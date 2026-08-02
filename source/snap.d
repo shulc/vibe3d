@@ -156,9 +156,12 @@ const(Mesh)* snapSource(int slot) {
 // own pivot/box — unlike setBackgroundSnapSources which skips the primary).
 //
 // Install shape mirrors setBackgroundSnapSources exactly: the setItemSnapFrames
-// CALL is unconditional every frame (app.d, next to setBackgroundSnapSources)
-// so a /api/reset that collapses the document to one layer self-clears the
-// prior test's multi-layer frames. Only the slice-fill loop may early-out.
+// CALL is unconditional every draw (ui/panels.d, next to
+// setBackgroundSnapSources) so a /api/reset that collapses the document to one
+// layer self-clears the prior test's multi-layer frames. Only the slice-fill
+// loop may early-out. That draw is the SOLE installer as of task 0587 — the
+// /api/snap provider used to install its own copy just-in-time, because it ran
+// on the HTTP thread and would otherwise race this one.
 // ---------------------------------------------------------------------------
 
 /// Per-layer (item) snap frame: world pivot point + world-space AABB.
@@ -1313,8 +1316,10 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
 
     // -----------------------------------------------------------------------
     // Stage 3: Pivot point targets — from item snap frames (discrete tier).
-    // Item frames are installed per-frame by app.d and just-in-time by
-    // the /api/snap provider. Scope: Item bucket (+ Global).
+    // Item frames are installed per-frame by the draw (ui/panels.d) — that
+    // is the only installer; the /api/snap provider's just-in-time copy of
+    // it went away when that endpoint moved onto the main thread (task 0587).
+    // Scope: Item bucket (+ Global).
     // -----------------------------------------------------------------------
     if ((cfg.enabledTypes & SnapType.Pivot)
             && typeEligible(SnapType.Pivot, cfg.snapScope)) {
@@ -1460,9 +1465,31 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
 // Closest world-space point on a polygon's surface to the cursor at
 // screen pixel (sx, sy). Cursor inside the screen-projected polygon
 // ⇒ ray-plane hit (face's plane, normal from first 3 verts). Outside
-// ⇒ closest point along the polygon's boundary edge ring. Returns
-// false on degenerate faces (< 3 verts, behind-camera vert, zero-area
-// normal) — caller skips that face.
+// ⇒ closest point on the polygon's boundary ring, elected in 3D against
+// the cursor ray (see the exterior leg below). Returns false on degenerate
+// faces (< 3 verts, behind-camera vert, zero-area normal) — caller skips
+// that face.
+//
+// TWO KNOWN DIVERGENCES FROM THE REFERENCE, recorded and deliberately NOT
+// fixed here (task 0587 fixed only the exterior leg's parameter defect,
+// which is the one that is a bug on its own evidence):
+//
+//   D1 — the interior test. Ours is point-in-polygon on the PROJECTED
+//        outline, and the hit is against ONE plane through face[0] with the
+//        normal of the first three vertices. The reference triangulates the
+//        polygon and intersects the eye ray with each triangle. The two
+//        differ on every NON-PLANAR polygon (we have no single plane to
+//        intersect) and on every NON-CONVEX one (the projected outline is
+//        not the projected surface). This is a different algorithm, not a
+//        defect in this one, so "fixing" it is a port, not a repair.
+//   D3 — the rank. `consider()` re-projects the returned point and ranks by
+//        true screen distance, which is depth-correct. The reference divides
+//        a world distance by the view's single world-per-pixel scale and
+//        gives an interior hit a rank of EXACTLY zero, so every polygon under
+//        the cursor ties and iteration order decides. On a strongly
+//        foreshortened polygon the two orderings can disagree.
+//
+// Both are recorded in the task file; neither is measured here.
 private bool closestOnPolygonSurface(const(uint)[] face,
                                      const ref Mesh mesh,
                                      int sx, int sy,
@@ -1495,27 +1522,50 @@ private bool closestOnPolygonSurface(const(uint)[] face,
         return rayPlaneIntersect(snapOrig5, ray, v0, n, worldHit);
     }
 
-    // Outside polygon — walk the boundary edge ring.
-    float bestT     = 0;
-    int   bestEi    = -1;
+    // Outside the polygon — elect a point on the boundary ring, in 3D, the
+    // same way the edge leg does (task 0567 for edges, 0587 here): the
+    // ELECTION is the closest approach of the world segment to the cursor's
+    // eye ray, and the RANK is the re-projected screen distance of the point
+    // that election returns. Two different metrics in sequence, deliberately.
+    //
+    // What this replaces: the ring used to take the closest parameter on the
+    // PROJECTED segment and then apply it as a WORLD parameter
+    // (`a + (b - a) * bestT` with `bestT` from `closestOnSegment2DSquared`).
+    // Under perspective those are different parameters, so the elected point
+    // could sit far from where the cursor actually was; the two agree only
+    // when the segment's endpoints are at equal depth, which is why a
+    // coplanar/equal-depth rig cannot tell the two laws apart.
+    Vec3 rayOrig, rayDir;
+    screenPointToRay(cast(float)sx, cast(float)sy, vp, rayOrig, rayDir);
     float bestDist2 = float.infinity;
+    bool  found     = false;
     foreach (i; 0 .. face.length) {
         size_t j = (i + 1) % face.length;
+        Vec3 a = mesh.vertices[face[i]];
+        Vec3 b = mesh.vertices[face[j]];
+        // A degenerate segment (zero-length, or pointing straight down the
+        // view ray) leaves `t` at 0 and elects `a`. Every point on such a
+        // segment shares one pixel, so the rank below is identical whichever
+        // point is chosen and the `false` return needs no separate handling.
         float t;
-        float d2 = closestOnSegment2DSquared(
-            cast(float)sx, cast(float)sy,
-            xs[i], ys[i], xs[j], ys[j], t);
+        closestOnSegmentToRay(rayOrig, rayDir, a, b, t);
+        Vec3 p = a + (b - a) * t;
+        float pxs, pys, ndcZ;
+        // Cannot fail in practice: every face vertex projected successfully
+        // above (or we returned false), so a point between two of them is in
+        // front of the camera too. Guarded anyway — `found` carries the
+        // verdict rather than an assumption.
+        if (!projectToWindowFull(p, vp, pxs, pys, ndcZ)) continue;
+        immutable float dx = pxs - cast(float)sx;
+        immutable float dy = pys - cast(float)sy;
+        immutable float d2 = dx * dx + dy * dy;
         if (d2 < bestDist2) {
             bestDist2 = d2;
-            bestT     = t;
-            bestEi    = cast(int)i;
+            worldHit  = p;
+            found     = true;
         }
     }
-    if (bestEi < 0) return false;
-    Vec3 a = mesh.vertices[face[bestEi]];
-    Vec3 b = mesh.vertices[face[(bestEi + 1) % face.length]];
-    worldHit = a + (b - a) * bestT;
-    return true;
+    return found;
 }
 
 // ---------------------------------------------------------------------------
@@ -4306,4 +4356,141 @@ unittest {
     }
 
     invalidateSnapGrids();
+}
+
+// THE POLYGON EXTERIOR-LEG ELECTION (task 0587) — when the cursor falls
+// OUTSIDE a polygon's projected outline, the point returned on its boundary
+// ring is elected in 3D against the cursor's eye ray, exactly as the edge leg
+// above elects one. It is NOT the closest parameter on the PROJECTED ring
+// segment applied as a world parameter, which is what this file used to do.
+//
+// TESTED ACROSS DEPTH, and that is the whole point of the fixture. The two
+// laws are algebraically the same whenever the ring segment's endpoints sit at
+// equal depth, so a fronto-parallel or coplanar polygon passes under either
+// law and proves nothing. The CONTROL block below demonstrates that failure
+// mode explicitly rather than asserting it in prose: on a fronto-parallel
+// polygon the two laws land 0.0002 world units apart, which no useful
+// tolerance can separate. The DECISIVE block spans a factor of ~20 in depth
+// and separates them by 8.38 world units and 24.6 px.
+//
+// Calls the leg directly instead of driving snapCursor: the exterior leg is
+// what changed, and a direct call cannot be confounded by backface culling,
+// the candidate grid or the cascade's ranking. The wiring from snapCursor's
+// polygon leg into this function is unchanged and covered elsewhere.
+unittest {
+    import math     : lookAt, perspectiveMatrix;
+    import std.math : PI;
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    float dist3(Vec3 p, Vec3 q) {
+        immutable Vec3 d = p - q;
+        return sqrt(dot(d, d));
+    }
+    float distPxAt(Vec3 w, int cx, int cy) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: the probe point must project on-screen");
+        immutable float dx = qx - cast(float)cx;
+        immutable float dy = qy - cast(float)cy;
+        return sqrt(dx * dx + dy * dy);
+    }
+    // The cursor must be OUTSIDE the projected outline or the interior
+    // (ray/plane) leg answers and the exterior leg never runs.
+    void assertCursorOutside(const ref Mesh m, const(uint)[] face, int cx, int cy) {
+        float[] xs, ys;
+        foreach (vi; face) {
+            float px, py, pz;
+            assert(projectToWindowFull(m.vertices[vi], vp, px, py, pz),
+                "fixture: every polygon vertex must project");
+            xs ~= px; ys ~= py;
+        }
+        assert(!pointInPolygon2D(cast(float)cx, cast(float)cy, xs, ys),
+            "fixture: the cursor must fall OUTSIDE the projected outline, or "
+            ~ "this rig exercises the interior leg and says nothing about the "
+            ~ "ring election");
+    }
+
+    immutable uint[3] tri = [0u, 1u, 2u];
+
+    // -----------------------------------------------------------------------
+    // DECISIVE — a boundary edge running from one unit in front of the camera
+    // (z = 4) out to twenty units away (z = -15), with the cursor just off it.
+    //
+    //   3D election   -> t = 0.04498, world (0.073045, 0.068511, 3.145295),
+    //                    which re-projects 0.79 px from the cursor
+    //   projected-t   -> t = 0.48547, world (0.200785, -0.239826, -5.223855),
+    //                    which re-projects 25.41 px away
+    //
+    // 8.38 world units apart. The third vertex is far to the +x side so the
+    // cursor is outside the outline and the near edge is the elected one.
+    // -----------------------------------------------------------------------
+    {
+        immutable int cx = 415, cy = 385;
+        Mesh m;
+        m.vertices = [ Vec3(0.06f,  0.10f,   4.0f),
+                       Vec3(0.35f, -0.60f, -15.0f),
+                       Vec3(6.0f,   2.0f,   -6.0f) ];
+
+        immutable Vec3 pRay  = Vec3(0.073045f,  0.068511f,  3.145295f);
+        immutable Vec3 pProj = Vec3(0.200785f, -0.239826f, -5.223855f);
+
+        assertCursorOutside(m, tri[], cx, cy);
+        // Premises, stated rather than trusted.
+        assert(distPxAt(pRay,  cx, cy) < 1.5f,
+            "fixture: the 3D-elected point must sit on the cursor's pixel");
+        assert(distPxAt(pProj, cx, cy) > 20.0f,
+            "fixture: the projected-parameter point must be far off it, or "
+            ~ "this rig cannot tell which law ran");
+        assert(dist3(pRay, pProj) > 5.0f,
+            "fixture: and the two must be far apart in world space, so no "
+            ~ "tolerance can blur them together");
+
+        Vec3 hit;
+        assert(closestOnPolygonSurface(tri[], m, cx, cy, vp, hit),
+            "a well-formed polygon with the cursor beside it must elect a point");
+        assert(dist3(hit, pRay) < 1e-3f,
+            "the elected point must be the boundary ring's closest approach to "
+            ~ "the cursor's eye ray");
+        assert(dist3(hit, pProj) > 5.0f,
+            "and must NOT be the projected parameter applied as a world one — "
+            ~ "that point is 8.4 world units away and re-projects 25 px off "
+            ~ "the cursor the user is pointing with");
+    }
+
+    // -----------------------------------------------------------------------
+    // CONTROL — the same question on a FRONTO-PARALLEL polygon (all three
+    // vertices at z = -6). Here the projected parameter and the 3D closest
+    // approach coincide: the two laws land 0.000217 world units apart. This
+    // block asserts that they agree, which is the honest way to record that a
+    // rig like this one CANNOT distinguish them — had the decisive block above
+    // been built at constant depth, it would have passed without the fix.
+    // -----------------------------------------------------------------------
+    {
+        immutable int cx = 415, cy = 385;
+        Mesh m;
+        m.vertices = [ Vec3(0.06f,  0.10f, -6.0f),
+                       Vec3(0.35f, -0.60f, -6.0f),
+                       Vec3(6.0f,   2.0f,  -6.0f) ];
+
+        immutable Vec3 pRay  = Vec3(0.470255f, 0.231227f, -6.0f);
+        immutable Vec3 pProj = Vec3(0.470462f, 0.231293f, -6.0f);
+
+        assertCursorOutside(m, tri[], cx, cy);
+        assert(dist3(pRay, pProj) < 1e-3f,
+            "fixture: at equal depth the two laws must coincide — that is the "
+            ~ "property being documented");
+
+        Vec3 hit;
+        assert(closestOnPolygonSurface(tri[], m, cx, cy, vp, hit),
+            "the fronto-parallel polygon must still elect a point");
+        assert(dist3(hit, pRay) < 1e-3f,
+            "and at equal depth it agrees with BOTH laws, which is exactly why "
+            ~ "the decisive rig has to span depth");
+    }
 }

@@ -203,27 +203,53 @@ class HttpServer {
     // /api/snap — POST. Body is the snap-query JSON ({cursor, sx, sy,
     // excludeVerts}); response is the SnapResult JSON. Used by the
     // 7.3 unit tests to probe snap math directly without driving an
-    // interactive Move drag through play-events. Served straight from the
-    // HTTP thread; tests are quiescent during probing.
+    // interactive Move drag through play-events.
     //
-    // Its old note called this "read-only, same convention as
-    // toolpipeEvalProvider". Both halves are wrong and it should not be
-    // copied: toolpipeEvalProvider is BRIDGED, and this closure is not
-    // read-only — it runs g_pipeCtx.pipeline.evaluate() and then writes
-    // snap.d's __gshared g_itemSnapFrames via setItemSnapFrames(). It is
-    // GL-free (swept and measured, task 0584), so it does not fault; what
-    // it does risk is the ordinary shared-state race the quiescence
-    // convention papers over. If it ever flakes, bridge it — do not widen
-    // the precedent.
+    // MARSHALED onto the main thread via snapQueryBridge (task 0587). Two of
+    // the standing rule's three clauses applied, and each on its own would
+    // have been enough:
+    //
+    //   * it MUTATES shared state — twice. g_pipeCtx.pipeline.evaluate()
+    //     re-runs the pipe and writes the shared stage caches (the same
+    //     hazard that bridged /api/toolpipe/eval), and the closure then
+    //     wrote snap.d's __gshared g_itemSnapFrames via setItemSnapFrames().
+    //   * what it reads is REBUILT PER FRAME — g_itemSnapFrames is installed
+    //     unconditionally by every draw (ui/panels.d), so a read taken off
+    //     the main thread has no moment at which the buffer is both complete
+    //     and describes the caller's document.
+    //
+    // The third clause (constructs anything) did NOT apply: the walk is
+    // GL-free, swept and measured in task 0584. That is why this was a race
+    // and not a fault, and why it outlived the sweep that found it.
+    //
+    // The second write is now GONE rather than protected: once the read runs
+    // on the main thread, the per-frame install is already correct and the
+    // provider's just-in-time copy of it was pure duplication. See app.d.
+    //
+    // For the record, since it was cited as a precedent twice: this endpoint
+    // was never "read-only, same convention as toolpipeEvalProvider" —
+    // toolpipeEvalProvider was already bridged when that note was written.
     private alias SnapQueryProvider = string delegate(string requestBody);
     private SnapQueryProvider snapQueryProvider;
     // /api/constrain — POST. Body is {pos:[x,y,z], delta:[x,y,z]};
     // evaluates the pipeline to pull the live ConstrainPacket, snapshots
-    // the background sources, and returns the projected point. Mirrors
-    // /api/snap — which is NOT a bridge, whatever this comment used to
-    // say: both are served on the HTTP thread and both call
-    // pipeline.evaluate() there. GL-free (task 0584); same standing advice
-    // as /api/snap above.
+    // the background sources, and returns the projected point.
+    //
+    // MARSHALED onto the main thread via its own bridge (task 0587), on the
+    // same two clauses as /api/snap:
+    //
+    //   * it MUTATES shared state — pipeline.evaluate() writes the shared
+    //     stage caches, exactly as above. It does NOT write g_itemSnapFrames;
+    //     that half was /api/snap's alone.
+    //   * what it reads is REBUILT PER FRAME — backgroundSourcesSnapshot()
+    //     copies g_snapSources, which every draw reinstalls unconditionally
+    //     (ui/panels.d, beside the item frames). The grid mutex makes that
+    //     copy untorn, which is not the same thing as current: it can still
+    //     answer from the set the previous frame installed.
+    //
+    // The third clause (constructs anything) does not apply — GL-free, swept
+    // in 0584. It genuinely does mirror /api/snap; as of 0587 that means
+    // "also bridged", not "also direct", which is what this note used to say.
     private alias ConstrainQueryProvider = string delegate(string requestBody);
     private ConstrainQueryProvider constrainQueryProvider;
     // /api/snap/last — GET. Returns the most recent SnapResult any
@@ -477,6 +503,24 @@ class HttpServer {
     struct PathResp { string result; string error; }
     private MainThreadBridge!(PathReq, PathResp) pathBridge;
 
+    // POST /api/snap and POST /api/constrain — one bridge each, own epoch pair
+    // (MUST NOT share pipeEval's or each other's, same rule as pathBridge).
+    // Both providers run g_pipeCtx.pipeline.evaluate() to pull a fully-
+    // populated SnapPacket/ConstrainPacket, which is the identical hazard that
+    // put /api/toolpipe/eval on a bridge: evaluate() re-runs the pipe over the
+    // live mesh + selection and mutates the shared stage caches in g_pipeCtx
+    // concurrently with the main thread's own per-frame evaluate(). The
+    // request payload is the raw POST body; the provider parses it, because
+    // the parse is part of the answer (a malformed body is reported as a 200
+    // with an {"error":...} object, not as a transport failure).
+    struct SnapQReq  { string body_; }
+    struct SnapQResp { string result; string error; }
+    private MainThreadBridge!(SnapQReq, SnapQResp) snapQueryBridge;
+
+    struct ConstrainQReq  { string body_; }
+    struct ConstrainQResp { string result; string error; }
+    private MainThreadBridge!(ConstrainQReq, ConstrainQResp) constrainQueryBridge;
+
     struct CmdReq  { string id; string params; bool interactive; }
     struct CmdResp { string error; string result; }
     private MainThreadBridge!(CmdReq, CmdResp) commandBridge;
@@ -675,6 +719,30 @@ class HttpServer {
                         resp.result = pathQueryProvider(req.t);
                     else
                         resp.error = "path query provider not set";
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            });
+
+        snapQueryBridge = new MainThreadBridge!(SnapQReq, SnapQResp)(this,
+            (ref SnapQReq req, ref SnapQResp resp) {
+                try {
+                    if (snapQueryProvider !is null)
+                        resp.result = snapQueryProvider(req.body_);
+                    else
+                        resp.error = "snap query provider not set";
+                } catch (Exception e) {
+                    resp.error = e.msg;
+                }
+            });
+
+        constrainQueryBridge = new MainThreadBridge!(ConstrainQReq, ConstrainQResp)(this,
+            (ref ConstrainQReq req, ref ConstrainQResp resp) {
+                try {
+                    if (constrainQueryProvider !is null)
+                        resp.result = constrainQueryProvider(req.body_);
+                    else
+                        resp.error = "constrain query provider not set";
                 } catch (Exception e) {
                     resp.error = e.msg;
                 }
@@ -1770,38 +1838,54 @@ class HttpServer {
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/snap" && request.method == "POST") {
-            if (snapQueryProvider !is null) {
-                try {
-                    response.statusCode = 200;
-                    response.body = snapQueryProvider(request.body);
-                    response.headers["Content-Type"] = "application/json";
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\":\"snap query failed\",\"message\":\"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
-                    response.headers["Content-Type"] = "application/json";
-                }
-            } else {
+            response.headers["Content-Type"] = "application/json";
+            // The null-provider verdict is decided HERE, on the HTTP thread,
+            // before the bridge is touched — otherwise an unwired provider
+            // would spin out the full submitAndWait timeout and report
+            // "timeout" instead of the historical "provider not set".
+            if (snapQueryProvider is null) {
                 response.statusCode = 500;
                 response.body = "{\"error\":\"snap query provider not set\"}";
-                response.headers["Content-Type"] = "application/json";
+            } else {
+                // Marshal onto the main thread (task 0587). The provider runs
+                // pipeline.evaluate() and reads the live mesh; see the
+                // snapQueryBridge declaration for why that cannot be served
+                // from this thread.
+                snapQueryBridge.req.body_   = request.body;
+                snapQueryBridge.resp.result = "";
+                snapQueryBridge.resp.error  = "";
+                if (!snapQueryBridge.submitAndWait())
+                    snapQueryBridge.resp.error = "timeout waiting for main thread";
+                if (snapQueryBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = snapQueryBridge.resp.result;
+                } else {
+                    response.statusCode = 500;
+                    response.body = "{\"error\":\"snap query failed\",\"message\":\"" ~
+                                   snapQueryBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                }
             }
         } else if (request.path == "/api/constrain" && request.method == "POST") {
-            if (constrainQueryProvider !is null) {
-                try {
-                    response.statusCode = 200;
-                    response.body = constrainQueryProvider(request.body);
-                    response.headers["Content-Type"] = "application/json";
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\":\"constrain query failed\",\"message\":\"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
-                    response.headers["Content-Type"] = "application/json";
-                }
-            } else {
+            response.headers["Content-Type"] = "application/json";
+            if (constrainQueryProvider is null) {
                 response.statusCode = 500;
                 response.body = "{\"error\":\"constrain query provider not set\"}";
-                response.headers["Content-Type"] = "application/json";
+            } else {
+                // Marshal onto the main thread (task 0587) — same reason as
+                // /api/snap above, minus the shared-buffer write.
+                constrainQueryBridge.req.body_   = request.body;
+                constrainQueryBridge.resp.result = "";
+                constrainQueryBridge.resp.error  = "";
+                if (!constrainQueryBridge.submitAndWait())
+                    constrainQueryBridge.resp.error = "timeout waiting for main thread";
+                if (constrainQueryBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = constrainQueryBridge.resp.result;
+                } else {
+                    response.statusCode = 500;
+                    response.body = "{\"error\":\"constrain query failed\",\"message\":\"" ~
+                                   constrainQueryBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                }
             }
         } else if (request.path.startsWith("/api/camera") && request.method == "POST") {
             if (cameraSetHandler is null) {

@@ -4637,8 +4637,13 @@ void main(string[] args) {
         // Phase 7.3a: /api/snap query bridge. Lets unit tests probe
         // the snap math directly with explicit cursor world pos +
         // screen pixel + excludeVerts, without driving an interactive
-        // Move drag through play-events. Read-only — same quiescence
-        // expectation as toolpipeEvalProvider above.
+        // Move drag through play-events.
+        //
+        // Body runs on the MAIN THREAD inside tickAll(), via
+        // snapQueryBridge (task 0587) — it is not read-only and never was:
+        // it runs pipeline.evaluate() over the live mesh and selection. See
+        // the bridge declaration in http_server.d for which clauses of the
+        // standing rule applied.
         httpServer.setSnapQueryProvider((string body_) {
             import std.array       : appender;
             import std.format      : format;
@@ -4704,19 +4709,15 @@ void main(string[] args) {
                 if (auto sp = vts.get!SnapPacket()) cfg = *sp;
             }
 
-            // Stage 3 D6: just-in-time item-frame install so the HTTP thread
-            // never races the render-thread's per-frame install. Build the same
-            // frames the render loop would, but from the current document state.
-            {
-                import snap : setItemSnapFrames, ItemSnapFrame;
-                ItemSnapFrame[] itemFrames;
-                foreach (lyr; document.layers) {
-                    if (!lyr.visible) continue;
-                    itemFrames ~= buildItemFrame(lyr);
-                }
-                setItemSnapFrames(itemFrames);
-            }
-
+            // The just-in-time item-frame install that used to sit here is
+            // GONE (task 0587), not moved. It existed for one reason: this
+            // closure ran on the HTTP thread, where it could race the draw's
+            // own per-frame setItemSnapFrames(). Now that the closure runs on
+            // the main thread there is no second writer to race, and the
+            // install it duplicated — ui/panels.d, unconditional every draw —
+            // has already run. Deleting it also makes this probe answer from
+            // the SAME frames an interactive tool sees mid-drag, which the
+            // just-in-time rebuild specifically did not.
             SnapResult sr = snapCursor(cursor, sx, sy, vp, mesh, cfg, exclude);
 
             buf.put(format(
@@ -4761,7 +4762,11 @@ void main(string[] args) {
         // /api/constrain — POST. Probe the constraint math directly with an
         // explicit `pos` world point. Evaluates the pipeline to pull the live
         // ConstrainPacket, snapshots the background sources, and returns the
-        // projected point. Mirrors /api/snap; read-only (HTTP thread safe).
+        // projected point. Mirrors /api/snap — including the thread contract:
+        // this body runs on the MAIN THREAD inside tickAll() via
+        // constrainQueryBridge (task 0587). It is not "read-only (HTTP thread
+        // safe)", as this note used to claim; pipeline.evaluate() writes the
+        // shared stage caches.
         httpServer.setConstrainQueryProvider((string body_) {
             import std.array       : appender;
             import std.format      : format;
