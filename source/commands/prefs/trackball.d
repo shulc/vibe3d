@@ -8,7 +8,7 @@ import editmode;
 import trackball : TrackballOption, parseTrackballOption,
                    setTrackballGlobal, setTrackballGlobalOverride,
                    setTrackballMouseSpeed, setTrackballTabletSpeed,
-                   clampTrackballSpeed;
+                   clampTrackballSpeed, setTrackballSwing;
 
 // ---------------------------------------------------------------------------
 // `pref.trackball <subject> <value>` — the trackball navigation setting.
@@ -24,10 +24,12 @@ import trackball : TrackballOption, parseTrackballOption,
 //   pref.trackball viewport <on|off|default>   THIS cell's override
 //   pref.trackball speed    <number>       the mouse speed multiplier
 //   pref.trackball tabletSpeed <number>    the tablet multiplier (stored only)
+//   pref.trackball swing <on|off>      settling spin (off) vs swing (on)
 //
-// One command with a subject positional rather than five sibling commands: the
-// five values are one feature with one persistence block and one reset, and
-// splitting them buys nothing but five registration sites to keep in sync.
+// One command with a subject positional rather than a family of sibling
+// commands: the values are one feature with one persistence block and one
+// reset, and splitting them buys nothing but registration sites to keep in
+// sync.
 //
 // An unrecognised subject or value is an ERROR, not a silent fallback. Landing
 // on "off" by accident looks exactly like the gesture was never ported, which
@@ -53,7 +55,7 @@ class TrackballPrefCommand : Command {
     override bool apply() {
         if (subject_.length == 0)
             throw new Exception("pref.trackball: subject required "
-                ~ "(global|override|viewport|speed|tabletSpeed)");
+                ~ "(global|override|viewport|speed|tabletSpeed|swing)");
         if (value_.length == 0)
             throw new Exception("pref.trackball: value required for subject '"
                 ~ subject_ ~ "'");
@@ -78,9 +80,16 @@ class TrackballPrefCommand : Command {
             case "tabletSpeed":
                 setTrackballTabletSpeed(parseSpeed());
                 return true;
+            case "swing":
+                // Which curve a release arms. NOT "spin on/off": the spin is
+                // armed whenever the gesture is, and this chooses between the
+                // four-second coast and the endless 1.6-second oscillation.
+                setTrackballSwing(parseOnOff());
+                return true;
             default:
                 throw new Exception("pref.trackball: unknown subject '"
-                    ~ subject_ ~ "' (want global|override|viewport|speed|tabletSpeed)");
+                    ~ subject_
+                    ~ "' (want global|override|viewport|speed|tabletSpeed|swing)");
         }
     }
 

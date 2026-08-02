@@ -37,7 +37,7 @@ import coord_rounding : CoordinateRounding, kCoordRoundingDefault,
                         kFixedIncrementDefault, coordRoundingName,
                         parseCoordRounding;
 import trackball      : kTrackballDefault, kTrackballSpeedDefault,
-                        clampTrackballSpeed;
+                        clampTrackballSpeed, kSpinSwingDefault;
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -127,6 +127,14 @@ struct Prefs {
     /// future tablet arm is not silently dropped on the next save.
     float trackballSpeed       = kTrackballSpeedDefault;
     float trackballTabletSpeed = kTrackballSpeedDefault;
+
+    /// Momentum spin (task 0582): which curve the spin a release leaves
+    /// behind follows. False = Settle, which coasts to a stop in exactly four
+    /// seconds; true = Swing, an undamped 1.6-second oscillation that runs
+    /// until the next press. Persisted next to the other four because it is one
+    /// feature with one reset — and NOT schema-bumping, same as they are: an
+    /// older file without the key reads back as the shipped Settle.
+    bool trackballSwing = kSpinSwingDefault;
 
     /// Task 0559: per-viewport-cell display state — the FIRST per-cell state
     /// this app persists at all. Everything else a cell owns (camera,
@@ -377,6 +385,9 @@ Prefs loadPrefs(string dir) {
         if (auto tp = "trackballGlobalOverride" in doc)
             if (tp.type == JSONType.true_ || tp.type == JSONType.false_)
                 p.trackballGlobalOverride = (tp.type == JSONType.true_);
+        if (auto tp = "trackballSwing" in doc)
+            if (tp.type == JSONType.true_ || tp.type == JSONType.false_)
+                p.trackballSwing = (tp.type == JSONType.true_);
 
         // Both multipliers go through the SAME clamp the setter uses, so a
         // hand-edited file cannot put a value into the camera's rotation that
@@ -454,6 +465,7 @@ void savePrefs(ref const Prefs p, string dir) {
     doc["trackballGlobalOverride"]       = JSONValue(p.trackballGlobalOverride);
     doc["trackballSpeed"]       = JSONValue(p.trackballSpeed);
     doc["trackballTabletSpeed"] = JSONValue(p.trackballTabletSpeed);
+    doc["trackballSwing"]   = JSONValue(p.trackballSwing);
 
     // Task 0559: per-cell display state. Written unconditionally for all four
     // cells, including cells the current layout does not show — a cell's
