@@ -697,6 +697,14 @@ struct GpuMesh {
     // under-report forever. A wrapper cannot be forgotten, because forgetting
     // it means calling glDrawArrays directly, which is greppable.
     //
+    // That guarantee is LOCAL TO THIS STRUCT and does not generalise. The
+    // line below is the only raw glDrawArrays in mesh_gpu.d, which is what
+    // makes "did someone bypass the counter here" a grep. Every other draw
+    // path in the codebase (handles/shapes.d, handles/gl_util.d,
+    // ui/panels.d, gpu_select.d, subpatch_osd.d) is a raw glDrawArrays with a
+    // g_fc.draw beside it, and there a forgotten bump is silent. See the
+    // FrameWorkProbe header in perf_probe.d for the per-file check.
+    //
     // Pure pass-through: no `count <= 0` guard, no reordering. A zero-vertex
     // submission is still a submission (the driver call happens either way),
     // so it is counted as one call with zero vertices rather than dropped —

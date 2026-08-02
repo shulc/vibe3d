@@ -694,6 +694,34 @@ __gshared FrameProbe g_frames;
 // Cost in the default build: a `++` and a `+=` per GL draw submission (tens
 // per frame), one struct clear per frame, and two thread-local reads for the
 // GC delta. Nothing here allocates and nothing here locks.
+//
+// The frame-rate figures taken while this was built — 233 fps idle, 215 under
+// 24 competing spinners, 205 under 64 — are NOT a measurement of that cost and
+// must not be quoted as one. All three rows are the same binary with these
+// counters live; there is no probe-off column anywhere in that experiment, so
+// it cannot price the probe at all. The quantity that varies across the rows
+// is external host load, and the conclusion runs opposite to a tax: the
+// counters were bit-identical (2144 bytes / 6 calls / 472 verts) in all three
+// while the frame rate moved 12%, which is the argument FOR counting instead
+// of timing in the default build. Quoting "233 -> 205 under 64 spinners" on
+// its own drops the idle and 24-spinner rows and inverts the finding into a
+// 12% probe overhead that was never measured and is not claimed.
+//
+// COVERAGE IS NOT UNIFORMLY ENFORCED, and the difference matters the moment
+// you add a draw call. In `mesh_gpu.d` every submission goes through
+// `dcArrays()`, which holds the only `glDrawArrays` in that struct: bypassing
+// the counter there means writing a SECOND raw `glDrawArrays` into the file,
+// and a grep finds it. No other draw path is protected that way. In
+// `handles/shapes.d`, `handles/gl_util.d`, `ui/panels.d`, `gpu_select.d` and
+// `subpatch_osd.d` a raw `glDrawArrays` simply has a `g_fc.draw` on the next
+// line, paired by habit and nothing else. The pairing is complete today — 18
+// raw calls, 18 bumps — so the current numbers are whole. But a NEW call added
+// to one of those files without its bump is SILENT: a raw `glDrawArrays` is
+// the norm there, so there is no anomaly to grep for, and the probe would
+// under-report while the response still looked complete. If you touch one of
+// them, the check is cheap and is the whole guarantee those files get:
+//
+//     grep -c 'glDrawArrays(' <file>  ==  grep -c 'g_fc\.draw(' <file>
 // ===========================================================================
 
 /// Draw-pass identity. One slot per thing a scene render can submit, split so
