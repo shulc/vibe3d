@@ -63,9 +63,14 @@ enum DisplayStyle : ubyte {
     /// that connect them.
     Wireframe,
     /// Solid fill with NO shading — a flat sketch fill, most useful combined
-    /// with a wireframe overlay. Our fill colour comes from the per-face
-    /// surface `baseColor` we already upload; the reference takes it from a
-    /// global preference. Recorded, minor, deliberate divergence.
+    /// with a wireframe overlay. The fill colour is the viewport colour
+    /// scheme's (`kSchemeSolidFill`), NOT the surface material: this style does
+    /// not consult the material at all. Task 0589 shipped it reading the
+    /// material and 0592 corrected that — see `kSchemeSolidFill` for the
+    /// measurement and for the per-item override we do not have.
+    ///
+    /// Also installs no BACKDROP face pass: see `resolveDrawPlan`'s
+    /// `SameAsActive` case.
     Solid,
     /// Lit surface from the material definition (diffuse / specular /
     /// glossiness). No image maps — we have none.
@@ -122,6 +127,31 @@ enum BackdropStyle : ubyte {
 /// in the renderer; it moves here because it is now an output of resolution.
 enum float kBackdropDim = 0.45f;
 
+/// The unshaded fill colour of `DisplayStyle.Solid`: 0.6 grey.
+///
+/// MEASURED, not chosen. The reference resolves this fill from a **viewport
+/// colour-scheme entry**, not from the surface material — its shipped colour
+/// scheme carries a dedicated key for it, both the factory scheme and the
+/// alternate scheme set it to 0.6 grey, and its own help describes that key as
+/// the geometry display colour used by the unshaded solid viewport style.
+/// `round(0.6 * 255) == 153`.
+///
+/// Task 0589 shipped this fill as the SURFACE MATERIAL's colour, on the
+/// reasonable-looking assumption that "Solid is Shaded minus shading" leaves
+/// the material in place. A later static read of the reference's own shading
+/// machinery refuted that: its unshaded style makes no surface-creation call
+/// at all, so the material is never consulted. Task 0592 moved the anchor.
+///
+/// PRECEDENCE, and the half we do not have. The reference resolves the fill as
+/// **per-item override first, then this scheme colour** — the override being a
+/// channel pair on the item (an enable plus a colour). We have **no per-item
+/// fill channel**: `Layer` carries no display colour of any kind, so there is
+/// nothing here to prefer over the scheme value, and the precedence collapses
+/// to a single term. That is an OPEN HALF, recorded rather than invented: when
+/// a per-item display colour lands, it resolves into `DrawPlan.fillColor`
+/// ahead of this constant, and this comment is the contract for doing so.
+enum float kSchemeSolidFill = 0.6f;
+
 /// One activity state's controls — the active mesh, or the backdrop.
 ///
 /// Defaults are TODAY'S BEHAVIOUR, deliberately: a default-constructed
@@ -164,7 +194,8 @@ struct ViewportDisplay {
 /// This is the only display input the renderer sees. Two labelled groups,
 /// because the two axes compose rather than exclude each other:
 ///
-///   * SHADING  — the solid surface: `drawFaces`, `facesLit`, `dim`
+///   * SHADING  — the solid surface: `drawFaces`, `facesLit`, `fillColor`,
+///                `dim`
 ///   * OVERLAY  — what is drawn on top: `drawWire`, `wireAlpha`, `wireColor`,
 ///                `drawVerts`
 ///
@@ -172,8 +203,8 @@ struct ViewportDisplay {
 /// Selection highlight and rollover are their own axes; a plan that could turn
 /// them off would make `WireOverlay.None` silently eat selection feedback.
 ///
-/// CONSUMED TODAY — `drawFaces`, `facesLit`, `drawWire`, `wireAlpha`,
-/// `drawVerts`, `dim`. `wireColor` is resolved correctly and dumped by the
+/// CONSUMED TODAY — `drawFaces`, `facesLit`, `fillColor`, `drawWire`,
+/// `wireAlpha`, `drawVerts`, `dim`. `wireColor` is resolved correctly and dumped by the
 /// display endpoint, but no pass reads it yet (the overlay still takes its
 /// colour from the edge shader's own default, and giving it a source is the
 /// per-item-colour question `WireOverlay.Colored` is parked on). Do not write
@@ -183,20 +214,33 @@ struct ViewportDisplay {
 /// `facesLit` joined the consumed list in task 0589, which is what made
 /// `DisplayStyle.Solid` reachable; before that it was resolved and read by
 /// nobody, and the command refused the style by name rather than let it
-/// render as `Shaded`.
+/// render as `Shaded`. `fillColor` joined it in 0592, when a read of the
+/// reference's own shading machinery showed that the unshaded fill's colour
+/// does not come from the material.
 struct DrawPlan {
     // ---- shading -----------------------------------------------------
     /// Draw the solid surface at all. False ⇒ no face pass, not even
     /// depth-only: the model must be see-through.
     bool  drawFaces = true;
     /// Light the surface. False ⇒ flat unshaded fill: the face pass runs
-    /// unchanged (same geometry, same material colours, same hover/selection
-    /// branches) with the diffuse and specular terms removed, so the fill
-    /// carries no information about how the surface is oriented. Reaches GL
-    /// as the lit shader's `u_lit`.
+    /// unchanged (same geometry, same hover/selection branches) with the
+    /// diffuse and specular terms removed AND the material no longer
+    /// consulted, so the fill carries no information about how the surface is
+    /// oriented and none about what it is made of. Reaches GL as the lit
+    /// shader's `u_lit`.
     bool  facesLit  = true;
     /// Brightness multiplier for this pass (1.0 = full).
     float dim       = 1.0f;
+    /// The unshaded fill colour, read by the face pass ONLY when
+    /// `facesLit == false`. Resolved always so the field is determinate; under
+    /// a lit pass the shader takes its base colour from the material and this
+    /// value is not observable.
+    ///
+    /// CONSUMED (reaches GL as the lit shader's `u_fillColor`) — unlike the
+    /// sibling `wireColor`, so a test may assert rendering from it. See
+    /// `kSchemeSolidFill` for where the value comes from and for the per-item
+    /// override that would resolve into this field ahead of it.
+    float[3] fillColor = [kSchemeSolidFill, kSchemeSolidFill, kSchemeSolidFill];
 
     // ---- overlay -----------------------------------------------------
     /// Draw the base wireframe over the surface.
@@ -234,11 +278,39 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
 
     DisplayState st = d.active;
 
+    // Set only by `SameAsActive` below; applied after the shading switch,
+    // because it overrides what the style would otherwise resolve to.
+    bool solidRunsNoBackdropFacePass = false;
+
     if (isBackdrop) {
         p.dim = kBackdropDim;
         final switch (d.backdropStyle) {
             case BackdropStyle.SameAsActive:
                 st = d.active;
+                // MEASURED CORRECTION (task 0592). In the reference's style
+                // registry every shaded style installs THREE model-draw
+                // sub-passes — a background one, the main one, and a
+                // transparency one — while the unshaded solid style installs
+                // exactly ONE, the main one. So "same as active" cannot mean
+                // "run the unshaded fill a second time for the background
+                // layers": running a background face pass is precisely the
+                // thing that style provably does not do.
+                //
+                // WHICH READING THIS IS — the narrow one, deliberately. The
+                // measurement establishes that the SOLID STYLE installs no
+                // background face step. It does NOT establish that background
+                // layers disappear, and this does not implement that: the
+                // overlay axis is untouched, so background layers keep their
+                // wireframe, stay visible, and stay snappable. Only the
+                // backdrop's FACE pass stops.
+                //
+                // Scoped to `SameAsActive` on purpose. `Flat` below also
+                // resolves the backdrop to `Solid`, but that is the user
+                // naming a backdrop representation outright — a separate
+                // registered style in the reference, not the active surface
+                // style reaching across — so it keeps its fill.
+                solidRunsNoBackdropFacePass =
+                    (d.active.style == DisplayStyle.Solid);
                 break;
             case BackdropStyle.Wireframe:
                 st       = d.backdrop;
@@ -271,6 +343,11 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
             p.facesLit  = true;
             break;
     }
+
+    // Applied AFTER the switch, not inside it: the style resolved a face pass
+    // and this withdraws it. See the `SameAsActive` case above for what the
+    // measurement does and does not say.
+    if (solidRunsNoBackdropFacePass) p.drawFaces = false;
 
     // ---- overlay group ----
     // Composes over the shading group; the ONE coupling is that a lines-only
@@ -449,4 +526,88 @@ unittest {
     const b = resolveDrawPlan(d, true);
     assert(a.wireAlpha == 1.0f,  "active side must keep its own opacity");
     assert(b.wireAlpha == 0.25f, "backdrop side must use the backdrop opacity");
+}
+
+unittest {
+    // TASK 0592 — the unshaded fill's colour is the viewport COLOUR SCHEME's,
+    // and it does not come from the surface material.
+    //
+    // The two candidate anchors, side by side, so the assertion states which
+    // one is measured:
+    //   MEASURED (theirs): 0.6 grey — the scheme's fill entry, read from the
+    //                      reference's own shipped colour scheme.
+    //   OURS (0589, wrong): 0.8 grey — `LitShader`'s default material slot.
+    // If those two were ever equal this test would be vacuous, so say so.
+    enum float kMeasuredTheirs = 0.6f;
+    enum float kOursWas0589    = 0.8f;   // the material grey, superseded
+    static assert(kMeasuredTheirs != kOursWas0589,
+        "the two anchors must differ or nothing below discriminates");
+
+    assert(kSchemeSolidFill == kMeasuredTheirs,
+        "the Solid fill must be anchored on the MEASURED scheme colour, not "
+        ~ "on the surface material we happened to be loading anyway");
+
+    ViewportDisplay d;
+    d.active.style = DisplayStyle.Solid;
+    const p = resolveDrawPlan(d, false);
+    assert(p.fillColor == [kMeasuredTheirs, kMeasuredTheirs, kMeasuredTheirs],
+        "the resolved unshaded fill must carry the scheme colour");
+
+    // Determinate under every style — the field is resolved always and read
+    // only when the pass is unlit, so a style sweep must not perturb it.
+    foreach (ubyte s; 0 .. 3) {
+        ViewportDisplay e;
+        e.active.style = cast(DisplayStyle)s;
+        assert(resolveDrawPlan(e, false).fillColor == p.fillColor,
+            "fillColor is resolved, not styled — the shader's u_lit decides "
+            ~ "whether it is read");
+    }
+}
+
+unittest {
+    // TASK 0592 — the unshaded style runs NO BACKDROP FACE PASS.
+    //
+    // Measured from the reference's style registry: every shaded style
+    // installs three model-draw sub-passes (background, main, transparency);
+    // the unshaded solid style installs one, the main one. So `SameAsActive`
+    // must not re-run the fill for background layers.
+    //
+    // NARROW reading, asserted as such: the FACE pass stops, the layers do
+    // NOT vanish. The overlay half below is the load-bearing half of that —
+    // without it this test would equally pass on "Solid hides the backdrop",
+    // which is the over-read the measurement does not support.
+    ViewportDisplay d;
+    d.active.style = DisplayStyle.Solid;
+    assert(d.backdropStyle == BackdropStyle.SameAsActive);
+
+    const b = resolveDrawPlan(d, true);
+    assert(!b.drawFaces,
+        "the unshaded style installs no background face step, so a backdrop "
+        ~ "that mirrors it must not draw one");
+    assert(b.drawWire,
+        "background layers must NOT vanish — the overlay is its own axis and "
+        ~ "the measurement says nothing about it");
+
+    // Backdrop-only: the active pass keeps its fill.
+    const a = resolveDrawPlan(d, false);
+    assert(a.drawFaces && !a.facesLit,
+        "the rule is about the BACKDROP pass; the active surface still fills");
+
+    // Shaded is untouched — this is the neutrality half.
+    ViewportDisplay sh;
+    assert(sh.active.style == DisplayStyle.Shaded);
+    assert(resolveDrawPlan(sh, true).drawFaces,
+        "a shaded style DOES install a background step; the default backdrop "
+        ~ "face pass must be exactly as it was");
+
+    // An EXPLICIT flat backdrop still fills, even under an active Solid. That
+    // is the user naming a backdrop representation — a separate style in the
+    // reference — not the active surface style reaching across.
+    ViewportDisplay f;
+    f.active.style  = DisplayStyle.Solid;
+    f.backdropStyle = BackdropStyle.Flat;
+    const fb = resolveDrawPlan(f, true);
+    assert(fb.drawFaces && !fb.facesLit,
+        "an explicitly chosen flat backdrop keeps its fill — the suppression "
+        ~ "is scoped to SameAsActive inheritance");
 }

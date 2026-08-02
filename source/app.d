@@ -3922,11 +3922,13 @@ void main(string[] args) {
             static string planJson(in DrawPlan p) {
                 return format(
                     `{"drawFaces":%s,"facesLit":%s,"dim":%.6f,` ~
+                    `"fillColor":[%.6f,%.6f,%.6f],` ~
                     `"drawWire":%s,"wireAlpha":%.6f,` ~
                     `"wireColor":[%.6f,%.6f,%.6f],"drawVerts":%s}`,
                     p.drawFaces ? "true" : "false",
                     p.facesLit  ? "true" : "false",
                     p.dim,
+                    p.fillColor[0], p.fillColor[1], p.fillColor[2],
                     p.drawWire  ? "true" : "false",
                     p.wireAlpha,
                     p.wireColor[0], p.wireColor[1], p.wireColor[2],

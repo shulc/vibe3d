@@ -1872,6 +1872,13 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     import bindbc.opengl;
     import display_state : DrawPlan, resolveDrawPlan;
 
+    // The value `LitShader`'s constructor seeds `u_fillColor` to. Restoring to
+    // it (rather than to whichever plan just drew) keeps the program in the
+    // state every non-plan caller — create-tool previews, gizmo draws — was
+    // built expecting. Taken from a default-constructed plan so there is one
+    // source of truth for it and not two.
+    static immutable float[3] kDefaultFill = DrawPlan.init.fillColor;
+
     // ---- Resolve this cell's display state into what each pass may draw ----
     //
     // Task 0559 Phase 1 (doc/viewport_display_modes_plan.md). Before this,
@@ -2120,8 +2127,10 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 litShader.setSurfaces(lyr.mesh.surfaces);
                 litShader.setDim(backdropPlan.dim);
                 litShader.setLit(backdropPlan.facesLit);
+                litShader.setFillColor(backdropPlan.fillColor);
                 bg.gpu.drawFaces(litShader);
                 litShader.setLit(true);
+                litShader.setFillColor(kDefaultFill);
                 litShader.setDim(1.0f);
             }
 
@@ -2174,19 +2183,30 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     // pass AT ALL — not a depth-only one: a lines-only style has to be
     // see-through, so back-side edges stay visible.
     //
-    // `facesLit == false` is the Solid style (task 0589): the SAME face pass,
-    // the same geometry, the same material colours, the same highlight
-    // branches — only the lighting term is gone. It is deliberately not a
-    // separate pass or a separate program: "Solid" is Shaded minus shading,
-    // and every OTHER thing the face pass does (hover tint, selection
-    // highlight, per-surface base colour) has to keep working under it. A
-    // second draw path would be where those quietly diverge.
+    // `facesLit == false` is the Solid style (0589, corrected in 0592): the
+    // SAME face pass, the same geometry, the same highlight branches — but
+    // neither the lighting term NOR the material. The fill's base becomes
+    // `activePlan.fillColor` (the viewport colour scheme's), which is why the
+    // two uniforms are set together below: "unlit" and "not from the material"
+    // are one decision, and a call site that set only the first would draw a
+    // black surface.
+    //
+    // Still deliberately not a separate pass or a separate program. The
+    // reference does register Solid as its own style, and its style record is
+    // genuinely a different shape — no light setup, one draw sub-pass instead
+    // of three. But everything that differs is expressible here: the light
+    // term is behind a uniform branch, the missing background sub-pass is a
+    // resolved `drawFaces`, and we have no transparency sub-pass to omit. What
+    // a second draw path would buy is a second place for hover tint, selection
+    // highlight and per-surface colour to quietly diverge, which is the actual
+    // risk this axis carries.
     {
         auto zMesh = g_perf.scope_(Cat.drawMesh);
         if (activePlan.drawFaces) {
             litShader.useProgram(meshModel, vp);
             litShader.setSurfaces(mesh.surfaces);
             litShader.setLit(activePlan.facesLit);
+            litShader.setFillColor(activePlan.fillColor);
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
                               && hoveredFace >= 0;
@@ -2200,6 +2220,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             // Restore, same discipline as the backdrop pass's setDim: the
             // program is shared with every preview/gizmo draw downstream.
             litShader.setLit(true);
+            litShader.setFillColor(kDefaultFill);
         }
     }
 

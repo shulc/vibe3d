@@ -1138,15 +1138,36 @@ bool testFlowK() {
 //     have different colours.
 //   * NOT Wireframe: faces are drawn at all.
 //
-// The uniform value is checked against the surface base colour rather than
-// just "some constant", which is the difference between "no shading" and
-// "shading with a constant light". `LitShader`'s slot 0 is seeded 0.8 grey for
-// meshes that carry no surfaces (every procedural primitive), and 0.8 * 255 is
-// 204 — so an unshaded fill of that cube is 204 exactly, with nothing between
-// the material colour and the framebuffer.
+// The uniform value is checked against a KNOWN colour rather than just "some
+// constant", which is the difference between "no shading" and "shading with a
+// constant light" — a constant light is uniform too, merely darker.
+//
+// WHICH known colour: THE ANCHOR MOVED IN TASK 0592, and the two candidates
+// are both named below on purpose, because the shape of this check is right
+// and only its anchor was wrong.
+//
+//   kFillMeasured = 153 — THEIRS, and what we now draw. The reference's
+//       unshaded style resolves its fill from a VIEWPORT COLOUR-SCHEME entry
+//       and never consults a surface at all; its shipped scheme sets that
+//       entry to 0.6 grey, and round(0.6 * 255) == 153.
+//
+//   kFillOursWas0589 = 204 — OURS, and wrong. Task 0589 anchored the fill on
+//       the surface material, reasoning that "Solid is Shaded minus shading"
+//       leaves the material in place. `LitShader` seeds material slot 0 to 0.8
+//       grey for meshes carrying no surfaces (every procedural primitive), and
+//       round(0.8 * 255) == 204. A later static read of the reference's own
+//       shading machinery refuted that reasoning, so this assertion is not
+//       being relaxed to make a change pass — it is being corrected to the
+//       number the measurement produced, and the number it used to hold stays
+//       written down right here so the correction is legible.
 // --------------------------------------------------------------------------
 
-enum int kFillLevel = 204;   // round(0.8 * 255) — LitShader's default slot-0 grey
+enum int kFillMeasured     = 153;  // THEIRS, measured: round(0.6 * 255)
+enum int kFillOursWas0589  = 204;  // OURS before 0592: round(0.8 * 255), the
+                                   // LitShader material grey — superseded
+static assert(kFillMeasured != kFillOursWas0589,
+    "the corrected anchor must differ from the one it replaces, or L4 cannot "
+    ~ "tell the two apart and the correction is untested");
 
 bool testFlowL() {
     writeln("  [L] Solid: an unshaded fill, uniform across faces...");
@@ -1174,7 +1195,20 @@ bool testFlowL() {
         "Solid renders the geometry WITHOUT shading");
     enforce(jsonBool(pa["plan"]["active"], "drawWire"),
         "the surface style must not disturb the overlay axis");
-    writeln("    L1 PASS: plan = faces on, lighting off, overlay untouched");
+    // The fill colour the renderer will actually use, off the same dump the
+    // renderer consumes — so L4's pixel number below has a stated source
+    // rather than being a bare constant someone tuned until it matched.
+    {
+        auto fc = pa["plan"]["active"]["fillColor"].array;
+        foreach (k, ch; fc)
+            enforce(abs(ch.get!double - 0.6) < 1e-6,
+                format("the resolved unshaded fill must be the measured "
+                       ~ "scheme colour 0.6 grey; channel %d reports %.6f "
+                       ~ "(0.8 would mean the surface material — our "
+                       ~ "superseded 0589 anchor)", k, ch.get!double));
+    }
+    writeln("    L1 PASS: plan = faces on, lighting off, overlay untouched, "
+            ~ "fill = the scheme colour 0.6");
 
     // --- L2: find the fill, and refuse to conclude anything from too little ---
     auto idx = erodedFillIndices(shaded, wire);
@@ -1214,20 +1248,28 @@ bool testFlowL() {
                ~ "tell an unshaded fill from a shaded surface under this "
                ~ "camera, so L4's pass would mean nothing", shadedSpread));
 
-    int offBase = 0;
-    foreach (i; idx)
-        if (abs(solid[i].r - kFillLevel) > 2 || abs(solid[i].g - kFillLevel) > 2
-            || abs(solid[i].b - kFillLevel) > 2) offBase++;
+    int offBase = 0, atOldMaterialAnchor = 0;
+    foreach (i; idx) {
+        if (abs(solid[i].r - kFillMeasured) > 2
+            || abs(solid[i].g - kFillMeasured) > 2
+            || abs(solid[i].b - kFillMeasured) > 2) offBase++;
+        if (abs(solid[i].r - kFillOursWas0589) <= 2) atOldMaterialAnchor++;
+    }
     enforce(offBase == 0,
-        format("%d of %d fill samples are not the surface base colour (%d). "
-               ~ "A UNIFORM fill that is darker than the material is shading "
-               ~ "with a CONSTANT light, not an absence of shading — the "
-               ~ "uniformity check above passes on that too, which is exactly "
-               ~ "why this one follows it",
-               offBase, idx.length, kFillLevel));
-    writefln("    L4 PASS: fill uniform (spread %d) at the base colour %d; "
+        format("%d of %d fill samples are not the MEASURED scheme fill "
+               ~ "(%d = round(0.6*255)); %d of them sit at %d instead, which "
+               ~ "is OUR superseded anchor — the surface material grey that "
+               ~ "task 0589 wrongly took the fill from. A fill that tracks the "
+               ~ "material means the material is still being consulted; a "
+               ~ "UNIFORM fill darker than its base means shading with a "
+               ~ "CONSTANT light. The uniformity check above passes on both, "
+               ~ "which is exactly why this one follows it",
+               offBase, idx.length, kFillMeasured,
+               atOldMaterialAnchor, kFillOursWas0589));
+    writefln("    L4 PASS: fill uniform (spread %d) at the measured scheme "
+             ~ "colour %d (not the material anchor %d we shipped in 0589); "
              ~ "the shaded control spreads %d levels over the same samples",
-             solidSpread, kFillLevel, shadedSpread);
+             solidSpread, kFillMeasured, kFillOursWas0589, shadedSpread);
 
     return true;
 }
@@ -1338,6 +1380,178 @@ bool testFlowM() {
 }
 
 // --------------------------------------------------------------------------
+// Flow N — Solid runs NO BACKDROP FACE PASS, and background layers do not
+// vanish (task 0592).
+//
+// MEASURED: in the reference's style registry every shaded style installs
+// three model-draw sub-passes — a background one, the main one, and a
+// transparency one — while the unshaded solid style installs exactly one, the
+// main one. So a backdrop that mirrors the active style cannot re-run the
+// unshaded fill for background layers: running a background face pass is the
+// one thing that style provably does not do. (We have no transparency pass at
+// all, so the other missing sub-pass costs us nothing to match.)
+//
+// THE OVER-READ THIS FLOW REFUSES TO IMPLEMENT. "No background step" is a
+// fact about the STYLE's callback record. It does NOT say background layers
+// disappear, and N3 is what stops this flow from passing on that stronger,
+// unsupported claim: with the layer still there under Solid, the frame must
+// differ from the frame with the layer HIDDEN. If the two matched, we would
+// have shipped "Solid solos the active layer" — a real behaviour change wearing
+// a measurement's clothes.
+//
+// The three arms are ordered so each one's precondition is already proven:
+//   N1  the plan says it (and the Shaded control says the opposite)
+//   N2  the pixels obey it — the fill is gone, and what is left is what a
+//       hidden layer would have left
+//   N3  the layer is nevertheless still drawn
+// --------------------------------------------------------------------------
+
+bool testFlowN() {
+    writeln("  [N] Solid: no backdrop face pass, background layers still drawn...");
+    resetApp();
+    scope(exit) restoreDisplayDefaults();
+
+    auto geom = probe(0, "");
+    immutable int W = geom.w, H = geom.h;
+    enforce(W > 64 && H > 64, "implausible cell size");
+    setSolidCamera(kSolidAz);
+
+    immutable string pts = fillLattice(W, H);
+
+    // Locate the face fill while the cube is still the FOREGROUND layer — the
+    // same self-locating criterion Flows L/M use, and it has to happen now
+    // because the whole point below is that the backdrop stops filling.
+    setStyle("shaded");    auto fgShaded = probe(0, pts).points;
+    setStyle("wireframe"); auto fgWire   = probe(0, pts).points;
+    auto idx = erodedFillIndices(fgShaded, fgWire);
+    enforce(idx.length >= 150,
+        format("only %d eroded face-fill samples — the model is not framed "
+               ~ "where this flow expects it and nothing below would mean "
+               ~ "anything", idx.length));
+
+    // Demote the cube to a background layer: an added empty layer becomes
+    // primary, so layer 0 (the cube) becomes visible-but-not-selected.
+    postCommand("layer.add");
+    Thread.sleep(500.msecs);
+
+    setStyle("shaded");    auto bgShaded = probe(0, pts).points;
+    setStyle("wireframe"); auto bgWire   = probe(0, pts).points;
+    setStyle("solid");     auto bgSolid  = probe(0, pts).points;
+
+    // --- N1: the plan, with its control ---
+    auto pSolid = displayDump()["cells"].array[0];
+    enforce(pSolid["state"]["active"]["style"].str == "Solid",
+        "the cell did not end up in the unshaded-fill style");
+    enforce(!jsonBool(pSolid["plan"]["backdrop"], "drawFaces"),
+        "the unshaded style installs no background face step, so the mirrored "
+        ~ "backdrop plan must not resolve one");
+    enforce(jsonBool(pSolid["plan"]["backdrop"], "drawWire"),
+        "the overlay is a SEPARATE axis — suppressing the backdrop fill must "
+        ~ "not suppress the backdrop's lines");
+    enforce(jsonBool(pSolid["plan"]["active"], "drawFaces"),
+        "the rule is about the BACKDROP pass; the active surface still fills");
+
+    setStyle("shaded");
+    auto pShaded = displayDump()["cells"].array[0];
+    enforce(jsonBool(pShaded["plan"]["backdrop"], "drawFaces"),
+        "CONTROL: a shaded style DOES install a background step, so this flow "
+        ~ "would be asserting a constant if the backdrop never filled");
+    writeln("    N1 PASS: backdrop drawFaces false under Solid, true under "
+            ~ "Shaded; backdrop overlay untouched by both");
+
+    // --- N2: the pixels. The fill is gone, and the layer is not repainting
+    //         something else in its place. ---
+    //
+    // The reference frame for "gone" is the SAME SCENE WITH THE LAYER HIDDEN,
+    // not the clear colour: the grid draws behind the model, so "no face pass"
+    // does not mean "background colour" at these samples.
+    setStyle("solid");
+    // NAMED params go through postCommandRaw (params as a JSON OBJECT). The
+    // `postCommand(cmd, string)` form carries ONE positional value, and
+    // handing it an object literal as a string is accepted with
+    // `{"status":"ok"}` and then silently ignored — the command runs on its
+    // defaults (index -1 = the active layer, value = true) and changes
+    // nothing. That is how this arm first ran vacuously: every probe below
+    // compared a frame against itself, N3 read 0 differences, and the "layers
+    // vanished" failure it reported was the harness, not the renderer.
+    postCommandRaw("layer.setVisible", `{"index":0,"value":false}`);
+    Thread.sleep(500.msecs);
+    auto lay = parseJSON(httpGet("/api/layers"));
+    enforce(!jsonBool(lay["layers"].array[0], "visible"),
+        "precondition: layer 0 must actually be hidden — this flow's whole "
+        ~ "reference frame is 'the same scene without that layer', and a "
+        ~ "setVisible that no-ops makes every comparison below vacuous");
+    auto bgHidden = probe(0, pts).points;
+
+    size_t fillGone = 0, matchesHidden = 0;
+    foreach (i; idx) {
+        if (!samePixel(bgShaded[i], bgSolid[i]))  fillGone++;
+        if (samePixel(bgSolid[i],  bgHidden[i]))  matchesHidden++;
+    }
+    enforce(fillGone >= idx.length * 95 / 100,
+        format("only %d of %d backdrop fill samples changed when the style "
+               ~ "went Shaded -> Solid — the backdrop face pass is still "
+               ~ "running, so the plan is resolved but not consumed",
+               fillGone, idx.length));
+    enforce(matchesHidden >= idx.length * 90 / 100,
+        format("only %d of %d samples match the layer-hidden frame — the "
+               ~ "backdrop stopped filling but is painting something else "
+               ~ "there. (Some mismatch is expected and allowed: the cube's "
+               ~ "INTERIOR wireframe edges cross this set, and those lines "
+               ~ "correctly survive.)", matchesHidden, idx.length));
+    writefln("    N2 PASS: %d/%d fill samples changed; %d/%d now read as if "
+             ~ "the layer were not there", fillGone, idx.length,
+             matchesHidden, idx.length);
+
+    // --- N3: THE DISCRIMINATOR AGAINST THE OVER-READ. ---
+    //
+    // Over the WHOLE lattice this time, not the eroded fill set: the samples
+    // that separate "still drawn" from "vanished" are the ones ON the lines,
+    // and erosion deliberately removes those. Self-locating — this never needs
+    // to know where a line is, only that hiding the layer changed something.
+    //
+    // Two arms, because either alone is satisfiable by the wrong build:
+    //   N3a  EXACT equality with the lines-only style's backdrop. Under
+    //        Wireframe the backdrop already resolved "no faces, lines on",
+    //        which is exactly what Solid's backdrop must now resolve — so the
+    //        two frames must agree byte for byte. Zero tolerance, no
+    //        threshold to tune. This pins the fill OFF and the lines ON in one
+    //        assertion, and it fails in both directions.
+    //   N3b  the frame must nevertheless DIFFER from the layer-hidden one.
+    //        N3a alone would still pass if the backdrop drew nothing at all
+    //        AND the lines-only backdrop drew nothing either; this is what
+    //        makes "vanished" a failure rather than a second way to agree.
+    size_t vsWire = 0, stillDrawn = 0;
+    foreach (i; 0 .. bgSolid.length) {
+        if (!bgSolid[i].valid) continue;
+        if (bgWire[i].valid   && !samePixel(bgSolid[i], bgWire[i]))   vsWire++;
+        if (bgHidden[i].valid && !samePixel(bgSolid[i], bgHidden[i])) stillDrawn++;
+    }
+    enforce(vsWire == 0,
+        format("%d of %d samples differ between the Solid backdrop and the "
+               ~ "lines-only backdrop. Both resolve to the same passes — no "
+               ~ "face step, overlay on — so the two frames must be identical; "
+               ~ "a difference means the backdrop is still filling, or has "
+               ~ "lost its lines", vsWire, bgSolid.length));
+    // The floor is a long way under what this camera actually produces (23 of
+    // 3000 measured), and a long way over the 0 the over-read would give. It
+    // is a "did anything at all draw" gate, not a count of lines.
+    enforce(stillDrawn >= 10,
+        format("only %d of %d samples differ between the Solid backdrop and "
+               ~ "the same scene with the layer HIDDEN — the background layer "
+               ~ "has effectively vanished. The measurement says the unshaded "
+               ~ "style installs no background FACE step; it does not say the "
+               ~ "layer stops being drawn, and this build implements the "
+               ~ "stronger claim", stillDrawn, bgSolid.length));
+    writefln("    N3 PASS: identical to the lines-only backdrop (0 differing), "
+             ~ "and %d/%d samples still show the background layer — it lost "
+             ~ "its fill, not its existence", stillDrawn, bgSolid.length);
+
+    postCommandRaw("layer.setVisible", `{"index":0,"value":true}`);
+    return true;
+}
+
+// --------------------------------------------------------------------------
 // Main
 // --------------------------------------------------------------------------
 
@@ -1373,6 +1587,7 @@ int main(string[] args) {
     run(&testFlowK, "Flow K — undrawable values are refused");
     run(&testFlowL, "Flow L — Solid: an unshaded fill, uniform across faces");
     run(&testFlowM, "Flow M — Solid is orientation-invariant, Shaded is not");
+    run(&testFlowN, "Flow N — Solid runs no backdrop face pass, layers remain");
 
     // Belt-and-suspenders: the runner shares one app across a worker's whole
     // slice and its between-tests reset does not cover viewport display state

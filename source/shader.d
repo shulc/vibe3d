@@ -8,6 +8,7 @@ import view;
 import math;
 import mesh : Surface, GpuMesh;
 import gl_thread_guard : glThreadGuard;
+import display_state : kSchemeSolidFill;
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------
@@ -94,29 +95,35 @@ private immutable string litFragSrc = q{
     uniform float u_specPow;
     uniform float u_dim;            // brightness multiplier; 1.0 = neutral (layers Stage 5)
     uniform bool  u_lit;            // false = flat unshaded fill (Solid style, task 0589)
+    uniform vec3  u_fillColor;      // the unlit fill's base; NOT the material (task 0592)
     layout(std140) uniform Materials {
         vec4 mat_base[64];     // .rgb = baseColor, .a = opacity
         vec4 mat_params[64];   // .x = diffuse, .y = specular, .z = glossiness
     };
     out vec4 fragColor;
     void main() {
-        uint  mi  = (vMatId < uint(64)) ? vMatId : uint(0);
-        vec3  bc  = mix(mat_base[mi].rgb, u_color, u_overrideMix);
-        // UNLIT is the DEFAULT-VALUE branch, not a scaling of the lit one, and
-        // that is the whole point of the Solid style: the fill must carry no
-        // information about how the surface is oriented. Written as a real
-        // branch rather than a mix()/multiply by zero for two reasons —
+        // TWO BASE COLOURS, NOT ONE SCALED. The lit path's base is the
+        // MATERIAL; the unlit path's base is `u_fillColor`, the viewport
+        // colour scheme's fill entry. That split is task 0592's correction:
+        // the reference's unshaded style never consults a surface at all, so
+        // "Solid is Shaded minus the lighting term" was wrong about where the
+        // colour comes from, not only about how it is shaded.
+        //
+        // Still a real branch rather than a mix()/multiply by zero, for the
+        // reasons task 0589 recorded:
         //   * a zero-length vNormal makes `normalize` produce NaN, and NaN * 0
         //     is NaN, so a multiplicative "off" would leak a degenerate face
         //     into the fill;
         //   * a branch on a UNIFORM is uniform across the whole draw, so it
         //     costs nothing to diverge on.
-        // Note what unlit deliberately KEEPS: `bc` (so the hover/highlight
-        // override colour still reaches the fill — selection and rollover are
-        // their own display axes and must survive every surface style) and
-        // `u_dim` (so an unshaded BACKDROP pass is still dimmed).
-        vec3  col = bc;
+        // What unlit deliberately KEEPS: the `u_color`/`u_overrideMix` mix (so
+        // the hover/highlight override colour still reaches the fill —
+        // selection and rollover are their own display axes and must survive
+        // every surface style) and `u_dim`.
+        vec3 col;
         if (u_lit) {
+            uint  mi  = (vMatId < uint(64)) ? vMatId : uint(0);
+            vec3  bc  = mix(mat_base[mi].rgb, u_color, u_overrideMix);
             vec3 N    = normalize(vNormal);
             vec3 L    = u_lightDir;
             vec3 V    = normalize(u_eyePos - vWorldPos);
@@ -125,6 +132,8 @@ private immutable string litFragSrc = q{
             float spc = pow(max(dot(N, H), 0.0), u_specPow);
             col = bc * (u_ambient + dif * (1.0 - u_ambient))
                 + vec3(1.0) * spc * u_specStr;
+        } else {
+            col = mix(u_fillColor, u_color, u_overrideMix);
         }
         fragColor = vec4(col * u_dim, 1.0);
     }
@@ -392,6 +401,7 @@ class LitShader {
     GLint locSpecPow;
     GLint locDim;
     GLint locLit;
+    GLint locFillColor;
     GLuint matsUbo;            // Material Groups (MG3) — Materials UBO
     enum  MATS_BINDING = 0;    // binding point index, matches std140 layout
 
@@ -409,6 +419,7 @@ class LitShader {
         locSpecPow     = glGetUniformLocation(program, "u_specPow");
         locDim         = glGetUniformLocation(program, "u_dim");
         locLit         = glGetUniformLocation(program, "u_lit");
+        locFillColor   = glGetUniformLocation(program, "u_fillColor");
 
         // Materials UBO — std140-sized for two arrays of 64 × vec4.
         glGenBuffers(1, &matsUbo);
@@ -505,6 +516,13 @@ class LitShader {
         // behaviour that predates it. The Solid pass flips this with setLit()
         // before its draws and restores true afterwards.
         glUniform1i(locLit, 1);
+        // Seed the unlit fill to the colour-scheme value. A GLSL uniform
+        // defaults to 0, so an unseeded `u_fillColor` would render the Solid
+        // style BLACK for any caller that draws without going through the
+        // display plan (the create-tool previews below, for one). Not
+        // observable at all while `u_lit` is true, which is the default.
+        glUniform3f(locFillColor,
+            kSchemeSolidFill, kSchemeSolidFill, kSchemeSolidFill);
     }
 
     /// Override the brightness multiplier for the next draws on this
@@ -523,6 +541,17 @@ class LitShader {
     void setLit(bool lit) {
         glUseProgram(program);
         glUniform1i(locLit, lit ? 1 : 0);
+    }
+
+    /// The unshaded fill's base colour (task 0592, `DrawPlan.fillColor`).
+    ///
+    /// Same restore discipline as `setDim`/`setLit`. Paired with `setLit` at
+    /// every call site rather than set only on the unlit path: the pair is one
+    /// decision ("draw the Solid style"), and splitting them is how the fill
+    /// would later be set by a pass that forgot to unset the lighting.
+    void setFillColor(in float[3] c) {
+        glUseProgram(program);
+        glUniform3f(locFillColor, c[0], c[1], c[2]);
     }
 }
 
