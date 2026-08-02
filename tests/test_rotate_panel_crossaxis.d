@@ -179,9 +179,38 @@ float arcStartAngle(Vec3 n, Vec3 camFwd, Vec3 right, Vec3 up) {
 // delta this gesture produced (post - pre).
 double principalRingGesture(int axis, Vec3 center, long wantCount,
                             float arcDelta = 0.55f) {
-    Vec3 axisVec = axis == 0 ? Vec3(1,0,0)
-                 : axis == 1 ? Vec3(0,1,0)
-                 :             Vec3(0,0,1);
+    // THE RING THIS GRABS IS THE ONE NEAREST THE NAMED WORLD AXIS, read off
+    // the published frame rather than assumed to BE that world axis.
+    //
+    // This line used to be the world axis outright. That is a hidden
+    // assumption that the tool's frame is a signed permutation of the world
+    // axes, and under acen=local it held only because the selection frame
+    // snapped its normal to the nearest world axis: gesture 1 rotates the
+    // selected face about X, the face's normal tilts, and the OLD frame
+    // snapped straight back to world +Y while the geometry did not. The
+    // selection frame now follows the face, so after gesture 1 no ring lies
+    // around world Y, every one of the sixteen retries below starts off-ring,
+    // and the failure reads "ring-grab flake" — which it is not.
+    //
+    // On a world-aligned frame this returns exactly the world axis, so the
+    // acen=auto case is byte-identical.
+    Vec3 axisVec;
+    {
+        Vec3 want = axis == 0 ? Vec3(1,0,0)
+                  : axis == 1 ? Vec3(0,1,0)
+                  :             Vec3(0,0,1);
+        auto ev = getJson("/api/toolpipe/eval");
+        float bestDot = 0;
+        axisVec = want;
+        foreach (slot; ["right", "up", "fwd"]) {
+            auto v = ev["axis"][slot].array;
+            Vec3 a = Vec3(cast(float)v[0].floating, cast(float)v[1].floating,
+                          cast(float)v[2].floating);
+            float d = a.x * want.x + a.y * want.y + a.z * want.z;
+            if (fabs(d) > fabs(bestDot)) { bestDot = d; axisVec = a; }
+        }
+        if (bestDot < 0) axisVec = Vec3(-axisVec.x, -axisVec.y, -axisVec.z);
+    }
     double preR = publishedR(axis);
     foreach (attempt; 0 .. 16) {
         settle();

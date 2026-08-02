@@ -130,19 +130,56 @@ double[3] vert(int idx) {
 
 // +X arrow handle grab pixel + screen-space +X direction for the gizmo at
 // `pivot` (same helpers as test_relocate_boundary.d).
+// THE ARROW THIS FILE HAULS IS THE ONE NEAREST WORLD +X — read off the
+// published frame, NOT assumed to BE world +X.
+//
+// Both helpers below used to build their segment along `pivot + world +X`
+// outright. That is a hidden assumption that the tool's frame is a signed
+// permutation of the world axes, and it held only because the selection frame
+// used to snap its normal to the nearest world axis. It does not hold for a
+// SINGLE-VERTEX selection, whose frame is now built from that vertex's
+// geometric normal — on a cube corner that is the (1,1,1) diagonal and NOT ONE
+// OF THE THREE ARROWS POINTS ALONG WORLD X. The second haul's mouse-DOWN then
+// lands OFF the gizmo, which is a commit boundary, and the coalescing this
+// file is about never gets a chance to happen: the failure reads `got 2`, as
+// if coalescing had broken.
+//
+// Asking the pipe which way the arrows actually point costs one GET and makes
+// the file say what it means — haul AN ARROW — instead of naming a direction
+// the gizmo is under no obligation to have.
+Vec3 arrowAxisNearestWorldX() {
+    auto ev = getJson("/api/toolpipe/eval");
+    Vec3 rd(string slot) {
+        auto v = ev["axis"][slot].array;
+        return Vec3(cast(float)v[0].floating, cast(float)v[1].floating,
+                    cast(float)v[2].floating);
+    }
+    Vec3 best = Vec3(1, 0, 0);
+    float bestDot = 0;
+    foreach (slot; ["right", "up", "fwd"]) {
+        Vec3 a = rd(slot);
+        float d = a.x;                       // dot with world +X
+        if (fabs(d) > fabs(bestDot)) { bestDot = d; best = a; }
+    }
+    // Point it along +X so the haul directions in the cases below keep their
+    // signs; on a world-aligned frame this returns exactly world +X.
+    return bestDot < 0 ? Vec3(-best.x, -best.y, -best.z) : best;
+}
 void arrowGrabPx(Vec3 pivot, ref Viewport vp, out int gx, out int gy) {
     float size = gizmoSize(pivot, vp);
+    Vec3 ax = arrowAxisNearestWorldX();
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size / 5.0f, pivot.y, pivot.z), vp, sx1, sy1);
-    projectToWindow(Vec3(pivot.x + size,        pivot.y, pivot.z), vp, sx2, sy2);
+    projectToWindow(pivot + ax * (size / 5.0f), vp, sx1, sy1);
+    projectToWindow(pivot + ax * size,          vp, sx2, sy2);
     gx = cast(int)(sx1 + 0.7f * (sx2 - sx1));
     gy = cast(int)(sy1 + 0.7f * (sy2 - sy1));
 }
 void arrowDirPx(Vec3 pivot, ref Viewport vp, out double ux, out double uy) {
     float size = gizmoSize(pivot, vp);
+    Vec3 ax = arrowAxisNearestWorldX();
     float sx1, sy1, sx2, sy2;
-    projectToWindow(Vec3(pivot.x + size/5.0f, pivot.y, pivot.z), vp, sx1, sy1);
-    projectToWindow(Vec3(pivot.x + size,       pivot.y, pivot.z), vp, sx2, sy2);
+    projectToWindow(pivot + ax * (size / 5.0f), vp, sx1, sy1);
+    projectToWindow(pivot + ax * size,          vp, sx2, sy2);
     double dx = sx2 - sx1, dy = sy2 - sy1;
     double len = sqrt(dx*dx + dy*dy);
     ux = dx / len; uy = dy / len;
