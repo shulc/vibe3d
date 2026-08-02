@@ -486,8 +486,24 @@ final class Viewport3D {
     // everything else the renderer branches on is either global (edit mode,
     // selection) or derived from the shared frame. It is defaulted to today's
     // exact behaviour, so a cell that is never touched renders as it always
-    // did; there is no command or preference that writes it yet.
+    // did.
     ViewportDisplay display;
+
+    // Task 0594 — PROVENANCE: has this cell's display style been chosen by
+    // somebody, rather than merely inherited from the shipped default?
+    //
+    // Deliberately NOT part of `ViewportDisplay`: it is not a render input,
+    // and `display_state.d`'s standing rule is that the renderer sees only
+    // what `DrawPlan` describes. A field there would eventually be read by a
+    // pass.
+    //
+    // What it protects: `applyLayout` seeds ortho cells with the wireframe
+    // template (`shippedDisplayFor`). Without this bit, a user who sets cell 0
+    // to Shaded and then switches Quad -> Single -> Quad silently loses it,
+    // and a restored preference would be overwritten by the template on the
+    // first layout switch of the session. Set by the `viewport.display*`
+    // commands and by the preference restore; cleared only by a full reset.
+    bool displayUserSet = false;
 
     // Phase-2..5 inert fields — declared now, unused in Phase 1.
     bool       indCenter = true;
@@ -844,6 +860,13 @@ final class ViewportManager {
             masterId = 3;  // perspective cell is the group master
         }
 
+        // Task 0594: seed each cell's display style from the layout template.
+        //
+        // Placed HERE, after the Quad block, because that block is what sets
+        // `projKind` — seeding earlier would read the previous layout's
+        // projections and give a fresh Quad four shaded cells.
+        seedShippedDisplay();
+
         // Compute initial analytic cell rects (the interactive window loop
         // overrides these once it runs; this serves as a pre-first-frame
         // fallback and as the authoritative rect for --test mode).
@@ -878,6 +901,43 @@ final class ViewportManager {
         layoutDirty = true;
     }
 
+    /// Seed every cell's ACTIVE display state from the shipped layout
+    /// template — orthographic cells lines-only, perspective cells shaded
+    /// (task 0594, `display_state.shippedDisplayFor`).
+    ///
+    /// A DEFAULT, WITH TWO THINGS IT MUST NOT DO:
+    ///
+    ///  1. It must not overwrite a chosen style. `displayUserSet` is set by
+    ///     the `viewport.display*` commands and by the preference restore, and
+    ///     a cell carrying it is skipped entirely. Layout switching is a
+    ///     routine action (Quad -> Single -> Quad); losing a style to it would
+    ///     be exactly the "a default silently overwrote a saved choice"
+    ///     defect.
+    ///  2. It must not fire on a camera change. This is called from
+    ///     `applyLayout` only — where a layout ESTABLISHES its cells — and
+    ///     deliberately NOT from `applyCellViewPreset`. Swinging an existing
+    ///     cell from Perspective to Top changes the camera, not the styling;
+    ///     the reference ships these values as view TEMPLATES, which are the
+    ///     initial content of a viewport rather than a rule re-evaluated on
+    ///     every camera move.
+    ///
+    /// All FOUR cells are seeded, not just the live ones, for the same reason
+    /// the preference restore covers all four: `views` is a fixed array that
+    /// is never reallocated, so a cell that Single does not show is the same
+    /// object Quad will show later.
+    ///
+    /// Only the ACTIVE side is seeded. The backdrop side is still resolved
+    /// from `SameAsActive` and has no template of its own; giving it one is a
+    /// separate defaults decision.
+    void seedShippedDisplay() {
+        import display_state : shippedDisplayFor;
+        foreach (k; 0..4) {
+            if (views[k].displayUserSet) continue;
+            views[k].display.active = shippedDisplayFor(views[k].isOrtho());
+            views[k].dirty = true;
+        }
+    }
+
     /// Mark every live cell dirty (forces a re-render next frame).
     void dirtyAll() {
         foreach (v; views[0..cellCount]) v.dirty = true;
@@ -900,6 +960,14 @@ final class ViewportManager {
             // could otherwise keep a stale focus and poison a later test that
             // assumes a fresh camera (e.g. the Quad Top-cell centre-grab).
             views[k].camera.reset();
+            // Task 0594: drop the "somebody chose this style" bit too. It is
+            // sticky BY DESIGN — that is the whole point of it — so a reset
+            // that left it set would let one test's `viewport.displayStyle`
+            // pin every later test in the same shared --test instance to that
+            // style, and the shipped-default assertions would pass or fail
+            // depending on slice order. Cleared BEFORE applyLayout, which is
+            // what re-seeds the template.
+            views[k].displayUserSet = false;
         }
         applyLayout(LayoutPreset.Single);
     }

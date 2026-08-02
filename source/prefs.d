@@ -173,6 +173,31 @@ struct ViewportCellDisplay {
     DisplayStyle style     = DisplayStyle.Shaded;
     WireOverlay  wire      = WireOverlay.Uniform;
     float        wireAlpha = 1.0f;
+
+    /// Task 0594: did a USER choose this style, or is it just the default
+    /// this file happened to be written with?
+    ///
+    /// This distinction did not exist while the default was one value for
+    /// every cell, and without it the projection-dependent default cannot be
+    /// shipped safely. Two failures it prevents, in opposite directions:
+    ///
+    ///  * `false` had to be the IN-MEMORY default, or a fresh profile (no
+    ///    file at all, so every field is its default) would look like four
+    ///    deliberate Shaded choices and suppress the ortho template entirely.
+    ///  * `true` has to be what a file WITHOUT the key reads back as. Such a
+    ///    file predates this field, its four cells were written
+    ///    unconditionally, and there is no way to tell a chosen Shaded from an
+    ///    inherited one — so the saved value wins, which is the stated
+    ///    precedence. `loadPrefs` sets it per cell OBJECT PRESENT in the file,
+    ///    not per key, which is what makes those two rules coexist.
+    ///
+    /// It is also what stops the shutdown flush from eating the feature. The
+    /// live `g_prefs.viewportDisplay` is only written by the `viewport.
+    /// display*` command mirror, so an untouched session flushes the values
+    /// it loaded; persisting `false` alongside them keeps the next run's
+    /// template application correct instead of pinning it to a default that
+    /// was never chosen.
+    bool styleUserSet = false;
 }
 
 /// Module-level live preferences. Loaded once at startup, mutated by the
@@ -324,6 +349,19 @@ Prefs loadPrefs(string dir) {
                 foreach (i, cellJson; vdp.array) {
                     if (i >= p.viewportDisplay.length) break;
                     if (cellJson.type != JSONType.object) continue;
+                    // Task 0594: a cell OBJECT in the file means the file has
+                    // an opinion about this cell. Files written before the
+                    // provenance key carry no `styleUserSet`, and their values
+                    // must still win over the projection-dependent default —
+                    // so presence of the object, not of the key, is what sets
+                    // this. An explicit key then overrides it, which is how a
+                    // file written by this version says "never chosen" and
+                    // lets the template through.
+                    p.viewportDisplay[i].styleUserSet = true;
+                    if (auto up = "styleUserSet" in cellJson) {
+                        if (up.type == JSONType.true_)  p.viewportDisplay[i].styleUserSet = true;
+                        if (up.type == JSONType.false_) p.viewportDisplay[i].styleUserSet = false;
+                    }
                     if (auto sp = "style" in cellJson)
                         if (sp.type == JSONType.string)
                             switch (sp.str) {
@@ -483,6 +521,12 @@ void savePrefs(ref const Prefs p, string dir) {
         cj["style"]     = JSONValue(to!string(c.style));
         cj["wire"]      = JSONValue(to!string(c.wire));
         cj["wireAlpha"] = JSONValue(c.wireAlpha);
+        // Task 0594: written explicitly, including when false. That `false`
+        // is the whole point — it is how the next run learns these three
+        // values are an inherited default rather than a choice, and so lets
+        // the projection-dependent template apply instead of being pinned by
+        // a value nobody picked.
+        cj["styleUserSet"] = JSONValue(c.styleUserSet);
         vd ~= cj;
     }
     doc["viewportDisplay"] = JSONValue(vd);
@@ -774,6 +818,12 @@ unittest {
             format("cell %d: unset overlay must default to Uniform", i));
         assert(c.wireAlpha == 1.0f,
             format("cell %d: unset opacity must default to fully opaque", i));
+        // Task 0594. A FRESH profile has chosen nothing, and this must read
+        // false — if it defaulted to true, a first-run user would look like
+        // four deliberate Shaded choices and the projection-dependent
+        // template would be suppressed on the machine of every new user.
+        assert(!c.styleUserSet,
+            format("cell %d: a profile with no file has chosen nothing", i));
     }
 
     // Round-trip, and PER-CELL INDEPENDENCE: writing one cell must not
@@ -798,6 +848,79 @@ unittest {
         assert(q.viewportDisplay[i].wireAlpha == 1.0f,
             format("cell %d opacity must be untouched by a write to cell 2", i));
     }
+}
+
+// Task 0594: the PERSISTED half of the display-default precedence.
+//
+// The runtime half (a chosen style surviving a layout switch) is an HTTP test.
+// This is the half that only a file can answer: does a style saved by one run
+// still outrank the shipped projection-dependent template on the NEXT launch,
+// and does a profile that chose nothing let the template through?
+unittest {
+    auto dir = makeScratch("viewportdisplayprov");
+    scope(exit) cleanScratch(dir);
+
+    // 1. A CHOICE survives the round trip, carrying its provenance with it.
+    //    Without the provenance surviving, app.d cannot tell this Shaded from
+    //    the Shaded that every pre-0594 file happens to contain, and would
+    //    have to either ignore both (losing the choice) or honour both
+    //    (killing the feature).
+    Prefs p;
+    p.viewportDisplay[1].style       = DisplayStyle.Shaded;
+    p.viewportDisplay[1].styleUserSet = true;
+    savePrefs(p, dir);
+    auto q = loadPrefs(dir);
+    assert(q.viewportDisplay[1].styleUserSet,
+        "a style the user chose must come back marked as chosen");
+    assert(q.viewportDisplay[1].style == DisplayStyle.Shaded,
+        "the chosen style itself must round-trip");
+
+    // 2. A cell nobody chose comes back UNCHOSEN even though `savePrefs`
+    //    wrote its three values out. This is the one that keeps the feature
+    //    alive across restarts: the shutdown flush persists whatever was
+    //    loaded, so every untouched cell is written to disk on every clean
+    //    exit. If those writes read back as choices, the template would apply
+    //    exactly once — on a profile's very first run — and never again.
+    foreach (i; [0, 2, 3])
+        assert(!q.viewportDisplay[i].styleUserSet,
+            format("cell %d was never chosen and must not read back as "
+                   ~ "chosen — otherwise one clean shutdown pins the "
+                   ~ "viewport to a default nobody picked", i));
+
+    // 3. A file that PREDATES the key: its cells carry no `styleUserSet` at
+    //    all. Those values must win, because there is no way to tell a chosen
+    //    Shaded from an inherited one in a file written before the
+    //    distinction existed, and the stated precedence is that a persisted
+    //    value beats a new default. Note this is keyed on the cell OBJECT
+    //    being present, not on any particular key inside it.
+    auto legacy = makeScratch("viewportdisplaylegacy");
+    scope(exit) cleanScratch(legacy);
+    write(buildPath(legacy, "prefs.json"),
+        `{ "version": 1, "viewportDisplay": [ {"style":"Shaded","wire":"Uniform","wireAlpha":1.0},`
+        ~ ` {"style":"Shaded"}, {"style":"Shaded"}, {"style":"Shaded"} ] }`);
+    auto old = loadPrefs(legacy);
+    foreach (i; 0 .. 4)
+        assert(old.viewportDisplay[i].styleUserSet,
+            format("cell %d came from a file that predates the provenance "
+                   ~ "key; its saved value must outrank the new default", i));
+
+    // 4. And the discrimination is real, not "everything is true": a file
+    //    written by THIS version that says false must read back false. If
+    //    both branches produced true, assertion 3 would pass vacuously.
+    auto mixed = makeScratch("viewportdisplaymixed");
+    scope(exit) cleanScratch(mixed);
+    write(buildPath(mixed, "prefs.json"),
+        `{ "version": 1, "viewportDisplay": [ {"style":"Shaded","styleUserSet":false},`
+        ~ ` {"style":"Shaded","styleUserSet":true} ] }`);
+    auto mx = loadPrefs(mixed);
+    assert(!mx.viewportDisplay[0].styleUserSet,
+        "an explicit false must be honoured, or the template can never apply "
+        ~ "after the first clean shutdown");
+    assert(mx.viewportDisplay[1].styleUserSet,
+        "an explicit true must be honoured");
+    // A cell absent from the array entirely keeps the in-memory default.
+    assert(!mx.viewportDisplay[3].styleUserSet,
+        "a cell the file does not mention has chosen nothing");
 
     // A name we resolve but do not DRAW falls back to the default rather than
     // coming back as a viewport that renders something other than what it

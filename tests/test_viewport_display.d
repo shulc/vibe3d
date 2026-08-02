@@ -1033,29 +1033,60 @@ bool testFlowJ() {
     enforce(cast(int)jsonNum(displayDump(), "cellCount") == 4,
         "precondition: Quad must report four cells");
 
+    // The BASELINE is measured, not assumed (task 0594). This flow's claim is
+    // ISOLATION — "a write addressed at one cell reaches that cell and no
+    // other" — which says nothing about what the other cells happen to hold.
+    // Hardcoding "Shaded" for them bolted that claim onto the shipped default,
+    // and the shipped default is now projection-dependent: a Quad's three
+    // ortho cells ship lines-only. Capturing the before-state keeps the real
+    // assertion and makes it STRICTER, because a non-target cell that moves in
+    // ANY direction now fails rather than only one that moves away from a
+    // named constant.
+    auto before = displayDump()["cells"].array;
+    string[] baseStyle;
+    double[] baseAlpha;
+    bool[]   baseFaces;
+    foreach (c; before) {
+        baseStyle ~= c["state"]["active"]["style"].str;
+        baseAlpha ~= jsonNum(c, "state", "active", "wireAlpha");
+        baseFaces ~= jsonBool(c, "plan", "active", "drawFaces");
+    }
+
+    // Write a style that DIFFERS from cell 2's own baseline, or the write
+    // would be a no-op and the flow would pass without testing anything.
+    immutable bool   toWire = (baseStyle[2] != "Wireframe");
+    immutable string want   = toWire ? "Wireframe" : "Shaded";
+    immutable string wantId = toWire ? "wireframe" : "shaded";
     postCommandRaw("viewport.displayStyle",
-        `{"_positional":["wireframe"],"viewport":2}`);
+        format(`{"_positional":["%s"],"viewport":2}`, wantId));
     postCommandRaw("viewport.wireAlpha", `{"_positional":[0.25],"viewport":2}`);
     Thread.sleep(300.msecs);
+
+    enforce(want != baseStyle[2],
+        "the write must change cell 2, or this flow asserts nothing");
 
     auto cells = displayDump()["cells"].array;
     foreach (i, c; cells) {
         immutable bool isTarget = (i == 2);
         immutable string style  = c["state"]["active"]["style"].str;
         immutable double alpha  = jsonNum(c, "state", "active", "wireAlpha");
-        enforce(style == (isTarget ? "Wireframe" : "Shaded"),
-            format("cell %d style is %s; a display write addressed at cell 2 "
-                   ~ "must reach cell 2 and no other — if every cell changed, "
-                   ~ "the state is not per-cell", i, style));
-        enforce(abs(alpha - (isTarget ? 0.25 : 1.0)) < 1e-4,
+        immutable string wantStyle = isTarget ? want : baseStyle[i];
+        enforce(style == wantStyle,
+            format("cell %d style is %s, expected %s; a display write "
+                   ~ "addressed at cell 2 must reach cell 2 and no other — if "
+                   ~ "every cell changed, the state is not per-cell",
+                   i, style, wantStyle));
+        enforce(abs(alpha - (isTarget ? 0.25 : baseAlpha[i])) < 1e-4,
             format("cell %d opacity is %.3f, expected %.2f", i, alpha,
-                   isTarget ? 0.25 : 1.0));
+                   isTarget ? 0.25 : baseAlpha[i]));
         // The resolved plan has to follow the state, per cell.
-        enforce(jsonBool(c, "plan", "active", "drawFaces") == !isTarget,
+        immutable bool wantFaces = isTarget ? (want != "Wireframe") : baseFaces[i];
+        enforce(jsonBool(c, "plan", "active", "drawFaces") == wantFaces,
             format("cell %d: the resolved plan does not follow that cell's "
                    ~ "own state", i));
     }
-    writeln("    J1 PASS: cell 2 changed, cells 0/1/3 untouched, plans follow");
+    writefln("    J1 PASS: cell 2 changed to %s, cells 0/1/3 held their "
+             ~ "baseline (%s), plans follow", want, baseStyle);
 
     // Addressing a cell the layout does not have must FAIL rather than
     // silently land on the active cell — a test that quietly retargeted would

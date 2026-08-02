@@ -1806,11 +1806,31 @@ void main(string[] args) {
         // --test must start from the shipped defaults every run, or a test
         // asserting default behaviour would pass or fail depending on
         // whichever profile happened to be on the machine.
+        //
+        // Task 0594 — PRECEDENCE. This loop runs AFTER applyLayout above, and
+        // that ordering is the whole mechanism: applyLayout seeds each cell
+        // from the shipped layout template (ortho cells lines-only), and a
+        // saved choice then overwrites it. A persisted style therefore always
+        // beats the new default, which is the stated requirement.
+        //
+        // A cell the user never configured is SKIPPED rather than applied.
+        // `styleUserSet` is false only for a profile this version wrote while
+        // nobody touched that cell's display; its three values are then a
+        // stale echo of the old one-size default, and applying them would
+        // silently undo the template on the second run of the app — the
+        // shutdown flush persists whatever was loaded, so the echo is
+        // guaranteed to be there. A file predating the key reads back as
+        // `true` (see `ViewportCellDisplay.styleUserSet`), so an existing
+        // profile keeps its appearance exactly.
         foreach (k, ref cd; g_prefs.viewportDisplay) {
             if (k >= vpm.views.length) break;
+            if (!cd.styleUserSet) continue;
             vpm.views[k].display.active.style     = cd.style;
             vpm.views[k].display.active.wire      = cd.wire;
             vpm.views[k].display.active.wireAlpha = cd.wireAlpha;
+            // Carry the provenance onto the cell, so a later layout switch in
+            // this session re-seeds every OTHER cell but leaves this one.
+            vpm.views[k].displayUserSet = true;
         }
         // Task 0570: seed the LIVE grid ladder from the persisted mask.
         // Inside the same !testMode gate as everything above, for the same
@@ -3971,11 +3991,19 @@ void main(string[] args) {
                 // disagree with the drawn one by construction.
                 Viewport gvp = vpm.resolvedSnapshot(k);
                 buf.put(format(
-                    `{"id":%d,"renders":%s,` ~
+                    `{"id":%d,"renders":%s,"ortho":%s,"userSet":%s,` ~
                     `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s"},` ~
                     `"plan":{"active":%s,"backdrop":%s},"grid":%s}`,
                     k,
                     renders ? "true" : "false",
+                    // Task 0594. `ortho` is what the shipped display default
+                    // is a function of, and `userSet` is what outranks it —
+                    // reporting both is what lets a test assert the DEFAULT
+                    // and its PRECEDENCE against the cell's own inputs,
+                    // instead of inferring them from a cell index that the
+                    // layout is free to reassign.
+                    cv.isOrtho() ? "true" : "false",
+                    cv.displayUserSet ? "true" : "false",
                     stateJson(cv.display.active),
                     stateJson(cv.display.backdrop),
                     cv.display.backdropStyle.to!string,
@@ -5475,6 +5503,15 @@ void main(string[] args) {
                     tv.display.active.wireAlpha = cast(float)nval;
                 }
 
+                // Task 0594: this cell's style is now a CHOICE, not an
+                // inheritance. Set on every arm of the branch above — including
+                // wireAlpha — because all three are the display controls the
+                // layout template would otherwise re-seed, and a user who set
+                // only the opacity has still expressed a preference about this
+                // cell's display. Only reached on success: every rejection
+                // above throws, so a refused value never marks the cell.
+                tv.displayUserSet = true;
+
                 // Mandatory, and the reason the older viewport.* commands all
                 // end this way: without it a non-hovered cell keeps re-blitting
                 // its cached colour texture and the change appears to do
@@ -5490,6 +5527,10 @@ void main(string[] args) {
                     g_prefs.viewportDisplay[cell].style     = tv.display.active.style;
                     g_prefs.viewportDisplay[cell].wire      = tv.display.active.wire;
                     g_prefs.viewportDisplay[cell].wireAlpha = tv.display.active.wireAlpha;
+                    // Task 0594: and the provenance with them — this is the
+                    // write that makes the saved value outrank the shipped
+                    // template on the next run.
+                    g_prefs.viewportDisplay[cell].styleUserSet = true;
                 }
                 return;
             }

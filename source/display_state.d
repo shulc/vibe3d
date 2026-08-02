@@ -167,6 +167,70 @@ struct DisplayState {
     float        wireAlpha = 1.0f;
 }
 
+/// The SHIPPED display state for a freshly-established cell, as a function of
+/// its projection: orthographic cells ship lines-only, perspective cells ship
+/// shaded.
+///
+/// WHY THIS IS A FUNCTION AND NOT A FIELD DEFAULT
+/// ---------------------------------------------
+/// `DisplayState`'s own field defaults are still today's behaviour, and must
+/// stay that way: they are what a default-constructed `ViewportDisplay`
+/// resolves to, which is the baseline half the tests in this module assert
+/// against. The projection-dependent default is a property of a cell being
+/// SET UP inside a layout — the layout template — not of the struct. Keeping
+/// them separate is what lets "a cell nobody configured renders as it always
+/// did" and "a fresh Quad ships three wireframe cells" both be true.
+///
+/// PROVENANCE, not a rule. This is the value a cell is BORN with, applied
+/// where a layout establishes a cell's camera preset. It is emphatically NOT
+/// re-applied whenever a projection changes: switching an existing cell's view
+/// from Perspective to Top must not overwrite a style the user chose. The
+/// reference ships these values as view TEMPLATES — the initial content of a
+/// viewport — and a template is consulted when the viewport is created, not on
+/// every subsequent camera change. `Viewport3D.displayUserSet` carries the
+/// "someone chose this" bit that protects the other direction.
+DisplayState shippedDisplayFor(bool ortho) pure nothrow @safe @nogc {
+    DisplayState d;                       // Shaded / Uniform / 1.0
+    if (ortho) d.style = DisplayStyle.Wireframe;
+    return d;
+}
+
+/// The shipped default differs by projection on the SURFACE axis only.
+unittest {
+    immutable persp = shippedDisplayFor(false);
+    immutable ortho = shippedDisplayFor(true);
+
+    assert(persp.style == DisplayStyle.Shaded,
+        "a perspective cell ships shaded");
+    assert(ortho.style == DisplayStyle.Wireframe,
+        "an orthographic cell ships lines-only");
+
+    // The overlay axis is NOT part of this default. Both ship a uniform
+    // overlay at full opacity; only the surface style differs. If a future
+    // change wants a fainter ortho overlay it is a separate decision with a
+    // separate sign-off, and this assertion is what makes it deliberate.
+    assert(persp.wire == ortho.wire && persp.wire == WireOverlay.Uniform,
+        "the overlay axis must not vary with projection");
+    assert(persp.wireAlpha == ortho.wireAlpha && persp.wireAlpha == 1.0f,
+        "the opacity must not vary with projection");
+
+    // The perspective default is EXACTLY the struct default — a Single-layout
+    // perspective viewport must be untouched by this whole change.
+    assert(persp == DisplayState.init,
+        "the perspective default must remain the struct's own default");
+}
+
+/// A wireframe ortho cell resolves to a plan that draws no faces but still
+/// draws lines — i.e. the default is renderable, not merely representable.
+unittest {
+    ViewportDisplay d;
+    d.active = shippedDisplayFor(true);
+    const p = resolveDrawPlan(d, false);
+    assert(!p.drawFaces, "the ortho default must not draw faces");
+    assert(p.drawWire,   "the ortho default must still draw lines");
+    assert(p.drawVerts,  "the ortho default draws vertex dots (Wireframe)");
+}
+
 /// The complete display state of ONE viewport cell.
 ///
 /// Carries the ACTIVITY AXIS from the outset — `active` and `backdrop` are two
