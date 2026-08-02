@@ -211,16 +211,48 @@ void jacobiSym3(double[3][3] a, out double[3] d, out double[3][3] v)
 // ---------------------------------------------------------------------------
 // The descending eigenpair sort.
 //
-// The reference sorts the three eigenpairs by eigenvalue descending right
-// after the Jacobi call. The sort's BODY was not read; this shape is
-// inferred, and it is the inference the one discriminating measurement picks
-// out. On a cube's +Y face the eigenvalues are (c, 0, c) with the two c's
-// BIT-IDENTICAL, and the reference's RECORDED box is
-// `[(0,0,1), (1,0,0), (0,1,0)]` — original column order (2, 0, 1). A stable
-// descending sort answers (0, 2, 1); the classic selection sort published
-// alongside the Jacobi routine above, whose inner comparison is `>=` so the
-// LAST maximum among equals wins, answers (2, 0, 1). The recorded matrix
-// picks the latter, and `unittest` below pins exactly that.
+// The reference sorts the three eigenpairs by eigenvalue descending right after
+// the Jacobi call. The sort's BODY was not read; this is the classic selection
+// sort published alongside the Jacobi routine above. The descending ORDER is
+// what every consumer below is written against and is pinned in several places.
+// Its TIE-BREAK is not pinned by anything, and that is stated plainly here
+// rather than dressed up as a measurement.
+//
+// THE TIE-BREAK IS UNPINNED. The inner comparison is `>=`, so among BIT-EQUAL
+// eigenvalues the LAST maximum wins; a stable sort would keep the first. On a
+// cube's +Y face the eigenvalues are (c, 0, c) with the two c's BIT-IDENTICAL,
+// and `>=` leaves the original column order (2, 0, 1) where a stable sort
+// leaves (0, 2, 1). An earlier revision of this file claimed the reference's
+// RECORDED box `[(0,0,1), (1,0,0), (0,1,0)]` chooses between those, and called
+// this line the one discriminating measurement in the whole port. It is not.
+// The reason is structural, not a gap in the corpus:
+//
+//   * `>=` and `>` differ only when `d[j] == p` EXACTLY, i.e. only inside a run
+//     of bit-equal eigenvalues;
+//   * both leave the same sorted `d`, so `obbFromPoints`' degeneracy flags come
+//     out identical either way;
+//   * bit-equal is a difference of zero, so such a run always satisfies the
+//     RELATIVE degeneracy test — and the degenerate branches then overwrite
+//     exactly the rows inside that run, seeded from the row OUTSIDE it, whose
+//     position no tie-break can move.
+//
+// So whenever this tie-break gets to choose, `fillDegenerateSubspace` (or the
+// isotropic branch) discards its choice a few lines later. MEASURED, by
+// building both variants and running them side by side: they agree bit for bit
+// on every box row, extent, centre and published frame over squares at 24
+// orientations, cubes, regular 3..12-gons, rods, lattices on and off exact
+// float boundaries, and 4000 pseudo-random point sets, half of them
+// hard-quantised so that bit-equal moments actually occur. Both reproduce the
+// recorded box.
+//
+// What the recorded box DOES discriminate is the DESCENDING world-index order
+// inside `fillDegenerateSubspace`: flip that to ascending and the recorded-box
+// `unittest` fires at once; flip this line and nothing geometric moves at all.
+//
+// `>=` is kept because it is what the published routine does, so a later reader
+// comparing the two sources finds them the same shape. The `unittest` below
+// pins it as a property of THIS FUNCTION — a guard against silent drift, not
+// evidence about the reference.
 // ---------------------------------------------------------------------------
 void sortEigenpairsDescending(ref double[3] d, ref double[3][3] v)
     @safe pure nothrow @nogc
@@ -258,19 +290,27 @@ void sortEigenpairsDescending(ref double[3] d, ref double[3][3] v)
 //   * Gram-Schmidt them against `n` and against each other, KEEPING THE WORLD
 //     AXIS' OWN SIGN.
 //
-// Two details are load-bearing and both are pinned by agreement with the
-// non-degenerate machinery on axis-aligned subjects:
+// Two details are load-bearing, and they are held down by DIFFERENT things.
+// Separating them matters, because an earlier revision credited both to the
+// same place and credited the first one to the wrong place entirely:
 //
-//   * the DESCENDING index order is what `sortEigenpairsDescending` produces
-//     on bit-equal
-//     eigenvalues. On a cube's +Y face the odd axis is world Y, the other two
-//     in descending order are Z then X, and the rows come out
-//     `[(0,0,1), (1,0,0), (0,1,0)]` — the reference's own recorded box, row
-//     for row;
+//   * the DESCENDING index order is pinned by the reference's RECORDED box, and
+//     that recording is the only measurement it has. On a cube's +Y face the
+//     odd axis is world Y, the other two in descending order are Z then X, and
+//     the rows come out `[(0,0,1), (1,0,0), (0,1,0)]` — the recorded box, row
+//     for row. Swap this to ascending and the recorded-box `unittest` fires.
+//     This is the term that recording discriminates; the eigenpair sort's
+//     tie-break, which used to be given the credit, is not (see its header);
 //   * the SECOND row is the projected world axis, NOT `cross(n, a)`. The two
-//     differ by a sign on half the cases (they agree for a +Y normal and
-//     disagree for a +Z one), and only the projected form reproduces the
-//     positive-world-axis columns Jacobi's identity early-out hands back.
+//     differ by a sign on half the cases — MEASURED: they agree for a +Y
+//     normal and disagree for a +Z and an +X one — and only the projected form
+//     reproduces the POSITIVE world-axis columns Jacobi's identity early-out
+//     hands back, because it keeps the seed axis' own sign where the cross
+//     product can invert it. That is a consistency argument with our own
+//     eigensolver, NOT a measurement, and it is unpinned by this file:
+//     substituting `cross(n, a)` leaves every `unittest` here passing, because
+//     the recorded rig's normal is +Y, one of the cases where the two agree. A
+//     degenerate subject with a +Z normal is what would settle it.
 // ---------------------------------------------------------------------------
 private void fillDegenerateSubspace(Vec3 n, out Vec3 a, out Vec3 b)
     @safe pure nothrow @nogc
@@ -606,9 +646,15 @@ unittest { // THE RECORDED BOX, row for row, extent for extent, centre included
            && nr(box.m[2], Vec3(0, 1, 0)),
            "the reference's RECORDED box for a cube's +Y face is the rows "
            ~ "(0,0,1) / (1,0,0) / (0,1,0); this port answers " ~ sm(box)
-           ~ ". Row 2 is the face normal; rows 0 and 1 are the in-plane pair "
-           ~ "in the order the descending eigenpair sort leaves BIT-EQUAL "
-           ~ "eigenvalues, which is Z before X.");
+           ~ ". Row 2 is the face normal. Rows 0 and 1 do NOT come from the "
+           ~ "eigensolver: this face's two in-plane eigenvalues are bit-equal, "
+           ~ "so the in-plane pair the solver and the sort produce is "
+           ~ "discarded and `fillDegenerateSubspace` fills it — the two world "
+           ~ "axes least aligned with row 2, in DESCENDING world index, which "
+           ~ "is Z before X. That convention is what this assert pins, and it "
+           ~ "is the first place to look when it fires. The eigenpair sort's "
+           ~ "tie-break is NOT pinned here and flipping it does not move this "
+           ~ "box; see the sort's header before changing it.");
     assert(fabs(box.size[0] - 1.0) < 1e-5 && fabs(box.size[1] - 1.0) < 1e-5
            && fabs(box.size[2]) < 1e-5,
            format("recorded extents are (1, 1, 0); got (%g, %g, %g)",
@@ -618,21 +664,29 @@ unittest { // THE RECORDED BOX, row for row, extent for extent, centre included
            ~ sv(box.center));
 }
 
-unittest { // the tie order is the discriminating half of the sort
+unittest { // the tie order — a property of this routine, not a port behaviour
     // Two candidate sorts agree on every distinct spectrum and disagree on
     // exactly this one: eigenvalues (c, 0, c) with the two c's BIT-IDENTICAL,
     // which is what a square face produces. A stable descending sort leaves
     // column 0 first; the sort published alongside the Jacobi routine compares
-    // with `>=` so the LAST maximum wins and column 2 goes first. The recorded
-    // box picks the second, and this is where that is nailed down without any
-    // geometry in the way.
+    // with `>=` so the LAST maximum wins and column 2 goes first.
+    //
+    // READ THE HEADER BEFORE ACTING ON A FAILURE HERE. This is the only place
+    // the choice is observable at all — `obbFromPoints` discards it, because
+    // the same bit-equality that lets the tie fire also trips the degeneracy
+    // test that overwrites the permuted rows. Nothing we have measured picks
+    // between the two, so a failure here means the ROUTINE drifted from the
+    // published shape; it does not mean a box changed.
     double[3] d = [0.25, 0.0, 0.25];
     double[3][3] v = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
     sortEigenpairsDescending(d, v);
     assert(v[0][0] == 0 && v[1][0] == 0 && v[2][0] == 1,
            format("column 0 must be the ORIGINAL column 2 = (0,0,1); got "
-                  ~ "(%g,%g,%g). A stable sort answers (1,0,0) here and would "
-                  ~ "publish a box the reference never recorded.",
+                  ~ "(%g,%g,%g). (1,0,0) is what a STABLE descending sort "
+                  ~ "answers — and it would publish the SAME box, since the "
+                  ~ "degenerate-subspace fill overwrites both of these rows. "
+                  ~ "This assert guards the routine's shape, not the port's "
+                  ~ "output.",
                   v[0][0], v[1][0], v[2][0]));
     assert(v[0][1] == 1 && v[1][1] == 0 && v[2][1] == 0,
            "column 1 must be the original column 0 = (1,0,0)");
