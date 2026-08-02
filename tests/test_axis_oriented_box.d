@@ -14,7 +14,7 @@
 // cube rotated 30 degrees about X has a face normal 30 degrees off world Y and
 // the old code still answered a signed world permutation.
 //
-// So the four cases below split into two kinds, and the split is the point:
+// So the cases below split into two kinds, and the split is the point:
 //
 //   * the AXIS-ALIGNED rows are CONTROLS. They are the recorded ground truth
 //     and they must not move by one digit. If they move, the port has changed
