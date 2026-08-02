@@ -3,6 +3,7 @@ module handles.gl_util;
 import bindbc.opengl;
 import std.math : sqrt, PI, abs;
 import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
+import gl_thread_guard : glThreadGuard;
 import math;
 
 // ---------------------------------------------------------------------------
@@ -338,6 +339,11 @@ void setThickLineScreenSize(int w, int h) {
 // Upload a float[] (XYZ triples) to a fresh VAO with a single vec3 attribute at location 0.
 // Fills *vbo with the created buffer object and returns the VAO.
 package GLuint buildVao3f(float[] data, out GLuint vbo) {
+    // Funnel 1 of 2. Every Handler shape's geometry lands here, and because a
+    // Tool builds its gizmo banks in its own ctor, so does every Tool — which
+    // is why "call a registry factory off the main thread" and "call GL off
+    // the main thread" are the same act. See gl_thread_guard.d.
+    glThreadGuard("buildVao3f");
     version(unittest) {
         vbo = 0;
         return 0;

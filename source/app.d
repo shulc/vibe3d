@@ -8,6 +8,7 @@ import std.json : JSONValue, JSONType;
 
 // HTTP server module
 import http_server;
+import gl_thread_guard : markMainThread;
 import log : logInfo, logWarn, logError;
 import prefs;
 
@@ -914,6 +915,12 @@ void drawPerfHud() {
 // ---------------------------------------------------------------------------
 
 void main(string[] args) {
+    // FIRST, before any subsystem can build a shader or a handle: record which
+    // thread owns the GL context, so the two constructor funnels can name a
+    // violator instead of faulting in a driver dispatch slot (task 0579's
+    // death, task 0584's sweep). Inert until this line runs.
+    markMainThread();
+
     // Release-binary fallback (R2 of doc/render_distribution_plan.md):
     // augment the dynamic-loader search path with <exeDir>/lib BEFORE
     // any GL/Cycles/RPR module ctor can touch dlopen. D-Cycles' build-

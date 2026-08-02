@@ -7,6 +7,7 @@ import std.string : toStringz;
 import view;
 import math;
 import mesh : Surface, GpuMesh;
+import gl_thread_guard : glThreadGuard;
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------
@@ -168,6 +169,10 @@ private immutable string gridFragSrc = q{
 // ---------------------------------------------------------------------------
 
 GLuint compileShader(GLenum type, string src) {
+    // Funnel 2 of 2. The lowest point of every program build — `createProgram`,
+    // `createProgramWithGeom` and gpu_select's own builder all route through
+    // here — so guarding it covers every `*Shader` ctor. See gl_thread_guard.d.
+    glThreadGuard("compileShader");
     GLuint shader = glCreateShader(type);
     const(char)* p = src.toStringz();
     glShaderSource(shader, 1, &p, null);
