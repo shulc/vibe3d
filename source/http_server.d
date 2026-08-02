@@ -129,6 +129,25 @@ class HttpServer {
     // Do not serve a tool-state read from the HTTP thread if answering it
     // would require mutating shared state, or if what it reads is rebuilt
     // per frame — use a bridge.
+    //
+    // THIRD CLAUSE, and the only one that has actually killed the process:
+    // do not serve it from the HTTP thread if answering it CONSTRUCTS
+    // anything. There is no GL context on this thread, and a great many
+    // constructors in this codebase allocate GL in their ctor body — every
+    // Handler shape funnels into handles/gl_util.buildVao3f
+    // (glGenVertexArrays), every *Shader compiles a program, and because a
+    // Tool builds its gizmo banks in its own ctor, so does every Tool. So
+    // "call a registry factory" and "touch GL" are the same act here, and
+    // it is not a race: it faults, or silently no-ops, undefined either way.
+    // /api/registry?params=1 died of exactly this (task 0579) by calling
+    // every factory to read its Param schema; the fix was to answer from a
+    // startup-built snapshot rather than to bridge, because a schema is a
+    // property of the class and needs no live instance.
+    //
+    // The rule that follows from all three: a provider may READ resident
+    // plain data. The moment it needs `new`, a factory, a per-frame
+    // structure, or a write to shared state, it belongs on a bridge — or,
+    // better, on a snapshot taken at startup on the main thread.
     private alias ToolHandlesDataProvider = string delegate();
     private ToolHandlesDataProvider toolHandlesDataProvider;
     private alias ToolStateDataProvider = string delegate();
@@ -144,14 +163,19 @@ class HttpServer {
     private RecordedEventsProvider recordedEventsProvider;
     // GET /api/registry — returns {"commands":[...],"tools":[...]} listing
     // every registered command and tool factory id. Read-only snapshot of
-    // post-startup-immutable AAs; served directly from the HTTP thread
-    // (same thread-safety posture as toolpipeProvider).
+    // post-startup-immutable AAs; served directly from the HTTP thread.
+    // (It used to cite toolpipeProvider as the precedent for that; do not
+    // read it that way — toolpipeProvider is bridged. What makes THIS one
+    // safe is that it copies out pre-built strings and calls nothing.)
     //
     // `?params=1` (task 0365 — param-bounds Phase 3) additionally requests
-    // per-id Param schemas (`commandParams`/`toolParams`): the bool arg is
-    // whether the caller asked for that mode, so the provider can skip
-    // instantiating every factory on the common (registry-listing-only)
-    // path. This is the enabler for the fuzz-smoke's static contract check
+    // per-id Param schemas (`commandParams`/`toolParams`); the bool arg is
+    // whether the caller asked for that mode. It is served from schemas
+    // serialised ONCE at startup, on the main thread, beside
+    // cacheSupportedModes(). It emphatically does NOT instantiate factories
+    // per request any more: doing so ran tool constructors — and therefore
+    // glGenVertexArrays — on this thread and killed the process (task 0579).
+    // This is the enabler for the fuzz-smoke's static contract check
     // (tests/test_param_bounds.d) — a generic reader of every count-like
     // Param's `.min()/.max()/.enforceBounds()` state without a hand-
     // maintained per-tool table.
@@ -179,15 +203,27 @@ class HttpServer {
     // /api/snap — POST. Body is the snap-query JSON ({cursor, sx, sy,
     // excludeVerts}); response is the SnapResult JSON. Used by the
     // 7.3 unit tests to probe snap math directly without driving an
-    // interactive Move drag through play-events. Read-only, so served
-    // straight from the HTTP thread (same convention as
-    // toolpipeEvalProvider) — tests are quiescent during probing.
+    // interactive Move drag through play-events. Served straight from the
+    // HTTP thread; tests are quiescent during probing.
+    //
+    // Its old note called this "read-only, same convention as
+    // toolpipeEvalProvider". Both halves are wrong and it should not be
+    // copied: toolpipeEvalProvider is BRIDGED, and this closure is not
+    // read-only — it runs g_pipeCtx.pipeline.evaluate() and then writes
+    // snap.d's __gshared g_itemSnapFrames via setItemSnapFrames(). It is
+    // GL-free (swept and measured, task 0584), so it does not fault; what
+    // it does risk is the ordinary shared-state race the quiescence
+    // convention papers over. If it ever flakes, bridge it — do not widen
+    // the precedent.
     private alias SnapQueryProvider = string delegate(string requestBody);
     private SnapQueryProvider snapQueryProvider;
     // /api/constrain — POST. Body is {pos:[x,y,z], delta:[x,y,z]};
     // evaluates the pipeline to pull the live ConstrainPacket, snapshots
     // the background sources, and returns the projected point. Mirrors
-    // the /api/snap bridge — read-only, served from the HTTP thread.
+    // /api/snap — which is NOT a bridge, whatever this comment used to
+    // say: both are served on the HTTP thread and both call
+    // pipeline.evaluate() there. GL-free (task 0584); same standing advice
+    // as /api/snap above.
     private alias ConstrainQueryProvider = string delegate(string requestBody);
     private ConstrainQueryProvider constrainQueryProvider;
     // /api/snap/last — GET. Returns the most recent SnapResult any

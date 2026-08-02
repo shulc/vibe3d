@@ -4289,9 +4289,15 @@ void main(string[] args) {
         // test-introspection over the active tool; null-guard mirrors every
         // other activeTool-reading provider in this file. See the
         // ToolHandlesDataProvider doc comment in http_server.d for the
-        // thread-safety discriminator (no lock needed — the reads mutate
-        // nothing, unlike the toolpipe/snap providers below which marshal to
-        // the main thread).
+        // thread-safety discriminator. That comment used to say these two
+        // need no lock "unlike the toolpipe/snap providers below which
+        // marshal to the main thread"; both halves have since gone stale.
+        // /api/tool/handles is itself MARSHALED now (toolHandlesBridge,
+        // task 0563 — the handle registry is rebuilt every draw), and the
+        // snap/constrain providers do NOT marshal: they run on the HTTP
+        // thread and call pipeline.evaluate() there. Only /api/tool/state
+        // is still a direct read, and only because it reads resident
+        // per-tool fields.
         httpServer.setToolHandlesDataProvider(() {
             import std.json : JSONValue;
             JSONValue root = JSONValue.emptyObject;
@@ -4374,9 +4380,15 @@ void main(string[] args) {
         // parity harness reads this to compare vibe3d's computed
         // pivot/axis to a reference engine's for the same case.
         //
-        // Called from the HTTP thread; pipeline.evaluate touches View
-        // state (cameraView.viewport() recomputes view/proj). Tests are
-        // expected to be quiescent (no concurrent edits) when probing.
+        // NOT called from the HTTP thread, despite what this comment said
+        // for a long time: /api/toolpipe/eval is marshaled onto the main
+        // thread through pipeEvalBridge, precisely because
+        // pipeline.evaluate touches View state (cameraView.viewport()
+        // recomputes view/proj) and writes g_pipeCtx's caches. The service
+        // body below therefore runs inside tickAll(), on the main thread.
+        // Do not cite this provider as precedent for a direct HTTP-thread
+        // read — /api/snap and /api/constrain did, and they are the two
+        // that still evaluate the pipeline off-thread.
         httpServer.setToolPipeEvalProvider(() {
             import std.array       : appender;
             import std.format      : format;
