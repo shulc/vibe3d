@@ -634,3 +634,499 @@ __gshared PerfProbe g_perf;
 /// (GET /api/frames). Same no-lock diagnostic-read contract as `g_perf`
 /// (see the plan's "direct read" decision).
 __gshared FrameProbe g_frames;
+
+// ===========================================================================
+// FrameWorkProbe — ALWAYS-COMPILED per-frame WORK COUNTERS.
+//
+// Third probe in this module, and the only one that is live in the DEFAULT
+// `modeling` build — the configuration `run_test.d` builds and every test
+// actually runs against. PerfProbe/FrameProbe above stay `version(PerfProbe)`
+// and stay TIMERS; this one is present everywhere and carries NO wall clock
+// at all. That split is the whole design, and it is deliberate:
+//
+//   * A nanosecond figure taken on this host is not a fact about vibe3d. The
+//     machine runs several agent lanes, a compile, and sometimes a second
+//     editor at once; frame `totalNs` moves by 3-5x between two runs of the
+//     same scenario with the same binary. A number like that gets quoted in a
+//     task result and then defended. So: no timing here. If you want times,
+//     build `--build=perf` and drive `tools/perf/run.d`, which brackets its
+//     numbers with a baseline and a p95 and is honest about the spread.
+//
+//   * Every performance defect this project has actually shipped and fixed
+//     was CPU-side and DETERMINISTIC in shape, not a slow draw call:
+//     an O(F^2) `isSubpatch` @property called inside a face loop; `selectedFaces`
+//     allocating a fresh `bool[]` on every read from the draw path; a pipeline
+//     stage publishing a packet nobody read. Counts catch all three and a
+//     wall clock catches none of them reliably. `drawCalls`, `drawVerts`,
+//     `allocBytes` and `stageEvals` are exact integers: they reproduce
+//     bit-for-bit across runs on a loaded host, so a test can assert on them
+//     and a regression is a diff, not a judgement call.
+//
+// WHAT THIS CANNOT TELL YOU, stated up front so nobody reads more into the
+// numbers than is there:
+//   * Nothing about GPU time. `drawVerts` is submitted-vertex count, i.e. how
+//     much work we HAND to the driver, not how long the driver takes. Two
+//     passes with equal `drawVerts` can differ by 10x in shader cost.
+//   * Nothing about per-call CPU cost. 4 draw calls are not "4x worse" than
+//     1; they are 4, which is a fact you can then go and price.
+//   * Nothing about time spent inside a phase. A pass that got slower without
+//     changing its call/vertex/alloc counts is invisible here BY CONSTRUCTION.
+//     That case is what the `perf` build exists for.
+//   * `allocBytes` is main-thread GC allocation for the whole frame, ImGui
+//     chrome included. It has a nonzero floor. It is a DELTA instrument: the
+//     claim it supports is "this change added N bytes/frame", never "a frame
+//     should allocate less than N".
+//
+// Cost in the default build: a `++` and a `+=` per GL draw submission (tens
+// per frame), one struct clear per frame, and two thread-local reads for the
+// GC delta. Nothing here allocates and nothing here locks.
+// ===========================================================================
+
+/// Draw-pass identity. One slot per thing a scene render can submit, split so
+/// that a pass appearing or vanishing (a display style dropping the face
+/// pass) is legible in the numbers rather than buried in a total.
+///
+/// `bgFaces`/`bgEdges` are the SAME GpuMesh entry points as `faces`/`edges`,
+/// routed by the backdrop redirect (see `FrameWorkProbe.backdrop`) — a
+/// background layer's draws must not be indistinguishable from the primary's,
+/// because "the backdrop got expensive" and "the model got expensive" call
+/// for different fixes.
+enum DrawPass {
+    faces,        // primary mesh surface (solid/lit), incl. the highlighted variant
+    faceOverlay,  // selected-face checker overlay
+    edges,        // primary mesh wireframe (base + selection + hover line passes)
+    verts,        // vertex dots
+    bgFaces,      // background-layer surface
+    bgEdges,      // background-layer wireframe
+    grid,         // ground grid + axis lines
+    symmetry,     // symmetry-plane overlay
+    handles,      // tool gizmo / handle shapes
+    subpatch,     // subpatch preview surface
+    idPick,       // GPU ID-buffer pass (picking, not display)
+}
+
+/// Per-pass work for one frame: GL submissions, and the vertices those
+/// submissions cover.
+struct PassCount {
+    long calls;
+    long verts;
+}
+
+/// One frame's deterministic work record. Every field is a COUNT. There is
+/// deliberately no time field — see the header.
+struct FrameWork {
+    long seq;                 /// frame ordinal since the last reset (1-based)
+    long cellsConsidered;     /// viewport cells the N-cell render loop looked at
+    long cellsRendered;       /// cells whose dirty key actually fired a scene render
+    long uploadCalls;         /// GpuMesh buffer (re)uploads issued this frame
+    long uploadVerts;         /// mesh vertices those uploads covered
+    long viewCacheRebuilds;   /// screen-space pick-cache invalidate+update passes
+    long hoverPicks;          /// per-frame hover picks run
+    long pipeEvals;           /// Pipeline.evaluate() passes
+    long stageEvals;          /// individual operator evaluate() calls inside them
+    long allocBytes;          /// main-thread GC bytes allocated during the frame
+    long drawCalls;           /// sum over pass[].calls
+    long drawVerts;           /// sum over pass[].verts
+    PassCount[DrawPass.max + 1] pass;
+}
+
+/// RAII redirect: while alive, `DrawPass.faces`/`edges` submissions are
+/// attributed to `bgFaces`/`bgEdges` instead. Nests (depth-counted) so an
+/// inner helper that opens one too cannot un-redirect its caller.
+///
+/// Holds the OWNING probe, not `g_fc`. Production only ever has one probe, so
+/// popping the global would look correct forever — and then the unit tests,
+/// which use local instances, would push one probe and pop another and see a
+/// redirect that never ends. It did exactly that before this pointer existed.
+struct BackdropScope {
+    private FrameWorkProbe* owner_;
+    @disable this(this);
+    ~this() { if (owner_ !is null) owner_.popBackdrop(); }
+}
+
+/// Always-compiled per-frame work counters. Single-writer (main thread);
+/// read from the HTTP thread with the same benign, lock-free diagnostic
+/// contract as `g_perf`/`g_frames` — `toJson` reads published snapshots that
+/// the writer stamps whole, so a racy read gets a slightly stale frame, never
+/// a torn one.
+struct FrameWorkProbe {
+
+    // In-flight frame.
+    private FrameWork cur_;
+    private ulong     allocBase_;
+    private int       backdropDepth_;
+
+    // Published snapshots.
+    private FrameWork last_;       // last committed frame, whatever it did
+    private FrameWork lastScene_;  // last committed frame that rendered >=1 cell
+    private FrameWork total_;      // cumulative since reset (seq = frame count)
+
+    // ---- frame lifecycle -------------------------------------------------
+
+    /// Start a frame. Called from the top of app.d's main loop, beside
+    /// `g_frames.beginFrame()`.
+    void beginFrame() {
+        cur_ = FrameWork.init;
+        backdropDepth_ = 0;
+        allocBase_ = allocatedNow();
+    }
+
+    /// Close the frame: fold per-pass totals, stamp the GC delta, publish.
+    /// Called beside `g_frames.endFrame()`.
+    ///
+    /// Publication order is write-record-then-publish, matching FrameProbe's
+    /// ring discipline: `last_`/`lastScene_` are assigned from a fully
+    /// populated local, so the HTTP reader either sees the previous frame or
+    /// this one, never half of each.
+    void endFrame() {
+        long dc = 0, dv = 0;
+        foreach (ref p; cur_.pass) { dc += p.calls; dv += p.verts; }
+        cur_.drawCalls = dc;
+        cur_.drawVerts = dv;
+        cur_.allocBytes = cast(long)(allocatedNow() - allocBase_);
+
+        total_.seq++;
+        cur_.seq = total_.seq;
+
+        total_.cellsConsidered   += cur_.cellsConsidered;
+        total_.cellsRendered     += cur_.cellsRendered;
+        total_.uploadCalls       += cur_.uploadCalls;
+        total_.uploadVerts       += cur_.uploadVerts;
+        total_.viewCacheRebuilds += cur_.viewCacheRebuilds;
+        total_.hoverPicks        += cur_.hoverPicks;
+        total_.pipeEvals         += cur_.pipeEvals;
+        total_.stageEvals        += cur_.stageEvals;
+        total_.allocBytes        += cur_.allocBytes;
+        total_.drawCalls         += cur_.drawCalls;
+        total_.drawVerts         += cur_.drawVerts;
+        foreach (i, ref p; cur_.pass) {
+            total_.pass[i].calls += p.calls;
+            total_.pass[i].verts += p.verts;
+        }
+
+        last_ = cur_;
+        if (cur_.cellsRendered > 0) lastScene_ = cur_;
+    }
+
+    // ---- instrumentation -------------------------------------------------
+
+    /// Record one GL draw submission covering `verts` vertices.
+    /// `verts` is the count argument handed to glDrawArrays/glDrawElements —
+    /// vertices SUBMITTED, not triangles and not pixels.
+    void draw(DrawPass p, long verts) {
+        if (backdropDepth_ > 0) {
+            if (p == DrawPass.faces) p = DrawPass.bgFaces;
+            else if (p == DrawPass.edges) p = DrawPass.bgEdges;
+        }
+        cur_.pass[p].calls++;
+        cur_.pass[p].verts += verts;
+    }
+
+    /// Open a backdrop redirect for the enclosing scope.
+    BackdropScope backdrop() return {
+        backdropDepth_++;
+        BackdropScope s;
+        s.owner_ = &this;
+        return s;
+    }
+
+    /// Internal: close one backdrop redirect. Called by ~BackdropScope.
+    void popBackdrop() { if (backdropDepth_ > 0) backdropDepth_--; }
+
+    /// One GPU buffer (re)upload covering `verts` mesh vertices.
+    void upload(long verts) { cur_.uploadCalls++; cur_.uploadVerts += verts; }
+
+    void bumpCellConsidered()  { cur_.cellsConsidered++; }
+    void bumpCellRendered()    { cur_.cellsRendered++; }
+    void bumpViewCacheRebuild(){ cur_.viewCacheRebuilds++; }
+    void bumpHoverPick()       { cur_.hoverPicks++; }
+    void bumpPipeEval()        { cur_.pipeEvals++; }
+    void bumpStageEval()       { cur_.stageEvals++; }
+
+    /// Zero every published counter and the in-flight frame's accumulators.
+    ///
+    /// Called from the HTTP thread, so it can land mid-frame. Unlike
+    /// `FrameProbe.reset` this DOES clear `cur_` — there is no elapsed-time
+    /// base to corrupt here (the one base, `allocBase_`, is re-stamped in
+    /// `beginFrame`; a reset landing mid-frame at worst mis-attributes that
+    /// single frame's `allocBytes`, and tests reset while quiescent).
+    void reset() {
+        cur_ = FrameWork.init;
+        last_ = FrameWork.init;
+        lastScene_ = FrameWork.init;
+        total_ = FrameWork.init;
+        backdropDepth_ = 0;
+        allocBase_ = allocatedNow();
+    }
+
+    // ---- read-out --------------------------------------------------------
+
+    /// By-value copy of the last committed frame that rendered at least one
+    /// viewport cell. This — not `last` — is what an assertion should read:
+    /// the render loop skips cells whose dirty key is unchanged, so an
+    /// arbitrary frame legitimately has zero draws.
+    FrameWork lastScene() const { return lastScene_; }
+
+    /// By-value copy of the last committed frame, rendered or not.
+    FrameWork last() const { return last_; }
+
+    /// By-value cumulative totals since reset (`seq` = frames committed).
+    FrameWork totals() const { return total_; }
+
+    /// JSON: `{"frames":N,"lastScene":{...},"last":{...},"totals":{...}}`.
+    /// Live in EVERY build — this endpoint is not a "{}" stub.
+    string toJson() {
+        import std.array : appender;
+        auto app = appender!string();
+        app.put(`{"frames":`);
+        putLong(app, total_.seq);
+        app.put(`,"lastScene":`); putWork(app, lastScene_);
+        app.put(`,"last":`);      putWork(app, last_);
+        app.put(`,"totals":`);    putWork(app, total_);
+        app.put("}");
+        return app.data;
+    }
+
+    private static void putLong(A)(ref A app, long v) {
+        import std.conv : to;
+        app.put(v.to!string);
+    }
+
+    private static void putWork(A)(ref A app, const ref FrameWork w) {
+        app.put(`{"seq":`);              putLong(app, w.seq);
+        app.put(`,"cellsConsidered":`);  putLong(app, w.cellsConsidered);
+        app.put(`,"cellsRendered":`);    putLong(app, w.cellsRendered);
+        app.put(`,"drawCalls":`);        putLong(app, w.drawCalls);
+        app.put(`,"drawVerts":`);        putLong(app, w.drawVerts);
+        app.put(`,"uploadCalls":`);      putLong(app, w.uploadCalls);
+        app.put(`,"uploadVerts":`);      putLong(app, w.uploadVerts);
+        app.put(`,"viewCacheRebuilds":`);putLong(app, w.viewCacheRebuilds);
+        app.put(`,"hoverPicks":`);       putLong(app, w.hoverPicks);
+        app.put(`,"pipeEvals":`);        putLong(app, w.pipeEvals);
+        app.put(`,"stageEvals":`);       putLong(app, w.stageEvals);
+        app.put(`,"allocBytes":`);       putLong(app, w.allocBytes);
+        app.put(`,"pass":{`);
+        static foreach (i, member; __traits(allMembers, DrawPass)) {{
+            static if (i > 0) app.put(",");
+            app.put(`"` ~ member ~ `":{"calls":`);
+            putLong(app, w.pass[__traits(getMember, DrawPass, member)].calls);
+            app.put(`,"verts":`);
+            putLong(app, w.pass[__traits(getMember, DrawPass, member)].verts);
+            app.put("}");
+        }}
+        app.put("}}");
+    }
+}
+
+/// Main-thread GC allocation counter. Isolated so the one druntime call this
+/// probe makes per frame boundary has a single named site.
+///
+/// `GC.allocatedInCurrentThread` reads a THREAD-LOCAL running total — no
+/// lock, no allocation, no stop-the-world. `GC.profileStats().numCollections`
+/// is deliberately NOT read here: it is a global that the conservative GC
+/// serialises, and a per-frame lock acquisition in the default build is a
+/// cost this probe is not allowed to introduce. Collection counts stay in the
+/// `perf` build's FrameProbe, which is where a stop-the-world hitch is a
+/// timing question anyway.
+/// (`nothrow` only, not `@nogc`: druntime does not mark the accessor `@nogc`
+/// even though it allocates nothing — see the FrameProbe comment on the same
+/// call in `endFrame`.)
+private ulong allocatedNow() nothrow {
+    import core.memory : GC;
+    return GC.allocatedInCurrentThread;
+}
+
+/// Process-wide frame-work counters. Written by the main loop, read by the
+/// HTTP thread (GET /api/frames/counts). Live in every build configuration,
+/// unlike `g_perf`/`g_frames`.
+__gshared FrameWorkProbe g_fc;
+
+// ---------------------------------------------------------------------------
+// FrameWorkProbe unit tests. These run under `dub test --config=modeling` —
+// i.e. in the SAME configuration the probe is live in, which is the whole
+// point of it being ungated. A local instance is used throughout; `g_fc` is
+// the main loop's and must not be disturbed.
+// ---------------------------------------------------------------------------
+
+unittest { // a committed frame folds its per-pass work into the totals
+    FrameWorkProbe fc;
+    fc.beginFrame();
+    fc.draw(DrawPass.faces, 36);
+    fc.draw(DrawPass.edges, 24);
+    fc.draw(DrawPass.edges, 8);
+    fc.bumpCellConsidered();
+    fc.bumpCellRendered();
+    fc.endFrame();
+
+    auto w = fc.last();
+    assert(w.seq == 1);
+    assert(w.pass[DrawPass.faces].calls == 1 && w.pass[DrawPass.faces].verts == 36);
+    assert(w.pass[DrawPass.edges].calls == 2 && w.pass[DrawPass.edges].verts == 32);
+    // drawCalls/drawVerts are FOLDS of the per-pass slots, not independently
+    // maintained counters — a mismatch here means a pass exists that the fold
+    // does not walk.
+    assert(w.drawCalls == 3, "drawCalls must be the sum over passes");
+    assert(w.drawVerts == 68, "drawVerts must be the sum over passes");
+    assert(w.cellsConsidered == 1 && w.cellsRendered == 1);
+}
+
+unittest { // the backdrop redirect moves faces/edges and nothing else
+    FrameWorkProbe fc;
+    fc.beginFrame();
+    fc.draw(DrawPass.faces, 10);
+    {
+        auto z = fc.backdrop();
+        fc.draw(DrawPass.faces, 100);
+        fc.draw(DrawPass.edges, 200);
+        // NOT a shading pass — must stay where it was put even inside the
+        // redirect, or the backdrop slot silently absorbs unrelated work.
+        fc.draw(DrawPass.grid, 400);
+    }
+    // Redirect must END with the scope.
+    fc.draw(DrawPass.edges, 20);
+    fc.endFrame();
+
+    auto w = fc.last();
+    assert(w.pass[DrawPass.faces].verts   == 10);
+    assert(w.pass[DrawPass.edges].verts   == 20);
+    assert(w.pass[DrawPass.bgFaces].verts == 100);
+    assert(w.pass[DrawPass.bgEdges].verts == 200);
+    assert(w.pass[DrawPass.grid].verts    == 400,
+           "the redirect must only touch faces/edges");
+}
+
+unittest { // nested backdrop scopes: an inner scope cannot un-redirect its caller
+    FrameWorkProbe fc;
+    fc.beginFrame();
+    auto outer = fc.backdrop();
+    {
+        auto inner = fc.backdrop();
+        fc.draw(DrawPass.faces, 1);
+    }
+    // Still inside `outer` — this must STILL be a backdrop draw.
+    fc.draw(DrawPass.faces, 2);
+    fc.endFrame();
+    auto w = fc.last();
+    assert(w.pass[DrawPass.bgFaces].verts == 3);
+    assert(w.pass[DrawPass.faces].verts == 0,
+           "the inner scope closing must not clear the outer redirect");
+}
+
+unittest { // lastScene skips frames that rendered no cell; last does not
+    FrameWorkProbe fc;
+
+    fc.beginFrame();
+    fc.bumpCellConsidered();
+    fc.bumpCellRendered();
+    fc.draw(DrawPass.faces, 36);
+    fc.endFrame();
+
+    // A frame that considered a cell and skipped it: real, and normal.
+    fc.beginFrame();
+    fc.bumpCellConsidered();
+    fc.endFrame();
+
+    assert(fc.last().seq == 2);
+    assert(fc.last().drawVerts == 0, "the skipped frame really drew nothing");
+    assert(fc.lastScene().seq == 1,
+           "lastScene must hold the last frame that rendered a cell");
+    assert(fc.lastScene().drawVerts == 36);
+}
+
+unittest { // totals accumulate across frames; seq counts committed frames
+    FrameWorkProbe fc;
+    foreach (i; 0 .. 5) {
+        fc.beginFrame();
+        fc.bumpCellConsidered();
+        fc.bumpCellRendered();
+        fc.draw(DrawPass.faces, 36);
+        fc.upload(8);
+        fc.bumpPipeEval();
+        fc.bumpStageEval();
+        fc.bumpStageEval();
+        fc.bumpViewCacheRebuild();
+        fc.bumpHoverPick();
+        fc.endFrame();
+    }
+    auto t = fc.totals();
+    assert(t.seq == 5);
+    assert(t.drawCalls == 5 && t.drawVerts == 180);
+    assert(t.pass[DrawPass.faces].calls == 5);
+    assert(t.uploadCalls == 5 && t.uploadVerts == 40);
+    assert(t.pipeEvals == 5 && t.stageEvals == 10);
+    assert(t.viewCacheRebuilds == 5 && t.hoverPicks == 5);
+    assert(fc.lastScene().drawVerts == 36, "lastScene is per-frame, not a total");
+}
+
+unittest { // reset zeroes everything, and counting resumes afterwards
+    FrameWorkProbe fc;
+    fc.beginFrame();
+    fc.draw(DrawPass.faces, 36);
+    fc.bumpCellRendered();
+    fc.endFrame();
+    assert(fc.totals().seq == 1);
+
+    fc.reset();
+    assert(fc.totals().seq == 0);
+    assert(fc.last().drawVerts == 0);
+    assert(fc.lastScene().drawVerts == 0);
+
+    fc.beginFrame();
+    fc.draw(DrawPass.edges, 7);
+    fc.bumpCellRendered();
+    fc.endFrame();
+    assert(fc.totals().seq == 1);
+    assert(fc.lastScene().pass[DrawPass.edges].verts == 7);
+}
+
+unittest { // a zero-vertex submission is a CALL, not a nothing
+    // A pass that ran with an empty mesh must be distinguishable from a pass
+    // that did not run. Dropping zero-count draws would erase that.
+    FrameWorkProbe fc;
+    fc.beginFrame();
+    fc.draw(DrawPass.faces, 0);
+    fc.endFrame();
+    assert(fc.last().pass[DrawPass.faces].calls == 1);
+    assert(fc.last().pass[DrawPass.faces].verts == 0);
+    assert(fc.last().drawCalls == 1);
+}
+
+unittest { // toJson emits every pass and the three published records
+    import std.json : parseJSON, JSONType;
+    FrameWorkProbe fc;
+    fc.beginFrame();
+    fc.bumpCellConsidered();
+    fc.bumpCellRendered();
+    fc.draw(DrawPass.faces, 36);
+    fc.draw(DrawPass.grid, 404);
+    fc.endFrame();
+
+    auto j = parseJSON(fc.toJson());
+    assert(j.type == JSONType.object);
+    assert(j["frames"].integer == 1);
+    foreach (rec; ["lastScene", "last", "totals"])
+        assert(rec in j, "missing record: " ~ rec);
+    // Every DrawPass member must have a key — a slot that exists in the enum
+    // but not in the dump is a pass nobody can assert on.
+    static foreach (member; __traits(allMembers, DrawPass))
+        assert(member in j["lastScene"]["pass"], "missing pass key: " ~ member);
+    assert(j["lastScene"]["pass"]["faces"]["verts"].integer == 36);
+    assert(j["lastScene"]["pass"]["grid"]["verts"].integer == 404);
+    assert(j["lastScene"]["drawVerts"].integer == 440);
+}
+
+unittest { // allocBytes is wired to the real GC counter, not left at zero
+    // Deliberately the ONLY assertion made about allocBytes anywhere: that it
+    // responds to allocation at all. No threshold is asserted here or in the
+    // HTTP tests — see the FrameWorkProbe header on why it is a delta
+    // instrument and not a gate.
+    FrameWorkProbe fc;
+    fc.beginFrame();
+    // Escape the optimizer: a heap array whose size is not known statically.
+    static size_t n = 4096;
+    auto junk = new ubyte[n];
+    junk[0] = 1;
+    fc.endFrame();
+    assert(fc.last().allocBytes >= cast(long)n,
+           "allocBytes must track main-thread GC allocation");
+}
