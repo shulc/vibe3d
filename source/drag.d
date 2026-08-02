@@ -525,25 +525,53 @@ double majorGridStep(double pixelSize) {
 //                scale 100 / grid 0.5 / step 0.05, and
 //                `stepLadderNearest(0.5/10) = 0.05`).
 //   Fine         MEASURED, 29/29 over 1024x. The shipped default.
-//   Fixed        THE ONE INFERRED ARM. Two independent decodes summarise it
-//                differently — "as Normal, floored by the increment" and a
-//                longer form with a `< 12` multiple test — and no capture has
-//                ever run under it. What is implemented is the reading both
-//                summaries AND the shipped help text agree on: the increment
-//                is a LOWER LIMIT on the step, and where the step is a small
-//                number of increments across it is aligned to a whole
-//                multiple of one. Flagged here rather than presented as
-//                measured; it is a non-default arm and it is the first thing
-//                to re-read if it ever matters.
+//   Fixed        READ at instruction level (task 0580), which is what this
+//                entry used to be waiting for. It is `Normal` with the
+//                early-out not taken, and then: the increment wins outright
+//                if it exceeds the GRID SIZE; otherwise the sub-step is
+//                aligned to a whole multiple of the increment, unless that
+//                would take twelve or more of them, in which case the
+//                sub-step stands. The two prose summaries this entry used to
+//                hedge between are BOTH wrong — one drops the multiple
+//                clause entirely, the other takes the ratio against the grid
+//                size where the code takes it against the sub-step, a factor
+//                of ten — so hedging between them was never going to land on
+//                the law. Still never observed in a RUNNING view; the read is
+//                of the code. What is unmeasured is the value, not the law.
 //   ForcedFixed  decoded, and the two decodes agree exactly: the increment,
 //                and nothing else, at any zoom.
 //
 // Returns 0 (i.e. the identity) for a non-positive or non-finite pixel size,
 // so a degenerate view rounds nothing rather than rounding to garbage.
+
+// The reference's double-to-int rounder, ported whole: round half away from
+// zero, then TRUNCATE TO int32.
+//
+// The int32 is not incidental packaging, and this is why it is spelled out
+// rather than folded into a `round()` call. The hardware truncation yields the
+// x86 "integer indefinite" value INT_MIN for any operand that is NaN, infinite,
+// or outside int32 — so a ratio of ±inf, which is exactly what `subStep / 0`
+// is, comes back as INT_MIN and therefore takes the `< 12` branch. Spelling it
+// as a double-returning `round()` gives `inf`, which fails `< 12` and takes the
+// OTHER branch: the sign of the whole non-positive-increment case (task 0586)
+// hangs on this one detail.
+private int roundToInt32(double x) pure nothrow @safe @nogc
+{
+    import std.math : isNaN;
+    const double r = x + (x > 0 ? 0.5 : -0.5);
+    // Truncation toward zero fits in int32 iff -2^31-1 < r < 2^31. NaN fails
+    // both comparisons and so lands on INT_MIN too, which is what the hardware
+    // does.
+    if (!(r > -2147483649.0 && r < 2147483648.0)) return int.min;
+    return cast(int) r;
+}
+
 double axisDragRoundingStep(CoordinateRounding mode, double pixelSize,
                        double fixedIncrement)
 {
-    import std.math : isNaN, isInfinity, round, abs;
+    // `round` used to be here for the Fixed arm's ratio; that arm now uses
+    // `roundToInt32`, whose int32 truncation is load-bearing (see above).
+    import std.math : isNaN, isInfinity;
 
     if (isNaN(pixelSize) || isInfinity(pixelSize) || !(pixelSize > 0))
         return 0.0;
@@ -559,12 +587,41 @@ double axisDragRoundingStep(CoordinateRounding mode, double pixelSize,
             return stepLadderCeil(pixelSize);
 
         case CoordinateRounding.Fixed: {
-            double s = stepLadderNearest(majorGridStep(pixelSize) / 10.0);
+            const double g = majorGridStep(pixelSize);
+            double s = stepLadderNearest(g / 10.0);
             const double d = fixedIncrement;
-            if (!(d > 0) || isNaN(d) || isInfinity(d)) return s;
-            if (d > s) return d;                       // the increment is a FLOOR
-            const double n = round(s / d);
-            if (n < 12.0) s = (n < 1.0 ? 1.0 : n) * d; // align to a whole multiple
+            // NaN / infinite increments are OURS, not the reference's — it has
+            // no such guard and would carry them through the arithmetic. Kept
+            // because neither has ever been measured and widening the fix to
+            // cover them would be inventing behaviour, not porting it.
+            if (isNaN(d) || isInfinity(d)) return s;
+            // The increment is a FLOOR, and the thing it is compared against is
+            // the GRID SIZE `g` — not the sub-step `s`, which is what this line
+            // used to say (task 0580 read the comparison off the instruction
+            // that makes it; task 0586 corrected the operand).
+            //
+            // The correction is VALUE-NEUTRAL for every positive increment, and
+            // that is a property of the ladder rather than luck. The ladder is
+            // closed under x10 and `g` is always on it, so `s` is the grid's
+            // tenth — to within an ulp, not bit-for-bit; the log-space
+            // reconstruction lands one low at some scales, which the unittest
+            // measures and pins. In the band `g/10 < d <= g` the old early
+            // return fired and gave `d`; the code below now reaches the
+            // multiple clause instead, where `s/d` is at most about 1, so the
+            // rounded ratio is 0 or 1, the `max(n,1)` lifts it to 1, and the
+            // result is `1*d = d`. Same number, by the arm's own arithmetic.
+            //
+            // So NO test can tell the two spellings apart — reverting this one
+            // operand leaves the suite green, and that was checked rather than
+            // assumed. It is corrected anyway, and this paragraph is the reason
+            // why: the old line was right only because two further errors in
+            // the summaries it came from happened to cancel, and an expression
+            // that survives on a cancellation is a trap for whoever edits the
+            // arm next. Silently relying on it would have been the one outcome
+            // worse than either fixing it or arguing against fixing it.
+            if (d > g) return d;
+            const int n = roundToInt32(s / d);
+            if (n < 12) s = (n < 1 ? 1 : n) * d;   // align to a whole multiple
             return s;
         }
 
@@ -1237,11 +1294,8 @@ unittest {  // LAW A ported: the OTHER arms of the setting.
     assert(axisDragRoundingStep(CoordinateRounding.ForcedFixed, 1e-3, 0.0)  == 0.0);
     assert(axisDragRoundingStep(CoordinateRounding.ForcedFixed, 1e-3, -1.0) == 0.0);
 
-    // `Fixed` — the INFERRED arm. What is asserted is only the property all
-    // three prose sources agree on and that the arm exists to provide: the
-    // increment is a LOWER LIMIT. Deliberately not asserted to any particular
-    // value at a particular zoom, because no capture has ever run under it
-    // and a value assertion here would freeze an inference as a measurement.
+    // `Fixed` — the floor property, which holds in all three of the arm's
+    // exits and survived the arm being read (task 0580).
     foreach (px; [1e-6, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1]) {
         const double d = 0.01;
         const double s = axisDragRoundingStep(CoordinateRounding.Fixed, px, d);
@@ -1250,10 +1304,78 @@ unittest {  // LAW A ported: the OTHER arms of the setting.
                     ~ "a floor: pixelSize %.9g with increment %.9g gave %.9g",
                     px, d, s));
     }
-    // With no increment set it degrades to Normal rather than to nothing —
-    // there is still a view-derived step to round to.
-    assert(axisDragRoundingStep(CoordinateRounding.Fixed, 1e-3, 0.0)
-        == axisDragRoundingStep(CoordinateRounding.Normal, 1e-3, 0.0));
+
+    // Value assertions are now available, because the arm was read rather than
+    // inferred. At pixelSize 1e-3 the grid size is 0.05 and the sub-step 0.005,
+    // which is enough to hit all three exits with hand-checkable numbers.
+    assert(majorGridStep(1e-3) == 0.05);
+    {
+        const double px = 1e-3;
+        // above the grid size — the increment wins outright
+        assert(axisDragRoundingStep(CoordinateRounding.Fixed, px, 0.06) == 0.06);
+        // a whole small multiple of the increment spans the sub-step
+        assert(abs(axisDragRoundingStep(CoordinateRounding.Fixed, px, 0.001)
+                   - 0.005) < 1e-15);
+        // twelve or more increments across it: the sub-step stands
+        assert(abs(axisDragRoundingStep(CoordinateRounding.Fixed, px, 0.0001)
+                   - 0.005) < 1e-15);
+    }
+
+    // THE BAND, pinned. `g/10 < d <= g` is where correcting the floor's operand
+    // from the sub-step to the grid size (task 0586) moved which branch runs.
+    // The result must not move with it: the multiple clause returns `1*d` there
+    // because the rounded ratio cannot exceed 1. Measured, not assumed — this
+    // is the assertion that would have caught the operand error had the ladder
+    // NOT made the two spellings agree.
+    foreach (px; [1e-6, 1e-4, 1e-3, 1e-2, 1.0]) {
+        const double g = majorGridStep(px);
+        // The ladder is closed under x10, so the sub-step IS the grid's tenth
+        // — but only to within representation, NOT bit-for-bit. At pixelSize
+        // 1e-6 the log-space reconstruction lands one ulp BELOW `g / 10.0`
+        // (4.9999999999999996e-6 against 5.0000000000000004e-6). A sweep over
+        // one staircase of scales can miss that and report exactness; it is
+        // not exact, and asserting `==` here fails on the first row.
+        assert(abs(stepLadderNearest(g / 10.0) - g / 10.0) <= 4e-16 * g,
+               "the sub-step must be the grid's tenth to within a few ulps");
+        // Nothing below needs the stronger claim: the band returns `d` as long
+        // as the rounded ratio cannot exceed 1, i.e. as long as `s/d < 1.5`,
+        // and in the band `s/d` is at most about 1. An ulp of slack in `s` is
+        // nowhere near that margin.
+        foreach (frac; [0.11, 0.25, 0.5, 0.9, 1.0]) {
+            const double d = g * frac;              // inside (g/10, g]
+            assert(axisDragRoundingStep(CoordinateRounding.Fixed, px, d) == d,
+                   format("in the band g/10 < d <= g the arm must return the "
+                        ~ "increment: pixelSize %.9g, g %.9g, d %.9g gave %.9g",
+                        px, g, d, axisDragRoundingStep(
+                            CoordinateRounding.Fixed, px, d)));
+        }
+    }
+
+    // A NON-POSITIVE increment switches rounding OFF, and this assertion is the
+    // inverse of what stood here before. It was not edited to make anything
+    // pass: task 0580 read the arm and the reading refutes the claim the old
+    // line made. At `d <= 0` the increment cannot exceed the grid size, so the
+    // multiple clause runs, and its rounded ratio is never above zero — at
+    // `d == 0` because `s/0` is +inf and the int32 truncation returns INT_MIN,
+    // and at `d < 0` because the ratio is simply negative. Either way `< 12`
+    // holds, `max(n,1)` gives 1, and the sub-step becomes `1*d` — zero or
+    // negative. The `step <= 0` gate then makes that the identity. The old line
+    // asserted the arm degraded to `Normal` here, i.e. that rounding stayed ON;
+    // it does not.
+    // (`ForcedFixed` above IS `max(d, 0)` and does degrade to nothing, which is
+    // where the confusion came from — the two arms differ exactly here.)
+    assert(axisDragRoundingStep(CoordinateRounding.Fixed, 1e-3, 0.0)  == 0.0);
+    assert(axisDragRoundingStep(CoordinateRounding.Fixed, 1e-3, -0.0) == 0.0);
+    assert(axisDragRoundingStep(CoordinateRounding.Fixed, 1e-3, -1.0) <  0.0);
+    assert(axisDragRoundingStep(CoordinateRounding.Fixed, 1e-3, -1e-3) < 0.0);
+    // ...and `snapAxisScalar`'s single gate is what turns that into the
+    // identity, so the end-to-end claim is "rounding off", not "step zero".
+    foreach (d; [0.0, -1e-3, -1.0]) {
+        const float step = cast(float)axisDragRoundingStep(
+            CoordinateRounding.Fixed, 1e-3, d);
+        assert(snapAxisScalar(0.037f, step) == 0.037f,
+               "a non-positive increment must leave the scalar untouched");
+    }
 }
 
 unittest {  // LAW A ported: the ladder helper, including the negative half.

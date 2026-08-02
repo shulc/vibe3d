@@ -78,6 +78,13 @@ CoordinateRounding coordRounding() { return g_mode; }
 /// The live fixed increment (world units). Non-positive is not clamped here —
 /// the law's `step <= 0` guard turns it into the identity, which is the same
 /// answer the reference gives.
+///
+/// That sentence was true of `ForcedFixed` and FALSE of `Fixed` until task
+/// 0586: the `Fixed` arm used to return the view-derived sub-step for a
+/// non-positive increment, so rounding stayed ON where the reference switches
+/// it off. Both arms now reach the guard. Left unclamped rather than defended
+/// here for the reason the sentence gives — the guard is the single gate, and
+/// a second one would be a second place to keep in sync.
 float coordRoundingFixedIncrement() { return g_fixed; }
 
 /// Set the mode and republish the UI state paths. The only writer outside
