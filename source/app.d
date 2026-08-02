@@ -10166,6 +10166,82 @@ void main(string[] args) {
                         }
                     }
 
+                    // Per-cell display-style dropdown (task 0594).
+                    //
+                    // PERMANENT NEW CHROME, and that is why it took an owner
+                    // decision rather than arriving as a side effect of adding
+                    // a control. The reference puts this selector in the cell,
+                    // so it goes in the cell. It sits beside the view-preset
+                    // combo, which is already the cell's one piece of chrome
+                    // and already establishes every convention this follows.
+                    //
+                    // HIDDEN UNDER --test BY PLACEMENT, not by its own flag:
+                    // the whole per-cell window loop lives inside main's
+                    // `if (!testMode)` block, so no "Viewport##k" window — and
+                    // therefore no combo — exists in test mode at all. That is
+                    // what makes recorded event logs replay unchanged: the
+                    // pixels this widget occupies are not claimed by anything
+                    // in the mode the HTTP suite and playback tests run in.
+                    //
+                    // ROUTED THROUGH THE COMMAND, unlike the view combo above
+                    // which writes the camera directly. There are now two ways
+                    // to reach this value — here and the Viewport Properties
+                    // panel — and two routes to one value are only safe while
+                    // both land on one implementation. `viewport.displayStyle`
+                    // is that implementation: it validates the name, refuses
+                    // what no pass can draw, marks the cell's style as chosen
+                    // (so the shipped ortho default stops re-seeding it), and
+                    // mirrors into the preferences. A direct field write here
+                    // would skip all four.
+                    {
+                        import display_state : DisplayStyle;
+                        import std.format : format;
+                        static immutable string[3] dsLabels =
+                            ["Shaded", "Solid", "Wireframe"];
+                        static immutable string[3] dsIds =
+                            ["shaded", "solid", "wireframe"];
+                        static immutable DisplayStyle[3] dsVals = [
+                            DisplayStyle.Shaded, DisplayStyle.Solid,
+                            DisplayStyle.Wireframe
+                        ];
+                        int dsIdx = 0;
+                        foreach (i, dv; dsVals)
+                            if (dv == _vcell.display.active.style) dsIdx = cast(int)i;
+
+                        // Beside the view combo: its origin is (4,4) and it is
+                        // 120 wide, so this starts at 128 with the same 4px
+                        // gutter. Narrower than the panel's full-width combo —
+                        // this is chrome sitting on top of the user's scene,
+                        // and the three labels it must show are short.
+                        ImGui.SetCursorPos(ImVec2(4 + 120 + 4, 4));
+                        ImGui.SetNextItemWidth(100.0f);
+                        bool _dsOpen = ImGui.BeginCombo(
+                            "##vpStyle" ~ to!string(k), dsLabels[dsIdx]);
+                        // Captured while LastItemData is still the combo
+                        // BUTTON, before the popup body is submitted, and with
+                        // the same two relax flags the view combo uses — so the
+                        // exclusion holds across the whole interaction and not
+                        // merely on the closed-combo frame. A new per-cell
+                        // widget that forgets this leaks its clicks into
+                        // ##vpHit and thence into scene picking.
+                        if (ImGui.IsItemHovered(
+                                ImGuiHoveredFlags.AllowWhenBlockedByActiveItem |
+                                ImGuiHoveredFlags.AllowWhenBlockedByPopup))
+                            _cellWidgetHovered = true;
+                        if (_dsOpen) {
+                            foreach (i, dl2; dsLabels) {
+                                bool sel = (i == dsIdx);
+                                if (ImGui.Selectable(dl2, sel)
+                                    && commandHandlerDelegate !is null)
+                                    commandHandlerDelegate("viewport.displayStyle",
+                                        format(`{"_positional":["%s"],"viewport":%d}`,
+                                               dsIds[i], k));
+                                if (sel) ImGui.SetItemDefaultFocus();
+                            }
+                            ImGui.EndCombo();
+                        }
+                    }
+
                     // Task 0232/0239: Loop Slice Slider HUD hit-test. Fold #2
                     // (opponent objection, load-bearing): submitted BEFORE
                     // ##vpHit — exactly like the view combo above — and its
