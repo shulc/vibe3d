@@ -3,6 +3,8 @@ module view;
 import math;
 import std.math : sqrt, tan, PI;
 import std.json : JSONValue, JSONType;
+import trackball : TrackballOption, resolveTrackball, trackballRadius,
+                   trackballVector, trackballStep, trackballMouseSpeed;
 
 /// Projection kind for the camera. Default Perspective.
 /// Ortho sets an axis-locked viewpoint; orbit is disabled.
@@ -159,6 +161,11 @@ class View {
         focus      =  Vec3(0, 0, 0);
         projKind   = ProjKind.Perspective;
         viewPreset = ViewPreset.Perspective;
+        // The per-cell trackball override and any in-flight arming go back to
+        // launch state too: a cell left explicitly On by one test is exactly
+        // the kind of setting that resurfaces as an unrelated failure later.
+        trackballOption = TrackballOption.Default;
+        tbArmed_        = false;
     }
 
     void orbit(int dx, int dy) {
@@ -194,6 +201,110 @@ class View {
         // screen-down (`right.y == -sin(roll)*cos(elevation)`), which is the
         // -back sense. Rotating about `back` would run the gesture backwards.
         orient_ = orient_.rotatedAbout(orient_.forward(), dx * 0.005f);
+    }
+
+    // -----------------------------------------------------------------------
+    // Trackball orbit/bank (see source/trackball.d for the law)
+    // -----------------------------------------------------------------------
+
+    /// This cell's trackball setting. `Default` defers to the global; the two
+    /// explicit arms are a per-viewport override. Per-cell rather than global
+    /// because the reference's own option is per-viewport, and because a Quad
+    /// layout has exactly one cell where the gesture makes sense.
+    TrackballOption trackballOption = TrackballOption.Default;
+
+    /// The previous lifted ball vector — the gesture's whole state, three
+    /// floats. Not `Vec3.init`-sensitive: `tbArmed_` gates every read.
+    private Vec3 tbPrev_;
+    private bool tbArmed_ = false;
+
+    /// Does an orbit drag on THIS camera run the trackball?
+    ///
+    /// The ortho exclusion lives here rather than at the call site because it
+    /// is a property of the view type, not of the gesture. The reference's
+    /// rotation gate simply returns without touching the trackball flag when
+    /// the view type is ortho — note the precise shape of that: the flag is not
+    /// written, it is not "forced off". The observable consequence is the same
+    /// one this expresses, that an ortho cell never takes the trackball path,
+    /// and it is the only part of a stateful flag's behaviour that a stateless
+    /// query can carry.
+    ///
+    /// This editor's orbit drag already redirects to a pan in an ortho cell, so
+    /// in practice the branch is belt-and-braces — which is the point: it means
+    /// the exclusion survives someone later deciding an ortho cell should orbit
+    /// after all.
+    bool trackballActive() const {
+        if (projKind == ProjKind.Ortho) return false;
+        return resolveTrackball(trackballOption);
+    }
+
+    /// Arm the trackball at a press, in WINDOW pixels.
+    ///
+    /// Window rather than pane-local because that is what an SDL event carries
+    /// and because this camera already knows its own rect (`x`/`y`/`width`/
+    /// `height` are the cell rect's single owner) — converting at the call site
+    /// would put the same subtraction in two places and let them drift.
+    void trackballDown(int mx, int my) {
+        tbPrev_  = ballVectorAt(mx, my);
+        tbArmed_ = true;
+    }
+
+    /// Compose one motion step, in WINDOW pixels.
+    ///
+    /// The lifted vectors are in the CAMERA frame, so the arc's axis is too and
+    /// has to be carried into world space before it can rotate the stored
+    /// orientation — that is the `right`/`up`/`back` combination below, which
+    /// is exactly the orientation matrix applied to the axis.
+    ///
+    /// **Sign.** The magnitudes above are read; the overall SENSE is not, and
+    /// this is the one place that matters. What the reference's instruction
+    /// stream fixes is the axis expression (`v1 x v0`) and that the angle it
+    /// pairs with it is negated; what it does NOT fix, without also pinning its
+    /// matrix-composition order and row/column convention, is which way that
+    /// lands. So the sense is pinned by a constraint that is available here
+    /// instead: the trackball and the two-axis orbit are alternative
+    /// implementations of the SAME drag, selected by a preference, so flipping
+    /// that preference must not invert the user's viewport. At a centre press
+    /// the trackball's limit therefore has to move the camera the way
+    /// `orbit(dx, dy)` does — drag right and the model follows right — and that
+    /// fixes the sign uniquely, on both axes at once. The unittests at the end
+    /// of this module assert exactly that agreement rather than a chosen sign.
+    void trackballMove(int mx, int my) {
+        if (!tbArmed_) return;
+        immutable Vec3 v1 = ballVectorAt(mx, my);
+        Vec3 axisCam; float angle;
+        // A degenerate step leaves the ANCHOR alone as well as the camera,
+        // which is the reference's own ordering. It is faithful rather than
+        // load-bearing — a degenerate step is exactly one where the two lifted
+        // vectors are equal, so advancing would write the same value — and
+        // `trackballStep`'s doc records the mutation that proved it.
+        if (!trackballStep(tbPrev_, v1, axisCam, angle)) return;
+        immutable Vec3 axisWorld = orient_.right() * axisCam.x
+                                 + orient_.up()    * axisCam.y
+                                 + orient_.back()  * axisCam.z;
+        orient_ = orient_.rotatedAbout(axisWorld, angle);
+        tbPrev_ = v1;
+    }
+
+    /// Disarm, so a motion event that arrives without a press does nothing.
+    ///
+    /// Deliberately NOT wired to button-up. Arming is idempotent — every press
+    /// re-anchors — and the motion path is gated on the drag mode, so there is
+    /// nothing for a release to clean up. Wiring it there would also be a trap:
+    /// the release handler runs AFTER the gesture's origin cell has been
+    /// cleared, so it would disarm whichever cell happens to be active rather
+    /// than the one that was dragged. `reset()` is the path that does clear it.
+    void trackballCancel() { tbArmed_ = false; }
+
+    /// Whether a trackball gesture is currently armed. Test seam only — no
+    /// product code branches on this.
+    bool trackballArmed() const { return tbArmed_; }
+
+    private Vec3 ballVectorAt(int mx, int my) const {
+        return trackballVector(cast(float)(mx - x), cast(float)(my - y),
+                               width * 0.5f, height * 0.5f,
+                               trackballRadius(width, height),
+                               trackballMouseSpeed());
     }
 
     void zoom(int dx) {
@@ -1066,4 +1177,463 @@ unittest { // viewportWith / toJsonWith carry a NON-ZERO bank the same way
            "toJsonWith must report the bank it rendered");
     assert(isClose(o1["roll"].floating, 0.4137f, 1e-5f),
            "/api/camera must publish the bank");
+}
+
+// ---------------------------------------------------------------------------
+// Trackball gesture (task 0573)
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    import trackball : setTrackballGlobal, resetTrackball, setTrackballMouseSpeed,
+                       trackballRadius;
+
+    // The two pane shapes every pane-dependent assertion runs on. The first is
+    // the corpus viewport, where the WIDTH is the larger half-extent; the
+    // second is a tall narrow pane where the HEIGHT is, and where the two
+    // half-extents differ by 2.27x. One pane shape cannot tell a pane-tracking
+    // radius from a constant, and a landscape-only pair cannot tell `max` from
+    // `min`.
+    private enum int kPaneWideW = 1098, kPaneWideH = 832;
+    private enum int kPaneTallW =   82, kPaneTallH = 186;
+
+    /// The angle a camera's view direction turned, in radians.
+    private float backTurn(Orientation a, Orientation b) {
+        import std.math : acos;
+        float c = dot(a.back(), b.back());
+        if (c >  1.0f) c =  1.0f;
+        if (c < -1.0f) c = -1.0f;
+        return acos(c);
+    }
+
+    /// A camera with the trackball switched on globally.
+    private View trackballCamera(int w, int h) {
+        setTrackballGlobal(true);
+        auto v = new View(0, 0, w, h);
+        assert(v.trackballActive(), "the fixture camera must run the trackball");
+        return v;
+    }
+
+    /// The same, but LEVEL — elevation and bank both zero.
+    ///
+    /// Worth its own helper because the angle chart is only a faithful readout
+    /// of this gesture at a level camera. The trackball rotates about an axis
+    /// fixed in the SCREEN, and at a tilted camera the screen's vertical is not
+    /// the world's, so a horizontal drag legitimately moves the chart's
+    /// elevation as well as its heading. That is the documented difference
+    /// between a trackball and a turntable, not a defect — the tests that want
+    /// to talk in azimuth/elevation/roll therefore start level, and the ones
+    /// that hold at ANY camera are stated as frame invariants instead.
+    private View levelTrackballCamera(int w, int h) {
+        auto v = trackballCamera(w, h);
+        v.setOrientation(Orientation.fromAngles(0.5f, 0.0f, 0.0f));
+        return v;
+    }
+}
+
+unittest { // a CENTRE press turns the camera the SAME WAY as the two-axis
+           // orbit it replaces — which is what pins the sign
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    immutable int cx = kPaneWideW / 2, cy = kPaneWideH / 2;
+
+    foreach (dx; [80, -80]) {
+        auto tb = levelTrackballCamera(kPaneWideW, kPaneWideH);
+        immutable float az0 = tb.azimuth;
+        tb.trackballDown(cx, cy);
+        tb.trackballMove(cx + dx, cy);
+
+        // The same drag through the gesture it replaces, from the same camera.
+        auto ob = new View(0, 0, kPaneWideW, kPaneWideH);
+        ob.setOrientation(Orientation.fromAngles(0.5f, 0.0f, 0.0f));
+        ob.orbit(dx, 0);
+
+        assert((tb.azimuth - az0) * (ob.azimuth - az0) > 0.0f,
+               "a centre press must turn the heading the SAME WAY as orbit(); "
+               ~ "an inverted sign here would flip every user's viewport the "
+               ~ "moment they switched the preference on");
+        assert(isClose(tb.elevation, 0.0f, 1e-4f, 1e-4f),
+               "from LEVEL, a horizontal centre drag is a pure heading change");
+        assert(isClose(tb.roll, 0.0f, 1e-4f, 1e-4f), "with no bank");
+    }
+
+    foreach (dy; [80, -80]) {
+        auto tb = levelTrackballCamera(kPaneWideW, kPaneWideH);
+        immutable float az0 = tb.azimuth;
+        tb.trackballDown(cx, cy);
+        tb.trackballMove(cx, cy + dy);
+
+        auto ob = new View(0, 0, kPaneWideW, kPaneWideH);
+        ob.setOrientation(Orientation.fromAngles(0.5f, 0.0f, 0.0f));
+        ob.orbit(0, dy);
+
+        assert((tb.elevation - 0.0f) * (ob.elevation - 0.0f) > 0.0f,
+               "a centre press must pitch the SAME WAY as orbit()");
+        assert(isClose(tb.azimuth, az0, 1e-4f, 1e-4f),
+               "from LEVEL, a vertical centre drag does not change the heading");
+        assert(isClose(tb.roll, 0.0f, 1e-4f, 1e-4f), "with no bank");
+    }
+}
+
+unittest { // the arc's AXIS is fixed in the screen — the invariant that holds
+           // at ANY camera, tilted or not
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    immutable int cx = kPaneWideW / 2, cy = kPaneWideH / 2;
+    immutable float r = trackballRadius(kPaneWideW, kPaneWideH);
+
+    // The default camera is TILTED (elevation 0.4), which is the point: these
+    // three statements are about the rotation, not about the chart, so they
+    // survive a camera the chart cannot describe cleanly.
+
+    // Horizontal centre drag: the axis is the camera's own UP, so `up` is a
+    // fixed vector of the rotation — invariant to the last bit.
+    {
+        auto v = trackballCamera(kPaneWideW, kPaneWideH);
+        immutable Vec3 up0 = v.orientation.up();
+        v.trackballDown(cx, cy);
+        v.trackballMove(cx + 90, cy);
+        immutable Vec3 up1 = v.orientation.up();
+        assert(abs(dot(up0, up1) - 1.0f) < 1e-6f,
+               "a horizontal centre drag rotates about SCREEN-UP, so screen-up "
+               ~ "does not move");
+        assert(abs(dot(v.orientation.back(), up0)) < 1e-6f,
+               "and the view direction stays perpendicular to it");
+    }
+
+    // Vertical centre drag: the axis is SCREEN-RIGHT, so `right` is invariant.
+    {
+        auto v = trackballCamera(kPaneWideW, kPaneWideH);
+        immutable Vec3 rt0 = v.orientation.right();
+        v.trackballDown(cx, cy);
+        v.trackballMove(cx, cy + 90);
+        assert(abs(dot(rt0, v.orientation.right()) - 1.0f) < 1e-6f,
+               "a vertical centre drag rotates about SCREEN-RIGHT");
+    }
+
+    // Outside press, tangential drag: the axis is the VIEW axis, so the camera
+    // keeps looking at exactly the same point and only spins. This is the
+    // sharpest statement of "outside the ball it banks" — and the two-axis
+    // orbit cannot do it at any pixel.
+    {
+        auto v = trackballCamera(kPaneWideW, kPaneWideH);
+        immutable Vec3 bk0 = v.orientation.back();
+        immutable Vec3 rt0 = v.orientation.right();
+        immutable int px = cx + cast(int)(2.0f * r);
+        v.trackballDown(px, cy);
+        v.trackballMove(px, cy + 200);
+        assert(abs(dot(bk0, v.orientation.back()) - 1.0f) < 1e-6f,
+               "an outside drag rotates about the VIEW axis: the camera does "
+               ~ "not change where it looks");
+        assert(dot(rt0, v.orientation.right()) < 0.999f,
+               "it only spins — and it really did spin");
+    }
+}
+
+unittest { // the centre RATE is speed/radius — NOT the two-axis orbit's 0.005
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    immutable int cx = kPaneWideW / 2, cy = kPaneWideH / 2;
+    immutable float r = trackballRadius(kPaneWideW, kPaneWideH);   // 521.55
+
+    auto tb = trackballCamera(kPaneWideW, kPaneWideH);
+    immutable Orientation before = tb.orientation;
+    tb.trackballDown(cx, cy);
+    tb.trackballMove(cx + 100, cy);
+    immutable float got = backTurn(before, tb.orientation);
+
+    // Closed form: a 100 px step from the centre subtends
+    // atan(100 / sqrt(r^2 - 100^2)) on the ball.
+    import std.math : atan;
+    immutable float want = atan(100.0f / sqrt(r * r - 10000.0f));
+    assert(isClose(got, want, 1e-3f), "the centre arc is atan(d / z0)");
+
+    // ...and that is 2.6x SLOWER than the drag it replaces. Reusing the
+    // two-axis orbit's flat 0.005 rad/px here is the single easiest way to
+    // port this wrong: it looks plausible and is wrong at every pane size but
+    // one.
+    immutable float twoAxis = 100 * 0.005f;      // 0.5 rad
+    assert(isClose(twoAxis / got, 2.585f, 1e-2f),
+           "the trackball's centre rate is ~2.6x slower than 0.005 rad/px");
+    assert(got < twoAxis * 0.5f, "and it is nowhere near it");
+}
+
+unittest { // the rate is PANE-DEPENDENT, on two sharply different pane shapes
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    float centreTurn(int w, int h, int dx) {
+        auto v = trackballCamera(w, h);
+        immutable Orientation before = v.orientation;
+        v.trackballDown(w / 2, h / 2);
+        v.trackballMove(w / 2 + dx, h / 2);
+        return backTurn(before, v.orientation);
+    }
+
+    import std.math : atan;
+    float wantTurn(int w, int h, int dx) {
+        immutable float r = trackballRadius(w, h);
+        return atan(dx / sqrt(r * r - cast(float)dx * dx));
+    }
+
+    // Landscape pane: the WIDTH is the larger half-extent.
+    immutable float wide = centreTurn(kPaneWideW, kPaneWideH, 10);
+    assert(isClose(wide, wantTurn(kPaneWideW, kPaneWideH, 10), 1e-3f),
+           "wide pane: the arc follows 0.95*w/2");
+
+    // Portrait pane: the HEIGHT is. This is the shape that separates a radius
+    // built on `max` from one built on `min` — they differ by 2.27x here.
+    immutable float tall = centreTurn(kPaneTallW, kPaneTallH, 10);
+    assert(isClose(tall, wantTurn(kPaneTallW, kPaneTallH, 10), 1e-3f),
+           "tall pane: the arc follows 0.95*h/2, not 0.95*w/2");
+
+    // The SAME pixel drag rotates ~5.9x further on the small pane. A rate that
+    // did not track the pane would give a ratio of exactly 1.
+    assert(tall / wide > 5.0f && tall / wide < 7.0f,
+           "the same drag must rotate much further on a smaller pane");
+
+    // And a radius built on the SMALLER half-extent would have given a
+    // materially different answer on the tall pane — stated so the assertion
+    // above cannot be satisfied by the wrong law.
+    immutable float rMin  = 0.95f * kPaneTallW / 2.0f;          // 38.95
+    immutable float wrong = atan(10.0f / sqrt(rMin * rMin - 100.0f));
+    assert(!isClose(tall, wrong, 5e-2f),
+           "a min(w,h) radius is out by more than 5% on this pane");
+}
+
+unittest { // the bank blends continuously — it is NOT gated on leaving the ball
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    immutable int cx = kPaneWideW / 2, cy = kPaneWideH / 2;
+    immutable float r = trackballRadius(kPaneWideW, kPaneWideH);
+
+    // From LEVEL, so the chart's `roll` is a faithful readout of the arc's
+    // view-axis content. SIGNED — see the sign block below.
+    float signedBankAt(float frac, int dy) {
+        auto v = levelTrackballCamera(kPaneWideW, kPaneWideH);
+        immutable int px = cx + cast(int)(frac * r);
+        v.trackballDown(px, cy);
+        v.trackballMove(px, cy + dy);
+        return v.roll;
+    }
+    float bankAt(float frac) { return abs(signedBankAt(frac, 40)); }
+
+    // THE BANK'S SIGN, which is not a free choice: the arc comes from ONE
+    // formula whose overall sense is already pinned at the centre (against the
+    // two-axis orbit), and the bank is the same formula continued outward, so
+    // the sign here is forced. Asserting it is what catches a camera-frame axis
+    // carried into world space through the wrong basis column — a mutation that
+    // leaves the orbit limits untouched and silently runs the bank backwards.
+    //
+    // The sense, in the hand: grab the ball on its right and push down, and the
+    // model turns clockwise on screen — the grabbed point follows the cursor,
+    // which is the same "the model follows you" the centre press has. On the
+    // chart that reads as a NEGATIVE bank.
+    assert(signedBankAt(0.5f,  40) < 0.0f, "press right, drag down -> bank -");
+    assert(signedBankAt(0.5f, -40) > 0.0f, "press right, drag up   -> bank +");
+    assert(signedBankAt(-0.5f, 40) > 0.0f, "press left,  drag down -> bank +");
+    // Mirroring the press and the drag together must return the same bank.
+    assert(isClose(signedBankAt(0.5f, 40), signedBankAt(-0.5f, -40), 1e-4f),
+           "the gesture is symmetric under mirroring both press and drag");
+
+    // Every one of these presses is INSIDE the circle, where the shipped
+    // description says the gesture "just orbits". It banks at all of them, and
+    // it banks more the further out the press is.
+    immutable float b25 = bankAt(0.25f);
+    immutable float b50 = bankAt(0.50f);
+    immutable float b90 = bankAt(0.90f);
+    assert(b25 > 1e-4f, "a press a quarter of the way out already banks");
+    assert(b50 > b25 && b90 > b50,
+           "and the bank grows monotonically with the press radius, with no "
+           ~ "cliff at the rim");
+    // The centre is the one place it is exactly zero.
+    assert(bankAt(0.0f) < 1e-6f, "only a dead-centre press is bank-free");
+    // The blend is roughly linear in the press radius (the closed form is
+    // exactly rho/r; `source/trackball.d` pins that to 1 %). Here it is enough
+    // to show the ratio reaches the camera rather than being flattened.
+    assert(isClose(b50 / b25, 2.0f, 5e-2f),
+           "twice the press radius is twice the bank");
+}
+
+unittest { // a degenerate step leaves the ANCHOR where it was
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    immutable int cx = kPaneWideW / 2, cy = kPaneWideH / 2;
+    immutable float r = trackballRadius(kPaneWideW, kPaneWideH);
+    immutable int px = cx + cast(int)(1.2f * r);   // outside the rim
+
+    // Press outside, wander straight OUTWARD along the ray, then drag
+    // tangentially. Every outward step lifts to the SAME rim vector — that is
+    // the hard rim clamp's signature, and a hyperbolic sheet would rotate here
+    // because its z keeps changing with the press radius.
+    auto a = trackballCamera(kPaneWideW, kPaneWideH);
+    a.trackballDown(px, cy);
+    immutable Orientation afterPress = a.orientation;
+    a.trackballMove(px + 100, cy);
+    a.trackballMove(px + 400, cy);
+    foreach (i; 0 .. 9)
+        assert(a.orientation.m[i] == afterPress.m[i],
+               "dragging straight outward beyond the rim must not move the "
+               ~ "camera by a single bit");
+    a.trackballMove(px + 400, cy + 150);
+
+    // The same press taken straight to the tangential position. The excursion
+    // must have left no trace at all. (This does NOT pin the reference's
+    // "do not advance the anchor" ordering — a degenerate step is one where the
+    // two lifted vectors are equal, so that ordering is unobservable; see
+    // `trackballStep`.)
+    auto b = trackballCamera(kPaneWideW, kPaneWideH);
+    b.trackballDown(px, cy);
+    b.trackballMove(px + 400, cy + 150);
+
+    foreach (i; 0 .. 9)
+        assert(abs(a.orientation.m[i] - b.orientation.m[i]) < 1e-6f,
+               "an outward excursion beyond the rim must leave no trace");
+    // ...and (a) is not vacuously equal to its own press state.
+    bool moved = false;
+    foreach (i; 0 .. 9)
+        if (abs(a.orientation.m[i] - afterPress.m[i]) > 1e-3f) moved = true;
+    assert(moved, "the tangential step must have actually rotated the camera");
+}
+
+unittest { // the ball is centred on the PANE, not on the window
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    // A cell parked away from the window origin — a Split/Quad layout's
+    // right-hand or bottom cell. Pressing at the CELL's centre must be the
+    // bank-free case; pressing at the window centre must not be.
+    setTrackballGlobal(true);
+    auto v = new View(640, 360, 800, 600);
+    v.setOrientation(Orientation.fromAngles(0.5f, 0.0f, 0.0f));
+    assert(v.trackballActive(), "fixture");
+
+    v.trackballDown(640 + 400, 360 + 300);      // the cell's centre
+    v.trackballMove(640 + 480, 360 + 300);
+    assert(isClose(v.roll, 0.0f, 1e-4f, 1e-4f),
+           "the cell centre must be the bank-free point, so the pane rect's "
+           ~ "origin has to be subtracted before the lift");
+
+    auto w = new View(640, 360, 800, 600);
+    w.setOrientation(Orientation.fromAngles(0.5f, 0.0f, 0.0f));
+    w.trackballDown(400, 300);                  // the WINDOW centre — far off-pane
+    w.trackballMove(480, 300);
+    assert(abs(w.roll) > 1e-3f,
+           "a press at the window centre is nowhere near the cell centre and "
+           ~ "must bank — otherwise the subtraction is not happening");
+}
+
+unittest { // the speed multiplier scales the rate AND shrinks the circle
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    immutable int cx = kPaneWideW / 2, cy = kPaneWideH / 2;
+    immutable float r = trackballRadius(kPaneWideW, kPaneWideH);
+
+    // Rate: at the centre, twice the speed is twice the arc (to first order).
+    float centreArc(float speed) {
+        setTrackballMouseSpeed(speed);
+        auto v = trackballCamera(kPaneWideW, kPaneWideH);
+        immutable Orientation before = v.orientation;
+        v.trackballDown(cx, cy);
+        v.trackballMove(cx + 5, cy);
+        return backTurn(before, v.orientation);
+    }
+    immutable float a1 = centreArc(1.0f);
+    immutable float a2 = centreArc(2.0f);
+    assert(isClose(a2 / a1, 2.0f, 5e-3f), "speed scales the rate");
+
+    // Circle: a press at 60 % of the radius is INSIDE at speed 1 (so the arc
+    // keeps a view-direction component) and ON THE RIM at speed 2 (so it is a
+    // pure spin and the view direction is invariant).
+    float viewMove(float speed) {
+        setTrackballMouseSpeed(speed);
+        auto v = trackballCamera(kPaneWideW, kPaneWideH);
+        immutable Vec3 bk0 = v.orientation.back();
+        immutable int px = cx + cast(int)(0.6f * r);
+        v.trackballDown(px, cy);
+        v.trackballMove(px, cy + 40);
+        return 1.0f - dot(bk0, v.orientation.back());
+    }
+    assert(viewMove(1.0f) > 1e-5f,
+           "at speed 1 a press at 0.6r is inside, so the view direction moves");
+    assert(viewMove(2.0f) < 1e-6f,
+           "at speed 2 the same pixel is on the rim: pure spin, view direction "
+           ~ "fixed — the multiplier shrank the circle, not just the rate");
+}
+
+unittest { // the option gates the gesture, and ortho is excluded outright
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    auto v = new View(0, 0, kPaneWideW, kPaneWideH);
+    assert(!v.trackballActive(), "shipped default is off");
+
+    v.trackballOption = TrackballOption.On;
+    assert(v.trackballActive(), "a per-cell On overrides the global");
+
+    // Ortho: excluded regardless of the option. The reference's rotation gate
+    // never writes its trackball flag for the ortho view type; this is the
+    // observable half of that.
+    v.projKind = ProjKind.Ortho;
+    assert(!v.trackballActive(), "an ortho cell never runs the trackball");
+    v.projKind = ProjKind.Perspective;
+    assert(v.trackballActive(), "and it comes back when the cell does");
+
+    // reset() returns the cell to deferring to the global.
+    v.reset();
+    assert(v.trackballOption == TrackballOption.Default,
+           "reset() must clear the per-cell override");
+    assert(!v.trackballActive(), "so a reset cell follows the (off) global");
+}
+
+unittest { // a motion event with no press does nothing at all
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    auto v = trackballCamera(kPaneWideW, kPaneWideH);
+    assert(!v.trackballArmed(), "a fresh camera is not armed");
+    immutable Orientation before = v.orientation;
+    v.trackballMove(100, 100);
+    foreach (i; 0 .. 9)
+        assert(v.orientation.m[i] == before.m[i],
+               "an unarmed move must not touch the camera");
+
+    v.trackballDown(200, 200);
+    assert(v.trackballArmed(), "the press arms it");
+    v.trackballCancel();
+    assert(!v.trackballArmed(), "and cancelling disarms it");
+    v.trackballMove(300, 300);
+    foreach (i; 0 .. 9)
+        assert(v.orientation.m[i] == before.m[i],
+               "a move after cancel must not touch the camera either");
+}
+
+unittest { // the composed rotation stays a clean rotation over a long gesture
+    scope(exit) resetTrackball();
+    resetTrackball();
+
+    // 400 motion events around a circle well inside the ball — the case where
+    // an incremental composition would accumulate drift if the write funnel's
+    // re-normalisation were not doing its job.
+    import std.math : sin, cos;
+    auto v = trackballCamera(kPaneWideW, kPaneWideH);
+    immutable int cx = kPaneWideW / 2, cy = kPaneWideH / 2;
+    v.trackballDown(cx + 200, cy);
+    foreach (i; 1 .. 401) {
+        immutable float t = i * 0.05f;
+        v.trackballMove(cx + cast(int)(200 * cos(t)), cy + cast(int)(200 * sin(t)));
+    }
+    assert(v.orientation.orthonormalityDefect() < 1e-5f,
+           "400 composed steps must leave an orthonormal camera");
+    // ...and it actually went somewhere, so the assertion is not vacuous.
+    auto fresh = new View(0, 0, kPaneWideW, kPaneWideH);
+    bool moved = false;
+    foreach (i; 0 .. 9)
+        if (abs(v.orientation.m[i] - fresh.orientation.m[i]) > 1e-3f) moved = true;
+    assert(moved, "the sweep must have actually rotated the camera");
 }

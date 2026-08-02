@@ -36,6 +36,8 @@ import display_state  : DisplayStyle, WireOverlay;
 import coord_rounding : CoordinateRounding, kCoordRoundingDefault,
                         kFixedIncrementDefault, coordRoundingName,
                         parseCoordRounding;
+import trackball      : kTrackballDefault, kTrackballSpeedDefault,
+                        clampTrackballSpeed;
 
 // ---------------------------------------------------------------------------
 // Schema
@@ -104,6 +106,27 @@ struct Prefs {
     /// The increment (world units) the two Fixed arms of `coordRounding`
     /// read. Ignored by the other three.
     float coordRoundingFixedIncrement = kFixedIncrementDefault;
+
+    /// Trackball navigation (task 0573): whether the orbit drag runs the
+    /// trackball (orbit AND bank, chosen by where the press lands) instead of
+    /// the two-axis orbit, plus the override that makes every viewport read
+    /// this value regardless of its own setting.
+    ///
+    /// NOT a schema bump, for the same reason `coordRounding` was not: a file
+    /// without these keys reads back at the defaults, and the defaults are the
+    /// shipped behaviour. The PER-VIEWPORT override is deliberately absent from
+    /// this struct — it is camera state, and camera state is runtime-only and
+    /// reset on startup (see `View.reset`).
+    bool trackball      = kTrackballDefault;
+    bool trackballGlobalOverride = false;
+
+    /// The trackball speed multipliers. Two, because the reference keeps a
+    /// separate value for a tablet and picks between them by querying the input
+    /// device; this editor has no tablet path, so the second one round-trips
+    /// and is never selected. Storing it anyway means a profile written by a
+    /// future tablet arm is not silently dropped on the next save.
+    float trackballSpeed       = kTrackballSpeedDefault;
+    float trackballTabletSpeed = kTrackballSpeedDefault;
 
     /// Task 0559: per-viewport-cell display state — the FIRST per-cell state
     /// this app persists at all. Everything else a cell owns (camera,
@@ -331,6 +354,30 @@ Prefs loadPrefs(string dir) {
             // to round to; refuse it here rather than let it reach the law.
             if (v > 0) p.coordRoundingFixedIncrement = v;
         }
+
+        // Trackball navigation (task 0573).
+        if (auto tp = "trackball" in doc)
+            if (tp.type == JSONType.true_ || tp.type == JSONType.false_)
+                p.trackball = (tp.type == JSONType.true_);
+        if (auto tp = "trackballGlobalOverride" in doc)
+            if (tp.type == JSONType.true_ || tp.type == JSONType.false_)
+                p.trackballGlobalOverride = (tp.type == JSONType.true_);
+
+        // Both multipliers go through the SAME clamp the setter uses, so a
+        // hand-edited file cannot put a value into the camera's rotation that
+        // the command would have refused.
+        float readNumber(string key, float def) {
+            auto np = key in doc;
+            if (np is null) return def;
+            float v = float.nan;
+            if      (np.type == JSONType.float_)   v = cast(float) np.floating;
+            else if (np.type == JSONType.integer)  v = cast(float) np.integer;
+            else if (np.type == JSONType.uinteger) v = cast(float) np.uinteger;
+            else return def;
+            return clampTrackballSpeed(v);
+        }
+        p.trackballSpeed       = readNumber("trackballSpeed",       p.trackballSpeed);
+        p.trackballTabletSpeed = readNumber("trackballTabletSpeed", p.trackballTabletSpeed);
     } catch (JSONException e) {
         logWarn("prefs", format("prefs.json partially malformed, using what parsed: %s", e.msg));
     }
@@ -377,6 +424,10 @@ void savePrefs(ref const Prefs p, string dir) {
     doc["coordRounding"] = JSONValue(coordRoundingName(p.coordRounding));
     doc["coordRoundingFixedIncrement"] =
         JSONValue(p.coordRoundingFixedIncrement);
+    doc["trackball"]            = JSONValue(p.trackball);
+    doc["trackballGlobalOverride"]       = JSONValue(p.trackballGlobalOverride);
+    doc["trackballSpeed"]       = JSONValue(p.trackballSpeed);
+    doc["trackballTabletSpeed"] = JSONValue(p.trackballTabletSpeed);
 
     // Task 0559: per-cell display state. Written unconditionally for all four
     // cells, including cells the current layout does not show — a cell's

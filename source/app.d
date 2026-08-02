@@ -220,6 +220,28 @@ import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.snap.mode        : SnapModeCommand;
 import commands.prefs.coord_rounding : CoordRoundingCommand;
+import commands.prefs.trackball : TrackballPrefCommand;
+
+/// Render one scalar argstring positional as text.
+///
+/// The argstring parser types its positionals: `1.0` becomes a JSON number and
+/// `true` a JSON bool, so a command whose argument is "a value, whatever kind"
+/// cannot read `.str` and hope. `%.9g` rather than `%g` on the float lane so a
+/// value the user typed survives the trip in full precision — `%g`'s six
+/// significant digits would quietly round a speed multiplier.
+private string scalarArgToString(JSONValue v) {
+    import std.format : format;
+    import std.conv   : to;
+    switch (v.type) {
+        case JSONType.string:   return v.str;
+        case JSONType.float_:   return format("%.9g", v.floating);
+        case JSONType.integer:  return to!string(v.integer);
+        case JSONType.uinteger: return to!string(v.uinteger);
+        case JSONType.true_:    return "true";
+        case JSONType.false_:   return "false";
+        default:                return "";
+    }
+}
 import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
 // AI Modeling Copilot findings panel (task 0402): the whole feature —
 // panel, overlay, and copilot.* commands — is version(WithAI)-only. The
@@ -1124,6 +1146,16 @@ void main(string[] args) {
         setCoordRoundingFixedIncrement(g_prefs.coordRoundingFixedIncrement);
     }
 
+    // Same, for the trackball navigation setting (task 0573).
+    {
+        import trackball : setTrackballGlobal, setTrackballGlobalOverride,
+                           setTrackballMouseSpeed, setTrackballTabletSpeed;
+        setTrackballGlobal(g_prefs.trackball);
+        setTrackballGlobalOverride(g_prefs.trackballGlobalOverride);
+        setTrackballMouseSpeed(g_prefs.trackballSpeed);
+        setTrackballTabletSpeed(g_prefs.trackballTabletSpeed);
+    }
+
     bool playbackMode = playbackFile.length > 0;
 
     // Prefer the SDL2 bundled in the .app (self-contained release); fall back
@@ -1380,6 +1412,14 @@ void main(string[] args) {
             import coord_rounding : coordRounding, coordRoundingFixedIncrement;
             g_prefs.coordRounding               = coordRounding();
             g_prefs.coordRoundingFixedIncrement = coordRoundingFixedIncrement();
+        }
+        {
+            import trackball : trackballGlobal, trackballGlobalOverride,
+                               trackballMouseSpeed, trackballTabletSpeed;
+            g_prefs.trackball            = trackballGlobal();
+            g_prefs.trackballGlobalOverride       = trackballGlobalOverride();
+            g_prefs.trackballSpeed       = trackballMouseSpeed();
+            g_prefs.trackballTabletSpeed = trackballTabletSpeed();
         }
         try savePrefs();
         catch (Exception e) logWarn("prefs", "could not write prefs.json: " ~ e.msg);
@@ -5013,6 +5053,24 @@ void main(string[] args) {
                             crc.setModeName(pos[0].str);
                     }
                 }
+            } else if (auto tbp = cast(TrackballPrefCommand)cmd) {
+                // pref.trackball <global|override|viewport|speed|tabletSpeed> <value>
+                //
+                // The VALUE is stringified from whatever scalar the argstring
+                // parser produced, not read as a string only: `speed 1.0`
+                // arrives as a JSON number and `global true` as a JSON bool, so
+                // a string-only read silently dropped both and the command then
+                // reported "value required" for an argument that was right
+                // there. The command owns the parsing of the resulting text.
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            tbp.setSubject(pos[0].str);
+                        if (pos.length >= 2)
+                            tbp.setValue(scalarArgToString(pos[1]));
+                    }
+                }
             } else if (auto utp = cast(UiToolPropertiesCommand)cmd) {
                 // ui.toolProperties <show|hide> (test-only).
                 if (auto pp = "_positional" in pj) {
@@ -6751,6 +6809,17 @@ void main(string[] args) {
             lastMouseX = btn.x;
             lastMouseY = btn.y;
 
+            // Trackball arming (task 0573). The trackball's rotation depends on
+            // WHERE the press landed in the pane, not only on how far the
+            // cursor has since travelled, so the absolute press pixel has to be
+            // captured here on the DOWN — the motion path only ever sees a
+            // delta. Armed only when the gesture would actually run it, which
+            // is off by default: a user who has not switched the trackball on
+            // reaches exactly the code they reached before.
+            if (dragMode == DragMode.Orbit && !vpm.originIsOrtho()
+                && vpm.originCamera().trackballActive())
+                vpm.originCamera().trackballDown(btn.x, btn.y);
+
             // Pick immediately on press for select clicks. A stationary
             // click (button pressed and released with no intervening motion
             // event) otherwise relies on a render frame landing during the
@@ -7169,7 +7238,19 @@ void main(string[] args) {
         // `indCenter` on (opt-in override) owns itself, so it zooms/pans
         // independently exactly as before.
         int originId = vpm.dragOriginId >= 0 ? vpm.dragOriginId : vpm.activeId;
-        if      (dragMode == DragMode.Orbit && !vpm.originIsOrtho()) vpm.originCamera().orbit(dx, dy);
+        if      (dragMode == DragMode.Orbit && !vpm.originIsOrtho()) {
+            // Two implementations of one drag, chosen by a preference. The
+            // trackball reads the ABSOLUTE cursor (its arc is the angle between
+            // where the press and the cursor sit on a virtual ball, so the same
+            // delta rotates differently depending on where in the pane it
+            // happens); the two-axis orbit reads the delta. With the option off
+            // — the shipped default — this is the identical `orbit(dx, dy)`
+            // call this line has always made, reached past one bool read.
+            if (vpm.originCamera().trackballActive())
+                vpm.originCamera().trackballMove(mot.x, mot.y);
+            else
+                vpm.originCamera().orbit(dx, dy);
+        }
         // Bank writes the ORIGIN cell's own camera, mirroring orbit exactly
         // (orbit does not redirect through a rotate-owner either). Whatever
         // coupling orbit grows, bank inherits by construction.

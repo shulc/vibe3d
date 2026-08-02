@@ -1135,6 +1135,12 @@ void registerCommands(EditorApp app) {
         import commands.prefs.coord_rounding : CoordRoundingCommand;
         reg.commandFactories["pref.coordRounding"] = () => cast(Command)
             new CoordRoundingCommand(&mesh(), cameraView, editMode);
+        // Trackball navigation (task 0573) — a viewport-navigation setting, so
+        // its `viewport` subject writes THIS factory's camera, which is the
+        // active cell's (`cameraView`), resolved at fire time.
+        import commands.prefs.trackball : TrackballPrefCommand;
+        reg.commandFactories["pref.trackball"] = () => cast(Command)
+            new TrackballPrefCommand(&mesh(), cameraView, editMode);
     }
     {
         reg.commandFactories["path.define"] = () => cast(Command)
