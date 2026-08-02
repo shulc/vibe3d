@@ -3778,18 +3778,29 @@ unittest {
 // is never farther from the cursor than the midpoint, and therefore that the
 // edge gather covers everything the old centre gather did.
 //
-// It does not. Our on-edge candidate is a WORLD-space lerp at the SCREEN-space
-// closest parameter, and under perspective those are different parameters — see
-// THE EDGE LEG in `snapCursor`. On a strongly foreshortened edge the elected
-// point can be tens of pixels from the cursor while the midpoint is on it.
+// It does not. Our on-edge candidate is the 3D CLOSEST APPROACH between the
+// world segment and the cursor's eye ray, CLAMPED to the segment — see THE EDGE
+// LEG in `snapCursor`. That point is not the one nearest the cursor in pixels,
+// and the two part company whenever the edge's ends sit at different depths. At
+// a clamp they part company entirely: on the rig below the election clamps to
+// the near endpoint at 21.5 px while the midpoint sits at 7.8 px.
+//
+// The ARRANGEMENT this block needs therefore has to come from depth, not from
+// parking the cursor on the midpoint. Under the elected-in-3D law a point on
+// the cursor's own pixel lies on the cursor's eye ray at zero perpendicular
+// distance, so it is always exactly what gets elected — "elected point far,
+// midpoint under the cursor" is unreachable for EVERY edge. The rig note inside
+// the block says the same thing at greater length; read it before touching the
+// fixture.
 //
 // What survives, and what this block pins, is the rule the model is made of:
 // the centre rides its ELEMENT's election, so a range that cannot reach the
-// edge cannot reach that edge's centre either — even with the cursor sitting on
-// the centre's own pixel. Under the old model, where a centre carried a gather
-// of its own, that cursor snapped. The rule is stated as reachability rather
-// than as a distance inequality on purpose: it stays true if the interpolation
-// is ever made perspective-correct, and the inequality would not.
+// edge cannot reach that edge's centre either — even with the cursor sitting
+// comfortably inside the centre's own acceptance. Under the old model, where a
+// centre carried a gather of its own, that cursor snapped. The rule is stated
+// as reachability rather than as a distance inequality on purpose: it holds
+// under ANY on-edge election law, including both the laws this file has now
+// shipped, where the inequality has to be re-derived for each.
 // ---------------------------------------------------------------------------
 unittest {
     import math     : lookAt, perspectiveMatrix;
@@ -3891,10 +3902,11 @@ unittest {
     SnapResult c10 = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
     assert(!c10.snapped && !c10.highlighted
         && c10.targetType == SnapType.None && c10.targetIndex == -1,
-        "a centre is reachable exactly when its element is: the cursor is ON "
-        ~ "the midpoint's pixel and the centre must STILL be unreachable, "
-        ~ "because the range does not reach the edge that would have to be "
-        ~ "elected first. Snapping here means a centre has a gather of its own "
+        "a centre is reachable exactly when its element is: the midpoint sits "
+        ~ "7.8 px from the cursor, well inside this 10 px range, and the "
+        ~ "centre must STILL be unreachable — because the range does not reach "
+        ~ "the ELECTED on-edge point, 21.5 px out, which is what would have to "
+        ~ "win first. Snapping here means a centre has a gather of its own "
         ~ "again — which is the old model, and the one the reference cannot "
         ~ "express");
 
@@ -3946,12 +3958,15 @@ unittest {
 // drifted past the midpoint.
 //
 // "Ordinary" is doing work in that sentence and this file no longer pretends
-// otherwise: our elected on-edge point is a WORLD-space lerp at the SCREEN-space
-// parameter, which under strong foreshortening is not the nearest point of the
-// segment (see THE EDGE LEG in `snapCursor`). There the veto can fire with the
-// edge candidate ranking WORSE than the vertex. The behaviour is still the
-// measured one — the veto reads the midpoint, not the edge — but do not lean on
-// "the edge is always nearer" as if it were a theorem about our numbers.
+// otherwise: our elected on-edge point is the 3D closest approach between the
+// world segment and the cursor's eye ray, clamped to the segment (see THE EDGE
+// LEG in `snapCursor`), and that is NOT in general the nearest point of the
+// projected segment. Where the two ends differ sharply in depth — and always at
+// a clamp — the elected point can rank many pixels worse than the segment's
+// screen-nearest point, so the veto can fire with the edge candidate ranking
+// WORSE than the vertex. The behaviour is still the measured one — the veto
+// reads the MIDPOINT, not the elected point — but do not lean on "the edge is
+// always nearer" as if it were a theorem about our numbers.
 // ---------------------------------------------------------------------------
 unittest {
     import math     : lookAt, perspectiveMatrix;
