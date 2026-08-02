@@ -5431,17 +5431,18 @@ void main(string[] args) {
                     switch (sval.strip.toLower) {
                         case "wireframe": tv.display.active.style = DisplayStyle.Wireframe; break;
                         case "shaded":    tv.display.active.style = DisplayStyle.Shaded;    break;
-                        case "solid":
-                            throw new Exception(
-                                "viewport.displayStyle: 'solid' is declared in "
-                                ~ "the style set but no pass consumes it yet — "
-                                ~ "an unlit surface needs a shader uniform that "
-                                ~ "does not exist. Refusing rather than "
-                                ~ "rendering 'shaded' under a different name.");
+                        // Task 0589: 'solid' used to be refused here, and the
+                        // refusal said exactly what was missing — "an unlit
+                        // surface needs a shader uniform that does not exist".
+                        // That uniform now exists (`u_lit` in shader.d) and the
+                        // face pass reads `DrawPlan.facesLit`, so the value is
+                        // consumed and the refusal would now be the lie. The
+                        // rest of the switch keeps refusing by name.
+                        case "solid":     tv.display.active.style = DisplayStyle.Solid;     break;
                         default:
                             throw new Exception(
-                                "viewport.displayStyle: expected 'wireframe' or "
-                                ~ "'shaded', got '" ~ sval ~ "'");
+                                "viewport.displayStyle: expected 'wireframe', "
+                                ~ "'solid' or 'shaded', got '" ~ sval ~ "'");
                     }
                 } else if (id == "viewport.wireOverlay") {
                     switch (sval.strip.toLower) {

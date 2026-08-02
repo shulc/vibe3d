@@ -692,10 +692,10 @@ void drawViewportPropsPanel(EditorApp app) {
             import display_state : DisplayStyle, WireOverlay;
             import std.format : format;
 
-            static immutable string[2] styleLabels = ["Shaded", "Wireframe"];
-            static immutable string[2] styleIds    = ["shaded", "wireframe"];
-            static immutable DisplayStyle[2] styleVals =
-                [DisplayStyle.Shaded, DisplayStyle.Wireframe];
+            static immutable string[3] styleLabels = ["Shaded", "Solid", "Wireframe"];
+            static immutable string[3] styleIds    = ["shaded", "solid", "wireframe"];
+            static immutable DisplayStyle[3] styleVals =
+                [DisplayStyle.Shaded, DisplayStyle.Solid, DisplayStyle.Wireframe];
 
             int si = 0;
             foreach (i, sv; styleVals) if (sv == v.display.active.style) si = cast(int)i;
@@ -2119,7 +2119,9 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 litShader.useProgram(bgModel, vp);
                 litShader.setSurfaces(lyr.mesh.surfaces);
                 litShader.setDim(backdropPlan.dim);
+                litShader.setLit(backdropPlan.facesLit);
                 bg.gpu.drawFaces(litShader);
+                litShader.setLit(true);
                 litShader.setDim(1.0f);
             }
 
@@ -2167,15 +2169,24 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         setItemSnapFrames(itemFrames);
     }
 
-    // ---- Faces (Blinn-Phong) ----
+    // ---- Faces (Blinn-Phong, or a flat fill) ----
     // Gated on the plan's SHADING group. `drawFaces == false` means no face
     // pass AT ALL — not a depth-only one: a lines-only style has to be
     // see-through, so back-side edges stay visible.
+    //
+    // `facesLit == false` is the Solid style (task 0589): the SAME face pass,
+    // the same geometry, the same material colours, the same highlight
+    // branches — only the lighting term is gone. It is deliberately not a
+    // separate pass or a separate program: "Solid" is Shaded minus shading,
+    // and every OTHER thing the face pass does (hover tint, selection
+    // highlight, per-surface base colour) has to keep working under it. A
+    // second draw path would be where those quietly diverge.
     {
         auto zMesh = g_perf.scope_(Cat.drawMesh);
         if (activePlan.drawFaces) {
             litShader.useProgram(meshModel, vp);
             litShader.setSurfaces(mesh.surfaces);
+            litShader.setLit(activePlan.facesLit);
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
                               && hoveredFace >= 0;
@@ -2186,6 +2197,9 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             } else {
                 gpu.drawFaces(litShader);
             }
+            // Restore, same discipline as the backdrop pass's setDim: the
+            // program is shared with every preview/gizmo draw downstream.
+            litShader.setLit(true);
         }
     }
 

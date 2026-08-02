@@ -26,6 +26,14 @@
 //          the passes that ran.
 // Flow E — the "--test renders only the active cell" trap is REPORTED by the
 //          endpoints rather than left as a comment for a test to trip over.
+//
+// Task 0589 adds the third surface style:
+// Flow L — Solid draws a fill and does NOT shade it: uniform across faces, at
+//          the material's own colour, and distinct from BOTH neighbours on the
+//          axis (Shaded varies; Wireframe has no fill).
+// Flow M — the law behind Flow L, stated as an invariance: turn the view a
+//          quarter turn about the world up axis and a Solid render must not
+//          move a single pixel, while the same turn moves a shaded one.
 module test_viewport_display;
 
 import std.stdio     : writeln, writefln;
@@ -35,6 +43,7 @@ import std.exception : enforce;
 import std.conv      : to;
 import std.format    : format;
 import std.math      : abs;
+import std.algorithm : maxElement;
 import core.thread   : Thread;
 import core.time     : msecs;
 
@@ -544,6 +553,105 @@ void restoreDisplayDefaults() {
     Thread.sleep(250.msecs);
 }
 
+// --------------------------------------------------------------------------
+// Locating the model's FILL without knowing where the model is (task 0589).
+//
+// Flows L and M both need the set of samples that a FACE covered, and they
+// must not need to know where the cube is on screen or how big it is — Flow G
+// records what happened the last time a flow assumed that.
+//
+// The construction: faces are drawn LAST and OPAQUE, so a pixel a face covered
+// is a pixel that DIFFERS between the shaded image and the lines-only image,
+// and a pixel a face did not cover is byte-identical between them. That single
+// criterion is self-locating and it does something else worth having for free:
+//
+//   * wireframe-overlay lines are EXCLUDED automatically, because the overlay
+//     draws in both styles at the same place in the same colour, so those
+//     pixels are identical and never enter the set;
+//   * grid and background pixels outside the model are excluded for the same
+//     reason;
+//   * so the set is exactly "face fill", which is the thing under test.
+//
+// Then an EROSION on the lattice (keep a sample only if its four lattice
+// neighbours are also fill) puts every surviving sample at least one stride
+// away from a silhouette. That is what makes Flow M's zero-tolerance claim
+// safe: the two camera positions it compares are congruent only to float
+// precision, so the silhouette may land a hair differently, and no assertion
+// should depend on which side of a boundary a rounding went.
+// --------------------------------------------------------------------------
+
+enum int kFillNX = 60, kFillNY = 50, kFillStride = 6;
+
+/// The regular lattice, centred on the cell. REGULAR is load-bearing: the
+/// erosion below is index arithmetic over it.
+string fillLattice(int W, int H) {
+    immutable int x0 = W / 2 - kFillNX * kFillStride / 2;
+    immutable int y0 = H / 2 - kFillNY * kFillStride / 2;
+    string pts;
+    foreach (j; 0 .. kFillNY)
+        foreach (i; 0 .. kFillNX)
+            pts ~= format("%d,%d;", x0 + i * kFillStride, y0 + j * kFillStride);
+    return pts;
+}
+
+/// Indices into a `fillLattice` probe that a face covered, eroded by one
+/// lattice step. `shaded` and `wire` are probes of the SAME lattice in the
+/// shaded and lines-only styles.
+size_t[] erodedFillIndices(in Px[] shaded, in Px[] wire) {
+    enforce(shaded.length == kFillNX * kFillNY && wire.length == shaded.length,
+        format("the probe returned %d/%d points for a %d-point lattice — the "
+               ~ "index arithmetic below is only valid on the full grid",
+               shaded.length, wire.length, kFillNX * kFillNY));
+    auto isFill = new bool[](shaded.length);
+    foreach (i; 0 .. shaded.length)
+        isFill[i] = shaded[i].valid && wire[i].valid
+                 && !samePixel(shaded[i], wire[i]);
+
+    size_t[] keep;
+    foreach (j; 1 .. kFillNY - 1)
+        foreach (i; 1 .. kFillNX - 1) {
+            immutable size_t k = j * kFillNX + i;
+            if (isFill[k] && isFill[k - 1] && isFill[k + 1]
+                && isFill[k - kFillNX] && isFill[k + kFillNX])
+                keep ~= k;
+        }
+    return keep;
+}
+
+/// A camera that frames the stock cube with its SIDE faces dominant (a
+/// near-overhead view would fill the lattice with the one face that a
+/// rotation about the world up axis maps to itself, which would weaken
+/// Flow M's control arm without failing it).
+enum double kSolidAz = 0.6, kSolidEl = 0.35, kSolidDist = 6.0;
+
+void setSolidCamera(double azimuth) {
+    httpPost("/api/camera", format(
+        `{"azimuth":%.10f,"elevation":%.10f,"distance":%.10f}`,
+        azimuth, kSolidEl, kSolidDist));
+    Thread.sleep(400.msecs);
+}
+
+void setStyle(string s) {
+    postCommand("viewport.displayStyle", s);
+    Thread.sleep(400.msecs);
+}
+
+/// Largest per-channel spread over a set of samples — 0 means every sample is
+/// literally the same colour.
+int channelSpread(in Px[] img, in size_t[] idx) {
+    int worst = 0;
+    foreach (c; 0 .. 3) {
+        int lo = 255, hi = 0;
+        foreach (i; idx) {
+            immutable int v = (c == 0) ? img[i].r : (c == 1) ? img[i].g : img[i].b;
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+        }
+        if (hi - lo > worst) worst = hi - lo;
+    }
+    return worst;
+}
+
 // POST a command in ARGSTRING form ("id arg arg ..."). The endpoint routes a
 // body that does not start with '{' through its argstring parser, which is
 // what fills `_positional` — the JSON form with a bare string `params` does
@@ -977,9 +1085,23 @@ bool testFlowK() {
     resetApp();
     scope(exit) restoreDisplayDefaults();
 
-    postCommandExpectingRefusal("viewport.displayStyle", `"solid"`);
+    // TASK 0589 MOVED ONE VALUE ACROSS THIS LINE. `"solid"` was refused here,
+    // with a message naming what was missing ("an unlit surface needs a shader
+    // uniform that does not exist"). That uniform exists now and the face pass
+    // reads `DrawPlan.facesLit`, so the refusal would itself be the lie this
+    // flow exists to prevent — a viewport that CAN draw an unshaded fill while
+    // the command insists it cannot. What it actually draws is Flow L's and
+    // Flow M's job; all this flow claims is that it is no longer refused.
+    postCommand("viewport.displayStyle", "solid");
+    enforce(displayDump()["cells"].array[0]["state"]["active"]["style"].str == "Solid",
+        "'solid' is accepted now, so it must also STICK — a command that "
+        ~ "reports ok and leaves the state alone is the same silent lie in a "
+        ~ "different shape");
+    postCommand("viewport.displayStyle", "shaded");
+
     postCommandExpectingRefusal("viewport.wireOverlay",  `"colored"`);
-    writeln("    K1 PASS: the unlit style and the per-item overlay colour are refused");
+    writeln("    K1 PASS: the per-item overlay colour is still refused; the "
+            ~ "unshaded fill is accepted and sticks");
 
     postCommandExpectingRefusal("viewport.displayStyle", `"gouraud"`);
     postCommandExpectingRefusal("viewport.wireOverlay",  `"dotted"`);
@@ -997,6 +1119,220 @@ bool testFlowK() {
          && jsonNum(after, "state", "active", "wireAlpha") == 1.0,
         "a refused command must not partially apply: " ~ after["state"].toString);
     writeln("    K4 PASS: refusals leave the display state untouched");
+
+    return true;
+}
+
+// --------------------------------------------------------------------------
+// Flow L — the unshaded fill. What Solid draws, and what it does NOT.
+//
+// Solid renders the geometry WITHOUT shading. It is a third surface style, not
+// Shaded under another name and not Wireframe with a fill bolted on, and the
+// two things it is most likely to be confused with are exactly the two other
+// values of the axis — so both are measured here against the same samples.
+//
+//   * NOT Shaded: the fill is UNIFORM. Every face of the stock cube carries
+//     the same surface, and with no lighting term every one of them lands on
+//     the same colour, whichever way it faces. A shaded render of the same
+//     cube cannot do that — the visible faces have different normals, so they
+//     have different colours.
+//   * NOT Wireframe: faces are drawn at all.
+//
+// The uniform value is checked against the surface base colour rather than
+// just "some constant", which is the difference between "no shading" and
+// "shading with a constant light". `LitShader`'s slot 0 is seeded 0.8 grey for
+// meshes that carry no surfaces (every procedural primitive), and 0.8 * 255 is
+// 204 — so an unshaded fill of that cube is 204 exactly, with nothing between
+// the material colour and the framebuffer.
+// --------------------------------------------------------------------------
+
+enum int kFillLevel = 204;   // round(0.8 * 255) — LitShader's default slot-0 grey
+
+bool testFlowL() {
+    writeln("  [L] Solid: an unshaded fill, uniform across faces...");
+    resetApp();
+    scope(exit) restoreDisplayDefaults();
+
+    auto geom = probe(0, "");
+    immutable int W = geom.w, H = geom.h;
+    enforce(W > 64 && H > 64, "implausible cell size");
+    setSolidCamera(kSolidAz);
+
+    immutable string pts = fillLattice(W, H);
+
+    setStyle("shaded");    auto shaded = probe(0, pts).points;
+    setStyle("wireframe"); auto wire   = probe(0, pts).points;
+    setStyle("solid");     auto solid  = probe(0, pts).points;
+
+    // --- L1: the plan. Faces on, lighting off, overlay untouched. ---
+    auto pa = displayDump()["cells"].array[0];
+    enforce(pa["state"]["active"]["style"].str == "Solid",
+        "the cell did not end up in the unshaded-fill style");
+    enforce(jsonBool(pa["plan"]["active"], "drawFaces"),
+        "Solid draws a filled surface — it is not a lines-only style");
+    enforce(!jsonBool(pa["plan"]["active"], "facesLit"),
+        "Solid renders the geometry WITHOUT shading");
+    enforce(jsonBool(pa["plan"]["active"], "drawWire"),
+        "the surface style must not disturb the overlay axis");
+    writeln("    L1 PASS: plan = faces on, lighting off, overlay untouched");
+
+    // --- L2: find the fill, and refuse to conclude anything from too little ---
+    auto idx = erodedFillIndices(shaded, wire);
+    enforce(idx.length >= 150,
+        format("only %d eroded face-fill samples — the model is not framed "
+               ~ "where this flow expects it and no conclusion below would "
+               ~ "mean anything", idx.length));
+    writefln("    L2 PASS: %d eroded face-fill samples located", idx.length);
+
+    // --- L3: it is not Wireframe — faces are actually drawn ---
+    //
+    // THIS RUNS BEFORE THE UNSHADED CHECK ON PURPOSE. Both orders fail when
+    // the face pass is dropped, but only this one says why: with no fill, the
+    // samples show grid and background and the uniformity check below reports
+    // "something is still shading it", which is a true statement about the
+    // numbers and a wrong diagnosis. Establish that there IS a fill, then ask
+    // whether it is shaded.
+    size_t drewOver = 0;
+    foreach (i; idx) if (!samePixel(solid[i], wire[i])) drewOver++;
+    enforce(drewOver >= idx.length * 95 / 100,
+        format("only %d of %d fill samples differ from the lines-only image — "
+               ~ "the face pass is not running under Solid, which makes it "
+               ~ "Wireframe with a different name", drewOver, idx.length));
+    writefln("    L3 PASS: %d/%d samples show a drawn face (vs lines-only)",
+             drewOver, idx.length);
+
+    // --- L4: THE DISCRIMINATOR. Uniform, and equal to the material colour. ---
+    immutable int solidSpread  = channelSpread(solid,  idx);
+    immutable int shadedSpread = channelSpread(shaded, idx);
+    enforce(solidSpread <= 2,
+        format("the unshaded fill varies by %d levels across the faces of a "
+               ~ "one-surface cube — something is still shading it (a shaded "
+               ~ "render of these same samples varies by %d)",
+               solidSpread, shadedSpread));
+    enforce(shadedSpread >= 20,
+        format("the SHADED control varies by only %d levels — this flow cannot "
+               ~ "tell an unshaded fill from a shaded surface under this "
+               ~ "camera, so L4's pass would mean nothing", shadedSpread));
+
+    int offBase = 0;
+    foreach (i; idx)
+        if (abs(solid[i].r - kFillLevel) > 2 || abs(solid[i].g - kFillLevel) > 2
+            || abs(solid[i].b - kFillLevel) > 2) offBase++;
+    enforce(offBase == 0,
+        format("%d of %d fill samples are not the surface base colour (%d). "
+               ~ "A UNIFORM fill that is darker than the material is shading "
+               ~ "with a CONSTANT light, not an absence of shading — the "
+               ~ "uniformity check above passes on that too, which is exactly "
+               ~ "why this one follows it",
+               offBase, idx.length, kFillLevel));
+    writefln("    L4 PASS: fill uniform (spread %d) at the base colour %d; "
+             ~ "the shaded control spreads %d levels over the same samples",
+             solidSpread, kFillLevel, shadedSpread);
+
+    return true;
+}
+
+// --------------------------------------------------------------------------
+// Flow M — orientation invariance, which is the whole point of the style.
+//
+// "It looks flat" is not a check. The law is that a Solid render carries NO
+// information about how the surface is oriented relative to the light, and the
+// way to assert a law rather than an appearance is to find an operation that
+// changes the orientation while leaving everything else alone, and require the
+// pixels not to move.
+//
+// The operation: rotate the view a quarter turn about the world up axis. The
+// stock cube is symmetric under that rotation, so its projection is CONGRUENT
+// — same silhouette, same faces at the same screen positions, same wireframe —
+// while the key light, which is fixed in world space, now falls on a different
+// face at every one of those positions. (The +Y face maps to itself, but the
+// eye moved, so its specular term moves too.)
+//
+// So over the face-fill samples:
+//   * Solid  must not change AT ALL. Not "changes little" — the fill is one
+//     colour over the whole model, so a congruent projection reproduces it
+//     exactly, and the erosion keeps every sample a stride away from the
+//     silhouette where float congruence is only approximate.
+//   * Shaded MUST change, a lot. That arm is not decoration: without it, a
+//     camera command that silently did nothing would make the Solid arm pass
+//     for the wrong reason, and so would a probe that returned a stale frame.
+//     It is the mutation guard for the assertion above it.
+//
+// This is the pair the whole task turns on: the two arms are two different
+// laws measured by one operation, rather than one law described twice.
+// --------------------------------------------------------------------------
+
+bool testFlowM() {
+    writeln("  [M] Solid is invariant to orientation; Shaded is not...");
+    resetApp();
+    scope(exit) restoreDisplayDefaults();
+
+    auto geom = probe(0, "");
+    immutable int W = geom.w, H = geom.h;
+    enforce(W > 64 && H > 64, "implausible cell size");
+    immutable string pts = fillLattice(W, H);
+
+    // A quarter turn. The cube's symmetry is what makes the projection
+    // congruent, so this constant is not a tuning knob — any other angle
+    // changes the silhouette and the flow stops meaning anything.
+    enum double kQuarterTurn = 1.5707963267948966;
+
+    setSolidCamera(kSolidAz);
+    setStyle("shaded");    auto shadedA = probe(0, pts).points;
+    setStyle("wireframe"); auto wireA   = probe(0, pts).points;
+    setStyle("solid");     auto solidA  = probe(0, pts).points;
+
+    auto idx = erodedFillIndices(shadedA, wireA);
+    enforce(idx.length >= 150,
+        format("only %d eroded face-fill samples to compare", idx.length));
+
+    setSolidCamera(kSolidAz + kQuarterTurn);
+    auto solidB = probe(0, pts).points;
+    setStyle("shaded");
+    auto shadedB = probe(0, pts).points;
+
+    // --- M1: the SHADED control first, because M2 is worthless without it ---
+    size_t shadedMoved = 0;
+    int    shadedDelta = 0;
+    foreach (i; idx) {
+        if (!samePixel(shadedA[i], shadedB[i])) shadedMoved++;
+        immutable int d = [abs(shadedA[i].r - shadedB[i].r),
+                           abs(shadedA[i].g - shadedB[i].g),
+                           abs(shadedA[i].b - shadedB[i].b)].maxElement;
+        if (d > shadedDelta) shadedDelta = d;
+    }
+    enforce(shadedMoved >= idx.length * 40 / 100,
+        format("only %d of %d samples changed when the SHADED view turned a "
+               ~ "quarter turn (max channel delta %d). The operation is not "
+               ~ "reaching the renderer — a camera command that did nothing, "
+               ~ "or a probe reading a stale frame, would look exactly like "
+               ~ "this, and would make the invariance arm below pass for the "
+               ~ "wrong reason", shadedMoved, idx.length, shadedDelta));
+    writefln("    M1 PASS: the turn is real — %d/%d shaded samples changed, "
+             ~ "max channel delta %d", shadedMoved, idx.length, shadedDelta);
+
+    // --- M2: THE LAW. Solid does not know which way the model faces. ---
+    size_t solidMoved = 0;
+    int    solidDelta = 0;
+    foreach (i; idx) {
+        if (!samePixel(solidA[i], solidB[i])) solidMoved++;
+        immutable int d = [abs(solidA[i].r - solidB[i].r),
+                           abs(solidA[i].g - solidB[i].g),
+                           abs(solidA[i].b - solidB[i].b)].maxElement;
+        if (d > solidDelta) solidDelta = d;
+    }
+    enforce(solidMoved == 0,
+        format("%d of %d fill samples changed when the view turned a quarter "
+               ~ "turn under Solid (max channel delta %d), while the shaded "
+               ~ "control moved %d of them. A fill that responds to the "
+               ~ "model's orientation is a SHADED render — this is the "
+               ~ "assertion that separates the two, and the tolerance is zero "
+               ~ "on purpose: an unshaded fill is one colour, so a congruent "
+               ~ "projection reproduces it exactly",
+               solidMoved, idx.length, solidDelta, shadedMoved));
+    writefln("    M2 PASS: %d/%d Solid samples changed (max channel delta %d) "
+             ~ "— the fill carries no orientation", solidMoved, idx.length,
+             solidDelta);
 
     return true;
 }
@@ -1035,6 +1371,8 @@ int main(string[] args) {
     run(&testFlowI, "Flow I — overlay opacity reaches the pixels");
     run(&testFlowJ, "Flow J — a display change reaches exactly one cell");
     run(&testFlowK, "Flow K — undrawable values are refused");
+    run(&testFlowL, "Flow L — Solid: an unshaded fill, uniform across faces");
+    run(&testFlowM, "Flow M — Solid is orientation-invariant, Shaded is not");
 
     // Belt-and-suspenders: the runner shares one app across a worker's whole
     // slice and its between-tests reset does not cover viewport display state

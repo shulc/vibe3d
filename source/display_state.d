@@ -172,17 +172,28 @@ struct ViewportDisplay {
 /// Selection highlight and rollover are their own axes; a plan that could turn
 /// them off would make `WireOverlay.None` silently eat selection feedback.
 ///
-/// CONSUMED AS OF PHASE 1 — `drawFaces`, `drawWire`, `drawVerts`, `dim`.
-/// `facesLit`, `wireAlpha` and `wireColor` are resolved correctly and dumped
-/// by the display endpoint, but no pass reads them yet (they need shader work
-/// scheduled for the overlay and surface-style phases). Do not write a test
-/// that infers rendering from an unconsumed field — it would pass forever.
+/// CONSUMED TODAY — `drawFaces`, `facesLit`, `drawWire`, `wireAlpha`,
+/// `drawVerts`, `dim`. `wireColor` is resolved correctly and dumped by the
+/// display endpoint, but no pass reads it yet (the overlay still takes its
+/// colour from the edge shader's own default, and giving it a source is the
+/// per-item-colour question `WireOverlay.Colored` is parked on). Do not write
+/// a test that infers rendering from an unconsumed field — it would pass
+/// forever.
+///
+/// `facesLit` joined the consumed list in task 0589, which is what made
+/// `DisplayStyle.Solid` reachable; before that it was resolved and read by
+/// nobody, and the command refused the style by name rather than let it
+/// render as `Shaded`.
 struct DrawPlan {
     // ---- shading -----------------------------------------------------
     /// Draw the solid surface at all. False ⇒ no face pass, not even
     /// depth-only: the model must be see-through.
     bool  drawFaces = true;
-    /// Light the surface. False ⇒ flat unshaded fill.
+    /// Light the surface. False ⇒ flat unshaded fill: the face pass runs
+    /// unchanged (same geometry, same material colours, same hover/selection
+    /// branches) with the diffuse and specular terms removed, so the fill
+    /// carries no information about how the surface is oriented. Reaches GL
+    /// as the lit shader's `u_lit`.
     bool  facesLit  = true;
     /// Brightness multiplier for this pass (1.0 = full).
     float dim       = 1.0f;

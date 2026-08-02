@@ -356,6 +356,66 @@ unittest {
     assert(k1 != k2, "two differently-configured cells must not alias each other");
 }
 
+unittest {
+    // Task 0589 — THE CLAIM THIS BLOCK EXISTS TO CHECK, not to assume: the
+    // unshaded fill needed NO new dirty-key term.
+    //
+    // That is the payoff of the design decision two blocks up (key = the
+    // resolved plans, not an enumeration of display fields), and the brief for
+    // this task said to verify it rather than take it on trust — every one of
+    // the five freezes this file documents began as somebody being sure a term
+    // was covered. So: a Solid cell and a Shaded cell differ in exactly one
+    // `DrawPlan` field (`facesLit`), and the key must separate them anyway.
+    //
+    // If it did not, the symptom would be specific and nasty: switching a
+    // non-hovered Quad cell to Solid would re-blit its cached colour texture
+    // and the style change would appear to do nothing until that cell's camera
+    // moved — the fill and the shaded surface share a silhouette, so it would
+    // look like a viewport that simply ignores the command.
+    import display_state : ViewportDisplay, DisplayStyle, DrawPlan,
+                           resolveDrawPlan;
+
+    // 1. The field alone discriminates.
+    DirtyKey a, b;
+    a.fboW = 640; b.fboW = 640;
+    a.fboH = 480; b.fboH = 480;
+    assert(a == b, "sanity: identical keys must compare equal");
+    b.planActive.facesLit = false;   // DrawPlan's default is true, so this bites
+    assert(b.planActive.facesLit != a.planActive.facesLit,
+        "sanity: the mutation must actually change the field");
+    assert(a != b,
+        "keys differing only in facesLit must compare unequal — an unshaded "
+        ~ "fill is a render input like any other");
+
+    // 2. And it is reached from the real resolution path, which is the half a
+    //    hand-written field mutation cannot prove. Shaded vs Solid must resolve
+    //    to plans that differ, and they must differ ONLY in facesLit — if a
+    //    future edit made Solid also drop the wireframe or the face pass, this
+    //    catches that too, at the resolution level rather than in pixels.
+    ViewportDisplay shadedCell;                                  // shipped default
+    ViewportDisplay solidCell;  solidCell.active.style = DisplayStyle.Solid;
+
+    immutable DrawPlan ps = resolveDrawPlan(shadedCell, false);
+    immutable DrawPlan pl = resolveDrawPlan(solidCell,  false);
+    assert(ps != pl, "Solid must not resolve to the same plan as Shaded");
+    assert(ps.facesLit && !pl.facesLit, "the difference must be the lighting term");
+    assert(ps.drawFaces == pl.drawFaces && pl.drawFaces,
+        "Solid still draws a filled surface — it is Shaded minus the shading, "
+        ~ "not Wireframe with a different name");
+    assert(ps.drawWire == pl.drawWire && ps.wireAlpha == pl.wireAlpha
+        && ps.wireColor == pl.wireColor && ps.drawVerts == pl.drawVerts
+        && ps.dim == pl.dim,
+        "Solid must disturb nothing in the overlay group");
+
+    DirtyKey ks, kl;
+    ks.planActive = ps; ks.planBackdrop = resolveDrawPlan(shadedCell, true);
+    kl.planActive = pl; kl.planBackdrop = resolveDrawPlan(solidCell,  true);
+    assert(ks != kl,
+        "a cell showing an unshaded fill must not alias a shaded cell — "
+        ~ "no new key TERM was added for this style, so this is the assertion "
+        ~ "that the plan-derived key really did cover it");
+}
+
 // ---------------------------------------------------------------------------
 // overlayDrawOrder — task 0206 Phase 0/3
 // ---------------------------------------------------------------------------

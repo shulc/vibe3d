@@ -329,6 +329,13 @@ Prefs loadPrefs(string dir) {
                             switch (sp.str) {
                                 case "Wireframe": p.viewportDisplay[i].style = DisplayStyle.Wireframe; break;
                                 case "Shaded":    p.viewportDisplay[i].style = DisplayStyle.Shaded;    break;
+                                // Task 0589: the face pass now reads
+                                // `DrawPlan.facesLit`, so an unshaded fill is
+                                // something we DRAW and therefore something we
+                                // may persist. Joining this switch and the
+                                // command's together is exactly what the note
+                                // above asked for.
+                                case "Solid":     p.viewportDisplay[i].style = DisplayStyle.Solid;     break;
                                 default: break;   // incl. styles no pass draws yet
                             }
                     if (auto wp = "wire" in cellJson)
@@ -795,8 +802,19 @@ unittest {
     // A name we resolve but do not DRAW falls back to the default rather than
     // coming back as a viewport that renders something other than what it
     // reports. Same stance the commands take, for the same reason.
+    //
+    // TASK 0589 CHANGED WHAT BELONGS ON EACH SIDE OF THIS LINE, and it is
+    // worth saying why rather than just editing the literal. This case used to
+    // read `{"style":"Solid","wire":"Colored"}` and assert BOTH fell back. The
+    // reason given was "a style no pass draws" — and that reason is now false
+    // for Solid: the face pass reads `DrawPlan.facesLit`, so an unshaded fill
+    // is drawn, and a profile naming it must come back naming it (proven by
+    // its own round-trip block below). Keeping the old assertion would not be
+    // conservatism, it would pin prefs to silently discard a style the app can
+    // render. `Colored` is untouched — nothing resolves a per-item line colour
+    // — and an unknown name stands in for the style side.
     write(buildPath(dir, "prefs.json"),
-        `{ "version": 1, "viewportDisplay": [ {"style":"Solid","wire":"Colored"} ] }`);
+        `{ "version": 1, "viewportDisplay": [ {"style":"Texture","wire":"Colored"} ] }`);
     auto r = loadPrefs(dir);
     assert(r.viewportDisplay[0].style == DisplayStyle.Shaded,
         "a style no pass draws must fall back to the default");
@@ -822,6 +840,41 @@ unittest {
         `{ "version": 1, "viewportDisplay": [ {"wireAlpha":-3} ] }`);
     assert(loadPrefs(dir).viewportDisplay[0].wireAlpha == 0.0f,
         "negative opacity clamps to fully transparent");
+}
+
+// Task 0589: the unshaded fill round-trips through a saved profile.
+//
+// This is a SEPARATE block from the one above on purpose. The save side writes
+// the enum's own name (`to!string`), and the load side is a hand-written
+// switch, so a style is persistable only if somebody remembers to add it to
+// that switch — which is precisely the step that was deliberately NOT taken
+// while the style was undrawable. Writing it through `savePrefs` rather than a
+// JSON literal is what makes this catch the omission: a literal would only
+// test the reader, and the two sides drifting is the failure that matters
+// (a profile that saves "Solid" and reloads as "Shaded" loses the user's
+// viewport silently, once, at the next launch).
+unittest {
+    auto dir = makeScratch("viewportdisplaysolid");
+    scope(exit) cleanScratch(dir);
+
+    Prefs p;
+    p.viewportDisplay[1].style = DisplayStyle.Solid;
+    savePrefs(p, dir);
+
+    // The file must literally name it — if `to!string` ever stopped agreeing
+    // with the reader's case labels this is where it shows, in the artefact
+    // rather than in the round-trip's result.
+    import std.file : readText;
+    import std.algorithm : canFind;
+    assert(readText(buildPath(dir, "prefs.json")).canFind(`"Solid"`),
+        "the saved profile must name the style it is persisting");
+
+    auto q = loadPrefs(dir);
+    assert(q.viewportDisplay[1].style == DisplayStyle.Solid,
+        "an unshaded-fill cell must come back unshaded, not silently Shaded");
+    foreach (i; [0, 2, 3])
+        assert(q.viewportDisplay[i].style == DisplayStyle.Shaded,
+            format("cell %d must be untouched by a write to cell 1", i));
 }
 
 // missing file → defaults, no throw.

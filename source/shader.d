@@ -93,22 +93,39 @@ private immutable string litFragSrc = q{
     uniform float u_specStr;
     uniform float u_specPow;
     uniform float u_dim;            // brightness multiplier; 1.0 = neutral (layers Stage 5)
+    uniform bool  u_lit;            // false = flat unshaded fill (Solid style, task 0589)
     layout(std140) uniform Materials {
         vec4 mat_base[64];     // .rgb = baseColor, .a = opacity
         vec4 mat_params[64];   // .x = diffuse, .y = specular, .z = glossiness
     };
     out vec4 fragColor;
     void main() {
-        vec3 N    = normalize(vNormal);
-        vec3 L    = u_lightDir;
-        vec3 V    = normalize(u_eyePos - vWorldPos);
-        vec3 H    = normalize(L + V);
-        float dif = max(dot(N, L), 0.0);
-        float spc = pow(max(dot(N, H), 0.0), u_specPow);
         uint  mi  = (vMatId < uint(64)) ? vMatId : uint(0);
         vec3  bc  = mix(mat_base[mi].rgb, u_color, u_overrideMix);
-        vec3  col = bc * (u_ambient + dif * (1.0 - u_ambient))
-                  + vec3(1.0) * spc * u_specStr;
+        // UNLIT is the DEFAULT-VALUE branch, not a scaling of the lit one, and
+        // that is the whole point of the Solid style: the fill must carry no
+        // information about how the surface is oriented. Written as a real
+        // branch rather than a mix()/multiply by zero for two reasons —
+        //   * a zero-length vNormal makes `normalize` produce NaN, and NaN * 0
+        //     is NaN, so a multiplicative "off" would leak a degenerate face
+        //     into the fill;
+        //   * a branch on a UNIFORM is uniform across the whole draw, so it
+        //     costs nothing to diverge on.
+        // Note what unlit deliberately KEEPS: `bc` (so the hover/highlight
+        // override colour still reaches the fill — selection and rollover are
+        // their own display axes and must survive every surface style) and
+        // `u_dim` (so an unshaded BACKDROP pass is still dimmed).
+        vec3  col = bc;
+        if (u_lit) {
+            vec3 N    = normalize(vNormal);
+            vec3 L    = u_lightDir;
+            vec3 V    = normalize(u_eyePos - vWorldPos);
+            vec3 H    = normalize(L + V);
+            float dif = max(dot(N, L), 0.0);
+            float spc = pow(max(dot(N, H), 0.0), u_specPow);
+            col = bc * (u_ambient + dif * (1.0 - u_ambient))
+                + vec3(1.0) * spc * u_specStr;
+        }
         fragColor = vec4(col * u_dim, 1.0);
     }
 };
@@ -374,6 +391,7 @@ class LitShader {
     GLint locSpecStr;
     GLint locSpecPow;
     GLint locDim;
+    GLint locLit;
     GLuint matsUbo;            // Material Groups (MG3) — Materials UBO
     enum  MATS_BINDING = 0;    // binding point index, matches std140 layout
 
@@ -390,6 +408,7 @@ class LitShader {
         locSpecStr     = glGetUniformLocation(program, "u_specStr");
         locSpecPow     = glGetUniformLocation(program, "u_specPow");
         locDim         = glGetUniformLocation(program, "u_dim");
+        locLit         = glGetUniformLocation(program, "u_lit");
 
         // Materials UBO — std140-sized for two arrays of 64 × vec4.
         glGenBuffers(1, &matsUbo);
@@ -481,6 +500,11 @@ class LitShader {
         // dimmed background pass sets it explicitly with setDim() before
         // its draws and restores 1.0 afterwards.
         glUniform1f(locDim, 1.0f);
+        // Default to LIT, for exactly the reason u_dim defaults to neutral:
+        // every caller that does not care about the display style gets the
+        // behaviour that predates it. The Solid pass flips this with setLit()
+        // before its draws and restores true afterwards.
+        glUniform1i(locLit, 1);
     }
 
     /// Override the brightness multiplier for the next draws on this
@@ -489,6 +513,16 @@ class LitShader {
     void setDim(float dim) {
         glUseProgram(program);
         glUniform1f(locDim, dim);
+    }
+
+    /// Light the surface, or fill it flat (task 0589, `DrawPlan.facesLit`).
+    ///
+    /// Same restore discipline as `setDim`: the caller that switches it off
+    /// switches it back on, because uniforms are program state and the next
+    /// draw on this program may be someone else's.
+    void setLit(bool lit) {
+        glUseProgram(program);
+        glUniform1i(locLit, lit ? 1 : 0);
     }
 }
 
@@ -515,6 +549,14 @@ void drawLitPreview(const ref LitShader litShader, const ref Shader shader,
     glUniform1f(litShader.locAmbient,  0.20f);
     glUniform1f(litShader.locSpecStr,  0.25f);
     glUniform1f(litShader.locSpecPow,  32.0f);
+    // Task 0589: this site seeds every uniform it depends on BY HAND rather
+    // than going through `LitShader.useProgram`, so a uniform that the scene
+    // pass may have switched off has to be seeded here too — otherwise a
+    // create-tool preview drawn after an unlit scene pass would inherit the
+    // flat fill. The scene pass does restore it, so this is belt-and-braces;
+    // the alternative is a cross-file invariant nobody can see from here.
+    // (`u_dim` has the same shape and the same restore discipline.)
+    glUniform1i(litShader.locLit, 1);
     previewGpu.drawFaces(litShader);
 
     // Wireframe edges.
