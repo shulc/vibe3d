@@ -6,6 +6,7 @@ import bindbc.sdl;
 
 import tools.transform.transform;
 import handler;
+import viewport_scheme : schemeColor, SchemeColor;
 import mesh;
 import editmode;
 import math;
@@ -454,7 +455,7 @@ public:
         // when a Ctrl-lock is active.  Depth disabled so it reads as an
         // overlay (mirrors CrossGizmo.draw handler.d:1402-1406).
         // No arrow setState override — the arbiter already highlights the
-        // captured arrow Rollover-yellow via setHaul+update.
+        // captured arrow in the scheme's active colour via setHaul+update.
         if (ctrlLockActive && dragAxis >= 0 && dragAxis <= 2) {
             drawConstraintLine(shader, vp);
         }
@@ -548,9 +549,12 @@ public:
             glBindBuffer(GL_ARRAY_BUFFER, 0);
         }
 
-        // Rollover yellow — matches the arbiter's highlight on the captured arrow.
-        // Keep visual language consistent (one locked thing = one colour).
-        immutable Vec3 color = Vec3(1.0f, 0.95f, 0.15f);
+        // The scheme's ACTIVE-handle colour — this line is drawn only while an
+        // axis is locked and hauled, which is exactly the state that colour
+        // means. It matches the arbiter's highlight on the captured arrow, and
+        // it now matches it by construction rather than by two hand-copied
+        // literals that agreed until one of them was corrected.
+        immutable Vec3 color = schemeColor(SchemeColor.handleActive);
         immutable float lineWidth = 1.5f;
 
         import math : identityMatrix;

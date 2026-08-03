@@ -9,6 +9,7 @@ import math;
 import editmode : EditMode;
 import params : Param;
 import handler : Arrow, ToolHandles, HandleState, gizmoSize;
+import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -99,7 +100,7 @@ private:
     Arrow       insetArrow;
     ToolHandles toolHandles;
 
-    enum Vec3 INSET_COLOR = Vec3(0.9f, 0.2f, 0.2f);  // red
+    enum Vec3 INSET_COLOR = schemeColor(SchemeColor.toolWidth);
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,

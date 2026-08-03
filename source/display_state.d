@@ -129,28 +129,14 @@ enum float kBackdropDim = 0.45f;
 
 /// The unshaded fill colour of `DisplayStyle.Solid`: 0.6 grey.
 ///
-/// MEASURED, not chosen. The reference resolves this fill from a **viewport
-/// colour-scheme entry**, not from the surface material — its shipped colour
-/// scheme carries a dedicated key for it, both the factory scheme and the
-/// alternate scheme set it to 0.6 grey, and its own help describes that key as
-/// the geometry display colour used by the unshaded solid viewport style.
-/// `round(0.6 * 255) == 153`.
-///
-/// Task 0589 shipped this fill as the SURFACE MATERIAL's colour, on the
-/// reasonable-looking assumption that "Solid is Shaded minus shading" leaves
-/// the material in place. A later static read of the reference's own shading
-/// machinery refuted that: its unshaded style makes no surface-creation call
-/// at all, so the material is never consulted. Task 0592 moved the anchor.
-///
-/// PRECEDENCE, and the half we do not have. The reference resolves the fill as
-/// **per-item override first, then this scheme colour** — the override being a
-/// channel pair on the item (an enable plus a colour). We have **no per-item
-/// fill channel**: `Layer` carries no display colour of any kind, so there is
-/// nothing here to prefer over the scheme value, and the precedence collapses
-/// to a single term. That is an OPEN HALF, recorded rather than invented: when
-/// a per-item display colour lands, it resolves into `DrawPlan.fillColor`
-/// ahead of this constant, and this comment is the contract for doing so.
-enum float kSchemeSolidFill = 0.6f;
+/// This is a VIEWPORT SCHEME entry and it now lives with the rest of the
+/// scheme in `viewport_scheme.d` — re-exported here so that every existing
+/// `import display_state : kSchemeSolidFill;` keeps resolving. Task 0596
+/// folded it in: it was the one scheme value living apart from the table, and
+/// one table is the whole point. See `viewport_scheme.kSchemeSolidFill` for
+/// where the value comes from and for the per-item precedence we do not yet
+/// have. Value and behaviour are unchanged by the move.
+public import viewport_scheme : kSchemeSolidFill;
 
 /// One activity state's controls — the active mesh, or the backdrop.
 ///

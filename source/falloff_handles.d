@@ -5,6 +5,7 @@ import bindbc.sdl;
 import handler : Arrow, BoxHandler, Handler, ToolHandles, gizmoSize;
 import math   : Vec3, Viewport, projectToWindowFull, closestOnSegment2D, dot,
                 screenRay, screenPointToRay, rayPlaneIntersect;
+import viewport_scheme : axisColor, schemeColor, SchemeColor;
 import shader : Shader;
 import drag   : screenAxisDelta, planeDragDelta;
 import toolpipe.packets  : FalloffPacket, FalloffType;
@@ -66,13 +67,14 @@ class FalloffEndpointHandle {
     enum float SCALE   = 0.4f;  // mini — 40% of main MoveHandler size
 
     this() {
-        // Same colours as MoveHandler arrows so the meaning carries
-        // over (red = X, green = Y, blue = Z). Center box cyan so it
-        // reads as "falloff handle" at a glance.
-        arrowX = new Arrow(Vec3(0,0,0), Vec3(1,0,0), Vec3(0.9f, 0.2f, 0.2f));
-        arrowY = new Arrow(Vec3(0,0,0), Vec3(0,1,0), Vec3(0.2f, 0.9f, 0.2f));
-        arrowZ = new Arrow(Vec3(0,0,0), Vec3(0,0,1), Vec3(0.2f, 0.2f, 0.9f));
-        centerBox = new BoxHandler(Vec3(0,0,0), Vec3(0.4f, 0.9f, 0.95f));
+        // The scheme's axis colours, read from the one table rather than
+        // copied — these used to be a second set of literals that had to be
+        // kept in step with MoveHandler's by hand, and were not.
+        arrowX = new Arrow(Vec3(0,0,0), Vec3(1,0,0), axisColor(0));
+        arrowY = new Arrow(Vec3(0,0,0), Vec3(0,1,0), axisColor(1));
+        arrowZ = new Arrow(Vec3(0,0,0), Vec3(0,0,1), axisColor(2));
+        // Axis-less, so the scheme's `handle` colour.
+        centerBox = new BoxHandler(Vec3(0,0,0), schemeColor(SchemeColor.handle));
         // Slimmer arrow shafts — secondary control, not the main tool.
         arrowX.lineWidth = 2.5f;
         arrowY.lineWidth = 2.5f;
@@ -220,10 +222,8 @@ public:
         endHandle    = new FalloffEndpointHandle();
         centerHandle = new FalloffEndpointHandle();
         foreach (i; 0 .. 6) {
-            Vec3 col = (i < 2) ? Vec3(0.9f, 0.2f, 0.2f)
-                     : (i < 4) ? Vec3(0.2f, 0.9f, 0.2f)
-                               : Vec3(0.2f, 0.2f, 0.9f);
-            sizeH[i] = new BoxHandler(Vec3(0, 0, 0), col);
+            // Six size handles, a ±pair per axis: 0,1 → X, 2,3 → Y, 4,5 → Z.
+            sizeH[i] = new BoxHandler(Vec3(0, 0, 0), axisColor(cast(int)i / 2));
         }
     }
 

@@ -9,6 +9,7 @@ import edit_session : KeepAliveOnCancel;
 import mesh;
 import math;
 import handler : MoveHandler, BoxHandler, getGizmoPixels, gizmoSize, ToolHandles;
+import viewport_scheme : axisColor, schemeColor, SchemeColor;
 import eventlog : queryMouse;
 import drag;
 import shader : Shader, LitShader, drawLitPreview;
@@ -1951,10 +1952,13 @@ public:
         mover.circleXY.setVisible(false);
         mover.circleYZ.setVisible(false);
         mover.circleXZ.setVisible(false);
+        // Seed colours only — both sets are re-coloured per frame from the
+        // world axis they end up aligned with (updateEdgeHandlers /
+        // updateHeightHandlers, via axisColorFor).
         foreach (i; 0 .. 4)
-            edgeH[i] = new BoxHandler(Vec3(0,0,0), Vec3(0.9f, 0.2f, 0.2f));
+            edgeH[i] = new BoxHandler(Vec3(0,0,0), axisColor(0));
         foreach (i; 0 .. 2)
-            heightH[i] = new BoxHandler(Vec3(0,0,0), Vec3(0.9f, 0.9f, 0.2f));
+            heightH[i] = new BoxHandler(Vec3(0,0,0), schemeColor(SchemeColor.toolExtent));
         toolHandles = new ToolHandles();
     }
 
@@ -2916,11 +2920,13 @@ private:
         return sr;
     }
 
-    // Color by world axis direction.
-    static Vec3 axisColor(Vec3 axis) {
-        if (abs(axis.x) > 0.5f) return Vec3(0.9f, 0.2f, 0.2f);
-        if (abs(axis.y) > 0.5f) return Vec3(0.2f, 0.9f, 0.2f);
-        return Vec3(0.2f, 0.2f, 0.9f);
+    // Color by world axis direction — resolved from the viewport scheme, not
+    // from literals. Named `axisColorFor` so it does not shadow the scheme's
+    // own index-keyed `axisColor` imported above.
+    static Vec3 axisColorFor(Vec3 axis) {
+        if (abs(axis.x) > 0.5f) return axisColor(0);
+        if (abs(axis.y) > 0.5f) return axisColor(1);
+        return axisColor(2);
     }
 
     // Update height handles — positions derived from params_.
@@ -2938,7 +2944,7 @@ private:
         foreach (i; 0 .. 2) {
             heightH[i].pos   = pts[i];
             heightH[i].size  = gizmoSize(pts[i], vp, 0.04f);
-            heightH[i].color = axisColor(colorAxis);
+            heightH[i].color = axisColorFor(colorAxis);
         }
     }
 
@@ -2958,8 +2964,8 @@ private:
 
         Vec3 c1 = toWorldD(planeAxis1);
         Vec3 c2 = toWorldD(planeAxis2);
-        Vec3[4] colors = [axisColor(c2), axisColor(c1),
-                          axisColor(c2), axisColor(c1)];
+        Vec3[4] colors = [axisColorFor(c2), axisColorFor(c1),
+                          axisColorFor(c2), axisColorFor(c1)];
 
         foreach (i; 0 .. 4) {
             edgeH[i].pos   = mids[i];

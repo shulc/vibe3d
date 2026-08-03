@@ -21,6 +21,7 @@ import operator : VectorStack;
 import display_sync : refreshDisplay;
 import eventlog : queryMouse;
 import handler : BoxHandler, FullCircleHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment, drawWorldQuad;
+import viewport_scheme : schemeColor, SchemeColor;
 import tools.create.create_common : currentWorkplaneFrame, pickWorkplaneFrame, WorkplaneFrame;
 // Reuse MoveTool's dominant-axis selector for the Ctrl axis-constraint (task
 // 0286): the SAME screen-direction → world-axis math the Move gizmo's Ctrl lock
@@ -838,20 +839,21 @@ private:
     enum float RING_RADIUS_PX = 46.0f;
     enum float RING_PICK_PX   = 8.0f;
 
-    // Gizmo palette (codebase handle colours — NOT reference colours): endpoint
-    // handles in the blue used by Create-tool handles, the line in a light
-    // neutral. Rollover/selected tints come from handler.handleStateColor.
-    enum Vec3 HANDLE_COLOR = Vec3(0.30f, 0.60f, 1.00f);
-    enum Vec3 LINE_COLOR   = Vec3(0.90f, 0.92f, 0.98f);
+    // Gizmo palette, resolved from the viewport scheme (`viewport_scheme.d`)
+    // rather than held as literals here: endpoint handles in the path blue,
+    // the line in a light neutral. The engaged tint is applied by the handle
+    // itself — see `viewport_scheme.handleColor`.
+    enum Vec3 HANDLE_COLOR = schemeColor(SchemeColor.toolPath);
+    enum Vec3 LINE_COLOR   = schemeColor(SchemeColor.toolPathLine);
     // Rotate-ring colour: a light teal in the vibe3d gizmo palette (NOT a
     // reference colour), distinct from the endpoint blue so the two read apart.
-    enum Vec3 RING_COLOR   = Vec3(0.35f, 0.85f, 0.85f);
+    enum Vec3 RING_COLOR   = schemeColor(SchemeColor.toolPathRing);
 
     // Cut-plane overlay (task 0284): a subtle translucent fill in the same blue
     // family as the endpoint handles (vibe3d gizmo palette — NOT reference
     // colours), at a low alpha so the mesh, cut preview, and handles all read
     // through it.
-    enum Vec3  PLANE_COLOR = Vec3(0.30f, 0.60f, 1.00f);
+    enum Vec3  PLANE_COLOR = schemeColor(SchemeColor.toolPath);
     enum float PLANE_ALPHA = 0.18f;
 
 public:

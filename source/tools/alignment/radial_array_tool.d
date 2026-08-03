@@ -9,6 +9,7 @@ import math;
 import editmode : EditMode;
 import params : Param;
 import handler : Arrow, BoxHandler, ToolHandles, gizmoSize;
+import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -152,8 +153,8 @@ private:
     BoxHandler  angleCube;
     ToolHandles toolHandles;
 
-    enum Vec3 OFFSET_COLOR = Vec3(0.2f, 0.45f, 1.0f);   // blue — linear haul
-    enum Vec3 ANGLE_COLOR  = Vec3(0.9f, 0.75f, 0.15f);  // yellow/gold — angular haul
+    enum Vec3 OFFSET_COLOR = schemeColor(SchemeColor.toolOffset);
+    enum Vec3 ANGLE_COLOR  = schemeColor(SchemeColor.toolAngle);
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,

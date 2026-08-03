@@ -23,6 +23,7 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import eventlog : queryMouse;
 import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment;
+import viewport_scheme : schemeColor, SchemeColor;
 
 // The interactive commit reuses the generic before/after snapshot edit command
 // (the same MeshSessionEdit the mirror / tack / Slice tools reuse for their
@@ -181,8 +182,8 @@ private:
     ToolHandles  toolHandles_;
 
     enum float HANDLE_HALF_PX = 5.0f;
-    enum Vec3  HANDLE_COLOR = Vec3(0.30f, 0.60f, 1.00f);
-    enum Vec3  CHORD_COLOR  = Vec3(0.90f, 0.92f, 0.98f);
+    enum Vec3  HANDLE_COLOR = schemeColor(SchemeColor.toolPath);
+    enum Vec3  CHORD_COLOR  = schemeColor(SchemeColor.toolPathLine);
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,

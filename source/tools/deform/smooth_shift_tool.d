@@ -9,6 +9,7 @@ import math;
 import editmode : EditMode;
 import params : Param;
 import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;
+import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -128,8 +129,8 @@ private:
     CubicArrow scaleArrow;
     ToolHandles toolHandles;
 
-    enum Vec3 OFFSET_COLOR = Vec3(0.2f, 0.45f, 1.0f);  // blue
-    enum Vec3 SCALE_COLOR  = Vec3(0.9f, 0.2f, 0.2f);   // red
+    enum Vec3 OFFSET_COLOR = schemeColor(SchemeColor.toolOffset);
+    enum Vec3 SCALE_COLOR  = schemeColor(SchemeColor.toolWidth);
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,

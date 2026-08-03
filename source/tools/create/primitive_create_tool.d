@@ -66,6 +66,7 @@ import edit_session : KeepAliveOnCancel;
 import mesh;
 import math;
 import handler : MoveHandler, BoxHandler, gizmoSize, ToolHandles;
+import viewport_scheme : axisColor;
 import eventlog : queryMouse;
 import drag : axisDragDelta, planeDragDelta, screenAxisDelta;
 import shader : Shader, LitShader, drawLitPreview;
@@ -560,10 +561,8 @@ public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
         super(meshSrc, gpu, litShader);
         foreach (i; 0 .. 6) {
-            Vec3 col = (i < 2) ? Vec3(0.9f, 0.2f, 0.2f)
-                     : (i < 4) ? Vec3(0.2f, 0.9f, 0.2f)
-                               : Vec3(0.2f, 0.2f, 0.9f);
-            sizeH[i] = new BoxHandler(Vec3(0, 0, 0), col);
+            // Six size handles, a ±pair per axis: 0,1 → X, 2,3 → Y, 4,5 → Z.
+            sizeH[i] = new BoxHandler(Vec3(0, 0, 0), axisColor(cast(int)i / 2));
         }
     }
 

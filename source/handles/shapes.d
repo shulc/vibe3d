@@ -4,6 +4,7 @@ import handles.gl_util;
 import math;
 import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import shader;
+import viewport_scheme;
 import bindbc.sdl;
 import bindbc.opengl;
 import std.math : sin, cos, sqrt, PI, abs;
@@ -13,22 +14,41 @@ import d_imgui.imgui_h;
 
 import ai.interaction : AiIntent;
 
+// A scheme colour packed for the ImGui overlay draw lists, at an explicit
+// alpha. Rounds rather than truncates, so 1.0 lands on 255 and not 254.
+private uint packImCol(Vec3 c, ubyte alpha) {
+    static int ch(float v) {
+        const int i = cast(int)(v * 255.0f + 0.5f);
+        return i < 0 ? 0 : (i > 255 ? 255 : i);
+    }
+    return IM_COL32(ch(c.x), ch(c.y), ch(c.z), cast(int)alpha);
+}
+
 // ---------------------------------------------------------------------------
-// HandleState — the handle selection model
-// (unselected / rollover / selected / secondary default hint).
-// One enum replaces the old hovered/selected bool soup at the colour-pick site.
+// HandleState — the ARBITRATION state (which handle won the hit test, plus the
+// advisory hints layered on top of it).
+//
+// NOTE what this enum is NOT, since it used to be both: it is no longer the
+// handle's COLOUR state. Task 0596 split the two, because they answer
+// different questions and only one of them drives pixels.
+//
+//   * HandleState answers "which handle would a press grab, and what does the
+//     advisor think about that" — it is the hit-test result plus the AI
+//     copilot's default hint. It is consumed by `handles/arbiter.d`, by the
+//     copilot lane, and it is serialised over /api/tool/handles.
+//   * `Handler.engaged` answers "is this handle being HAULED right now" — and
+//     that, alone, is what recolours a handle. See `viewport_scheme.handleColor`.
+//
+// The enum kept all four members deliberately. `SecondaryDefault` carries the
+// copilot's deterministic-default hint (arbiter.d) and is asserted across
+// tests/test_ai_handle_candidates.d and tests/test_ai_model_live_wiring.d;
+// `Rollover` is the arbiter's hot-part concept and part of the JSON contract
+// below. Collapsing the enum would have broken three unrelated consumers to
+// express a fact about drawing. Collapsing the COLOUR LAW — which is where the
+// two-state model actually belongs — cost nothing and is done.
 // ---------------------------------------------------------------------------
 
 enum HandleState { Normal, Rollover, Selected, SecondaryDefault }
-
-private Vec3 handleStateColor(HandleState state, Vec3 base) {
-    final switch (state) {
-        case HandleState.Normal:           return base;
-        case HandleState.Rollover:         return Vec3(1.0f, 0.95f, 0.15f);
-        case HandleState.Selected:         return Vec3(1.0f, 0.64f, 0.0f);
-        case HandleState.SecondaryDefault: return Vec3(0.55f, 0.75f, 1.0f);
-    }
-}
 
 // HandleState → lowercase string, for JSON serialization (task 0234,
 // /api/tool/handles). Deliberately a string, not the raw enum int: a future
@@ -57,6 +77,16 @@ private:
     HandleState state = HandleState.Normal;
     bool   visible = true;
 
+    // Is this handle being HAULED right now? The one bit that recolours a
+    // handle (see viewport_scheme.handleColor). Driven by ToolHandles.update
+    // from its CAPTURE, never from its hit test: the highlight marks the
+    // grabbed handle, armed by the press that captured it and cleared on
+    // release. A handle under the bare pointer stays its own colour.
+    //
+    // Scalar, so the class .init blob has nothing to alias — cf. the array
+    // field that shipped one shared store to every instance in task 0590.
+    bool   engaged = false;
+
 public:
     // Called once per frame to render the overlay into the 3-D view.
     void draw(const ref Shader shader, const ref Viewport vp) {}
@@ -78,6 +108,17 @@ public:
     // HandleState accessors — used by the ToolHandles arbiter.
     void setState(HandleState s) { state = s; }
     HandleState getState() const { return state; }
+
+    // Haul accessors — likewise driven by the arbiter, from its capture.
+    void setEngaged(bool e) { engaged = e; }
+    bool isEngaged() const  { return engaged; }
+
+    // The colour to draw this handle in: its own `idle` colour, or the
+    // scheme's active colour while hauled. Every shape's draw() goes through
+    // here so the two-state law has exactly one implementation.
+    protected Vec3 drawColor(Vec3 idle) const {
+        return handleColor(idle, engaged);
+    }
 
     // A representative screen-space pixel for this handle, for test
     // introspection (task 0234, /api/tool/handles) — "press here to grab this
@@ -195,7 +236,7 @@ class Arrow : ShaftedArrow {
         float shaftLen   = len - coneLen;
         Vec3  coneBase   = end - fwd * coneLen;
 
-        Vec3 c = handleStateColor(state, color);
+        Vec3 c = drawColor(color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -266,7 +307,7 @@ class CubicArrow : ShaftedArrow {
         }
         if (shaftLen < 0.0f) shaftLen = 0.0f;
 
-        Vec3 c = handleStateColor(state, color);
+        Vec3 c = drawColor(color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -300,7 +341,7 @@ class CubicArrow : ShaftedArrow {
 
         float cubeHalf   = fixedCubeHalf > 0.0f ? fixedCubeHalf : len * GIZMO_CUBE_HEAD_HALF_OF_LEN;
         Vec3  cubeCenter = end - fwd * cubeHalf;
-        Vec3 c = handleStateColor(state, color);
+        Vec3 c = drawColor(color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -320,7 +361,16 @@ class CubicArrow : ShaftedArrow {
 // ---------------------------------------------------------------------------
 // SemicircleHandler : Handler
 // Draws a half-circle arc (0..π) with a given color.
-// Highlights on hover (yellow); toggles selected state on click (orange).
+// Takes the scheme's active colour while hauled; hover does not recolour it.
+//
+// ONE colour, and only ever one: a rotate ring's far half is CULLED, not
+// dimmed. This class draws the camera-facing half only — `RotateHandler`
+// re-derives `startAngle` every frame from the intersection of the ring plane
+// with the view plane and flips it so the arc's midpoint faces the viewer, so
+// the half pointing away is simply absent. `aiScreenDistance` walks the SAME
+// arc span, which is what keeps the drawn ring and the grabbable ring the same
+// object. A second, darker "back-half" colour would be modelling a thing that
+// is not drawn — do not add one.
 // ---------------------------------------------------------------------------
 
 class SemicircleHandler : Handler {
@@ -364,7 +414,7 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        Vec3 c = handleStateColor(state, color);
+        Vec3 c = drawColor(color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
@@ -479,7 +529,7 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        Vec3 c = handleStateColor(state, color);
+        Vec3 c = drawColor(color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -573,19 +623,20 @@ class MoveHandler : Handler {
 
     this(Vec3 center) {
         this.center = center;
-        arrowX    = new Arrow(center + Vec3(0.1f,0,0), center + Vec3(1,0,0), Vec3(0.9f, 0.2f, 0.2f));
-        arrowY    = new Arrow(center + Vec3(0,0.1f,0), center + Vec3(0,1,0), Vec3(0.2f, 0.9f, 0.2f));
-        arrowZ    = new Arrow(center + Vec3(0,0,0.1f), center + Vec3(0,0,1), Vec3(0.2f, 0.2f, 0.9f));
-        centerBox = new BoxHandler(center, Vec3(0.0f, 0.9f, 0.9f));
-        // XY plane (Z normal) — blue tint
+        arrowX    = new Arrow(center + Vec3(0.1f,0,0), center + Vec3(1,0,0), axisColor(0));
+        arrowY    = new Arrow(center + Vec3(0,0.1f,0), center + Vec3(0,1,0), axisColor(1));
+        arrowZ    = new Arrow(center + Vec3(0,0,0.1f), center + Vec3(0,0,1), axisColor(2));
+        // The centre handle belongs to no axis, so it takes the scheme's
+        // axis-less `handle` colour.
+        centerBox = new BoxHandler(center, schemeColor(SchemeColor.handle));
+        // Plane handles: outline in the colour of the axis NORMAL to the
+        // plane, fill derived from it (see viewport_scheme.planeFillColor).
         circleXY  = new CircleHandler(center + Vec3(1, 1,0), Vec3(0,0,1), 1.0f,
-                        Vec3(0.2f, 0.2f, 0.9f), Vec3(0.1f, 0.1f, 0.4f));
-        // YZ plane (X normal) — red tint
+                        axisColor(2), planeFillColor(axisColor(2)));
         circleYZ  = new CircleHandler(center + Vec3(0,1,1), Vec3(1,0,0), 1.0f,
-                        Vec3(0.9f, 0.2f, 0.2f), Vec3(0.4f, 0.1f, 0.1f));
-        // XZ plane (Y normal) — green tint
+                        axisColor(0), planeFillColor(axisColor(0)));
         circleXZ  = new CircleHandler(center + Vec3(1,0,1), Vec3(0,1,0), 1.0f,
-                        Vec3(0.2f, 0.9f, 0.2f), Vec3(0.1f, 0.4f, 0.1f));
+                        axisColor(1), planeFillColor(axisColor(1)));
     }
 
     void destroy() {
@@ -743,10 +794,12 @@ class RotateHandler : Handler {
 
     this(Vec3 center) {
         this.center = center;
-        arcX     = new SemicircleHandler(center, Vec3(1,0,0), 1.0f, Vec3(0.9f, 0.2f, 0.2f));
-        arcY     = new SemicircleHandler(center, Vec3(0,1,0), 1.0f, Vec3(0.2f, 0.9f, 0.2f));
-        arcZ     = new SemicircleHandler(center, Vec3(0,0,1), 1.0f, Vec3(0.2f, 0.2f, 0.9f));
-        arcView  = new FullCircleHandler(center, Vec3(0,0,1), 1.0f, Vec3(0.6f, 0.6f, 0.6f));
+        arcX     = new SemicircleHandler(center, Vec3(1,0,0), 1.0f, axisColor(0));
+        arcY     = new SemicircleHandler(center, Vec3(0,1,0), 1.0f, axisColor(1));
+        arcZ     = new SemicircleHandler(center, Vec3(0,0,1), 1.0f, axisColor(2));
+        // The screen-plane ring belongs to no axis — flat grey, by law, and
+        // not a preference row (viewport_scheme.kViewRingGrey).
+        arcView  = new FullCircleHandler(center, Vec3(0,0,1), 1.0f, kViewRingGrey);
         arcX.lineWidth    += 1.0f;
         arcY.lineWidth    += 1.0f;
         arcZ.lineWidth    += 1.0f;
@@ -844,7 +897,8 @@ class RotateHandler : Handler {
 
 // ---------------------------------------------------------------------------
 // BoxHandler : Handler — solid-colour axis-aligned box at a given position.
-// Highlights on hover (yellow); toggles selected state on click (orange).
+// Takes the scheme's active colour while hauled, or when the owning tool has
+// marked it current (`selected`). Hover does not recolour it.
 // ---------------------------------------------------------------------------
 
 class BoxHandler : Handler {
@@ -877,9 +931,12 @@ public:
     override void draw(const ref Shader shader, const ref Viewport vp)
     {
         if (!visible) return;
-        Vec3 c = selected && state == HandleState.Normal
-            ? handleStateColor(HandleState.Selected, color)
-            : handleStateColor(state, color);
+        // `selected` marks a handle the owning tool has made CURRENT (the only
+        // setter is the pen's current-point marker). It reads as engaged, and
+        // takes the scheme's active colour — not the mesh-selection orange it
+        // used to borrow. That orange belongs to selected geometry; a handle
+        // wearing it says "you have selected some mesh", which is a lie.
+        Vec3 c = handleColor(color, engaged || selected);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -949,7 +1006,8 @@ private:
 // CircleHandler : Handler
 // Filled disc + outline ring at a given position in a given plane.
 // Outline color = color; fill color = fillColor.
-// Highlights on hover (yellow); toggles selected on click (orange).
+// While hauled the FILL takes the scheme's active colour; the outline keeps
+// its axis colour, so which plane this is stays legible. Hover does not recolour.
 // ---------------------------------------------------------------------------
 
 class CircleHandler : Handler {
@@ -1023,8 +1081,14 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        Vec3 oc = handleStateColor(state, color);
-        Vec3 fc = handleStateColor(state, fillColor);
+        // A plane handle is TWO concentric parts, and they do not light up
+        // together: the outline ring keeps its axis colour even while hauled
+        // (the ring says WHICH plane this is, and grabbing it does not change
+        // which plane it is), while the fill disc inside takes the active
+        // colour. Highlighting the outline too would erase the only cue that
+        // tells the three plane handles apart at the moment you most need it.
+        Vec3 oc = color;
+        Vec3 fc = handleColor(fillColor, engaged);
 
         auto m = modelMatrix(right, up, fwd, Vec3(radius, radius, radius), center);
 
@@ -1094,26 +1158,14 @@ class CenterDiskGizmo : Handler {
         }
         if (!allValid) return;
 
-        uint fillCol;
-        uint outlineCol;
-        final switch (state) {
-            case HandleState.Rollover:
-                fillCol    = IM_COL32(255, 242,  38, 120);
-                outlineCol = IM_COL32(255, 242,  38, 230);
-                break;
-            case HandleState.SecondaryDefault:
-                fillCol    = IM_COL32(140, 190, 255,  90);
-                outlineCol = IM_COL32(140, 190, 255, 190);
-                break;
-            case HandleState.Selected:
-                fillCol    = IM_COL32(255, 163,   0, 120);
-                outlineCol = IM_COL32(255, 163,   0, 230);
-                break;
-            case HandleState.Normal:
-                fillCol    = IM_COL32(  0, 220, 220,  80);
-                outlineCol = IM_COL32(  0, 220, 220, 200);
-                break;
-        }
+        // The screen-plane disc is an axis-less handle: the scheme's `handle`
+        // colour idle, the active colour while hauled. Two states, one law —
+        // the four-way switch that used to live here painted a hover yellow
+        // and a selection orange for states this handle has no business
+        // distinguishing. Alphas are ours and unchanged by task 0596.
+        const Vec3 c = handleColor(schemeColor(SchemeColor.handle), engaged);
+        const uint fillCol    = packImCol(c,  80);
+        const uint outlineCol = packImCol(c, 200);
 
         ImDrawList* dl = ImGui.GetForegroundDrawList();
         dl.AddConvexPolyFilled(pts.ptr, SEGS, fillCol);
@@ -1185,25 +1237,27 @@ class ScaleHandler : Handler {
 
     this(Vec3 center) {
         this.center = center;
-        arrowX      = new CubicArrow(center + Vec3(0.1f,0,0), center + Vec3(1,0,0), Vec3(0.9f, 0.2f, 0.2f));
-        arrowY      = new CubicArrow(center + Vec3(0,0.1f,0), center + Vec3(0,1,0), Vec3(0.2f, 0.9f, 0.2f));
-        arrowZ      = new CubicArrow(center + Vec3(0,0,0.1f), center + Vec3(0,0,1), Vec3(0.2f, 0.2f, 0.9f));
-        scaleArrowX = new CubicArrow(center, center + Vec3(1,0,0), Vec3(1.0f, 1.0f, 0.0f));
-        scaleArrowY = new CubicArrow(center, center + Vec3(0,1,0), Vec3(1.0f, 1.0f, 0.0f));
-        scaleArrowZ = new CubicArrow(center, center + Vec3(0,0,1), Vec3(1.0f, 1.0f, 0.0f));
+        arrowX      = new CubicArrow(center + Vec3(0.1f,0,0), center + Vec3(1,0,0), axisColor(0));
+        arrowY      = new CubicArrow(center + Vec3(0,0.1f,0), center + Vec3(0,1,0), axisColor(1));
+        arrowZ      = new CubicArrow(center + Vec3(0,0,0.1f), center + Vec3(0,0,1), axisColor(2));
+        // The scale-feedback arrows wear their AXIS colour, not a hand-picked
+        // yellow. A scale arrow is the same axis as the arm it grows out of,
+        // and colouring all three identically threw that away — the one thing
+        // the arrow has to communicate is WHICH axis is being scaled.
+        scaleArrowX = new CubicArrow(center, center + Vec3(1,0,0), axisColor(0));
+        scaleArrowY = new CubicArrow(center, center + Vec3(0,1,0), axisColor(1));
+        scaleArrowZ = new CubicArrow(center, center + Vec3(0,0,1), axisColor(2));
         scaleArrowX.fixedDir = Vec3(1, 0, 0);
         scaleArrowY.fixedDir = Vec3(0, 1, 0);
         scaleArrowZ.fixedDir = Vec3(0, 0, 1);
         centerDisk  = new CenterDiskGizmo();
-        // XY plane (Z normal) — blue tint
+        // Plane handles: outline in the colour of the axis NORMAL to the plane.
         circleXY = new CircleHandler(center, Vec3(0,0,1), 1.0f,
-                        Vec3(0.2f, 0.2f, 0.9f), Vec3(0.1f, 0.1f, 0.4f));
-        // YZ plane (X normal) — red tint
+                        axisColor(2), planeFillColor(axisColor(2)));
         circleYZ = new CircleHandler(center, Vec3(1,0,0), 1.0f,
-                        Vec3(0.9f, 0.2f, 0.2f), Vec3(0.4f, 0.1f, 0.1f));
-        // XZ plane (Y normal) — green tint
+                        axisColor(0), planeFillColor(axisColor(0)));
         circleXZ = new CircleHandler(center, Vec3(0,1,0), 1.0f,
-                        Vec3(0.2f, 0.9f, 0.2f), Vec3(0.1f, 0.4f, 0.1f));
+                        axisColor(1), planeFillColor(axisColor(1)));
     }
 
     void setScaleAccum(Vec3 s) { scaleAccum = s; }

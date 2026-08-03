@@ -9,6 +9,7 @@ import math;
 import editmode : EditMode;
 import params : Param;
 import handler : Arrow, ToolHandles, HandleState, gizmoSize;
+import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -80,7 +81,7 @@ private:
     Arrow       widthArrow;
     ToolHandles toolHandles;
 
-    enum Vec3 WIDTH_COLOR = Vec3(0.2f, 0.45f, 1.0f);  // blue
+    enum Vec3 WIDTH_COLOR = schemeColor(SchemeColor.toolOffset);
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,

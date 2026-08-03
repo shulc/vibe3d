@@ -9,6 +9,7 @@ import mesh;
 import math;
 import params : Param;
 import handler : BoxHandler, gizmoSize, ToolHandles;
+import viewport_scheme : schemeColor, SchemeColor;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -600,7 +601,7 @@ private:
         // world, so hit-testing needs the world image of `pos`.
         vertices_ ~= pos;
         Vec3 worldPos = toWorldP(pos);
-        auto h = new BoxHandler(worldPos, Vec3(0.0f, 0.9f, 0.9f));
+        auto h = new BoxHandler(worldPos, schemeColor(SchemeColor.handle));
         h.size = gizmoSize(worldPos, cachedVp, 0.04f);
         vertHandlers ~= h;
     }
@@ -637,7 +638,7 @@ private:
         if (insertIdx > cast(int)vertices_.length) insertIdx = cast(int)vertices_.length;
         vertices_ = vertices_[0 .. insertIdx] ~ pos ~ vertices_[insertIdx .. $];
         Vec3 worldPos = toWorldP(pos);
-        auto h = new BoxHandler(worldPos, Vec3(0.0f, 0.9f, 0.9f));
+        auto h = new BoxHandler(worldPos, schemeColor(SchemeColor.handle));
         h.size = gizmoSize(worldPos, cachedVp, 0.04f);
         vertHandlers = vertHandlers[0 .. insertIdx] ~ h ~ vertHandlers[insertIdx .. $];
     }
