@@ -234,7 +234,24 @@ class Arrow : ShaftedArrow {
     // default: 0 means "keep the ratio", so every arrow that sets neither
     // (falloff endpoint handles, primitive create-tool movers) is untouched.
     float fixedConeLen  = 0.0f;  // world length of the head along the axis
-    float fixedConeHalf = 0.0f;  // world radius of the head's base
+    float fixedConeHalf = 0.0f;  // world OFFSET of the head's off-axis corners
+
+    // Task 0603 — the two LATERAL directions the head's off-axis base corners
+    // sit on, both on the POSITIVE side. Setting both (alongside the pixel
+    // sizes above) selects the measured TETRAHEDRAL head; leaving either zero
+    // keeps the cone of revolution. Same shape of escape hatch as the sizes,
+    // and for the same reason: `Arrow` is shared with the falloff endpoint
+    // handles and the primitive create-tool movers, and the tetrahedron is a
+    // measurement of the TRANSFORM gizmo's head only. Nothing has measured
+    // theirs, so nothing here changes them.
+    //
+    // These are directions, not offsets — the length comes from
+    // `fixedConeHalf`. They need not be unit (draw normalises) but they must
+    // not be parallel to each other or to the arm, or the head has no volume.
+    Vec3 headLateralA = Vec3(0, 0, 0);
+    Vec3 headLateralB = Vec3(0, 0, 0);
+
+    private int headWedgeFirst, headWedgeCount;
 
     this(Vec3 start, Vec3 end, Vec3 color) {
         this.start = start;
@@ -253,6 +270,13 @@ class Arrow : ShaftedArrow {
             coneData ~= [0f,0f,0f,  c1,s1,0f,  c0,s0,0f];  // base cap (inward)
         }
         headVertCount = cast(int)(coneData.length / 3);
+        // The tetrahedral head is APPENDED to the same buffer rather than given
+        // its own VAO/VBO: it is twelve vertices, only one caller selects it,
+        // and sharing the buffer means `destroy()` stays correct as written and
+        // no arrow that never draws the shape pays a GL object for it.
+        headWedgeFirst = headVertCount;
+        buildWedgeHeadData(coneData);
+        headWedgeCount = cast(int)(coneData.length / 3) - headWedgeFirst;
         headVao = buildVao3f(coneData, headVbo);
     }
 
@@ -271,6 +295,31 @@ class Arrow : ShaftedArrow {
         float coneRadius = fixedConeHalf > 0.0f ? fixedConeHalf
                                                 : len * GIZMO_CONE_RADIUS_OF_LEN;
         float shaftLen   = len - coneLen;
+
+        // Task 0603 — SHAPE, not size. When the caller supplies both lateral
+        // directions the head is the measured TETRAHEDRON: apex on the axis at
+        // the arm's end, one base corner on the axis, and two base corners
+        // `coneRadius` out along `latA` / `latB`. See `buildWedgeHeadData`.
+        Vec3 latA = headLateralA, latB = headLateralB;
+        immutable float aLen = sqrt(dot(latA, latA)), bLen = sqrt(dot(latB, latB));
+        bool wedge = fixedConeHalf > 0.0f && aLen > 1e-6f && bLen > 1e-6f;
+        if (wedge) {
+            latA = latA / aLen;
+            latB = latB / bLen;
+            // The reference's lateral PAIR is written out per axis and its
+            // handedness is not consistent: for the X arm the frame (Z, Y, X)
+            // is left-handed while (Z, X, Y) and (X, Y, Z) are right-handed. It
+            // never culls, so it never had to care. We do — a translucent
+            // closed solid on a depth-off pass has to be culled to one layer or
+            // its alpha stacks (see `beginHandleFill`) — so the pair is
+            // normalised to a right-handed frame here. Swapping A and B
+            // RELABELS two corners of the same tetrahedron and leaves the drawn
+            // solid bit-identical; all it changes is which face is front, which
+            // is exactly what makes one cull direction right for all three arms.
+            immutable float det = dot(cross(latA, latB), fwd);
+            if (abs(det) < 1e-6f) wedge = false;   // coplanar: no volume to draw
+            else if (det < 0.0f) { Vec3 t = latA; latA = latB; latB = t; }
+        }
         // An overridden head is a PIXEL size and the shaft is a world one, so
         // a short enough arrow can be all head. Mirrors CubicArrow's guard.
         if (shaftLen < 0.0f) shaftLen = 0.0f;
@@ -286,15 +335,28 @@ class Arrow : ShaftedArrow {
                        shader.program, alpha);
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
-        // The cone is SOLID and stays hard-edged — it is translucent, not
+        // The head is SOLID and stays hard-edged — it is translucent, not
         // smoothed. Its staircase edge beside the shaft's graded one is what
         // the reference was measured doing, and matching means keeping it.
+        // Both shapes are closed solids and both are wound outward-CCW, so the
+        // default `HandleFacing` covers either (see buildWedgeHeadData).
         immutable int fillTok = beginHandleFill(shader.locAlpha, alpha);
-        auto headModel = modelMatrix(right, up, fwd, Vec3(coneRadius, coneRadius, coneLen), coneBase);
+        // The wedge's basis is the two lateral directions themselves, NOT the
+        // `localFrame` pair the cone uses: localFrame is stable but arbitrary
+        // about the axis, so a head built on it would lean somewhere unrelated
+        // to the arm's neighbours and its width would not breathe with the roll
+        // the way the measured one does.
+        auto headModel = wedge
+            ? modelMatrix(latA * coneRadius, latB * coneRadius, fwd * coneLen,
+                          Vec3(1, 1, 1), coneBase)
+            : modelMatrix(right, up, fwd,
+                          Vec3(coneRadius, coneRadius, coneLen), coneBase);
+        immutable int headFirst = wedge ? headWedgeFirst : 0;
+        immutable int headCount = wedge ? headWedgeCount : headVertCount;
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
         glBindVertexArray(headVao);
-        glDrawArrays(GL_TRIANGLES, 0, headVertCount);
-        g_fc.draw(DrawPass.handles, headVertCount);
+        glDrawArrays(GL_TRIANGLES, headFirst, headCount);
+        g_fc.draw(DrawPass.handles, headCount);
         endHandleFill(shader.locAlpha, fillTok);
 
         glBindVertexArray(0);
@@ -767,6 +829,25 @@ class MoveHandler : Handler {
         arrowX.fixedConeLen = headLen; arrowX.fixedConeHalf = headHalf;
         arrowY.fixedConeLen = headLen; arrowY.fixedConeHalf = headHalf;
         arrowZ.fixedConeLen = headLen; arrowZ.fixedConeHalf = headHalf;
+
+        // Task 0603: the head is a TETRAHEDRON leaning into one quadrant, not a
+        // cone of revolution — `headHalf` is the offset of two base corners
+        // from the axis, and the third corner sits ON it. The two corners lie
+        // along the OTHER two gizmo axes, both POSITIVE, which is what makes
+        // the head reach `headHalf` on one side of the arm and zero on the
+        // other and makes its drawn width breathe as the view rolls.
+        //
+        // These are the gizmo's own axes, so under the default (auto) workplane
+        // they ARE the world axes, which is what the head's lean was measured
+        // against. Under a rotated workplane the arms are no longer world axes
+        // and the head follows the arms — the alternative, world axes against a
+        // rotated arm, would not even be perpendicular to it. The PAIRING per
+        // arm is the reference's own and is deliberately not a cyclic rotation;
+        // it fixes only which corner is labelled first, since the tetrahedron
+        // is the same solid either way (draw() re-orders it for winding).
+        arrowX.headLateralA = axisZ; arrowX.headLateralB = axisY;
+        arrowY.headLateralA = axisZ; arrowY.headLateralB = axisX;
+        arrowZ.headLateralA = axisX; arrowZ.headLateralB = axisY;
 
         // Same law for the centre handle: 5 px at the default handle size, and
         // exactly three distinct sizes over the whole reachable range. The

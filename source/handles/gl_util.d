@@ -853,6 +853,147 @@ package void buildUnitCubeData(ref float[] data) {
 }
 
 // ---------------------------------------------------------------------------
+// The transform gizmo's ARROWHEAD — a closed tetrahedron, not a cone.
+//
+// Unit space, exactly the space `Arrow.draw` scales it through:
+//   X = the first lateral direction, Y = the second, Z = the arm's own axis.
+//
+//     T = (0,0,1)   the apex, ON the axis, at the arm's outer end
+//     C = (0,0,0)   a base corner, also ON the axis
+//     A = (1,0,0)   a base corner, one lateral out
+//     B = (0,1,0)   a base corner, the other lateral out
+//
+// SHAPE, NOT SIZE — this is the whole finding. The measured half-width
+// (`gizmoHeadHalfPx`) is the OFFSET of two base corners from the axis, and the
+// third corner sits on the axis. So the base is a right isoceles triangle with
+// its right angle on the arm's line: the head reaches its full half-width on
+// ONE side and exactly ZERO on the other, and what the camera changes is which
+// way it leans. Its drawn width therefore breathes between H and H*sqrt(2) as
+// the view rolls about the arm, instead of standing at 2H from every angle.
+// A cone of revolution cannot express that at any radius, which is why fixing
+// this by re-tuning `gizmoHeadHalfPx` is not available — the constant is
+// confirmed against drawn pixels and it is the mesh that was wrong.
+//
+// WINDING, and why it is stated here rather than assumed. `HandleFacing` above
+// records that our two existing solids disagree about winding, so a third one
+// may not simply inherit either. The reference emits these four faces in a
+// MIXED winding — three one way, one the other — because it never culls, so
+// its vertex order carries no information beyond WHICH four faces. We do cull
+// (a translucent closed solid under a depth-off pass would otherwise composite
+// itself three deep and lose its alpha), so all four are emitted here
+// consistently OUTWARD-CCW. That puts this shape on `HandleFacing.outwardCCW`,
+// the same value the cone it replaces already used. The unittest below
+// re-derives every face normal from the emitted floats and checks it points
+// away from the solid's own centroid, so the claim is proved from the data
+// rather than asserted in prose.
+// ---------------------------------------------------------------------------
+package void buildWedgeHeadData(ref float[] data) {
+    static immutable float[3][4] pt = [
+        [0, 0, 1],   // 0 = T, the apex
+        [0, 0, 0],   // 1 = C, the on-axis base corner
+        [1, 0, 0],   // 2 = A, one lateral out
+        [0, 1, 0],   // 3 = B, the other lateral out
+    ];
+    static immutable int[3][4] face = [
+        [0, 1, 2],   // T C A — the Y=0 side,     outward -Y
+        [1, 0, 3],   // C T B — the X=0 side,     outward -X
+        [0, 2, 3],   // T A B — the slanted side, outward +(1,1,1)
+        [3, 2, 1],   // B A C — the base CAP,     outward -Z
+    ];
+    foreach (ref f; face)
+        foreach (idx; f)
+            data ~= pt[idx][];
+}
+
+unittest {
+    // The arrowhead is a CLOSED, CAPPED tetrahedron wound uniformly outward,
+    // and its body sits in one quadrant. Every claim below is re-derived from
+    // the emitted floats; none of it reads a constant back to itself.
+    import std.algorithm : canFind, map, sort;
+    import std.array     : array;
+    import std.math      : abs;
+
+    float[] d;
+    buildWedgeHeadData(d);
+    assert(d.length == 4 * 3 * 3,
+           "the head must be 4 triangles / 12 vertices / 36 floats");
+
+    static Vec3 vert(const float[] d, size_t i) {
+        return Vec3(d[i*3], d[i*3 + 1], d[i*3 + 2]);
+    }
+    static bool same(Vec3 a, Vec3 b) {
+        return abs(a.x-b.x) < 1e-6f && abs(a.y-b.y) < 1e-6f && abs(a.z-b.z) < 1e-6f;
+    }
+
+    // 1. Exactly FOUR distinct points, and they are the four the card names.
+    Vec3[] uniq;
+    foreach (i; 0 .. 12) {
+        auto v = vert(d, i);
+        bool seen = false;
+        foreach (u; uniq) if (same(u, v)) { seen = true; break; }
+        if (!seen) uniq ~= v;
+    }
+    assert(uniq.length == 4,
+           "twelve vertices must close on four points — the head is a tetrahedron");
+    foreach (want; [Vec3(0,0,1), Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0)]) {
+        bool found = false;
+        foreach (u; uniq) if (same(u, want)) { found = true; break; }
+        assert(found, "a base/apex point of the arrowhead is missing");
+    }
+
+    // 2. The ONE-QUADRANT claim, restated as REACH rather than as coordinates:
+    //    the head extends a full unit along each lateral on the POSITIVE side
+    //    and nothing at all on the negative one — which is why the drawn head
+    //    is H across and not 2H. Check 1 already pins the four points, so this
+    //    cannot fail on its own; it is kept because it says in one line what
+    //    the shape is FOR, and it is the line that would have to be deleted,
+    //    not merely edited, to put a symmetric head back.
+    float minX = 0, maxX = 0, minY = 0, maxY = 0;
+    foreach (u; uniq) {
+        if (u.x < minX) minX = u.x;  if (u.x > maxX) maxX = u.x;
+        if (u.y < minY) minY = u.y;  if (u.y > maxY) maxY = u.y;
+    }
+    assert(maxX == 1.0f && minX == 0.0f,
+           "the head must reach 1 lateral unit on one side and 0 on the other");
+    assert(maxY == 1.0f && minY == 0.0f,
+           "the head must reach 1 lateral unit on one side and 0 on the other");
+
+    // 3. CLOSED and CAPPED: the four triangles are the four distinct 3-subsets
+    //    of the four points, each appearing exactly once. A missing base cap
+    //    (three faces) or a doubled face both fail here.
+    int[][] faceKeys;
+    foreach (f; 0 .. 4) {
+        int[] key;
+        foreach (k; 0 .. 3) {
+            auto v = vert(d, f*3 + k);
+            foreach (idx, u; uniq) if (same(u, v)) { key ~= cast(int)idx; break; }
+        }
+        assert(key.length == 3, "a face names a point that is not one of the four");
+        assert(key[0] != key[1] && key[1] != key[2] && key[0] != key[2],
+               "a face repeats a vertex — that triangle has no area");
+        key.sort();
+        assert(!faceKeys.canFind(key), "a face of the head is emitted twice");
+        faceKeys ~= key;
+    }
+    assert(faceKeys.length == 4, "the head must have all four faces, cap included");
+
+    // 4. WINDING: every face's CCW normal points AWAY from the solid's own
+    //    centroid, i.e. the whole shape is outward-CCW and `outwardCCW` is the
+    //    correct HandleFacing for it. This is the assertion that catches a
+    //    face copied over with the reference's own (mixed) vertex order.
+    Vec3 cen = Vec3(0,0,0);
+    foreach (u; uniq) cen = cen + u;
+    cen = cen / 4.0f;
+    foreach (f; 0 .. 4) {
+        auto p0 = vert(d, f*3), p1 = vert(d, f*3 + 1), p2 = vert(d, f*3 + 2);
+        auto n  = cross(p1 - p0, p2 - p0);
+        assert(dot(n, p0 - cen) > 1e-6f,
+               "an arrowhead face is wound INWARD; culling GL_BACK would open "
+               ~ "a hole in the solid and its alpha would stack twice there");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The handle pass's BLEND BRACKET.
 //
 // The reference requests blending PER PRIMITIVE BATCH, from a tag on the
@@ -909,8 +1050,12 @@ private void endHandleBlend(bool hadBlend) {
 /// The cube's winding is left alone deliberately. Nothing culls it today, so
 /// the inversion is invisible and "fixing" it would be an unmeasured change to
 /// geometry six other handle types share.
+/// The transform gizmo's tetrahedral arrowhead (`buildWedgeHeadData` above) is
+/// a THIRD solid and it does not inherit either convention by assumption: its
+/// four faces are emitted outward-CCW on purpose, proved by the unittest beside
+/// the builder, so it shares `outwardCCW` with the cone it replaces.
 enum HandleFacing {
-    outwardCCW,   /// front faces point out — cull GL_BACK  (the arrowhead cone)
+    outwardCCW,   /// front faces point out — cull GL_BACK  (the arrowheads)
     outwardCW,    /// front faces point in  — cull GL_FRONT (the unit cube)
     flat,         /// not a solid: ONE layer already, so cull nothing
 }

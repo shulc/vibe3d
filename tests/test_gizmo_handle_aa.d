@@ -1,5 +1,14 @@
-// test_gizmo_handle_aa.d — the gizmo's LINES are antialiased and its SOLIDS
-// are not, and that asymmetry is the whole finding.
+// test_gizmo_handle_aa.d — how the move gizmo's arm ARRIVES ON PIXELS.
+//
+// Flows A and B: the gizmo's LINES are antialiased and its SOLIDS are not, and
+// that asymmetry is the whole finding.
+// Flow C (task 0603, added later): the solid in question — the arrowhead — is
+// a one-quadrant WEDGE and not a cone of revolution, which is a fact only its
+// pixels can settle and only across a range of camera rolls. It lives here
+// rather than in a file of its own because it is the same part read with the
+// same instrument (`findArm` + `crossSection` + the ink metric) that Flow B
+// already builds; splitting it would have duplicated all of that to say a
+// second thing about one arrowhead.
 //
 // WHY BOTH HALVES ARE IN ONE FILE. It would be easy to write a test that only
 // says "the shaft has soft edges" and call the port done. That test passes on a
@@ -322,6 +331,236 @@ bool testFlowB() {
 }
 
 // --------------------------------------------------------------------------
+// Flow C — the arrowhead is a ONE-QUADRANT WEDGE, not a cone of revolution.
+//
+// Same instrument as Flow B (the ink profile of a perpendicular cross-section),
+// pointed at a different property: the head's SHAPE. The measured head is a
+// tetrahedron whose apex and one base corner sit ON the arm's axis while the
+// other two base corners are pushed out along the two lateral directions. Its
+// body is therefore entirely in one quadrant: it reaches its full half-width on
+// one side of the arm and exactly ZERO on the other, and what the camera
+// changes is which way it leans.
+//
+// WHY A ROLL SWEEP AND NOT ONE CAMERA. At a single camera angle a cone and a
+// wedge differ only by a number, and any number can be matched by re-tuning a
+// radius — a one-angle test would pass on either shape, which is exactly the
+// trap this flow exists to avoid. It is the VARIATION that names the shape: a
+// solid of revolution about the arm presents the same silhouette from every
+// roll, so no radius can make its width breathe or its reach go lopsided.
+//
+// MEASURED BOTH WAYS ON THIS BUILD, which is what makes the thresholds below
+// numbers rather than hopes. With the wedge the widest cross-section runs
+// 5..10 px across the sweep and the two sides' reach differs by up to 7 px.
+// With the cone restored (the lateral directions cleared, nothing else
+// touched) every single roll gives 14 px and a span of [-7..+6] — constant to
+// the pixel, and symmetric to within the one pixel of rounding. The gates are
+// set at 4, a bit over halfway between the two, so neither reading is close.
+//
+// THE CAMERA, AND WHY THIS ONE ANGLE SWEEPS THE ROLL. At azimuth 0 the view
+// forward has no X component for any elevation, so screen-right stays world +X
+// and the X arm lies across the screen at full length no matter the elevation
+// — while the plane containing the other two axes turns. The elevation IS the
+// roll about that arm. The arm's projected length is asserted constant across
+// the sweep for exactly this reason: if it moved, the widths would not be
+// comparable and a foreshortening artifact could masquerade as the finding.
+// --------------------------------------------------------------------------
+
+// The widest cross-section at station `s`, as (width, lowest offset, highest
+// offset) in pixels perpendicular to the arm, or width 0 if no stroke is there.
+struct Span { int width, lo, hi, peak; }
+
+Span spanAt(const ref Arm a, int s, int half) {
+    auto prof = crossSection(a, s, half);
+    Span sp;
+    sp.peak = prof.maxElement;
+    if (sp.peak < 60) return sp;
+    int lo = int.max, hi = int.min;
+    foreach (i, v; prof) {
+        if (v <= sp.peak - 15) continue;
+        immutable int d = cast(int)i - half;
+        if (d < lo) lo = d;
+        if (d > hi) hi = d;
+        sp.width++;
+    }
+    sp.lo = lo; sp.hi = hi;
+    return sp;
+}
+
+bool testFlowC() {
+    writeln("  [C] Move arm ARROWHEAD — its width must BREATHE with the roll ...");
+    resetApp();
+    script("tool.set move");
+    settle();
+    // /api/reset restores the default camera, so this puts the shared instance
+    // back for whatever test the worker runs next as well as for this file.
+    scope(exit) { script("tool.set move off"); settle(); resetApp(); }
+
+    enum int kHalf = 14;              // > any reach the head can have
+    // Includes the two rolls where the law is extreme (-45 narrowest, +45
+    // widest) and both ends, where the head sits wholly on one side.
+    immutable int[] rolls = [-80, -60, -45, -20, 0, 20, 45, 65, 85];
+
+    void setRoll(int deg) {
+        import std.math : PI;
+        httpPost("/api/camera",
+                 format(`{"azimuth":0.0,"elevation":%.9g}`, deg * PI / 180.0));
+        settle();
+    }
+
+    // Locate the head once, coarsely, at the first roll. Nothing here is copied
+    // from the draw code — the head announces itself as the widest station, as
+    // in Flow B — and the arm-length control below is what licenses reusing the
+    // station across the rest of the sweep.
+    setRoll(rolls[0]);
+    auto h0 = handles();
+    auto a0 = findArm(h0);
+    int baseS = -1, baseW = 0;
+    for (int s = 60; s <= 150; s += 4) {
+        auto sp = spanAt(a0, s, kHalf);
+        if (sp.width > baseW) { baseW = sp.width; baseS = s; }
+    }
+    enforce(baseS > 0 && baseW >= 4,
+        format("no arrowhead found along the arm (widest %d px at s=%d)",
+               baseW, baseS));
+
+    struct Row { int roll, width, lo, hi, above, below; double armPx; }
+    Row[] rows;
+    foreach (roll; rolls) {
+        setRoll(roll);
+        auto h = handles();
+        auto a = findArm(h);
+        immutable double dx = h.screen[0][0] - h.screen[3][0];
+        immutable double dy = h.screen[0][1] - h.screen[3][1];
+        Span best;
+        for (int s = baseS - 6; s <= baseS + 6; ++s) {
+            auto sp = spanAt(a, s, kHalf);
+            if (sp.width > best.width) best = sp;
+        }
+        enforce(best.width > 0,
+            format("roll %d: no arrowhead ink near s=%d", roll, baseS));
+        Row r;
+        r.roll = roll; r.width = best.width; r.lo = best.lo; r.hi = best.hi;
+        // Reach measured from the ARM'S OWN LINE, one side at a time. A cone
+        // is symmetric about that line at every roll, so it pins these equal.
+        r.above  = best.hi > 0 ? best.hi : 0;
+        r.below  = best.lo < 0 ? -best.lo : 0;
+        r.armPx  = sqrt(dx*dx + dy*dy);
+        rows ~= r;
+        writefln("    roll %+3d: width %2d px, perp [%+3d .. %+3d], "
+                 ~ "reach %d / %d, arm %.1f px, peak ink %d",
+                 r.roll, r.width, r.lo, r.hi, r.below, r.above, r.armPx, best.peak);
+    }
+
+    // CONTROL 1 — the arm itself did not move. Every roll must project the arm
+    // to the same length; otherwise the sweep is changing the gizmo's size and
+    // the width readings are not comparable across rows.
+    double armMin = rows[0].armPx, armMax = rows[0].armPx;
+    foreach (r; rows) {
+        if (r.armPx < armMin) armMin = r.armPx;
+        if (r.armPx > armMax) armMax = r.armPx;
+    }
+    enforce(armMax - armMin < 1.0,
+        format("control failed: the arm's projected length varied %.2f px over "
+               ~ "the sweep (%.1f .. %.1f). The camera is not rolling ABOUT the "
+               ~ "arm, so any change in the head's width could be perspective "
+               ~ "rather than shape", armMax - armMin, armMin, armMax));
+
+    // CONTROL 2 — well off the arm is background, so "ink" is the arm's ink.
+    {
+        setRoll(0);
+        auto hc = handles();
+        auto a = findArm(hc);
+        auto off = crossSection(a, baseS, 40);
+        enforce(off[0] <= 15 && off[$ - 1] <= 15,
+            format("control failed: 40 px off the arm axis is not background "
+                   ~ "(ink %d and %d)", off[0], off[$ - 1]));
+    }
+
+    // C1 — the WIDTH breathes. A solid of revolution cannot: its silhouette
+    // perpendicular to its own axis is its diameter at every roll.
+    int wMin = rows[0].width, wMax = rows[0].width;
+    foreach (r; rows) {
+        if (r.width < wMin) wMin = r.width;
+        if (r.width > wMax) wMax = r.width;
+    }
+    writefln("    width over the sweep: %d .. %d px (spread %d)",
+             wMin, wMax, wMax - wMin);
+    enforce(wMax - wMin >= 4,
+        format("the arrowhead's screen width only varied %d px (%d..%d) over "
+               ~ "%d rolls about its own arm. A head that keeps one width from "
+               ~ "every angle is a solid of REVOLUTION — the measured head is a "
+               ~ "tetrahedron with two base corners off the axis and the third "
+               ~ "ON it, so its width must run from H to H*sqrt(2). Check that "
+               ~ "the head is built by handles.gl_util.buildWedgeHeadData and "
+               ~ "not by the cone tessellation", wMax - wMin, wMin, wMax,
+               cast(int)rows.length));
+
+    // C2 — the REACH is one-sided. This is the model-free half: it needs no fit
+    // and no predicted law, only the observation that at some roll the head is
+    // far more on one side of the arm than the other. Symmetric shapes — a cone
+    // of revolution, a flat two-triangle head, a pyramid — all force it to ~0.
+    int lopMax = 0, lopRoll = 0;
+    foreach (r; rows) {
+        immutable int lop = r.above > r.below ? r.above - r.below
+                                              : r.below - r.above;
+        if (lop > lopMax) { lopMax = lop; lopRoll = r.roll; }
+    }
+    writefln("    most lopsided roll: %+d, reach differs by %d px",
+             lopRoll, lopMax);
+    enforce(lopMax >= 4,
+        format("the arrowhead never reached more than %d px further on one "
+               ~ "side of the arm than the other, over %d rolls. It is "
+               ~ "SYMMETRIC about the arm at every angle, which is what a cone "
+               ~ "of revolution is and what the measured head is not: two of "
+               ~ "its three base corners are offset from the axis and the third "
+               ~ "sits on it, so the head leans into one quadrant and swaps "
+               ~ "sides as the view rolls past the diagonal",
+               lopMax, cast(int)rows.length));
+
+    // C3 — the head still composites exactly ONCE. The new shape is a closed
+    // capped solid drawn on a depth-off pass, so it has to be culled to a
+    // single layer or its 0.95 stacks and the part goes effectively opaque —
+    // and culling is only correct if every face is wound the same way, which is
+    // a per-shape fact and not inherited from the cone. Read straight off the
+    // ink: the axis red is (229,51,51), so a raw or twice-composited sample
+    // gives 178 while a single 0.95 composite gives 0.95*178 = 169. Verified to
+    // separate: with the cull removed these same samples come back at 178.
+    {
+        setRoll(0);
+        auto hk = handles();
+        auto a = findArm(hk);
+        auto sp = spanAt(a, baseS, kHalf);
+        enforce(sp.width >= 4, "no head found for the compositing check");
+        auto prof = crossSection(a, baseS, kHalf);
+        // Inside the head but clear of the shaft's own translucent stroke,
+        // which lies on the arm's line and would legitimately stack with it.
+        int worst = 0, deep = 0;
+        foreach (d; sp.lo .. sp.hi + 1) {
+            if (d >= -2 && d <= 2) continue;
+            deep++;
+            immutable int v = prof[d + kHalf];
+            if (v > worst) worst = v;
+        }
+        enforce(deep >= 3,
+            "the head does not extend far enough off the shaft to sample it "
+            ~ "clear of the shaft's own stroke");
+        writefln("    head interior peak ink %d (169 = one 0.95 layer, "
+                 ~ "178 = raw / stacked)", worst);
+        enforce(worst <= 173,
+            format("an arrowhead pixel read ink %d — at or above the RAW axis "
+                   ~ "colour's 178 rather than the 169 a single 0.95 composite "
+                   ~ "gives. The solid is compositing more than once, i.e. the "
+                   ~ "cull is not removing the far faces. Winding is derived "
+                   ~ "PER SHAPE: check that every face buildWedgeHeadData emits "
+                   ~ "is outward-CCW (its unittest asserts exactly that) and "
+                   ~ "that draw() still passes HandleFacing.outwardCCW", worst));
+    }
+
+    writeln("    C PASS: the head breathes, leans, and composites once");
+    return true;
+}
+
+// --------------------------------------------------------------------------
 
 int main(string[] args) {
     // NOTE: keep the literal "http://localhost:8080" — run_test.d isolates
@@ -344,6 +583,7 @@ int main(string[] args) {
 
     run(&testFlowA, "Flow A — the line stroke is antialiased");
     run(&testFlowB, "Flow B — the solid arrowhead is NOT antialiased");
+    run(&testFlowC, "Flow C — the arrowhead is a one-quadrant wedge");
 
     writefln("\n%d passed, %d failed", passed, failed);
     return failed > 0 ? 1 : 0;
