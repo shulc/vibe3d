@@ -106,6 +106,59 @@
 // Flow C compares no pixels — it reads the handle registry only — so blending
 // cannot reach it and it is deliberately untouched.
 // --------------------------------------------------------------------------
+// WHY A FOOTPRINT IS NOT A SET OF COLOUR-MATCHED PIXELS (task 0609)
+//
+// Flow A used to name the arm's footprint by matching an exact composite: the
+// pixels reading `axis at ARM_ALPHA over their background` when idle, and the
+// pixels reading `active at ARM_ALPHA over their background` when hovered, and
+// then required the two index sets to be equal. That conflates the two things
+// the assertion means to separate — WHICH pixels the arm covers, and WHAT
+// COLOUR they carry — because it derives the first from the second. It failed
+// on CI, deterministically, for exactly that reason.
+//
+// The mechanism, measured. A +-3 count window around a composite is a window
+// on the pixel's VALUE, and a value window converts into a COVERAGE window by
+// dividing by the distance from the background to the stroke's colour. Over
+// this scene's background rgb(105,105,105) the two colours sit at different
+// distances — the axis red is 124 counts away on its widest channel, the
+// active yellow 150 — so the SAME +-3 admits coverage down to 0.972 for the
+// axis colour and only to 0.977 for the active one. Any pixel landing in that
+// 0.005-wide band is inside one window and outside the other, and the sets
+// differ by it. The band is about half an 8-bit level wide: whether a given
+// build lands a pixel in it is a question about the rasteriser's sub-pixel
+// rounding, not about the renderer under test.
+//
+// And that is what happened. At pixel (518,308) — one fringe pixel beside the
+// shaft's full-coverage core — hardware GL reads red 225 and llvmpipe reads
+// 226. ONE COUNT. 225 is outside both windows (the pixel is simply not in
+// either set, and the sets match); 226 is inside the axis window and outside
+// the active one, so idle names 5 pixels, hovered names 4, and the assertion
+// fires. Both rasterisers agree about everything else, including a core of
+// four pixels at coverage exactly 1.000.
+//
+// Note what this says about the local pass: it was 4 == 4, not a comfortable
+// margin. The old form was one count from red on the machine it was written
+// on.
+//
+// The replacement measures the footprint as COVERAGE — for each sampled pixel,
+// the single scalar k in `k*colour + (1-k)*background` that its value implies,
+// with the residual checked so that "not this colour" is still rejected. k is
+// geometric: it is how much of the pixel the stroke covers times the alpha it
+// is drawn at, so recolouring the stroke may not move it. The flow then
+// asserts the profile is the same idle and hovered (the footprint), that the
+// hovered reading fits the ACTIVE colour and the idle one does not (the
+// colour), and that each pixel's step from one to the other is the recolour
+// direction scaled by that same k (the repaint, cross-checked without any
+// background at all).
+//
+// This is not a widened window. The +-3 survives only as the residual bound on
+// a FIT, where it is not being asked to discriminate two colours: fitting the
+// idle arm to the active colour misses by ~90 counts, thirty times the bound.
+// What was widened is nothing; what was replaced is the quantity being
+// compared. And the flow got stronger — the old set comparison was blind to
+// every fringe pixel, which is most of an antialiased 2 px stroke, while the
+// profile covers all of them and would fail on a tenth-pixel width change.
+// --------------------------------------------------------------------------
 
 import std.format : format;
 import std.json;
@@ -155,6 +208,31 @@ private enum int[3] RGB_ACTIVE = [255, 230, 102];   // 1.0, 0.9, 0.4
 // per-batch alpha is still being applied at all.
 private enum double ARM_ALPHA  = 0.9975; // move/scale arms: 0.95, twice over
 private enum double RING_ALPHA = 0.80;   // the plane handle's outline ring
+
+// How much a pixel's COVERAGE by a stroke may differ between two readings that
+// differ only in the stroke's colour. It is a noise budget on a geometric
+// quantity, not a colour tolerance — see task 0609 in the header for why Flow
+// A compares coverages instead of sets of colour-matched pixels.
+//
+// Where 0.04 comes from. Two effects move a recovered coverage without the
+// stroke moving:
+//   * 8-bit quantisation. Coverage is recovered by projection over three
+//     channels, so a half-count of rounding per channel is +-0.5/|colour - bg|
+//     ~ +-0.004 for the arm over this scene's background, in each of the two
+//     readings.
+//   * The colour literals above are rounded to 8 bits (0.9*255 = 229.5 -> 230)
+//     while the renderer rounds the other way, which biases one colour's
+//     recovered coverage against the other's by up to ~0.004.
+// MEASURED across the whole X-arm sweep: idle-vs-hovered coverage drifts by at
+// most 0.008, on hardware GL and on llvmpipe alike. 0.04 is five times that.
+//
+// What it still catches, MEASURED by mutation rather than extrapolated: a
+// shaft re-stroked 0.3 px wider on hover moves a fringe pixel from 0.922 to
+// 0.986 covered, i.e. 0.064 — 1.6x this tolerance, and the smallest re-stroke
+// that was tried. (The full 1 px mutation moves that same pixel only a little
+// further, to 0.997, because it is near saturation; the pixels that move most
+// under a width change are the ones the stroke's new edge sweeps across.)
+private enum double COV_TOL = 0.04;
 
 private JSONValue postJson(string path, string body_) {
     return parseJSON(cast(string)post(baseUrl ~ path, body_));
@@ -274,21 +352,30 @@ private bool isColor(Px p, const int[3] want) {
                    && abs(p.b - want[2]) <= SLOP;
 }
 
-private int mix1(int fg, int bg, double alpha) {
-    return cast(int)(alpha * fg + (1.0 - alpha) * bg + 0.5);
-}
-
-// Is `p` the FULLY covered composite of `want` at `alpha` over the background
-// `bg`, measured at the same pixel with the gizmo dropped?
+// HOW MUCH of `p` is `want`, over the background `bg` measured at that same
+// pixel with the gizmo dropped?
 //
-// Partial-coverage fringe pixels do NOT satisfy this — their effective alpha
-// is lower — which is exactly what makes a match mean "the stroke's
-// centreline" and what makes the index sets below stable enough to compare.
-private bool isStroke(Px p, Px bg, const int[3] want, double alpha) {
+// A blended, antialiased stroke writes `k*want + (1-k)*bg`, where
+// `k = alpha * coverage` — ONE scalar for all three channels. Recover it by
+// projecting the pixel's step off its background onto the step the UNBLENDED
+// colour would make, and check the residual: a pixel that is not `want` over
+// `bg` does not lie on that line and is rejected however large `k` comes out.
+//
+// The point of `k` is that it is a GEOMETRIC quantity — the fraction of the
+// pixel the stroke covers, times the alpha it is drawn at. It is a property of
+// where the stroke IS, so recolouring the stroke must not move it. That is
+// what makes it the right thing to compare across a hover; see COV_TOL.
+private bool strokeCoverage(Px p, Px bg, const int[3] want, out double k) {
+    k = 0;                                  // `out` starts at double.init = NaN
     if (!p.valid || !bg.valid) return false;
-    return abs(p.r - mix1(want[0], bg.r, alpha)) <= SLOP
-        && abs(p.g - mix1(want[1], bg.g, alpha)) <= SLOP
-        && abs(p.b - mix1(want[2], bg.b, alpha)) <= SLOP;
+    immutable double dr = want[0] - bg.r, dg = want[1] - bg.g, db = want[2] - bg.b;
+    immutable double den = dr*dr + dg*dg + db*db;
+    if (den < 1.0) return false;            // the stroke's colour IS the background
+    immutable double cr = p.r - bg.r, cg = p.g - bg.g, cb = p.b - bg.b;
+    k = (cr*dr + cg*dg + cb*db) / den;
+    return abs(cr - k*dr) <= SLOP
+        && abs(cg - k*dg) <= SLOP
+        && abs(cb - k*db) <= SLOP;
 }
 
 // Is the step from `a` to `b` the SAME stroke repainted from `from` to `to`?
@@ -357,15 +444,43 @@ private size_t[] changedIdx(const Px[] before, const Px[] after) {
     return outi;
 }
 
-// The same, for a blended stroke: the indices whose value is `want` composited
-// at `alpha` over the background measured at that same index.
-private size_t[] strokeIdx(const Px[] pxs, const Px[] bg, const int[3] want,
-                           double alpha)
+// The coverage of `want` at every index of a reading, against the background
+// measured at that same index — the stroke's FOOTPRINT, as a profile rather
+// than a set.
+//
+// Every point is required to fit: a sweep across one stroke is either that
+// stroke over its background (0 < k <= alpha) or the background itself (k = 0,
+// which fits exactly), and anything else on the sweep — a second handle, a
+// shading change, a frame that moved between the reading and the background —
+// lands off the line and is reported rather than silently dropped. `what`
+// names the reading for that message.
+private double[] coverProfile(const Px[] pxs, const Px[] bg, const int[3] want,
+                              string what)
 {
     assert(pxs.length == bg.length, "reading and background differ in length");
-    size_t[] outi;
-    foreach (i, p; pxs) if (isStroke(p, bg[i], want, alpha)) outi ~= i;
-    return outi;
+    auto ks = new double[pxs.length];
+    foreach (i, p; pxs)
+        assert(strokeCoverage(p, bg[i], want, ks[i]),
+               format("%s: pixel (%d,%d) reads rgb(%d,%d,%d) over a measured "
+                      ~ "background of rgb(%d,%d,%d), which no coverage of "
+                      ~ "rgb(%(%d,%)) explains — no single scalar fits all "
+                      ~ "three channels, so this pixel is not that stroke over "
+                      ~ "that background",
+                      what, p.x, p.y, p.r, p.g, p.b,
+                      bg[i].r, bg[i].g, bg[i].b, want[]));
+    return ks;
+}
+
+private double maxOf(const double[] xs) {
+    double m = 0;
+    foreach (x; xs) if (x > m) m = x;
+    return m;
+}
+
+private size_t argMax(const double[] xs) {
+    size_t bi = 0;
+    foreach (i, x; xs) if (x > xs[bi]) bi = i;
+    return bi;
 }
 
 // ---------------------------------------------------------------------------
@@ -493,18 +608,33 @@ unittest {
            ~ "drop/re-arm round trip, so the background probe is not a "
            ~ "background OF THIS frame");
 
-    auto onX = strokeIdx(idleX, bgX, RGB_AXIS_X, ARM_ALPHA);
-    auto onY = strokeIdx(idleY, bgY, RGB_AXIS_Y, ARM_ALPHA);
-    assert(onX.length > 0,
-           format("no pixel of the X arm found on the centre->tip sweep: none "
-                  ~ "reads its colour rgb(%(%d,%)) composited at alpha %.2f "
-                  ~ "over its own measured background. The arm was not drawn, "
+    // The arm's FOOTPRINT on this sweep: how much of each sampled pixel the
+    // shaft covers, measured against that pixel's own background. Requiring
+    // every point to fit is itself a claim — that nothing but the X arm and
+    // the scene behind it is on this sweep.
+    auto covIdleX = coverProfile(idleX, bgX, RGB_AXIS_X, "the idle X arm");
+    auto covIdleY = coverProfile(idleY, bgY, RGB_AXIS_Y, "the idle Y arm");
+
+    // The arm is drawn, and drawn at ARM_ALPHA: somewhere on the sweep the
+    // shaft covers a whole pixel, so the coverage there IS the alpha.
+    //
+    // This replaces "some pixel reads the exact composite of the colour at
+    // ARM_ALPHA over its background", which said the same thing through a
+    // +-3 byte window and could therefore be answered differently by two
+    // rasterisers — see COV_TOL. Only the LOWER half is asserted: 0.9975 and
+    // 1.0 differ by 0.3 of an 8-bit level, so no probe can hold the upper one
+    // (the reasoning retired with the TRANSLUCENT bracket below).
+    assert(maxOf(covIdleX) >= ARM_ALPHA - COV_TOL,
+           format("the X arm's peak coverage on the centre->tip sweep is only "
+                  ~ "%.3f of its colour rgb(%(%d,%)); a shaft drawn at alpha "
+                  ~ "%.4f must cover some pixel whole. The arm was not drawn, "
                   ~ "the scheme changed without this test, or it is not being "
-                  ~ "drawn at that alpha", RGB_AXIS_X[], ARM_ALPHA));
-    assert(onY.length > 0,
-           format("no pixel of the Y arm's colour rgb(%(%d,%)) found — the "
-                  ~ "control arm is not on screen, so its silence below would "
-                  ~ "prove nothing", RGB_AXIS_Y[]));
+                  ~ "drawn at that alpha",
+                  maxOf(covIdleX), RGB_AXIS_X[], ARM_ALPHA));
+    assert(maxOf(covIdleY) >= ARM_ALPHA - COV_TOL,
+           format("the Y arm's peak coverage of rgb(%(%d,%)) is only %.3f — "
+                  ~ "the control arm is not on screen, so its silence below "
+                  ~ "would prove nothing", RGB_AXIS_Y[], maxOf(covIdleY)));
 
     // The arm is TRANSLUCENT — RETIRED at task 0604, and deliberately not
     // replaced by something weaker in the same place.
@@ -536,8 +666,24 @@ unittest {
 
     // Nothing is highlighted yet. Stated explicitly so a build that paints the
     // whole gizmo active could not sail through the comparison.
-    assert(strokeIdx(idleX, bgX, RGB_ACTIVE, ARM_ALPHA).length == 0,
-           "an unhovered X arm already wears the active colour");
+    //
+    // Said at the pixel the arm covers MOST, where a wrong colour has the
+    // furthest to travel: the idle reading there must not be explicable as any
+    // coverage of the active colour. The rejection is not marginal — the axis
+    // colour over this scene's background misses the active colour's line by
+    // ~90 counts against a tolerance of 3, so the two remain unconfusable at
+    // any byte slop this file could plausibly carry.
+    {
+        immutable size_t peak = argMax(covIdleX);
+        double kBad;
+        assert(!strokeCoverage(idleX[peak], bgX[peak], RGB_ACTIVE, kBad),
+               format("an unhovered X arm already wears the active colour: "
+                      ~ "pixel (%d,%d) reads rgb(%d,%d,%d), which is coverage "
+                      ~ "%.3f of rgb(%(%d,%)) over its background",
+                      idleX[peak].x, idleX[peak].y,
+                      idleX[peak].r, idleX[peak].g, idleX[peak].b,
+                      kBad, RGB_ACTIVE[]));
+    }
 
     // --- hover the X arm ---
     immutable int hx = cast(int)round(h.screen[PART_ARM_X][0]);
@@ -553,41 +699,111 @@ unittest {
     auto hovX = probe(c, sweepX);
     auto hovY = probe(c, sweepY);
 
-    // 1. The arm changed colour: every pixel that wore the axis colour now
-    //    wears the active one — at the same alpha, over the same background.
-    auto nowActive = strokeIdx(hovX, bgX, RGB_ACTIVE, ARM_ALPHA);
-    assert(nowActive.length > 0,
-           format("the X arm did not change colour under the pointer: %d "
-                  ~ "pixels still read rgb(%(%d,%)) at alpha %.2f and none "
-                  ~ "read the active rgb(%(%d,%)). The hover state is not "
-                  ~ "reaching the draw.",
-                  strokeIdx(hovX, bgX, RGB_AXIS_X, ARM_ALPHA).length,
-                  RGB_AXIS_X[], ARM_ALPHA, RGB_ACTIVE[]));
+    // 1. The arm is now the ACTIVE colour, at every coverage it had. Requiring
+    //    the whole sweep to fit is the "colour" half: a pixel still carrying
+    //    the axis colour, or carrying a blend of the two, does not lie on the
+    //    active colour's line at all.
+    //
+    //    Said first at the pixel the arm covers MOST, and only then over the
+    //    whole sweep, so that a build with no hover cue at all fails on "the
+    //    arm did not change colour" rather than on a fit message about the
+    //    first fringe pixel in the list.
+    {
+        immutable size_t peak = argMax(covIdleX);
+        double kNow;
+        assert(strokeCoverage(hovX[peak], bgX[peak], RGB_ACTIVE, kNow),
+               format("the X arm did not change colour under the pointer: its "
+                      ~ "most-covered pixel (%d,%d) reads rgb(%d,%d,%d), which "
+                      ~ "is no coverage of the active rgb(%(%d,%)) over its "
+                      ~ "background rgb(%d,%d,%d) — it is still %.3f covered by "
+                      ~ "the axis rgb(%(%d,%)). The hover state is not reaching "
+                      ~ "the draw.",
+                      hovX[peak].x, hovX[peak].y,
+                      hovX[peak].r, hovX[peak].g, hovX[peak].b, RGB_ACTIVE[],
+                      bgX[peak].r, bgX[peak].g, bgX[peak].b,
+                      covIdleX[peak], RGB_AXIS_X[]));
+    }
+    auto covHovX = coverProfile(hovX, bgX, RGB_ACTIVE, "the hovered X arm");
 
-    // 2. ...and it is the SAME set of pixels, not a larger or smaller one.
-    //    This is the half that says "colour, and nothing but colour": a size,
-    //    line-width, outline or glow change would move the footprint, and the
-    //    two index sets would stop matching.
-    assert(onX == nowActive,
-           format("the X arm's footprint changed under the pointer: %d pixels "
-                  ~ "wore its axis colour, %d now wear the active colour, and "
-                  ~ "the sets are not the same pixels. Hover must repaint the "
-                  ~ "handle, not resize or re-stroke it.",
-                  onX.length, nowActive.length));
-    assert(strokeIdx(hovX, bgX, RGB_AXIS_X, ARM_ALPHA).length == 0,
-           "part of the X arm kept its axis colour — the highlight covered "
-           ~ "only some of the handle");
+    // 2. ...and it covers exactly what it covered before — the FOOTPRINT is
+    //    unchanged, pixel for pixel and fringe included. This is the half that
+    //    says "colour, and nothing but colour": a size, line-width, outline or
+    //    glow change moves how much of a pixel the stroke covers, and the two
+    //    profiles stop agreeing.
+    //
+    //    Compared as coverage rather than as two sets of pixels-that-matched-a-
+    //    composite (task 0609). See COV_TOL for why that distinction is the
+    //    whole point and not a restatement.
+    foreach (i; 0 .. covIdleX.length)
+        assert(abs(covIdleX[i] - covHovX[i]) <= COV_TOL,
+               format("the X arm's footprint changed under the pointer: pixel "
+                      ~ "(%d,%d) was %.3f covered by the arm and is now %.3f "
+                      ~ "covered — it reads rgb(%d,%d,%d) where it read "
+                      ~ "rgb(%d,%d,%d), over a background of rgb(%d,%d,%d). "
+                      ~ "Hover must repaint the handle, not resize or "
+                      ~ "re-stroke it.",
+                      sweepX[i][0], sweepX[i][1], covIdleX[i], covHovX[i],
+                      hovX[i].r, hovX[i].g, hovX[i].b,
+                      idleX[i].r, idleX[i].g, idleX[i].b,
+                      bgX[i].r, bgX[i].g, bgX[i].b));
 
-    // 3. The control: the Y arm beside it is untouched, pixel for pixel. One
+    // 3. ...and every pixel got there by the arm being REPAINTED: the step it
+    //    took from idle to hovered is along `active - axis`, and its length is
+    //    the coverage that pixel has. One equation, and it needs no background
+    //    at all — the destination cancels out of a difference — so it is an
+    //    independent check on (1) and (2) rather than a third reading of them.
+    //
+    //    It is also what makes the highlight COMPLETE rather than partial: a
+    //    pixel the highlight missed keeps its colour, so it steps by 0 while
+    //    still being covered, and fails here by its full coverage. A build with
+    //    no hover cue at all fails it at every covered pixel.
+    size_t repainted = 0;
+    foreach (i; 0 .. sweepX.length) {
+        double kStep;
+        assert(recolourGain(idleX[i], hovX[i], RGB_AXIS_X, RGB_ACTIVE, kStep),
+               format("pixel (%d,%d) changed from rgb(%d,%d,%d) to "
+                      ~ "rgb(%d,%d,%d), which is not the X arm repainted from "
+                      ~ "rgb(%(%d,%)) to rgb(%(%d,%)) — no single coverage "
+                      ~ "explains all three channels",
+                      sweepX[i][0], sweepX[i][1],
+                      idleX[i].r, idleX[i].g, idleX[i].b,
+                      hovX[i].r, hovX[i].g, hovX[i].b,
+                      RGB_AXIS_X[], RGB_ACTIVE[]));
+        assert(abs(kStep - covIdleX[i]) <= COV_TOL,
+               format("pixel (%d,%d) is %.3f covered by the X arm but moved as "
+                      ~ "though it were %.3f covered. The hover either did not "
+                      ~ "reach this part of the handle, or it repainted "
+                      ~ "something that is not the shape the arm occupies.",
+                      sweepX[i][0], sweepX[i][1], covIdleX[i], kStep));
+        if (covIdleX[i] > 0.5) ++repainted;
+    }
+    assert(repainted > 0,
+           "no pixel on the sweep is even half covered by the X arm, so the "
+           ~ "repaint above was asserted over nothing");
+
+    // 4. The control: the Y arm beside it is untouched, pixel for pixel. One
     //    part lights at a time, and the probe is not simply reporting a
     //    global recolour.
     assert(changedIdx(idleY, hovY).length == 0,
            format("hovering the X arm changed %d pixels of the Y arm",
                   changedIdx(idleY, hovY).length));
-    assert(strokeIdx(hovY, bgY, RGB_AXIS_Y, ARM_ALPHA) == onY,
-           "the Y arm's own colour moved while the X arm was hovered");
-    assert(strokeIdx(hovY, bgY, RGB_ACTIVE, ARM_ALPHA).length == 0,
-           "the Y arm lit up while the pointer was on the X arm");
+    auto covHovY = coverProfile(hovY, bgY, RGB_AXIS_Y, "the Y arm, X hovered");
+    foreach (i; 0 .. covIdleY.length)
+        assert(abs(covIdleY[i] - covHovY[i]) <= COV_TOL,
+               format("the Y arm's own footprint moved while the X arm was "
+                      ~ "hovered: pixel (%d,%d) went from %.3f to %.3f covered",
+                      sweepY[i][0], sweepY[i][1], covIdleY[i], covHovY[i]));
+    {
+        immutable size_t peakY = argMax(covHovY);
+        double kBad;
+        assert(!strokeCoverage(hovY[peakY], bgY[peakY], RGB_ACTIVE, kBad),
+               format("the Y arm lit up while the pointer was on the X arm: "
+                      ~ "pixel (%d,%d) reads rgb(%d,%d,%d), coverage %.3f of "
+                      ~ "the active rgb(%(%d,%))",
+                      hovY[peakY].x, hovY[peakY].y,
+                      hovY[peakY].r, hovY[peakY].g, hovY[peakY].b,
+                      kBad, RGB_ACTIVE[]));
+    }
 
     // Leave the gizmo unhovered for whatever runs next.
     hoverAt(c, c.vx + 8, c.vy + 8);
