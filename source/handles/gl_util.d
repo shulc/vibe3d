@@ -412,6 +412,30 @@ enum float GIZMO_ALPHA_SCREEN_DISC_RING = 1.00f;
 enum float GIZMO_ALPHA_ROTATE_DISC_FILL = 0.20f;
 enum float GIZMO_ALPHA_ROTATE_DISC_RING = 0.75f;
 
+unittest {
+    // ONE literal on every gizmo line batch — and after task 0604 this identity
+    // is what keeps `GIZMO_ALPHA_ARM` pinned at all.
+    //
+    // The arm now reaches the framebuffer through TWO emissions (see
+    // ShaftedArrow.doubledShaft), so its observed opacity is `1-(1-a)^2`. That
+    // curve is nearly flat at the top: its slope is `2(1-a)`, i.e. 0.1 at
+    // a = 0.95, so moving the arm's alpha by 0.05 moves the composite by 0.005
+    // — well under one 8-bit level over any background contrast the viewport
+    // offers. A pixel test therefore CANNOT bracket the arm's own literal any
+    // more; the best it can do is exclude a single emission, which is a
+    // statement about the doubling and not about the value.
+    //
+    // The rotate ring is emitted ONCE at the same measured literal, so its
+    // composite still moves 1:1 with it and tests/test_gizmo_handle_alpha.d
+    // Flow B brackets it from both sides at the pixel. This assertion is the
+    // link that carries that bracket back to the arm: drift either constant on
+    // its own and the chain breaks here, loudly, with the reason attached.
+    assert(GIZMO_ALPHA_ARM == GIZMO_ALPHA_ROTATE_RING,
+           "the arm and the rotate ring are the same measured line alpha. If "
+           ~ "one really has to change, the other's pixel bracket stops "
+           ~ "standing in for it — give the arm its own measurable pin first");
+}
+
 // -- Pick regions (window pixels; NOT derived from the drawn shape) ---------
 /// Half-width of the capsule around an arrow's projected start→end segment
 /// that counts as a hit. Wider than anything drawn: the move arrow's shaft is
@@ -1069,11 +1093,22 @@ private void endHandleBlend(bool hadBlend) {
 /// The transform gizmo's tetrahedral arrowhead (`buildWedgeHeadData` above) is
 /// a THIRD solid and it does not inherit either convention by assumption: its
 /// four faces are emitted outward-CCW on purpose, proved by the unittest beside
-/// the builder, so it shares `outwardCCW` with the cone it replaces.
+/// the builder. It nonetheless draws `twoLayer` — see that value.
 enum HandleFacing {
-    outwardCCW,   /// front faces point out — cull GL_BACK  (the arrowheads)
+    outwardCCW,   /// front faces point out — cull GL_BACK  (the cone head)
     outwardCW,    /// front faces point in  — cull GL_FRONT (the unit cube)
     flat,         /// not a solid: ONE layer already, so cull nothing
+    /// A closed CONVEX solid drawn deliberately UNCULLED, so every pixel inside
+    /// its silhouette composites exactly TWICE — once through the near face,
+    /// once through the far one. Not an oversight and not the absence of a
+    /// decision: it is the measured behaviour of the reference's arrowhead,
+    /// which never culls, and the two layers are what put that head at
+    /// `1-(1-a)^2` rather than at `a`. Legal only where the solid is convex
+    /// AND closed (a concave one could stack three or more layers on one ray,
+    /// which is the runaway `beginHandleFill` culls to prevent); the tetrahedron
+    /// qualifies, and the unittest beside `buildWedgeHeadData` is what keeps it
+    /// qualifying.
+    twoLayer,
 }
 
 /// Bracket a translucent SOLID (triangle) handle batch drawn on the SHARED
@@ -1096,6 +1131,19 @@ enum HandleFacing {
 /// the raw axis colour. Culling leaves one layer per pixel, so the alpha means
 /// what it says. The silhouette is unchanged — these are convex solids.
 ///
+/// AND WHY THE ARROWHEAD IS NOW EXEMPT (task 0604). That reasoning was right in
+/// kind and overshot by one shape. The reference does NOT cull, and its head is
+/// a tetrahedron: convex and closed, so a ray through it crosses exactly TWO
+/// faces, not three. Two layers at 0.95 is 0.9975, and 0.9975 is what the
+/// reference's arm was measured at, photometrically, across a 74-level
+/// background change (its observed colour did not move, excluding a single
+/// 0.95 emission by 6.4 levels). Culling the head to one layer is therefore not
+/// "the alpha meaning what it says" — it is our head landing 10 levels lighter
+/// than the one it is a port of. So the head passes `HandleFacing.twoLayer` and
+/// keeps both layers, while every other translucent solid here — the scale
+/// boxes, and any concave or many-layered shape a later part brings — keeps the
+/// cull. The exemption is per shape, decided at the call site, never global.
+///
 /// Solid geometry is NOT antialiased here and must not be: the reference never
 /// enables polygon smoothing and explicitly disables multisampling, and its
 /// arrowhead was measured stepping background-to-full with no intermediate
@@ -1105,12 +1153,18 @@ int beginHandleFill(GLint locAlpha, float alpha,
     if (!(alpha < 1.0f) || locAlpha < 0) return -1;   // NaN-safe: !(nan < 1) is true
     glUniform1f(locAlpha, alpha);
     immutable bool hadBlend = beginHandleBlend();
-    // `flat` geometry — the plane handle's fill disc is a triangle FAN whose
-    // triangles tile the disc without overlapping, so it already composites
-    // exactly once and needs no cull. It must not GET one either: a flat fan
-    // seen from its other side is entirely back-facing, and culling would make
-    // the plane handle vanish depending on which way the camera is.
-    if (facing == HandleFacing.flat) return (hadBlend ? 1 : 0) | 4;
+    // Two shapes cull NOTHING, for opposite reasons, and bit 2 of the token
+    // records that so `endHandleFill` restores no cull state either.
+    //   `flat`     — the plane handle's fill disc is a triangle FAN whose
+    //                triangles tile the disc without overlapping, so it already
+    //                composites exactly once. It must not GET a cull: a flat fan
+    //                seen from its other side is entirely back-facing, and
+    //                culling would make the plane handle vanish depending on
+    //                which way the camera is.
+    //   `twoLayer` — the arrowhead, which is SUPPOSED to composite twice
+    //                because the shape it ports does. See the enum.
+    if (facing == HandleFacing.flat || facing == HandleFacing.twoLayer)
+        return (hadBlend ? 1 : 0) | 4;
     immutable bool hadCull = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
     glEnable(GL_CULL_FACE);
     glCullFace(facing == HandleFacing.outwardCCW ? GL_BACK : GL_FRONT);

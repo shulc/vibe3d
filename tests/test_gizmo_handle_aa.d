@@ -150,9 +150,12 @@ Handles handles() {
 
 // The X arm is RED, so its "ink" is how far the red channel runs ahead of the
 // other two. Background (grey mesh, grey backdrop, grid) sits at ~0 on this
-// measure and full stroke at ~169 — the axis red 229/51/51 composited at the
-// arm's own 0.95 alpha. Using an EXCESS rather than a distance-to-a-literal is
-// what makes the test indifferent to what is behind the gizmo.
+// measure and full stroke at ~178 — the axis red 229/51/51 reaching the
+// framebuffer through the arm's TWO emissions of its 0.95 alpha (task 0604;
+// before that it was the 169 of a single one). Using an EXCESS rather than a
+// distance-to-a-literal is what makes the test indifferent to what is behind
+// the gizmo, and every threshold below except C3's is relative to a peak this
+// function measures, so they did not move with it.
 int ink(Px p) {
     if (!p.valid) return 0;
     return p.r - max(p.g, p.b);
@@ -517,14 +520,36 @@ bool testFlowC() {
                ~ "sides as the view rolls past the diagonal",
                lopMax, cast(int)rows.length));
 
-    // C3 — the head still composites exactly ONCE. The new shape is a closed
-    // capped solid drawn on a depth-off pass, so it has to be culled to a
-    // single layer or its 0.95 stacks and the part goes effectively opaque —
-    // and culling is only correct if every face is wound the same way, which is
-    // a per-shape fact and not inherited from the cone. Read straight off the
-    // ink: the axis red is (229,51,51), so a raw or twice-composited sample
-    // gives 178 while a single 0.95 composite gives 0.95*178 = 169. Verified to
-    // separate: with the cull removed these same samples come back at 178.
+    // C3 — the head composites exactly TWICE.
+    //
+    // THIS ASSERTION USED TO BE ITS OWN OPPOSITE, and the reversal is the whole
+    // of task 0604's second port. The head is a closed capped solid on a
+    // depth-off pass, so every face of it lands on the same pixels; this test
+    // was written when we culled it to one layer, on the reasoning that a
+    // translucent solid otherwise stacks its own alpha. The reasoning was right
+    // in kind and wrong for this shape: the reference does not cull, its head
+    // is a TETRAHEDRON — convex, so a ray crosses exactly two faces, not three
+    // — and its arm was measured holding its colour across a 74-level
+    // background change, which one 0.95 composite cannot do. Culling was
+    // therefore making our head a measurable ~9 counts lighter than the head it
+    // is a port of, and the fix is to stop.
+    //
+    // Read straight off the ink, which is background-free: the axis red is
+    // (229,51,51), so the raw colour is 178, one 0.95 composite is 169, and two
+    // are 0.9975*178 = 178 again. The 169/178 separation this used to rely on
+    // is exactly the separation it relies on now, with the sides swapped — so
+    // re-adding the cull fails here, as loudly as removing it once did.
+    //
+    // The layer COUNT is not inferred from this number, which cannot tell two
+    // layers from three (0.9975 against 0.999875 is under a quarter of a
+    // level). It was measured directly, by rebuilding at a diagnostic alpha of
+    // 0.5 where the layers separate by 0.25 each: this head read 0.746/0.748,
+    // i.e. two, while the scale bank's still-culled box read 0.496/0.500 in the
+    // same frames as a control that the reading can tell one layer from two.
+    //
+    // VERIFIED BY MUTATION: `Arrow.draw` passing `HandleFacing.outwardCCW` for
+    // the wedge again — i.e. the cull restored — built and run, fires exactly
+    // this assertion at "head interior peak ink 169".
     {
         setRoll(0);
         auto hk = handles();
@@ -534,29 +559,28 @@ bool testFlowC() {
         auto prof = crossSection(a, baseS, kHalf);
         // Inside the head but clear of the shaft's own translucent stroke,
         // which lies on the arm's line and would legitimately stack with it.
-        int worst = 0, deep = 0;
+        int peak = 0, deep = 0;
         foreach (d; sp.lo .. sp.hi + 1) {
             if (d >= -2 && d <= 2) continue;
             deep++;
             immutable int v = prof[d + kHalf];
-            if (v > worst) worst = v;
+            if (v > peak) peak = v;
         }
         enforce(deep >= 3,
             "the head does not extend far enough off the shaft to sample it "
             ~ "clear of the shaft's own stroke");
         writefln("    head interior peak ink %d (169 = one 0.95 layer, "
-                 ~ "178 = raw / stacked)", worst);
-        enforce(worst <= 173,
-            format("an arrowhead pixel read ink %d — at or above the RAW axis "
-                   ~ "colour's 178 rather than the 169 a single 0.95 composite "
-                   ~ "gives. The solid is compositing more than once, i.e. the "
-                   ~ "cull is not removing the far faces. Winding is derived "
-                   ~ "PER SHAPE: check that every face buildWedgeHeadData emits "
-                   ~ "is outward-CCW (its unittest asserts exactly that) and "
-                   ~ "that draw() still passes HandleFacing.outwardCCW", worst));
+                 ~ "178 = two)", peak);
+        enforce(peak >= 176,
+            format("the arrowhead's deepest pixel read ink %d — the 169 that a "
+                   ~ "SINGLE 0.95 composite gives, not the 178 of two. The "
+                   ~ "head is being culled to one layer again: check that "
+                   ~ "Arrow.draw still passes HandleFacing.twoLayer for the "
+                   ~ "wedge and that beginHandleFill still treats it as "
+                   ~ "cull-nothing", peak));
     }
 
-    writeln("    C PASS: the head breathes, leans, and composites once");
+    writeln("    C PASS: the head breathes, leans, and composites twice");
     return true;
 }
 

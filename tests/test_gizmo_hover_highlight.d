@@ -51,6 +51,13 @@
 //          ring can tell the two mechanisms apart.
 //   * GIZMO_ALPHA_ARM 0.95 -> 1.00, and -> 0.90
 //       -> Flow A, "no pixel of the X arm found on the centre->tip sweep".
+//          NO LONGER CAUGHT since task 0604, and the honest reason is worth
+//          more than a green tick: the arm is emitted twice, so what reaches
+//          the framebuffer is `1-(1-a)^2`, whose slope at a = 0.95 is 0.1.
+//          Both mutations land under one 8-bit level of the correct value.
+//          What Flow A still catches is the arm being emitted ONCE (~6 counts)
+//          or its alpha collapsing far (0.80 -> effective 0.96, ~2.5 counts).
+//          The value itself is pinned via the ring — see ARM_ALPHA below.
 //   * GIZMO_ALPHA_PLANE_RING 0.80 -> 1.00
 //       -> Flow B, "lights to gain 0.998, past the ring's own alpha 0.80".
 //
@@ -61,10 +68,13 @@
 // directly, on the stated premise that the handle passes never blend, so a
 // pixel's value IS the uniform. That premise was true when it was written and
 // is now false: the gizmo's lines are drawn at a measured per-part alpha over
-// a live blend (ARM_ALPHA, RING_ALPHA below), so an arm shaft pixel is
+// a live blend (ARM_ALPHA, RING_ALPHA below), so an arm shaft pixel was
 // `0.95*axis + 0.05*background` — about 6 counts off the raw colour on the
-// saturated channel, which the +-3 byte-slop window rightly rejects. Flow A
-// failed exactly there, at "the arm was not drawn". Flow B was hidden behind
+// saturated channel, which the +-3 byte-slop window rightly rejects. (Task
+// 0604 then doubled the arm's emission, so the arm specifically is back at the
+// raw colour to within a rounding step while the plane ring is not. The
+// machinery below did not change for it — only the number ARM_ALPHA holds.)
+// Flow A failed exactly there, at "the arm was not drawn". Flow B was hidden behind
 // it (a module stops at its first failure) and was measured to be broken the
 // same way: 0 of its 7 ring pixels read the raw active colour, and 5 pixels
 // where the ring overlaps the disc differ between hovered and grabbed, which
@@ -80,8 +90,10 @@
 //   * Flow A probes the same sweep points a second time with the tool
 //     dropped, and matches `alpha*colour + (1-alpha)*measured background`.
 //     That is strictly tighter than what it replaced: the old form could not
-//     see the alpha VALUE at all, and this one fails at 1.0 and at 0.90
-//     alike (see the two-sided bracket at the "translucent" assertion).
+//     see the alpha VALUE at all. How much of the value it can see depends on
+//     how many times the part is emitted — see the mutation list above and
+//     ARM_ALPHA below, where task 0604 wrote down what the arm's doubling
+//     costs this flow and where the missing half went.
 //   * Flow B needs no background at all. Its ring pixels sit over an unknown
 //     destination, so they are identified by the DIRECTION they move in: a
 //     ring pixel's step from idle to hovered must be exactly
@@ -127,10 +139,21 @@ private enum int[3] RGB_ACTIVE = [255, 230, 102];   // 1.0, 0.9, 0.4
 // (handles/gl_util.d: GIZMO_ALPHA_ARM, GIZMO_ALPHA_PLANE_RING). Restated here
 // as literals rather than read back from the app, on the same convention as
 // the colours above: changing one in the renderer has to fail here and be
-// re-justified. Both are bracketed from BOTH sides below — a value that is
-// too low matches no composite, a value that is too high shows through as the
-// raw colour (Flow A) or overshoots the recolour gain (Flow B).
-private enum double ARM_ALPHA  = 0.95;   // move/scale arms, shaft and head
+// re-justified.
+//
+// ARM_ALPHA is the opacity an arm REACHES THE FRAMEBUFFER at, which since task
+// 0604 is not the same as the alpha its batch is drawn with: the shaft is
+// emitted twice (the reference emits it twice), so the measured 0.95 arrives as
+// `1-(1-0.95)^2` and the arrowhead, no longer culled, composites its near and
+// far faces for the same result. Hence 0.9975 here — and hence, one assertion
+// below having to be retired rather than adjusted; see "the arm is
+// TRANSLUCENT" in Flow A for where that bracket went.
+//
+// RING_ALPHA is untouched: the plane ring is one emission of one batch, so it
+// is still bracketed from BOTH sides below — too low matches no composite, too
+// high overshoots the recolour gain — and it is the in-frame evidence that
+// per-batch alpha is still being applied at all.
+private enum double ARM_ALPHA  = 0.9975; // move/scale arms: 0.95, twice over
 private enum double RING_ALPHA = 0.80;   // the plane handle's outline ring
 
 private JSONValue postJson(string path, string body_) {
@@ -334,12 +357,6 @@ private size_t[] changedIdx(const Px[] before, const Px[] after) {
     return outi;
 }
 
-private size_t[] matchingIdx(const Px[] pxs, const int[3] want) {
-    size_t[] outi;
-    foreach (i, p; pxs) if (isColor(p, want)) outi ~= i;
-    return outi;
-}
-
 // The same, for a blended stroke: the indices whose value is `want` composited
 // at `alpha` over the background measured at that same index.
 private size_t[] strokeIdx(const Px[] pxs, const Px[] bg, const int[3] want,
@@ -489,18 +506,34 @@ unittest {
                   ~ "control arm is not on screen, so its silence below would "
                   ~ "prove nothing", RGB_AXIS_Y[]));
 
-    // The arm is TRANSLUCENT, and this is the other half of the bracket on
-    // ARM_ALPHA. Nothing on the sweep may read the RAW axis colour: at 0.95
-    // over the measured background the centreline lands ~6 counts short of it
-    // and the window is 3, so an opaque arm fails here while a fainter one
-    // fails the composite match above. Between them the value is pinned to
-    // roughly +-0.025, and 1.00 / 0.90 / 0.80 are all excluded.
-    assert(matchingIdx(idleX, RGB_AXIS_X).length == 0,
-           format("%d pixel(s) of the X arm read the raw scheme colour "
-                  ~ "rgb(%(%d,%)) — the arm is reaching the framebuffer more "
-                  ~ "opaque than the measured alpha %.2f it is supposed to be "
-                  ~ "drawn at", matchingIdx(idleX, RGB_AXIS_X).length,
-                  RGB_AXIS_X[], ARM_ALPHA));
+    // The arm is TRANSLUCENT — RETIRED at task 0604, and deliberately not
+    // replaced by something weaker in the same place.
+    //
+    // This used to be the upper half of a two-sided bracket: nothing on the
+    // sweep might read the RAW axis colour, because at one composite of 0.95
+    // the centreline lands ~6 counts short of it and the window is 3. The arm
+    // is now emitted twice, so its centreline reads 0.9975 — which rounds to
+    // the raw colour on every channel over every background this scene offers.
+    // The assertion would now fire on a CORRECT build, and widening it to
+    // "no more opaque than 0.9975" is not a test at all: 0.9975 and 1.0 differ
+    // by 0.3 of an 8-bit level over the widest contrast available, so no probe
+    // anywhere can hold that line.
+    //
+    // The bracket is not abandoned, it moved to where it can still be paid:
+    //   * RING_ALPHA below is one emission, still bracketed both ways here, and
+    //     is this frame's evidence that alpha is applied per batch at all —
+    //     which is the alternative explanation an "arm reads raw" reading
+    //     would otherwise leave open.
+    //   * tests/test_gizmo_handle_alpha.d Flow B does the same for the rotate
+    //     ring at the arm's own literal, and a unittest beside the constants
+    //     (handles/gl_util.d) asserts the arm and the ring ARE that one
+    //     literal — the link that carries the ring's bracket to the arm.
+    //   * Flow C of that file excludes a single emission the way the reference
+    //     was measured: the same pixel over two backgrounds 60+ levels apart.
+    //   * A unittest in handles/shapes.d asserts the shaft batch really holds
+    //     two identical segments, which is the only unambiguous statement of
+    //     the mechanism, pixels being unable to make it.
+
     // Nothing is highlighted yet. Stated explicitly so a build that paints the
     // whole gizmo active could not sail through the comparison.
     assert(strokeIdx(idleX, bgX, RGB_ACTIVE, ARM_ALPHA).length == 0,

@@ -179,6 +179,46 @@ class ShaftedArrow : Handler {
     /// Opaque by default; the transform gizmo's arms set the measured 0.95.
     float alpha     = 1.0f;
 
+    /// Task 0604 — emit the shaft stroke TWICE, as the reference does.
+    ///
+    /// Its move-handle draw puts FOUR vertices in one `LINES` batch, the third
+    /// resetting to the shaft's own start, so the same segment is rasterised
+    /// twice; its scale-handle draw does the same for the stem. The effect was
+    /// measured, not assumed: the reference's arm holds its colour across a
+    /// 74-level background change, which puts it at ≥0.9865 effective — a single
+    /// emission at its 0.95 is excluded by 6.4 levels, two emissions predict the
+    /// observed value in all three channels, and a plane ring composited
+    /// correctly at 0.80 in the very same frames rules out "the alpha is simply
+    /// ignored".
+    ///
+    /// WHY THE DOUBLING AND NOT AN ALPHA OF 1.0. The two are the same to a
+    /// quarter of a level in the stroke's CORE and are not the same at its
+    /// EDGE, which is the half of the stroke that antialiasing exists for. Our
+    /// line coverage multiplies into alpha (`thickLineFragSrc`: `u_alpha*cov`),
+    /// so a fringe fragment at coverage c composites as `1-(1-0.95c)^2` drawn
+    /// twice and as `c` drawn once at 1.0 — 0.72 against 0.50 at half coverage.
+    /// The reference's own fringe was measured at an effective 0.975 where a
+    /// single emission could not have exceeded 0.95 at any coverage, i.e. its
+    /// edge is fattened by the doubling exactly as ours will be. Folding the
+    /// alpha would have matched the middle of the stroke and thinned its edge,
+    /// and it would also have retired `GIZMO_ALPHA_ARM` — the measured constant
+    /// — into a number no longer written anywhere.
+    ///
+    /// Off by default and opted into per shape, like `Arrow.fixedConeLen`: this
+    /// class also serves the falloff endpoint handles and the create-tool
+    /// movers, which draw opaque and which nothing has measured.
+    bool doubledShaft = false;
+
+    /// The unit shaft segment (0,0,0)→(0,0,1), stored TWICE so `doubledShaft`
+    /// is a vertex COUNT at the draw call rather than a second draw call — the
+    /// same one-batch shape the reference emits. Subclasses build their shaft
+    /// VAO from this; `shaftVertCount` says how much of it to draw.
+    protected static float[] shaftSegmentData() {
+        return [0f,0f,0f,  0f,0f,1f,   0f,0f,0f,  0f,0f,1f];
+    }
+    /// 2 or 4 — see `doubledShaft`.
+    protected int shaftVertCount() const { return doubledShaft ? 4 : 2; }
+
 protected:
     GLuint shaftVao, shaftVbo;
     GLuint headVao,  headVbo;
@@ -258,7 +298,7 @@ class Arrow : ShaftedArrow {
         this.end   = end;
         this.color = color;
 
-        shaftVao = buildVao3f([0f,0f,0f,  0f,0f,1f], shaftVbo);
+        shaftVao = buildVao3f(shaftSegmentData(), shaftVbo);
 
         float[] coneData;
         foreach (i; 0 .. CONE_SEGS) {
@@ -309,13 +349,19 @@ class Arrow : ShaftedArrow {
             // The reference's lateral PAIR is written out per axis and its
             // handedness is not consistent: for the X arm the frame (Z, Y, X)
             // is left-handed while (Z, X, Y) and (X, Y, Z) are right-handed. It
-            // never culls, so it never had to care. We do — a translucent
-            // closed solid on a depth-off pass has to be culled to one layer or
-            // its alpha stacks (see `beginHandleFill`) — so the pair is
-            // normalised to a right-handed frame here. Swapping A and B
-            // RELABELS two corners of the same tetrahedron and leaves the drawn
-            // solid bit-identical; all it changes is which face is front, which
-            // is exactly what makes one cull direction right for all three arms.
+            // never culls, so it never had to care. The normalisation to a
+            // right-handed frame below was added when we DID cull this head; as
+            // of task 0604 we no longer do (`HandleFacing.twoLayer`), so it is
+            // now a shape invariant rather than a correctness requirement, and
+            // it is kept for two reasons. Swapping A and B RELABELS two corners
+            // of the same tetrahedron and leaves the drawn solid bit-identical,
+            // so keeping it costs nothing; and it is what makes the emitted
+            // winding uniformly outward for all three arms, which is the
+            // premise the `buildWedgeHeadData` unittest asserts and the premise
+            // a future culled user of this shape would need.
+            //
+            // The determinant test itself is NOT optional either way: a
+            // coplanar pair gives the head no volume at all.
             immutable float det = dot(cross(latA, latB), fwd);
             if (abs(det) < 1e-6f) wedge = false;   // coplanar: no volume to draw
             else if (det < 0.0f) { Vec3 t = latA; latA = latB; latB = t; }
@@ -331,16 +377,23 @@ class Arrow : ShaftedArrow {
         glDisable(GL_DEPTH_TEST);
 
         auto shaftModel = modelMatrix(right, up, fwd, Vec3(1, 1, shaftLen), start);
-        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth,
-                       shader.program, alpha);
+        drawThickLines(shaftVao, shaftVertCount(), GL_LINES, shaftModel, vp, c,
+                       lineWidth, shader.program, alpha);
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
         // The head is SOLID and stays hard-edged — it is translucent, not
         // smoothed. Its staircase edge beside the shaft's graded one is what
         // the reference was measured doing, and matching means keeping it.
-        // Both shapes are closed solids and both are wound outward-CCW, so the
-        // default `HandleFacing` covers either (see buildWedgeHeadData).
-        immutable int fillTok = beginHandleFill(shader.locAlpha, alpha);
+        //
+        // The TETRAHEDRON draws uncilled (`twoLayer`), because the head it ports
+        // composites twice — see `HandleFacing.twoLayer`, which is also where
+        // the convexity this relies on is stated. The cone fallback keeps the
+        // cull: it is the shape the falloff handles and the create-tool movers
+        // draw, nothing has measured its layer count, and at their opaque alpha
+        // `beginHandleFill` is a no-op there anyway.
+        immutable int fillTok = beginHandleFill(shader.locAlpha, alpha,
+                                                wedge ? HandleFacing.twoLayer
+                                                      : HandleFacing.outwardCCW);
         // The wedge's basis is the two lateral directions themselves, NOT the
         // `localFrame` pair the cone uses: localFrame is stable but arbitrary
         // about the axis, so a head built on it would lean somewhere unrelated
@@ -379,7 +432,7 @@ class CubicArrow : ShaftedArrow {
         this.end   = end;
         this.color = color;
 
-        shaftVao = buildVao3f([0f,0f,0f,  0f,0f,1f], shaftVbo);
+        shaftVao = buildVao3f(shaftSegmentData(), shaftVbo);
 
         float[] cubeData;
         buildUnitCubeData(cubeData);
@@ -421,8 +474,8 @@ class CubicArrow : ShaftedArrow {
         glDisable(GL_DEPTH_TEST);
 
         auto shaftModel = modelMatrix(right, up, fwd, Vec3(1, 1, shaftLen), shaftOrigin);
-        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth,
-                       shader.program, alpha);
+        drawThickLines(shaftVao, shaftVertCount(), GL_LINES, shaftModel, vp, c,
+                       lineWidth, shader.program, alpha);
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
         immutable int fillTok = beginHandleFill(shader.locAlpha, alpha,
@@ -829,6 +882,10 @@ class MoveHandler : Handler {
         foreach (a; [arrowX, arrowY, arrowZ]) {
             a.lineWidth = GIZMO_STROKE_MOVE_SHAFT_PX;
             a.alpha     = GIZMO_ALPHA_ARM;
+            // Task 0604 — the move handle's shaft is the batch the reference
+            // was READ emitting twice and MEASURED compositing twice. See
+            // ShaftedArrow.doubledShaft.
+            a.doubledShaft = true;
         }
         foreach (c; [circleXY, circleYZ, circleXZ]) {
             c.lineWidth    = GIZMO_STROKE_PLANE_RING_PX;
@@ -1608,6 +1665,15 @@ class ScaleHandler : Handler {
             a.lineWidth = GIZMO_STROKE_SCALE_SHAFT_PX;
             a.alpha     = GIZMO_ALPHA_ARM;
         }
+        // Task 0604 — the doubled emission goes to the STEMS only. The
+        // reference's scale-handle draw doubles its first `LINES` batch (the
+        // stem) and emits its SECOND batch as a single segment; that second
+        // batch is what an undoubled stroke looks like in the same function, so
+        // "everything in this bank is doubled" is refuted by the binary itself.
+        // Nothing identifies our live drag-feedback arrows with that batch, so
+        // they are left single rather than doubled on a guess.
+        foreach (a; [arrowX, arrowY, arrowZ])
+            a.doubledShaft = true;
         foreach (c; [circleXY, circleYZ, circleXZ]) {
             c.lineWidth    = GIZMO_STROKE_PLANE_RING_PX;
             c.outlineAlpha = GIZMO_ALPHA_PLANE_RING;
@@ -1848,4 +1914,45 @@ private:
         vao = buildVao3f(data, vbo);
         built = true;
     }
+}
+
+unittest {
+    // Task 0604 — the shaft's batch really carries a SECOND, identical segment,
+    // and `doubledShaft` really selects it.
+    //
+    // This is the pin the pixel tests cannot supply. Two emissions at 0.95
+    // composite to 0.9975 and one emission at 1.0 composites to 1.0, and those
+    // differ by less than a third of an 8-bit level over the widest background
+    // contrast the viewport has — so no probe can tell the ported mechanism
+    // from a folded alpha. They are NOT the same thing at the stroke's edge
+    // (`u_alpha*cov` means a coverage-c fringe fragment lands at `1-(1-0.95c)^2`
+    // one way and at `c` the other, 0.72 against 0.50 at half coverage), and
+    // the edge is half of what antialiasing is for. So the mechanism is
+    // asserted here, structurally, where it is unambiguous.
+    import std.math : abs;
+
+    auto d = ShaftedArrow.shaftSegmentData();
+    assert(d.length == 12,
+           "the shaft buffer must hold FOUR vertices — two copies of the unit "
+           ~ "segment, which is what lets one draw call emit it twice");
+    foreach (i; 0 .. 6)
+        assert(abs(d[i] - d[i + 6]) < 1e-9f,
+               "the shaft buffer's second segment is not identical to the "
+               ~ "first; a doubled emission must retrace the SAME line, not "
+               ~ "draw a second one somewhere near it");
+    // ...and it is the unit segment along +Z, which is what `draw`'s model
+    // matrix scales into the arm.
+    assert(d[0] == 0f && d[1] == 0f && d[2] == 0f);
+    assert(d[3] == 0f && d[4] == 0f && d[5] == 1f);
+
+    // The selector. `Arrow`'s ctor only touches GL through `buildVao3f`, which
+    // is a no-op under `version(unittest)`.
+    auto arrow = new Arrow(Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,0));
+    assert(arrow.shaftVertCount() == 2,
+           "an arrow that has not opted in must draw ONE segment — this class "
+           ~ "also serves the falloff endpoint handles and the create-tool "
+           ~ "movers, whose stroke weight nothing has measured");
+    arrow.doubledShaft = true;
+    assert(arrow.shaftVertCount() == 4,
+           "an opted-in arm must draw both copies of the segment");
 }
