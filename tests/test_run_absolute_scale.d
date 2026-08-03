@@ -232,8 +232,15 @@ double[3] scaleGestureOnHandle(long wantCount, double mag = 70.0) {
 // routes to Scale, the move shaft to Move — the clean cross-bank separation.
 // Drag outward (+X) to grow the axis factor. Verify-and-retry on the UNDO COUNT
 // AND a positive SX (so a stray Move steal does not satisfy the gate).
-// GIZMO_SCALE_ARM = 1.00 (handles/gl_util.d) — was 1.18 until task 0553;
-// the reference ends the scale and move arms at the same point.
+//
+// The box is at 1.10 of the arm HERE, not 1.00, and the difference is the
+// point of this preset: task 0553 measured both banks ending at the same
+// 1.00 with one bank armed at a time, and task 0606 measured the combined
+// tool standing its scale boxes a further tenth of an arm out whenever the
+// move or rotate bank is drawn beside them. `Transform` arms all three, so
+// this call site takes the stood-off figure. Pressing 1.00 instead lands
+// 12 px inside the box — its grab disc's exact radius — and the "stray Move
+// steal" this function guards against is precisely what happens.
 double[3] scaleGestureViaAxisBox(long wantCount, double mag = 80.0) {
     foreach (attempt; 0 .. 6) {
         settle();
@@ -242,7 +249,7 @@ double[3] scaleGestureViaAxisBox(long wantCount, double mag = 80.0) {
         Vec3 piv = evalPivot();
         float size = gizmoSize(piv, vp);
         float bx, by;          // the +X axis box (head) screen position
-        projectToWindow(Vec3(piv.x + size * 1.00f, piv.y, piv.z), vp, bx, by);
+        projectToWindow(Vec3(piv.x + size * 1.10f, piv.y, piv.z), vp, bx, by);
         // screen-space +X direction for the drag.
         float s0x, s0y, s1x, s1y;
         projectToWindow(Vec3(piv.x + size / 5.0f, piv.y, piv.z), vp, s0x, s0y);

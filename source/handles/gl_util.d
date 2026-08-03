@@ -282,16 +282,46 @@ enum float GIZMO_RING_RADIUS          = 1.00f;
 enum float GIZMO_VIEW_RING_RADIUS     = 13.0f / 12.0f;
 
 // -- Scale bank: three axis boxes on stems, centre disc, plane circles ------
-/// Axis box distance from the centre, fraction of the arm. → 120 px, i.e.
-/// the SAME point the move arrow's tip reaches.
+/// Axis box distance from the centre when this bank is drawn ALONE, as a
+/// fraction of the arm. → 120 px, i.e. the SAME point the move arrow's tip
+/// reaches. Add GIZMO_SCALE_ARM_CROSS_BANK_SHIFT when it is not alone.
 ///
 /// Task 0553: was 1.18, which put the scale boxes 18 % beyond the move tips.
-/// The reference ends both banks' arms at the same `screenLength`; the
-/// stagger was ours. (Its scale CUBE is centred 5 px inside that end, on a
-/// line that still runs the full length — a distinction our CubicArrow
-/// cannot draw, since `end` is at once the stem's end and the head's centre.
-/// Splitting those two would license the remaining 5 px; nothing else does.)
+/// The reference ends both banks' arms at the same screen length, so 1.00 is
+/// right — for a bank on its own, which is the only frame the measurement
+/// behind that number ever contained. It did NOT say the stagger was ours;
+/// see the constant below for the frame it never covered.
+///
+/// (The reference's scale CUBE is centred half a box inside that end, on a
+/// line that still runs the full length — a distinction our CubicArrow cannot
+/// draw, since `end` is at once the stem's end and the head's centre. Moot in
+/// the combined presentation, which draws no scale stem at all.)
 enum float GIZMO_SCALE_ARM            = 1.00f;
+/// ADDED to GIZMO_SCALE_ARM whenever another bank shares the gizmo — the move
+/// bank, the rotate bank, or both. → the box spans 122 → 132 px instead of
+/// 110 → 120, clearing the 96 → 120 arrowhead with 2 px to spare.
+///
+/// Task 0606, and it is the only quantity in this gizmo that depends on what
+/// ELSE is on screen. The reference's combined transform tool does not route
+/// its scale bank through the framework handle-draw call its standalone scale
+/// tool is a thin caller of: the combined tool emits the boxes itself, and
+/// that call cannot express this offset. Which is exactly why comparing our
+/// combined path against our own standalone one — as two lanes did — finds
+/// them in agreement and settles nothing.
+///
+/// THE GATE IS A DISJUNCTION, and one all-on cell against one all-off cell
+/// cannot say so: that pair fits "when translate is on", "when rotate is on"
+/// and "when either is on" equally. Two more cells broke it — one read
+/// translate OFF with the box shifted anyway, another read rotate OFF and
+/// shifted. Neither flag alone is the gate.
+///
+/// A tenth of the ARM, not a fitted pixel count, so it tracks the handle-size
+/// preference across its whole [0.5, 5.0] band (60..600 px of arm).
+///
+/// Ours was 1.00 in both presentations, which drew a 10 px box entirely
+/// inside a 24 px arrowhead. That is the visible defect this retires, and it
+/// was reported twice before it was measured in the frame that shows it.
+enum float GIZMO_SCALE_ARM_CROSS_BANK_SHIFT = 1.0f / 10.0f;
 /// Scale stem start = arm / this. → 24 px out from the centre — the same
 /// inset as the move bank (task 0553; see GIZMO_MOVE_SHAFT_INSET_DIV). Was
 /// 7, which made it 12.9 px against move's 15.

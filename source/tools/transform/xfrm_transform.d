@@ -1358,6 +1358,29 @@ public:
         if (flagT) moveSub.setWrapperGizmoPose(center, bX, bY, bZ);
         if (flagR) rotateSub.setWrapperGizmoPose(center, bX, bY, bZ);
         if (flagS) scaleSub.setWrapperGizmoPose(center, bX, bY, bZ);
+        syncScaleBankStandoff();
+    }
+
+    // The scale bank's axis boxes stand a further tenth of an arm out when
+    // ANOTHER bank shares the gizmo (handles/gl_util.GIZMO_SCALE_ARM_CROSS_-
+    // BANK_SHIFT). The gate is a disjunction — either companion pushes the
+    // boxes out, and it took a second measuring run to establish that, since
+    // an all-on cell against an all-off one fits `T`, `R` and `T || R` alike.
+    //
+    // The wrapper is the only thing that knows what else is drawn, so it is
+    // the only writer. It re-derives the value rather than caching it: `flagT`
+    // / `flagR` are Param-bound and a headless `tool.attr` write can flip
+    // either between any two frames, with no hook to observe it.
+    //
+    // Called from BOTH per-frame funnels because the two cover different
+    // paths and neither covers the other: `setSharedGizmoPose` runs at the top
+    // of `update()` and `draw()` (so replica cells, which skip the arbiter
+    // block, still draw the right box), and `registerGizmoHandles` runs
+    // immediately before `refreshBankGeometry` on the mouse-down hit pass
+    // (which registers and refreshes without ever posing). Both write the same
+    // pure function of the flags, so the order they run in cannot matter.
+    private void syncScaleBankStandoff() {
+        if (flagS) scaleSub.handler.setCrossBankShift(flagT || flagR);
     }
 
     private bool compactPresentation() const {
@@ -1389,6 +1412,11 @@ public:
         // would override a plain setVisible(false) on arrows each frame).
         if (flagS)
             scaleSub.handler.uniformMode = uniform;
+
+        // Same kind of per-frame bank configuration as `uniformMode` above,
+        // and it must land BEFORE `refreshBankGeometry` re-derives the hit
+        // geometry a few statements later at both call sites.
+        syncScaleBankStandoff();
 
         if (compactPresentation()) {
             // Bare Transform draws scale boxes at the same screen-space endpoints

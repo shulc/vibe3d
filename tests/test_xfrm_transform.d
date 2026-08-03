@@ -351,9 +351,17 @@ unittest { // Bare Transform: scale axis head dispatches to Scale, not Move.
     auto vp  = viewportFromCamera(cam);
     drag_helpers.Vec3 pivot = drag_helpers.Vec3(0, 0, 0);
     float size = gizmoSize(pivot, vp);
-    auto arrowEnd = drag_helpers.Vec3(pivot.x + size * 1.00f, pivot.y, pivot.z);
+    // 1.10, not 1.00, since task 0606: beside the move and rotate banks the
+    // scale bank stands its axis boxes a tenth of an arm past the arm end,
+    // so the box no longer sits ON the move arrow's tip. Pressing the tip
+    // (1.00) now lands 12 px short of the box — the exact radius of its grab
+    // disc — and the click falls through to the move bank, which is what this
+    // test then caught as a Z change under an X-only scale. The stagger is
+    // also what makes this test's own subject unambiguous: the two banks no
+    // longer share a pixel to dispatch between.
+    auto scaleBox = drag_helpers.Vec3(pivot.x + size * 1.10f, pivot.y, pivot.z);
     float sx, sy;
-    assert(projectToWindow(arrowEnd, vp, sx, sy));
+    assert(projectToWindow(scaleBox, vp, sx, sy));
 
     int x0 = cast(int)sx;
     int y0 = cast(int)sy;

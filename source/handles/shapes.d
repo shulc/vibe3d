@@ -1607,6 +1607,12 @@ private:
 class ScaleHandler : Handler {
     enum float AXIS_BOX_DISTANCE = GIZMO_SCALE_ARM;
 
+    // Cross-bank stand-off, in arm fractions: 0 when this bank is the only
+    // one on the gizmo, GIZMO_SCALE_ARM_CROSS_BANK_SHIFT when a move and/or
+    // rotate bank is drawn beside it. Only the wrapper knows what else is
+    // drawn, so only the wrapper writes it — see setCrossBankShift.
+    private float crossBankShift_ = 0.0f;
+
     Vec3  center;
     float size;   // world-space gizmo length, updated each frame in draw()
     CubicArrow      arrowX, arrowY, arrowZ;
@@ -1683,6 +1689,28 @@ class ScaleHandler : Handler {
 
     void setScaleAccum(Vec3 s) { scaleAccum = s; }
 
+    /// Declare whether another bank shares this gizmo. THE ONE PIECE OF BOX
+    /// GEOMETRY THAT IS STATE RATHER THAN A DRAW ARGUMENT, deliberately.
+    ///
+    /// `updateGeometry` used to take the box distance as a defaulted
+    /// parameter that no call site ever overrode. Handing the shifted value
+    /// to the DRAW call would have moved the drawn box and left the pick
+    /// region behind: `syncGeometry` re-derives the geometry the HIT test
+    /// reads (`ScaleHeadHandle` measures its 12 px disc from `arrowN.end`,
+    /// `hitTestAxes` walks the same segment) and it passes no arguments, so
+    /// the handle would have moved and the place you must click would not.
+    /// As state, draw and hit reach the same number through the same
+    /// no-argument call, and the parameter that made the two expressible
+    /// separately is gone.
+    void setCrossBankShift(bool besideAnotherBank) {
+        crossBankShift_ = besideAnotherBank ? GIZMO_SCALE_ARM_CROSS_BANK_SHIFT : 0.0f;
+    }
+    /// The live stand-off, in arm fractions (0 or the cross-bank shift).
+    float crossBankShift() const { return crossBankShift_; }
+    /// Where an axis box's OUTER FACE sits, in arm fractions — the arm plus
+    /// whatever stand-off the bank currently carries.
+    float axisBoxDistance() const { return AXIS_BOX_DISTANCE + crossBankShift_; }
+
     int activeDragAxis = -1;  // -1 = none, 0/1/2 = axis, 3 = uniform
 
     void destroy() {
@@ -1702,25 +1730,31 @@ class ScaleHandler : Handler {
     }
 
     // Task 0212: see MoveHandler.syncGeometry — same idempotent CPU-only
-    // re-layout forwarder. Keeps the default `axisBoxDistance` (the ONLY
-    // value any draw call site uses — verified: `draw()` and
-    // `drawAxisBoxesOnly()` both call `updateGeometry(vp)` with no override),
-    // so the synced geometry matches whichever bank draw runs afterward.
+    // re-layout forwarder. It takes no geometry arguments and `updateGeometry`
+    // accepts none, which is the whole safety property: this call feeds the
+    // HIT test and `draw()` / `drawAxisBoxesOnly()` feed the pixels, and there
+    // is no longer any way to hand one of them a box distance the other does
+    // not see (task 0606 — see setCrossBankShift).
     // Re-derives `centerDisk.normal`/`radius` (camFwd/gizmoSize-dependent —
     // the stale members `CenterDiskGizmo.diskHitCheck` reads) plus the plane
     // circles' gizmoSize-offset centers.
     void syncGeometry(const ref Viewport vp) { updateGeometry(vp); }
 
-    private void updateGeometry(const ref Viewport vp, float axisBoxDistance = AXIS_BOX_DISTANCE)
+    private void updateGeometry(const ref Viewport vp)
     {
         size = gizmoSize(center, vp);
 
+        // Arm + cross-bank stand-off. `crossBankShift_` is 0 unless the
+        // wrapper has declared a companion bank, so a scale bank on its own
+        // lands exactly where it always did.
+        immutable float boxDist = AXIS_BOX_DISTANCE + crossBankShift_;
+
         arrowX.start = center + axisX * (size/GIZMO_SCALE_SHAFT_INSET_DIV);
-        arrowX.end   = center + axisX * (size * axisBoxDistance);
+        arrowX.end   = center + axisX * (size * boxDist);
         arrowY.start = center + axisY * (size/GIZMO_SCALE_SHAFT_INSET_DIV);
-        arrowY.end   = center + axisY * (size * axisBoxDistance);
+        arrowY.end   = center + axisY * (size * boxDist);
         arrowZ.start = center + axisZ * (size/GIZMO_SCALE_SHAFT_INSET_DIV);
-        arrowZ.end   = center + axisZ * (size * axisBoxDistance);
+        arrowZ.end   = center + axisZ * (size * boxDist);
 
         // Task 0597: one clamped box size, shared by the STATIC axis box and
         // the LIVE drag-feedback box. Ours were two different quantities (2.88
@@ -1735,14 +1769,19 @@ class ScaleHandler : Handler {
         arrowX.fixedCubeHalf      = cubeFixed;
         arrowY.fixedCubeHalf      = cubeFixed;
         arrowZ.fixedCubeHalf      = cubeFixed;
+        // The live drag box. The stand-off is ADDITIVE and applied AFTER the
+        // drag factor, not folded into it: the reference computes the box at
+        // `arm x factor` and then adds its tenth, so a 2x drag puts the box at
+        // two arms plus a tenth — not at 2.2 arms. With no companion bank
+        // `crossBankShift_` is 0 and this is the old expression exactly.
         scaleArrowX.start         = arrowX.end;
         scaleArrowY.start         = arrowY.end;
         scaleArrowZ.start         = arrowZ.end;
-        scaleArrowX.end           = center + axisX * (size * axisBoxDistance * scaleAccum.x);
+        scaleArrowX.end           = center + axisX * (size * (AXIS_BOX_DISTANCE * scaleAccum.x + crossBankShift_));
         scaleArrowX.fixedCubeHalf = cubeFixed;
-        scaleArrowY.end           = center + axisY * (size * axisBoxDistance * scaleAccum.y);
+        scaleArrowY.end           = center + axisY * (size * (AXIS_BOX_DISTANCE * scaleAccum.y + crossBankShift_));
         scaleArrowY.fixedCubeHalf = cubeFixed;
-        scaleArrowZ.end           = center + axisZ * (size * axisBoxDistance * scaleAccum.z);
+        scaleArrowZ.end           = center + axisZ * (size * (AXIS_BOX_DISTANCE * scaleAccum.z + crossBankShift_));
         scaleArrowZ.fixedCubeHalf = cubeFixed;
 
         // The view cull (task 0602) — the same predicate MoveHandler uses, and

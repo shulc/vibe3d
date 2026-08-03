@@ -125,6 +125,34 @@ void selectUpperRegion() {
     selStr ~= "]";
     postJson("/api/select", `{"mode":"polygons","indices":` ~ selStr ~ `}`);
 }
+// Where the scale box for one axis ACTUALLY is, asked of the tool instead of
+// frozen as a pixel. Part ids 20/21/22 are the scale bank's axis heads (see
+// source/tools/transform/xfrm_transform.d); in the compact presentation the
+// head's screen anchor IS the drawn box, and the same point its 12 px grab
+// disc is measured from.
+//
+// This replaces a hard-coded press pixel. Task 0606: with another bank on the
+// gizmo the scale bank stands its boxes a tenth of an arm further out, which
+// moved this one ~12 px — exactly the radius of that grab disc, so the frozen
+// pixel came to rest on its rim and the press stopped landing. The subject of
+// this test is the gesture's undo / centre behaviour, not where the handle
+// sits; where it sits is pinned in tests/test_gizmo_scale_bank_standoff.d and
+// tests/test_gizmo_scale_bank_gate.d.
+bool scaleBoxPx(int axis, out int px, out int py) {
+    auto h = getJson("/api/tool/handles")["handles"];
+    if (h.type == JSONType.null_) return false;
+    foreach (p; h["parts"].array) {
+        if (cast(int) p["part"].integer != 20 + axis) continue;
+        if (!p["visible"].boolean) return false;
+        if (p["screen"].type == JSONType.null_) return false;
+        auto s = p["screen"].array;
+        px = cast(int) s[0].floating;
+        py = cast(int) s[1].floating;
+        return true;
+    }
+    return false;
+}
+
 void setupFlex() {
     postJson("/api/reset?type=subdivcube&levels=2", "");
     postJson("/api/camera", `{"azimuth":0.785,"elevation":0.6,"distance":3.2}`);
@@ -410,7 +438,9 @@ unittest {
     setupFlex();
     Cam cam = fetchCam();
     double ppx, ppy; assert(projectPivot(cam, ppx, ppy), "pivot off-camera");
-    int x0 = 475, y0 = 260;
+    int x0, y0;
+    assert(scaleBoxPx(2, x0, y0),
+           "the scale Z box is not registered — nothing to press");
     int x1 = x0, y1 = y0 - 55;
 
     V3 preScaleRight = scaleRight();

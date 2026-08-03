@@ -154,11 +154,19 @@ unittest { // The arm is 120 SCREEN pixels, and stays 120 as the camera dollies
     }
 }
 
-unittest { // One shaft inset, one arm end — the two banks agree
+unittest { // One shaft inset, one arm end — the two banks agree, ALONE
     // Measured: the reference starts BOTH banks' shafts at screenLength/5
     // (24 px) and ends BOTH banks' arms at screenLength (120 px). We had two
     // insets (/6 move, /7 scale) and an 18 % stagger between the arm ends;
     // neither exists over there.
+    //
+    // SCOPE, narrowed by task 0606: every frame behind that reading held ONE
+    // bank. Drawn beside a move or rotate bank the reference's scale box
+    // stands a further tenth of an arm out, so "the two banks agree" is a
+    // statement about banks on their own — which is exactly what the two bare
+    // handlers below are. tests/test_gizmo_scale_bank_standoff.d holds the
+    // other case; this one deliberately keeps the alone case pinned, since a
+    // stand-off leaking into it would be its own regression.
     enum float INSET_DIV = 5.0f;
     enum float ARM_RATIO = 1.00f;
 
@@ -179,7 +187,9 @@ unittest { // One shaft inset, one arm end — the two banks agree
     assert(vec3Close(mv.arrowX.end, pivot + ax * (size * ARM_RATIO), eps),
            "move arm does not end at the arm length");
     assert(vec3Close(sc.arrowX.end, pivot + ax * (size * ARM_RATIO), eps),
-           "scale arm does not end at the arm length — a stagger is back");
+           "a scale bank drawn ALONE does not end at the arm length — either "
+           ~ "the old 18 % stagger is back, or task 0606's cross-bank "
+           ~ "stand-off has leaked into the single-bank case");
     assert(vec3Close(mv.arrowX.start, sc.arrowX.start, eps),
            "the two banks disagree about where the shaft starts");
     assert(vec3Close(mv.arrowX.end, sc.arrowX.end, eps),
