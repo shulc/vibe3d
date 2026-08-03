@@ -398,17 +398,49 @@ immutable string thickLineGeomSrc = q{
 // explicitly disables `GL_MULTISAMPLE`, and its arrowheads and centre cube
 // were measured stepping from background straight to full colour with no
 // intermediate value. Hard-edged solids are what matching looks like.
+//
+// SMOOTHING IS PER SHAPE, NOT PER RENDERER (task 0610). Coverage-into-alpha
+// above is what a smoothed stroke wants, and it used to be the ONLY thing this
+// stage could do — every line drawn through this program was antialiased,
+// whether or not the shape it came from asked to be. That is not the reference's
+// model: it requests smoothing per BATCH, and several of its gizmo strokes do
+// not request it. The rotate bank's backing disc is the first of ours to be
+// measured as one of them (its ink is a single exact value with no fringe, next
+// to a screen-plane ring in the same frame that is graded on both edges), so
+// this stage now takes the request as a uniform.
+//
+// `u_smooth = 0` is a HARD edge in the strict sense: coverage is 1 inside the
+// stroke's own half-width and 0 outside it, with no intermediate value possible
+// at any pixel. The geometry stage still pads the quad by `kAaPadPx`, and those
+// padding fragments are exactly the ones this zeroes — the padding costs a
+// little rasterised area and changes nothing that reaches the framebuffer.
+//
+// It is a UNIFORM branch, so it is coherent across every fragment of a batch and
+// costs nothing measurable; written that way rather than as a `mix` because
+// "which of two coverage laws" is what it is, and a reader should not have to
+// work out that one side of the interpolation is dead.
+//
+// DEFAULT IS SMOOTHED. Every existing caller keeps analytic AA without saying
+// anything; only a shape that opts out changes. Two other strokes are known not
+// to request smoothing in the reference — the scale shaft and the guide lines —
+// and they are deliberately NOT switched here: neither has been measured on our
+// own pixels, and this task's evidence covers the disc alone. The mechanism is
+// what makes them a one-line change when someone measures them.
 immutable string thickLineFragSrc = q{
     #version 330 core
     uniform vec3  u_color;
     uniform float u_dim;        // brightness multiplier; 1.0 = neutral
     uniform float u_alpha;      // fragment opacity; 1.0 = opaque
     uniform float u_lineWidth;  // stroke width, WINDOW PIXELS (shared with the geometry stage)
+    uniform float u_smooth;     // 1 = analytic coverage AA, 0 = hard-edged; 1.0 = neutral
     noperspective in float vEdgeDist;
     out vec4 fragColor;
     void main() {
         float halfW = u_lineWidth * 0.5;
-        float cov = 1.0 - smoothstep(halfW - 0.5, halfW + 0.5, abs(vEdgeDist));
+        float d     = abs(vEdgeDist);
+        float cov   = (u_smooth > 0.5)
+                    ? 1.0 - smoothstep(halfW - 0.5, halfW + 0.5, d)
+                    : (d <= halfW ? 1.0 : 0.0);
         fragColor = vec4(u_color * u_dim, u_alpha * cov);
     }
 };

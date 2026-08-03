@@ -15,6 +15,7 @@ import math;
 private struct ThickLineState {
     GLuint prog;
     GLint  locModel, locView, locProj, locColor, locWidth, locScreen, locAlpha;
+    GLint  locSmooth;
     float  screenW, screenH;
 }
 private ThickLineState g_thickLine;
@@ -389,15 +390,24 @@ enum float GIZMO_STROKE_ROTATE_RING_PX = 2.5f;
 /// Plane-handle outline ring. The width preference with NO floor under it —
 /// the one stroke that can go below 2 px.
 enum float GIZMO_STROKE_PLANE_RING_PX  = 1.0f;
-/// The disc drawn behind the rotate rings, outlined at a literal 2.0.
+/// The disc drawn behind the rotate rings: a HAIRLINE, and the one stroke on
+/// this gizmo with no floor under it at all — the same law as the plane ring
+/// above, and unlike the move shaft's 2 and the rotate rings' 2.5.
 ///
-/// It is NOT the rings' 2.5 and never was — measured as DRAWN, through
-/// /api/viewport/probe, by integrating stroke coverage over an annulus (which
-/// averages out where the pixel grid happens to fall): the rings integrate to
-/// 2.49 px and this disc to 2.00 px. The 25 % between them is close to
-/// invisible, so a disc that looks wrong is not a disc that is the wrong
-/// width — see `rotateBackingDiscColor`, which is what was actually wrong.
-enum float GIZMO_STROKE_ROTATE_DISC_PX = 2.0f;
+/// Task 0610: was 2.0. That number came from the arm of a two-arm draw function
+/// that the reference application never enters — both of its call sites select
+/// the other arm — so it was never a measurement of anything drawn. What is
+/// drawn integrates to 1.006-1.046 px over a 2.9x change of radius, and steps
+/// to exactly 8 px when the width preference is set to 8. A LAW, not a
+/// constant: it tracks the preference verbatim and does not track the handle
+/// scale. We do not expose that preference, so 1.0 is what ships; if one is
+/// ever added, this becomes the preference itself and NOT `max(floor, pref)`.
+///
+/// This is the width the disc is measured at, so the number here has to stay
+/// tied to a measurement rather than to what looks right: at 1 px against a
+/// backdrop it sits 0.15 below, the shape is close to subliminal, and every
+/// wrong value for it also looks approximately fine.
+enum float GIZMO_STROKE_ROTATE_DISC_PX = 1.0f;
 
 // -- Per-part ALPHA (task 0600) ---------------------------------------------
 //
@@ -430,17 +440,22 @@ enum float GIZMO_ALPHA_PLANE_FILL_GRABBED = 1.00f;
 /// The screen/eye-aligned disc — the faintest fill on the gizmo, ringed solid.
 enum float GIZMO_ALPHA_SCREEN_DISC_FILL = 0.10f;
 enum float GIZMO_ALPHA_SCREEN_DISC_RING = 1.00f;
-/// The backing disc behind the rotate rings — TWO parts, like the plane
-/// handle: a filled plate under a smooth outline, one colour
-/// (`rotateBackingDiscColor`) at two opacities.
+/// The backing disc behind the rotate rings. ONE part — a line loop — and it
+/// is OPAQUE, which on this gizmo makes it the exception rather than the rule:
+/// every other stroke here carries an alpha below 1.
 ///
-/// The fill is what makes the disc a disc. Without it the shape is just a
-/// third ring, and a ring drawn in a colour a hair off the backdrop is nearly
-/// nothing at all — which is how ours drew, in pure black, for as long as it
-/// existed: the outline alone at 0.75 over the backdrop is a heavy dark
-/// stroke, and it was reported as one.
-enum float GIZMO_ALPHA_ROTATE_DISC_FILL = 0.20f;
-enum float GIZMO_ALPHA_ROTATE_DISC_RING = 0.75f;
+/// Task 0610 retired both of the values that used to stand here, a fill at 0.20
+/// under an outline at 0.75. There is no fill (see `FullCircleHandler`, which
+/// no longer has one to give) and there is no partial opacity: the reference
+/// emits this batch with no alpha attached at all, which on its own path means
+/// blending is switched OFF for it rather than "blended at 1.0". Ours reaches
+/// the same pixels by staying on the one blend bracket every line batch uses,
+/// where an alpha of exactly 1 is an identity.
+///
+/// Measured, not read: the disc's ink is the SAME 8-bit triple over two
+/// viewport backdrops 38 levels apart. A stroke at 0.75 would have landed on
+/// two different values there, and that is the whole test.
+enum float GIZMO_ALPHA_ROTATE_DISC      = 1.00f;
 
 unittest {
     // ONE literal on every gizmo line batch — and after task 0604 this identity
@@ -834,6 +849,15 @@ void initThickLineProgram(GLuint prog, int screenW, int screenH) {
     // seeding below stays, because a program whose very first draw forgot to
     // pass one would still be reaching for a 0.
     g_thickLine.locAlpha  = glGetUniformLocation(prog, "u_alpha");
+    // The per-shape smoothing request (task 0610). WRITTEN on every draw, like
+    // `u_lineWidth` and unlike `u_alpha` was — `drawThickLines` is the single
+    // funnel every line batch in the app passes through, so this uniform is
+    // never read stale and is NOT a `kSharedFragNeutrals` obligation. It is
+    // seeded below anyway, for the one case the funnel does not cover: a future
+    // path that binds this program and draws without going through that
+    // function would otherwise get GL's default 0 and render EVERY line
+    // hard-edged, which is a silent whole-app regression rather than a crash.
+    g_thickLine.locSmooth = glGetUniformLocation(prog, "u_smooth");
     g_thickLine.screenW   = cast(float)screenW;
     g_thickLine.screenH   = cast(float)screenH;
 
@@ -854,6 +878,19 @@ void initThickLineProgram(GLuint prog, int screenW, int screenH) {
     // future uniform on the shared source cannot reach only one of its two
     // programs again.
     seedSharedFragUniforms(prog);
+
+    // ...and `u_smooth`'s own neutral. Not part of that list on purpose: the
+    // list is the contract of the SHARED fragment source, and this uniform
+    // exists on the thick-line source alone. Same bind-and-restore discipline,
+    // for the same reason (a builder runs during init, with some other program
+    // possibly bound).
+    if (g_thickLine.locSmooth >= 0) {
+        GLint prevProg;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
+        glUseProgram(prog);
+        glUniform1f(g_thickLine.locSmooth, 1.0f);
+        glUseProgram(cast(GLuint)prevProg);
+    }
 }
 
 /// Update the cached screen dimensions used by drawThickLines for the current
@@ -1224,12 +1261,23 @@ void endHandleFill(GLint locAlpha, int token) {
 // pixel would simply be written at full colour and the smoothing would vanish.
 // A line batch is exactly the case the reference also always blends, since
 // every gizmo stroke it emits carries an alpha below 1.
+//
+// That last clause is no longer true of every stroke (task 0610: the rotate
+// bank's backing disc carries no alpha at all and is not smoothed), and the
+// unconditional blend stays right for it anyway. At `smooth = false, alpha = 1`
+// every fragment this stage emits is either fully opaque or exactly zero, so a
+// `SRC_ALPHA` blend is an identity on both — and the alpha channel is written
+// `GL_ZERO / GL_ONE` (see `beginHandleBlend`), so the zero-coverage fragments
+// outside the stroke cannot punch a hole in the cell FBO's own alpha either.
+// Keeping ONE blend bracket for all line batches is worth more than saving the
+// two GL calls a special case would.
 package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
                              const ref float[16] model,
                              const ref Viewport vp,
                              Vec3 color, float lineWidth,
                              GLuint restoreProgram,
-                             float alpha = 1.0f)
+                             float alpha = 1.0f,
+                             bool smooth = true)
 {
     glUseProgram(g_thickLine.prog);
     glUniformMatrix4fv(g_thickLine.locModel, 1, GL_FALSE, model.ptr);
@@ -1239,6 +1287,8 @@ package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
     glUniform1f(g_thickLine.locWidth, lineWidth);
     glUniform2f(g_thickLine.locScreen, g_thickLine.screenW, g_thickLine.screenH);
     if (g_thickLine.locAlpha >= 0) glUniform1f(g_thickLine.locAlpha, alpha);
+    if (g_thickLine.locSmooth >= 0)
+        glUniform1f(g_thickLine.locSmooth, smooth ? 1.0f : 0.0f);
 
     immutable bool hadBlend = beginHandleBlend();
     glBindVertexArray(vao);
@@ -1257,10 +1307,11 @@ void drawThickLinesExt(GLuint vao, int vertCount, GLenum mode,
                        const ref Viewport vp,
                        Vec3 color, float lineWidth,
                        GLuint restoreProgram,
-                       float alpha = 1.0f)
+                       float alpha = 1.0f,
+                       bool smooth = true)
 {
     drawThickLines(vao, vertCount, mode, model, vp, color, lineWidth,
-                   restoreProgram, alpha);
+                   restoreProgram, alpha, smooth);
 }
 
 // Lazily-built unit-segment VAO ([0,0,0]→[0,0,1]) shared by tools that draw a

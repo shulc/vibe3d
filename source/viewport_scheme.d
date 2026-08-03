@@ -177,9 +177,15 @@ enum float kBackingDiscDarken = 0.15f;
 /// rather than a negative colour. Nothing clamps at the top: the offset only
 /// ever subtracts.
 ///
-/// This is the disc's colour for BOTH of its parts — the fill and the outline
-/// share it and differ only in alpha (see `GIZMO_ALPHA_ROTATE_DISC_FILL` /
-/// `_RING`). One colour, two opacities, which is why there is one function.
+/// The disc has ONE part, so this is simply its colour — drawn at it, opaque
+/// (`GIZMO_ALPHA_ROTATE_DISC`), with nothing else sharing it.
+///
+/// It used to be described here as one colour serving two parts at two
+/// opacities, a plate under an outline. Task 0610 measured the shape and there
+/// is no plate; the wording is corrected rather than deleted because the
+/// derivation below is the half of that row which survived, and survived
+/// exactly — the drawn ink matches this expression to the last 8-bit level over
+/// two different backdrops.
 Vec3 rotateBackingDiscColor() @safe pure nothrow @nogc {
     immutable Vec3 b = schemeColor(SchemeColor.backdrop);
     return Vec3(max(0.0f, b.x - kBackingDiscDarken),
