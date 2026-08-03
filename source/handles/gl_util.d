@@ -4,6 +4,7 @@ import bindbc.opengl;
 import std.math : sqrt, PI, abs;
 import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 import gl_thread_guard : glThreadGuard;
+import shader : seedSharedFragUniforms;
 import math;
 
 // ---------------------------------------------------------------------------
@@ -307,21 +308,22 @@ void initThickLineProgram(GLuint prog, int screenW, int screenH) {
     g_thickLine.screenH   = cast(float)screenH;
 
     // The thick-line program reuses the basic `fragmentShaderSrc`, whose
-    // fragment colour is `u_color * u_dim` (layers Stage 5 dim feature).
-    // A GLSL uniform defaults to 0, so an unset `u_dim` renders every
-    // gizmo shaft / rotate ring / scale axis BLACK. These lines are never
-    // dimmed (the background-layer dim pass only touches the Shader /
-    // LitShader programs, never this one), so seed `u_dim` to the neutral
-    // 1.0 once here. Guarded for forward-compat in case the shared
-    // fragment shader ever drops the uniform.
-    GLint locDim = glGetUniformLocation(prog, "u_dim");
-    if (locDim >= 0) {
-        GLint prevProg;
-        glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
-        glUseProgram(prog);
-        glUniform1f(locDim, 1.0f);
-        glUseProgram(prevProg);
-    }
+    // fragment colour is `vec4(u_color * u_dim, u_alpha)`. A GLSL uniform
+    // defaults to 0, and 0 is the destructive value for BOTH of those: an
+    // unset `u_dim` renders every gizmo shaft / rotate ring / scale axis
+    // BLACK, and an unset `u_alpha` writes them into the cell's FBO with zero
+    // coverage — which the ImGui composite of that colour texture then blends
+    // away, so the lines read as the panel grey behind them. Neither uniform
+    // is ever written on this program's draw path, so both are seeded to
+    // neutral once, here.
+    //
+    // This used to seed `u_dim` alone, by hand. `u_alpha` was added
+    // to the shared fragment source later (task 0559) and this builder was not
+    // updated, which is exactly the greyed-lines bug. Seeding now goes through
+    // `shader.seedSharedFragUniforms`, which owns the full neutral list, so a
+    // future uniform on the shared source cannot reach only one of its two
+    // programs again.
+    seedSharedFragUniforms(prog);
 }
 
 /// Update the cached screen dimensions used by drawThickLines for the current

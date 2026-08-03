@@ -35,11 +35,61 @@ immutable string fragmentShaderSrc = q{
     }
 };
 
+// Every uniform of `fragmentShaderSrc` that is NOT written on the draw path,
+// paired with the value that means "do nothing". A program built from that
+// source must be seeded with all of them before its first draw, because GL
+// initialises an unset uniform to 0 and 0 is the DESTRUCTIVE value for both:
+// `u_dim = 0` renders black, `u_alpha = 0` renders nothing.
+//
+// The list lives here, next to the shader source it describes, because of the
+// bug that produced it: `u_alpha` was added to the shared source by task 0559
+// and only ONE of the two programs built from it was taught to seed the new
+// uniform, so every gizmo shaft and rotate ring reached the framebuffer with
+// the right colour and zero coverage and was composited away as the panel grey
+// behind it. That is not a typo at a call site, it is a hazard of the shared
+// source itself — adding a uniform to `fragmentShaderSrc` silently adds an
+// obligation to every program built from it, past and future. Adding the
+// entry here, and calling `seedSharedFragUniforms` from every builder,
+// discharges that obligation in one place instead of N.
+private immutable struct SharedFragUniform { string name; float neutral; }
+private immutable SharedFragUniform[] kSharedFragNeutrals = [
+    SharedFragUniform("u_dim",   1.0f),   // brightness multiplier (layers Stage 5)
+    SharedFragUniform("u_alpha", 1.0f),   // fragment opacity (task 0559)
+];
+
+/// Seed every non-draw-path uniform of the shared `fragmentShaderSrc` on
+/// `prog` to its neutral value, then restore the previously-bound program.
+///
+/// Call this from EVERY builder of a `fragmentShaderSrc` program, right after
+/// linking. Locations are looked up here rather than taken from the caller so
+/// a builder cannot seed a uniform it forgot to cache; a `< 0` location (the
+/// uniform absent, or optimised out because the source dropped it) is skipped,
+/// which keeps this forward-compatible with the shader changing again.
+///
+/// Restoring the previous program matters: builders run during init, where
+/// some other program may already be bound and the caller does not expect its
+/// binding to move under it.
+void seedSharedFragUniforms(GLuint prog) {
+    GLint prevProg;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
+    glUseProgram(prog);
+    foreach (u; kSharedFragNeutrals) {
+        GLint loc = glGetUniformLocation(prog, u.name.toStringz());
+        if (loc >= 0) glUniform1f(loc, u.neutral);
+    }
+    glUseProgram(cast(GLuint)prevProg);
+}
+
 // Flat translucent-fill fragment shader — a solid `u_color` at a per-draw
-// `u_alpha`. Used by handler.drawWorldQuad for alpha-blended overlay polygons
-// (the Slice tool's cut-plane preview). Kept as its OWN program so the opaque
-// `fragmentShaderSrc` gizmo/mesh draws are untouched (no shared `u_alpha`
-// uniform to seed, no risk of an unset uniform blanking other draws).
+// `u_alpha`. Its OWN program, and its own `u_alpha` distinct from the shared
+// source's: this one is WRITTEN on every draw (drawWorldQuad takes the alpha
+// as a parameter), so it is never a seeding obligation.
+//
+// The comment that used to sit here claimed `fragmentShaderSrc` had "no
+// shared `u_alpha` uniform to seed". That stopped being true when task 0559
+// added exactly such a uniform to it, and the stale claim is part of why the
+// gap survived: it read as a standing guarantee that the shared program had
+// nothing to seed. See `kSharedFragNeutrals` above for what it actually owes.
 immutable string fillFragSrc = q{
     #version 330 core
     uniform vec3  u_color;
@@ -305,18 +355,20 @@ class Shader {
         locColor  = glGetUniformLocation(program, "u_color");
         locDim    = glGetUniformLocation(program, "u_dim");
         locAlpha  = glGetUniformLocation(program, "u_alpha");
-        // Seed u_alpha ONCE, here, and not only in useProgram(). GL
-        // initialises an unset uniform to 0, and this program is also driven
-        // by a handful of call sites that bind it with a bare
-        // glUseProgram(shader.program) instead of going through useProgram()
-        // (gizmo shapes, the pen preview, the slice overlay). Seeding in the
-        // constructor means u_alpha is 1.0 from the very first frame no
-        // matter which site binds the program first, so no draw ordering can
-        // ever expose the 0 default. The existing fillFragSrc comment warns
-        // about exactly this failure mode for a shared alpha uniform; this is
-        // how that warning is honoured while still sharing the program.
-        glUseProgram(program);
-        glUniform1f(locAlpha, 1.0f);
+        // Seed the shared source's neutral uniforms ONCE, here, and not only
+        // in useProgram(). GL initialises an unset uniform to 0, and this
+        // program is also driven by a handful of call sites that bind it with
+        // a bare glUseProgram(shader.program) instead of going through
+        // useProgram() (gizmo shapes, the pen preview, the slice overlay).
+        // Seeding in the constructor means both uniforms are neutral from the
+        // very first frame no matter which site binds the program first, so no
+        // draw ordering can ever expose the 0 default.
+        //
+        // Through the shared helper rather than a hand-written glUniform1f per
+        // uniform: this class is one of TWO builders of `fragmentShaderSrc`
+        // (the other is app.d's thick-line program), and the one that seeded
+        // by hand is the one that fell behind when a uniform was added.
+        seedSharedFragUniforms(program);
     }
     ~this() {  glDeleteProgram(program); }
 
