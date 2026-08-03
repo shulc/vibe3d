@@ -25,13 +25,15 @@
 //
 // Flow B — the plane handle, which is the ONE part where hover and grab
 //          disagree, and the only flow that can tell the two mechanisms apart.
-//          Measured: hover recolours the ring AND the disc; a grab recolours
-//          the disc and gives the ring its axis colour BACK. This is asserted
-//          as a pure differential — the set of pixels a hover changes must be
-//          a STRICT SUPERSET of the set a grab changes — so it needs to know
-//          nothing about where the ring is, and the pixels in the difference
-//          are then identified by value as the ring. A two-state colour law
-//          cannot pass this flow in either direction.
+//          Measured: hover recolours the ring AND the disc and touches neither
+//          alpha; a grab gives the ring its axis colour BACK and takes the
+//          disc to full opacity. So the two states differ by a COLOUR step on
+//          one element and an ALPHA step on the other, and both are asserted.
+//          The skeleton is a pure differential — the set of pixels a hover
+//          changes must be a STRICT SUPERSET of the set a grab changes — so it
+//          needs to know nothing about where the ring is, and the pixels in
+//          the difference are then identified by value as the ring. A
+//          two-state colour law cannot pass this flow in either direction.
 //
 // Flow C — the hover region IS the click region. The exact pixel that makes a
 //          part hot must be a pixel that captures that same part on a press.
@@ -288,6 +290,30 @@ private bool recolourGain(Px a, Px b, const int[3] from, const int[3] to,
     if (den < 1.0) return false;            // the two colours are the same
     immutable double cr = b.r - a.r, cg = b.g - a.g, cb = b.b - a.b;
     k = (cr*dr + cg*dg + cb*db) / den;
+    return abs(cr - k*dr) <= SLOP
+        && abs(cg - k*dg) <= SLOP
+        && abs(cb - k*db) <= SLOP;
+}
+
+// Is the step from `a` to `b` the SAME stroke at a HIGHER alpha?
+//
+// Raising a stroke's alpha over an unknown destination D moves the pixel along
+// the straight line from where it already is toward the stroke's own colour:
+// `a = m*C + (1-m)*D` and `b = n*C + (1-n)*D` with `n > m` give
+// `b - a = ((n-m)/(1-m)) * (C - a)`. So one scalar in (0, 1] has to explain all
+// three channels, and every quantity in the test is measured except `C`. This
+// is `recolourGain`'s companion for the one part of the gizmo whose alpha
+// changes between states, and it works at any coverage — a half-covered fringe
+// pixel obeys it exactly as the centreline does.
+private bool opacityStep(Px a, Px b, const int[3] want, out double k) {
+    k = 0;                                  // `out` starts at double.init = NaN
+    if (!a.valid || !b.valid) return false;
+    immutable double dr = want[0] - a.r, dg = want[1] - a.g, db = want[2] - a.b;
+    immutable double den = dr*dr + dg*dg + db*db;
+    if (den < 1.0) return false;            // already AT the colour
+    immutable double cr = b.r - a.r, cg = b.g - a.g, cb = b.b - a.b;
+    k = (cr*dr + cg*dg + cb*db) / den;
+    if (k <= 0.02 || k > 1.05) return false;
     return abs(cr - k*dr) <= SLOP
         && abs(cg - k*dg) <= SLOP
         && abs(cb - k*db) <= SLOP;
@@ -684,33 +710,68 @@ unittest {
                   ~ "about that on the stroke's centreline; this is a fringe "
                   ~ "flicker, not a handle lighting up", ringGainMax, RING_ALPHA));
 
-    // The other half of the exception: hover and grab agree about the DISC and
-    // disagree about the ring — so wherever the two states disagree AT ALL, on
-    // any of the rays, the disagreement must again be the ring's stroke and
-    // nothing else. (This subsumes the ring-only set: those are the ring
-    // pixels the disc does not also cover. The pixels where the two overlap
-    // change on the grab as well — the disc recolours under them — and are
-    // therefore not in `ringOnly`, but the difference between hovered and
-    // grabbed there is still purely the ring.)
+    // The other half of the exception. Hovered and grabbed differ on BOTH
+    // elements now, and by two DIFFERENT mechanisms — which is exactly what
+    // makes this handle worth a flow of its own:
+    //
+    //   the RING — one stroke repainted from the active colour back to its
+    //              axis colour, at an unchanged alpha;
+    //   the DISC — the same colour at a raised ALPHA (0.2 hovered, 1.0
+    //              grabbed), which moves the pixel along the straight line
+    //              from wherever it is toward the colour itself.
+    //
+    // Every pixel on which the two states disagree must be one or the other.
+    // A different part, a shading change or a frame shift satisfies neither.
+    //
+    // Task 0602 note: until the grabbed disc was made opaque this block read
+    // "only the RING may tell hovered from grabbed", because the disc had one
+    // alpha in both states and its pixels were bit-identical. That premise was
+    // an artefact of the missing alpha, not a law — the disc's opacity step is
+    // the second half of the measured grab and is now asserted rather than
+    // assumed absent.
+    size_t nRingStep = 0, nDiscStep = 0;
     auto hovVsGrb = changedIdx(grb, hov);
     foreach (i; hovVsGrb) {
-        double k;
-        assert(recolourGain(grb[i], hov[i], RGB_RING, RGB_ACTIVE, k) && k > 0,
+        double kd;
+        if (opacityStep(hov[i], grb[i], RGB_ACTIVE, kd)) { ++nDiscStep; continue; }
+        double kr;
+        if (recolourGain(grb[i], hov[i], RGB_RING, RGB_ACTIVE, kr) && kr > 0) {
+            ++nRingStep;
+            continue;
+        }
+        assert(false,
                format("pixel (%d,%d) differs between hovered and grabbed by "
-                      ~ "something that is not the ring: rgb(%d,%d,%d) vs "
-                      ~ "rgb(%d,%d,%d). Only the ring may tell those two "
-                      ~ "states apart.", rays[i][0], rays[i][1],
+                      ~ "something that is neither the ring's recolour nor the "
+                      ~ "disc's opacity step: rgb(%d,%d,%d) vs rgb(%d,%d,%d). "
+                      ~ "Those two are the whole of the difference.",
+                      rays[i][0], rays[i][1],
                       hov[i].r, hov[i].g, hov[i].b,
                       grb[i].r, grb[i].g, grb[i].b));
     }
-    // And the disc really is lit identically in both: most of what the grab
-    // changed reads pixel-for-pixel the same as under a bare hover.
-    size_t discAgreed = 0;
-    foreach (i; grbChanged) if (samePixel(hov[i], grb[i])) ++discAgreed;
-    assert(discAgreed > 0,
-           format("every one of the %d pixels the grab lit also differs "
-                  ~ "between hover and grab, so nothing here is the disc — the "
-                  ~ "two states share no lit geometry at all", grbChanged.length));
+    assert(nRingStep > 0,
+           "no pixel differs between hovered and grabbed by the RING's own "
+           ~ "recolour — the ring is supposed to give its axis colour back on "
+           ~ "the grab, and nothing here shows it doing so");
+    assert(nDiscStep > 0,
+           "no pixel differs between hovered and grabbed by the DISC's opacity "
+           ~ "step — the grab is supposed to take the disc to full alpha");
+
+    // ...and the alpha that step lands on is bracketed from both sides, which
+    // a direction test alone cannot do. At exactly 1.0 the batch never reaches
+    // the blending path, so the disc's centreline reads the RAW colour; at the
+    // hover's 0.2 no pixel can, whatever it is drawn over.
+    size_t discRaw = 0;
+    foreach (i; grbChanged) if (isColor(grb[i], RGB_ACTIVE)) ++discRaw;
+    assert(discRaw > 0,
+           format("not one of the %d pixels the grab lit reads the raw active "
+                  ~ "colour — a grabbed disc is fully opaque and its centreline "
+                  ~ "must", grbChanged.length));
+    foreach (i; grbChanged)
+        assert(!isColor(hov[i], RGB_ACTIVE),
+               format("pixel (%d,%d) reads the raw active colour while merely "
+                      ~ "HOVERED — hover recolours the disc and must leave its "
+                      ~ "alpha at %.2f", rays[i][0], rays[i][1],
+                      cast(double)0.20));
 
     // The control never moved, in any of the three readings — so none of the
     // differences above is a whole-frame shift (a camera nudge, a relocate, a

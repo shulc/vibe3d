@@ -102,7 +102,10 @@ private:
     // fixed table (`pickScalePlaneAxes`). The excluded axis is left at exactly
     // 1. Armed in `onMouseButtonDownWithResolvedAxis`, consumed in
     // `onMouseMotion`, cleared on mouse-up with every other drag mode.
-    enum int   PLANE_DRAG_AXIS = 7;
+    // Public because the wrapper has to tell this gesture apart from the ones
+    // that grabbed a handle: every other `dragAxis` value is a registered part
+    // id offset, and this one names no handle at all.
+    public enum int PLANE_DRAG_AXIS = 7;
     // Screen pixels per unit of scale gain. The gain on each of the two axes is
     // `1 + component / PLANE_DRAG_PIXELS`, i.e. linear in the pixels and passing
     // through zero — a long enough drag the other way MIRRORS rather than

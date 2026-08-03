@@ -790,21 +790,25 @@ class MoveHandler : Handler {
         circleXZ.center = center + axisX * cirOffset + axisZ * cirOffset;
         circleXZ.normal = axisY; circleXZ.radius = circR;
 
-        // Orthographic cull (task 0225): in an ORTHO cell the axis arrow
-        // parallel to the (parallel) view direction is edge-on — zero on-screen
-        // length, useless to drag — so hide it AND drop it from the hit-test
-        // (the shared arbiter's ToolHandles.test() skips invisible handles).
-        // PERSPECTIVE keeps all three arrows. The view direction is the camera
-        // forward derived from the view matrix — correct for ortho's parallel
-        // projection (the eye→center ray is only right when the gizmo sits at
-        // the focus), so the cull is right for a gizmo offset from the focus and
-        // for a non-world (workplane/flex) basis.
+        // The view cull (task 0602; was task 0225's ortho-only rule). An axis
+        // within 5.126 deg of the ray this view looks along through the gizmo
+        // projects to nothing, so its arm is dropped from BOTH the draw and the
+        // hit test — the shared arbiter's ToolHandles.test() skips invisible
+        // handles, so an invisible arm cannot swallow a click meant for
+        // whatever it collapsed onto. This fires in EVERY projection: the
+        // predicate takes the eye vector at the gizmo's own position, which is
+        // a fixed direction under ortho and the actual ray under perspective.
+        //
+        // Each plane handle then tests BOTH of the axes its plane SPANS — not
+        // its normal. See handles/gl_util.planeHandleHidden for why that is the
+        // measured rule and why the obvious one is wrong.
         viewDir = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
-        enum float VIEW_ALIGN = 0.999f;
-        bool ortho = isOrtho(vp);
-        arrowX.setVisible(arrowsVisible && (!ortho || abs(dot(viewDir, axisX)) < VIEW_ALIGN));
-        arrowY.setVisible(arrowsVisible && (!ortho || abs(dot(viewDir, axisY)) < VIEW_ALIGN));
-        arrowZ.setVisible(arrowsVisible && (!ortho || abs(dot(viewDir, axisZ)) < VIEW_ALIGN));
+        arrowX.setVisible(arrowsVisible && !axisFacesViewer(axisX, center, vp));
+        arrowY.setVisible(arrowsVisible && !axisFacesViewer(axisY, center, vp));
+        arrowZ.setVisible(arrowsVisible && !axisFacesViewer(axisZ, center, vp));
+        circleXY.setVisible(!planeHandleHidden(axisX, axisY, center, vp));
+        circleYZ.setVisible(!planeHandleHidden(axisY, axisZ, center, vp));
+        circleXZ.setVisible(!planeHandleHidden(axisX, axisZ, center, vp));
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -967,20 +971,27 @@ class RotateHandler : Handler {
         applyStart(arcY, axisY);
         applyStart(arcZ, axisZ);
 
-        // Orthographic cull (task 0225): in an ORTHO cell a principal ring is
-        // face-on (useful — its rotation axis points at the camera, i.e. screen
-        // rotation) only when its axis is PARALLEL to the view direction; the
-        // other two rings are edge-on (their planes are seen as a line — near
-        // impossible to grab), so hide them and drop them from the hit-test.
-        // The view-plane ring (arcView, normal = camFwd) always stays — it is
-        // the screen-plane rotation. PERSPECTIVE keeps all three arcs. This is
-        // the INVERSE of the Move/Scale rule (which hides the axis PARALLEL to
-        // the view): an arrow is useful when in-plane, a ring when face-on.
-        enum float VIEW_ALIGN = 0.999f;
-        bool ortho = isOrtho(vp);
-        arcX.setVisible(!ortho || abs(dot(camFwd, axisX)) >= VIEW_ALIGN);
-        arcY.setVisible(!ortho || abs(dot(camFwd, axisY)) >= VIEW_ALIGN);
-        arcZ.setVisible(!ortho || abs(dot(camFwd, axisZ)) >= VIEW_ALIGN);
+        // The ring cull (task 0602; was task 0225's rule, with the OPPOSITE
+        // polarity). A ring seen edge-on is a line and near impossible to grab,
+        // so in an axis-locked view it is dropped from the draw and the hit
+        // test alike. The view-plane ring (arcView, normal = camFwd) is never
+        // culled — it IS the screen-plane rotation.
+        //
+        // Two things changed and both matter. The GATE is a viewport-type
+        // question, `lockedViewAxis`, not `isOrtho` plus a camera test; and the
+        // rule now DROPS THE EDGE-ON rings rather than KEEPING ONLY the face-on
+        // one. Those two phrasings pick the same single ring whenever the gizmo
+        // carries the world basis — which is every case anyone had looked at —
+        // and they part company as soon as it carries a rotated one. Measured
+        // on our own build: an ortho Front cell with the axis stage on
+        // `workplane` and the work plane turned 45 deg about Y reported all
+        // three axis rings `visible:false` through /api/tool/handles, leaving a
+        // rotate gizmo that could not rotate about any of its own axes. Under
+        // this rule two of the three survive, which is also what the reference
+        // does with those normals.
+        arcX.setVisible(!rotateRingHidden(axisX, center, vp));
+        arcY.setVisible(!rotateRingHidden(axisY, center, vp));
+        arcZ.setVisible(!rotateRingHidden(axisZ, center, vp));
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -1218,7 +1229,23 @@ public:
         Vec3 oc = planeRingColor(color, paint);
         Vec3 fc = handleColor(fillColor, paint);
 
-        auto m = modelMatrix(right, up, fwd, Vec3(radius, radius, radius), center);
+        // TWO radii, not one. The ring is the handle's stated size; the disc
+        // sits INSIDE it at `GIZMO_PLANE_FILL_RATIO` of that, leaving a visible
+        // gap that is what makes the shape read as a ring around a hole. Ours
+        // used to draw both off the same matrix, so the disc filled the ring to
+        // its edge and the two elements were indistinguishable except by alpha.
+        // The HIT region deliberately stays the outer radius (see doHitTest) —
+        // the grabbable target is the whole handle, not the disc.
+        auto mRing = modelMatrix(right, up, fwd, Vec3(radius, radius, radius), center);
+        immutable float fillR = radius * GIZMO_PLANE_FILL_RATIO;
+        auto mFill = modelMatrix(right, up, fwd, Vec3(fillR, fillR, fillR), center);
+
+        // A grab is the one state in which the disc goes fully opaque. Hover
+        // does NOT — hover only recolours, which is the difference the plane
+        // handle exists to show. Callers that never set `fillAlpha` are already
+        // at 1.0, so this is inert for every non-gizmo user of the shape.
+        immutable float fa = paint == HandlePaint.grabbed
+            ? GIZMO_ALPHA_PLANE_FILL_GRABBED : fillAlpha;
 
         glDisable(GL_DEPTH_TEST);
 
@@ -1228,17 +1255,17 @@ public:
         // as ring-over-disc rather than disc-over-ring. That is the order the
         // reference emits its two circles in, and with depth testing off for
         // the whole handle pass, emission order is the only thing deciding it.
-        immutable int fillTok = beginHandleFill(shader.locAlpha, fillAlpha,
+        immutable int fillTok = beginHandleFill(shader.locAlpha, fa,
                                                 HandleFacing.flat);
         glUniform3f(shader.locColor, fc.x, fc.y, fc.z);
-        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, m.ptr);
+        glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, mFill.ptr);
         glBindVertexArray(fillVao);
         glDrawArrays(GL_TRIANGLES, 0, fillVertCount);
         g_fc.draw(DrawPass.handles, fillVertCount);
         endHandleFill(shader.locAlpha, fillTok);
 
         // ---- Outline ----
-        drawThickLines(outlineVao, SEGS + 1, GL_LINE_STRIP, m, vp, oc, lineWidth,
+        drawThickLines(outlineVao, SEGS + 1, GL_LINE_STRIP, mRing, vp, oc, lineWidth,
                        shader.program, outlineAlpha);
 
         glBindVertexArray(0);
@@ -1492,18 +1519,17 @@ class ScaleHandler : Handler {
         scaleArrowZ.end           = center + axisZ * (size * axisBoxDistance * scaleAccum.z);
         scaleArrowZ.fixedCubeHalf = cubeFixed;
 
-        // Orthographic cull (task 0225) — mirror of MoveHandler: hide the axis
-        // box/arrow parallel to the view direction (edge-on) in an ORTHO cell
-        // and drop it from the hit-test (the ScaleHeadHandle proxy also reports
-        // no-hit once its target arrow is invisible). PERSPECTIVE keeps all
-        // three. Uses the camera forward (ortho's parallel projection dir).
+        // The view cull (task 0602) — the same predicate MoveHandler uses, and
+        // deliberately the same one: the reference's move and scale banks are
+        // separate code paths that were measured crossing at the identical
+        // threshold. Drops the arm from the draw and the hit test alike (the
+        // ScaleHeadHandle proxy also reports no-hit once its target arrow is
+        // invisible), in EVERY projection rather than only in ortho.
         Vec3 camFwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
         viewDir = camFwd;
-        enum float VIEW_ALIGN = 0.999f;
-        bool ortho = isOrtho(vp);
-        arrowX.setVisible(!ortho || abs(dot(camFwd, axisX)) < VIEW_ALIGN);
-        arrowY.setVisible(!ortho || abs(dot(camFwd, axisY)) < VIEW_ALIGN);
-        arrowZ.setVisible(!ortho || abs(dot(camFwd, axisZ)) < VIEW_ALIGN);
+        arrowX.setVisible(!axisFacesViewer(axisX, center, vp));
+        arrowY.setVisible(!axisFacesViewer(axisY, center, vp));
+        arrowZ.setVisible(!axisFacesViewer(axisZ, center, vp));
 
         centerDisk.center = center;
         centerDisk.normal = camFwd;
@@ -1518,6 +1544,11 @@ class ScaleHandler : Handler {
         circleYZ.normal = axisX; circleYZ.radius = circR;
         circleXZ.center = center + axisX * cirOffset + axisZ * cirOffset;
         circleXZ.normal = axisY; circleXZ.radius = circR;
+        // Each plane handle tests BOTH axes its plane spans — see
+        // MoveHandler.updateGeometry and handles/gl_util.planeHandleHidden.
+        circleXY.setVisible(!planeHandleHidden(axisX, axisY, center, vp));
+        circleYZ.setVisible(!planeHandleHidden(axisY, axisZ, center, vp));
+        circleXZ.setVisible(!planeHandleHidden(axisX, axisZ, center, vp));
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)

@@ -638,6 +638,53 @@ bool isOrtho(const ref Viewport vp) @safe pure nothrow @nogc {
     return vp.proj[15] != 0.0f;
 }
 
+/// The eye vector at a world point: the direction the view looks ALONG as it
+/// passes through `p`. Perspective diverges from the eye, orthographic is
+/// constant.
+///
+/// Lives here rather than in a tool module because it is plain view geometry
+/// with no tool semantics, and because two unrelated families need it: the
+/// click-relocate plane law (`tools.transform.relocate_plane`, which
+/// re-exports it for its own callers) and the gizmo's handle-facing cull
+/// (`handles.gl_util.axisFacesViewer`). Being per-point rather than a single
+/// global forward vector is the whole reason the cull is correct for a gizmo
+/// that sits away from the camera focus.
+Vec3 eyeVectorAt(const ref Viewport vp, Vec3 p) @safe pure nothrow @nogc {
+    if (isOrtho(vp)) return normalize(Vec3(-vp.view[2], -vp.view[6], -vp.view[10]));
+    return normalize(p - vp.eye);
+}
+
+/// The world axis a view is locked to, or -1 when it has none.
+///
+/// The reference reads a view TYPE field and decodes it to an axis; we have
+/// no such field on `Viewport`, so the same class of view is recognised
+/// GEOMETRICALLY: an orthographic projection whose forward vector is a world
+/// axis. In vibe3d that is exactly `ProjKind.Ortho` with one of the six
+/// `ViewPreset` axis presets, because `View.viewportWith` builds those six
+/// from a hard-coded axis eye and ignores azimuth/elevation.
+///
+/// The two ways to be ortho WITHOUT a locked axis — `ViewPreset.Perspective`
+/// or `.Camera` under `ProjKind.Ortho`, which keep the free spherical basis —
+/// return -1 here unless the free camera happens to be exactly axis-aligned.
+/// That coincidence is measure-zero and costs nothing when it happens: with
+/// the rays parallel to `e_k` the ray arm and the locked arm agree on every
+/// component except the quantum on the plane point.
+///
+/// Second consumer, added later: the rotate-ring cull (`handles.gl_util`),
+/// where this stands in for the reference's viewport-TYPE lookup — a lookup
+/// that never inspects where the camera points, which is why modelling it as
+/// "ortho AND axis-aligned" rather than "ortho" is the faithful reading.
+int lockedViewAxis(const ref Viewport vp) @safe pure nothrow @nogc {
+    if (!isOrtho(vp)) return -1;
+    // Column-major view matrix: forward = (-m[2], -m[6], -m[10]).
+    Vec3 f = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
+    enum float axisEps = 1e-4f;
+    if (abs(abs(f.x) - 1.0f) < axisEps && abs(f.y) < axisEps && abs(f.z) < axisEps) return 0;
+    if (abs(abs(f.y) - 1.0f) < axisEps && abs(f.x) < axisEps && abs(f.z) < axisEps) return 1;
+    if (abs(abs(f.z) - 1.0f) < axisEps && abs(f.x) < axisEps && abs(f.y) < axisEps) return 2;
+    return -1;
+}
+
 Vec3 sphericalToCartesian(float az, float el, float dist) {
     return Vec3(dist * cos(el) * sin(az),
                 dist * sin(el),

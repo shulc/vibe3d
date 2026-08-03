@@ -982,12 +982,31 @@ public:
             // (`toolHandles.update`) — this is the fix.
             refreshBankGeometry(vp);
             if (fp.enabled && pipeGizmoHost !is null) pipeGizmoHost.syncGeometry(vp, fp);
-            // Capture precedence: a live falloff-handle drag wins; else the active
-            // gizmo bank's dragAxis; scale suppresses all highlight during its drag.
+            // Capture precedence: a live falloff-handle drag wins; else the
+            // active gizmo bank's dragAxis names the hauled part.
+            //
+            // THE SCALE BANK USED TO CALL `suppress()` HERE, and that is why a
+            // grabbed scale handle went DARK at the moment you grabbed it. The
+            // colour law was reached and nothing bypassed it — it was fed the
+            // wrong input: `suppress()` clears `hot` and calls
+            // `setEngaged(false)` on EVERY registered handle, so the one part
+            // that should have been `grabbed` could not reach that state at
+            // all. The handle lit under the pointer and then reverted on press,
+            // which is a non-monotonic cue the law allows for exactly one part
+            // (the plane ring, where it is measured) and not for an axis.
+            // Measured for this bank: its grabbed state is the active colour,
+            // the same as move and rotate. So this is now the same `setHaul`
+            // the other two banks use.
+            //
+            // `PLANE_DRAG_AXIS` is the off-handle plane drag — a gesture that
+            // grabs no registered handle — so it stays hauling nothing rather
+            // than naming a part id that was never registered.
             if      (pipeGizmoHost !is null && pipeGizmoHost.isDragging())  toolHandles.setHaul(pipeGizmoHost.capturedPart());
             else if (activeDrag is moveSub   && moveSub.dragAxis   >= 0)  toolHandles.setHaul(MOVE_BASE  + moveSub.dragAxis);
             else if (activeDrag is rotateSub && rotateSub.dragAxis >= 0)  toolHandles.setHaul(ROT_BASE   + rotateSub.dragAxis);
-            else if (activeDrag is scaleSub  && scaleSub.dragAxis  >= 0)  toolHandles.suppress();
+            else if (activeDrag is scaleSub  && scaleSub.dragAxis  >= 0
+                                             && scaleSub.dragAxis != ScaleTool.PLANE_DRAG_AXIS)
+                                                                          toolHandles.setHaul(SCALE_BASE + scaleSub.dragAxis);
             else                                                          toolHandles.setHaul(-1);
             int hmx, hmy;
             queryMouse(hmx, hmy);

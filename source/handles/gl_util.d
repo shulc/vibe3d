@@ -257,6 +257,18 @@ enum float GIZMO_PLANE_OFFSET         = 0.80f;
 /// through `gizmoPixelSize` below, which is our name for the reference's
 /// "model units per pixel" conversion.
 enum float GIZMO_PLANE_RADIUS_PX      = 8.0f;
+/// The plane handle's inner FILL disc, as a fraction of its outline ring.
+///
+/// Task 0602: was implicitly 1.0 — our disc was drawn at the ring's own radius,
+/// so it filled the ring edge to edge and the two elements read as one blob.
+/// The reference draws the fill at `0.8 x` the ring, i.e. 6.4 px inside an 8 px
+/// outline, and the gap between them is the whole reason the handle reads as a
+/// ring around a hole rather than as a dot. Measured two ways: read off the
+/// instruction stream as one shared 0.8 constant (the same literal that is also
+/// the ring's alpha), and corroborated on a face-on handle whose fill covered
+/// 112 px — against the 129 px a 6.4 px disc predicts and the 201 px a full
+/// 8 px disc would have given.
+enum float GIZMO_PLANE_FILL_RATIO     = 0.80f;
 
 // -- Rotate bank: three principal semicircles + the view-plane ring ---------
 /// Principal (X/Y/Z) ring radius, fraction of the arm. → 90 px.
@@ -370,6 +382,14 @@ enum float GIZMO_ALPHA_CENTRE_BOX       = 1.00f;
 /// Plane handle: a nearly-solid axis-coloured ring around a barely-there disc.
 enum float GIZMO_ALPHA_PLANE_RING       = 0.80f;
 enum float GIZMO_ALPHA_PLANE_FILL       = 0.20f;
+/// ...and the ONE state in which that disc goes fully opaque. A grabbed plane
+/// handle is the only opaque thing the plane handle ever draws, and it is what
+/// separates a grab from a hover on this shape: hover recolours BOTH elements
+/// and leaves both alphas alone, a grab raises only the disc's alpha and hands
+/// the ring its axis colour back. Exactly 1.0, not "nearly" — at 1.0 the batch
+/// leaves the blending path entirely, which is the reference's own behaviour
+/// (its stroke selects an opaque blend word at exactly this value).
+enum float GIZMO_ALPHA_PLANE_FILL_GRABBED = 1.00f;
 /// The screen/eye-aligned disc — the faintest fill on the gizmo, ringed solid.
 enum float GIZMO_ALPHA_SCREEN_DISC_FILL = 0.10f;
 enum float GIZMO_ALPHA_SCREEN_DISC_RING = 1.00f;
@@ -455,6 +475,219 @@ float gizmoSize(Vec3 pos, const ref Viewport vp, float scale = 1.0f) {
 // here cancels the multiplication inside.
 float gizmoPixelSize(Vec3 pos, const ref Viewport vp, float px) {
     return gizmoSize(pos, vp, px / g_gizmoPixels);
+}
+
+// ---------------------------------------------------------------------------
+// WHICH HANDLES THIS VIEW CAN STILL USE — one predicate, four applications
+// ---------------------------------------------------------------------------
+//
+// Task 0602. A handle whose screen offset has collapsed is not a small handle,
+// it is a LIE: it sits on top of a sibling or on the gizmo centre, it cannot be
+// dragged in any meaningful direction, and while it is still registered it goes
+// on swallowing the clicks meant for whatever it is sitting on. The reference
+// removes it — an early return before any stroke is emitted and before the part
+// is published to the hit test, so a culled handle is invisible AND unclickable
+// by construction, with no second geometry to keep in sync. Ours does the same
+// with `Handler.setVisible(false)`, which both `draw()` and `ToolHandles.test()`
+// already honour.
+//
+// WHAT THIS REPLACED, AND WHY IT WAS A GAP RATHER THAN A REGRESSION.
+// Three copies of one idiom lived in `handles/shapes.d`, all gated on the cell
+// being ORTHOGRAPHIC and all comparing against 0.999 (2.56 deg). The gate was
+// backwards on two banks out of three and the threshold was too tight:
+//
+//   * MEASURED, the arm and plane-handle cull fires in EVERY projection. Ours
+//     fired in none but ortho, so a perspective camera aimed down an axis left
+//     a zero-length arm registered and grabbable, in front of whatever it had
+//     collapsed onto.
+//   * MEASURED to four decimals, four independent brackets in two runs across
+//     three banks agree on 0.996 (5.126 deg) — a cone twice as wide as ours.
+//   * The RING cull is the one that IS gated on the viewport, and by a viewport
+//     TYPE lookup rather than any camera test (see `lockedViewAxis`).
+//
+// All three are stated once here and applied at their call sites, so the
+// threshold and the eye-vector convention cannot drift between banks again.
+
+/// How nearly a gizmo axis must point along the view ray before the handles
+/// built on it are dropped. `acos(0.996) = 5.126 deg`.
+///
+/// MEASURED, not derived: the reference authors this as a plain decimal, not as
+/// the cosine of a round angle, and four independent live brackets — the move
+/// arm on two different sweeps, a scale shaft, and a plane handle appearing
+/// rather than vanishing — all put the knee inside a 0.0004-wide window that
+/// contains it.
+enum float GIZMO_FACING_COS = 0.996f;
+
+/// How nearly a rotate ring's normal must lie perpendicular to the view ray —
+/// i.e. how nearly edge-on the ring must be — before it is dropped.
+/// `asin(0.087) = 4.991 deg`. Read as the same "about five degrees" as
+/// `GIZMO_FACING_COS`, measured from the other end.
+enum float GIZMO_RING_EDGE_SIN = 0.087f;
+
+/// True when `axis` points within `GIZMO_FACING_COS` of the ray this view looks
+/// along through `gizmoCenter` — in either direction, towards the camera or
+/// away from it.
+///
+/// `axis` need not be unit length; `gizmoCenter` is the GIZMO's origin, not the
+/// individual handle's, and that is deliberate. The reference evaluates the eye
+/// vector once at the position it pushes its handle transform with, so an arm
+/// and the two plane handles that span it cross the threshold in the SAME frame
+/// — which is a measured property of the reference, not an implementation
+/// detail (an arm at 0.99581 and its plane handle both drew; at 0.99620 both
+/// were gone). Using each part's own offset centre would stagger them.
+bool axisFacesViewer(Vec3 axis, Vec3 gizmoCenter, const ref Viewport vp)
+    @safe pure nothrow @nogc
+{
+    immutable Vec3 eye = eyeVectorAt(vp, gizmoCenter);
+    return abs(dot(normalize(axis), eye)) >= GIZMO_FACING_COS;
+}
+
+/// True when the plane handle spanning `u` and `v` must be dropped.
+///
+/// THE RULE IS ABOUT THE TWO AXES THE PLANE SPANS, NOT ABOUT ITS NORMAL, and
+/// that distinction is measured rather than assumed. A neighbouring helper in
+/// the reference's own framework does test the normal — "hide the handle when
+/// its plane is edge-on" — and it is the answer this would have got by
+/// reasoning from what the handle is for. It is wrong for this gizmo: held
+/// exactly edge-on through a 90-degree sweep, the reference's plane handle
+/// stayed DRAWN at every elevation, a 16 px line, and vanished only where one
+/// of its two in-plane axes crossed 0.996.
+///
+/// The rule that survives is not "hide it when you cannot see the plane" but
+/// "hide it when its own offset collapses": the handle sits on the diagonal of
+/// its two axes, so when either of them points at the camera the handle lands
+/// on the other axis's arm or on the gizmo centre with nothing to say.
+bool planeHandleHidden(Vec3 u, Vec3 v, Vec3 gizmoCenter, const ref Viewport vp)
+    @safe pure nothrow @nogc
+{
+    return axisFacesViewer(u, gizmoCenter, vp)
+        || axisFacesViewer(v, gizmoCenter, vp);
+}
+
+/// True when the rotate ring about `normal` must be dropped.
+///
+/// The only cull of the four that is GATED ON THE VIEWPORT, and the gate is a
+/// viewport-type question — "is this one of the axis views?" — that never asks
+/// where the camera is pointing. `lockedViewAxis` is how we ask it (an ortho
+/// projection whose forward is a world axis); in a perspective cell it answers
+/// -1 and no ring is ever culled, however the camera is aimed.
+///
+/// Inside an axis view, a ring goes when it is within ~5 degrees of EDGE-ON.
+/// Note the polarity: this drops the unusable rings and keeps everything else,
+/// which is not the same rule as keeping only the face-on one. The two agree
+/// exactly when the gizmo's basis is the world basis — one axis at the eye, two
+/// perpendicular, so "keep the face-on one" and "drop the edge-on ones" select
+/// the same single ring — and they diverge the moment the gizmo carries a
+/// rotated basis (a work plane, a local cluster, an element frame). At 45
+/// degrees "keep only the face-on one" keeps NOTHING, and the gizmo loses all
+/// three of its axis rings while both of them are perfectly grabbable. That
+/// case is reachable here and is the reason this is the ported rule.
+bool rotateRingHidden(Vec3 normal, Vec3 gizmoCenter, const ref Viewport vp)
+    @safe pure nothrow @nogc
+{
+    if (lockedViewAxis(vp) < 0) return false;
+    immutable Vec3 eye = eyeVectorAt(vp, gizmoCenter);
+    return abs(dot(normalize(normal), eye)) < GIZMO_RING_EDGE_SIN;
+}
+
+unittest {
+    // The threshold is a CONE, and it is bracketed from both sides here so
+    // that moving the constant in either direction fails a case.
+    import std.math : cos, sin, PI;
+
+    static Viewport perspAt(Vec3 eye) {
+        Viewport vp;
+        vp.view = lookAt(eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+        vp.proj = perspectiveMatrix(45.0f * PI / 180.0f, 1.0f, 0.001f, 100.0f);
+        vp.eye  = eye;
+        vp.width = 800; vp.height = 600;
+        return vp;
+    }
+
+    // A camera 5.5 deg off the X axis: X is INSIDE the 5.126 deg cone at 4.5
+    // and OUTSIDE it at 5.5, and the arm must follow.
+    foreach (degOff; [0.0f, 2.0f, 4.5f, 5.0f, 5.5f, 10.0f, 45.0f]) {
+        immutable float r = degOff * cast(float)PI / 180.0f;
+        auto vp = perspAt(Vec3(10.0f * cos(r), 0, 10.0f * sin(r)));
+        immutable bool hidden = axisFacesViewer(Vec3(1, 0, 0), Vec3(0, 0, 0), vp);
+        immutable bool expect = degOff < 5.126f;
+        assert(hidden == expect,
+               "the X arm's cull must switch exactly at 5.126 deg");
+    }
+
+    // PERSPECTIVE IS NOT EXEMPT. This is the half our old rule could not do:
+    // the camera above is perspective throughout, and the 0-deg case must hide.
+    {
+        auto vp = perspAt(Vec3(10, 0, 0));
+        assert(axisFacesViewer(Vec3(1, 0, 0), Vec3(0, 0, 0), vp),
+               "an axis pointing straight at a PERSPECTIVE camera is culled too");
+    }
+
+    // The eye vector is per-point, so a gizmo away from the focus is judged by
+    // the ray through ITSELF. Camera on +Z looking at the origin: the Z axis
+    // faces it at the origin, and a gizmo pushed far along +X does not.
+    {
+        auto vp = perspAt(Vec3(0, 0, 10));
+        assert(axisFacesViewer(Vec3(0, 0, 1), Vec3(0, 0, 0), vp));
+        assert(!axisFacesViewer(Vec3(0, 0, 1), Vec3(8, 0, 0), vp));
+    }
+
+    // The plane handle takes its two SPANNED axes. With X pointing at the
+    // camera, the two handles whose planes CONTAIN X go, and the one normal to
+    // X — the only one seen face-on — stays. That is the reference's own
+    // per-projection table for an axis view, restated as a predicate.
+    {
+        auto vp = perspAt(Vec3(10, 0, 0));
+        immutable Vec3 X = Vec3(1, 0, 0), Y = Vec3(0, 1, 0), Z = Vec3(0, 0, 1);
+        assert( planeHandleHidden(X, Y, Vec3(0, 0, 0), vp), "XY spans X");
+        assert( planeHandleHidden(X, Z, Vec3(0, 0, 0), vp), "XZ spans X");
+        assert(!planeHandleHidden(Y, Z, Vec3(0, 0, 0), vp), "YZ does not span X");
+    }
+
+    // THE DISCRIMINATOR between the two candidate plane rules, as the reference
+    // measured it: hold a plane exactly edge-on and sweep. The XY plane's
+    // normal is Z; with the camera in the XY plane the normal is perpendicular
+    // to the view ray at EVERY elevation, so a normal-based rule would hide
+    // this handle throughout. The spanned-axes rule keeps it except in the two
+    // narrow cones, and the spanned-axes rule is the measured one.
+    foreach (elDeg; [10.0f, 30.0f, 45.0f, 60.0f, 80.0f]) {
+        immutable float e = elDeg * cast(float)PI / 180.0f;
+        auto vp = perspAt(Vec3(10.0f * cos(e), 10.0f * sin(e), 0));
+        assert(!planeHandleHidden(Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 0), vp),
+               "an edge-on plane handle stays drawn away from its axes' cones");
+    }
+
+    // Rotate: the gate is the viewport TYPE, so a perspective cell keeps every
+    // ring however it is aimed — including the two that are exactly edge-on.
+    {
+        auto vp = perspAt(Vec3(0, 0, 10));
+        assert(!rotateRingHidden(Vec3(1, 0, 0), Vec3(0, 0, 0), vp));
+        assert(!rotateRingHidden(Vec3(0, 1, 0), Vec3(0, 0, 0), vp));
+        assert(!rotateRingHidden(Vec3(0, 0, 1), Vec3(0, 0, 0), vp));
+    }
+
+    // ...and an ortho axis view drops exactly the edge-on ones. With the world
+    // basis that leaves one ring, which is what the reference shows in each of
+    // its axis views; with a basis rotated 45 deg about Y it leaves TWO, where
+    // "keep only the face-on ring" would have left none.
+    {
+        Viewport vp;
+        vp.view = lookAt(Vec3(0, 0, 10), Vec3(0, 0, 0), Vec3(0, 1, 0));
+        vp.proj = orthographicMatrix(2.0f, 1.0f, 0.001f, 100.0f);
+        vp.eye  = Vec3(0, 0, 10);
+        vp.width = 800; vp.height = 600;
+        assert(lockedViewAxis(vp) == 2, "fixture premise: this is a Z axis view");
+
+        assert( rotateRingHidden(Vec3(1, 0, 0), Vec3(0, 0, 0), vp), "X ring edge-on");
+        assert( rotateRingHidden(Vec3(0, 1, 0), Vec3(0, 0, 0), vp), "Y ring edge-on");
+        assert(!rotateRingHidden(Vec3(0, 0, 1), Vec3(0, 0, 0), vp), "Z ring face-on");
+
+        immutable float s = cast(float)(1.0 / 1.4142135623730951);
+        immutable Vec3 rx = Vec3( s, 0, -s), ry = Vec3(0, 1, 0), rz = Vec3(s, 0, s);
+        assert(!rotateRingHidden(rx, Vec3(0, 0, 0), vp), "a 45 deg ring is usable");
+        assert( rotateRingHidden(ry, Vec3(0, 0, 0), vp), "...its Y sibling is not");
+        assert(!rotateRingHidden(rz, Vec3(0, 0, 0), vp), "...and so is its partner");
+    }
 }
 
 unittest {

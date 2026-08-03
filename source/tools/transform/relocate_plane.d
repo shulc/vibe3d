@@ -86,39 +86,12 @@ Vec3 withAxisComp(Vec3 v, int i, float c) @safe pure nothrow @nogc {
     return Vec3(v.x, v.y, c);
 }
 
-/// The world axis a view is locked to, or -1 when it has none.
-///
-/// The reference reads a view TYPE field and decodes it to an axis; we have
-/// no such field on `Viewport`, so the same class of view is recognised
-/// GEOMETRICALLY: an orthographic projection whose forward vector is a world
-/// axis. In vibe3d that is exactly `ProjKind.Ortho` with one of the six
-/// `ViewPreset` axis presets, because `View.viewportWith` builds those six
-/// from a hard-coded axis eye and ignores azimuth/elevation.
-///
-/// The two ways to be ortho WITHOUT a locked axis — `ViewPreset.Perspective`
-/// or `.Camera` under `ProjKind.Ortho`, which keep the free spherical basis —
-/// return -1 here unless the free camera happens to be exactly axis-aligned.
-/// That coincidence is measure-zero and costs nothing when it happens: with
-/// the rays parallel to `e_k` the ray arm and the locked arm agree on every
-/// component except the quantum on the plane point.
-int lockedViewAxis(const ref Viewport vp) @safe pure nothrow @nogc {
-    if (!isOrtho(vp)) return -1;
-    // Column-major view matrix: forward = (-m[2], -m[6], -m[10]).
-    Vec3 f = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
-    enum float axisEps = 1e-4f;
-    if (abs(abs(f.x) - 1.0f) < axisEps && abs(f.y) < axisEps && abs(f.z) < axisEps) return 0;
-    if (abs(abs(f.y) - 1.0f) < axisEps && abs(f.x) < axisEps && abs(f.z) < axisEps) return 1;
-    if (abs(abs(f.z) - 1.0f) < axisEps && abs(f.x) < axisEps && abs(f.y) < axisEps) return 2;
-    return -1;
-}
-
-/// The eye vector at a world point: the direction the view looks ALONG as it
-/// passes through `p`. Perspective diverges from the eye, orthographic is
-/// constant.
-Vec3 eyeVectorAt(const ref Viewport vp, Vec3 p) @safe pure nothrow @nogc {
-    if (isOrtho(vp)) return normalize(Vec3(-vp.view[2], -vp.view[6], -vp.view[10]));
-    return normalize(p - vp.eye);
-}
+/// `lockedViewAxis` and `eyeVectorAt` used to be defined HERE and are now in
+/// `math`, because the gizmo's handle-facing cull (`handles.gl_util`) needs
+/// both and `handles` must not import a tool module. They are re-exported so
+/// every existing `import tools.transform.relocate_plane : lockedViewAxis;`
+/// still resolves and this module's own law reads unchanged.
+public import math : lockedViewAxis, eyeVectorAt;
 
 /// The four shipped work-plane preferences, the view's own snap step, and the
 /// out-of-plane quantum.
