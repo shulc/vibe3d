@@ -6077,6 +6077,24 @@ void main(string[] args) {
             // instance) that enabled AI would leave `aiState.enabled` stuck on
             // across the reset (the test_ai_toggle "AI must default off" failure).
             aiState.setEnabled(false);
+            // Same argument, second global: park the REPLAYED POINTER. Every
+            // replayed motion/button event moves it and nothing ever moved it
+            // back, so it outlives the test that put it there — and `run_test.d`
+            // shares one `--test` instance across a worker's whole slice, so the
+            // next test's re-baselined scene keeps being hover-picked against
+            // the previous test's cursor. That is a hover the next test never
+            // asked for: one extra vertex-dot submission if the cursor landed on
+            // a vertex, a gizmo part repainted in the hover colour if it landed
+            // on a handle — enough to fail an assertion about draw counts or
+            // about pixels, and only when the slice happens to put those two
+            // tests together, which the LPT scheduler re-decides every run.
+            // Deliberately here and NOT in SceneReset: file.new goes through the
+            // command too, and for a human the pointer really IS where it is.
+            // See eventlog.parkOverrideMouse.
+            {
+                import eventlog : parkOverrideMouse;
+                parkOverrideMouse();
+            }
             // selTypeOrder is kept in lockstep with editMode by the
             // promoteGeometryType hook installed on the scene.reset factory — no
             // manual re-sync needed here (the old reverse-sync is deleted).

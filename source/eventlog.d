@@ -76,6 +76,34 @@ void setOverrideMouse(int x, int y) {
     g_mouseOverride = true;
 }
 
+/// Park the overridden pointer back at the position these globals hold at
+/// process start — (0, 0), which lies outside every viewport cell — WITHOUT
+/// touching the override flag.
+///
+/// Nothing ever cleared the replayed pointer, and that is deliberate WITHIN a
+/// test: parking it on a handle and leaving it there is how a test gets a
+/// hover cue into the frames it probes afterwards (see `hoverAt` in
+/// tests/test_gizmo_hover_highlight.d, whose comment states the property).
+/// The position outlives the test as well, though, and `run_test.d` reuses ONE
+/// `vibe3d --test` across a worker's whole slice — so the pointer the previous
+/// test walked away from keeps getting re-picked, every frame, against the next
+/// test's freshly reset scene. The next test's "pristine" baseline then quietly
+/// carries a hovered vertex (one extra GL_POINTS submission in the vertex-dot
+/// pass) or a hovered gizmo part (the handle repainted in the hover colour) —
+/// a whole hover the test never asked for and cannot see.
+///
+/// So the automation reset parks it (app.d's POST /api/reset handler). Not the
+/// UI's own file.new / scene.reset: for a human the pointer really is where it
+/// is, and highlighting what it lands on after a reset is correct.
+///
+/// The override FLAG is left alone on purpose. It says where the position
+/// comes from, not what it is; `--test` raises it once at startup and
+/// handleMouseMotion re-raises it on every real motion event.
+void parkOverrideMouse() {
+    g_mouseX = 0;
+    g_mouseY = 0;
+}
+
 void queryMouse(out int mx, out int my) {
     if (g_mouseOverride) { mx = g_mouseX; my = g_mouseY; }
     else _getMouseState(&mx, &my);
@@ -496,6 +524,21 @@ unittest { // mouseOverride: queryMouse returns overridden coords without SDL
     int mx, my;
     queryMouse(mx, my);
     assert(mx == 42 && my == 99);
+}
+
+unittest { // parkOverrideMouse: position goes home, the override flag does not
+    // The flag half is the load-bearing half. Parking must not silently hand
+    // picking back to SDL_GetMouseState in a `--test` process that has no real
+    // cursor — the pointer must read (0,0), not "whatever the window manager
+    // thinks", so the parked baseline is the same one the FIRST test of a
+    // slice gets.
+    setOverrideMouse(311, 207);
+    assert(g_mouseOverride == true);
+    parkOverrideMouse();
+    assert(g_mouseOverride == true, "parking must not clear the override flag");
+    int mx, my;
+    queryMouse(mx, my);
+    assert(mx == 0 && my == 0, "parked pointer must read the boot origin");
 }
 
 unittest { // queryMouse without override uses SDL_GetMouseState mock

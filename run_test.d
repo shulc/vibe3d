@@ -686,7 +686,7 @@ bool prepareWorker(ref Worker w) {
 // Re-establish a known-clean baseline on a worker's shared vibe3d BEFORE each
 // test binary runs. The runner reuses ONE `vibe3d --test` per worker across
 // that worker's whole slice of tests, so a preceding test can leave global
-// state dirty for the next one in four ways:
+// state dirty for the next one in five ways:
 //   1. an event-log replay (/api/play-events) is still DRAINING on the
 //      background event player when the test process exits — its queued
 //      mouse-move events keep firing into the next test's freshly-reset mesh;
@@ -695,6 +695,18 @@ bool prepareWorker(ref Worker w) {
 //      at 50, which would pin any count-delta assertion).
 //   4. selection/edit mode can leak when a reset is undone while draining
 //      history.
+//   5. THE POINTER. Every replayed motion/button event moves the override
+//      cursor (eventlog.setOverrideMouse) and nothing ever moved it back, so
+//      the position the previous test walked away from keeps being hover-picked
+//      against the next test's freshly reset scene — a hovered vertex costs one
+//      extra vertex-dot submission, a hovered gizmo part gets repainted in the
+//      hover colour. Any test that reads draw counts or framebuffer pixels is
+//      then wrong by exactly one hover, and ONLY when the slice happens to put
+//      it after a test that parked the cursor somewhere interesting. Since the
+//      LPT packing below is recomputed from a timing cache that every run
+//      rewrites, that pairing is re-rolled every run — which is what made this
+//      look like "a different test fails each time, and it passes on the rerun".
+//      Closed inside /api/reset (step 3): see eventlog.parkOverrideMouse.
 // This is the documented cross-test state-bleed flake family (test_http_endpoint
 // asserting the pristine startup cube, test_selection's "expected 2 got 0",
 // etc.). Resetting at the RUNNER level — between every binary — kills the whole
