@@ -2520,8 +2520,8 @@ void main(string[] args) {
     // Equivalence per call site is documented at each call below.
     enum RecordMode { Record, Coalescing }
     void applyOrRefire(Command cmd, RecordMode mode, string throwMsg) {
-        // Post-mode finalize (task 0463, SDK-derived — LXfCMD_MODEL +
-        // ILxCmdSysListener post-mode lifecycle; see
+        // Post-mode finalize (task 0463, SDK-derived — the reference's
+        // MODEL command class + its command-system post-mode listener; see
         // toolcards/_framework/shift_apply_rearm.md "Command-fired post-mode
         // finalize"). A Model (scene-mutating) command executed while an
         // interactive tool is armed DROPS the tool FIRST — committing any

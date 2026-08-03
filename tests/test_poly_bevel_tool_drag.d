@@ -365,7 +365,7 @@ unittest {
 // Post-mode finalize (task 0463): firing a Model (scene-mutating) command —
 // Delete — while poly.bevel is armed with a live edit DROPS the tool first,
 // committing the pending bevel, then runs the command. Mirrors the reference
-// editor's LXfCMD_MODEL post-mode end-callback (a hard drop, not a re-arm).
+// editor's MODEL-class-command post-mode end-callback (a hard drop, not a re-arm).
 unittest {
     enum int EX = 400, EY = 450;
     auto reset = parseJSON(cast(string)post(BASE ~ "/api/reset?type=cube", ""));
