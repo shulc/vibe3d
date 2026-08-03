@@ -618,17 +618,38 @@ class FullCircleHandler : Handler {
     // the one external user that leaves it alone renders unchanged.
     float lineWidth = 1.5f;
     float alpha     = 1.0f;  /// fragment opacity; the rotate bank sets its own
+    /// Opacity of the FILL disc behind the outline, or 0 for "no fill".
+    ///
+    /// Zero is the sentinel and the default on purpose: this shape was
+    /// outline-only for its whole life and two of its three users still want
+    /// exactly that (the rotate bank's screen-plane ring, and the Slice tool's
+    /// rotation ring — a ring you look THROUGH). One number carries both the
+    /// switch and the value, so there is no way to ask for a fill and forget
+    /// to say how opaque, or to set an opacity that silently does nothing.
+    ///
+    /// Read only at construction — the fill's geometry is a different VAO and
+    /// is not built unless it is going to be drawn. Assigning to this field
+    /// afterwards changes the opacity of a fill that exists; it cannot bring
+    /// one into being.
+    float fillAlpha = 0.0f;
 
 private:
-    GLuint arcVao, arcVbo;
+    GLuint arcVao,  arcVbo;
+    GLuint fillVao, fillVbo;
+    int    fillVertCount;
+    bool   hasFill;
     enum SEGS = 64;
 
 public:
-    this(Vec3 center, Vec3 normal, float radius, Vec3 color) {
-        this.center = center;
-        this.normal = normal;
-        this.radius = radius;
-        this.color  = color;
+    this(Vec3 center, Vec3 normal, float radius, Vec3 color,
+         float fillAlpha = 0.0f)
+    {
+        this.center    = center;
+        this.normal    = normal;
+        this.radius    = radius;
+        this.color     = color;
+        this.fillAlpha = fillAlpha;
+        this.hasFill   = fillAlpha > 0.0f;
 
         // Unit full circle in XY plane: (cos a, sin a, 0) for a ∈ [0, 2π]
         float[] arcData;
@@ -637,11 +658,31 @@ public:
             arcData ~= [cos(a), sin(a), 0.0f];
         }
         arcVao = buildVao3f(arcData, arcVbo);
+
+        // Fill: a triangle FAN written out as independent triangles, exactly
+        // as CircleHandler builds its plane disc — same tiling, so it composites
+        // exactly once per pixel and needs no cull (HandleFacing.flat below).
+        if (hasFill) {
+            float[] fillData;
+            foreach (i; 0 .. SEGS) {
+                float a0 = cast(float) i      * 2.0f * PI / SEGS;
+                float a1 = cast(float)(i + 1) * 2.0f * PI / SEGS;
+                fillData ~= [0.0f, 0.0f, 0.0f];
+                fillData ~= [cos(a0), sin(a0), 0.0f];
+                fillData ~= [cos(a1), sin(a1), 0.0f];
+            }
+            fillVertCount = cast(int)(fillData.length / 3);
+            fillVao = buildVao3f(fillData, fillVbo);
+        }
     }
 
     void destroy() {
         glDeleteVertexArrays(1, &arcVao);
         glDeleteBuffers(1, &arcVbo);
+        if (hasFill) {
+            glDeleteVertexArrays(1, &fillVao);
+            glDeleteBuffers(1, &fillVbo);
+        }
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp)
@@ -658,6 +699,25 @@ public:
 
         auto model = modelMatrix(right, up, fwd,
                                  Vec3(radius, radius, radius), center);
+
+        // ---- Fill, then outline ----
+        // ORDER IS LOAD-BEARING, and emission order is ALL there is: the whole
+        // handle pass runs with depth testing off, so nothing else can decide
+        // which of two translucent parts lands on top. The plate goes down
+        // first and the outline composites over it, so the rim reads as an
+        // edge ON the plate rather than as a plate laid over its own edge.
+        // Same order, same reason, as CircleHandler's ring-over-disc.
+        if (hasFill) {
+            immutable int fillTok = beginHandleFill(shader.locAlpha, fillAlpha,
+                                                    HandleFacing.flat);
+            glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, model.ptr);
+            glBindVertexArray(fillVao);
+            glDrawArrays(GL_TRIANGLES, 0, fillVertCount);
+            g_fc.draw(DrawPass.handles, fillVertCount);
+            glBindVertexArray(0);
+            endHandleFill(shader.locAlpha, fillTok);
+        }
+
         drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, vp, c, lineWidth,
                        shader.program, alpha);
 
@@ -962,7 +1022,7 @@ class RotateHandler : Handler {
     float size;              // world-space radius, updated each frame in draw()
     SemicircleHandler arcX, arcY, arcZ;
     FullCircleHandler arcView;   // camera-view-plane ring (gray, interactive)
-    FullCircleHandler bgCircle;  // camera-view-plane ring (black 1px, decorative)
+    FullCircleHandler bgCircle;  // camera-view-plane backing disc (decorative)
     // World-space orientation triple — see MoveHandler.axisX/Y/Z. Each arc
     // rotates around the corresponding basis axis (arcX = around axisX).
     Vec3 axisX = Vec3(1, 0, 0);
@@ -996,11 +1056,29 @@ class RotateHandler : Handler {
         }
         arcView.lineWidth = GIZMO_STROKE_ROTATE_RING_PX;
         arcView.alpha     = GIZMO_ALPHA_ROTATE_RING;
-        bgCircle = new FullCircleHandler(center, Vec3(0,0,1), 1.0f, Vec3(0.0f, 0.0f, 0.0f));
+        // The backing disc. TWO parts in one shape: a plate filled at 0.2 and
+        // an outline stroked at 0.75, both in one colour that is DERIVED from
+        // the viewport backdrop rather than written down (see
+        // `viewport_scheme.rotateBackingDiscColor`).
+        //
+        // Ours was pure black, outline only, and that is the pair of defects
+        // this replaces — not the stroke width, which was already right. Black
+        // at 0.75 over the backdrop lands on 0.25x the backdrop, a stroke four
+        // times darker than everything near it; the derived colour lands
+        // 0.1125 below the backdrop, a shading you read as "the rings sit on
+        // something" and not as a line. And with no fill there was no
+        // something to sit on: the shape was a third ring wearing the disc's
+        // name.
+        bgCircle = new FullCircleHandler(center, Vec3(0,0,1), 1.0f,
+                                         rotateBackingDiscColor(),
+                                         GIZMO_ALPHA_ROTATE_DISC_FILL);
         bgCircle.lineWidth = GIZMO_STROKE_ROTATE_DISC_PX;
-        bgCircle.alpha     = GIZMO_ALPHA_ROTATE_DISC;
-        // bgCircle is decorative: drawn but never registered in the Test pass
-        // (ToolHandles), so it stays at HandleState.Normal and never highlights.
+        bgCircle.alpha     = GIZMO_ALPHA_ROTATE_DISC_RING;
+        // bgCircle stays decorative, fill and all: drawn but never registered
+        // in the Test pass (ToolHandles), so it holds HandleState.Normal, is
+        // never hit, and never takes the active colour. Adding a filled disc
+        // does not add a target — the fill is geometry in the Draw pass and
+        // the Test pass has no idea it exists.
     }
 
     void destroy() { arcX.destroy(); arcY.destroy(); arcZ.destroy(); arcView.destroy(); bgCircle.destroy(); }
@@ -1023,7 +1101,8 @@ class RotateHandler : Handler {
         // Camera forward vector (world space): f = (-view[2], -view[6], -view[10])
         Vec3 camFwd = Vec3(-vp.view[2], -vp.view[6], -vp.view[10]);
 
-        // Decorative black ring: same plane and radius as X/Y/Z arcs, drawn first (behind)
+        // Decorative backing disc: same plane and radius as the X/Y/Z arcs
+        // (the arm length), drawn first so everything else lands on top of it.
         bgCircle.center = center;
         bgCircle.normal = camFwd;
         bgCircle.radius = size * GIZMO_RING_RADIUS;

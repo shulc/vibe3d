@@ -30,6 +30,9 @@
 module viewport_scheme;
 
 import math : Vec3;
+import std.algorithm.comparison : max;
+
+version (unittest) import std.math : abs;
 
 // ---------------------------------------------------------------------------
 // The preference-backed rows
@@ -147,9 +150,42 @@ enum float kSchemeSolidFill = 0.6f;
 /// exactly how the two drifted apart before.
 enum float kPlaneFillScale = 0.45f;
 
+/// How far the rotate bank's backing disc sits BELOW the viewport backdrop.
+///
+/// The disc is the plate the three rotation rings sit on — a shape whose whole
+/// job is to be *slightly* darker than what is behind it, so the rings read
+/// against something instead of against the scene. That makes it the one
+/// gizmo colour with no value of its own: it is an OFFSET, and the number
+/// below is the whole of it.
+enum float kBackingDiscDarken = 0.15f;
+
 // ---------------------------------------------------------------------------
 // Derived lookups
 // ---------------------------------------------------------------------------
+
+/// The rotate bank's decorative backing disc.
+///
+/// DERIVED from the backdrop, and deliberately not stored as a triple. At the
+/// shipped backdrop this evaluates to (0.21, 0.25, 0.30), which is the value
+/// that was measured — but writing that triple down would freeze a number
+/// whose meaning is "a bit darker than whatever is behind it". Re-theme the
+/// backdrop and a literal is instantly wrong in a way nothing would catch: the
+/// disc would still draw, still be a plausible grey, and simply stop being a
+/// darkening. Deriving it means the relationship is what ships.
+///
+/// Clamped at 0 per channel so a backdrop darker than the offset yields black
+/// rather than a negative colour. Nothing clamps at the top: the offset only
+/// ever subtracts.
+///
+/// This is the disc's colour for BOTH of its parts — the fill and the outline
+/// share it and differ only in alpha (see `GIZMO_ALPHA_ROTATE_DISC_FILL` /
+/// `_RING`). One colour, two opacities, which is why there is one function.
+Vec3 rotateBackingDiscColor() @safe pure nothrow @nogc {
+    immutable Vec3 b = schemeColor(SchemeColor.backdrop);
+    return Vec3(max(0.0f, b.x - kBackingDiscDarken),
+                max(0.0f, b.y - kBackingDiscDarken),
+                max(0.0f, b.z - kBackingDiscDarken));
+}
 
 /// Axis index (0 = X, 1 = Y, 2 = Z) to its colour.
 ///
@@ -384,6 +420,46 @@ unittest {
     static assert(kMeasuredSchemeFill != kOursWas0589,
         "the two anchors must differ or nothing here discriminates");
     assert(kSchemeSolidFill == kMeasuredSchemeFill);
+}
+
+/// The rotate backing disc is a DERIVATION, and the test says so.
+///
+/// The expected side is written as `backdrop - 0.15` rather than as the triple
+/// that comes out of it, on purpose: the triple is what a literal would have
+/// frozen, and freezing it is the bug this function exists to prevent. So the
+/// first assertion re-derives, and only the second one names (0.21, 0.25, 0.30)
+/// — as a statement about the SHIPPED backdrop, which is what was measured.
+unittest {
+    const b = schemeColor(SchemeColor.backdrop);
+    const d = rotateBackingDiscColor();
+
+    // The relationship, stated without reference to any particular backdrop.
+    assert(d.x == b.x - kBackingDiscDarken);
+    assert(d.y == b.y - kBackingDiscDarken);
+    assert(d.z == b.z - kBackingDiscDarken);
+
+    // ...and the value it lands on today. If the backdrop is ever re-themed
+    // this row is the one that has to move, and the three above must not.
+    assert(abs(d.x - 0.21f) < 1e-6f);
+    assert(abs(d.y - 0.25f) < 1e-6f);
+    assert(abs(d.z - 0.30f) < 1e-6f);
+
+    // Strictly darker than the backdrop on every channel — the whole point of
+    // the shape. A disc at or above the backdrop is not a backing disc.
+    assert(d.x < b.x && d.y < b.y && d.z < b.z);
+
+    // NOT black, which is what it used to be. Stated explicitly because black
+    // is a perfectly plausible-looking value for a "backing" shape and the
+    // reason it is wrong is not visible from the code: at the outline's 0.75 it
+    // composites to a quarter of the backdrop, i.e. a heavy dark stroke, where
+    // the derived colour composites to the backdrop minus 0.1125.
+    assert(d != Vec3(0.0f, 0.0f, 0.0f));
+
+    // The clamp. Not reachable from the shipped backdrop, so nothing else here
+    // exercises it; a channel darker than the offset must floor at 0 rather
+    // than going negative and being multiplied into a blend.
+    static assert(kBackingDiscDarken > 0.0f);
+    assert(max(0.0f, 0.10f - kBackingDiscDarken) == 0.0f);
 }
 
 /// The fixed constants are fixed.

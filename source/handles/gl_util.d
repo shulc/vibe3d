@@ -360,6 +360,13 @@ enum float GIZMO_STROKE_ROTATE_RING_PX = 2.5f;
 /// the one stroke that can go below 2 px.
 enum float GIZMO_STROKE_PLANE_RING_PX  = 1.0f;
 /// The disc drawn behind the rotate rings, outlined at a literal 2.0.
+///
+/// It is NOT the rings' 2.5 and never was — measured as DRAWN, through
+/// /api/viewport/probe, by integrating stroke coverage over an annulus (which
+/// averages out where the pixel grid happens to fall): the rings integrate to
+/// 2.49 px and this disc to 2.00 px. The 25 % between them is close to
+/// invisible, so a disc that looks wrong is not a disc that is the wrong
+/// width — see `rotateBackingDiscColor`, which is what was actually wrong.
 enum float GIZMO_STROKE_ROTATE_DISC_PX = 2.0f;
 
 // -- Per-part ALPHA (task 0600) ---------------------------------------------
@@ -393,8 +400,17 @@ enum float GIZMO_ALPHA_PLANE_FILL_GRABBED = 1.00f;
 /// The screen/eye-aligned disc — the faintest fill on the gizmo, ringed solid.
 enum float GIZMO_ALPHA_SCREEN_DISC_FILL = 0.10f;
 enum float GIZMO_ALPHA_SCREEN_DISC_RING = 1.00f;
-/// The backing disc behind the rotate rings.
-enum float GIZMO_ALPHA_ROTATE_DISC      = 0.75f;
+/// The backing disc behind the rotate rings — TWO parts, like the plane
+/// handle: a filled plate under a smooth outline, one colour
+/// (`rotateBackingDiscColor`) at two opacities.
+///
+/// The fill is what makes the disc a disc. Without it the shape is just a
+/// third ring, and a ring drawn in a colour a hair off the backdrop is nearly
+/// nothing at all — which is how ours drew, in pure black, for as long as it
+/// existed: the outline alone at 0.75 over the backdrop is a heavy dark
+/// stroke, and it was reported as one.
+enum float GIZMO_ALPHA_ROTATE_DISC_FILL = 0.20f;
+enum float GIZMO_ALPHA_ROTATE_DISC_RING = 0.75f;
 
 // -- Pick regions (window pixels; NOT derived from the drawn shape) ---------
 /// Half-width of the capsule around an arrow's projected start→end segment
