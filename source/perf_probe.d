@@ -794,9 +794,17 @@ struct BackdropScope {
 
 /// Always-compiled per-frame work counters. Single-writer (main thread);
 /// read from the HTTP thread with the same benign, lock-free diagnostic
-/// contract as `g_perf`/`g_frames` — `toJson` reads published snapshots that
-/// the writer stamps whole, so a racy read gets a slightly stale frame, never
-/// a torn one.
+/// contract as `g_perf`/`g_frames`.
+///
+/// The contract is not uniform across the three published records, and the
+/// difference is worth stating because it used to be stated wrongly. `last_`
+/// and `lastScene_` ARE stamped whole (`last_ = cur_` from a fully populated
+/// local), so a racy read of either gets a slightly stale frame, never a torn
+/// one. `total_` is NOT: it is accumulated field-by-field in place, so a
+/// reader's copy of it can mix fields from two adjacent frames. That is
+/// tolerable in a diagnostic total — no consumer compares two of its fields —
+/// but reading the SAME field of it twice is not, which is why `toJson` takes
+/// one copy up front and serialises the copy. See its comment.
 struct FrameWorkProbe {
 
     // In-flight frame.
@@ -923,14 +931,33 @@ struct FrameWorkProbe {
 
     /// JSON: `{"frames":N,"lastScene":{...},"last":{...},"totals":{...}}`.
     /// Live in EVERY build — this endpoint is not a "{}" stub.
+    ///
+    /// Every record is COPIED before anything is serialised, and the reason is
+    /// specifically `frames`: it and `totals.seq` are the same counter, and
+    /// reading it live at both sites left ~70 `to!string` allocations' worth of
+    /// window between them for the main thread to commit a frame in. One
+    /// response then said `frames: N` and `totals: {seq: N+1}` — a document
+    /// contradicting itself, which is what tests/test_frame_counts.d's
+    /// "totals.seq is the committed-frame count" is entitled to reject.
+    /// Measured on an idle host: 89 of 40 000 responses, every one of them
+    /// off by exactly +1. Serialising from the copies makes the two fields the
+    /// same read, so the disagreement is not narrowed, it is unrepresentable.
+    ///
+    /// The copies do not make the read atomic and are not meant to: `total_`
+    /// is accumulated in place (see the struct header), so one copy can still
+    /// mix fields from two adjacent frames. Nothing compares two of its fields;
+    /// a response disagreeing with ITSELF about one field is the defect.
     string toJson() {
         import std.array : appender;
+        const scene = lastScene_;
+        const lastF = last_;
+        const tot   = total_;
         auto app = appender!string();
         app.put(`{"frames":`);
-        putLong(app, total_.seq);
-        app.put(`,"lastScene":`); putWork(app, lastScene_);
-        app.put(`,"last":`);      putWork(app, last_);
-        app.put(`,"totals":`);    putWork(app, total_);
+        putLong(app, tot.seq);
+        app.put(`,"lastScene":`); putWork(app, scene);
+        app.put(`,"last":`);      putWork(app, lastF);
+        app.put(`,"totals":`);    putWork(app, tot);
         app.put("}");
         return app.data;
     }
