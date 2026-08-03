@@ -30,7 +30,8 @@ import std.math : abs;
 
 import handler : MoveHandler, RotateHandler, ScaleHandler;
 import math : Vec3;
-import viewport_scheme : handleColor, planeFillColor, kPlaneFillScale;
+import viewport_scheme : handleColor, planeRingColor, planeFillColor,
+    kPlaneFillScale, HandlePaint;
 
 void main() {}
 
@@ -152,23 +153,47 @@ unittest { // Scale bank: arms, the scale-feedback arrows, plane rings
     assert(same(s.circleXZ.color, AXIS_Y));
 }
 
-unittest { // The two-state law, applied to the parts that obey it
+unittest { // The common law, applied to the parts that obey it
     auto m = new MoveHandler(Vec3(0, 0, 0));
     auto r = new RotateHandler(Vec3(0, 0, 0));
     auto s = new ScaleHandler(Vec3(0, 0, 0));
 
-    // Idle keeps the part's own colour — there is no pre-press rollover
-    // colour, so hovering must not change any of these.
     foreach (idle; [m.arrowX.color, m.arrowY.color, m.arrowZ.color,
                     m.centerBox.color, r.arcX.color, r.arcView.color,
                     s.arrowZ.color, s.scaleArrowY.color]) {
-        assert(same(handleColor(idle, false), idle));
-        // Engaged takes the active colour REGARDLESS of the part's own
-        // colour — one active colour, not one per axis.
-        assert(same(handleColor(idle, true), ACTIVE));
+        // Idle keeps the part's own colour.
+        assert(same(handleColor(idle, HandlePaint.idle), idle));
+        // The pointer resting on the part, and a haul, take the active colour
+        // REGARDLESS of the part's own colour — one active colour, not one per
+        // axis, and the same one for both states. Every part in this list
+        // agrees about hover and grab; the plane RING is the one that does not
+        // (see the plane-ring unittest below).
+        assert(same(handleColor(idle, HandlePaint.hover),   ACTIVE));
+        assert(same(handleColor(idle, HandlePaint.grabbed), ACTIVE));
     }
 
-    // The engaged colour is neither of the two colours it replaced.
-    assert(!same(ACTIVE, WAS_ROLLOVER), "the old hover yellow is retired");
+    // The active colour is neither of the two colours it replaced.
+    assert(!same(ACTIVE, WAS_ROLLOVER), "the hand-picked hover yellow is retired");
     assert(!same(ACTIVE, WAS_SELECTED), "the mesh-selection orange is not a handle colour");
+}
+
+unittest { // The plane ring — the one part that does NOT obey it
+    auto m = new MoveHandler(Vec3(0, 0, 0));
+
+    // Each plane circle's outline wears the colour of the axis NORMAL to its
+    // plane, and that outline is the part whose hover and grab differ. Driven
+    // off the constructed handlers so this cannot drift from the bank.
+    foreach (ring; [m.circleXY.color, m.circleYZ.color, m.circleXZ.color]) {
+        assert(same(planeRingColor(ring, HandlePaint.idle),    ring));
+        assert(same(planeRingColor(ring, HandlePaint.hover),   ACTIVE));
+        // ...and BACK to its own colour on the grab. The ring is the only cue
+        // that says which plane this is, so the grab keeps it legible.
+        assert(same(planeRingColor(ring, HandlePaint.grabbed), ring));
+    }
+
+    // The disc inside follows the common law, so the two parts of one handle
+    // DISAGREE about a grab — which is the whole reason the law needs three
+    // states and could not stay a bool.
+    assert(same(handleColor(m.circleXY.fillColor, HandlePaint.grabbed), ACTIVE));
+    assert(!same(planeRingColor(m.circleXY.color, HandlePaint.grabbed), ACTIVE));
 }

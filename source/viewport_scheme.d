@@ -49,7 +49,7 @@ enum SchemeColor {
     axisZ,
     // --- handles ---
     handle,        /// an idle handle with no axis of its own (centre box, screen disc)
-    handleActive,  /// the GRABBED handle. There is no separate hover colour — see handleColor()
+    handleActive,  /// the handle under the pointer, and the one being hauled — see handleColor()
     handleGuide,   /// drag guide line, pointer marker riding a rotate ring
     handleCage,    /// vertex-normal / cage overlay
     handleLabel,   /// dimension text and handle labels
@@ -166,23 +166,76 @@ Vec3 axisColor(int axis) @safe pure nothrow @nogc {
     }
 }
 
-/// The fill disc of the plane handle whose outline is `outline`.
+/// The resting fill disc of the plane handle whose outline is `outline`.
+///
+/// This is the disc's OWN colour — the `idle` argument to the state law below,
+/// not the law itself. See `planeRingColor` for the part of the plane handle
+/// that does not follow the common law.
 Vec3 planeFillColor(Vec3 outline) @safe pure nothrow @nogc {
     return outline * kPlaneFillScale;
 }
 
-/// THE handle colour law: a handle is either idle or ENGAGED. Two states.
+// ---------------------------------------------------------------------------
+// THE handle colour law
+// ---------------------------------------------------------------------------
+
+/// What a handle is doing, for the purpose of choosing its colour. THREE
+/// states, and the third one is not a convenience — it is measured.
 ///
-/// `engaged` means GRABBED — armed when the press captures the handle, cleared
-/// on release. It is emphatically NOT hover: there is no pre-press rollover
-/// colour in this scheme, and a handle that recolours under the bare pointer
-/// is telling the user it did something it did not do. The arbiter drives this
-/// bit from its capture, never from its hit test (`handles/arbiter.d`).
+/// Kept separate from `handles.shapes.HandleState`, which answers a different
+/// question (which handle would a press grab, plus the advisor's hints) and is
+/// serialised over the handles API. This enum is only ever about pixels.
+enum HandlePaint {
+    idle,      /// no pointer on it, nothing hauling it
+    hover,     /// the pointer is over it, no button pressed
+    grabbed,   /// a press captured it and has not released
+}
+
+/// A handle's colour, given what it is doing.
+///
+/// MEASURED: `hover` and `grabbed` are the SAME colour — the pointer resting
+/// on a handle repaints it in exactly the active colour a haul would give it,
+/// and nothing else about it changes (not its size, its line width, its
+/// outline or its alpha). So the law has three states but only two colours,
+/// and it would be tempting to collapse it back to a bool. Do not: the plane
+/// handle's ring (below) distinguishes hover from grabbed, and it is the whole
+/// reason this is an enum. A bool cannot express a part that lights up under
+/// the pointer and goes BACK to its own colour when you actually grab it.
 ///
 /// `idle` is the handle's own colour — its axis colour for an axis handle, the
 /// `handle` row for one with no axis.
-Vec3 handleColor(Vec3 idle, bool engaged) @safe pure nothrow @nogc {
-    return engaged ? schemeColor(SchemeColor.handleActive) : idle;
+Vec3 handleColor(Vec3 idle, HandlePaint paint) @safe pure nothrow @nogc {
+    final switch (paint) {
+        case HandlePaint.idle:                        return idle;
+        case HandlePaint.hover, HandlePaint.grabbed:  return schemeColor(SchemeColor.handleActive);
+    }
+}
+
+/// The plane handle's outline RING — the one part that breaks the common law.
+///
+/// MEASURED, and the shape of it is genuinely non-monotonic:
+///
+///   idle     -> its axis colour
+///   hover    -> the active colour
+///   grabbed  -> its axis colour AGAIN
+///
+/// The two mechanisms behind that are separable and both are visible here. The
+/// pointer highlight is applied to whatever is under the pointer, uniformly,
+/// with no knowledge of which part of which handle it is — so it catches the
+/// ring like everything else. The GRAB highlight is the handle's own drawing
+/// rule, and that rule deliberately leaves the ring alone: the ring says WHICH
+/// plane this is, and grabbing it does not change which plane it is. Losing
+/// that cue at the moment of the grab would be the worst time to lose it.
+///
+/// The inner fill disc is NOT here because it does not need to be — it follows
+/// `handleColor` exactly (idle: its own dark tint; hover and grabbed alike:
+/// the active colour). What the fill additionally does on a grab is raise its
+/// ALPHA to fully opaque, which is not a colour and is not this table's to
+/// state; the drawing code owns per-part alpha.
+Vec3 planeRingColor(Vec3 axis, HandlePaint paint) @safe pure nothrow @nogc {
+    return paint == HandlePaint.hover
+        ? schemeColor(SchemeColor.handleActive)
+        : axis;
 }
 
 // ---------------------------------------------------------------------------
@@ -242,28 +295,69 @@ unittest {
     }
 }
 
-/// The two colours a handle is allowed to be, and the one it is not.
+/// The three states, and the two colours they resolve to.
 unittest {
-    const idle = schemeColor(SchemeColor.axisX);
+    const idle   = schemeColor(SchemeColor.axisX);
+    const active = schemeColor(SchemeColor.handleActive);
 
     // Idle keeps its own colour...
-    assert(handleColor(idle, false) == idle);
-    // ...engaged takes the active colour, whatever the handle's own colour is.
-    assert(handleColor(idle, true)  == schemeColor(SchemeColor.handleActive));
-    assert(handleColor(schemeColor(SchemeColor.handle), true)
-           == schemeColor(SchemeColor.handleActive));
+    assert(handleColor(idle, HandlePaint.idle) == idle);
+    // ...and BOTH the pointer resting on it and a haul take the active colour,
+    // whatever the handle's own colour is. This is the measured equality that
+    // makes hover and grab indistinguishable everywhere except the plane ring.
+    assert(handleColor(idle, HandlePaint.hover)   == active);
+    assert(handleColor(idle, HandlePaint.grabbed) == active);
+    assert(handleColor(schemeColor(SchemeColor.handle), HandlePaint.grabbed) == active);
 
-    // The engaged colour is NOT the mesh-selection colour. We used to paint a
+    // The active colour is NOT the mesh-selection colour. We used to paint a
     // "selected" handle with the selection orange; that orange belongs to
     // selected geometry and never to a handle, and the two must stay distinct
     // or the gizmo starts speaking the mesh's language.
-    assert(schemeColor(SchemeColor.handleActive) != schemeColor(SchemeColor.selection));
+    assert(active != schemeColor(SchemeColor.selection));
 
-    // ...nor the old hover yellow, which stood for a state that does not exist.
+    // ...nor the hand-picked yellow the pre-measurement hover state wore. The
+    // state turned out to be real; the colour it was given was not.
     immutable Vec3 retiredRolloverYellow = Vec3(1.0f, 0.95f, 0.15f);
     immutable Vec3 retiredSelectedOrange = Vec3(1.0f, 0.64f, 0.0f);
-    assert(schemeColor(SchemeColor.handleActive) != retiredRolloverYellow);
-    assert(schemeColor(SchemeColor.handleActive) != retiredSelectedOrange);
+    assert(active != retiredRolloverYellow);
+    assert(active != retiredSelectedOrange);
+}
+
+/// The plane handle's ring: lights under the pointer, DARKENS under the grab.
+///
+/// This is the assertion that stops the enum being collapsed back to a bool.
+/// A two-state law can only make `grabbed` agree with `hover` (which breaks
+/// the third row) or with `idle` (which breaks the second); the three rows
+/// below are mutually unsatisfiable by any function of one boolean, so this
+/// test fails on the spot if someone re-derives `paint` from `engaged` alone.
+unittest {
+    const axis   = schemeColor(SchemeColor.axisZ);   // the XY plane's normal
+    const active = schemeColor(SchemeColor.handleActive);
+
+    assert(planeRingColor(axis, HandlePaint.idle)    == axis);
+    assert(planeRingColor(axis, HandlePaint.hover)   == active);
+    assert(planeRingColor(axis, HandlePaint.grabbed) == axis);
+
+    // Non-monotonic, stated as such: the ring is NOT "more highlighted the
+    // more you interact with it". Hover is the odd one out.
+    assert(planeRingColor(axis, HandlePaint.idle)
+           == planeRingColor(axis, HandlePaint.grabbed));
+    assert(planeRingColor(axis, HandlePaint.hover)
+           != planeRingColor(axis, HandlePaint.grabbed));
+
+    // And the exception is exactly one part wide: the disc inside that ring
+    // follows the common law, so hover and grab agree there. Ring and disc
+    // therefore DISAGREE about a grab, which is the whole two-part effect.
+    const disc = planeFillColor(axis);
+    assert(handleColor(disc, HandlePaint.hover) == handleColor(disc, HandlePaint.grabbed));
+    assert(handleColor(disc, HandlePaint.grabbed) != planeRingColor(axis, HandlePaint.grabbed));
+
+    // The three axes all break the same way — nothing here is X-specific.
+    foreach (ax; 0 .. 3) {
+        const a = axisColor(ax);
+        assert(planeRingColor(a, HandlePaint.hover) == active);
+        assert(planeRingColor(a, HandlePaint.grabbed) == a);
+    }
 }
 
 /// Axis lookup agrees with the table, and plane fills track their outline.

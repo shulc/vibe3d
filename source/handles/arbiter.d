@@ -397,11 +397,16 @@ version (unittest) {
 
 /// Hovering a handle must NOT engage it.
 ///
-/// This is the whole structural point of the two-state colour law, and it is
-/// the assertion that fails if someone "simplifies" `setEngaged` to read `hot`
-/// — which is tempting, because during a haul `hot` and `captured` are equal,
-/// so every drag test would still pass while every hovering pointer silently
-/// lit a handle up again.
+/// A hovered handle DOES light up — that is measured — but it lights up as
+/// hover, through `state`, and not as a haul. Keeping the two bits apart is
+/// what lets the colour law tell them apart, and on the plane handle's outline
+/// ring the two states are genuinely different colours.
+///
+/// This is the assertion that fails if someone "simplifies" `setEngaged` to
+/// read `hot` — which is tempting, because during a haul `hot` and `captured`
+/// are equal, so every drag test would still pass. What would break is subtler
+/// than it used to be: the highlight would still appear, but a grab would
+/// become indistinguishable from a hover and the plane ring could never revert.
 unittest {
     Viewport vp;
     auto pool = new ToolHandles();

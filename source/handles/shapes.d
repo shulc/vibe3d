@@ -28,24 +28,26 @@ private uint packImCol(Vec3 c, ubyte alpha) {
 // HandleState — the ARBITRATION state (which handle won the hit test, plus the
 // advisory hints layered on top of it).
 //
-// NOTE what this enum is NOT, since it used to be both: it is no longer the
-// handle's COLOUR state. Task 0596 split the two, because they answer
-// different questions and only one of them drives pixels.
+// NOTE what this enum is NOT, since it used to be both: it is not the handle's
+// COLOUR state. The two were split because they answer different questions and
+// carry different consumers, and the split still holds now that hover paints.
 //
 //   * HandleState answers "which handle would a press grab, and what does the
 //     advisor think about that" — it is the hit-test result plus the AI
 //     copilot's default hint. It is consumed by `handles/arbiter.d`, by the
 //     copilot lane, and it is serialised over /api/tool/handles.
-//   * `Handler.engaged` answers "is this handle being HAULED right now" — and
-//     that, alone, is what recolours a handle. See `viewport_scheme.handleColor`.
+//   * `viewport_scheme.HandlePaint` answers "what colour is this handle" —
+//     three states, resolved by `Handler.paintState` from `Rollover` plus
+//     `engaged`. HandleState feeds it; it is not it. Rollover carrying an
+//     advisory hint (SecondaryDefault) alongside a paintable one is exactly why
+//     the drawing code must not switch on this enum directly.
 //
 // The enum kept all four members deliberately. `SecondaryDefault` carries the
 // copilot's deterministic-default hint (arbiter.d) and is asserted across
 // tests/test_ai_handle_candidates.d and tests/test_ai_model_live_wiring.d;
 // `Rollover` is the arbiter's hot-part concept and part of the JSON contract
 // below. Collapsing the enum would have broken three unrelated consumers to
-// express a fact about drawing. Collapsing the COLOUR LAW — which is where the
-// two-state model actually belongs — cost nothing and is done.
+// express a fact about drawing.
 // ---------------------------------------------------------------------------
 
 enum HandleState { Normal, Rollover, Selected, SecondaryDefault }
@@ -77,11 +79,12 @@ private:
     HandleState state = HandleState.Normal;
     bool   visible = true;
 
-    // Is this handle being HAULED right now? The one bit that recolours a
-    // handle (see viewport_scheme.handleColor). Driven by ToolHandles.update
-    // from its CAPTURE, never from its hit test: the highlight marks the
-    // grabbed handle, armed by the press that captured it and cleared on
-    // release. A handle under the bare pointer stays its own colour.
+    // Is this handle being HAULED right now? Driven by ToolHandles.update from
+    // its CAPTURE, never from its hit test — the two coincide during a haul but
+    // differ for every hovering pointer, and only this bit means "a press
+    // grabbed it". Hover is the OTHER input to the colour law and arrives
+    // through `state` (see paintState below); keeping the two apart is what
+    // lets the plane ring tell them apart.
     //
     // Scalar, so the class .init blob has nothing to alias — cf. the array
     // field that shipped one shared store to every instance in task 0590.
@@ -113,28 +116,25 @@ public:
     void setEngaged(bool e) { engaged = e; }
     bool isEngaged() const  { return engaged; }
 
-    // The colour to draw this handle in: its own `idle` colour, or the
-    // scheme's active colour while hauled. Every shape's draw() goes through
-    // here so the two-state law has exactly one implementation.
-    //
-    // INTERIM — a hover cue sits ON TOP of that law, deliberately not inside
-    // it. The read that removed the pre-press hover highlight rests on
-    // ABSENCE (no colour lookup found on any handle path) rather than on a
-    // positive observation, and its own author flagged that only a live
-    // capture could close it. Meanwhile a real affordance was gone: the
-    // pointer over a handle said nothing. So hover paints the measured
-    // ACTIVE colour — a value we have measured, not one invented to fill the
-    // gap — until that capture lands.
-    //
-    // Kept out of `viewport_scheme.handleColor` on purpose: that function is
-    // the measured law and its test pins it. When the capture answers, this
-    // block is deleted (no cue) or given its own row (a distinct cue), and
-    // the law underneath is untouched either way.
+    // What this handle is doing, in the only terms the colour law cares about.
+    // The two arbitration bits collapse to one of three paint states, and the
+    // precedence is grab-over-hover: during a haul the arbiter pins `hot` to
+    // the captured part, so the hauled handle is BOTH Rollover and engaged and
+    // must read as grabbed. (That distinction is invisible on every handle but
+    // the plane ring, which is precisely why it has to be got right here
+    // rather than at each shape.)
+    protected HandlePaint paintState() const {
+        if (engaged)                          return HandlePaint.grabbed;
+        if (state == HandleState.Rollover)    return HandlePaint.hover;
+        return HandlePaint.idle;
+    }
+
+    // The colour to draw this handle in. Every shape whose parts all agree
+    // goes through here, so the common law has exactly one implementation;
+    // CircleHandler (the plane handle) is the sole shape that reads
+    // `paintState` directly, because its ring and its disc disagree.
     protected Vec3 drawColor(Vec3 idle) const {
-        if (engaged) return handleColor(idle, true);
-        if (state == HandleState.Rollover)
-            return schemeColor(SchemeColor.handleActive);
-        return handleColor(idle, false);
+        return handleColor(idle, paintState());
     }
 
     // A representative screen-space pixel for this handle, for test
@@ -944,8 +944,9 @@ class RotateHandler : Handler {
 
 // ---------------------------------------------------------------------------
 // BoxHandler : Handler — solid-colour axis-aligned box at a given position.
-// Takes the scheme's active colour while hauled, or when the owning tool has
-// marked it current (`selected`). Hover does not recolour it.
+// Follows the common law (active under the pointer and while hauled alike),
+// and additionally takes the active colour when the owning tool has marked it
+// current (`selected`).
 // ---------------------------------------------------------------------------
 
 class BoxHandler : Handler {
@@ -979,11 +980,14 @@ public:
     {
         if (!visible) return;
         // `selected` marks a handle the owning tool has made CURRENT (the only
-        // setter is the pen's current-point marker). It reads as engaged, and
+        // setter is the pen's current-point marker). It reads as grabbed, and
         // takes the scheme's active colour — not the mesh-selection orange it
         // used to borrow. That orange belongs to selected geometry; a handle
         // wearing it says "you have selected some mesh", which is a lie.
-        Vec3 c = handleColor(color, engaged || selected);
+        // Being current outranks a passing pointer, hence the explicit
+        // `grabbed` rather than a fall-through to paintState().
+        Vec3 c = selected ? handleColor(color, HandlePaint.grabbed)
+                          : drawColor(color);
 
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
@@ -1053,8 +1057,10 @@ private:
 // CircleHandler : Handler
 // Filled disc + outline ring at a given position in a given plane.
 // Outline color = color; fill color = fillColor.
-// While hauled the FILL takes the scheme's active colour; the outline keeps
-// its axis colour, so which plane this is stays legible. Hover does not recolour.
+// THE ONE SHAPE WHOSE TWO PARTS DISAGREE: under the pointer both take the
+// scheme's active colour; while HAULED only the fill does, and the outline
+// goes back to its axis colour so which plane this is stays legible. See
+// draw() below and viewport_scheme.planeRingColor.
 // ---------------------------------------------------------------------------
 
 class CircleHandler : Handler {
@@ -1128,14 +1134,21 @@ public:
         Vec3 right, up;
         localFrame(normal, right, up);
 
-        // A plane handle is TWO concentric parts, and they do not light up
-        // together: the outline ring keeps its axis colour even while hauled
-        // (the ring says WHICH plane this is, and grabbing it does not change
-        // which plane it is), while the fill disc inside takes the active
-        // colour. Highlighting the outline too would erase the only cue that
-        // tells the three plane handles apart at the moment you most need it.
-        Vec3 oc = color;
-        Vec3 fc = handleColor(fillColor, engaged);
+        // A plane handle is TWO concentric parts, and it is the ONE shape in
+        // the gizmo whose parts disagree — so it is the one shape that does
+        // not go through `drawColor`. See viewport_scheme.planeRingColor for
+        // the measured rows; in short:
+        //
+        //   disc  idle -> its own tint,  hover -> active,  grabbed -> active
+        //   ring  idle -> its axis,      hover -> active,  grabbed -> its axis
+        //
+        // The ring lights under a passing pointer like anything else, but the
+        // grab deliberately gives it back its axis colour: the ring is the only
+        // thing that says WHICH plane this is, and the moment of the grab is
+        // the worst moment to stop saying it.
+        const paint = paintState();
+        Vec3 oc = planeRingColor(color, paint);
+        Vec3 fc = handleColor(fillColor, paint);
 
         auto m = modelMatrix(right, up, fwd, Vec3(radius, radius, radius), center);
 
@@ -1205,12 +1218,12 @@ class CenterDiskGizmo : Handler {
         }
         if (!allValid) return;
 
-        // The screen-plane disc is an axis-less handle: the scheme's `handle`
-        // colour idle, the active colour while hauled. Two states, one law —
-        // the four-way switch that used to live here painted a hover yellow
-        // and a selection orange for states this handle has no business
-        // distinguishing. Alphas are ours and unchanged by task 0596.
-        const Vec3 c = handleColor(schemeColor(SchemeColor.handle), engaged);
+        // The screen-plane disc is an axis-less handle and it follows the
+        // COMMON law: the scheme's `handle` colour idle, the active colour
+        // both under the pointer and while hauled. It belongs to no axis, so
+        // it has nothing to protect the way the axis plane rings do and none
+        // of their exception applies. Alphas are ours, and unchanged here.
+        const Vec3 c = drawColor(schemeColor(SchemeColor.handle));
         const uint fillCol    = packImCol(c,  80);
         const uint outlineCol = packImCol(c, 200);
 
