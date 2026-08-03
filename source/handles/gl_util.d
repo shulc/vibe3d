@@ -14,7 +14,7 @@ import math;
 
 private struct ThickLineState {
     GLuint prog;
-    GLint  locModel, locView, locProj, locColor, locWidth, locScreen;
+    GLint  locModel, locView, locProj, locColor, locWidth, locScreen, locAlpha;
     float  screenW, screenH;
 }
 private ThickLineState g_thickLine;
@@ -315,15 +315,82 @@ enum float GIZMO_CONE_RADIUS_OF_LEN   = 0.05f;
 /// when `CubicArrow.fixedCubeHalf` is unset. → 2.80 px on the scale stem.
 enum float GIZMO_CUBE_HEAD_HALF_OF_LEN = 0.03f;
 
+// -- Stroke widths, in WINDOW PIXELS (task 0600) ----------------------------
+//
+// The reference's four gizmo stroke widths, each read out of the draw code and
+// then confirmed on its own pixels. Three of them are a FLOOR under a
+// user-settable line-width preference we do not expose; with no preference the
+// floor IS the value, so these are the floors. If such a preference is ever
+// added, it belongs here as `max(FLOOR, pref)` — and note it would not be only
+// a stroke weight, it also multiplies `gizmoHeadHalfPx` above.
+//
+// WHAT THESE REPLACED, AND WHY THE NUMBERS LOOK SMALLER THAN THEY ARE. The old
+// literals were 5.0 (move shaft), 6.0 (rotate arc), 4.0 (view ring), 1.5
+// (plane ring). They were NOT 5 / 6 / 4 / 1.5 pixels: the geometry shader's
+// clip-to-screen conversion was off by exactly 2 (see `thickLineGeomSrc`), so
+// they rendered 2.5 / 3.0 / 2.0 / 0.75 px. Measured through
+// /api/viewport/probe, on the ink itself, before anything here changed.
+//
+// So the real gaps against the reference were 2.5 -> 2.0 and 3.0 -> 2.5 (a
+// quarter too heavy, not "roughly twice"), while the view ring at 2.0 and the
+// plane ring at 0.75 were too THIN. Every direction was wrong, which is why
+// the unit was fixed rather than the literals rescaled: with the shader
+// honest, the number written here is the number of pixels drawn.
+/// Move-bank axis shaft. A 2 px floor under the width preference.
+enum float GIZMO_STROKE_MOVE_SHAFT_PX  = 2.0f;
+/// Scale-bank axis stem. A literal in the reference — it ignores the
+/// preference the other three consult.
+enum float GIZMO_STROKE_SCALE_SHAFT_PX = 2.0f;
+/// Rotate rings — the three axis arcs AND the screen-plane ring, which are one
+/// shape in the reference and take one width: a 2.5 px floor.
+enum float GIZMO_STROKE_ROTATE_RING_PX = 2.5f;
+/// Plane-handle outline ring. The width preference with NO floor under it —
+/// the one stroke that can go below 2 px.
+enum float GIZMO_STROKE_PLANE_RING_PX  = 1.0f;
+/// The disc drawn behind the rotate rings, outlined at a literal 2.0.
+enum float GIZMO_STROKE_ROTATE_DISC_PX = 2.0f;
+
+// -- Per-part ALPHA (task 0600) ---------------------------------------------
+//
+// Measured per part. These could not be ported when they were first read,
+// because no handle draw wrote the fragment alpha at all — every gizmo line
+// reached the framebuffer at alpha 0 and was composited away. That is fixed;
+// these are the values it was fixed FOR.
+//
+// The 0.95 is not a rounding of 1.0. It is a literal the reference passes on
+// every gizmo line batch, and it is load-bearing for the look it was measured
+// with: its own antialiasing only engages because alpha < 1 puts the batch on
+// the blending path in the first place.
+/// Move/scale arms — shaft, arrowhead and box alike. One value for the whole arm.
+enum float GIZMO_ALPHA_ARM              = 0.95f;
+/// Rotate rings, axis and screen-plane alike.
+enum float GIZMO_ALPHA_ROTATE_RING      = 0.95f;
+/// The centre handle. The one gizmo part that is fully opaque.
+enum float GIZMO_ALPHA_CENTRE_BOX       = 1.00f;
+/// Plane handle: a nearly-solid axis-coloured ring around a barely-there disc.
+enum float GIZMO_ALPHA_PLANE_RING       = 0.80f;
+enum float GIZMO_ALPHA_PLANE_FILL       = 0.20f;
+/// The screen/eye-aligned disc — the faintest fill on the gizmo, ringed solid.
+enum float GIZMO_ALPHA_SCREEN_DISC_FILL = 0.10f;
+enum float GIZMO_ALPHA_SCREEN_DISC_RING = 1.00f;
+/// The backing disc behind the rotate rings.
+enum float GIZMO_ALPHA_ROTATE_DISC      = 0.75f;
+
 // -- Pick regions (window pixels; NOT derived from the drawn shape) ---------
 /// Half-width of the capsule around an arrow's projected start→end segment
 /// that counts as a hit. Wider than anything drawn: the move arrow's shaft is
-/// 5 px thick and its cone 3.75 px in radius, so the grab band is ~2x the
-/// visible arrow and extends 8 px PAST the drawn tip. Shared by the move
-/// arrows, the scale stems and the falloff endpoint arrows.
+/// 2 px thick and its cone 7.5 px in radius, so the grab band comfortably
+/// contains the visible arrow and extends 8 px PAST the drawn tip. Shared by
+/// the move arrows, the scale stems and the falloff endpoint arrows.
+///
+/// Task 0600 narrowed the strokes and deliberately did NOT touch this. The
+/// pick regions are not derived from the drawn shape (see the note below), and
+/// a grab band that tracked the ink would have shrunk the gizmo's usable target
+/// along with its stroke — the reference's own hit width is likewise
+/// independent of, and for this gizmo NARROWER than, what it draws.
 enum float GIZMO_PICK_AXIS_PX         = 8.0f;
-/// Same, for a rotate ring's projected polyline. The principal arcs are drawn
-/// 6 px thick and the view ring 4 px, so this is again wider than the ink.
+/// Same, for a rotate ring's projected polyline. The arcs are drawn 2.5 px
+/// thick, so this is again wider than the ink.
 enum float GIZMO_PICK_RING_PX         = 8.0f;
 /// Radius of the disc around a scale axis box's projected tip that counts as
 /// a hit, in the `compact` (bare Transform) presentation only. 4.4x the drawn
@@ -460,6 +527,10 @@ void initThickLineProgram(GLuint prog, int screenW, int screenH) {
     g_thickLine.locColor  = glGetUniformLocation(prog, "u_color");
     g_thickLine.locWidth  = glGetUniformLocation(prog, "u_lineWidth");
     g_thickLine.locScreen = glGetUniformLocation(prog, "u_screenSize");
+    // Now WRITTEN per draw (the per-part alphas), not merely seeded — but the
+    // seeding below stays, because a program whose very first draw forgot to
+    // pass one would still be reaching for a 0.
+    g_thickLine.locAlpha  = glGetUniformLocation(prog, "u_alpha");
     g_thickLine.screenW   = cast(float)screenW;
     g_thickLine.screenH   = cast(float)screenH;
 
@@ -548,13 +619,139 @@ package void buildUnitCubeData(ref float[] data) {
             data ~= v[idx][];
 }
 
+// ---------------------------------------------------------------------------
+// The handle pass's BLEND BRACKET.
+//
+// The reference requests blending PER PRIMITIVE BATCH, from a tag on the
+// batch's begin call, and turns it back off for the next batch that does not
+// ask. Our closest analogue to "a batch" is one of these draw helpers, so the
+// bracket lives here rather than around the whole pass — the same granularity,
+// and no call site can forget it.
+//
+// The equation is the reference's for COLOUR and deliberately not for ALPHA.
+// Colour is plain `SRC_ALPHA / ONE_MINUS_SRC_ALPHA`, which is the one blend
+// function the reference sets (once, per viewport resize) and therefore the one
+// every translucent handle of its own composites through. The alpha channel
+// takes `ZERO / ONE` — destination alpha is left exactly as it was.
+//
+// That asymmetry is not a liberty; it is what porting to our target requires.
+// The reference blends into a window whose alpha nobody reads afterwards. We
+// blend into a CELL FBO whose colour texture ImGui then composites using that
+// very alpha channel, so a translucent stroke that let its own 0.95 through to
+// the destination would punch a 5 %-transparent hole in the cell and the panel
+// behind would show through the gizmo. `mesh_gpu.d`'s wireframe pass already
+// took this exact decision for this exact reason; this follows it.
+// ---------------------------------------------------------------------------
+
+/// Enable the handle pass's blend equation, returning the previous GL_BLEND
+/// enable so the caller can restore it. See the block comment above.
+private bool beginHandleBlend() {
+    immutable bool had = glIsEnabled(GL_BLEND) == GL_TRUE;
+    glEnable(GL_BLEND);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+    return had;
+}
+
+/// Undo `beginHandleBlend`. Restores the ENABLE bit to what it was and the
+/// blend function to the app-wide default that every other bracket in the
+/// codebase (`mesh_gpu.d`, `slice_tool.d`, `ui/panels.d`) also restores to.
+private void endHandleBlend(bool hadBlend) {
+    if (!hadBlend) glDisable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+/// The winding convention of a solid handle shape, i.e. which face has to be
+/// culled to leave its OUTWARD surface. See `beginHandleFill` for why a
+/// translucent solid must be culled at all.
+///
+/// The two shapes disagree, and the values below are derived rather than
+/// guessed. For the cone (`buildConeData` in shapes.d) a side triangle
+/// apex→P0→P1 at the base point (1,0,0) has normal ∝ (1,0,1) — radially out
+/// and toward the apex, i.e. OUTWARD — so its front faces (default `GL_CCW`)
+/// face out and the BACK ones are the far side. For the unit cube
+/// (`buildUnitCubeData`) the -Z face 0→1→2 has normal ∝ +Z while its outward
+/// normal is -Z, so that shape is wound the other way and its FRONT faces are
+/// the far side.
+///
+/// The cube's winding is left alone deliberately. Nothing culls it today, so
+/// the inversion is invisible and "fixing" it would be an unmeasured change to
+/// geometry six other handle types share.
+enum HandleFacing {
+    outwardCCW,   /// front faces point out — cull GL_BACK  (the arrowhead cone)
+    outwardCW,    /// front faces point in  — cull GL_FRONT (the unit cube)
+    flat,         /// not a solid: ONE layer already, so cull nothing
+}
+
+/// Bracket a translucent SOLID (triangle) handle batch drawn on the SHARED
+/// program — the arrowhead cone, the scale boxes, the plane fill disc.
+/// `locAlpha` is `Shader.locAlpha`; pass the part's alpha.
+///
+/// Returns an opaque token for `endHandleFill`. At `alpha >= 1` this issues NO
+/// GL calls at all and the draw stays byte-identical to the unblended path it
+/// replaced — which is what keeps the opaque parts (the centre box) off this
+/// change's blast radius entirely.
+///
+/// WHY IT CULLS. The handle pass runs with DEPTH TESTING OFF, because handles
+/// are overlays. A closed solid then rasterises every one of its faces onto the
+/// same pixels — for the cone, the near side, the far side and the base cap.
+/// While it was opaque that was invisible: three writes of one colour. Blended,
+/// it is three composites, and 0.95 stacked three deep is 0.999875 — i.e. the
+/// part renders effectively OPAQUE and the alpha silently does nothing.
+/// Measured exactly that way before this cull existed: the shaft came back at
+/// the predicted `0.95*axis + 0.05*bg` while the cone beside it came back at
+/// the raw axis colour. Culling leaves one layer per pixel, so the alpha means
+/// what it says. The silhouette is unchanged — these are convex solids.
+///
+/// Solid geometry is NOT antialiased here and must not be: the reference never
+/// enables polygon smoothing and explicitly disables multisampling, and its
+/// arrowhead was measured stepping background-to-full with no intermediate
+/// value. This bracket buys TRANSPARENCY, not soft edges.
+int beginHandleFill(GLint locAlpha, float alpha,
+                    HandleFacing facing = HandleFacing.outwardCCW) {
+    if (!(alpha < 1.0f) || locAlpha < 0) return -1;   // NaN-safe: !(nan < 1) is true
+    glUniform1f(locAlpha, alpha);
+    immutable bool hadBlend = beginHandleBlend();
+    // `flat` geometry — the plane handle's fill disc is a triangle FAN whose
+    // triangles tile the disc without overlapping, so it already composites
+    // exactly once and needs no cull. It must not GET one either: a flat fan
+    // seen from its other side is entirely back-facing, and culling would make
+    // the plane handle vanish depending on which way the camera is.
+    if (facing == HandleFacing.flat) return (hadBlend ? 1 : 0) | 4;
+    immutable bool hadCull = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
+    glEnable(GL_CULL_FACE);
+    glCullFace(facing == HandleFacing.outwardCCW ? GL_BACK : GL_FRONT);
+    return (hadBlend ? 1 : 0) | (hadCull ? 2 : 0);
+}
+
+/// Close `beginHandleFill`, restoring the blend and cull state AND the shared
+/// program's `u_alpha` to opaque. Restoring the uniform is not optional: the
+/// same program draws the mesh, and a leaked 0.95 would quietly make the whole
+/// model translucent on the next frame.
+void endHandleFill(GLint locAlpha, int token) {
+    if (token < 0) return;
+    if ((token & 4) == 0) {                 // bit 2 set == `flat`, nothing culled
+        if ((token & 2) == 0) glDisable(GL_CULL_FACE);
+        glCullFace(GL_BACK);                // the GL default, and the app's
+    }
+    endHandleBlend((token & 1) != 0);
+    if (locAlpha >= 0) glUniform1f(locAlpha, 1.0f);
+}
+
 // Draw VAO with GL_LINES/GL_LINE_STRIP using the thick-line program,
 // then restore the caller's program.
+//
+// Blending is enabled UNCONDITIONALLY here, even at `alpha == 1`, because the
+// analytic antialiasing works through the alpha channel: the fragment stage
+// multiplies coverage into alpha, and with blending off a half-covered fringe
+// pixel would simply be written at full colour and the smoothing would vanish.
+// A line batch is exactly the case the reference also always blends, since
+// every gizmo stroke it emits carries an alpha below 1.
 package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
                              const ref float[16] model,
                              const ref Viewport vp,
                              Vec3 color, float lineWidth,
-                             GLuint restoreProgram)
+                             GLuint restoreProgram,
+                             float alpha = 1.0f)
 {
     glUseProgram(g_thickLine.prog);
     glUniformMatrix4fv(g_thickLine.locModel, 1, GL_FALSE, model.ptr);
@@ -563,9 +760,14 @@ package void drawThickLines(GLuint vao, int vertCount, GLenum mode,
     glUniform3f(g_thickLine.locColor, color.x, color.y, color.z);
     glUniform1f(g_thickLine.locWidth, lineWidth);
     glUniform2f(g_thickLine.locScreen, g_thickLine.screenW, g_thickLine.screenH);
+    if (g_thickLine.locAlpha >= 0) glUniform1f(g_thickLine.locAlpha, alpha);
+
+    immutable bool hadBlend = beginHandleBlend();
     glBindVertexArray(vao);
     glDrawArrays(mode, 0, vertCount);
     g_fc.draw(DrawPass.handles, vertCount);
+    endHandleBlend(hadBlend);
+
     glUseProgram(restoreProgram);
 }
 
@@ -576,9 +778,11 @@ void drawThickLinesExt(GLuint vao, int vertCount, GLenum mode,
                        const ref float[16] model,
                        const ref Viewport vp,
                        Vec3 color, float lineWidth,
-                       GLuint restoreProgram)
+                       GLuint restoreProgram,
+                       float alpha = 1.0f)
 {
-    drawThickLines(vao, vertCount, mode, model, vp, color, lineWidth, restoreProgram);
+    drawThickLines(vao, vertCount, mode, model, vp, color, lineWidth,
+                   restoreProgram, alpha);
 }
 
 // Lazily-built unit-segment VAO ([0,0,0]→[0,0,1]) shared by tools that draw a
@@ -593,7 +797,8 @@ private bool   g_segReady;
 /// Maps the unit segment onto a→b with the same model-matrix trick Arrow's
 /// shaft uses, so no per-frame VBO churn is needed.
 void drawWorldSegment(Vec3 a, Vec3 b, const ref Viewport vp,
-                      Vec3 color, float width, GLuint restoreProgram)
+                      Vec3 color, float width, GLuint restoreProgram,
+                      float alpha = 1.0f)
 {
     if (!g_segReady) {
         g_segVao = buildVao3f([0f,0f,0f,  0f,0f,1f], g_segVbo);
@@ -606,7 +811,8 @@ void drawWorldSegment(Vec3 a, Vec3 b, const ref Viewport vp,
     Vec3 right, up;
     localFrame(fwd, right, up);
     auto model = modelMatrix(right, up, fwd, Vec3(1, 1, len), a);
-    drawThickLines(g_segVao, 2, GL_LINES, model, vp, color, width, restoreProgram);
+    drawThickLines(g_segVao, 2, GL_LINES, model, vp, color, width,
+                   restoreProgram, alpha);
 }
 
 // Register the translucent-fill program (compiled in app.d from

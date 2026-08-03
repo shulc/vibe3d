@@ -41,6 +41,14 @@ immutable string fragmentShaderSrc = q{
 // initialises an unset uniform to 0 and 0 is the DESTRUCTIVE value for both:
 // `u_dim = 0` renders black, `u_alpha = 0` renders nothing.
 //
+// "That source" is now TWO sources sharing one CONTRACT: `fragmentShaderSrc`
+// and `thickLineFragSrc` (which had to split off to consume the geometry
+// stage's coverage varying — see its own comment). They declare the same
+// uniform names with the same meanings, and `seedSharedFragUniforms` resolves
+// by name, so the obligation below still reaches both. A new entry here is
+// still a single edit; a new uniform in only ONE of the two sources is the
+// thing to avoid.
+//
 // The list lives here, next to the shader source it describes, because of the
 // bug that produced it: `u_alpha` was added to the shared source by task 0559
 // and only ONE of the two programs built from it was taught to seed the new
@@ -287,31 +295,121 @@ GLuint createProgram(string vertSrc = vertexShaderSrc,
 
 // Geometry shader that expands GL_LINES into screen-aligned quads
 // to produce thick lines on macOS Core Profile (where glLineWidth > 1 is unsupported).
+//
+// UNITS — `u_lineWidth` is the stroke width in WINDOW PIXELS.
+//
+// It did not use to be. The old conversion was `s = ndc * u_screenSize`, but
+// NDC spans [-1, 1] across the framebuffer, so one pixel is TWO units of that
+// `s` — every line came out at exactly HALF its nominal width. Measured on
+// pixels through /api/viewport/probe before the fix, on three independent
+// nominal widths at once: the move shaft's 5.0 rendered 2.5 px of ink, the
+// rotate arcs' 6.0 rendered 3 px, and the view ring's 4.0 rendered 2 px. One
+// factor, three readings, so the scale below is `u_screenSize * 0.5`.
+//
+// Fixing it was not cosmetic. `handles/gl_util.gizmoHeadHalfPx` multiplies the
+// arrowhead's half-width by `0.5 * max(2.0, lineWidth)` — a law measured
+// against a stroke in real pixels — and the coverage ramp in the fragment
+// stage below is a HALF-PIXEL band, which is only half a pixel if the varying
+// it thresholds is in pixels too. Both were quietly reading a doubled number.
+// Every call site was rescaled with this change so that no line's RENDERED
+// width moved except the transform gizmo's, which is the point of the task.
 immutable string thickLineGeomSrc = q{
     #version 330 core
     layout(lines) in;
     layout(triangle_strip, max_vertices = 4) out;
-    uniform float u_lineWidth;   // desired line width in pixels
+    uniform float u_lineWidth;   // stroke width, WINDOW PIXELS
     uniform vec2  u_screenSize;  // framebuffer size in pixels
+
+    // Signed perpendicular distance from the line's centreline, WINDOW PIXELS.
+    // `noperspective` is load-bearing, not decoration: the quad's two ends can
+    // sit at very different depths, and the default perspective-correct
+    // interpolation would make this vary non-linearly ACROSS THE SCREEN — the
+    // antialiasing fringe would widen at the far end and pinch at the near one.
+    // Screen-space coverage needs a screen-linear varying.
+    noperspective out float vEdgeDist;
+
+    // The coverage ramp needs somewhere to live: a stroke edge is soft for half
+    // a pixel on each side, and a fragment outside the quad is never shaded at
+    // all. So the quad is grown past the stroke's own half-width by this much.
+    // At the grown edge the fragment's coverage is exactly 0, so the padding
+    // costs nothing visible — it only enlarges the rasterised area slightly.
+    const float kAaPadPx = 1.0;
+
     void main() {
         vec4 p0 = gl_in[0].gl_Position;
         vec4 p1 = gl_in[1].gl_Position;
-        // Convert to screen space
-        vec2 s0 = p0.xy / p0.w * u_screenSize;
-        vec2 s1 = p1.xy / p1.w * u_screenSize;
+        // Clip -> WINDOW PIXELS. NDC spans [-1,1] over `u_screenSize` pixels,
+        // so the scale is HALF the framebuffer size, not the whole of it.
+        vec2 halfScreen = u_screenSize * 0.5;
+        vec2 s0 = p0.xy / p0.w * halfScreen;
+        vec2 s1 = p1.xy / p1.w * halfScreen;
         vec2 dir = s1 - s0;
         float len = length(dir);
         if (len < 0.001) return;
-        // Perpendicular in screen space, half-width
-        vec2 perp = vec2(-dir.y, dir.x) / len * (u_lineWidth * 0.5);
-        // Back to NDC offsets (un-divide by w)
-        vec2 off0 = perp / u_screenSize * p0.w;
-        vec2 off1 = perp / u_screenSize * p1.w;
-        gl_Position = vec4(p0.xy + off0, p0.zw); EmitVertex();
-        gl_Position = vec4(p0.xy - off0, p0.zw); EmitVertex();
-        gl_Position = vec4(p1.xy + off1, p1.zw); EmitVertex();
-        gl_Position = vec4(p1.xy - off1, p1.zw); EmitVertex();
+        // Perpendicular in window pixels, half-width plus the fringe's room.
+        float halfE = u_lineWidth * 0.5 + kAaPadPx;
+        vec2 perp = vec2(-dir.y, dir.x) / len * halfE;
+        // Back to clip-space offsets (un-divide by w).
+        vec2 off0 = perp / halfScreen * p0.w;
+        vec2 off1 = perp / halfScreen * p1.w;
+        gl_Position = vec4(p0.xy + off0, p0.zw); vEdgeDist =  halfE; EmitVertex();
+        gl_Position = vec4(p0.xy - off0, p0.zw); vEdgeDist = -halfE; EmitVertex();
+        gl_Position = vec4(p1.xy + off1, p1.zw); vEdgeDist =  halfE; EmitVertex();
+        gl_Position = vec4(p1.xy - off1, p1.zw); vEdgeDist = -halfE; EmitVertex();
         EndPrimitive();
+    }
+};
+
+// The thick-line program's OWN fragment stage — ANALYTIC line antialiasing.
+//
+// WHY THIS IS NOT `fragmentShaderSrc`. It cannot be: it consumes a varying
+// (`vEdgeDist`) that only the geometry stage above produces, and a fragment
+// input with no matching upstream output is a link error. The regular program
+// has no geometry stage, so the two sources had to split.
+//
+// WHAT IT KEEPS. The uniform CONTRACT is deliberately identical — `u_color`,
+// `u_dim`, `u_alpha`, same names, same meanings — so `seedSharedFragUniforms`
+// (which looks its list up by NAME and skips what is absent) still discharges
+// this program's seeding obligation exactly as it does the regular one. Adding
+// a uniform to `kSharedFragNeutrals` still reaches both. Splitting the SOURCE
+// without splitting the CONTRACT is what keeps the task-0559 greyed-lines
+// hazard closed rather than re-opening it under a new name.
+//
+// THE COVERAGE FUNCTION, and why this shape. The reference antialiases lines
+// the fixed-function way — `GL_LINE_SMOOTH`, where the driver multiplies the
+// fragment's alpha by its pixel coverage and an ordinary SRC_ALPHA blend turns
+// that into a soft edge. We cannot use it: our "line" is already a geometry-
+// shader quad (Core Profile has no `glLineWidth > 1`), so there is no GL line
+// for the driver to smooth. The port is therefore analytic — carry the
+// perpendicular distance, convert it to coverage here, multiply it into alpha.
+// Same coverage-to-alpha result, different route.
+//
+// The ramp is a one-pixel `smoothstep` centred ON the stroke's own edge: full
+// coverage half a pixel inside it, zero half a pixel outside. That width is
+// the only choice that leaves the stroke's 50 %-coverage contour exactly where
+// an unantialiased stroke's hard edge was, so switching this on changes the
+// EDGES and not the WEIGHT. `smoothstep` rather than a linear ramp because the
+// measuring lane could not fit the reference's own falloff — the fixed-function
+// coverage function belongs to the driver, not to the engine, so there is no
+// engine-side shape to match — and named it the conventional first choice.
+//
+// Note what this deliberately does NOT do: nothing here touches the SOLID
+// handle geometry. The reference never enables `GL_POLYGON_SMOOTH` and
+// explicitly disables `GL_MULTISAMPLE`, and its arrowheads and centre cube
+// were measured stepping from background straight to full colour with no
+// intermediate value. Hard-edged solids are what matching looks like.
+immutable string thickLineFragSrc = q{
+    #version 330 core
+    uniform vec3  u_color;
+    uniform float u_dim;        // brightness multiplier; 1.0 = neutral
+    uniform float u_alpha;      // fragment opacity; 1.0 = opaque
+    uniform float u_lineWidth;  // stroke width, WINDOW PIXELS (shared with the geometry stage)
+    noperspective in float vEdgeDist;
+    out vec4 fragColor;
+    void main() {
+        float halfW = u_lineWidth * 0.5;
+        float cov = 1.0 - smoothstep(halfW - 0.5, halfW + 0.5, abs(vEdgeDist));
+        fragColor = vec4(u_color * u_dim, u_alpha * cov);
     }
 };
 
@@ -365,9 +463,10 @@ class Shader {
         // draw ordering can ever expose the 0 default.
         //
         // Through the shared helper rather than a hand-written glUniform1f per
-        // uniform: this class is one of TWO builders of `fragmentShaderSrc`
-        // (the other is app.d's thick-line program), and the one that seeded
-        // by hand is the one that fell behind when a uniform was added.
+        // uniform: this class is one of TWO builders on the shared uniform
+        // CONTRACT (the other is app.d's thick-line program, now built from
+        // `thickLineFragSrc`), and the one that seeded by hand is the one that
+        // fell behind when a uniform was added.
         seedSharedFragUniforms(program);
     }
     ~this() {  glDeleteProgram(program); }

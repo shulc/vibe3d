@@ -616,7 +616,9 @@ public:
         // PENDING chord is the only one that needs an explicit world-space
         // line, since it isn't baked yet.
         if (havePending)
-            drawWorldSegment(positions[$ - 1], pendingPos, vp, CHORD_COLOR, 2.0f, shader.program);
+            // 1.0f is WINDOW PIXELS — halved from 2.0f with task 0600's
+            // geometry-shader unit fix (see shader.thickLineGeomSrc). Same ink.
+            drawWorldSegment(positions[$ - 1], pendingPos, vp, CHORD_COLOR, 1.0f, shader.program);
 
         foreach (hd; handles_) hd.draw(shader, vp);
 

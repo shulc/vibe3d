@@ -168,7 +168,16 @@ class ShaftedArrow : Handler {
     Vec3  start;
     Vec3  end;
     Vec3  color;
-    float lineWidth = 5.0f;
+    // WINDOW PIXELS. Was 5.0f, which rendered 2.5 px — the geometry shader's
+    // clip-to-screen conversion was off by 2 (see shader.thickLineGeomSrc).
+    // Task 0600 made the unit honest, so this literal was halved to keep every
+    // arrow that does NOT set its own width rendering at exactly the width it
+    // always did. The transform gizmo's arms set theirs explicitly.
+    float lineWidth = 2.5f;
+    /// Fragment opacity for the WHOLE arrow — shaft stroke and solid head
+    /// alike, because they are one part and the reference gives them one alpha.
+    /// Opaque by default; the transform gizmo's arms set the measured 0.95.
+    float alpha     = 1.0f;
 
 protected:
     GLuint shaftVao, shaftVbo;
@@ -273,14 +282,20 @@ class Arrow : ShaftedArrow {
         glDisable(GL_DEPTH_TEST);
 
         auto shaftModel = modelMatrix(right, up, fwd, Vec3(1, 1, shaftLen), start);
-        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth, shader.program);
+        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth,
+                       shader.program, alpha);
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
+        // The cone is SOLID and stays hard-edged — it is translucent, not
+        // smoothed. Its staircase edge beside the shaft's graded one is what
+        // the reference was measured doing, and matching means keeping it.
+        immutable int fillTok = beginHandleFill(shader.locAlpha, alpha);
         auto headModel = modelMatrix(right, up, fwd, Vec3(coneRadius, coneRadius, coneLen), coneBase);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
         glBindVertexArray(headVao);
         glDrawArrays(GL_TRIANGLES, 0, headVertCount);
         g_fc.draw(DrawPass.handles, headVertCount);
+        endHandleFill(shader.locAlpha, fillTok);
 
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
@@ -344,14 +359,18 @@ class CubicArrow : ShaftedArrow {
         glDisable(GL_DEPTH_TEST);
 
         auto shaftModel = modelMatrix(right, up, fwd, Vec3(1, 1, shaftLen), shaftOrigin);
-        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth, shader.program);
+        drawThickLines(shaftVao, 2, GL_LINES, shaftModel, vp, c, lineWidth,
+                       shader.program, alpha);
         glUniform3f(shader.locColor, c.x, c.y, c.z);
 
+        immutable int fillTok = beginHandleFill(shader.locAlpha, alpha,
+                                                HandleFacing.outwardCW);
         auto headModel = modelMatrix(right, up, fwd, Vec3(cubeHalf, cubeHalf, cubeHalf), cubeCenter);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
         glBindVertexArray(headVao);
         glDrawArrays(GL_TRIANGLES, 0, headVertCount);
         g_fc.draw(DrawPass.handles, headVertCount);
+        endHandleFill(shader.locAlpha, fillTok);
 
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
@@ -377,11 +396,14 @@ class CubicArrow : ShaftedArrow {
         glUniform3f(shader.locColor, c.x, c.y, c.z);
         glDisable(GL_DEPTH_TEST);
 
+        immutable int fillTok = beginHandleFill(shader.locAlpha, alpha,
+                                                HandleFacing.outwardCW);
         auto headModel = modelMatrix(right, up, fwd, Vec3(cubeHalf, cubeHalf, cubeHalf), cubeCenter);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, headModel.ptr);
         glBindVertexArray(headVao);
         glDrawArrays(GL_TRIANGLES, 0, headVertCount);
         g_fc.draw(DrawPass.handles, headVertCount);
+        endHandleFill(shader.locAlpha, fillTok);
 
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
@@ -409,7 +431,10 @@ class SemicircleHandler : Handler {
     Vec3  normal;   // axis perpendicular to the plane of the arc
     float radius;
     Vec3  color;
-    float lineWidth  = 5.0f;
+    // WINDOW PIXELS; halved with the geometry shader's unit fix so an arc that
+    // sets no width of its own renders exactly as it did (task 0600).
+    float lineWidth  = 2.5f;
+    float alpha      = 1.0f;  /// fragment opacity; the rotate bank sets 0.95
     float startAngle = 0.0f;  // arc begins at this angle (radians) in the local XY plane
 
 private:
@@ -456,7 +481,8 @@ public:
         Vec3 ru = up * ca - right * sa;
         auto model = modelMatrix(rr, ru, fwd,
                                  Vec3(radius, radius, radius), center);
-        drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, vp, c, lineWidth, shader.program);
+        drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, vp, c, lineWidth,
+                       shader.program, alpha);
 
         glEnable(GL_DEPTH_TEST);
         // Restore main program's u_model to identity
@@ -526,7 +552,10 @@ class FullCircleHandler : Handler {
     Vec3  normal;   // axis perpendicular to the circle plane (camera forward)
     float radius;
     Vec3  color;
-    float lineWidth = 3.0f;
+    // WINDOW PIXELS; halved with the geometry shader's unit fix (task 0600) so
+    // the one external user that leaves it alone renders unchanged.
+    float lineWidth = 1.5f;
+    float alpha     = 1.0f;  /// fragment opacity; the rotate bank sets its own
 
 private:
     GLuint arcVao, arcVbo;
@@ -567,7 +596,8 @@ public:
 
         auto model = modelMatrix(right, up, fwd,
                                  Vec3(radius, radius, radius), center);
-        drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, vp, c, lineWidth, shader.program);
+        drawThickLines(arcVao, SEGS + 1, GL_LINE_STRIP, model, vp, c, lineWidth,
+                       shader.program, alpha);
 
         glEnable(GL_DEPTH_TEST);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identityMatrix.ptr);
@@ -668,6 +698,24 @@ class MoveHandler : Handler {
                         axisColor(0), planeFillColor(axisColor(0)));
         circleXZ  = new CircleHandler(center + Vec3(1,0,1), Vec3(0,1,0), 1.0f,
                         axisColor(1), planeFillColor(axisColor(1)));
+
+        // Task 0600 — the MEASURED stroke widths and per-part alphas. Set here
+        // rather than left to the class defaults because the class defaults
+        // serve every OTHER user of these shapes (falloff endpoint arrows, the
+        // per-tool parameter handles), none of which has been measured against
+        // anything. The transform gizmo has.
+        foreach (a; [arrowX, arrowY, arrowZ]) {
+            a.lineWidth = GIZMO_STROKE_MOVE_SHAFT_PX;
+            a.alpha     = GIZMO_ALPHA_ARM;
+        }
+        foreach (c; [circleXY, circleYZ, circleXZ]) {
+            c.lineWidth    = GIZMO_STROKE_PLANE_RING_PX;
+            c.outlineAlpha = GIZMO_ALPHA_PLANE_RING;
+            c.fillAlpha    = GIZMO_ALPHA_PLANE_FILL;
+        }
+        // The centre box keeps the class default and is deliberately NOT given
+        // an alpha: it is the one gizmo part measured fully opaque, so it stays
+        // on the unblended path it has always been on.
     }
 
     void destroy() {
@@ -847,12 +895,25 @@ class RotateHandler : Handler {
         // The screen-plane ring belongs to no axis — flat grey, by law, and
         // not a preference row (viewport_scheme.kViewRingGrey).
         arcView  = new FullCircleHandler(center, Vec3(0,0,1), 1.0f, kViewRingGrey);
-        arcX.lineWidth    += 1.0f;
-        arcY.lineWidth    += 1.0f;
-        arcZ.lineWidth    += 1.0f;
-        arcView.lineWidth += 1.0f;
+        // Task 0600 — the measured ring stroke and alpha. The axis arcs and the
+        // screen-plane ring are ONE shape in the reference and take ONE width,
+        // so they are set together here; ours had them at two different values.
+        //
+        // This replaced four `lineWidth += 1.0f` lines. Those were an
+        // unconditional CONSTRUCTOR bump, not a hot-state widening — worth
+        // stating because they read like one and were reported as one. Nothing
+        // in this codebase has ever widened a stroke on hover or on haul; the
+        // two-state law recolours and only recolours (see Handler.drawColor),
+        // which is already what the reference does.
+        foreach (arc; [arcX, arcY, arcZ]) {
+            arc.lineWidth = GIZMO_STROKE_ROTATE_RING_PX;
+            arc.alpha     = GIZMO_ALPHA_ROTATE_RING;
+        }
+        arcView.lineWidth = GIZMO_STROKE_ROTATE_RING_PX;
+        arcView.alpha     = GIZMO_ALPHA_ROTATE_RING;
         bgCircle = new FullCircleHandler(center, Vec3(0,0,1), 1.0f, Vec3(0.0f, 0.0f, 0.0f));
-        bgCircle.lineWidth = 2.0f;
+        bgCircle.lineWidth = GIZMO_STROKE_ROTATE_DISC_PX;
+        bgCircle.alpha     = GIZMO_ALPHA_ROTATE_DISC;
         // bgCircle is decorative: drawn but never registered in the Test pass
         // (ToolHandles), so it stays at HandleState.Normal and never highlights.
     }
@@ -1069,7 +1130,14 @@ class CircleHandler : Handler {
     float radius    = 1.0f;
     Vec3  color;        // outline
     Vec3  fillColor;    // disc fill
-    float lineWidth = 1.5f;
+    // WINDOW PIXELS; halved with the geometry shader's unit fix (task 0600).
+    float lineWidth = 0.75f;
+    /// The plane handle is TWO parts with two DIFFERENT opacities — a nearly
+    /// solid ring around a barely-there disc. One alpha for both would erase
+    /// the construction, so they are separate fields, defaulting to opaque for
+    /// any caller that does not set them.
+    float outlineAlpha = 1.0f;
+    float fillAlpha    = 1.0f;
 
 private:
     GLuint outlineVao, outlineVbo;
@@ -1155,14 +1223,23 @@ public:
         glDisable(GL_DEPTH_TEST);
 
         // ---- Fill ----
+        // ORDER IS LOAD-BEARING now that both parts are translucent: the disc
+        // is laid down FIRST and the ring composited over it, so the rim reads
+        // as ring-over-disc rather than disc-over-ring. That is the order the
+        // reference emits its two circles in, and with depth testing off for
+        // the whole handle pass, emission order is the only thing deciding it.
+        immutable int fillTok = beginHandleFill(shader.locAlpha, fillAlpha,
+                                                HandleFacing.flat);
         glUniform3f(shader.locColor, fc.x, fc.y, fc.z);
         glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, m.ptr);
         glBindVertexArray(fillVao);
         glDrawArrays(GL_TRIANGLES, 0, fillVertCount);
         g_fc.draw(DrawPass.handles, fillVertCount);
+        endHandleFill(shader.locAlpha, fillTok);
 
         // ---- Outline ----
-        drawThickLines(outlineVao, SEGS + 1, GL_LINE_STRIP, m, vp, oc, lineWidth, shader.program);
+        drawThickLines(outlineVao, SEGS + 1, GL_LINE_STRIP, m, vp, oc, lineWidth,
+                       shader.program, outlineAlpha);
 
         glBindVertexArray(0);
         glEnable(GL_DEPTH_TEST);
@@ -1221,11 +1298,25 @@ class CenterDiskGizmo : Handler {
         // The screen-plane disc is an axis-less handle and it follows the
         // COMMON law: the scheme's `handle` colour idle, the active colour
         // both under the pointer and while hauled. It belongs to no axis, so
-        // it has nothing to protect the way the axis plane rings do and none
-        // of their exception applies. Alphas are ours, and unchanged here.
+        // it has nothing to protect the way the axis plane rings do, and none
+        // of their exception applies.
+        //
+        // The two alphas are the MEASURED pair — a 10 % fill inside a solid
+        // ring — replacing hand-picked values that had the fill three times
+        // too strong and the ring short of solid.
+        //
+        // NOTE this handle alone does not go through the thick-line program: it
+        // is drawn on the UI foreground draw list, which antialiases its own
+        // polylines. So it is smoothed by a path we do not control here, and
+        // its ring is a case where we are softer than measured. Left as is —
+        // moving it onto the GL path is its own change.
         const Vec3 c = drawColor(schemeColor(SchemeColor.handle));
-        const uint fillCol    = packImCol(c,  80);
-        const uint outlineCol = packImCol(c, 200);
+        static ubyte a8(float a) {
+            const int i = cast(int)(a * 255.0f + 0.5f);
+            return cast(ubyte)(i < 0 ? 0 : (i > 255 ? 255 : i));
+        }
+        const uint fillCol    = packImCol(c, a8(GIZMO_ALPHA_SCREEN_DISC_FILL));
+        const uint outlineCol = packImCol(c, a8(GIZMO_ALPHA_SCREEN_DISC_RING));
 
         ImDrawList* dl = ImGui.GetForegroundDrawList();
         dl.AddConvexPolyFilled(pts.ptr, SEGS, fillCol);
@@ -1318,6 +1409,23 @@ class ScaleHandler : Handler {
                         axisColor(0), planeFillColor(axisColor(0)));
         circleXZ = new CircleHandler(center, Vec3(0,1,0), 1.0f,
                         axisColor(1), planeFillColor(axisColor(1)));
+
+        // Task 0600 — measured stroke widths and per-part alphas; see the same
+        // block in MoveHandler's constructor. The scale stem is the one gizmo
+        // stroke the reference does NOT run through its line-width preference:
+        // it is a plain literal 2.0 there, which is why it has its own name.
+        // The live drag-feedback arrows are the same part continued, so they
+        // take the same values as the stems they grow out of.
+        foreach (a; [arrowX, arrowY, arrowZ,
+                     scaleArrowX, scaleArrowY, scaleArrowZ]) {
+            a.lineWidth = GIZMO_STROKE_SCALE_SHAFT_PX;
+            a.alpha     = GIZMO_ALPHA_ARM;
+        }
+        foreach (c; [circleXY, circleYZ, circleXZ]) {
+            c.lineWidth    = GIZMO_STROKE_PLANE_RING_PX;
+            c.outlineAlpha = GIZMO_ALPHA_PLANE_RING;
+            c.fillAlpha    = GIZMO_ALPHA_PLANE_FILL;
+        }
     }
 
     void setScaleAccum(Vec3 s) { scaleAccum = s; }

@@ -555,7 +555,9 @@ public:
         // it now matches it by construction rather than by two hand-copied
         // literals that agreed until one of them was corrected.
         immutable Vec3 color = schemeColor(SchemeColor.handleActive);
-        immutable float lineWidth = 1.5f;
+        // WINDOW PIXELS. Halved from 1.5f with task 0600's geometry-shader unit
+        // fix (see shader.thickLineGeomSrc); renders the same 0.75 px it did.
+        immutable float lineWidth = 0.75f;
 
         import math : identityMatrix;
         glDisable(GL_DEPTH_TEST);

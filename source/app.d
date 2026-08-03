@@ -1657,7 +1657,12 @@ void main(string[] args) {
     Shader shader = new Shader();
     LitShader litShader = new LitShader();
 
-    GLuint thickLineProgram = createProgramWithGeom(vertexShaderSrc, thickLineGeomSrc, fragmentShaderSrc);
+    // `thickLineFragSrc`, not `fragmentShaderSrc`: the line path antialiases
+    // analytically and needs the geometry stage's coverage varying, which the
+    // regular fragment source cannot declare (it has no geometry stage to
+    // supply it). Same uniform contract, so `initThickLineProgram`'s
+    // `seedSharedFragUniforms` still covers it.
+    GLuint thickLineProgram = createProgramWithGeom(vertexShaderSrc, thickLineGeomSrc, thickLineFragSrc);
     scope(exit) glDeleteProgram(thickLineProgram);
     initThickLineProgram(thickLineProgram, fbW, fbH);
 

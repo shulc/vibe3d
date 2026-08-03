@@ -32,6 +32,35 @@
 //
 // VERIFIED TO FAIL BEFORE THE FIX: on the unfixed binary both flows fail with
 // "alpha 0, expected 255" at the same pixels this passes at afterwards.
+//
+// --------------------------------------------------------------------------
+// HOW THE STROKE IS LOCATED, AND WHY THAT CHANGED (task 0600)
+//
+// This file used to find a stroke pixel by matching the scheme colour EXACTLY,
+// on the stated premise that "these are UNBLENDED writes (blending is off for
+// the handle passes), so the value is the uniform, not a mix". That premise is
+// now false, deliberately: the gizmo's lines and arms are drawn at their
+// measured alpha of 0.95 over a live blend, so a shaft pixel is
+// `0.95*axis + 0.05*background` — about 6 counts off the raw colour on the
+// saturated channel, which the old +-3 window rejects. The test failed exactly
+// there, and the centre box (measured fully opaque, and therefore still an
+// unblended write) went on passing beside it.
+//
+// The fix is NOT to widen the window to swallow the difference. That would
+// weaken the only thing keeping this test pointed at a handle rather than at
+// some other red thing. Instead the background is now MEASURED — the same
+// points are probed a second time with the tool dropped — and the expectation
+// is the exact composite of the two. That is strictly tighter than what it
+// replaced: the old test could not see the alpha VALUE at all, and this one
+// fails if the arm is drawn at 1.0, or at 0.8, or blended against the wrong
+// destination. The alpha-CHANNEL assertion it was written for is untouched.
+//
+// A pleasant side effect: because full coverage only occurs along the stroke's
+// centreline once the edges are antialiased, "the pixel matching the composite"
+// IS the centreline pixel. So the 255 below is asserted where a correctly
+// antialiased line must still be opaque, which is the property that separates
+// working AA from a coverage function that has gone wrong.
+// --------------------------------------------------------------------------
 
 import std.stdio      : writeln, writefln;
 import std.net.curl   : HTTP;
@@ -137,12 +166,35 @@ enum int[3] RGB_AXIS_Z = [ 51, 102, 255];   // 0.2, 0.4, 1.0
 enum int[3] RGB_HANDLE = [102, 255, 255];   // 0.4, 1.0, 1.0  (centre box)
 
 // Software GL rounds the last bit differently across drivers; 3/255 is byte
-// slop, not a shading tolerance. These are UNBLENDED writes (blending is off
-// for the handle passes), so the value is the uniform, not a mix.
+// slop, not a shading tolerance.
+//
+// `isColor` is for the parts that are still UNBLENDED writes — the centre box,
+// which is measured fully opaque — where the value really is the uniform.
 bool isColor(Px p, const int[3] want) {
     return p.valid && abs(p.r - want[0]) <= 3
                    && abs(p.g - want[1]) <= 3
                    && abs(p.b - want[2]) <= 3;
+}
+
+/// The alpha every gizmo LINE batch is drawn at. Measured, and restated here as
+/// a literal rather than read back from the app, so that changing it in the
+/// renderer has to fail here and be re-justified.
+enum double kStrokeAlpha = 0.95;
+
+/// Is `p` the fully-covered composite of `want` at `kStrokeAlpha` over the
+/// background `bg` measured at the same pixel with the gizmo dropped?
+///
+/// The same +-3 byte slop as `isColor`. Partial-coverage fringe pixels do NOT
+/// satisfy this — their effective alpha is lower — which is exactly what makes
+/// a match mean "centreline".
+bool isStroke(Px p, Px bg, const int[3] want) {
+    if (!p.valid || !bg.valid) return false;
+    static int mix(int fg, int back) {
+        return cast(int)(kStrokeAlpha * fg + (1.0 - kStrokeAlpha) * back + 0.5);
+    }
+    return abs(p.r - mix(want[0], bg.r)) <= 3
+        && abs(p.g - mix(want[1], bg.g)) <= 3
+        && abs(p.b - mix(want[2], bg.b)) <= 3;
 }
 
 // The handle registry, with the cell rectangle it was measured in.
@@ -228,24 +280,38 @@ bool testFlowA() {
         }
         auto got = probe(pts);
 
+        // Second pass over the SAME points with the gizmo gone, so the
+        // composite the stroke is checked against is measured rather than
+        // assumed. Dropping the tool changes nothing else in the scene.
+        script("tool.set move off");
+        settle();
+        auto bg = probe(pts);
+        script("tool.set move");
+        settle();
+        enforce(bg.length == got.length, "the two probe passes disagree in length");
+
         Px[] onShaft;
-        foreach (p; got) if (isColor(p, RGB_AXIS_X)) onShaft ~= p;
+        foreach (i, p; got) if (isStroke(p, bg[i], RGB_AXIS_X)) onShaft ~= p;
         enforce(onShaft.length > 0,
-            format("no pixel of the X arm's own colour rgb(%d,%d,%d) found along "
-                   ~ "the centre->tip segment — the arm was not drawn, or the "
-                   ~ "scheme colour changed without this test",
-                   RGB_AXIS_X[0], RGB_AXIS_X[1], RGB_AXIS_X[2]));
+            format("no pixel matching the X arm composited at alpha %.2f over "
+                   ~ "its own measured background was found along the "
+                   ~ "centre->tip segment. Either the arm was not drawn, or it "
+                   ~ "is not being drawn at that alpha (rgb(%d,%d,%d) is the "
+                   ~ "unblended colour it composites FROM)",
+                   kStrokeAlpha, RGB_AXIS_X[0], RGB_AXIS_X[1], RGB_AXIS_X[2]));
 
         foreach (p; onShaft)
             enforce(p.a == 255,
                 format("X arm shaft at (%d,%d): rgb is right but alpha is %d, "
                        ~ "expected 255. A zero-coverage line is composited away "
                        ~ "and reads as the panel behind it — check that every "
-                       ~ "program built from the shared fragment source seeds "
-                       ~ "u_alpha (shader.seedSharedFragUniforms)",
+                       ~ "program built on the shared fragment contract seeds "
+                       ~ "u_alpha (shader.seedSharedFragUniforms), and that the "
+                       ~ "handle blend leaves DESTINATION alpha alone "
+                       ~ "(GL_ZERO/GL_ONE on the alpha channel)",
                        p.x, p.y, p.a));
-        writefln("    A2 PASS: %d shaft pixels, all rgb %s and alpha 255",
-                 onShaft.length, RGB_AXIS_X);
+        writefln("    A2 PASS: %d full-coverage shaft pixels, all alpha 255",
+                 onShaft.length);
     }
     return true;
 }
@@ -280,19 +346,36 @@ bool testFlowB() {
     int[2][] pts;
     foreach (d; 0 .. 140) pts ~= toFbo(h, cx + d, cy);
 
-    Px[] onRing;
-    // Chunked so the request line stays short regardless of cell size.
+    // Same two-pass measurement as Flow A: read the ray with the rings up, then
+    // read it again with them gone, and require the exact composite of the two.
+    Px[] withRings, background;
     for (size_t i = 0; i < pts.length; i += 70) {
         auto slice = pts[i .. (i + 70 > pts.length ? pts.length : i + 70)];
-        foreach (p; probe(slice))
-            if (isColor(p, RGB_AXIS_X) || isColor(p, RGB_AXIS_Y)
-                                       || isColor(p, RGB_AXIS_Z))
-                onRing ~= p;
+        withRings ~= probe(slice);
     }
+    script("tool.set rotate off");
+    settle();
+    for (size_t i = 0; i < pts.length; i += 70) {
+        auto slice = pts[i .. (i + 70 > pts.length ? pts.length : i + 70)];
+        background ~= probe(slice);
+    }
+    script("tool.set rotate");
+    settle();
+    enforce(withRings.length == background.length,
+            "the two probe passes disagree in length");
+
+    Px[] onRing;
+    foreach (i, p; withRings)
+        if (isStroke(p, background[i], RGB_AXIS_X)
+         || isStroke(p, background[i], RGB_AXIS_Y)
+         || isStroke(p, background[i], RGB_AXIS_Z))
+            onRing ~= p;
 
     enforce(onRing.length > 0,
-        "no ring pixel in an axis colour found on a ray out of the rotate "
-        ~ "gizmo centre — the rings were not drawn");
+        format("no ring pixel matching an axis colour composited at alpha %.2f "
+               ~ "over its own measured background was found on a ray out of "
+               ~ "the rotate gizmo centre — the rings were not drawn, or not at "
+               ~ "that alpha", kStrokeAlpha));
     foreach (p; onRing)
         enforce(p.a == 255,
             format("rotate ring at (%d,%d): rgb(%d,%d,%d) is right but alpha is "

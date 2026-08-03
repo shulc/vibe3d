@@ -554,11 +554,14 @@ public:
         }
 
         glDisable(GL_DEPTH_TEST);
+        // WINDOW PIXELS, both draws. Halved from 1.5f with task 0600's
+        // geometry-shader unit fix (see shader.thickLineGeomSrc); each still
+        // renders the 0.75 px it always did.
         drawThickLinesExt(planeQuadVao, 4, GL_LINE_LOOP, identityMatrix, vp,
-                          planeColor, 1.5f, restoreProgram);
+                          planeColor, 0.75f, restoreProgram);
         if (axisVertCount > 0)
             drawThickLinesExt(axisLineVao, axisVertCount, GL_LINES, identityMatrix, vp,
-                              planeColor, 1.5f, restoreProgram);
+                              planeColor, 0.75f, restoreProgram);
         glEnable(GL_DEPTH_TEST);
     }
 
