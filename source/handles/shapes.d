@@ -116,8 +116,25 @@ public:
     // The colour to draw this handle in: its own `idle` colour, or the
     // scheme's active colour while hauled. Every shape's draw() goes through
     // here so the two-state law has exactly one implementation.
+    //
+    // INTERIM — a hover cue sits ON TOP of that law, deliberately not inside
+    // it. The read that removed the pre-press hover highlight rests on
+    // ABSENCE (no colour lookup found on any handle path) rather than on a
+    // positive observation, and its own author flagged that only a live
+    // capture could close it. Meanwhile a real affordance was gone: the
+    // pointer over a handle said nothing. So hover paints the measured
+    // ACTIVE colour — a value we have measured, not one invented to fill the
+    // gap — until that capture lands.
+    //
+    // Kept out of `viewport_scheme.handleColor` on purpose: that function is
+    // the measured law and its test pins it. When the capture answers, this
+    // block is deleted (no cue) or given its own row (a distinct cue), and
+    // the law underneath is untouched either way.
     protected Vec3 drawColor(Vec3 idle) const {
-        return handleColor(idle, engaged);
+        if (engaged) return handleColor(idle, true);
+        if (state == HandleState.Rollover)
+            return schemeColor(SchemeColor.handleActive);
+        return handleColor(idle, false);
     }
 
     // A representative screen-space pixel for this handle, for test
