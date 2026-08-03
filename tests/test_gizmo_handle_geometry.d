@@ -40,7 +40,7 @@ import std.conv : to;
 import std.math : PI, abs, cos, sin, sqrt;
 
 import handler : MoveHandler, ScaleHandler, gizmoSize, setGizmoPixels,
-                 getGizmoPixels, Handler;
+                 getGizmoPixels, setGizmoHandleScale, Handler;
 import math : Vec3, Viewport, cross, normalize, projectToWindowFull, Orientation;
 import view : View;
 
@@ -226,4 +226,137 @@ unittest { // The plane ring's RADIUS is a pixel count; its OFFSET is not
     assert(abs(offsetPx[1] / offsetPx[0] - 4.0f) < 0.05f,
            "the plane ring's OFFSET should scale with the arm (4x here) even "
            ~ "though its radius does not");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0597 — the ornaments are CLAMPED, and the wiring that makes them so.
+//
+// handles/gl_util.d's own unittests pin the pixel LAWS. These pin that the
+// handler banks actually consume them: they read the world sizes the banks
+// hand their shapes, convert them back to screen pixels through the projection
+// the drawn geometry really uses, and check three handle sizes — one below
+// every knee, the shipped default, and one far above every knee.
+//
+// The third row is the load-bearing one and the reason a default-only test was
+// never enough: before this port each of these was a flat fraction of the arm,
+// so at handle size 5.0 the arrowhead was 120 px long and the centre box 24 px
+// across. The default row alone passes on that code.
+// ---------------------------------------------------------------------------
+
+// A camera looking straight down -Z at the origin: +X lies in the screen plane
+// at the pivot's own depth, so a world length laid along +X projects to its
+// true pixel length with no foreshortening and no perspective gain.
+private float worldLenToPx(float worldLen, const ref Viewport vp) {
+    float ox, oy, oz, ex, ey, ez;
+    assert(projectToWindowFull(Vec3(0, 0, 0), vp, ox, oy, oz), "pivot off-camera");
+    assert(projectToWindowFull(Vec3(worldLen, 0, 0), vp, ex, ey, ez),
+           "probe off-camera");
+    return abs(ex - ox);
+}
+
+unittest { // The move bank's arrowhead and centre box stop growing at the knee
+    // Measured off the reference over its whole reachable handle-size range,
+    // both ends of every clamp. Restated as literals — recomputing them from
+    // the product's own enums would assert nothing.
+    //                       size   headLen  headHalf  boxHalf
+    static immutable float[4][3] rows = [
+        [0.5f,               12.0f,   4.0f,   3.75f],  // below every knee
+        [1.0f,               24.0f,   7.5f,   5.00f],  // the shipped default
+        [5.0f,               30.0f,   9.0f,   6.25f],  // 5x the arm, frozen
+    ];
+
+    immutable float savedPx = getGizmoPixels();
+    scope(exit) setGizmoPixels(savedPx);
+
+    auto v = new View(0, 0, 800, 600);
+    Vec3 pivot = Vec3(0, 0, 0);
+
+    foreach (r; rows) {
+        setGizmoHandleScale(r[0]);
+        Viewport vp = v.viewportWith(pivot, 10.0f,
+                                     Orientation.fromAngles(0.0f, 0.0f, v.roll));
+        auto mv = new MoveHandler(pivot);
+        mv.syncGeometry(vp);
+
+        // The three axis arrows must agree — one head size, not one per axis.
+        assert(mv.arrowX.fixedConeLen == mv.arrowY.fixedConeLen &&
+               mv.arrowX.fixedConeLen == mv.arrowZ.fixedConeLen,
+               "the three move arrowheads disagree about their length");
+        assert(mv.arrowX.fixedConeHalf == mv.arrowY.fixedConeHalf &&
+               mv.arrowX.fixedConeHalf == mv.arrowZ.fixedConeHalf,
+               "the three move arrowheads disagree about their width");
+
+        immutable float lenPx  = worldLenToPx(mv.arrowX.fixedConeLen,  vp);
+        immutable float halfPx = worldLenToPx(mv.arrowX.fixedConeHalf, vp);
+        immutable float boxPx  = worldLenToPx(mv.centerBox.size,       vp);
+
+        assert(abs(lenPx - r[1]) < 0.05f,
+               "at handle size " ~ r[0].to!string ~ " the arrowhead should be "
+               ~ r[1].to!string ~ " px long, not " ~ lenPx.to!string);
+        assert(abs(halfPx - r[2]) < 0.05f,
+               "at handle size " ~ r[0].to!string ~ " the arrowhead half-width "
+               ~ "should be " ~ r[2].to!string ~ " px, not " ~ halfPx.to!string);
+        assert(abs(boxPx - r[3]) < 0.05f,
+               "at handle size " ~ r[0].to!string ~ " the centre box half should "
+               ~ "be " ~ r[3].to!string ~ " px, not " ~ boxPx.to!string);
+    }
+
+    // ... and the arm itself is NOT clamped, on the same three rows: it is the
+    // contrast that makes the freeze visible, and it guards against "fix" the
+    // ornaments by clamping everything.
+    foreach (r; rows) {
+        setGizmoHandleScale(r[0]);
+        Viewport vp = v.viewportWith(pivot, 10.0f,
+                                     Orientation.fromAngles(0.0f, 0.0f, v.roll));
+        auto mv = new MoveHandler(pivot);
+        mv.syncGeometry(vp);
+        immutable float armPx = worldLenToPx(mv.arrowX.end.x, vp);
+        assert(abs(armPx - 120.0f * r[0]) < 0.5f,
+               "the arm must keep scaling linearly with the handle size");
+    }
+}
+
+unittest { // The scale bank's box: ONE size, the same clamped one, both boxes
+    // Ours used to draw two different boxes — the static axis box at 2.88 px
+    // (a fraction of the stem) and the live drag-feedback box at 3.6 px (a
+    // fraction of the arm). The reference draws one box at one size, and the
+    // centre handle uses that same size, so all three must now agree exactly.
+    static immutable float[2][3] rows = [
+        [0.5f, 3.75f],
+        [1.0f, 5.00f],
+        [5.0f, 6.25f],
+    ];
+
+    immutable float savedPx = getGizmoPixels();
+    scope(exit) setGizmoPixels(savedPx);
+
+    auto v = new View(0, 0, 800, 600);
+    Vec3 pivot = Vec3(0, 0, 0);
+
+    foreach (r; rows) {
+        setGizmoHandleScale(r[0]);
+        Viewport vp = v.viewportWith(pivot, 10.0f,
+                                     Orientation.fromAngles(0.0f, 0.0f, v.roll));
+        auto sc = new ScaleHandler(pivot);
+        sc.syncGeometry(vp);
+        auto mv = new MoveHandler(pivot);
+        mv.syncGeometry(vp);
+
+        assert(abs(worldLenToPx(sc.arrowX.fixedCubeHalf, vp) - r[1]) < 0.05f,
+               "the static scale box is off its clamped size at handle size "
+               ~ r[0].to!string);
+        assert(sc.scaleArrowX.fixedCubeHalf == sc.arrowX.fixedCubeHalf,
+               "the live scale box disagrees with the static one");
+        assert(sc.arrowX.fixedCubeHalf == mv.centerBox.size,
+               "the scale box and the centre handle must share one size");
+
+        // The box's OUTER face lands on the arm end — the box grows inward
+        // from a tip that keeps scaling, which is why the arm end can be the
+        // same for both banks while the box freezes.
+        immutable float boxCentrePx = worldLenToPx(
+            sc.arrowX.end.x - sc.arrowX.fixedCubeHalf, vp);
+        assert(abs(boxCentrePx - (120.0f * r[0] - r[1])) < 0.5f,
+               "the scale box centre should sit one half-extent inside the arm "
+               ~ "end at handle size " ~ r[0].to!string);
+    }
 }

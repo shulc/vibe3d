@@ -201,6 +201,15 @@ public:
 class Arrow : ShaftedArrow {
     enum CONE_SEGS = 16;
 
+    // Task 0597. If > 0, these override the flat fractions of the arrow's own
+    // length. The transform gizmo needs them because its arrowhead is CLAMPED
+    // in pixels — it grows with the arm only up to a knee — and a fraction
+    // cannot clamp. Same shape as CubicArrow.fixedCubeHalf below, and the same
+    // default: 0 means "keep the ratio", so every arrow that sets neither
+    // (falloff endpoint handles, primitive create-tool movers) is untouched.
+    float fixedConeLen  = 0.0f;  // world length of the head along the axis
+    float fixedConeHalf = 0.0f;  // world radius of the head's base
+
     this(Vec3 start, Vec3 end, Vec3 color) {
         this.start = start;
         this.end   = end;
@@ -231,9 +240,14 @@ class Arrow : ShaftedArrow {
         Vec3 right, up;
         localFrame(fwd, right, up);
 
-        float coneLen    = len * GIZMO_CONE_LEN_OF_LEN;
-        float coneRadius = len * GIZMO_CONE_RADIUS_OF_LEN;
+        float coneLen    = fixedConeLen  > 0.0f ? fixedConeLen
+                                                : len * GIZMO_CONE_LEN_OF_LEN;
+        float coneRadius = fixedConeHalf > 0.0f ? fixedConeHalf
+                                                : len * GIZMO_CONE_RADIUS_OF_LEN;
         float shaftLen   = len - coneLen;
+        // An overridden head is a PIXEL size and the shaft is a world one, so
+        // a short enough arrow can be all head. Mirrors CubicArrow's guard.
+        if (shaftLen < 0.0f) shaftLen = 0.0f;
         Vec3  coneBase   = end - fwd * coneLen;
 
         Vec3 c = drawColor(color);
@@ -678,8 +692,24 @@ class MoveHandler : Handler {
         arrowZ.start = center + axisZ * (size/GIZMO_MOVE_SHAFT_INSET_DIV);
         arrowZ.end   = center + axisZ * (size * GIZMO_MOVE_ARM);
 
+        // Task 0597: the arrowhead is CLAMPED, not a fraction of the shaft. It
+        // grows with the arm to a knee near handle-size 1.25 and then stops —
+        // so at the largest handle size the arm is 5x its default while the
+        // head is 1.25x. Pushed in as world lengths converted from the pixel
+        // law; leaving these unset would put the head back on a flat ratio.
+        immutable float headLen  = gizmoPixelSize(center, vp, gizmoHeadLenPx());
+        immutable float headHalf = gizmoPixelSize(center, vp, gizmoHeadHalfPx());
+        arrowX.fixedConeLen = headLen; arrowX.fixedConeHalf = headHalf;
+        arrowY.fixedConeLen = headLen; arrowY.fixedConeHalf = headHalf;
+        arrowZ.fixedConeLen = headLen; arrowZ.fixedConeHalf = headHalf;
+
+        // Same law for the centre handle: 5 px at the default handle size, and
+        // exactly three distinct sizes over the whole reachable range. The
+        // grab region for this box is its drawn silhouette (see the pick-region
+        // note in handles/gl_util.d), so it follows the drawn size as it always
+        // has — no separate hit size is introduced here.
         centerBox.pos  = center;
-        centerBox.size = size * GIZMO_CENTER_BOX_HALF * centerBoxScale;
+        centerBox.size = gizmoPixelSize(center, vp, gizmoBoxHalfPx()) * centerBoxScale;
 
         // The ring's RADIUS is a plain pixel count; its OFFSET scales with the
         // arm. That asymmetry is the reference's (task 0553) — grow the gizmo
@@ -1301,7 +1331,19 @@ class ScaleHandler : Handler {
         arrowZ.start = center + axisZ * (size/GIZMO_SCALE_SHAFT_INSET_DIV);
         arrowZ.end   = center + axisZ * (size * axisBoxDistance);
 
-        float cubeFixed = size * GIZMO_SCALE_BOX_HALF;
+        // Task 0597: one clamped box size, shared by the STATIC axis box and
+        // the LIVE drag-feedback box. Ours were two different quantities (2.88
+        // px from the stem-length ratio, 3.6 px from the arm) where the
+        // reference draws one box at one size; both are now the same 5 px at
+        // the default, frozen above handle-size 1.25 and floored below 0.75.
+        // Setting `fixedCubeHalf` on the stems keeps the change inside this
+        // bank — GIZMO_CUBE_HEAD_HALF_OF_LEN still serves every other
+        // CubicArrow user untouched. The box's outer face still lands exactly
+        // on the arm end, since CubicArrow centres its head at `end - half`.
+        float cubeFixed = gizmoPixelSize(center, vp, gizmoBoxHalfPx());
+        arrowX.fixedCubeHalf      = cubeFixed;
+        arrowY.fixedCubeHalf      = cubeFixed;
+        arrowZ.fixedCubeHalf      = cubeFixed;
         scaleArrowX.start         = arrowX.end;
         scaleArrowY.start         = arrowY.end;
         scaleArrowZ.start         = arrowZ.end;

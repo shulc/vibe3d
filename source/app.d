@@ -2127,19 +2127,16 @@ void main(string[] args) {
     EditMode          pendingSelBeforeMode;
     bool              pendingSelOpen = false;
 
-    // Gizmo size in screen pixels: 9 levels — clustered around the
-    // default and stretched upward for users who prefer a larger hit area.
-    // Independent of viewport height.
+    // Gizmo size: the `-` / `+` ladder lives in handles/gl_util.d as
+    // `stepGizmoHandleScale`, which walks the handle-size preference by +-0.5
+    // over [0.5, 5.0] — ten linear steps, 60..600 px of arm, default 120.
     //
-    // Task 0553: the default is 120 px (was 90) — the reference's arm length
-    // at its shipped handle scale, read out of the engine. 120 was already a
-    // level, so only the starting index moves. The LADDER's span (50..480) is
-    // still ours: the reference clamps its handle scale to [0.5, 5.0], i.e.
-    // 60..600 px, but that is a continuous clamp on a preference, not a set
-    // of discrete steps, so nothing measured says where our steps go.
-    enum float[9] gizmoLevels = [50.0f, 70.0f, 90.0f, 120.0f, 160.0f,
-                                  220.0f, 290.0f, 380.0f, 480.0f];
-    int gizmoLevelIdx = 3;  // = 120 px default (must match g_gizmoPixels)
+    // Task 0597 replaced the nine geometric levels (50..480) that used to sit
+    // here. The reference's steps are NOT a free choice: four ornament sizes
+    // stop growing at a knee near 1.2-1.25, so a ladder that skips past the
+    // knee differently changes what the user sees change. Keeping the state in
+    // gl_util.d beside the sizes it feeds is also what lets a plain unittest
+    // walk the ladder without standing up the app.
 
     Tool   activeTool   = null;
     string activeToolId = "";
@@ -6690,16 +6687,10 @@ void main(string[] args) {
                 break;
             }
             case SDLK_MINUS:
-                if (gizmoLevelIdx > 0) {
-                    --gizmoLevelIdx;
-                    setGizmoPixels(gizmoLevels[gizmoLevelIdx]);
-                }
+                stepGizmoHandleScale(-1);
                 break;
             case SDLK_EQUALS:
-                if (gizmoLevelIdx < cast(int)gizmoLevels.length - 1) {
-                    ++gizmoLevelIdx;
-                    setGizmoPixels(gizmoLevels[gizmoLevelIdx]);
-                }
+                stepGizmoHandleScale(+1);
                 break;
             default: break;
         }

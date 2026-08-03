@@ -56,6 +56,65 @@ void  setGizmoPixels(float px)  { g_gizmoPixels = px; }
 float getGizmoPixels()          { return g_gizmoPixels; }
 
 // ---------------------------------------------------------------------------
+// The handle-size PREFERENCE, and the ten values the `-` / `+` keys reach.
+//
+// Task 0597. The arm above is `handleScale * 120 px`, and the handle scale is
+// what the user actually moves: the reference steps it by exactly +-0.5 and
+// clamps it to [0.5, 5.0] — TEN LINEAR values giving 60..600 px of arm,
+// shipping at 1.0.
+//
+// Our previous ladder was nine GEOMETRIC steps of our own invention
+// (50/70/90/120/160/220/290/380/480). That is wrong in kind and not merely in
+// its endpoints, because four of the ornament sizes below stop growing at a
+// knee near a handle scale of 1.2-1.25 — so WHERE the steps land decides
+// whether the user ever sees an ornament change size at all.
+//
+// `g_gizmoPixels` stays the stored state: a great many call sites (drag.d,
+// drag_identity.d, the slice tools, ~45 test files) read the arm in pixels, and
+// deriving the scale from it rather than storing both means the two can never
+// disagree. `setGizmoPixels` remains the RAW setter and deliberately does not
+// clamp — tests drive it directly to pin the size law. The PREFERENCE path is
+// `setGizmoHandleScale` / `stepGizmoHandleScale`, which clamp on write; the
+// reference clamps in the same place (its setter), so that its keyboard path
+// and its preference path cannot disagree.
+// ---------------------------------------------------------------------------
+
+/// Arm length in pixels at a handle scale of 1.0 — the shipped default.
+enum float GIZMO_ARM_PX_AT_UNIT_SCALE = 120.0f;
+/// Preference floor / ceiling / per-press step. From the 1.0 default these
+/// give exactly {0.5, 1.0, 1.5, ... 5.0} — 60 px to 600 px of arm.
+enum float GIZMO_HANDLE_SCALE_MIN  = 0.5f;
+enum float GIZMO_HANDLE_SCALE_MAX  = 5.0f;
+enum float GIZMO_HANDLE_SCALE_STEP = 0.5f;
+
+/// Clamp that sends NaN to the FLOOR instead of propagating it. Every size
+/// below is a drawn extent, and a NaN extent silently deletes the geometry it
+/// sizes (the model matrix goes NaN and every vertex is culled), which is a far
+/// worse failure than a handle drawn at its minimum. `!(v > lo)` is true for
+/// NaN, which is the whole trick — `v < lo` would not be.
+private float clampSizeF(float v, float lo, float hi) {
+    if (!(v > lo)) return lo;
+    return v < hi ? v : hi;
+}
+
+/// The handle-size preference itself: the arm in units of its default length.
+float gizmoHandleScale() { return g_gizmoPixels / GIZMO_ARM_PX_AT_UNIT_SCALE; }
+
+/// Set the preference, clamped to the reachable band. NaN lands on the floor.
+void setGizmoHandleScale(float scale) {
+    setGizmoPixels(clampSizeF(scale, GIZMO_HANDLE_SCALE_MIN, GIZMO_HANDLE_SCALE_MAX)
+                   * GIZMO_ARM_PX_AT_UNIT_SCALE);
+}
+
+/// One press of `-` (`dir < 0`) or `+` (`dir >= 0`). Returns the new scale.
+/// Saturating rather than wrapping, and idempotent at either end.
+float stepGizmoHandleScale(int dir) {
+    immutable float step = dir < 0 ? -GIZMO_HANDLE_SCALE_STEP : GIZMO_HANDLE_SCALE_STEP;
+    setGizmoHandleScale(gizmoHandleScale() + step);
+    return gizmoHandleScale();
+}
+
+// ---------------------------------------------------------------------------
 // Transform-gizmo handle geometry — one named place per quantity.
 //
 // `g_gizmoPixels` above already centralises the OVERALL gizmo scale; what it
@@ -84,6 +143,85 @@ float getGizmoPixels()          { return g_gizmoPixels; }
 // backed by a measurement, not by making a test pass.
 // ---------------------------------------------------------------------------
 
+// -- The CLAMPED ornaments (task 0597) --------------------------------------
+//
+// Four sizes on the transform gizmo are NOT a fixed fraction of the arm. They
+// grow with the arm only inside a narrow band and then stop, and two of them
+// stop at the bottom as well. The bands were measured live off the reference
+// over the whole reachable handle-scale range (0.5 -> 5.0, a 10x span), both
+// ends of every clamp; the sharpest single reading is that a handle scale of
+// 1.25 and one of 5.0 — a 4x difference in the arm — give a bit-identical box.
+//
+// WHY THIS MATTERS MORE THAN THE CONSTANTS. Every knee sits at 1.2-1.25 and
+// every press moves the handle scale by 0.5, so the FIRST `+` from the shipped
+// 1.0 saturates all four and the remaining nine steps grow nothing but the arm.
+// A port that carried only the ratios would look right in a screenshot at the
+// default and diverge the moment anyone touched the keys — which is exactly
+// the bug this block exists to fix. The falsifiable half, confirmed by hand
+// after the measurement: `-` from the default DOES shrink the arrowhead,
+// because 0.5 is below both knees. Fixed pixels would have shrunk neither.
+//
+// These are PIXEL counts, consumed through `gizmoPixelSize` (below) rather
+// than multiplied into `gizmoSize`, because that is what they are.
+
+/// Arrowhead axial length: `arm / 5`, clamped. 24 px at the default, frozen at
+/// 30 px for every handle scale of 1.25 or more. The floor sits below the
+/// reachable range (it would engage at 0.4167) but is real and is ported as read.
+enum float GIZMO_HEAD_LEN_ARM_DIV   = 5.0f;
+enum float GIZMO_HEAD_LEN_MIN_PX    = 10.0f;
+enum float GIZMO_HEAD_LEN_MAX_PX    = 30.0f;
+
+/// Arrowhead HALF-WIDTH: `arm / 16`, clamped at BOTH ends, then scaled by the
+/// stroke width. 7.5 px at the default; pinned to 4 px at or below a handle
+/// scale of 0.533 and to 9 px at or above 1.2.
+///
+/// The line width is a GEOMETRY input here, not only a stroke weight — raising
+/// it 1.0 -> 8.0 was measured taking the half-width 7.5 px -> 30 px, i.e. the
+/// factor is `0.5 * max(2.0, lineWidth)` and nothing else in the gizmo moved.
+/// We expose no such user preference (our handle stroke widths are per-shape
+/// constants in handles/shapes.d, not a setting), so the parameter defaults to
+/// the value that reproduces our effective behaviour — and at
+/// `lineWidth <= 2.0` the factor is exactly 1.0, so the default costs nothing.
+/// It is a parameter rather than a global so the coupling is stated and
+/// testable without introducing mutable state nothing writes.
+enum float GIZMO_HEAD_HALF_ARM_DIV  = 16.0f;
+enum float GIZMO_HEAD_HALF_MIN_PX   = 4.0f;
+enum float GIZMO_HEAD_HALF_MAX_PX   = 9.0f;
+enum float GIZMO_HEAD_LINE_FLOOR    = 2.0f;
+enum float GIZMO_LINE_WIDTH_DEFAULT = 1.0f;
+
+/// Centre-handle and scale-box HALF-extent: `clamp(handleScale, 0.75, 1.25) * 5`
+/// px. ONE constant for both boxes, which is also what the reference does —
+/// the same three-constant clamp idiom appears at both of its sites. Over the
+/// ten reachable handle-scale values it takes exactly THREE values: 3.75 px at
+/// 0.5, 5.00 px at 1.0, 6.25 px from 1.5 up. Three steps, not a constant: the
+/// centre handle looks unchanging next to a 10x arm, but it is not fixed, and
+/// a test asserting invariance would freeze the wrong law.
+enum float GIZMO_BOX_HALF_PX        = 5.0f;
+enum float GIZMO_BOX_SCALE_MIN      = 0.75f;
+enum float GIZMO_BOX_SCALE_MAX      = 1.25f;
+
+/// Arrowhead axial length in window pixels at the current handle size.
+float gizmoHeadLenPx() {
+    return clampSizeF(g_gizmoPixels / GIZMO_HEAD_LEN_ARM_DIV,
+                      GIZMO_HEAD_LEN_MIN_PX, GIZMO_HEAD_LEN_MAX_PX);
+}
+
+/// Arrowhead half-width (cone base RADIUS) in window pixels.
+float gizmoHeadHalfPx(float lineWidth = GIZMO_LINE_WIDTH_DEFAULT) {
+    // `max(GIZMO_HEAD_LINE_FLOOR, lineWidth)`, written so NaN takes the floor.
+    immutable float w = lineWidth > GIZMO_HEAD_LINE_FLOOR ? lineWidth
+                                                         : GIZMO_HEAD_LINE_FLOOR;
+    return clampSizeF(g_gizmoPixels / GIZMO_HEAD_HALF_ARM_DIV,
+                      GIZMO_HEAD_HALF_MIN_PX, GIZMO_HEAD_HALF_MAX_PX) * 0.5f * w;
+}
+
+/// Centre-box / scale-box half-extent in window pixels.
+float gizmoBoxHalfPx() {
+    return clampSizeF(gizmoHandleScale(), GIZMO_BOX_SCALE_MIN, GIZMO_BOX_SCALE_MAX)
+           * GIZMO_BOX_HALF_PX;
+}
+
 // -- Move bank: three axis arrows, centre box, three plane circles ----------
 /// Arrow tip, as a fraction of the arm. 1.0 = the arm itself → 120 px.
 enum float GIZMO_MOVE_ARM             = 1.00f;
@@ -94,8 +232,11 @@ enum float GIZMO_MOVE_ARM             = 1.00f;
 /// We had two different divisors, /6 here and /7 for scale; there is one
 /// inset, and this is it. See GIZMO_SCALE_SHAFT_INSET_DIV.
 enum float GIZMO_MOVE_SHAFT_INSET_DIV = 5.0f;
-/// Centre-box HALF-extent, fraction of the arm. → 4.8 px half / 9.6 px across.
-enum float GIZMO_CENTER_BOX_HALF      = 0.04f;
+// The centre box's half-extent used to live here as `GIZMO_CENTER_BOX_HALF`,
+// a flat 0.04 of the arm (4.8 px at the default, and 2..19 px across the old
+// ladder). Task 0597 replaced it with `gizmoBoxHalfPx()` above: 5.00 px at the
+// default and three distinct sizes over the whole reachable range. The
+// measured centre handle is a clamped extent, not a share of the arm.
 /// Plane-circle centre offset along EACH of its two axes. → 72 px per axis.
 ///
 /// Task 0553: was 0.75. The reference publishes this exact proportion as a
@@ -120,8 +261,13 @@ enum float GIZMO_PLANE_RADIUS_PX      = 8.0f;
 // -- Rotate bank: three principal semicircles + the view-plane ring ---------
 /// Principal (X/Y/Z) ring radius, fraction of the arm. → 90 px.
 enum float GIZMO_RING_RADIUS          = 1.00f;
-/// View-plane ring radius, fraction of the arm. → 99 px.
-enum float GIZMO_VIEW_RING_RADIUS     = 1.10f;
+/// View-plane ring radius, fraction of the arm. → 130 px.
+///
+/// Task 0597: was 1.10 (132 px). The reference builds this ring as
+/// `SL + SL/12`, i.e. 13/12 of the arm — read from its instruction stream
+/// rather than measured, and the 2 px it moves is well inside the ring's own
+/// grab band, so nothing that presses the view ring notices.
+enum float GIZMO_VIEW_RING_RADIUS     = 13.0f / 12.0f;
 
 // -- Scale bank: three axis boxes on stems, centre disc, plane circles ------
 /// Axis box distance from the centre, fraction of the arm. → 120 px, i.e.
@@ -138,11 +284,13 @@ enum float GIZMO_SCALE_ARM            = 1.00f;
 /// inset as the move bank (task 0553; see GIZMO_MOVE_SHAFT_INSET_DIV). Was
 /// 7, which made it 12.9 px against move's 15.
 enum float GIZMO_SCALE_SHAFT_INSET_DIV = 5.0f;
-/// Half-extent of the LIVE (drag-feedback) scale box, fraction of the arm.
-/// → 2.7 px. The STATIC axis box uses GIZMO_CUBE_HEAD_HALF_OF_LEN below,
-/// which is relative to the stem length, and lands at 2.80 px — the two are
-/// deliberately-looking but genuinely different quantities.
-enum float GIZMO_SCALE_BOX_HALF       = 0.03f;
+// The scale box's half-extent used to live here as `GIZMO_SCALE_BOX_HALF`
+// (0.03 of the arm = 3.6 px) for the LIVE drag-feedback box, while the STATIC
+// axis box fell through to GIZMO_CUBE_HEAD_HALF_OF_LEN below and landed at
+// 2.88 px. The reference has ONE box per axis at ONE size, so task 0597 gave
+// both `gizmoBoxHalfPx()` — 5.00 px at the default, the same clamped extent as
+// the centre handle. GIZMO_CUBE_HEAD_HALF_OF_LEN stays as the fallback for
+// every OTHER CubicArrow user, which this port does not touch.
 /// Centre-disc radius, fraction of the arm. → 7.2 px.
 enum float GIZMO_DISC_RADIUS          = 0.08f;
 
@@ -150,10 +298,18 @@ enum float GIZMO_DISC_RADIUS          = 0.08f;
 // NOTE these are shared with every other Arrow/CubicArrow user (primitive
 // create-tool movers, falloff endpoint handles), not just the transform
 // gizmo — changing them moves those handles too.
-/// Cone head length as a fraction of the arrow's length. → 18.75 px on the
-/// move arrow (whose shaft is 75 px long).
+//
+// Task 0597: the TRANSFORM gizmo no longer reaches these. MoveHandler and
+// ScaleHandler now push explicit pixel sizes (`gizmoHeadLenPx`,
+// `gizmoHeadHalfPx`, `gizmoBoxHalfPx`) into `Arrow.fixedConeLen` /
+// `.fixedConeHalf` / `CubicArrow.fixedCubeHalf`, because the reference clamps
+// those three and a flat fraction cannot clamp. The ratios below remain the
+// FALLBACK for every arrow that sets no override — deliberately left alone,
+// since nothing has measured the handles that use them.
+/// Cone head length as a fraction of the arrow's length. → 24 px on the move
+/// arrow (whose shaft spans 96 px) before the transform gizmo's override.
 enum float GIZMO_CONE_LEN_OF_LEN      = 0.25f;
-/// Cone head base radius as a fraction of the arrow's length. → 3.75 px.
+/// Cone head base radius as a fraction of the arrow's length. → 4.8 px.
 enum float GIZMO_CONE_RADIUS_OF_LEN   = 0.05f;
 /// Default cube-head HALF-extent as a fraction of the arrow's length, used
 /// when `CubicArrow.fixedCubeHalf` is unset. → 2.80 px on the scale stem.
@@ -518,6 +674,135 @@ void drawWorldQuad(Vec3[4] corners, const ref Viewport vp,
 // ---------------------------------------------------------------------------
 // Unittests
 // ---------------------------------------------------------------------------
+
+// Task 0597 — the four CLAMPED ornaments, sampled ACROSS their knees.
+//
+// This is the coverage the bug got past. Every one of these sizes used to be a
+// flat fraction of the arm, which is correct at the shipped default and wrong
+// everywhere else — so a test that only checked the default would have passed
+// on the broken code. Each assertion below therefore samples BELOW the floor,
+// AT the default and ABOVE the ceiling, and the ceiling rows are the load-
+// bearing ones: they are what a fraction-of-the-arm implementation fails.
+//
+// The values are restated here as literals rather than recomputed from the
+// enums, so that moving an enum has to fail here. They come from a live sweep
+// of the reference over the full handle-scale range, both ends of every clamp.
+unittest {
+    import std.math : abs;
+
+    immutable float saved = getGizmoPixels();
+    scope(exit) setGizmoPixels(saved);
+
+    static bool near(float a, float b) { return abs(a - b) < 1e-4f; }
+
+    // handle scale -> (head length px, head half-width px, box half px).
+    // 0.5  : the reachable floor. The two box clamps are ON their floor here
+    //        (0.75 * 5 = 3.75, not 0.5 * 5 = 2.5) and the head half-width is
+    //        on its floor too (4, not 60/16 = 3.75) — the floors are what stop
+    //        the ornaments shrinking away on `-`.
+    // 1.0  : the shipped default. Every value sits strictly inside its band
+    //        except the boxes, which sit at the band's centre. A broken
+    //        implementation agrees with all of these, which is the point.
+    // 1.25 : the knee. Head length reaches its ceiling exactly here; the head
+    //        half-width (knee 1.2) and the boxes (knee 1.25) are already at
+    //        theirs.
+    // 5.0  : the reachable ceiling — a 4x longer arm than 1.25 and a 10x
+    //        longer arm than 0.5, with all three ornaments bit-identical to
+    //        their 1.25 row. This row alone refutes "a fraction of the arm".
+    static immutable float[4][6] rows = [
+        // ts     headLen  headHalf  boxHalf
+        [0.5f,    12.0f,    4.0f,    3.75f],
+        [0.75f,   18.0f,    5.625f,  3.75f],   // still on the box floor
+        [1.0f,    24.0f,    7.5f,    5.00f],
+        [1.2f,    28.8f,    9.0f,    6.00f],   // half-width knee, boxes still rising
+        [1.25f,   30.0f,    9.0f,    6.25f],   // length + box knees
+        [5.0f,    30.0f,    9.0f,    6.25f],   // 4x the arm, identical ornaments
+    ];
+
+    foreach (r; rows) {
+        setGizmoHandleScale(r[0]);
+        assert(near(gizmoHandleScale(), r[0]), "the preference did not round-trip");
+        assert(near(gizmoHeadLenPx(),  r[1]), "arrowhead length off its clamped law");
+        assert(near(gizmoHeadHalfPx(), r[2]), "arrowhead half-width off its clamped law");
+        assert(near(gizmoBoxHalfPx(),  r[3]), "box half-extent off its clamped law");
+    }
+
+    // The ceiling rows must be EXACT, not merely close: the reference's own
+    // sharpest reading is that two very different arms give a bit-identical
+    // box, and that is the property a ratio can never have.
+    setGizmoHandleScale(1.25f);
+    immutable float lenAtKnee = gizmoHeadLenPx();
+    immutable float halfAtKnee = gizmoHeadHalfPx();
+    immutable float boxAtKnee = gizmoBoxHalfPx();
+    setGizmoHandleScale(5.0f);
+    assert(gizmoHeadLenPx()  == lenAtKnee,  "arrowhead length still grows past its knee");
+    assert(gizmoHeadHalfPx() == halfAtKnee, "arrowhead width still grows past its knee");
+    assert(gizmoBoxHalfPx()  == boxAtKnee,  "box still grows past its knee");
+
+    // ... and the floor rows likewise, against the OTHER failure mode: an
+    // implementation with only the ceiling ported shrinks these on `-`.
+    setGizmoHandleScale(0.5f);
+    immutable float boxAtFloor = gizmoBoxHalfPx();
+    setGizmoHandleScale(0.75f);
+    assert(gizmoBoxHalfPx() == boxAtFloor, "box shrinks below its floor on `-`");
+
+    // The line-draw coupling: the arrowhead's half-width is GEOMETRY, and the
+    // stroke width multiplies it. Measured on the reference at the default
+    // handle size: 1.0 -> 8.0 takes the half-width 7.5 px -> 30 px. At or
+    // below the 2.0 floor the factor is exactly 1.0, so our default is inert.
+    setGizmoHandleScale(1.0f);
+    assert(gizmoHeadHalfPx(8.0f) == 30.0f, "line width must scale the arrowhead");
+    assert(gizmoHeadHalfPx(1.0f) == gizmoHeadHalfPx(2.0f),
+           "line widths under the 2.0 floor must be indistinguishable");
+    assert(gizmoHeadHalfPx(float.nan) == gizmoHeadHalfPx(2.0f),
+           "a NaN line width must take the floor, not poison the geometry");
+}
+
+// Task 0597 — the `-` / `+` ladder: ten LINEAR steps, saturating at both ends.
+unittest {
+    import std.math : abs;
+
+    immutable float saved = getGizmoPixels();
+    scope(exit) setGizmoPixels(saved);
+
+    // Walk up from the shipped default and collect every arm length the user
+    // can reach. The reference's reachable set is exactly {0.5, 1.0 ... 5.0},
+    // i.e. 60, 120 ... 600 px — a linear ladder, where ours was nine geometric
+    // steps 50..480. Sizes are exact in binary floating point at every rung,
+    // so these are `==`, not tolerance compares.
+    setGizmoHandleScale(1.0f);
+    assert(getGizmoPixels() == 120.0f, "the default arm must stay 120 px");
+
+    float[] up;
+    foreach (_; 0 .. 12) { stepGizmoHandleScale(+1); up ~= getGizmoPixels(); }
+    assert(up[0] == 180.0f && up[1] == 240.0f && up[2] == 300.0f);
+    assert(up[7] == 600.0f, "eight presses from the default must reach 600 px");
+    assert(up[$ - 1] == 600.0f, "`+` past the ceiling must saturate, not wrap");
+
+    float[] down;
+    setGizmoHandleScale(1.0f);
+    foreach (_; 0 .. 4) { stepGizmoHandleScale(-1); down ~= getGizmoPixels(); }
+    assert(down[0] == 60.0f, "one `-` from the default must reach the floor");
+    assert(down[$ - 1] == 60.0f, "`-` past the floor must saturate");
+
+    // The step is a CONSTANT 60 px of arm, not a ratio — the property that
+    // decides whether a clamped ornament is ever seen changing.
+    setGizmoHandleScale(1.0f);
+    float prev = getGizmoPixels();
+    foreach (_; 0 .. 8) {
+        stepGizmoHandleScale(+1);
+        assert(abs((getGizmoPixels() - prev) - 60.0f) < 1e-4f,
+               "the ladder must be linear in the arm, not geometric");
+        prev = getGizmoPixels();
+    }
+
+    // Clamp-on-write, independent of the stepping path — the reference clamps
+    // in its setter so its keyboard and preference paths cannot disagree.
+    setGizmoHandleScale(0.2f);   assert(getGizmoPixels() == 60.0f);
+    setGizmoHandleScale(99.0f);  assert(getGizmoPixels() == 600.0f);
+    setGizmoHandleScale(float.nan);
+    assert(getGizmoPixels() == 60.0f, "a NaN preference must land on the floor");
+}
 
 // setThickLineScreenSize writes both cached dimensions without touching GL.
 // Guards against regressing to the global-init-only path (single cell).
