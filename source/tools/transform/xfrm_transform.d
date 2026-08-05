@@ -144,6 +144,11 @@ alias VertexEditFactory = MeshVertexEdit delegate();
 // gizmo arrow — matching the click-dispatch order.
 private enum int MOVE_BASE = 0, ROT_BASE = 10, SCALE_BASE = 20;
 
+// Local handle ids per bank (0..6 used; the stride must clear the highest
+// local id so the per-bank [base, base+HANDLES_PER_BANK) ranges never
+// overlap).
+private enum int HANDLES_PER_BANK = 10;
+
 private enum LatchedHandleBank { None, Move, Rotate, Scale }
 
 private struct LatchedHandlePart {
@@ -152,11 +157,11 @@ private struct LatchedHandlePart {
 }
 
 private LatchedHandlePart latchedHandlePart(int hitPart) pure nothrow @safe @nogc {
-    if (hitPart >= MOVE_BASE && hitPart < MOVE_BASE + 10)
+    if (hitPart >= MOVE_BASE && hitPart < MOVE_BASE + HANDLES_PER_BANK)
         return LatchedHandlePart(LatchedHandleBank.Move, hitPart - MOVE_BASE);
-    if (hitPart >= ROT_BASE && hitPart < ROT_BASE + 10)
+    if (hitPart >= ROT_BASE && hitPart < ROT_BASE + HANDLES_PER_BANK)
         return LatchedHandlePart(LatchedHandleBank.Rotate, hitPart - ROT_BASE);
-    if (hitPart >= SCALE_BASE && hitPart < SCALE_BASE + 10)
+    if (hitPart >= SCALE_BASE && hitPart < SCALE_BASE + HANDLES_PER_BANK)
         return LatchedHandlePart(LatchedHandleBank.Scale, hitPart - SCALE_BASE);
     return LatchedHandlePart();
 }
@@ -180,6 +185,51 @@ version(unittest) int xfrmCompactScaleHeadFallbackForTest(
         pure nothrow @safe @nogc {
     return compactScaleHeadFallbackHitPart(compact, scaleEnabled,
                                            hitPart, scaleHeadAxis);
+}
+
+// Baseline restore used by `applyTRS.restoreBaseline`: copy `src` over the
+// PREFIX of `dst` that both share, never more. `applyTRS` asserts the two
+// agree in length, but `dub.json`'s `perf` buildType is `releaseMode`, which
+// strips that assert — so the length agreement must be enforced by something
+// that survives `-release`. A bare slice assignment (`dst[] = src[]`) does
+// not: it requires exact agreement and throws RangeError otherwise, in every
+// build type. The explicit bound below keeps the copy total-and-safe under
+// `-release` while preserving the prefix semantics a longer `src` had.
+private void restoreBaselinePrefix(Vec3[] dst, const(Vec3)[] src)
+        pure nothrow @safe @nogc {
+    const n = dst.length < src.length ? dst.length : src.length;
+    foreach (i; 0 .. n) dst[i] = src[i];
+}
+
+unittest { // restoreBaselinePrefix: a length mismatch copies the shared prefix
+           // and never throws — the contract `applyTRS.restoreBaseline` needs
+           // in `perf` (releaseMode) builds, where its assert is stripped.
+    // Longer source: copy the prefix, leave nothing out of range touched.
+    Vec3[] dst = [Vec3(0, 0, 0), Vec3(0, 0, 0)];
+    const(Vec3)[] longer = [Vec3(1, 2, 3), Vec3(4, 5, 6), Vec3(7, 8, 9)];
+    restoreBaselinePrefix(dst, longer);
+    assert(dst.length == 2, "prefix copy must not resize the destination");
+    assert(dst[0] == Vec3(1, 2, 3), "prefix copy must take src[0]");
+    assert(dst[1] == Vec3(4, 5, 6), "prefix copy must take src[1]");
+
+    // Shorter source: copy what exists, leave the tail of dst alone.
+    Vec3[] dst2 = [Vec3(0, 0, 0), Vec3(9, 9, 9)];
+    const(Vec3)[] shorter = [Vec3(1, 1, 1)];
+    restoreBaselinePrefix(dst2, shorter);
+    assert(dst2[0] == Vec3(1, 1, 1), "shared prefix is restored");
+    assert(dst2[1] == Vec3(9, 9, 9), "dst beyond src length is untouched");
+
+    // Empty on either side is a no-op, not a fault.
+    Vec3[] empty;
+    restoreBaselinePrefix(empty, longer);
+    restoreBaselinePrefix(dst2, []);
+    assert(dst2[0] == Vec3(1, 1, 1), "empty src leaves dst unchanged");
+
+    // Equal lengths (the normal case) copy everything.
+    Vec3[] dst3 = [Vec3(0, 0, 0), Vec3(0, 0, 0)];
+    restoreBaselinePrefix(dst3, [Vec3(1, 0, 0), Vec3(0, 1, 0)]);
+    assert(dst3[0] == Vec3(1, 0, 0) && dst3[1] == Vec3(0, 1, 0),
+           "equal-length restore is a full copy");
 }
 
 unittest { // shared handle winner maps to the exact subtool latch part
@@ -497,6 +547,10 @@ public:
     // THIS matrix — `gpuMatrix = wrapAboutPivot(lastFoldMatrix, lastFoldPivot)` —
     // instead of rebuilding a parallel about-pivot rotation/scale matrix, so the
     // GPU preview is the literal same transform the CPU fold applied.
+    // Inline identity literal (matches math.identityMatrix); a field
+    // initializer cannot CTFE-cast the `immutable float[16]` constant to a
+    // mutable field, so the literal is spelled out here (same constraint as
+    // XformState.r).
     float[16] lastFoldMatrix  = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
     Vec3      lastFoldPivot   = Vec3(0, 0, 0);
     Vec3      lastFoldAnchor  = Vec3(0, 0, 0);
@@ -538,13 +592,24 @@ public:
         scaleSub.setUndoBindings(h, factory);
     }
 
+    // Enabled sub-tools in bank order T → R → S, backed by a fixed member
+    // buffer — NO GC allocation (several call sites are per-frame: update(),
+    // the idle motion/button-up forwards). Single-threaded reuse (the SDL
+    // dispatch thread only), so the shared buffer cannot race.
+    private TransformTool[3] enabledSubsBuf_;
+    private TransformTool[] enabledSubs() {
+        size_t n = 0;
+        if (flagT) enabledSubsBuf_[n++] = moveSub;
+        if (flagR) enabledSubsBuf_[n++] = rotateSub;
+        if (flagS) enabledSubsBuf_[n++] = scaleSub;
+        return enabledSubsBuf_[0 .. n];
+    }
+
     override void activate() {
         super.activate();   // sets active=true, runs resetTransientState()
         // One-time activation wiring (NOT part of resyncSession): bring the
         // composed sub-tools online and back-link them to this wrapper.
-        if (flagT) moveSub.activate();
-        if (flagR) rotateSub.activate();
-        if (flagS) scaleSub.activate();
+        foreach (sub; enabledSubs()) sub.activate();
         moveSub.wrapperRef = this;
         rotateSub.wrapperRef = this;   // MS-2: rotate single-source plumbing
         scaleSub.wrapperRef = this;    // scale single-source plumbing
@@ -621,9 +686,7 @@ public:
         // the wrapper inherited from TransformTool).
         if (editIsOpen())
             commitEdit("Move");
-        if (flagT) moveSub.deactivate();
-        if (flagR) rotateSub.deactivate();
-        if (flagS) scaleSub.deactivate();
+        foreach (sub; enabledSubs()) sub.deactivate();
         // Tool drop (record+consolidate): consolidate the FINAL run's in-session
         // tail into one surviving entry. A clean multi-gesture run therefore
         // collapses to ONE undo entry at the drop (one post-drop Ctrl+Z reverts
@@ -689,15 +752,10 @@ public:
                 // test depends on this site (selection-change mid-run is forced
                 // before any in-run record).
                 if (history !is null && history.runOpen()) {
-                    history.consolidate(history.currentRunId);
-                    history.nextRun();
-                    currentRunBank = DragBank.None;
-                    // Run boundary: invalidate the re-grade anchor + staleness
-                    // stamp so a falloff change after a selection/mutation
-                    // boundary cannot re-grade the just-closed run.
-                    lastAppliedGestureMutationVersion = ulong.max;
-                    refireAnchor.length               = 0;
-                    refirePreValid                    = false;
+                    closeRunBoundary();
+                    // A falloff change after a selection/mutation boundary
+                    // cannot re-grade the just-closed run.
+                    invalidateRunRefireAnchor();
                 }
                 // Apply-path Phase 2: a selection/mutation change is a GEOMETRY-run
                 // boundary regardless of whether a history run is open — the moving
@@ -757,15 +815,10 @@ public:
                     if (editIsOpen())
                         commitEdit("Move");
                     if (history !is null && history.runOpen()) {
-                        history.consolidate(history.currentRunId);
-                        history.nextRun();
-                        currentRunBank = DragBank.None;
-                        // Run boundary: invalidate the re-grade anchor + staleness
-                        // stamp so a later config change cannot re-grade the
-                        // just-closed run (same resets as the selection boundary).
-                        lastAppliedGestureMutationVersion = ulong.max;
-                        refireAnchor.length               = 0;
-                        refirePreValid                    = false;
+                        closeRunBoundary();
+                        // Same resets as the selection boundary: a later
+                        // config change cannot re-grade the just-closed run.
+                        invalidateRunRefireAnchor();
                     }
                     // GEOMETRY-run boundary regardless of an open history run: the
                     // pivot moved, so the next gesture must re-capture its baseline.
@@ -920,9 +973,7 @@ public:
         // Each sub-tool's update() pulls handler.center from ACEN
         // and refreshes its gizmo orientation from AXIS. They all
         // see the same pipeline state so the three gizmos co-locate.
-        if (flagT) moveSub.update(vts);
-        if (flagR) rotateSub.update(vts);
-        if (flagS) scaleSub.update(vts);
+        foreach (sub; enabledSubs()) sub.update(vts);
         if (activeDrag is moveSub)
             setSharedGizmoPose(moveSub.handler.center, vts);
         else if (activeDrag is rotateSub)
@@ -1182,20 +1233,23 @@ public:
     // is the Model-C render frame, distinct from the frozen input/apply frame.
     //
     // Each accessor returns the bank's right/up/fwd as a 3x3-in-Vec3 triple.
+    // Shared body, templated because `handler` is typed per sub-tool
+    // (MoveHandler / RotateHandler / ScaleHandler — axisX/Y/Z are declared
+    // per subclass in handles/shapes.d, not on the Handler base).
+    private static void renderFrameOf(H)(const(H) handler,
+            out Vec3 right, out Vec3 up, out Vec3 fwd) {
+        right = handler.axisX;
+        up    = handler.axisY;
+        fwd   = handler.axisZ;
+    }
     public void moveRenderFrame(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
-        right = moveSub.handler.axisX;
-        up    = moveSub.handler.axisY;
-        fwd   = moveSub.handler.axisZ;
+        renderFrameOf(moveSub.handler, right, up, fwd);
     }
     public void rotateRenderFrame(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
-        right = rotateSub.handler.axisX;
-        up    = rotateSub.handler.axisY;
-        fwd   = rotateSub.handler.axisZ;
+        renderFrameOf(rotateSub.handler, right, up, fwd);
     }
     public void scaleRenderFrame(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
-        right = scaleSub.handler.axisX;
-        up    = scaleSub.handler.axisY;
-        fwd   = scaleSub.handler.axisZ;
+        renderFrameOf(scaleSub.handler, right, up, fwd);
     }
     // The rotate ring's composed orientation = R_accum · frozenFrame (the
     // R_gesture·B0 the ring already draws, xfrm_transform.d ring compose). The
@@ -1204,9 +1258,7 @@ public:
     // frozen idle basis. Published distinctly so a test can assert the ring
     // preview rate independently of the sibling banks.
     public void rotateRingFrame(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
-        right = rotateSub.handler.axisX;
-        up    = rotateSub.handler.axisY;
-        fwd   = rotateSub.handler.axisZ;
+        renderFrameOf(rotateSub.handler, right, up, fwd);
     }
 
     // flex_border_handles_plan.md Model C — the SHARED rendered gizmo basis fed
@@ -1355,6 +1407,9 @@ public:
     private void setSharedGizmoPose(Vec3 center, ref VectorStack vts) {
         Vec3 bX, bY, bZ;
         renderBasis(bX, bY, bZ, vts);
+        // Per-frame fan-out over the enabled banks. setWrapperGizmoPose is
+        // sub-tool-specific (not on the TransformTool base), so each bank is
+        // called out explicitly — no allocation, bank order T → R → S.
         if (flagT) moveSub.setWrapperGizmoPose(center, bX, bY, bZ);
         if (flagR) rotateSub.setWrapperGizmoPose(center, bX, bY, bZ);
         if (flagS) scaleSub.setWrapperGizmoPose(center, bX, bY, bZ);
@@ -1464,6 +1519,9 @@ public:
     // registered. In `--test` (single cell, no foreign draws) geometry was
     // already owner-correct, so this is a byte-neutral no-op on output.
     private void refreshBankGeometry(const ref Viewport vp) {
+        // Same explicit fan-out as setSharedGizmoPose: `handler` is
+        // typed per sub-tool (MoveHandler / RotateHandler / ScaleHandler),
+        // so a base-class array cannot reach syncGeometry.
         if (flagT) moveSub.handler.syncGeometry(vp);
         if (flagR) rotateSub.handler.syncGeometry(vp);
         if (flagS) scaleSub.handler.syncGeometry(vp);
@@ -1637,8 +1695,7 @@ public:
                 // entries into ONE surviving entry, then open a fresh run id so
                 // the next gesture is tagged distinctly.
                 if (history !is null && history.runOpen()) {
-                    history.consolidate(history.currentRunId);
-                    history.nextRun();
+                    consolidateRunAndAdvance();
                 }
                 // Apply-path Phase 2: a relocate is a GEOMETRY-run boundary (the
                 // pivot moved + the prior run committed) — re-capture the run
@@ -1661,8 +1718,7 @@ public:
                 scaleSub.commitSessionIfOpen();
                 moveSub.stageCurrentActionCenterPin();
                 if (history !is null && history.runOpen()) {
-                    history.consolidate(history.currentRunId);
-                    history.nextRun();
+                    consolidateRunAndAdvance();
                 }
                 resetRun();
             }
@@ -1715,8 +1771,7 @@ tryRotateBank:
                 if (rotWasRelocate) rotateSub.restageActionCenterPin();
                 else                rotateSub.stageCurrentActionCenterPin();
                 if (history !is null && history.runOpen()) {
-                    history.consolidate(history.currentRunId);
-                    history.nextRun();
+                    consolidateRunAndAdvance();
                 }
                 resetRun();
             }
@@ -1753,9 +1808,7 @@ tryRotateBank:
                 // above has ALREADY closed the run, so it is excluded rather than
                 // allowed to close it twice.
                 if (history !is null && history.runOpen()) {
-                    history.consolidate(history.currentRunId);
-                    history.nextRun();
-                    currentRunBank = DragBank.None;
+                    closeRunBoundary();
                 }
                 // Apply-path Phase 2: relocate / no-axis click = geometry-run
                 // boundary; re-capture the run baseline on the next gesture.
@@ -1789,9 +1842,7 @@ tryScaleBank:
             scaleSub.lastClickWasRelocate = false;   // consume
             if (scaleSub.dragAxis >= 0) {
                 if (scaleWasRelocate && history !is null && history.runOpen()) {
-                    history.consolidate(history.currentRunId);
-                    history.nextRun();
-                    currentRunBank = DragBank.None;
+                    closeRunBoundary();
                 }
                 if (scaleWasRelocate) resetRun();
                 // Bank-switch run boundary (Q-c): a switch INTO Scale from a
@@ -1809,9 +1860,7 @@ tryScaleBank:
                 // After a per-gesture scale commit the session is closed yet the
                 // run is still open, so consolidate + open a fresh run here.
                 if (history !is null && history.runOpen()) {
-                    history.consolidate(history.currentRunId);
-                    history.nextRun();
-                    currentRunBank = DragBank.None;
+                    closeRunBoundary();
                 }
                 // Apply-path Phase 2: relocate / no-axis click = geometry-run
                 // boundary; re-capture the run baseline on the next gesture.
@@ -1980,8 +2029,7 @@ noBankConsumed:
             // single source of truth) so the run splits even when the prior
             // gesture already self-committed its session.
             if (history !is null && history.runOpen()) {
-                history.consolidate(history.currentRunId);
-                history.nextRun();
+                consolidateRunAndAdvance();
             }
             // Apply-path Phase 2: an element-pick relocate is a geometry-run
             // boundary (pivot moved + prior run committed); re-capture the run
@@ -2087,9 +2135,7 @@ noBankConsumed:
             // runOpen() is the single source of truth for "a run to close").
             if (p5Boundary) {
                 moveSub.stageCurrentActionCenterPin();
-                history.consolidate(history.currentRunId);
-                history.nextRun();
-                currentRunBank = DragBank.None;
+                closeRunBoundary();
                 // Apply-path Phase 2: the P5 off-gizmo-in-relocate-DISALLOWED
                 // click is a geometry-run boundary; re-capture on the next drag.
                 resetRun();   // + P-F: this boundary freezes a NEW run-frame
@@ -2103,6 +2149,37 @@ noBankConsumed:
         // defaults. Also refresh the derived euler display (identity ⇒ 0).
         run = XformState.init;
         headlessRotate = Vec3(0, 0, 0);
+    }
+
+    // Run-boundary close helpers (record+consolidate). The gizmo mouse-down
+    // consume arms and the idle boundary polls split the open run the same
+    // few ways; these cover the exact field sets those sites reset. Every
+    // caller gates on `history !is null && history.runOpen()` (or an
+    // equivalent, e.g. p5Boundary) BEFORE calling, so `history` is non-null
+    // and the run is open here.
+
+    // Hard run boundary: collapse the open run's tagged in-session entries
+    // into ONE surviving entry, then open a fresh run id so the next gesture
+    // is tagged distinctly.
+    private void consolidateRunAndAdvance() {
+        history.consolidate(history.currentRunId);
+        history.nextRun();
+    }
+
+    // consolidateRunAndAdvance + reset the in-session run bank: the closed
+    // run's bank does not carry into the fresh run.
+    private void closeRunBoundary() {
+        consolidateRunAndAdvance();
+        currentRunBank = DragBank.None;
+    }
+
+    // Run boundary: invalidate the re-grade anchor + staleness stamp so a
+    // falloff/snap/symmetry config change after the boundary cannot re-grade
+    // the just-closed run.
+    private void invalidateRunRefireAnchor() {
+        lastAppliedGestureMutationVersion = ulong.max;
+        refireAnchor.length               = 0;
+        refirePreValid                    = false;
     }
 
     // P-F — geometry-run boundary reset. Factored so EVERY `runBaselineValid =
@@ -2455,6 +2532,43 @@ noBankConsumed:
         return h;
     }
 
+    // Shared begin*DragSession prologue: the per-drag captures every bank
+    // runs at mouse-down, BEFORE its bank-specific session/baseline work.
+    // The `beginRunGesture(bank)` / `beginGesture(bank)` pair deliberately
+    // stays at each call site — Move inserts `beginEdit()` and Rotate its
+    // per-cluster capture between this prologue and beginRunGesture
+    // (load-bearing order, documented at those sites).
+    private void beginDragSessionPrologue(ref VectorStack vts) {
+        buildVertexCacheIfNeeded();
+        captureFalloffForDrag(vts);
+        captureSymmetryForDrag(vts);
+        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
+    }
+
+    // Once-per-drag GPU-bypass predicate (moveDragFastPath / rotDragFastPath /
+    // scaleDragFastPath): the unconstrained whole-mesh case — no falloff, no
+    // symmetry, no per-cluster pivots, whole-mesh selection.
+    //
+    // ANTI-RELOCATION: do NOT move the evaluation of this predicate out of
+    // the `begin*DragSession` functions and do NOT re-evaluate it in
+    // `onMouseMotion`. The fast-path is a ONCE-PER-DRAG decision; its inputs
+    // MUST come from the snapshot taken at mouse-down:
+    //   - `dragFalloff` / `dragSymmetry`: just captured by
+    //     beginDragSessionPrologue; both frozen for the drag.
+    //   - `cp.active`: cluster-pivot presence is a function of ACEN mode +
+    //     the moving set, both of which the wrapper's `update()` freezes
+    //     during a drag (`dragAxis>=0` early-return in transform.d).
+    //   - `vertexProcessCount`: selection-derived; same freeze.
+    // Recomputing mid-drag from a live `vts` would let the path silently
+    // flip (e.g. if falloff turned on between frames), violating the
+    // "drag == numeric" contract the parity test pins.
+    private bool wholeMeshGpuBypassAllowed(ClusterPivots cp) const {
+        return !dragFalloff.enabled
+            && !dragSymmetry.enabled
+            && !cp.active
+            && (vertexProcessCount == cast(int)mesh.vertices.length);
+    }
+
     // Capture the per-drag state that `applyTRS` and the fast-path
     // bypass read from. Runs exactly once per drag, immediately
     // after `moveSub.onMouseButtonDown` (or `beginScreenPlaneDragAt`)
@@ -2483,10 +2597,7 @@ noBankConsumed:
     //     no-ops; the same baseline drives the final
     //     `commitEdit("Move")` at deactivate / selection change.
     void beginMoveDragSession(ref VectorStack vts) {
-        buildVertexCacheIfNeeded();
-        captureFalloffForDrag(vts);
-        captureSymmetryForDrag(vts);
-        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
+        beginDragSessionPrologue(vts);
         beginEdit();   // idempotent — opens tool-session edit on first call
 
         // `cachedVp` is already up to date from the most recent
@@ -2506,28 +2617,10 @@ noBankConsumed:
         accumulatedAtDragStart  = accumulatedWorldDelta;
 
         auto cp = queryClusterPivots(vts);
-        // ANTI-RELOCATION: do NOT move this predicate out of
-        // `beginMoveDragSession` and do NOT re-evaluate it in
-        // `onMouseMotion`. The fast-path is a ONCE-PER-DRAG
-        // decision; its inputs MUST come from the snapshot
-        // taken at mouse-down:
-        //   - `dragFalloff` / `dragSymmetry`: just captured
-        //     above; both frozen for the drag.
-        //   - `cp.active`: cluster-pivot presence is a function
-        //     of ACEN mode + the moving set, both of which the
-        //     wrapper's `update()` freezes during a drag
-        //     (`dragAxis>=0` early-return in transform.d).
-        //   - `vertexProcessCount`: selection-derived; same
-        //     freeze.
-        // Recomputing mid-drag from a live `vts` would let the
-        // path silently flip (e.g. if falloff turned on
-        // between frames), violating the "drag == numeric"
-        // contract the parity test pins.
-        moveDragFastPath = !dragFalloff.enabled
-                        && !dragSymmetry.enabled
-                        && !cp.active
-                        && (vertexProcessCount
-                            == cast(int)mesh.vertices.length);
+        // Once-per-drag predicate; the anti-relocation contract (frozen
+        // mouse-down inputs, never recomputed mid-drag) lives on
+        // wholeMeshGpuBypassAllowed.
+        moveDragFastPath = wholeMeshGpuBypassAllowed(cp);
 
         // Re-gate the unified `frame` for this gesture (it carries the persisted,
         // possibly-chained gesture-end basis) under the same Element/Local gate the
@@ -2570,10 +2663,7 @@ noBankConsumed:
     //   - `rotDragAxisIdx` / `rotDragFastPath`: dragged ring index + the
     //     once-per-drag GPU-skip predicate.
     void beginRotateDragSession(ref VectorStack vts) {
-        buildVertexCacheIfNeeded();
-        captureFalloffForDrag(vts);
-        captureSymmetryForDrag(vts);
-        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
+        beginDragSessionPrologue(vts);
 
         // NOTE: the rotate edit SESSION is owned by `rotateSub` (its
         // `onMouseButtonDown` calls `beginEdit`, and its `deactivate`/`update`
@@ -2656,13 +2746,10 @@ noBankConsumed:
         // self-guard to 0/1/2.
 
         auto cp = queryClusterPivots(vts);
-        // Same once-per-drag freeze contract as `moveDragFastPath`; see its
-        // anti-relocation note. Do NOT recompute mid-drag.
-        rotDragFastPath = !dragFalloff.enabled
-                       && !dragSymmetry.enabled
-                       && !cp.active
-                       && (vertexProcessCount
-                           == cast(int)mesh.vertices.length);
+        // Same once-per-drag freeze contract as `moveDragFastPath`; see
+        // wholeMeshGpuBypassAllowed's anti-relocation note. Do NOT recompute
+        // mid-drag.
+        rotDragFastPath = wholeMeshGpuBypassAllowed(cp);
 
         // Re-gate the unified `frame` for this gesture (see beginMoveDragSession).
         refreshFrameValid();
@@ -2699,10 +2786,7 @@ noBankConsumed:
     // "Scale" with the scaleAccum/propScale undo hooks). The wrapper captures
     // only the GEOMETRY drag state; geometry is applied through `applyTRS`.
     void beginScaleDragSession(ref VectorStack vts) {
-        buildVertexCacheIfNeeded();
-        captureFalloffForDrag(vts);
-        captureSymmetryForDrag(vts);
-        captureSnapForDrag(vts);   // P-C: run-start snap config for the refire trigger
+        beginDragSessionPrologue(vts);
 
         // Run-scoped baseline + held-attr discipline (apply-path Phase 2): a
         // cross-bank scale reuses the run baseline + resets ONLY run.s,
@@ -2718,13 +2802,10 @@ noBankConsumed:
         beginGesture(DragBank.Scale);
 
         auto cp = queryClusterPivots(vts);
-        // Same once-per-drag freeze contract as `moveDragFastPath`; see its
-        // anti-relocation note. Do NOT recompute mid-drag.
-        scaleDragFastPath = !dragFalloff.enabled
-                         && !dragSymmetry.enabled
-                         && !cp.active
-                         && (vertexProcessCount
-                             == cast(int)mesh.vertices.length);
+        // Same once-per-drag freeze contract as `moveDragFastPath`; see
+        // wholeMeshGpuBypassAllowed's anti-relocation note. Do NOT recompute
+        // mid-drag.
+        scaleDragFastPath = wholeMeshGpuBypassAllowed(cp);
         scaleDragActive = true;
 
         // Re-gate the unified `frame` for this gesture (see beginMoveDragSession).
@@ -3081,9 +3162,7 @@ noBankConsumed:
             // snap preview. None will consume the event (dragAxis ==
             // -1 path on every sub-tool returns false after updating
             // the preview).
-            if (flagT) moveSub.onMouseMotion(e, vts);
-            if (flagR) rotateSub.onMouseMotion(e, vts);
-            if (flagS) scaleSub.onMouseMotion(e, vts);
+            foreach (sub; enabledSubs()) sub.onMouseMotion(e, vts);
         }
         // GPU bypass: forward the active sub-tool's gpuMatrix.
         // app.d reads `activeTool.gpuMatrix` to drive the shader's
@@ -3131,409 +3210,419 @@ noBankConsumed:
             // No active drag: still forward LMB-up to each sub-tool
             // so they get a chance to close screen-falloff disc
             // overlays etc. None should claim the event.
-            if (flagT) moveSub.onMouseButtonUp(e, vts);
-            if (flagR) rotateSub.onMouseButtonUp(e, vts);
-            if (flagS) scaleSub.onMouseButtonUp(e, vts);
+            foreach (sub; enabledSubs()) sub.onMouseButtonUp(e, vts);
         }
 
-        // Phase 3 — wrapper owns the GPU upload + gpuMatrix reset
-        // that MoveTool's mouseUp used to handle. One upload per
-        // drag end; the next drag opens its own dragBaseline at the
-        // refreshed mesh state.
-        if (wasMoveDrag && e.button == SDL_BUTTON_LEFT) {
-            gpu.upload(*mesh);
-            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-            needsGpuUpdate   = false;
-            moveDragFastPath = false;
-            // P-F Phase 3a (MAJOR-4) — this upload moves the GPU buffer off the
-            // frozen run baseline, so a subsequent R/S own-bank fast-path in this
-            // run must drop to a CPU re-upload (its lastFoldMatrix is relative to
-            // the frozen baseline).
-            runGpuBufferDirty = true;
-
-            // Per-gesture commit (record+consolidate, Phase 1): each move drag
-            // is its own atomic gesture, baked to history at mouse-up as a
-            // tagged in-session entry (recordViaInSession is true while the tool
-            // is live). The next LMB-down reopens a fresh edit session (beginEdit
-            // via beginMoveDragSession) at the grab point, so two consecutive
-            // drags land as TWO in-session entries — one Ctrl+Z steps each — that
-            // consolidate into ONE surviving entry at the run boundary / drop.
-            // Within a single drag the per-pixel increments already coalesce
-            // structurally (one applyTRS(baseline) per motion → one commitEdit
-            // here). Committing on mouse-up also means there is NO open gizmo
-            // session at idle, which keeps the in-session Ctrl+Z contract clean
-            // (navHistory pops one gesture, tool stays live). The panel/forms
-            // path is untouched: it opens its session via reEvaluate /
-            // applyMovePanelDelta (never this gizmo mouse-up) and stays coalesced
-            // until drop. discardAcenUserPlacedSnapshot stays on commitEdit
-            // (Q-b): the next gesture's beginEdit re-freezes the pin.
-            // BUG-1 — Move gizmo settle (DISPLAY soft-pin). The reference keeps
-            // the Move gizmo at the FULL-delta pivot on mouse-up. On mouse-up the
-            // active drag clears and computeCenter (Auto/None/Screen) recomputes
-            // the gizmo pose from the moving-set centroid.
-            //
-            //   • WITHOUT falloff every selected vert moved by the full delta, so
-            //     that centroid ALREADY equals moveSub.handler.center — the gizmo
-            //     does not move. Setting a soft pin here would only freeze a value
-            //     equal-up-to-float-noise to the live centroid, but since the live
-            //     centroid and handler.center are not bit-identical it would nudge
-            //     the published pivot off the centroid the recompute would give —
-            //     visible to the pixel-exact relocate-boundary tests. So the
-            //     no-falloff path is left EXACTLY as today (byte-identical): no
-            //     soft pin, computeCenter returns the centroid as before.
-            //
-            //   • WITH falloff the centroid is the WEIGHTED moving-set bbox-center,
-            //     which sits well short of the full delta — that is the snap-back.
-            //     Record the settled handler center (which followed the full delta
-            //     via center + worldStep every motion frame) as a DISPLAY soft-pin
-            //     so computeCenter returns it instead.
-            //
-            // Gated to the relocate-allowed modes (Auto/None/Screen) — the exact
-            // set whose computeCenter reads the soft pin and where the snap-back
-            // occurs (Select/Element/Local/Origin/Manual/Border keep their own
-            // selection-derived pivot and never read it). Deliberately NOT
-            // notifyAcenUserPlaced: it must NOT set userPlaced (a prior attempt
-            // did, breaking the cross-slot relocate boundary), so the relocate
-            // snapshot machinery is untouched. The soft pin is sticky for the next
-            // same-run gesture and cleared at the selection / ACEN-mode boundaries
-            // (where the moving set legitimately changes) and by any relocate.
-            //
-            // BUG-2 (reviewer BLOCKER) — set the soft pin BEFORE commitEdit so the
-            // commit captures the gesture-END soft state LIVE (ac.isSoftPlaced() /
-            // currentSoftCenter()) into its undo/redo hooks, alongside the
-            // userPlaced pin + pipe config. Previously this fired AFTER commitEdit,
-            // so the recorded hooks never carried the soft pin and an in-session
-            // Ctrl+Z reverted geometry but left the gizmo floating at the settled
-            // height (the update() clear is skipped on undo — undo bumps
-            // mutationVersion but not the selection hash). Reordering does not
-            // change any externally-observable steady state for a real drag: the
-            // soft pin's effect (computeCenter returning it) is identical whether
-            // published just before or just after the commit; the commit itself
-            // does not read the soft pin (it captures the userPlaced pin, which the
-            // soft pin does not touch).
-            //
-            // ALSO gated to actual MOTION (BUG-2 falloff+relocate): a Move mouse-up
-            // can be a degenerate off-gizmo relocate CLICK — its mouse-DOWN opened a
-            // moveSub session AND fired setUserPlaced (which CLEARS the soft pin),
-            // but the gesture moved ZERO distance, so it is a pure relocate, not a
-            // settle. (Such a click still builds a Move command, so a "non-null cmd"
-            // test does NOT distinguish it.) accumulatedWorldDelta is this gesture's
-            // total world translate — reset to 0 at beginMoveDragSession and summed
-            // per motion frame — so a near-zero magnitude means no drag happened.
-            // Setting the soft pin then would resurrect it on top of the explicit
-            // userPlaced relocate (both pins set). So only REQUEST the soft pin when
-            // the gesture genuinely moved geometry; commitEdit applies the pending
-            // request (BEFORE recording the cmd hooks, so the END capture sees the
-            // settle) only when a real edit command was also built. A relocate-only
-            // click leaves the soft pin cleared (userPlaced wins, as the reference
-            // does); a relocate-THEN-drag still stamps the settle (motion > 0).
-            // flex_border_handles_plan.md Phase 3 (BUG-1): request the gesture-end
-            // center settle. The relocate gate is GONE (it admitted only
-            // Auto/None/Screen and excluded Border, the flex mode) — the actual
-            // mode filter is settleGestureCenter's acenSettleAllowed() predicate,
-            // applied when commitEdit consumes the request. The falloff gate STAYS:
-            // without falloff every selected vert moves the full delta, so the live
-            // recompute already equals the settled center (no jump-back, soft pin
-            // unused) and pinning it would only nudge the published pivot off the
-            // bit-exact recompute the relocate-boundary tests pin.
-            enum float kMoveEps = 1e-5f;
-            bool gestureMoved = accumulatedWorldDelta.length() > kMoveEps;
-            // Set-or-keep discipline (stale-soft-pin fix): when a prior gesture
-            // (a moved rotate in Auto/None/Screen, or a scale under falloff)
-            // left a display soft pin, the Move mouse-up
-            // must overwrite it with the moved pivot so the gizmo follows the
-            // move instead of snapping back to the stale pin. Without a prior
-            // soft pin AND without falloff, the predicate stays false and the
-            // live centroid is already bit-exact — byte-identical baseline (R1).
-            // Routes through pendingMoveSoftPin → commitEdit → settleGestureCenter
-            // → acenSettleAllowed() so Element/Local stay excluded (R2), and the
-            // END soft-pin capture in commitEdit sees the updated state (R5).
-            bool softActive = false;
-            if (auto ac = activeAcenStage()) softActive = ac.isSoftPlaced();
-            if (gestureMoved && (currentFalloff(vts).enabled || softActive)) {
-                pendingMoveSoftPin    = true;
-                pendingMoveSoftCenter = moveSub.handler.center;
-                // COMMIT B — persist the move bank's gesture-end rendered basis
-                // (R_gesture=I ⇒ B0) so the idle gizmo holds it, gated identically
-                // to the center settle (real motion + falloff/softActive) for a
-                // byte-identical no-falloff / no-prior-pin path.
-                settleGestureBasis(moveSub.handler.axisX,
-                                   moveSub.handler.axisY,
-                                   moveSub.handler.axisZ);
-            }
-
-            if (editIsOpen())
-                commitEdit("Move");
-            // A no-op commit (no cmd built) never consumes the request; drop it so
-            // it cannot leak into an unrelated later commit.
-            pendingMoveSoftPin = false;
-
-            // In-session falloff re-grade — staleness stamp (OBJ-1). Record the
-            // mesh version this gesture left behind: a later falloff tweak at
-            // idle re-grades this gesture ONLY while the version still matches.
-            // An in-session Ctrl+Z reverts geometry (bumps the version away from
-            // the stamp), so the re-grade site then refuses — a popped gesture is
-            // never resurrected. (A brush-reset tool DISARMS instead — see
-            // armRegradeStamp: a baked stroke must not re-grade on a falloff tweak.)
-            armRegradeStamp();
-
-            // Open a FRESH re-fire window for this gesture. A run can hold more
-            // than one gesture (g1 -> tweak -> g2 -> tweak), and a tweak after g2
-            // must anchor before[] to the post-g2 geometry, NOT the stale post-g1
-            // snapshot. Clearing here makes each gesture start a fresh window:
-            // the next re-grade re-captures the anchor live. (The drop's
-            // consolidate still reverts every touched vert to the run-start state
-            // via mergeRun's first-touch before[], so the per-gesture window only
-            // governs the SINGLE in-session Ctrl+Z granularity, exactly C.)
-            refireAnchor.length = 0;
-            refirePreValid      = false;   // fresh window ⇒ recapture pre-config
-        }
-
-        // Rotate drag (principal axes OR view-ring) — wrapper owns the final
-        // upload + gpuMatrix reset (CPU verts were rebuilt by applyTRS every
-        // frame, so this uploads the already-rotated mesh; no stale-CPU, B3).
-        // MS-3.4: the view-ring rotation was a transient applyTRS parameter,
-        // not a persistent slot, so there is nothing to clear here — a later
-        // panel/falloff re-apply drives applyTRS with the default (zero) view
-        // rotation. The edit SESSION lives on rotateSub.
-        if (rotWrapperOwned && e.button == SDL_BUTTON_LEFT) {
-            gpu.upload(*mesh);
-            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-            needsGpuUpdate  = false;
-            rotDragFastPath = false;
-            // Gesture chaining (flex_border_handles_plan.md) — drop the chained
-            // ring-axis read by clearing the principal-ring index; the chained drain
-            // gate (`frame.valid && rotDragAxisIdx in 0..2`) is now false, so the
-            // NEXT gesture re-evaluates the axis from the frame this gesture's own
-            // settleGestureBasis just (re)pinned.
-            rotDragAxisIdx  = -1;
-            // P-F Phase 3a (MAJOR-4) — buffer moved off the frozen baseline; a
-            // subsequent R/S own-bank fast-path must drop to CPU re-upload.
-            runGpuBufferDirty = true;
-
-            // Per-gesture commit (record+consolidate, Phase 2): each ring drag
-            // bakes a tagged in-session entry on mouse-up (rotateSub's commitEdit
-            // attaches the angleAccum/propDeg hooks + routes via recordCommit,
-            // which is in-session because the wrapper set rotateSub's routing flag
-            // at activate). The next ring grab reopens a fresh rotateSub session,
-            // so two consecutive ring drags are two in-session entries that
-            // consolidate into one at the boundary / drop — mirroring the Move
-            // mouse-up commit above. Committing here also CLOSES the rotate
-            // sub-tool session at idle, which flips case (d): an in-session Ctrl+Z
-            // now pops one gesture rather than cancelling the whole open run.
-            //
-            // P-F Phase 3 (MAJOR-5) — unified WHOLE-STRUCT undo hook (identical
-            // across all three banks + the refire). xfStart is THIS gesture's
-            // run-START snapshot (captured at rotate mouse-down, gestureStart);
-            // xfEnd is the current run-total state. Splice them onto the rotateSub
-            // gesture entry through the wrapper-field hook pair so an in-session
-            // Ctrl+Z restores the run state to BEFORE this gesture (mergeRun
-            // first.revert/last.apply splices to run-START / run-END at the drop),
-            // and redo restores the post-gesture run state. Gated by
-            // rotateRec.runKnown so a commit with no preceding mouse-down leaves
-            // xfStart == xfEnd (inert). The SAME pre/post is recorded IDENTICALLY in
-            // recordPipeRefire so a snap/falloff mid-run refire does not strand it.
-            // A Rotate gesture only changes run.r (+ its derived euler); the T/S
-            // fields are equal between xfStart and xfEnd, so restoring the WHOLE
-            // struct is byte-equivalent to restoring run.r alone. On a cross-axis /
-            // view-ring re-bake xfStart.r was identity (re-bake zeroed it), so the
-            // hook restores the orientation to identity for the new-axis run-segment
-            // — consistent with the geometry baseline (the prior axis is carried in
-            // geometry). MATRIX-AS-TRUTH: run.r is the truth, headlessRotate is
-            // re-derived (eulerZYXFromMatrix) so the panel + matrix never drift.
-            // F3b — read (not yet consumed: buildGestureHooks below clears
-            // runKnown) so the settle-gate logic can still tell whether this
-            // gesture actually moved the orientation.
-            bool rotAbsKnown = rotateRec.runKnown;
-            XformState xfStart = rotAbsKnown ? rotateRec.runStart : run;
-            XformState xfEnd   = run;
-            // flex_border_handles_plan.md Phase 3 (BUG-1) — settle the gesture-end
-            // center through the shared helper (relocate gate GONE; the 2-entry
-            // acenSettleAllowed() predicate is the sole filter). settleGestureCenter
-            // pins the drop center and reports the END soft state so the undo hook
-            // can carry it in lockstep with the geometry (gesture-START captured at
-            // mouse-down in beginRotateDragSession). rotateSub.handler.center is the
-            // pivot (rotate never translates it), so the live recompute for a Border
-            // partial selection would otherwise drift off it after the rotation.
-            // PER-BANK settle gate (preserves each bank's ORIGINAL main condition,
-            // OR-ing in the flex/Border falloff branch). Rotate on main pinned in
-            // the RELOCATE modes (acenAllowsClickRelocate: Auto/None/Screen) — its
-            // handler.center stays at the pivot during the gesture but the recomputed
-            // bbox center after rotation is angle-dependent (asymmetric meshes), so
-            // the pin is needed even WITHOUT falloff (test_acen_softpin_settle). We
-            // keep that AND add the falloff branch so flex/Border (which always has
-            // falloff) also pins (bug 1 + rotate-basis-persist). acenSettleAllowed()
-            // still excludes Element/Local (a single drop pose can't represent the
-            // live element anchor / N cluster pivots). The "no if(mode==border)" rule
-            // holds: these are capability predicates (relocate / settle-allowed /
-            // falloff), never a mode-NAME branch. (Scale below is falloff-ONLY — main
-            // had no scale settle, so without falloff a stale scale pin must not drift
-            // the next cross-bank Move's pivot: test_run_absolute_scale.)
-            bool rotGestureMoved = rotAbsKnown && !xformRotEqual(xfStart, xfEnd);
-            bool rotSettle = rotGestureMoved && acenSettleAllowed()
-                          && (acenAllowsClickRelocate() || currentFalloff(vts).enabled);
-            bool   softEndPlaced; Vec3 softEndCenter;
-            if (rotSettle)
-                settleGestureCenter(rotateSub.handler.center, softEndPlaced, softEndCenter);
-            else { softEndPlaced = false; softEndCenter = Vec3(0, 0, 0); }
-            // COMMIT B — persist the rotate bank's gesture-end rendered basis
-            // (R_gesture·B0 = the rotated frame the ring left on screen) so the idle
-            // gizmo HOLDS it instead of snapping back to the world-snapped live
-            // currentBasis on release. Read from the rendered handler.axis* NOW (the
-            // last drag frame's render frame), before any boundary resetRun. Gated
-            // identically (same falloff+moved condition) so center+basis stay in sync.
-            if (rotSettle)
-                settleGestureBasis(rotateSub.handler.axisX,
-                                   rotateSub.handler.axisY,
-                                   rotateSub.handler.axisZ);
-            // BASIS undo splice — the rendered-frame analogue of the soft-pin pair
-            // above. frameEnd = the gesture-END `frame` settleGestureBasis just
-            // wrote (R_gesture·B0); frameStart (resolved inside buildGestureHooks)
-            // is this gesture's mouse-down capture. An in-session Ctrl+Z bumps the
-            // mutation version but not the selection hash, so clearFrame never
-            // fires and the idle renderBasis keeps the settled (rotated) basis —
-            // without this restore the gizmo would render the rotated frame over
-            // the reverted-to-pristine geometry.
-            GestureFrame frameEnd = frame;
-            // F3b — single chokepoint composing the {apply, revert} pair from
-            // rotateRec + this gesture's live END state (Rotate never restores
-            // the userPin — pinEnd is unused for a non-Move bank, Pin.init is a
-            // harmless placeholder). Consumes (clears) rotateRec.runKnown.
-            auto gh = buildGestureHooks(DragBank.Rotate, xfEnd, frameEnd,
-                                         Pin(softEndPlaced, softEndCenter), Pin.init);
-            rotateSub.wrapperFieldApplyHook  = gh.apply;
-            rotateSub.wrapperFieldRevertHook = gh.revert;
-            rotateSub.commitGesture();
-            // Clear the wrapper-field hooks so a later sub-tool commit with no
-            // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
-            // does not re-fire this gesture's stale snapshot.
-            rotateSub.wrapperFieldApplyHook  = null;
-            rotateSub.wrapperFieldRevertHook = null;
-
-            // In-session falloff re-grade — staleness stamp + window reset
-            // (OBJ-1 / OBJ-3), mirroring the Move commit above. Without these an
-            // R/S gesture after a Move tweak (or a prior R/S tweak) would leave a
-            // STALE refireAnchor + stamp: a subsequent falloff tweak would either
-            // anchor before[] to the wrong (pre-this-gesture) geometry or fire
-            // off a mismatched version. Stamp the version this rotate gesture left
-            // behind so a later falloff tweak re-grades THIS gesture only while
-            // the version still matches; clear refireAnchor so the tweak opens a
-            // FRESH re-fire window anchored to this gesture's post-recompute state.
-            armRegradeStamp();   // brush-reset tool disarms (no post-stroke re-grade)
-            refireAnchor.length = 0;
-            refirePreValid      = false;   // fresh window ⇒ recapture pre-config
-        }
-
-        // Scale single-source — wrapper owns the final upload + gpuMatrix
-        // reset (CPU verts were rebuilt by applyTRS every frame, so this
-        // uploads the already-scaled mesh; no stale-CPU). The edit SESSION
-        // lives on scaleSub.
-        if (wasScaleDrag && e.button == SDL_BUTTON_LEFT) {
-            gpu.upload(*mesh);
-            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-            needsGpuUpdate    = false;
-            scaleDragFastPath = false;
-            scaleDragActive   = false;
-            // P-F Phase 3a (MAJOR-4) — buffer moved off the frozen baseline; the
-            // NEXT same-bank Scale own-bank fast-path in this run must drop to a
-            // CPU re-upload (its lastFoldMatrix is built from the FULL run-absolute
-            // run.s against the frozen baseline → wrapAboutPivot(fold) ×
-            // this transformed buffer would double-scale).
-            runGpuBufferDirty = true;
-
-            // P-F Phase 3 (MAJOR-5) — unified WHOLE-STRUCT undo hook (identical to
-            // the Rotate hook above / the Move hook). xfStart is THIS gesture's
-            // run-START snapshot (captured at scale mouse-down, gestureStart);
-            // xfEnd is the current run-total state. Splice them onto the scaleSub
-            // gesture entry through the wrapper-field hook pair so an in-session
-            // Ctrl+Z restores the run state to BEFORE this gesture (mergeRun
-            // first.revert/last.apply splices to run-START / run-END at the drop),
-            // and redo restores the post-gesture run state. Gated by
-            // scaleRec.runKnown so a commit with no preceding mouse-down leaves
-            // xfStart == xfEnd (inert). The same pre/post is recorded IDENTICALLY in
-            // recordPipeRefire (3747-region) so a snap/falloff mid-run refire does
-            // not strand it. A Scale gesture only changes run.s; the T/R fields are
-            // equal between xfStart and xfEnd, so the whole-struct restore is
-            // byte-equivalent to restoring run.s alone.
-            // F3b — read (not yet consumed: buildGestureHooks below clears
-            // runKnown) so the settle-gate logic can still tell whether this
-            // gesture actually moved the scale factor.
-            bool scaleAbsKnown = scaleRec.runKnown;
-            XformState xfStart = scaleAbsKnown ? scaleRec.runStart : run;
-            XformState xfEnd   = run;
-            // flex_border_handles_plan.md Phase 3 (BUG-1) — Scale had NO settle at
-            // all; add it through the shared helper (the 2-entry acenSettleAllowed()
-            // predicate is the sole mode filter, no relocate gate) so a completed
-            // scale leaves the gizmo at its drop pose. Pin BEFORE commitGesture so
-            // the gesture-END snapshot the undo hook restores carries the settle;
-            // splice the soft pin into both hooks (gesture-START captured at scale
-            // mouse-down) so an in-session Ctrl+Z restores it in lockstep.
-            // PER-BANK settle gate — Scale is FALLOFF-ONLY. Main had NO scale
-            // settle at all, so WITHOUT falloff scale must NOT pin: a stale softPlaced
-            // from this scale would shift the NEXT cross-bank Move gesture's
-            // computeCenter under the relocate modes (Auto/None/Screen read softPlaced)
-            // — the scale-then-move-under-None pivot drift (test_run_absolute_scale).
-            // Scale's bbox center, UNLIKE rotate's, is NOT angle-dependent (scale about
-            // the pivot keeps the centroid put), so the no-falloff pin the rotate bank
-            // needs is unnecessary — hence falloff-only here, NOT acenAllowsClickRelocate.
-            // WITH falloff (flex / Border, which always has falloff) the pin fires so
-            // bug 1 + the basis persistence stay fixed. acenSettleAllowed() excludes
-            // Element/Local as everywhere.
-            bool scaleGestureMoved = scaleAbsKnown && !xformScaleEqual(xfStart, xfEnd);
-            bool scaleSettle = scaleGestureMoved && acenSettleAllowed()
-                            && currentFalloff(vts).enabled;
-            bool   softEndPlaced; Vec3 softEndCenter;
-            if (scaleSettle)
-                settleGestureCenter(scaleSub.handler.center, softEndPlaced, softEndCenter);
-            else { softEndPlaced = false; softEndCenter = Vec3(0, 0, 0); }
-            // COMMIT B — persist the scale bank's gesture-end rendered basis
-            // (R_gesture=I ⇒ B0) so the idle gizmo holds it after release. Gated
-            // identically so center+basis persistence stay in sync.
-            if (scaleSettle)
-                settleGestureBasis(scaleSub.handler.axisX,
-                                   scaleSub.handler.axisY,
-                                   scaleSub.handler.axisZ);
-            // BASIS undo splice (mirror of the rotate hook). Scale's R_gesture is I,
-            // so frameStart == frameEnd and the restore is an identity no-op — it
-            // exists purely so the splice composes uniformly across the three banks.
-            GestureFrame frameEnd = frame;
-            // F3b — single chokepoint composing the {apply, revert} pair from
-            // scaleRec + this gesture's live END state (Scale never restores
-            // the userPin — pinEnd is unused, Pin.init is a harmless
-            // placeholder). Consumes (clears) scaleRec.runKnown.
-            auto gh = buildGestureHooks(DragBank.Scale, xfEnd, frameEnd,
-                                         Pin(softEndPlaced, softEndCenter), Pin.init);
-            scaleSub.wrapperFieldApplyHook  = gh.apply;
-            scaleSub.wrapperFieldRevertHook = gh.revert;
-
-            // Per-gesture commit (record+consolidate, Phase 2): mirrors the
-            // rotate path above — each scale drag bakes a tagged in-session entry
-            // on mouse-up (scaleSub's commitEdit attaches the scaleAccum/propScale
-            // hooks + routes in-session), the next handle grab reopens a fresh
-            // scaleSub session, and the run consolidates at the boundary / drop.
-            scaleSub.commitGesture();
-            // Clear the wrapper-field hooks so a later sub-tool commit with no
-            // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
-            // does not re-fire this gesture's stale snapshot.
-            scaleSub.wrapperFieldApplyHook  = null;
-            scaleSub.wrapperFieldRevertHook = null;
-
-            // In-session falloff re-grade — staleness stamp + window reset
-            // (OBJ-1 / OBJ-3), mirroring the Move + Rotate commits above. Same
-            // rationale: stamp the version this scale gesture left behind and
-            // clear refireAnchor so a later falloff tweak re-grades THIS gesture
-            // from a fresh window, and an R/S gesture after a Move/R/S tweak never
-            // inherits a stale anchor.
-            armRegradeStamp();   // brush-reset tool disarms (no post-stroke re-grade)
-            refireAnchor.length = 0;
-            refirePreValid      = false;   // fresh window ⇒ recapture pre-config
-        }
+        // Per-bank drag-end epilogues (Phase B split) — one private method
+        // per bank, cut VERBATIM from this function at the wasMoveDrag /
+        // rotWrapperOwned / wasScaleDrag markers. The cross-block ORDER
+        // (Move → Rotate → Scale) is load-bearing — the side-effect order
+        // is documented fragile — so the calls below preserve it exactly.
+        if (wasMoveDrag && e.button == SDL_BUTTON_LEFT)
+            endMoveDrag(vts);
+        if (rotWrapperOwned && e.button == SDL_BUTTON_LEFT)
+            endRotateDrag(vts);
+        if (wasScaleDrag && e.button == SDL_BUTTON_LEFT)
+            endScaleDrag(vts);
 
         // moveSub + all rotate rings + scale are wrapper-owned. Anything else
         // (a sub-tool driving its own gpuMatrix) still needs the forward.
         if (!wasMoveDrag && !rotWrapperOwned && !wasScaleDrag)
             syncGpuMatrix();
         return r;
+    }
+
+    // Phase 3 — wrapper owns the GPU upload + gpuMatrix reset
+    // that MoveTool's mouseUp used to handle. One upload per
+    // drag end; the next drag opens its own dragBaseline at the
+    // refreshed mesh state.
+    private void endMoveDrag(ref VectorStack vts) {
+        gpu.upload(*mesh);
+        gpuMatrix = identityMatrix;
+        needsGpuUpdate   = false;
+        moveDragFastPath = false;
+        // P-F Phase 3a (MAJOR-4) — this upload moves the GPU buffer off the
+        // frozen run baseline, so a subsequent R/S own-bank fast-path in this
+        // run must drop to a CPU re-upload (its lastFoldMatrix is relative to
+        // the frozen baseline).
+        runGpuBufferDirty = true;
+
+        // Per-gesture commit (record+consolidate, Phase 1): each move drag
+        // is its own atomic gesture, baked to history at mouse-up as a
+        // tagged in-session entry (recordViaInSession is true while the tool
+        // is live). The next LMB-down reopens a fresh edit session (beginEdit
+        // via beginMoveDragSession) at the grab point, so two consecutive
+        // drags land as TWO in-session entries — one Ctrl+Z steps each — that
+        // consolidate into ONE surviving entry at the run boundary / drop.
+        // Within a single drag the per-pixel increments already coalesce
+        // structurally (one applyTRS(baseline) per motion → one commitEdit
+        // here). Committing on mouse-up also means there is NO open gizmo
+        // session at idle, which keeps the in-session Ctrl+Z contract clean
+        // (navHistory pops one gesture, tool stays live). The panel/forms
+        // path is untouched: it opens its session via reEvaluate /
+        // applyMovePanelDelta (never this gizmo mouse-up) and stays coalesced
+        // until drop. discardAcenUserPlacedSnapshot stays on commitEdit
+        // (Q-b): the next gesture's beginEdit re-freezes the pin.
+        // BUG-1 — Move gizmo settle (DISPLAY soft-pin). The reference keeps
+        // the Move gizmo at the FULL-delta pivot on mouse-up. On mouse-up the
+        // active drag clears and computeCenter (Auto/None/Screen) recomputes
+        // the gizmo pose from the moving-set centroid.
+        //
+        //   • WITHOUT falloff every selected vert moved by the full delta, so
+        //     that centroid ALREADY equals moveSub.handler.center — the gizmo
+        //     does not move. Setting a soft pin here would only freeze a value
+        //     equal-up-to-float-noise to the live centroid, but since the live
+        //     centroid and handler.center are not bit-identical it would nudge
+        //     the published pivot off the centroid the recompute would give —
+        //     visible to the pixel-exact relocate-boundary tests. So the
+        //     no-falloff path is left EXACTLY as today (byte-identical): no
+        //     soft pin, computeCenter returns the centroid as before.
+        //
+        //   • WITH falloff the centroid is the WEIGHTED moving-set bbox-center,
+        //     which sits well short of the full delta — that is the snap-back.
+        //     Record the settled handler center (which followed the full delta
+        //     via center + worldStep every motion frame) as a DISPLAY soft-pin
+        //     so computeCenter returns it instead.
+        //
+        // Gated to the relocate-allowed modes (Auto/None/Screen) — the exact
+        // set whose computeCenter reads the soft pin and where the snap-back
+        // occurs (Select/Element/Local/Origin/Manual/Border keep their own
+        // selection-derived pivot and never read it). Deliberately NOT
+        // notifyAcenUserPlaced: it must NOT set userPlaced (a prior attempt
+        // did, breaking the cross-slot relocate boundary), so the relocate
+        // snapshot machinery is untouched. The soft pin is sticky for the next
+        // same-run gesture and cleared at the selection / ACEN-mode boundaries
+        // (where the moving set legitimately changes) and by any relocate.
+        //
+        // BUG-2 (reviewer BLOCKER) — set the soft pin BEFORE commitEdit so the
+        // commit captures the gesture-END soft state LIVE (ac.isSoftPlaced() /
+        // currentSoftCenter()) into its undo/redo hooks, alongside the
+        // userPlaced pin + pipe config. Previously this fired AFTER commitEdit,
+        // so the recorded hooks never carried the soft pin and an in-session
+        // Ctrl+Z reverted geometry but left the gizmo floating at the settled
+        // height (the update() clear is skipped on undo — undo bumps
+        // mutationVersion but not the selection hash). Reordering does not
+        // change any externally-observable steady state for a real drag: the
+        // soft pin's effect (computeCenter returning it) is identical whether
+        // published just before or just after the commit; the commit itself
+        // does not read the soft pin (it captures the userPlaced pin, which the
+        // soft pin does not touch).
+        //
+        // ALSO gated to actual MOTION (BUG-2 falloff+relocate): a Move mouse-up
+        // can be a degenerate off-gizmo relocate CLICK — its mouse-DOWN opened a
+        // moveSub session AND fired setUserPlaced (which CLEARS the soft pin),
+        // but the gesture moved ZERO distance, so it is a pure relocate, not a
+        // settle. (Such a click still builds a Move command, so a "non-null cmd"
+        // test does NOT distinguish it.) accumulatedWorldDelta is this gesture's
+        // total world translate — reset to 0 at beginMoveDragSession and summed
+        // per motion frame — so a near-zero magnitude means no drag happened.
+        // Setting the soft pin then would resurrect it on top of the explicit
+        // userPlaced relocate (both pins set). So only REQUEST the soft pin when
+        // the gesture genuinely moved geometry; commitEdit applies the pending
+        // request (BEFORE recording the cmd hooks, so the END capture sees the
+        // settle) only when a real edit command was also built. A relocate-only
+        // click leaves the soft pin cleared (userPlaced wins, as the reference
+        // does); a relocate-THEN-drag still stamps the settle (motion > 0).
+        // flex_border_handles_plan.md Phase 3 (BUG-1): request the gesture-end
+        // center settle. The relocate gate is GONE (it admitted only
+        // Auto/None/Screen and excluded Border, the flex mode) — the actual
+        // mode filter is settleGestureCenter's acenSettleAllowed() predicate,
+        // applied when commitEdit consumes the request. The falloff gate STAYS:
+        // without falloff every selected vert moves the full delta, so the live
+        // recompute already equals the settled center (no jump-back, soft pin
+        // unused) and pinning it would only nudge the published pivot off the
+        // bit-exact recompute the relocate-boundary tests pin.
+        enum float kMoveEps = 1e-5f;
+        bool gestureMoved = accumulatedWorldDelta.length() > kMoveEps;
+        // Set-or-keep discipline (stale-soft-pin fix): when a prior gesture
+        // (a moved rotate in Auto/None/Screen, or a scale under falloff)
+        // left a display soft pin, the Move mouse-up
+        // must overwrite it with the moved pivot so the gizmo follows the
+        // move instead of snapping back to the stale pin. Without a prior
+        // soft pin AND without falloff, the predicate stays false and the
+        // live centroid is already bit-exact — byte-identical baseline (R1).
+        // Routes through pendingMoveSoftPin → commitEdit → settleGestureCenter
+        // → acenSettleAllowed() so Element/Local stay excluded (R2), and the
+        // END soft-pin capture in commitEdit sees the updated state (R5).
+        bool softActive = false;
+        if (auto ac = activeAcenStage()) softActive = ac.isSoftPlaced();
+        if (gestureMoved && (currentFalloff(vts).enabled || softActive)) {
+            pendingMoveSoftPin    = true;
+            pendingMoveSoftCenter = moveSub.handler.center;
+            // COMMIT B — persist the move bank's gesture-end rendered basis
+            // (R_gesture=I ⇒ B0) so the idle gizmo holds it, gated identically
+            // to the center settle (real motion + falloff/softActive) for a
+            // byte-identical no-falloff / no-prior-pin path.
+            settleGestureBasis(moveSub.handler.axisX,
+                               moveSub.handler.axisY,
+                               moveSub.handler.axisZ);
+        }
+
+        if (editIsOpen())
+            commitEdit("Move");
+        // A no-op commit (no cmd built) never consumes the request; drop it so
+        // it cannot leak into an unrelated later commit.
+        pendingMoveSoftPin = false;
+
+        // In-session falloff re-grade — staleness stamp (OBJ-1). Record the
+        // mesh version this gesture left behind: a later falloff tweak at
+        // idle re-grades this gesture ONLY while the version still matches.
+        // An in-session Ctrl+Z reverts geometry (bumps the version away from
+        // the stamp), so the re-grade site then refuses — a popped gesture is
+        // never resurrected. (A brush-reset tool DISARMS instead — see
+        // armRegradeStamp: a baked stroke must not re-grade on a falloff tweak.)
+        armRegradeStamp();
+
+        // Open a FRESH re-fire window for this gesture. A run can hold more
+        // than one gesture (g1 -> tweak -> g2 -> tweak), and a tweak after g2
+        // must anchor before[] to the post-g2 geometry, NOT the stale post-g1
+        // snapshot. Clearing here makes each gesture start a fresh window:
+        // the next re-grade re-captures the anchor live. (The drop's
+        // consolidate still reverts every touched vert to the run-start state
+        // via mergeRun's first-touch before[], so the per-gesture window only
+        // governs the SINGLE in-session Ctrl+Z granularity, exactly C.)
+        refireAnchor.length = 0;
+        refirePreValid      = false;   // fresh window ⇒ recapture pre-config
+    }
+
+    // Rotate drag (principal axes OR view-ring) — wrapper owns the final
+    // upload + gpuMatrix reset (CPU verts were rebuilt by applyTRS every
+    // frame, so this uploads the already-rotated mesh; no stale-CPU, B3).
+    // MS-3.4: the view-ring rotation was a transient applyTRS parameter,
+    // not a persistent slot, so there is nothing to clear here — a later
+    // panel/falloff re-apply drives applyTRS with the default (zero) view
+    // rotation. The edit SESSION lives on rotateSub.
+    private void endRotateDrag(ref VectorStack vts) {
+        gpu.upload(*mesh);
+        gpuMatrix = identityMatrix;
+        needsGpuUpdate  = false;
+        rotDragFastPath = false;
+        // Gesture chaining (flex_border_handles_plan.md) — drop the chained
+        // ring-axis read by clearing the principal-ring index; the chained drain
+        // gate (`frame.valid && rotDragAxisIdx in 0..2`) is now false, so the
+        // NEXT gesture re-evaluates the axis from the frame this gesture's own
+        // settleGestureBasis just (re)pinned.
+        rotDragAxisIdx  = -1;
+        // P-F Phase 3a (MAJOR-4) — buffer moved off the frozen baseline; a
+        // subsequent R/S own-bank fast-path must drop to CPU re-upload.
+        runGpuBufferDirty = true;
+
+        // Per-gesture commit (record+consolidate, Phase 2): each ring drag
+        // bakes a tagged in-session entry on mouse-up (rotateSub's commitEdit
+        // attaches the angleAccum/propDeg hooks + routes via recordCommit,
+        // which is in-session because the wrapper set rotateSub's routing flag
+        // at activate). The next ring grab reopens a fresh rotateSub session,
+        // so two consecutive ring drags are two in-session entries that
+        // consolidate into one at the boundary / drop — mirroring the Move
+        // mouse-up commit above. Committing here also CLOSES the rotate
+        // sub-tool session at idle, which flips case (d): an in-session Ctrl+Z
+        // now pops one gesture rather than cancelling the whole open run.
+        //
+        // P-F Phase 3 (MAJOR-5) — unified WHOLE-STRUCT undo hook (identical
+        // across all three banks + the refire). xfStart is THIS gesture's
+        // run-START snapshot (captured at rotate mouse-down, gestureStart);
+        // xfEnd is the current run-total state. Splice them onto the rotateSub
+        // gesture entry through the wrapper-field hook pair so an in-session
+        // Ctrl+Z restores the run state to BEFORE this gesture (mergeRun
+        // first.revert/last.apply splices to run-START / run-END at the drop),
+        // and redo restores the post-gesture run state. Gated by
+        // rotateRec.runKnown so a commit with no preceding mouse-down leaves
+        // xfStart == xfEnd (inert). The SAME pre/post is recorded IDENTICALLY in
+        // recordPipeRefire so a snap/falloff mid-run refire does not strand it.
+        // A Rotate gesture only changes run.r (+ its derived euler); the T/S
+        // fields are equal between xfStart and xfEnd, so restoring the WHOLE
+        // struct is byte-equivalent to restoring run.r alone. On a cross-axis /
+        // view-ring re-bake xfStart.r was identity (re-bake zeroed it), so the
+        // hook restores the orientation to identity for the new-axis run-segment
+        // — consistent with the geometry baseline (the prior axis is carried in
+        // geometry). MATRIX-AS-TRUTH: run.r is the truth, headlessRotate is
+        // re-derived (eulerZYXFromMatrix) so the panel + matrix never drift.
+        // F3b — read (not yet consumed: buildGestureHooks below clears
+        // runKnown) so the settle-gate logic can still tell whether this
+        // gesture actually moved the orientation.
+        bool rotAbsKnown = rotateRec.runKnown;
+        XformState xfStart = rotAbsKnown ? rotateRec.runStart : run;
+        XformState xfEnd   = run;
+        // flex_border_handles_plan.md Phase 3 (BUG-1) — settle the gesture-end
+        // center through the shared helper (relocate gate GONE; the 2-entry
+        // acenSettleAllowed() predicate is the sole filter). settleGestureCenter
+        // pins the drop center and reports the END soft state so the undo hook
+        // can carry it in lockstep with the geometry (gesture-START captured at
+        // mouse-down in beginRotateDragSession). rotateSub.handler.center is the
+        // pivot (rotate never translates it), so the live recompute for a Border
+        // partial selection would otherwise drift off it after the rotation.
+        // PER-BANK settle gate (preserves each bank's ORIGINAL main condition,
+        // OR-ing in the flex/Border falloff branch). Rotate on main pinned in
+        // the RELOCATE modes (acenAllowsClickRelocate: Auto/None/Screen) — its
+        // handler.center stays at the pivot during the gesture but the recomputed
+        // bbox center after rotation is angle-dependent (asymmetric meshes), so
+        // the pin is needed even WITHOUT falloff (test_acen_softpin_settle). We
+        // keep that AND add the falloff branch so flex/Border (which always has
+        // falloff) also pins (bug 1 + rotate-basis-persist). acenSettleAllowed()
+        // still excludes Element/Local (a single drop pose can't represent the
+        // live element anchor / N cluster pivots). The "no if(mode==border)" rule
+        // holds: these are capability predicates (relocate / settle-allowed /
+        // falloff), never a mode-NAME branch. (Scale below is falloff-ONLY — main
+        // had no scale settle, so without falloff a stale scale pin must not drift
+        // the next cross-bank Move's pivot: test_run_absolute_scale.)
+        bool rotGestureMoved = rotAbsKnown && !xformRotEqual(xfStart, xfEnd);
+        bool rotSettle = rotGestureMoved && acenSettleAllowed()
+                      && (acenAllowsClickRelocate() || currentFalloff(vts).enabled);
+        bool   softEndPlaced; Vec3 softEndCenter;
+        if (rotSettle)
+            settleGestureCenter(rotateSub.handler.center, softEndPlaced, softEndCenter);
+        else { softEndPlaced = false; softEndCenter = Vec3(0, 0, 0); }
+        // COMMIT B — persist the rotate bank's gesture-end rendered basis
+        // (R_gesture·B0 = the rotated frame the ring left on screen) so the idle
+        // gizmo HOLDS it instead of snapping back to the world-snapped live
+        // currentBasis on release. Read from the rendered handler.axis* NOW (the
+        // last drag frame's render frame), before any boundary resetRun. Gated
+        // identically (same falloff+moved condition) so center+basis stay in sync.
+        if (rotSettle)
+            settleGestureBasis(rotateSub.handler.axisX,
+                               rotateSub.handler.axisY,
+                               rotateSub.handler.axisZ);
+        // BASIS undo splice — the rendered-frame analogue of the soft-pin pair
+        // above. frameEnd = the gesture-END `frame` settleGestureBasis just
+        // wrote (R_gesture·B0); frameStart (resolved inside buildGestureHooks)
+        // is this gesture's mouse-down capture. An in-session Ctrl+Z bumps the
+        // mutation version but not the selection hash, so clearFrame never
+        // fires and the idle renderBasis keeps the settled (rotated) basis —
+        // without this restore the gizmo would render the rotated frame over
+        // the reverted-to-pristine geometry.
+        GestureFrame frameEnd = frame;
+        // F3b — single chokepoint composing the {apply, revert} pair from
+        // rotateRec + this gesture's live END state (Rotate never restores
+        // the userPin — pinEnd is unused for a non-Move bank, Pin.init is a
+        // harmless placeholder). Consumes (clears) rotateRec.runKnown.
+        auto gh = buildGestureHooks(DragBank.Rotate, xfEnd, frameEnd,
+                                     Pin(softEndPlaced, softEndCenter), Pin.init);
+        rotateSub.wrapperFieldApplyHook  = gh.apply;
+        rotateSub.wrapperFieldRevertHook = gh.revert;
+        rotateSub.commitGesture();
+        // Clear the wrapper-field hooks so a later sub-tool commit with no
+        // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
+        // does not re-fire this gesture's stale snapshot.
+        rotateSub.wrapperFieldApplyHook  = null;
+        rotateSub.wrapperFieldRevertHook = null;
+
+        // In-session falloff re-grade — staleness stamp + window reset
+        // (OBJ-1 / OBJ-3), mirroring the Move commit above. Without these an
+        // R/S gesture after a Move tweak (or a prior R/S tweak) would leave a
+        // STALE refireAnchor + stamp: a subsequent falloff tweak would either
+        // anchor before[] to the wrong (pre-this-gesture) geometry or fire
+        // off a mismatched version. Stamp the version this rotate gesture left
+        // behind so a later falloff tweak re-grades THIS gesture only while
+        // the version still matches; clear refireAnchor so the tweak opens a
+        // FRESH re-fire window anchored to this gesture's post-recompute state.
+        armRegradeStamp();   // brush-reset tool disarms (no post-stroke re-grade)
+        refireAnchor.length = 0;
+        refirePreValid      = false;   // fresh window ⇒ recapture pre-config
+    }
+
+    // Scale single-source — wrapper owns the final upload + gpuMatrix
+    // reset (CPU verts were rebuilt by applyTRS every frame, so this
+    // uploads the already-scaled mesh; no stale-CPU). The edit SESSION
+    // lives on scaleSub.
+    private void endScaleDrag(ref VectorStack vts) {
+        gpu.upload(*mesh);
+        gpuMatrix = identityMatrix;
+        needsGpuUpdate    = false;
+        scaleDragFastPath = false;
+        scaleDragActive   = false;
+        // P-F Phase 3a (MAJOR-4) — buffer moved off the frozen baseline; the
+        // NEXT same-bank Scale own-bank fast-path in this run must drop to a
+        // CPU re-upload (its lastFoldMatrix is built from the FULL run-absolute
+        // run.s against the frozen baseline → wrapAboutPivot(fold) ×
+        // this transformed buffer would double-scale).
+        runGpuBufferDirty = true;
+
+        // P-F Phase 3 (MAJOR-5) — unified WHOLE-STRUCT undo hook (identical to
+        // the Rotate hook above / the Move hook). xfStart is THIS gesture's
+        // run-START snapshot (captured at scale mouse-down, gestureStart);
+        // xfEnd is the current run-total state. Splice them onto the scaleSub
+        // gesture entry through the wrapper-field hook pair so an in-session
+        // Ctrl+Z restores the run state to BEFORE this gesture (mergeRun
+        // first.revert/last.apply splices to run-START / run-END at the drop),
+        // and redo restores the post-gesture run state. Gated by
+        // scaleRec.runKnown so a commit with no preceding mouse-down leaves
+        // xfStart == xfEnd (inert). The same pre/post is recorded IDENTICALLY in
+        // recordPipeRefire (3747-region) so a snap/falloff mid-run refire does
+        // not strand it. A Scale gesture only changes run.s; the T/R fields are
+        // equal between xfStart and xfEnd, so the whole-struct restore is
+        // byte-equivalent to restoring run.s alone.
+        // F3b — read (not yet consumed: buildGestureHooks below clears
+        // runKnown) so the settle-gate logic can still tell whether this
+        // gesture actually moved the scale factor.
+        bool scaleAbsKnown = scaleRec.runKnown;
+        XformState xfStart = scaleAbsKnown ? scaleRec.runStart : run;
+        XformState xfEnd   = run;
+        // flex_border_handles_plan.md Phase 3 (BUG-1) — Scale had NO settle at
+        // all; add it through the shared helper (the 2-entry acenSettleAllowed()
+        // predicate is the sole mode filter, no relocate gate) so a completed
+        // scale leaves the gizmo at its drop pose. Pin BEFORE commitGesture so
+        // the gesture-END snapshot the undo hook restores carries the settle;
+        // splice the soft pin into both hooks (gesture-START captured at scale
+        // mouse-down) so an in-session Ctrl+Z restores it in lockstep.
+        // PER-BANK settle gate — Scale is FALLOFF-ONLY. Main had NO scale
+        // settle at all, so WITHOUT falloff scale must NOT pin: a stale softPlaced
+        // from this scale would shift the NEXT cross-bank Move gesture's
+        // computeCenter under the relocate modes (Auto/None/Screen read softPlaced)
+        // — the scale-then-move-under-None pivot drift (test_run_absolute_scale).
+        // Scale's bbox center, UNLIKE rotate's, is NOT angle-dependent (scale about
+        // the pivot keeps the centroid put), so the no-falloff pin the rotate bank
+        // needs is unnecessary — hence falloff-only here, NOT acenAllowsClickRelocate.
+        // WITH falloff (flex / Border, which always has falloff) the pin fires so
+        // bug 1 + the basis persistence stay fixed. acenSettleAllowed() excludes
+        // Element/Local as everywhere.
+        bool scaleGestureMoved = scaleAbsKnown && !xformScaleEqual(xfStart, xfEnd);
+        bool scaleSettle = scaleGestureMoved && acenSettleAllowed()
+                        && currentFalloff(vts).enabled;
+        bool   softEndPlaced; Vec3 softEndCenter;
+        if (scaleSettle)
+            settleGestureCenter(scaleSub.handler.center, softEndPlaced, softEndCenter);
+        else { softEndPlaced = false; softEndCenter = Vec3(0, 0, 0); }
+        // COMMIT B — persist the scale bank's gesture-end rendered basis
+        // (R_gesture=I ⇒ B0) so the idle gizmo holds it after release. Gated
+        // identically so center+basis persistence stay in sync.
+        if (scaleSettle)
+            settleGestureBasis(scaleSub.handler.axisX,
+                               scaleSub.handler.axisY,
+                               scaleSub.handler.axisZ);
+        // BASIS undo splice (mirror of the rotate hook). Scale's R_gesture is I,
+        // so frameStart == frameEnd and the restore is an identity no-op — it
+        // exists purely so the splice composes uniformly across the three banks.
+        GestureFrame frameEnd = frame;
+        // F3b — single chokepoint composing the {apply, revert} pair from
+        // scaleRec + this gesture's live END state (Scale never restores
+        // the userPin — pinEnd is unused, Pin.init is a harmless
+        // placeholder). Consumes (clears) scaleRec.runKnown.
+        auto gh = buildGestureHooks(DragBank.Scale, xfEnd, frameEnd,
+                                     Pin(softEndPlaced, softEndCenter), Pin.init);
+        scaleSub.wrapperFieldApplyHook  = gh.apply;
+        scaleSub.wrapperFieldRevertHook = gh.revert;
+
+        // Per-gesture commit (record+consolidate, Phase 2): mirrors the
+        // rotate path above — each scale drag bakes a tagged in-session entry
+        // on mouse-up (scaleSub's commitEdit attaches the scaleAccum/propScale
+        // hooks + routes in-session), the next handle grab reopens a fresh
+        // scaleSub session, and the run consolidates at the boundary / drop.
+        scaleSub.commitGesture();
+        // Clear the wrapper-field hooks so a later sub-tool commit with no
+        // wrapper splice (e.g. commitSessionIfOpen at a cross-bank boundary)
+        // does not re-fire this gesture's stale snapshot.
+        scaleSub.wrapperFieldApplyHook  = null;
+        scaleSub.wrapperFieldRevertHook = null;
+
+        // In-session falloff re-grade — staleness stamp + window reset
+        // (OBJ-1 / OBJ-3), mirroring the Move + Rotate commits above. Same
+        // rationale: stamp the version this scale gesture left behind and
+        // clear refireAnchor so a later falloff tweak re-grades THIS gesture
+        // from a fresh window, and an R/S gesture after a Move/R/S tweak never
+        // inherits a stale anchor.
+        armRegradeStamp();   // brush-reset tool disarms (no post-stroke re-grade)
+        refireAnchor.length = 0;
+        refirePreValid      = false;   // fresh window ⇒ recapture pre-config
     }
 
     // Single geometry-apply entry point — the "evaluate" of this tool.
@@ -3593,8 +3682,7 @@ noBankConsumed:
              ~ "edit-session start)");
 
         void restoreBaseline() {
-            foreach (i; 0 .. mesh.vertices.length)
-                mesh.vertices[i] = baseline[i];
+            restoreBaselinePrefix(mesh.vertices, baseline);
         }
 
         if (samplePipeFromBaseline) {
@@ -3683,19 +3771,6 @@ noBankConsumed:
         {
             import std.math : PI, fabs;
 
-            // Each pass's matrix kernel takes an ORDINAL-parallel source buffer
-            // (source[k] is the current position of vertex
-            // vertexIndicesToProcess[k]) — see applyXformMatrix's array-layout
-            // contract. ordinalSrc() gathers the LIVE post-prior-pass positions
-            // for the moving set so each pass reads the previous pass's output.
-            Vec3[] ordinalSrc() {
-                auto s = new Vec3[](vertexIndicesToProcess.length);
-                foreach (k, vi; vertexIndicesToProcess)
-                    s[k] = (vi >= 0 && vi < cast(int)mesh.vertices.length)
-                         ? mesh.vertices[vi] : Vec3(0, 0, 0);
-                return s;
-            }
-
             bool hasT = flagT && (run.t.x != 0
                               || run.t.y != 0
                               || run.t.z != 0);
@@ -3719,154 +3794,9 @@ noBankConsumed:
                 applyFold(baseline, pivot, bX, bY, bZ, cp, ap,
                           hasT, hasS, viewAxis, viewAngleDeg);
             } else {
-
-            // ---- T pass -------------------------------------------------------
-            if (hasT) {
-                if (cp.active && ap.active) {
-                    // Per-cluster translate: falloff-EXEMPT (w==1, no falloff),
-                    // signed per-cluster axes — matches applyTranslatePerCluster.
-                    // One pivot-relative translation matrix per cluster from its
-                    // OWN right/up/fwd frame, selected per vertex via clusterM.
-                    float[16][] clusterM;
-                    clusterM.length = ap.right.length;
-                    foreach (cid; 0 .. ap.right.length) {
-                        Vec3 wd = ap.right[cid] * run.t.x
-                                + ap.up[cid]    * run.t.y
-                                + ap.fwd[cid]   * run.t.z;
-                        clusterM[cid] = translationMatrix(wd);
-                    }
-                    FalloffPacket noFo;  noFo.enabled = false;   // w==1 exempt
-                    applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                     pivot, identityMatrix, Vec3(0, 0, 0),
-                                     blendModeForMeasure(),
-                                     noFo, cachedVp, cp, ap, clusterM,
-                                     dragSymmetry, toProcess);
-                } else {
-                    // Global basis: delta = bX·TX + bY·TY + bZ·TZ; weight at the
-                    // LIVE position (source == weightVerts == current scratch),
-                    // matching applyTranslateIncremental.
-                    Vec3 delta = bX * run.t.x
-                               + bY * run.t.y
-                               + bZ * run.t.z;
-                    applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                     pivot, translationMatrix(delta), Vec3(0, 0, 0),
-                                     blendModeForMeasure(),
-                                     dragFalloff, cachedVp, cp, ap, null,
-                                     dragSymmetry, toProcess);
-                }
-            }
-
-            // ---- R.x / R.y / R.z + view-ring passes --------------------------
-            // Each rotation about a basis axis (or per-cluster axis,
-            // dragAxisIdx 0/1/2); weight at the LIVE position. Per-cluster
-            // rotate is LIVE-weighted, NOT falloff-exempt (unlike per-cluster
-            // translate). The matrix is origin-fixing; applyXformMatrix
-            // re-applies the (possibly per-cluster) pivot.
-            if (flagR) {
-                if (headlessRotate.x != 0)
-                    applyRotatePass(bX, 0,
-                        headlessRotate.x * cast(float)(PI / 180.0),
-                        pivot, cp, ap, &ordinalSrc);
-                if (headlessRotate.y != 0)
-                    applyRotatePass(bY, 1,
-                        headlessRotate.y * cast(float)(PI / 180.0),
-                        pivot, cp, ap, &ordinalSrc);
-                if (headlessRotate.z != 0)
-                    applyRotatePass(bZ, 2,
-                        headlessRotate.z * cast(float)(PI / 180.0),
-                        pivot, cp, ap, &ordinalSrc);
-
-                // View-ring rotation: a single rotation about the arbitrary
-                // camera-forward axis. dragAxisIdx == -1 keeps the axis as-is
-                // (no per-cluster substitution) and applies one weighted
-                // rotation about one axis (correct under falloff). A view
-                // rotation is global by definition. Nonzero only during a live
-                // view-ring drag.
-                bool hasViewRot = viewAngleDeg != 0
-                    && (viewAxis.x != 0
-                     || viewAxis.y != 0
-                     || viewAxis.z != 0);
-                if (hasViewRot)
-                    applyRotatePass(viewAxis, -1,
-                        viewAngleDeg * cast(float)(PI / 180.0),
-                        pivot, cp, ap, &ordinalSrc);
-            }
-
-            // ---- S pass -------------------------------------------------------
-            if (hasS) {
-                // compoundPasses != 1 (Selection/flex falloff's scale pow) has
-                // NO matrix expression (plan F2). The matrix path cannot carry
-                // it, so route this one pass through the per-component scale
-                // kernel — which applies pow(s_eff, compoundPasses) for real —
-                // exactly as the legacy chain did. compoundPasses is published
-                // 1.0 everywhere in the current tree, so the matrix branch is
-                // the live path; this preserves the dormant pow path correctly.
-                float passes = dragFalloff.compoundPasses > 0.0f
-                             ? dragFalloff.compoundPasses : 1.0f;
-                if (fabs(passes - 1.0f) > 1e-4f) {
-                    Vec3[] activation = mesh.vertices.dup;
-                    // Per-vert weight at the pre-chain BASELINE position.
-                    applyScaleFromActivation(mesh, vertexIndicesToProcess,
-                                             activation, pivot,
-                                             bX, bY, bZ,
-                                             run.s,
-                                             dragFalloff, cachedVp,
-                                             cp, ap, dragSymmetry, toProcess,
-                                             baseline);
-                } else {
-                    // Matrix path. Source = current scratch (post-T/R), gathered
-                    // ordinal-parallel; weight at the pre-chain BASELINE
-                    // (weightVerts == baseline, mesh-length vid-indexed). The
-                    // scale matrix is origin-fixing (built around Vec3(0));
-                    // applyXformMatrix re-applies the pivot. Per-cluster scale
-                    // uses each cluster's OWN right/up/fwd frame (matching the
-                    // per-component kernel's axesFor()), selected via clusterM.
-                    float[16][] clusterM = null;
-                    if (cp.active && ap.active) {
-                        clusterM = new float[16][](ap.right.length);
-                        foreach (cid; 0 .. ap.right.length)
-                            clusterM[cid] = pivotScaleMatrixBasis(
-                                Vec3(0, 0, 0),
-                                ap.right[cid], ap.up[cid], ap.fwd[cid],
-                                run.s.x, run.s.y,
-                                run.s.z);
-                    }
-                    applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                     pivot,
-                                     pivotScaleMatrixBasis(Vec3(0, 0, 0),
-                                         bX, bY, bZ,
-                                         run.s.x, run.s.y,
-                                         run.s.z),
-                                     Vec3(0, 0, 0),
-                                     blendModeForMeasure(),
-                                     dragFalloff, cachedVp, cp, ap, clusterM,
-                                     dragSymmetry, toProcess,
-                                     /*weightVerts=*/ baseline);
-                }
-            }
-
-            // Symmetry mirror for the DORMANT legacy pow-scale chain. The
-            // in-kernel mirror tail was deleted in Stage 2 (the live fold owns
-            // the mirror via Pass B). This branch is only reached when
-            // compoundPasses != 1 (Selection-falloff scale pow — dormant in the
-            // current tree), so it keeps the legacy POSITION-COPY mirror at its
-            // own call site (per the plan: legacy/per-cluster paths retain
-            // position-copy until their own stage). One copy after the whole
-            // chain, OR-ing mirror verts into toProcess for upload/undo.
-            if (dragSymmetry.enabled
-                && dragSymmetry.pairOf.length == mesh.vertices.length) {
-                import symmetry : applySymmetryMirror;
-                applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
-            }
-            // Change-notification (Stage 1): the dormant legacy per-pass /
-            // pow-scale chain also writes positions in place WITHOUT a version
-            // bump (mid-drag stability). Mirror applyFold's note so this path
-            // publishes Position too — ONE note for the whole T/R/S chain (never
-            // per pass, never per vertex). compoundPasses is 1.0 everywhere in
-            // the current tree, so this branch is dormant; the note keeps it
-            // correct if the pow path is ever re-enabled.
-            mesh.noteChange(MeshEditScope.Position);
-            }  // MS-4.3 — close legacy per-pass else (per-cluster / pow-scale)
+                applyTRSLegacyPowPath(baseline, pivot, bX, bY, bZ, cp, ap,
+                                      hasT, hasS, viewAxis, viewAngleDeg);
+            }  // MS-4.3 — legacy per-pass chain → applyTRSLegacyPowPath
         }
 
         // (MS-3.6) The MS-2 measure-only per-pass shadow was retired here: it
@@ -3934,6 +3864,180 @@ noBankConsumed:
         return true;
     }
 
+    // MS-4.3/4.4 — the DORMANT legacy per-pass T→R→S chain, reached only when
+    // dragFalloff.compoundPasses != 1 (the pow-scale S pass has no matrix
+    // form, F2; compoundPasses is published 1.0 everywhere in the current
+    // tree). Cut VERBATIM from applyTRS's `else` branch (Phase B); the
+    // ordinalSrc gather moved with it (that branch was its only consumer).
+    // The parameter list is exactly the set of applyTRS locals the branch
+    // read; all mutation still goes through member state (mesh / toProcess).
+    void applyTRSLegacyPowPath(Vec3[] baseline, Vec3 pivot,
+                               Vec3 bX, Vec3 bY, Vec3 bZ,
+                               TransformTool.ClusterPivots cp,
+                               TransformTool.ClusterAxes ap,
+                               bool hasT, bool hasS,
+                               Vec3 viewAxis, float viewAngleDeg) {
+        import std.math : PI, fabs;
+        // Each pass's matrix kernel takes an ORDINAL-parallel source buffer
+        // (source[k] is the current position of vertex
+        // vertexIndicesToProcess[k]) — see applyXformMatrix's array-layout
+        // contract. ordinalSrc() gathers the LIVE post-prior-pass positions
+        // for the moving set so each pass reads the previous pass's output.
+        Vec3[] ordinalSrc() {
+            auto s = new Vec3[](vertexIndicesToProcess.length);
+            foreach (k, vi; vertexIndicesToProcess)
+                s[k] = (vi >= 0 && vi < cast(int)mesh.vertices.length)
+                     ? mesh.vertices[vi] : Vec3(0, 0, 0);
+            return s;
+        }
+        // ---- T pass -------------------------------------------------------
+        if (hasT) {
+            if (cp.active && ap.active) {
+                // Per-cluster translate: falloff-EXEMPT (w==1, no falloff),
+                // signed per-cluster axes — matches applyTranslatePerCluster.
+                // One pivot-relative translation matrix per cluster from its
+                // OWN right/up/fwd frame, selected per vertex via clusterM.
+                float[16][] clusterM;
+                clusterM.length = ap.right.length;
+                foreach (cid; 0 .. ap.right.length) {
+                    Vec3 wd = ap.right[cid] * run.t.x
+                            + ap.up[cid]    * run.t.y
+                            + ap.fwd[cid]   * run.t.z;
+                    clusterM[cid] = translationMatrix(wd);
+                }
+                FalloffPacket noFo;  noFo.enabled = false;   // w==1 exempt
+                applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
+                                 pivot, identityMatrix, Vec3(0, 0, 0),
+                                 blendModeForMeasure(),
+                                 noFo, cachedVp, cp, ap, clusterM,
+                                 dragSymmetry, toProcess);
+            } else {
+                // Global basis: delta = bX·TX + bY·TY + bZ·TZ; weight at the
+                // LIVE position (source == weightVerts == current scratch),
+                // matching applyTranslateIncremental.
+                Vec3 delta = bX * run.t.x
+                           + bY * run.t.y
+                           + bZ * run.t.z;
+                applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
+                                 pivot, translationMatrix(delta), Vec3(0, 0, 0),
+                                 blendModeForMeasure(),
+                                 dragFalloff, cachedVp, cp, ap, null,
+                                 dragSymmetry, toProcess);
+            }
+        }
+
+        // ---- R.x / R.y / R.z + view-ring passes --------------------------
+        // Each rotation about a basis axis (or per-cluster axis,
+        // dragAxisIdx 0/1/2); weight at the LIVE position. Per-cluster
+        // rotate is LIVE-weighted, NOT falloff-exempt (unlike per-cluster
+        // translate). The matrix is origin-fixing; applyXformMatrix
+        // re-applies the (possibly per-cluster) pivot.
+        if (flagR) {
+            if (headlessRotate.x != 0)
+                applyRotatePass(bX, 0,
+                    headlessRotate.x * cast(float)(PI / 180.0),
+                    pivot, cp, ap, &ordinalSrc);
+            if (headlessRotate.y != 0)
+                applyRotatePass(bY, 1,
+                    headlessRotate.y * cast(float)(PI / 180.0),
+                    pivot, cp, ap, &ordinalSrc);
+            if (headlessRotate.z != 0)
+                applyRotatePass(bZ, 2,
+                    headlessRotate.z * cast(float)(PI / 180.0),
+                    pivot, cp, ap, &ordinalSrc);
+
+            // View-ring rotation: a single rotation about the arbitrary
+            // camera-forward axis. dragAxisIdx == -1 keeps the axis as-is
+            // (no per-cluster substitution) and applies one weighted
+            // rotation about one axis (correct under falloff). A view
+            // rotation is global by definition. Nonzero only during a live
+            // view-ring drag.
+            bool hasViewRot = viewAngleDeg != 0
+                && (viewAxis.x != 0
+                 || viewAxis.y != 0
+                 || viewAxis.z != 0);
+            if (hasViewRot)
+                applyRotatePass(viewAxis, -1,
+                    viewAngleDeg * cast(float)(PI / 180.0),
+                    pivot, cp, ap, &ordinalSrc);
+        }
+
+        // ---- S pass -------------------------------------------------------
+        if (hasS) {
+            // compoundPasses != 1 (Selection/flex falloff's scale pow) has
+            // NO matrix expression (plan F2). The matrix path cannot carry
+            // it, so route this one pass through the per-component scale
+            // kernel — which applies pow(s_eff, compoundPasses) for real —
+            // exactly as the legacy chain did. compoundPasses is published
+            // 1.0 everywhere in the current tree, so the matrix branch is
+            // the live path; this preserves the dormant pow path correctly.
+            float passes = dragFalloff.compoundPasses > 0.0f
+                         ? dragFalloff.compoundPasses : 1.0f;
+            if (fabs(passes - 1.0f) > 1e-4f) {
+                Vec3[] activation = mesh.vertices.dup;
+                // Per-vert weight at the pre-chain BASELINE position.
+                applyScaleFromActivation(mesh, vertexIndicesToProcess,
+                                         activation, pivot,
+                                         bX, bY, bZ,
+                                         run.s,
+                                         dragFalloff, cachedVp,
+                                         cp, ap, dragSymmetry, toProcess,
+                                         baseline);
+            } else {
+                // Matrix path. Source = current scratch (post-T/R), gathered
+                // ordinal-parallel; weight at the pre-chain BASELINE
+                // (weightVerts == baseline, mesh-length vid-indexed). The
+                // scale matrix is origin-fixing (built around Vec3(0));
+                // applyXformMatrix re-applies the pivot. Per-cluster scale
+                // uses each cluster's OWN right/up/fwd frame (matching the
+                // per-component kernel's axesFor()), selected via clusterM.
+                float[16][] clusterM = null;
+                if (cp.active && ap.active) {
+                    clusterM = new float[16][](ap.right.length);
+                    foreach (cid; 0 .. ap.right.length)
+                        clusterM[cid] = pivotScaleMatrixBasis(
+                            Vec3(0, 0, 0),
+                            ap.right[cid], ap.up[cid], ap.fwd[cid],
+                            run.s.x, run.s.y,
+                            run.s.z);
+                }
+                applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
+                                 pivot,
+                                 pivotScaleMatrixBasis(Vec3(0, 0, 0),
+                                     bX, bY, bZ,
+                                     run.s.x, run.s.y,
+                                     run.s.z),
+                                 Vec3(0, 0, 0),
+                                 blendModeForMeasure(),
+                                 dragFalloff, cachedVp, cp, ap, clusterM,
+                                 dragSymmetry, toProcess,
+                                 /*weightVerts=*/ baseline);
+            }
+        }
+
+        // Symmetry mirror for the DORMANT legacy pow-scale chain. The
+        // in-kernel mirror tail was deleted in Stage 2 (the live fold owns
+        // the mirror via Pass B). This branch is only reached when
+        // compoundPasses != 1 (Selection-falloff scale pow — dormant in the
+        // current tree), so it keeps the legacy POSITION-COPY mirror at its
+        // own call site (per the plan: legacy/per-cluster paths retain
+        // position-copy until their own stage). One copy after the whole
+        // chain, OR-ing mirror verts into toProcess for upload/undo.
+        if (dragSymmetry.enabled
+            && dragSymmetry.pairOf.length == mesh.vertices.length) {
+            import symmetry : applySymmetryMirror;
+            applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
+        }
+        // Change-notification (Stage 1): the dormant legacy per-pass /
+        // pow-scale chain also writes positions in place WITHOUT a version
+        // bump (mid-drag stability). Mirror applyFold's note so this path
+        // publishes Position too — ONE note for the whole T/R/S chain (never
+        // per pass, never per vertex). compoundPasses is 1.0 everywhere in
+        // the current tree, so this branch is dormant; the note keeps it
+        // correct if the pow path is ever re-enabled.
+        mesh.noteChange(MeshEditScope.Position);
+    }
+
     // Phase 1 (R/S run-baseline) — the FIX. The Rotate/Scale panel-apply path
     // used to rebuild absolutely from the SUB-TOOL's session-start snapshot
     // (origVertices / activationVertices = the original mesh at sub-tool
@@ -3952,11 +4056,19 @@ noBankConsumed:
     // own beginEdit/commitEdit — the sub-tool's applyRotatePanelValue /
     // applyScalePanelValue already opened it before calling here). headlessRotate
     // / run.s are read ABSOLUTELY by applyTRS, exactly as the gizmo path.
+    //
+    // Shared prologue of the two entry points below: snapshot the run
+    // baseline + live pipe packets (no wrapper session — see above), then
+    // dirty the vertex cache so applyTRS rebuilds from the refreshed
+    // baseline.
+    private void prepareRunAbsoluteApply() {
+        captureBaselinePacketsNoSession();
+        vertexCacheDirty = true;
+    }
     public void applyRotateAbsoluteFromRun(Vec3 angleAccumRad) {
         import std.math : PI;
         import math : matrixFromEulerZYX;
-        captureBaselinePacketsNoSession();
-        vertexCacheDirty = true;
+        prepareRunAbsoluteApply();
         headlessRotate = Vec3(angleAccumRad.x * 180.0f / cast(float)PI,
                               angleAccumRad.y * 180.0f / cast(float)PI,
                               angleAccumRad.z * 180.0f / cast(float)PI);
@@ -3979,8 +4091,7 @@ noBankConsumed:
     }
 
     public void applyScaleAbsoluteFromRun(Vec3 scaleAccum) {
-        captureBaselinePacketsNoSession();
-        vertexCacheDirty = true;
+        prepareRunAbsoluteApply();
         // Task 0332 — this is the WRAPPED role's single choke point that
         // drives geometry from `run.s` (reached via
         // `ScaleTool.applyScaleFromActivationCpuOnly`'s wrapped branch, i.e.
@@ -4762,7 +4873,7 @@ noBankConsumed:
             // the raw mutationVersion bump AND publishes the class.
             mesh.commitChange(MeshEditScope.Position);
             gpu.upload(*mesh);
-            gpuMatrix = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+            gpuMatrix = identityMatrix;
             needsGpuUpdate = false;
 
             // Restore the headless TRS attrs to their session-start values so the
@@ -4898,10 +5009,9 @@ private:
 
     bool takeEdge(FalloffStage stage, int ei) {
         auto edge = mesh.edges[ei];
-        Vec3 a = mesh.vertices[edge[0]];
-        Vec3 b = mesh.vertices[edge[1]];
-        // Anchor = edge midpoint (centroid of the two endpoints), click-independent.
-        Vec3 anchor = (a + b) * 0.5f;
+        // Anchor = edge midpoint (centroid of the two endpoints),
+        // click-independent — Mesh.edgeCentroid (mesh_ops/connected_mask.d).
+        Vec3 anchor = mesh.edgeCentroid(cast(uint)ei);
         notifyAcenUserPlaced(anchor);
         stage.anchorRing = [cast(uint)edge[0], cast(uint)edge[1]];
         notifyAcenElementVerts(stage.anchorRing);
@@ -4914,9 +5024,7 @@ private:
         Vec3 anchor = mesh.faceCentroid(cast(uint)fi);
         notifyAcenUserPlaced(anchor);
         auto face = mesh.faces[fi];
-        stage.anchorRing.length = face.length;
-        foreach (i, vi; face)
-            stage.anchorRing[i] = vi;
+        stage.anchorRing = face.dup;
         notifyAcenElementVerts(stage.anchorRing);
         if (face.length > 0)
             updateConnectMask(stage, cast(int)face[0]);
@@ -5372,34 +5480,19 @@ private:
 
     // Connected-component BFS seeded at the picked vert, written into
     // FalloffStage.connectMask. Active only when connect != Ignore.
+    // The BFS itself moved to Mesh.connectedComponentMask
+    // (source/mesh_ops/connected_mask.d, xfrm Phase B) — this wrapper keeps
+    // the Ignore / seed-bounds guards and the stage write.
     void updateConnectMask(FalloffStage stage, int seedVi) {
         if (stage.connect == ElementConnect.Ignore) {
             stage.connectMask = null;
             return;
         }
-        size_t n = mesh.vertices.length;
-        if (seedVi < 0 || seedVi >= cast(int)n) {
+        if (seedVi < 0 || seedVi >= cast(int)mesh.vertices.length) {
             stage.connectMask = null;
             return;
         }
-        // CSR vert→vert adjacency (relation D, edge-based), same provider as
-        // smooth.d / smoothSubdivide. `stage.connectMask` is an order-
-        // independent visited set, so (unlike the two smooth kernels) the
-        // CSR neighbor order carries no bit-stability requirement here.
-        const(size_t)[] adjOff;
-        const(uint)[]   adjNbrs;
-        mesh.vertexAdjacencyCSR(adjOff, adjNbrs);
-        bool[] visited = new bool[](n);
-        size_t[] queue;
-        queue ~= cast(size_t)seedVi;
-        visited[seedVi] = true;
-        while (queue.length > 0) {
-            size_t v = queue[$ - 1];
-            queue.length -= 1;
-            foreach (nb; adjNbrs[adjOff[v] .. adjOff[v + 1]])
-                if (!visited[nb]) { visited[nb] = true; queue ~= nb; }
-        }
-        stage.connectMask = visited;
+        stage.connectMask = mesh.connectedComponentMask(cast(size_t)seedVi);
     }
 
     FalloffStage activeFalloffStage() const {
@@ -5765,13 +5858,10 @@ private:
     // next gesture extends the same single-bank run.
     private void noteRunBank(DragBank thisBank) {
         if (currentRunBank != DragBank.None && currentRunBank != thisBank) {
-            history.consolidate(history.currentRunId);
-            history.nextRun();
+            consolidateRunAndAdvance();
             // A bank switch is a run boundary: the prior run's re-grade anchor +
             // staleness stamp must not leak into the new run.
-            lastAppliedGestureMutationVersion = ulong.max;
-            refireAnchor.length               = 0;
-            refirePreValid                    = false;
+            invalidateRunRefireAnchor();
         }
         currentRunBank = thisBank;
     }
@@ -5909,9 +5999,9 @@ private:
         // after a gesture, and mergeRun keeps first.revert + last.apply, so the
         // config endpoints splice coherently. No geometry payload ⇒ no spurious
         // vertex churn on undo.
-        uint[] uidx;
-        uidx.length = movedIdx.length;
-        foreach (k, vid; movedIdx) uidx[k] = cast(uint) vid;
+        import std.algorithm : map;
+        import std.array : array;
+        uint[] uidx = movedIdx.map!(v => cast(uint) v).array;
 
         if (vertexEditFactory is null) return;
         auto cmd = vertexEditFactory();

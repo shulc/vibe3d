@@ -2,14 +2,14 @@ import bindbc.sdl;
 import bindbc.opengl;
 import std.string : toStringz;
 import std.stdio : writeln, writefln, File, stderr;
-import std.math : tan, sin, cos, sqrt, PI, abs;
+import std.math : tan;
 import std.conv;
 import std.json : JSONValue, JSONType;
 
 // HTTP server module
 import http_server;
 import gl_thread_guard : markMainThread;
-import log : logInfo, logWarn, logError;
+import log : logInfo, logWarn;
 import prefs;
 
 import ImGui = d_imgui;
@@ -35,9 +35,8 @@ import gizmo;
 import view;
 import shader;
 import viewcache;
-import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot,
-                    g_fc, DrawPass, FrameWork;
-import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
+import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot, g_fc;
+import io.assimp_runtime : initAssimp, shutdownAssimp;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
 import viewgrid : g_viewGrid, viewGridSize, viewGridSubStep, viewWorldPerPixel,
@@ -63,31 +62,11 @@ import tools.create.torus;
 import tools.create.arc;
 import tools.create.tube;
 import tools.create.pen;
-import tools.create.vertex_place : VertexTool;
-import tools.edit.drag_weld    : DragWeldTool;
-import tools.edit.edge_extrude : EdgeExtrudeTool;
 import tools.edit.edge_extend : EdgeExtendTool;
-import tools.slice.edge_slide : EdgeSlideTool;
-import tools.edit.poly_extrude : PolyExtrudeTool;
 import tools.alignment.radial_array_tool : RadialArrayTool;
-import tools.edit.poly_bevel : PolyBevelTool;
-import tools.edit.poly_inset_tool : PolyInsetTool;
-import tools.deform.smooth_shift_tool : SmoothShiftTool;
-import tools.deform.magnet : MagnetTool;
-import tools.edit.edge_bevel : EdgeBevelTool;
 import tools.slice.loop_slice_tool : LoopSliceTool;
-import tools.slice.slice_tool : SliceTool;
 import tools.slice.edge_slice_tool : EdgeSliceTool;
-import tools.edit.reduce : ReductionTool;
-import tools.alignment.clone_tool : CloneTool;
-import tools.alignment.array_tool : ArrayTool;
-import tools.edit.tack : TackTool;
-import tools.edit.bridge_tool : BridgeTool, BridgeEditFactory;
-import tools.edit.vert_merge_tool : VertexMergeTool;
-import tools.edit.vertex_bevel_tool : VertexBevelTool;
-import tools.edit.vertex_extrude_tool : VertexExtrudeTool;
 import tools.deform.stroke_extrude_tool : StrokeExtrudeTool;
-import tools.common.command_wrapper : XfrmSmoothTool, XfrmJitterTool, XfrmQuantizeTool;
 
 import commands.select.connect;
 import commands.select.expand;
@@ -102,84 +81,29 @@ import commands.select.type_from : SelectTypeFromCommand;
 import commands.select.drop     : SelectDropCommand;
 import commands.select.element  : SelectElementCommand;
 import commands.select.convert  : SelectConvertCommand;
-import commands.select.fill     : SelectFillHoles, SelectFillInsideLoop;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 import commands.file.load;
 import commands.file.save;
 import commands.mesh.subdivide;
 import commands.mesh.subdivide_faceted;
-import commands.mesh.triple      : MeshTriple;
-import commands.mesh.quadruple   : MeshQuadruple;
-import commands.mesh.detriangulate : MeshDetriangulate;
-import commands.mesh.merge         : MeshMergeFaces;
 import commands.mesh.subpatch_toggle;
 import commands.mesh.set_material;
 import commands.mesh.set_part;
 import commands.tool.headless : ToolHeadlessCommand;
 import commands.mesh.split_edge;
-import commands.mesh.add_point : MeshAddPoint;
-import commands.mesh.split_face  : MeshSplitFace;
-import commands.mesh.edge_join : MeshEdgeJoin;
 import commands.mesh.spin_edge;
-import commands.mesh.loop_slice : MeshAddLoop, MeshLoopSlice;
 import commands.mesh.session_edit : MeshSessionEdit;
-import commands.mesh.edge_extrude : MeshEdgeExtrude;
-import commands.mesh.vertex_extrude : MeshVertexExtrude;
-import commands.mesh.vertex_bevel   : MeshVertexBevel;
-import commands.mesh.poly_inset : MeshPolygonInset;
-import commands.mesh.spikey : MeshSpikey;
-import commands.mesh.bevel : MeshBevel;
-import commands.mesh.face_extrude : MeshFaceExtrude;
-import commands.mesh.bridge : MeshBridge;
-import commands.mesh.thicken : MeshThicken;
-import commands.mesh.smooth_shift : MeshSmoothShift;
-import commands.mesh.edge_extend : MeshEdgeExtend;
 import commands.mesh.move_vertex;
-import commands.mesh.vertex_new    : MeshVertexNew;
-import commands.mesh.vertex_center : MeshCenterVertices;
-import commands.mesh.vertex_set    : MeshSetPosition;
-import commands.mesh.delete_ : MeshDelete;
-import commands.mesh.remove_ : MeshRemove;
-import commands.mesh.flip    : MeshFlip;
-import commands.mesh.duplicate_ : MeshDuplicate;
-import commands.mesh.copy_      : MeshCopy;
-import commands.mesh.paste_     : MeshPaste;
-import commands.mesh.cut_       : MeshCut;
-import commands.mesh.mirror_      : MeshMirror;
-import commands.mesh.symmetrize   : MeshSymmetrize;
-import commands.mesh.array_       : MeshArray;
-import commands.mesh.clone_       : MeshClone;
-import commands.mesh.radial_array_ : MeshRadialArray;
-import commands.mesh.sweep         : MeshSweep;
-import commands.mesh.stroke_extrude      : MeshStrokeExtrude;
-import commands.mesh.vert_merge        : MeshVertMerge;
-import commands.mesh.weld_vertex_pair  : MeshWeldVertexPair;
-import commands.mesh.vert_join         : MeshVertJoin;
-import commands.mesh.axis_slice    : MeshAxisSlice, MeshJulienne;
-import commands.mesh.screen_slice  : MeshScreenSlice;
-import commands.mesh.edge_slice    : MeshEdgeSlice;
-import commands.mesh.collapse      : MeshCollapse;
-import commands.mesh.vertex_split  : MeshVertexSplit;
-import commands.mesh.reduce        : MeshReduce;
-import commands.mesh.unify         : MeshUnify;
-import commands.mesh.cleanup       : MeshCleanup;
-import commands.mesh.fix_orientation : MeshFixOrientation;
-import commands.mesh.make_polygon  : MeshMakePolygon;
 import commands.mesh.select;
 import commands.mesh.selection_edit : MeshSelectionEdit;
 import commands.mesh.transform;
 import commands.mesh.quantize;
 import commands.mesh.jitter;
-import commands.mesh.magnet : MeshMagnet;
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
 import commands.mesh.uv_transform;
-import commands.mesh.uv_project  : UvProject;
-import commands.mesh.uv_pack     : UvFit, UvPack;
 import commands.mesh.uv_map_util;
-import commands.mesh.uv_relax  : UvRelax;
-import commands.mesh.uv_unwrap : UvUnwrap;
 import commands.mesh.edge_slide;
 import commands.mesh.linear_align;
 import commands.mesh.polygon_align;
@@ -187,14 +111,6 @@ import commands.mesh.radial_align;
 import commands.mesh.vertex_edit;
 import commands.scene.reset;
 import commands.scene.load_mesh;
-import commands.history.undo : HistoryUndo;
-import commands.history.redo : HistoryRedo;
-import commands.history.show : HistoryShow;
-import commands.history.clear : HistoryClear;
-import commands.test_undo_flags : UndoSuppressNoop, UndoForceNoop;
-import commands.history.save_as_script : HistorySaveAsScript;
-import commands.macros.record : MacroRecord;
-import commands.macros.save_recorded : MacroSaveRecorded;
 import macro_recorder : MacroRecorder;
 import step_trace : StepTrace;
 import snapshot : SelectionSnapshot;
@@ -206,7 +122,6 @@ import commands.layer.commands : LayerAttr;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
-import commands.tool.begin_session : ToolBeginSessionCommand;
 import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
 
 // Which page of the Tool Properties panel is showing. 0 = "Main" (the active
@@ -220,7 +135,7 @@ private __gshared int g_toolPropsTab = kToolPropsTabMain;
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 version (WithAI)
-import commands.ui.copilot_panel   : UiCopilotPanelCommand, g_copilotPanelShown;
+import commands.ui.copilot_panel : g_copilotPanelShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.snap.mode        : SnapModeCommand;
@@ -230,24 +145,8 @@ import commands.prefs.trackball : TrackballPrefCommand;
 /// Render one scalar argstring positional as text.
 ///
 /// The argstring parser types its positionals: `1.0` becomes a JSON number and
-/// `true` a JSON bool, so a command whose argument is "a value, whatever kind"
-/// cannot read `.str` and hope. `%.9g` rather than `%g` on the float lane so a
-/// value the user typed survives the trip in full precision — `%g`'s six
-/// significant digits would quietly round a speed multiplier.
-private string scalarArgToString(JSONValue v) {
-    import std.format : format;
-    import std.conv   : to;
-    switch (v.type) {
-        case JSONType.string:   return v.str;
-        case JSONType.float_:   return format("%.9g", v.floating);
-        case JSONType.integer:  return to!string(v.integer);
-        case JSONType.uinteger: return to!string(v.uinteger);
-        case JSONType.true_:    return "true";
-        case JSONType.false_:   return "false";
-        default:                return "";
-    }
-}
-import commands.ai.toggle    : AiToggleCommand, AiToggleAction;
+// scalarArgToString: moved VERBATIM to source/http_providers.d (app.d decomp
+// phase B) -- its only call sites left with the moved HTTP block.
 // AI Modeling Copilot findings panel (task 0402): the whole feature —
 // panel, overlay, and copilot.* commands — is version(WithAI)-only. The
 // underlying modules (copilot_panel.d, ai/analysis.d, etc.) are plain D and
@@ -266,9 +165,7 @@ version (WithAI) {
 import commands.falloff        : FalloffAddCommand, FalloffRemoveCommand,
                                   FalloffAutoSizeCommand;
 import commands.path.define    : PathDefineCommand;
-import commands.workplane     : WorkplaneResetCommand, WorkplaneEditCommand,
-                                WorkplaneRotateCommand, WorkplaneOffsetCommand,
-                                WorkplaneAlignToSelectionCommand;
+import commands.workplane : WorkplaneEditCommand, WorkplaneRotateCommand, WorkplaneOffsetCommand;
 
 import command;
 import registry;
@@ -277,6 +174,7 @@ import registry;
 // parameterized by the EditorApp ctx bag.
 import editor_app;
 import registration : registerTools, registerCommands;
+import http_providers : wireHttpProviders;
 import shortcuts;
 import buttonset;
 import ai.debug_trace : latestHandleDebugTraceJson;
@@ -284,10 +182,9 @@ import ai.element_candidates : publishElementCandidates,
     collectElementCandidates, resolveElementCandidateDecision;
 import ai.interaction : AiAdvisorDecision, AiCandidate, AiInteractionContext,
     AiInteractionPhase, AiIntent;
-import ai.interaction_log : AiInteractionLogRecord, makeAiInteractionLogRecord;
+import ai.interaction_log : makeAiInteractionLogRecord;
 import ai.interaction_log_writer : AiInteractionLogWriter, defaultLiveSource;
-import ai.exploration : AiExplorationController, buildCandidateKey,
-    defaultExploreSource, OptionalGrab, Resolution, ResolutionKind;
+import ai.exploration : AiExplorationController, buildCandidateKey, defaultExploreSource, OptionalGrab, ResolutionKind;
 import ai.state      : EditorAiState;
 import ai.advisor    : AiAdvisor;
 import ai.copilot_gate : kCopilotEnabled;
@@ -301,16 +198,14 @@ import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
 import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
 import ai3d.scene_validator      : Ai3dMaxTotalFaces;
 import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
-    Ai3dInstallState, ai3dDefaultInstallLocation;
+    Ai3dInstallState, ai3dDefaultInstallLocation, ai3dDefaultWorkerUrl;
 import commands.ai3d.import_result : Ai3dImportResult;
 import remesh.remesh_job         : RemeshJob, RemeshParams,
     MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
-import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
+import commands.mesh.remesh : Remesh, RemeshStart;
 import property_panel : PropertyPanel;
 import forms_render;
-import layer_params   : LayerPropsProvider;
 import document       : Layer;
-import snap           : ItemSnapFrame;
 
 version (WithRender) import render.render_mvp   : initIPR, drawIPRPanel, shutdownIPR;
 version (WithRender) import render.render_diff  : runRenderDiff;
@@ -380,23 +275,6 @@ private void warnStageFormOnce(string stageId, string msg) {
     logWarnOnce("forms", stageId,
                 "stage form for '" ~ stageId ~
                 "' failed to draw; falling back to legacy panel: " ~ msg);
-}
-
-
-private string buildJsonArray(bool[] sel) {
-    import std.array : appender;
-    import std.format : format;
-    auto buf = appender!string();
-    buf ~= "[";
-    bool first = true;
-    foreach (i, s; sel) {
-        if (!s) continue;
-        if (!first) buf ~= ",";
-        buf ~= format("%d", i);
-        first = false;
-    }
-    buf ~= "]";
-    return buf.data;
 }
 
 
@@ -2520,7 +2398,9 @@ void main(string[] args) {
     //   - throwMsg not null -> failures throw new Exception(throwMsg)
     //   - mode selects record() vs recordCoalescing() on a successful apply
     // Equivalence per call site is documented at each call below.
-    enum RecordMode { Record, Coalescing }
+    // RecordMode: relocated verbatim to editor_app.d's module level (app.d
+    // decomp phase B) so EditorApp's applyOrRefire field can name the type;
+    // resolves here via `import editor_app;`.
     void applyOrRefire(Command cmd, RecordMode mode, string throwMsg) {
         // Post-mode finalize (task 0463, SDK-derived — the reference's
         // MODEL command class + its command-system post-mode listener; see
@@ -2698,9 +2578,9 @@ void main(string[] args) {
         }
         // Per-face subpatch flags, parallel to faces[] — same shape /api/model
         // emits (`"isSubpatch": [false,false,...]`). Defensive length guard
-        // mirrors meshToDetailedJson's subCopy: isSubpatch lazy-resizes on
-        // write, so a face index can outrun it between a face-add and the
-        // next selection touch.
+        // mirrors the padding rule in meshToJsonDetailed (http_server.d):
+        // isSubpatch lazy-resizes on write, so a face index can outrun it
+        // between a face-add and the next selection touch.
         JSONValue[] subpatchJson;
         auto subView = mesh.isSubpatch;
         foreach (fi; 0 .. mesh.faces.length)
@@ -2906,7 +2786,7 @@ void main(string[] args) {
     string ai3dPickedImagePath;
     char[256] ai3dWorkerUrlBuf;
     ai3dWorkerUrlBuf[] = 0;
-    ai3dWorkerUrlBuf[0 .. "http://127.0.0.1:47831".length] = "http://127.0.0.1:47831";
+    ai3dWorkerUrlBuf[0 .. ai3dDefaultWorkerUrl.length] = ai3dDefaultWorkerUrl;
     // Requested face budget for the create-job body (task ai3d-maxfaces).
     // The widget cannot be trusted to clamp on its own (same lesson as the
     // negative-scale ImGui v_min gap) — clamped to [1000, Ai3dMaxTotalFaces]
@@ -3361,6 +3241,34 @@ void main(string[] args) {
     app.remeshRefs.remeshLastErrorPtr        = &remeshLastError;
     app.remeshRefs.remeshLastSummaryPtr      = &remeshLastSummary;
 
+    // Phase-B panel wiring (source/ui/panels.d main-loop panels --
+    // drawAi3dModal/drawRemeshModal/drawQuitGuardModal/
+    // drawCommandHistoryPanel). All pointer-backed locals are declared
+    // above (~2710-2823); ai3dWorkerManager is assigned exactly once
+    // (~1179). navHistory is a nested function declared far below
+    // (~4051), wired separately right after its declaration.
+    app.ai3dWorkerStartingPtr         = &ai3dWorkerStarting;
+    app.ai3dWorkerStartDeadlinePtr    = &ai3dWorkerStartDeadline;
+    app.ai3dWorkerNextHealthProbePtr  = &ai3dWorkerNextHealthProbe;
+    app.ai3dInstallConfirmOpenPtr        = &ai3dInstallConfirmOpen;
+    app.ai3dInstallConfirmPendingOpenPtr = &ai3dInstallConfirmPendingOpen;
+    app.ai3dMaxFacesPtr               = &ai3dMaxFaces;
+    app.ai3dWorkerManager             = ai3dWorkerManager;
+    app.remeshModalPendingClosePtr    = &remeshModalPendingClose;
+    app.remeshTargetQuadsPtr          = &remeshTargetQuads;
+    app.remeshAdaptivityPtr           = &remeshAdaptivity;
+    app.remeshSharpEdgePtr            = &remeshSharpEdge;
+    app.quitConfirmOpenPtr            = &quitConfirmOpen;
+    app.quitConfirmPendingPtr         = &quitConfirmPending;
+    app.quitAfterSavePtr              = &quitAfterSave;
+    app.historyFilterPtr              = &historyFilter;
+    app.historyShowArgsPtr            = &historyShowArgs;
+    app.historyShowRowNumbersPtr      = &historyShowRowNumbers;
+    app.historyShowTimestampsPtr      = &historyShowTimestamps;
+    app.historyShowCommandIdsPtr      = &historyShowCommandIds;
+    app.historyReplLastWasErrorPtr    = &historyReplLastWasError;
+    app.historyReplInputPtr           = &historyReplInput;
+
     app.history         = history;
     app.vpm             = vpm;
     app.litShader       = litShader;
@@ -3738,2435 +3646,14 @@ void main(string[] args) {
     bool formsInteractiveLatch = false;
 
     // Set up HTTP server model data provider
-    if (httpServer !is null) {
-        // Convert mesh vertices to flat float array for HTTP server
-        float[] getMeshVertices() {
-            float[] verts = new float[](mesh.vertices.length * 3);
-            for (size_t i = 0; i < mesh.vertices.length; i++) {
-                verts[i * 3] = mesh.vertices[i].x;
-                verts[i * 3 + 1] = mesh.vertices[i].y;
-                verts[i * 3 + 2] = mesh.vertices[i].z;
-            }
-            return verts;
-        }
-
-        // Serialize ANY mesh to the detailed /api/model JSON. Extracted so the
-        // active-layer provider and the layer-aware ?layer=N provider share one
-        // body (layers Stage 2).
-        string meshToDetailedJson(ref Mesh m) {
-            float[] verts = new float[](m.vertices.length * 3);
-            for (size_t i = 0; i < m.vertices.length; i++) {
-                verts[i * 3]     = m.vertices[i].x;
-                verts[i * 3 + 1] = m.vertices[i].y;
-                verts[i * 3 + 2] = m.vertices[i].z;
-            }
-            uint[2][] edgesCopy = new uint[2][](m.edges.length);
-            for (size_t i = 0; i < m.edges.length; i++)
-                edgesCopy[i] = m.edges[i];
-            uint[][] facesCopy = new uint[][](m.faces.length);
-            for (size_t i = 0; i < m.faces.length; i++)
-                facesCopy[i] = m.faces[i].dup;
-            auto subView = m.isSubpatch;
-            bool[] subCopy = new bool[](m.faces.length);
-            for (size_t i = 0; i < m.faces.length; i++)
-                subCopy[i] = i < subView.length && subView[i];
-            auto surfacesCopy = m.surfaces.dup;
-            uint[] matCopy = new uint[](m.faces.length);
-            for (size_t i = 0; i < m.faces.length; i++)
-                matCopy[i] = i < m.faceMaterial.length ? m.faceMaterial[i] : 0u;
-            uint[] partCopy = new uint[](m.faces.length);
-            for (size_t i = 0; i < m.faces.length; i++)
-                partCopy[i] = i < m.facePart.length ? m.facePart[i] : 0u;
-            return meshToJsonDetailed(
-                m.vertices.length, m.edges.length, m.faces.length,
-                verts, edgesCopy, facesCopy, subCopy, surfacesCopy, matCopy, partCopy);
-        }
-
-        httpServer.setDetailedModelDataProvider(() => meshToDetailedJson(mesh));
-        // /api/model?layer=N — N<0 (default) → active layer; otherwise clamp
-        // into range. Same detailed JSON shape, just a different source layer.
-        httpServer.setLayerModelProvider((int layer) {
-            size_t idx = layer < 0 ? document.activeIndex : cast(size_t)layer;
-            if (idx >= document.layers.length) idx = document.layers.length - 1;
-            return meshToDetailedJson(document.layers[idx].mesh);
-        });
-        // GET /api/layers — index/name/visible/background/active + per-layer
-        // vertex & face counts + the per-layer mutationVersion (a read-only
-        // diagnostic the Stage-6 cross-layer-undo torture test reads to confirm
-        // two identical layers genuinely share a version — the cache-key
-        // collision precondition the address-augmented keys defend against).
-        httpServer.setLayersDataProvider(() {
-            import std.array  : appender;
-            import std.format : format;
-            import std.json   : JSONValue;
-            import document   : Document;   // Document.background (derived, 2b)
-            auto a = appender!string();
-            a.put(format(`{"active":%d,"layers":[`, document.activeIndex));
-            foreach (i, l; document.layers) {
-                if (i > 0) a.put(",");
-                // `background` is now DERIVED (Stage 2b): visible && !selected —
-                // the stored bool is gone. `selected` + `primary` are the #4
-                // item-selection surface: `selected` is the per-layer foreground
-                // membership, `primary` marks the single edit target (== active).
-                // A test reads these to verify the multi-select set + which member
-                // is primary; `background` is the derived third-state collapse.
-                // Channels P4: expose the per-layer item transform so tests can
-                // assert the NON-BAKED transform without it ever moving vertices.
-                // The authored components (pos/rot/scl/pivot) let a test assert a
-                // round-trip; the composed `matrix` (column-major float[16]) lets
-                // the analytic golden fixture assert the composed result against an
-                // INDEPENDENT hand formula. Pure JSON-shape addition (the data
-                // provider already runs the snapshot on the main thread).
-                const x = l.xform;
-                float[16] m = x.composedMatrix();
-                auto xb = appender!string();
-                xb.put(format(
-                    `{"pos":[%.6f,%.6f,%.6f],"rot":[%.6f,%.6f,%.6f],` ~
-                    `"scl":[%.6f,%.6f,%.6f],"pivot":[%.6f,%.6f,%.6f],"matrix":[`,
-                    x.pos.x, x.pos.y, x.pos.z, x.rot.x, x.rot.y, x.rot.z,
-                    x.scl.x, x.scl.y, x.scl.z, x.pivot.x, x.pivot.y, x.pivot.z));
-                foreach (mi; 0 .. 16) {
-                    if (mi > 0) xb.put(",");
-                    xb.put(format("%.6f", m[mi]));
-                }
-                xb.put("]}");
-                // Task 0082: find the parent layer's index (-1 = no parent).
-                int parentIdx = -1;
-                if (l.parent !is null) {
-                    foreach (pi, pl; document.layers)
-                        if (pl is l.parent) { parentIdx = cast(int)pi; break; }
-                }
-                a.put(format(
-                    `{"index":%d,"name":%s,"visible":%s,"background":%s,` ~
-                    `"active":%s,"selected":%s,"primary":%s,` ~
-                    `"vertexCount":%d,"faceCount":%d,` ~
-                    `"mutationVersion":%d,"xform":%s,"parent":%d}`,
-                    i, JSONValue(l.name).toString(),
-                    l.visible ? "true" : "false",
-                    Document.background(l) ? "true" : "false",
-                    i == document.activeIndex ? "true" : "false",
-                    l.selected ? "true" : "false",
-                    document.isPrimary(l) ? "true" : "false",
-                    l.mesh.vertices.length, l.mesh.faces.length,
-                    cast(ulong)l.mesh.mutationVersion, xb.data, parentIdx));
-            }
-            a.put("]}");
-            return a.data;
-        });
-        httpServer.setCameraDataProvider((int vpIdx) {
-            int _idx = (vpIdx >= 0 && vpIdx < vpm.cellCount) ? vpIdx : vpm.activeId;
-            string base = vpm.resolvedCameraJson(_idx);
-            // Additive, read-only fields for numpad-view-shortcut assertions
-            // (task 0215): splice viewPreset/projKind into the existing JSON
-            // body without touching View.toJsonWith, which other call sites
-            // and its own unittests already pin to the base shape.
-            string presetName = to!string(vpm.views[_idx].camera.viewPreset);
-            string projName   = to!string(vpm.views[_idx].camera.projKind);
-            return base[0 .. $ - 1] ~ `,"viewPreset":"` ~ presetName ~
-                `","projKind":"` ~ projName ~ `"}`;
-        });
-
-        // GET /api/gpu/face-vbo — read back gpu.faceVbo on the main
-        // (GL) thread and return the position triples as JSON. Used by
-        // test_subpatch_move to verify the subpatch surface actually
-        // updates after a /api/transform; the /api/model snapshot
-        // alone can't catch a broken fan-out shader since it only
-        // reflects the cage.
-        httpServer.setGpuSurfaceProvider(() {
-            import std.array : appender;
-            import std.format : format;
-            import bindbc.opengl;
-            // Mid-batch pull-guard: this provider is MainThreadBridge-serviced
-            // during httpServer.tickAll(), i.e. BEFORE this frame's flush — a
-            // command earlier in the same tick may have mutated the mesh
-            // without the (bus-driven) upload having run yet.
-            ensureDisplayCurrent();
-            // Faces use stride-6 (pos+normal). Read the live VBO.
-            int vertCount = gpu.faceVertCount;
-            // Also expose the model matrix the renderer applies to the
-            // VBO (transform tools' gpuMatrix) so tests can detect a
-            // gpuMatrix-vs-mesh mismatch mid-drag — the actual on-screen
-            // pose is `gpuMatrix · gpu.faceVbo`.
-            float[16] meshModel = identityMatrix;
-            {
-                TransformTool tt = cast(TransformTool)activeTool;
-                if (tt !is null) meshModel = tt.gpuMatrix;
-            }
-            string modelStr;
-            {
-                auto mb = appender!string();
-                mb.put("[");
-                foreach (i; 0 .. 16) {
-                    if (i > 0) mb.put(",");
-                    mb.put(format("%.6f", meshModel[i]));
-                }
-                mb.put("]");
-                modelStr = mb.data;
-            }
-            if (vertCount <= 0)
-                return `{"faceVertCount":0,"positions":[],"model":` ~ modelStr ~ `}`;
-            float[] data = new float[](vertCount * 6);
-            glBindBuffer(GL_ARRAY_BUFFER, gpu.faceVbo);
-            glGetBufferSubData(GL_ARRAY_BUFFER, 0,
-                cast(GLsizeiptr)(data.length * float.sizeof),
-                data.ptr);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-            auto buf = appender!string();
-            buf.put(`{"faceVertCount":`);
-            buf.put(format("%d", vertCount));
-            buf.put(`,"positions":[`);
-            foreach (i; 0 .. vertCount) {
-                if (i > 0) buf.put(",");
-                buf.put(format("[%.6f,%.6f,%.6f]",
-                    data[i * 6 + 0], data[i * 6 + 1], data[i * 6 + 2]));
-            }
-            buf.put(`],"model":`);
-            buf.put(modelStr);
-            buf.put("}");
-            return buf.data;
-        });
-
-        // GET /api/viewport/display — task 0559 (viewport display modes).
-        // Dumps, per cell, the display STATE and the resolved DRAW PLANS.
-        // These are the same `resolveDrawPlan` calls the render loop and the
-        // cell's dirty key make, so asserting the dump is asserting drawing —
-        // there is no second derivation that could drift.
-        //
-        // `renders` reports whether this cell is actually being re-rendered
-        // under the current mode; in --test only the active cell is, and a
-        // pixel probe aimed at any other cell would read a never-filled FBO
-        // and pass for the wrong reason. State assertions do not need it.
-        httpServer.setViewportDisplayProvider(() {
-            import std.array  : appender;
-            import std.format : format;
-            import std.conv   : to;
-
-            static string planJson(in DrawPlan p) {
-                return format(
-                    `{"drawFaces":%s,"facesLit":%s,"dim":%.6f,` ~
-                    `"fillColor":[%.6f,%.6f,%.6f],` ~
-                    `"drawWire":%s,"wireAlpha":%.6f,` ~
-                    `"wireColor":[%.6f,%.6f,%.6f],"drawVerts":%s}`,
-                    p.drawFaces ? "true" : "false",
-                    p.facesLit  ? "true" : "false",
-                    p.dim,
-                    p.fillColor[0], p.fillColor[1], p.fillColor[2],
-                    p.drawWire  ? "true" : "false",
-                    p.wireAlpha,
-                    p.wireColor[0], p.wireColor[1], p.wireColor[2],
-                    p.drawVerts ? "true" : "false");
-            }
-            static string stateJson(in DisplayState s) {
-                return format(`{"style":"%s","wire":"%s","wireAlpha":%.6f}`,
-                    s.style.to!string, s.wire.to!string, s.wireAlpha);
-            }
-
-            // Task 0570: the grid terms, per cell, straight from the
-            // renderer's own inputs. Reported at %.9g rather than a fixed
-            // number of decimals because a rung spans nine decades (1e-4 to
-            // 1e5 are all reachable zooms) and a %.6f would print the fine
-            // end as 0.000000 — an assertion about a step it cannot see.
-            static string gridJson(const ref Viewport gv) {
-                immutable float px = viewWorldPerPixel(gv);
-                immutable float gs = viewGridSize(px, g_viewGrid);
-                immutable float ss = viewGridSubStep(px, gs, g_viewGrid);
-                // `fadeRadius` is read through the same function the draw
-                // site calls, not recomputed here — a reporter with its own
-                // copy of a formula is how a dump starts lying.
-                return format(
-                    `{"mask":%d,"pixelSize":%.9g,"size":%.9g,"subStep":%.9g,` ~
-                    `"cellPixels":%.9g,"fadeRadius":%.9g}`,
-                    g_viewGrid.rungMask, px, gs, ss,
-                    px > 0 ? gs / px : 0.0f,
-                    viewGridFadeRadius(gs > 0 ? gs : 1.0f));
-            }
-
-            auto buf = appender!string();
-            buf.put(format(`{"activeId":%d,"cellCount":%d,"cells":[`,
-                           vpm.activeId, vpm.cellCount));
-            foreach (k; 0 .. vpm.cellCount) {
-                if (k > 0) buf.put(",");
-                Viewport3D cv = vpm.views[k];
-                immutable bool renders = testMode ? (k == vpm.activeId) : true;
-                // The SAME snapshot the render loop feeds
-                // renderViewportSceneToFbo, so the reported grid cannot
-                // disagree with the drawn one by construction.
-                Viewport gvp = vpm.resolvedSnapshot(k);
-                buf.put(format(
-                    `{"id":%d,"renders":%s,"ortho":%s,"userSet":%s,` ~
-                    `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s"},` ~
-                    `"plan":{"active":%s,"backdrop":%s},"grid":%s}`,
-                    k,
-                    renders ? "true" : "false",
-                    // Task 0594. `ortho` is what the shipped display default
-                    // is a function of, and `userSet` is what outranks it —
-                    // reporting both is what lets a test assert the DEFAULT
-                    // and its PRECEDENCE against the cell's own inputs,
-                    // instead of inferring them from a cell index that the
-                    // layout is free to reassign.
-                    cv.isOrtho() ? "true" : "false",
-                    cv.displayUserSet ? "true" : "false",
-                    stateJson(cv.display.active),
-                    stateJson(cv.display.backdrop),
-                    cv.display.backdropStyle.to!string,
-                    planJson(resolveDrawPlan(cv.display, false)),
-                    planJson(resolveDrawPlan(cv.display, true)),
-                    gridJson(gvp)));
-            }
-            buf.put("]}");
-            return buf.data;
-        });
-
-        // GET /api/viewport/probe?cell=N[&x=&y=][&points=][&hash=1] —
-        // task 0559. glReadPixels against one cell's FBO colour attachment:
-        // the only tier of this feature's testing that proves GL actually
-        // did something, as opposed to that the plan said it should.
-        //
-        // Coordinates are FBO pixels, origin TOP-LEFT (screen convention, the
-        // one every event log and every other endpoint uses); the flip to
-        // GL's bottom-up origin happens here so no caller has to know.
-        //
-        // `hash=1` digests the WHOLE colour buffer. That is what turns "this
-        // refactor changed no pixels" from an assertion into a measurement.
-        //
-        // Serviced during tickAll(), which runs BEFORE this frame's scene
-        // render — so a probe reads the last COMPLETED frame, which is what
-        // you want. Callers that just changed something must let a frame pass.
-        httpServer.setViewportProbeProvider((int cell, string points, bool wantHash) {
-            import bindbc.opengl;
-            import std.array  : appender, split;
-            import std.conv   : to;
-            import std.format : format;
-            import std.string : strip;
-
-            if (cell < 0) cell = vpm.activeId;
-            if (cell < 0 || cell >= cast(int)vpm.views.length)
-                return format(`{"error":"cell %d out of range"}`, cell);
-
-            Viewport3D cv = vpm.views[cell];
-            immutable bool renders = testMode ? (cell == vpm.activeId) : true;
-            immutable int W = cv.fbo.w;
-            immutable int H = cv.fbo.h;
-            immutable string head = format(
-                `{"cell":%d,"renders":%s,"w":%d,"h":%d`,
-                cell, renders ? "true" : "false", W, H);
-
-            if (cv.fbo.fbo == 0 || W <= 0 || H <= 0)
-                return head ~ `,"points":[],"error":"cell has no framebuffer yet"}`;
-
-            GLint prevRead = 0;
-            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prevRead);
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, cv.fbo.fbo);
-            glReadBuffer(GL_COLOR_ATTACHMENT0);
-            scope(exit) glBindFramebuffer(GL_READ_FRAMEBUFFER, cast(GLuint)prevRead);
-
-            auto buf = appender!string();
-            buf.put(head);
-            buf.put(`,"points":[`);
-            bool first = true;
-            foreach (spec; points.split(";")) {
-                auto s = spec.strip();
-                if (s.length == 0) continue;
-                auto xy = s.split(",");
-                if (xy.length != 2) continue;
-                int px, py;
-                try {
-                    px = xy[0].strip.to!int;
-                    py = xy[1].strip.to!int;
-                } catch (Exception) {
-                    continue;
-                }
-                if (!first) buf.put(",");
-                first = false;
-                if (px < 0 || py < 0 || px >= W || py >= H) {
-                    buf.put(format(`{"x":%d,"y":%d,"error":"outside the cell"}`, px, py));
-                    continue;
-                }
-                ubyte[4] rgba;
-                // Flip Y: caller passes top-left origin, GL reads bottom-up.
-                glReadPixels(px, H - 1 - py, 1, 1,
-                             GL_RGBA, GL_UNSIGNED_BYTE, rgba.ptr);
-                buf.put(format(`{"x":%d,"y":%d,"r":%d,"g":%d,"b":%d,"a":%d}`,
-                               px, py, rgba[0], rgba[1], rgba[2], rgba[3]));
-            }
-            buf.put("]");
-
-            if (wantHash) {
-                // FNV-1a over the whole RGBA8 buffer. Cheap, stable, and a
-                // mismatch is a real difference — not a tolerance question.
-                auto all = new ubyte[](cast(size_t)W * cast(size_t)H * 4);
-                glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, all.ptr);
-                ulong h = 0xcbf2_9ce4_8422_2325UL;
-                foreach (b; all) {
-                    h ^= b;
-                    h *= 0x0000_0100_0000_01b3UL;
-                }
-                buf.put(format(`,"hash":"%016x"`, h));
-            }
-
-            buf.put("}");
-            return buf.data;
-        });
-
-        // GET /api/pick?x=&y=&engine=bvh|gpu — A/B face-pick oracle.
-        // engine=gpu calls gpuSelect.pick DIRECTLY regardless of VIBE3D_FACE_PICK
-        // so the oracle is always reachable even when BVH is the default.
-        httpServer.setPickProvider((int x, int y, string engine) {
-            import std.format : format;
-            // Mid-batch pull-guard: serviced during tickAll, before the flush
-            // (see the surface provider above) — both engines read
-            // upload-derived state (ID-FBO / BVH keyed on gpu.uploadVersion).
-            ensureDisplayCurrent();
-            Viewport vp = vpm.activeSnapshot();
-            int faceIdx;
-            if (engine == "gpu") {
-                faceIdx = gpuSelect.pick(SelectMode.Face, x, y, /*r=*/0,
-                                          mesh, gpu, vp);
-            } else {
-                const(Mesh)* srcMesh = subpatchPreview.active
-                    ? &subpatchPreview.mesh : &mesh();
-                faceIdx = bvhPick.pickFace(x, y, vp, *srcMesh, gpu);
-            }
-            return format(`{"faceIndex":%d}`, faceIdx);
-        });
-
-        // GET /api/surface-raycast?x=&y=[&thresholdPx=] — background-surface
-        // raycast oracle (topology-pen P0/P1, doc/topopen_p0_plan.md,
-        // doc/topopen_p1_plan.md). Main-thread bridge (mirrors /api/pick
-        // above): builds a SubjectPacket with cursorValid=true at the
-        // requested pixel, evaluates the live toolpipe (the CONS stage's
-        // raycast branch fires because cursorValid is true here), and
-        // reports the resulting ConstrainHitPacket PLUS (P1) the resolved
-        // hover snap-target (targetKind/targetVert/targetEdge), computed by
-        // the SAME `resolveHoverTarget` (constraint.d) that
-        // TopologyPenTool calls — this endpoint and the tool always agree.
-        // GL-free — the CONS raycast reads snap.backgroundSourcesSnapshot()
-        // (CPU-side Mesh pointers) via BvhPick, no GPU state involved, so
-        // this needs no ensureDisplayCurrent().
-        //
-        // NIT-5 (multi-viewport caveat, deferred): this uses
-        // `vpm.activeSnapshot()` (the currently-ACTIVE viewport cell), while
-        // the real mouse-event dispatch path (buildToolVts, further down)
-        // uses `vpm.inputSnapshot()` (the cell the event itself landed in).
-        // The two coincide for P0's single-viewport test scenes, so `x`/`y`
-        // here are unambiguous; a multi-viewport caller wanting the
-        // raycast scoped to a NON-active cell would need this endpoint to
-        // accept an explicit viewport id, same as `/api/camera`'s
-        // `_viewport` override — not needed until a later phase actually
-        // exercises multi-viewport topology-pen.
-        httpServer.setSurfaceRaycastProvider((int x, int y, float thresholdPx) {
-            import std.format        : format;
-            import toolpipe.packets  : ConstrainHitPacket, HoverTargetKind;
-            import constraint        : resolveHoverTarget, topoPenPressPickPx;
-
-            SubjectPacket subj;
-            subj.mesh        = &mesh();
-            subj.editMode    = editMode;
-            subj.viewport    = vpm.activeSnapshot();
-            subj.cursorX     = x;
-            subj.cursorY     = y;
-            subj.cursorValid = true;
-
-            VectorStack vts;
-            vts.put(&subj);
-            if (g_pipeCtx !is null)
-                g_pipeCtx.pipeline.evaluate(vts);
-
-            auto hp = vts.get!ConstrainHitPacket();
-            if (hp is null)
-                return `{"hit":false,"targetKind":"none","targetVert":-1,"targetEdge":-1}`;
-
-            float th = (thresholdPx > 0.0f) ? thresholdPx : topoPenPressPickPx(subj.viewport);
-            auto tgt = resolveHoverTarget(*hp, subj.viewport, th);
-            string kindToken;
-            final switch (tgt.kind) {
-                case HoverTargetKind.None:   kindToken = "none";   break;
-                case HoverTargetKind.Vertex: kindToken = "vertex"; break;
-                case HoverTargetKind.Edge:   kindToken = "edge";   break;
-                case HoverTargetKind.Face:   kindToken = "face";   break;
-            }
-
-            return format(
-                `{"hit":%s,"point":[%.6f,%.6f,%.6f],"normal":[%.6f,%.6f,%.6f],`
-              ~ `"layer":%d,"face":%d,"nearestVert":%d,"nearestEdge":%d,`
-              ~ `"targetKind":"%s","targetVert":%d,"targetEdge":%d}`,
-                hp.hit ? "true" : "false",
-                hp.point.x, hp.point.y, hp.point.z,
-                hp.normal.x, hp.normal.y, hp.normal.z,
-                hp.layer, hp.face, hp.nearestVert, hp.nearestEdge,
-                kindToken, tgt.vert, tgt.edge);
-        });
-
-        // POST /api/camera — set live View. Accepts azimuth, elevation,
-        // distance, roll (radians/world-units) and optional focus[x,y,z] +
-        // width/height. Used by the cross-engine drag test to align
-        // vibe3d's camera with a reference engine's before replaying —
-        // `roll` is the third rotational term such a reference publishes for
-        // its own view and which, until it existed here, could not be
-        // transferred at all.
-        httpServer.setCameraSetHandler((JSONValue p) {
-            import math : Vec3;
-            // Resolve target cell: _viewport injected by http_server.d from ?viewport=N
-            int _vidx = vpm.activeId;
-            if ("_viewport" in p) {
-                auto _vn = p["_viewport"];
-                int _v = -1;
-                if (_vn.type == JSONType.integer)        _v = cast(int)_vn.integer;
-                else if (_vn.type == JSONType.uinteger)  _v = cast(int)_vn.uinteger;
-                else if (_vn.type == JSONType.float_)    _v = cast(int)_vn.floating;
-                if (_v >= 0 && _v < vpm.cellCount) _vidx = _v;
-            }
-            ref View targetCam = vpm.views[_vidx].camera;
-            float floatFrom(string field, float def) {
-                if (field !in p) return def;
-                auto n = p[field];
-                switch (n.type) {
-                    case JSONType.integer:  return cast(float)n.integer;
-                    case JSONType.uinteger: return cast(float)n.uinteger;
-                    case JSONType.float_:   return cast(float)n.floating;
-                    default: throw new Exception(
-                        "'" ~ field ~ "' must be a number");
-                }
-            }
-            // The whole ROTATION, as the nine floats the camera actually
-            // stores. This is the only key that can express an arbitrary
-            // orientation — one reached by composing rotations about
-            // different axes, or carrying a bank at a pole — and it is
-            // LOSSLESS both ways (`%.9g` out, parsed back to the same
-            // floats). The three angle keys below remain, but they are a
-            // chart: they cannot name every rotation and they lose precision
-            // at `%f`.
-            //
-            // Applied FIRST so a body may set the rotation wholesale and then
-            // adjust one angle of it, and rejected as a unit — a malformed
-            // value leaves the camera alone rather than aiming it somewhere
-            // arbitrary. `setOrientation` re-orthonormalises, so a caller may
-            // post a matrix measured off another engine without cleaning it.
-            if ("orientation" in p) {
-                Orientation o;
-                if (!orientationFromJson(p["orientation"], o))
-                    throw new Exception(
-                        "'orientation' must be an array of 9 numbers");
-                targetCam.setOrientation(o);
-            }
-            if ("azimuth" in p)   targetCam.azimuth   = floatFrom("azimuth",   targetCam.azimuth);
-            if ("elevation" in p) targetCam.elevation = floatFrom("elevation", targetCam.elevation);
-            if ("distance" in p)  targetCam.distance  = floatFrom("distance",  targetCam.distance);
-            // Bank, radians. Absent key leaves the current bank alone, so
-            // every existing camera-set body is unaffected.
-            if ("roll" in p)      targetCam.roll      = floatFrom("roll",      targetCam.roll);
-            if ("focus" in p) {
-                auto f = p["focus"];
-                float comp(string k, float def) {
-                    if (k !in f.object) return def;
-                    auto n = f[k];
-                    switch (n.type) {
-                        case JSONType.integer:  return cast(float)n.integer;
-                        case JSONType.uinteger: return cast(float)n.uinteger;
-                        case JSONType.float_:   return cast(float)n.floating;
-                        default: throw new Exception(
-                            "focus." ~ k ~ " must be a number");
-                    }
-                }
-                targetCam.focus = Vec3(comp("x", targetCam.focus.x),
-                                       comp("y", targetCam.focus.y),
-                                       comp("z", targetCam.focus.z));
-            }
-            // Optional viewport resize.
-            if ("width" in p && "height" in p) {
-                targetCam.setSize(
-                    cast(int)floatFrom("width",  targetCam.width),
-                    cast(int)floatFrom("height", targetCam.height));
-            }
-        });
-        httpServer.setSelectionDataProvider(() {
-            import std.format : format;
-            // Derivation invariant: editMode is a materialized view of
-            // selTypeOrder.mostRecentGeometry. Any bypassing writer (raw
-            // *editModePtr write without going through the funnel) surfaces
-            // here as a hard failure in a debug build — every selection test
-            // already reads /api/selection, so regressions are caught immediately.
-            debug assert(editMode == derivedEditMode(),
-                "editMode drifted from selTypeOrder — a writer bypassed the funnel");
-            string modeName;
-            final switch (editMode) {
-                case EditMode.Vertices: modeName = "vertices"; break;
-                case EditMode.Edges:    modeName = "edges";    break;
-                case EditMode.Polygons: modeName = "polygons"; break;
-            }
-            // selType (Stage 1): the CURRENT selection type from the recent
-            // ordering — lowercase singular token (vertex/edge/polygon/item),
-            // matching the geometry payload's vocabulary. `selTypeOrder` is the
-            // full most-recent-first ordering (front == current); `items` is the
-            // item (layer) selection view — one `{selected,primary}` entry per
-            // layer, in layer order. These are the Stage 4 final shapes; the
-            // geometry-selection arrays are unchanged.
-            import std.array : appender;
-            auto orderBuf = appender!string();
-            orderBuf.put("[");
-            foreach (oi, t; selTypeOrder.order) {
-                if (oi > 0) orderBuf.put(",");
-                orderBuf.put(`"` ~ selTypeToken(t) ~ `"`);
-            }
-            orderBuf.put("]");
-            auto itemsBuf = appender!string();
-            itemsBuf.put("[");
-            foreach (li, l; document.layers) {
-                if (li > 0) itemsBuf.put(",");
-                itemsBuf.put(format(`{"selected":%s,"primary":%s}`,
-                    l.selected ? "true" : "false",
-                    document.isPrimary(l) ? "true" : "false"));
-            }
-            itemsBuf.put("]");
-            return format(`{"mode":"%s","selType":"%s","selTypeOrder":%s,` ~
-                `"items":%s,` ~
-                `"selectedVertices":%s,"selectedEdges":%s,"selectedFaces":%s}`,
-                modeName,
-                selTypeToken(selTypeOrder.current()),
-                orderBuf.data,
-                itemsBuf.data,
-                buildJsonArray(mesh.selectedVertices),
-                buildJsonArray(mesh.selectedEdges),
-                buildJsonArray(mesh.selectedFaces));
-        });
-        // Task 0234 — GET /api/tool/handles + GET /api/tool/state. Read-only
-        // test-introspection over the active tool; null-guard mirrors every
-        // other activeTool-reading provider in this file. See the
-        // ToolHandlesDataProvider doc comment in http_server.d for the
-        // thread-safety discriminator. That comment used to say these two
-        // need no lock "unlike the toolpipe/snap providers below which
-        // marshal to the main thread"; both halves have since gone stale.
-        // /api/tool/handles is itself MARSHALED now (toolHandlesBridge,
-        // task 0563 — the handle registry is rebuilt every draw), and the
-        // snap/constrain providers do NOT marshal: they run on the HTTP
-        // thread and call pipeline.evaluate() there. Only /api/tool/state
-        // is still a direct read, and only because it reads resident
-        // per-tool fields.
-        httpServer.setToolHandlesDataProvider(() {
-            import std.json : JSONValue;
-            JSONValue root = JSONValue.emptyObject;
-            root["handles"] = activeTool is null ? JSONValue(null) : activeTool.toolHandlesJson();
-            return root.toString();
-        });
-        httpServer.setToolStateDataProvider(() {
-            return activeTool is null ? "{}" : activeTool.toolStateJson().toString();
-        });
-        httpServer.setRecordedEventsProvider(() {
-            import std.file : exists, readText;
-            if (!exists("recording.jsonl")) return null;
-            return readText("recording.jsonl");
-        });
-        // Phase 7.0 — Tool Pipe inspection. Returns JSON listing the
-        // stages currently registered with the global pipe (task FOURCC,
-        // id, ordinal, enabled flag, plus per-stage attrs from
-        // listAttrs).
-        httpServer.setToolPipeProvider(() {
-            import std.array  : appender;
-            import std.format : format;
-            auto buf = appender!string;
-            buf.put(`{"stages":[`);
-            bool first = true;
-            if (g_pipeCtx !is null) {
-                foreach (s; g_pipeCtx.pipeline.all()) {
-                    if (!first) buf.put(",");
-                    first = false;
-                    uint code = cast(uint)s.taskCode();
-                    char[4] taskStr = [
-                        cast(char)((code >> 24) & 0xFF),
-                        cast(char)((code >> 16) & 0xFF),
-                        cast(char)((code >>  8) & 0xFF),
-                        cast(char)( code        & 0xFF),
-                    ];
-                    buf.put(format(
-                        `{"task":"%s","id":"%s","ordinal":%d,"enabled":%s,"attrs":{`,
-                        taskStr.idup, s.id(), s.ordinal(),
-                        s.enabled ? "true" : "false"));
-                    bool firstAttr = true;
-                    foreach (kv; s.listAttrs()) {
-                        if (!firstAttr) buf.put(",");
-                        firstAttr = false;
-                        buf.put(format(`"%s":"%s"`, kv[0], kv[1]));
-                    }
-                    buf.put(`}}`);
-                }
-            }
-            buf.put(`]}`);
-            return buf.data;
-        });
-
-        // GET /api/registry — returns every registered command and tool
-        // factory id as JSON arrays. Read-only snapshot of post-startup-
-        // immutable AAs; served directly from the HTTP thread.
-        //
-        // `?params=1` (task 0365, param-bounds Phase 3): additionally emits
-        // `commandParams`/`toolParams`, one entry per registered id, each a
-        // JSON array of that id's Param schema — {name, kind, enforceBounds,
-        // value, min?, max?}. `value` is boxed via `paramToJson` so the wire
-        // shape matches the existing `tool.attr <id> <attr> ?` read-back
-        // convention. This is the enabler for the fuzz-smoke's static
-        // "born-clamped" contract check (tests/test_param_bounds.d) — a
-        // generic reader instead of a hand-maintained per-tool table.
-        //
-        // The schema text is CACHED (reg.commandParamsJson / toolParamsJson,
-        // filled by cacheSupportedModes() at startup) and the body is built
-        // by `Registry.registryJson`, which is a pure read of those caches.
-        // This closure used to instantiate every factory inline — on the HTTP
-        // thread, which is where a tool constructor's glGenVertexArrays ran
-        // with no current GL context and killed the process. The builder
-        // lives in registry.d so the "answers without calling a factory"
-        // invariant is unit-testable; keep it there.
-        httpServer.setRegistryProvider(
-            (bool includeParams) => reg.registryJson(includeParams));
-
-        // Pipeline evaluation snapshot — runs pipeline.evaluate once with
-        // the current mesh + selection + camera and returns the resulting
-        // ActionCenterPacket / AxisPacket as JSON. The reference-diff
-        // parity harness reads this to compare vibe3d's computed
-        // pivot/axis to a reference engine's for the same case.
-        //
-        // NOT called from the HTTP thread, despite what this comment said
-        // for a long time: /api/toolpipe/eval is marshaled onto the main
-        // thread through pipeEvalBridge, precisely because
-        // pipeline.evaluate touches View state (cameraView.viewport()
-        // recomputes view/proj) and writes g_pipeCtx's caches. The service
-        // body below therefore runs inside tickAll(), on the main thread.
-        // Do not cite this provider as precedent for a direct HTTP-thread
-        // read — /api/snap and /api/constrain did, and they are the two
-        // that still evaluate the pipeline off-thread.
-        httpServer.setToolPipeEvalProvider(() {
-            import std.array       : appender;
-            import std.format      : format;
-            import toolpipe.pipeline : g_pipeCtx;
-            import toolpipe.packets  : SubjectPacket;
-            import math              : Vec3;
-
-            auto buf = appender!string;
-            if (g_pipeCtx is null) {
-                buf.put(`{"error":"pipeline not initialised"}`);
-                return buf.data;
-            }
-            SubjectPacket subj;
-            subj.mesh             = &mesh();
-            subj.editMode         = editMode;
-            subj.viewport         = vpm.activeSnapshot();
-
-            import operator             : VectorStack;
-            import toolpipe.packets     : ActionCenterPacket, AxisPacket,
-                                          SymmetryPacket, SnapPacket;
-            VectorStack vts;
-            vts.put(&subj);
-            g_pipeCtx.pipeline.evaluate(vts);
-
-            ActionCenterPacket acen;
-            AxisPacket         axis;
-            SymmetryPacket     symm;
-            SnapPacket         snapPkt;   // P-C: surface live snap config for tests
-            if (auto p = vts.get!ActionCenterPacket()) acen = *p;
-            if (auto p = vts.get!AxisPacket())         axis = *p;
-            if (auto p = vts.get!SymmetryPacket())     symm = *p;
-            if (auto p = vts.get!SnapPacket())         snapPkt = *p;
-
-            void putVec3(Vec3 v) {
-                buf.put(format(`[%f,%f,%f]`, v.x, v.y, v.z));
-            }
-            void putVec3List(Vec3[] list) {
-                buf.put("[");
-                foreach (i, v; list) {
-                    if (i) buf.put(",");
-                    putVec3(v);
-                }
-                buf.put("]");
-            }
-
-            // Soft/user-placed pin introspection — read straight off the ACEN
-            // stage (the evaluated ActionCenterPacket does not carry the pin
-            // flags). Lets the soft-pin undo/relocate tests witness that an
-            // explicit relocate clears the display soft pin (userPlaced wins).
-            bool acIsUserPlaced = false;
-            bool acIsSoftPlaced = false;
-            {
-                import toolpipe.stage            : TaskCode;
-                import toolpipe.stages.actcenter : ActionCenterStage;
-                if (auto acs = cast(ActionCenterStage)
-                               g_pipeCtx.pipeline.findByTask(TaskCode.Acen)) {
-                    acIsUserPlaced = acs.isUserPlaced();
-                    acIsSoftPlaced = acs.isSoftPlaced();
-                }
-            }
-
-            buf.put(`{"actionCenter":{"center":`);
-            putVec3(acen.center);
-            buf.put(format(`,"isUserPlaced":%s,"isSoftPlaced":%s`,
-                           acIsUserPlaced ? "true" : "false",
-                           acIsSoftPlaced ? "true" : "false"));
-            buf.put(format(`,"isAuto":%s,"type":%d,"clusterCenters":`,
-                           acen.isAuto ? "true" : "false",
-                           acen.type));
-            putVec3List(acen.clusterCenters);
-            buf.put(`,"clusterOf":[`);
-            foreach (i, c; acen.clusterOf) {
-                if (i) buf.put(",");
-                buf.put(format(`%d`, c));
-            }
-            buf.put(`]},"axis":{"right":`);
-            putVec3(axis.right);
-            buf.put(`,"up":`);
-            putVec3(axis.up);
-            buf.put(`,"fwd":`);
-            putVec3(axis.fwd);
-            buf.put(format(`,"axIndex":%d,"type":%d,"isAuto":%s`,
-                           axis.axIndex, axis.type,
-                           axis.isAuto ? "true" : "false"));
-            buf.put(`,"clusterRight":`);  putVec3List(axis.clusterRight);
-            buf.put(`,"clusterUp":`);     putVec3List(axis.clusterUp);
-            buf.put(`,"clusterFwd":`);    putVec3List(axis.clusterFwd);
-            buf.put(`},"symmetry":{"enabled":`);
-            buf.put(symm.enabled ? "true" : "false");
-            buf.put(format(`,"axisIndex":%d,"useWorkplane":%s,"topology":%s,"baseSide":%d`,
-                           symm.axisIndex,
-                           symm.useWorkplane ? "true" : "false",
-                           symm.topology     ? "true" : "false",
-                           symm.baseSide));
-            buf.put(`,"planePoint":`);  putVec3(symm.planePoint);
-            buf.put(`,"planeNormal":`); putVec3(symm.planeNormal);
-            buf.put(`,"pairOf":[`);
-            foreach (i, m; symm.pairOf) {
-                if (i) buf.put(",");
-                buf.put(format(`%d`, m));
-            }
-            buf.put(`],"onPlane":[`);
-            foreach (i, op; symm.onPlane) {
-                if (i) buf.put(",");
-                buf.put(op ? "true" : "false");
-            }
-            buf.put(`],"vertSign":[`);
-            foreach (i, s; symm.vertSign) {
-                if (i) buf.put(",");
-                buf.put(format(`%d`, s));
-            }
-            // P-C: snap config block — lets tests witness the snap config-restore
-            // (snap is a cursor-time op with no geometry signal at idle, so its
-            // undo/redo restore is observed via this published enabled/types).
-            buf.put(format(`]},"snap":{"enabled":%s,"types":%d}`,
-                           snapPkt.enabled ? "true" : "false",
-                           snapPkt.enabledTypes));
-
-            // P-F: published transform attrs (TX..SZ). Read straight off the active
-            // XfrmTransformTool's introspection seam so the run-absolute panel-
-            // display contract can be asserted without poking the panel struct.
-            // Absent block ⇒ no transform tool active; tests gate on its presence.
-            // (Phase 1 adds the frozen run-frame fields to this same block.)
-            {
-                import tools.transform.xfrm_transform : XfrmTransformTool;
-                if (auto xf = cast(XfrmTransformTool) activeTool) {
-                    buf.put(`,"transform":{"translate":`); putVec3(xf.publishedTranslate());
-                    buf.put(`,"rotate":`);  putVec3(xf.publishedRotate());
-                    buf.put(`,"scale":`);   putVec3(xf.publishedScale());
-                    // Live Move-bank gizmo center (handler.center) — the
-                    // VISUAL gizmo position during a drag (the wrapper draws
-                    // the gizmo from this, NOT from actionCenter.center while a
-                    // drag is active). Lets tests witness the during-drag gizmo
-                    // (element-move: the gizmo must jump onto the picked element
-                    // at drag start, not move off its old center).
-                    buf.put(`,"gizmoCenter":`); putVec3(xf.moveGizmoCenter());
-                    buf.put(format(`,"moveDragAxis":%d`, xf.moveDragAxisPublic()));
-                    buf.put(format(`,"constraintLockedAxis":%d`, xf.constraintLockedAxis()));
-                    // P-F Phase 1 — the frozen per-run gizmo frame.
-                    bool rfValid; Vec3 rfO, rfR, rfU, rfF;
-                    xf.publishedRunFrame(rfValid, rfO, rfR, rfU, rfF);
-                    buf.put(format(`,"runFrameValid":%s,"runFrameOrigin":`,
-                                   rfValid ? "true" : "false"));
-                    putVec3(rfO);
-                    buf.put(`,"runFrameRight":`); putVec3(rfR);
-                    buf.put(`,"runFrameUp":`);    putVec3(rfU);
-                    buf.put(`,"runFrameFwd":`);   putVec3(rfF);
-                    // flex_border_handles_plan.md Phase 4 step 1 — the LIVE
-                    // rendered per-bank gizmo pose (Risk 7: read handler.axis*,
-                    // NOT the frozen runFrame*). Lets tests witness the rendered
-                    // orientation follow/freeze during a drag (bugs 2/3).
-                    Vec3 mrR, mrU, mrF, rrR, rrU, rrF, srR, srU, srF, ringR, ringU, ringF;
-                    xf.moveRenderFrame(mrR, mrU, mrF);
-                    xf.rotateRenderFrame(rrR, rrU, rrF);
-                    xf.scaleRenderFrame(srR, srU, srF);
-                    xf.rotateRingFrame(ringR, ringU, ringF);
-                    buf.put(`,"moveRenderFrame":{"right":`);   putVec3(mrR);
-                    buf.put(`,"up":`); putVec3(mrU); buf.put(`,"fwd":`); putVec3(mrF); buf.put(`}`);
-                    buf.put(`,"rotateRenderFrame":{"right":`); putVec3(rrR);
-                    buf.put(`,"up":`); putVec3(rrU); buf.put(`,"fwd":`); putVec3(rrF); buf.put(`}`);
-                    buf.put(`,"scaleRenderFrame":{"right":`);  putVec3(srR);
-                    buf.put(`,"up":`); putVec3(srU); buf.put(`,"fwd":`); putVec3(srF); buf.put(`}`);
-                    buf.put(`,"rotateRingFrame":{"right":`);   putVec3(ringR);
-                    buf.put(`,"up":`); putVec3(ringU); buf.put(`,"fwd":`); putVec3(ringF); buf.put(`}`);
-                    buf.put(`}`);
-                }
-            }
-            // task 0342 Phase 1 (stage-conformance fixtures): per-vertex
-            // falloff weights, mesh vertex-index order. Sibling optional
-            // block to "transform" above — emitted ONLY when a falloff is
-            // active (mirrors the "absent block ⇒ tests gate on its
-            // presence" convention). Read-only: `evaluateFalloff` is a pure
-            // function (source/falloff.d) and `vts.get!FalloffPacket()`
-            // just retrieves the packet `pipeline.evaluate` above already
-            // published — no additional cache mutation. Wire contract
-            // (locked, see doc/tasks/work/0342-stage-conformance-fixtures.md):
-            // key = "falloffWeights", one weight per vertex in mesh
-            // vertex-index order, values in [0, 1].
-            {
-                import toolpipe.packets : FalloffPacket;
-                import falloff          : evaluateFalloff;
-                import std.math         : isFinite;
-                if (auto fpp = vts.get!FalloffPacket()) {
-                    if (fpp.enabled) {
-                        buf.put(`,"falloffWeights":[`);
-                        foreach (i, v; subj.mesh.vertices) {
-                            if (i) buf.put(",");
-                            float w = evaluateFalloff(*fpp, v, cast(int) i, subj.viewport);
-                            // Honor the block's documented [0,1] contract for
-                            // EVERY falloff type: Screen/Lasso weights project
-                            // through the viewport (perspective divide can go
-                            // non-finite for a vert at/behind the camera) and
-                            // custom cubic-Bezier shapes can overshoot [0,1].
-                            // Guard so the emitter never produces nan/inf/out-of-
-                            // range (invalid JSON / broken wire contract).
-                            if (!isFinite(w)) w = 0.0f;
-                            else if (w < 0.0f) w = 0.0f;
-                            else if (w > 1.0f) w = 1.0f;
-                            buf.put(format(`%f`, w));
-                        }
-                        buf.put(`]`);
-                    }
-                }
-            }
-            // Published hover state (vert/edge/face index, -1 = none). Lets
-            // tests witness the during-drag hover FREEZE: while a tool drag is
-            // active the hover must stay on the element picked at drag-start,
-            // not follow the cursor onto other elements.
-            {
-                import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
-                buf.put(format(`,"hover":{"vertex":%d,"edge":%d,"face":%d}`,
-                               g_hoveredVertex, g_hoveredEdge, g_hoveredFace));
-            }
-            {
-                buf.put(`,"ai":`);
-                buf.put(latestHandleDebugTraceJson(aiState.enabled));
-            }
-            buf.put(`}`);
-            return buf.data;
-        });
-
-        // AI Modeling Copilot Phase 1 (task 0402, doc/ai_copilot_plan.md):
-        // GET /api/ai/analyze runs the whole-mesh analysis engine over the
-        // live mesh and returns the resulting Finding[] as JSON. Read-only,
-        // no side effects, available regardless of aiState.enabled (the
-        // toggle gates later UI phases, not this raw analysis read).
-        // Marshaled onto the main thread via aiAnalyzeBridge (see
-        // http_server.d) so it never races the main thread's own mesh edits.
-        // version(WithAI)-only — modeling-noai never sets the provider, so
-        // http_server.d's existing `aiAnalyzeProvider is null` guard serves
-        // the 404/unavailable response (see http_server.d:1417).
-        version (WithAI)
-        httpServer.setAiAnalyzeProvider(() {
-            import ai.analysis : analyzeMesh, findingsToJson;
-            return findingsToJson(analyzeMesh(mesh()));
-        });
-
-        // Phase 7.3a: /api/snap query bridge. Lets unit tests probe
-        // the snap math directly with explicit cursor world pos +
-        // screen pixel + excludeVerts, without driving an interactive
-        // Move drag through play-events.
-        //
-        // Body runs on the MAIN THREAD inside tickAll(), via
-        // snapQueryBridge (task 0587) — it is not read-only and never was:
-        // it runs pipeline.evaluate() over the live mesh and selection. See
-        // the bridge declaration in http_server.d for which clauses of the
-        // standing rule applied.
-        httpServer.setSnapQueryProvider((string body_) {
-            import std.array       : appender;
-            import std.format      : format;
-            import std.json        : parseJSON, JSONType, JSONValue;
-            import std.conv        : to;
-            import toolpipe.pipeline       : g_pipeCtx;
-            import toolpipe.packets        : SnapPacket, SubjectPacket;
-            import snap                    : snapCursor, SnapResult;
-            import math                    : Vec3;
-
-            auto buf = appender!string;
-            JSONValue req;
-            try req = parseJSON(body_);
-            catch (Exception e) {
-                buf.put(`{"error":"invalid JSON","message":"`
-                        ~ e.msg ~ `"}`);
-                return buf.data;
-            }
-
-            // Required: cursor (Vec3 array), sx, sy.
-            if ("cursor" !in req || "sx" !in req || "sy" !in req) {
-                buf.put(`{"error":"missing fields cursor/sx/sy"}`);
-                return buf.data;
-            }
-            auto cur = req["cursor"].array;
-            if (cur.length != 3) {
-                buf.put(`{"error":"cursor must be [x,y,z]"}`);
-                return buf.data;
-            }
-            float toF(JSONValue v) {
-                if (v.type == JSONType.integer) return cast(float)v.integer;
-                if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
-                return cast(float)v.floating;
-            }
-            int toI(JSONValue v) {
-                if (v.type == JSONType.integer) return cast(int)v.integer;
-                if (v.type == JSONType.uinteger) return cast(int)v.uinteger;
-                return cast(int)v.floating;
-            }
-            Vec3 cursor = Vec3(toF(cur[0]), toF(cur[1]), toF(cur[2]));
-            int  sx     = toI(req["sx"]);
-            int  sy     = toI(req["sy"]);
-            uint[] exclude;
-            if ("excludeVerts" in req) {
-                foreach (e; req["excludeVerts"].array)
-                    exclude ~= cast(uint)toI(e);
-            }
-
-            // Pull a fully-evaluated SnapPacket from the pipeline so
-            // SNAP's workplane snapshot + grid step are populated
-            // (they depend on the upstream WORK stage having run).
-            auto vp = vpm.activeSnapshot();
-            SnapPacket cfg;
-            if (g_pipeCtx !is null) {
-                import operator        : VectorStack;
-                SubjectPacket subj;
-                subj.mesh             = &mesh();
-                subj.editMode         = editMode;
-                subj.viewport         = vp;
-                VectorStack vts;
-                vts.put(&subj);
-                g_pipeCtx.pipeline.evaluate(vts);
-                if (auto sp = vts.get!SnapPacket()) cfg = *sp;
-            }
-
-            // The just-in-time item-frame install that used to sit here is
-            // GONE (task 0587), not moved. It existed for one reason: this
-            // closure ran on the HTTP thread, where it could race the draw's
-            // own per-frame setItemSnapFrames(). Now that the closure runs on
-            // the main thread there is no second writer to race, and the
-            // install it duplicated — ui/panels.d, unconditional every draw —
-            // has already run. Deleting it also makes this probe answer from
-            // the SAME frames an interactive tool sees mid-drag, which the
-            // just-in-time rebuild specifically did not.
-            SnapResult sr = snapCursor(cursor, sx, sy, vp, mesh, cfg, exclude);
-
-            buf.put(format(
-                `{"snapped":%s,"highlighted":%s,"targetType":%d,`
-              ~ `"targetIndex":%d,"targetSource":%d,"constraintType":%d,`
-              ~ `"worldPos":[%f,%f,%f],"highlightPos":[%f,%f,%f]}`,
-                sr.snapped ? "true" : "false",
-                sr.highlighted ? "true" : "false",
-                cast(int)sr.targetType,
-                sr.targetIndex,
-                sr.targetSource,
-                cast(int)sr.constraintType,
-                sr.worldPos.x, sr.worldPos.y, sr.worldPos.z,
-                sr.highlightPos.x, sr.highlightPos.y, sr.highlightPos.z));
-            return buf.data;
-        });
-
-        // Phase 7.3d: /api/snap/last — read-only snapshot of the
-        // most recent snap result any tool published via
-        // snap_render.publishLastSnap. Lets headless tests verify the
-        // visual-feedback wiring without a screenshot diff.
-        httpServer.setSnapLastProvider(() {
-            import std.array  : appender;
-            import std.format : format;
-            import snap_render : g_lastSnap;
-            auto buf = appender!string;
-            auto sr = g_lastSnap;
-            buf.put(format(
-                `{"snapped":%s,"highlighted":%s,"targetType":%d,`
-              ~ `"targetIndex":%d,"targetSource":%d,"worldPos":[%f,%f,%f],`
-              ~ `"highlightPos":[%f,%f,%f]}`,
-                sr.snapped ? "true" : "false",
-                sr.highlighted ? "true" : "false",
-                cast(int)sr.targetType,
-                sr.targetIndex,
-                sr.targetSource,
-                sr.worldPos.x, sr.worldPos.y, sr.worldPos.z,
-                sr.highlightPos.x, sr.highlightPos.y, sr.highlightPos.z));
-            return buf.data;
-        });
-
-        // /api/constrain — POST. Probe the constraint math directly with an
-        // explicit `pos` world point. Evaluates the pipeline to pull the live
-        // ConstrainPacket, snapshots the background sources, and returns the
-        // projected point. Mirrors /api/snap — including the thread contract:
-        // this body runs on the MAIN THREAD inside tickAll() via
-        // constrainQueryBridge (task 0587). It is not "read-only (HTTP thread
-        // safe)", as this note used to claim; pipeline.evaluate() writes the
-        // shared stage caches.
-        httpServer.setConstrainQueryProvider((string body_) {
-            import std.array       : appender;
-            import std.format      : format;
-            import std.json        : parseJSON, JSONType, JSONValue;
-            import std.conv        : to;
-            import toolpipe.pipeline   : g_pipeCtx;
-            import toolpipe.packets    : ConstrainPacket, SubjectPacket;
-            import snap                : backgroundSourcesSnapshot;
-            import constraint          : constrainPoint;
-            import math                : Vec3;
-
-            auto buf = appender!string;
-            JSONValue req;
-            try req = parseJSON(body_);
-            catch (Exception e) {
-                buf.put(`{"error":"invalid JSON","message":"`
-                        ~ e.msg ~ `"}`);
-                return buf.data;
-            }
-
-            if ("pos" !in req) {
-                buf.put(`{"error":"missing field pos"}`);
-                return buf.data;
-            }
-            auto pa = req["pos"].array;
-            if (pa.length != 3) {
-                buf.put(`{"error":"pos must be [x,y,z]"}`);
-                return buf.data;
-            }
-            float toF(JSONValue v) {
-                if (v.type == JSONType.integer)  return cast(float)v.integer;
-                if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
-                return cast(float)v.floating;
-            }
-            Vec3 pos = Vec3(toF(pa[0]), toF(pa[1]), toF(pa[2]));
-            Vec3 delta = Vec3(0, 0, 0);
-            if ("delta" in req) {
-                auto da = req["delta"].array;
-                if (da.length == 3)
-                    delta = Vec3(toF(da[0]), toF(da[1]), toF(da[2]));
-            }
-
-            auto vp = vpm.activeSnapshot();
-            ConstrainPacket cfg;
-            if (g_pipeCtx !is null) {
-                import operator : VectorStack;
-                SubjectPacket subj;
-                subj.mesh     = &mesh();
-                subj.editMode = editMode;
-                subj.viewport = vp;
-                VectorStack vts;
-                vts.put(&subj);
-                g_pipeCtx.pipeline.evaluate(vts);
-                if (auto cp = vts.get!ConstrainPacket()) cfg = *cp;
-            }
-
-            auto bgSrc = backgroundSourcesSnapshot();
-            Vec3 result = constrainPoint(pos, delta, vp, bgSrc, cfg);
-            // `projected` reflects whether constrainPoint actually moved
-            // the position. Identity cases (disabled / geometry=off /
-            // no-sources / vector-screen no-op) return the input unchanged,
-            // so a displacement magnitude check is the correct test.
-            float dx = result.x - pos.x;
-            float dy = result.y - pos.y;
-            float dz = result.z - pos.z;
-            bool hit = (dx*dx + dy*dy + dz*dz) > 1e-12f;
-
-            buf.put(format(
-                `{"projected":%s,"resultPos":[%f,%f,%f]}`,
-                hit ? "true" : "false",
-                result.x, result.y, result.z));
-            return buf.data;
-        });
-
-        // /api/path — evaluate the PATH stage at a requested t and return
-        // value/tangent/length as JSON. Marshaled onto the main thread via
-        // tickPath() using a dedicated epoch pair (NOT the pipeEval pair).
-        httpServer.setPathQueryProvider((float t) {
-            import std.array         : appender;
-            import std.format        : format;
-            import toolpipe.pipeline : g_pipeCtx;
-            import toolpipe.packets  : SubjectPacket, PathPacket;
-            import operator          : VectorStack;
-            import path              : pathValue, pathTangent, pathLength;
-
-            if (g_pipeCtx is null)
-                return `{"error":"pipeline not initialised"}`;
-
-            SubjectPacket subj;
-            subj.mesh     = &mesh();
-            subj.editMode = editMode;
-            subj.viewport = vpm.activeSnapshot();
-
-            VectorStack vts;
-            vts.put(&subj);
-            g_pipeCtx.pipeline.evaluate(vts);
-
-            auto pp = vts.get!PathPacket();
-            if (pp is null || !pp.enabled)
-                return `{"enabled":false}`;
-
-            import math : Vec3;
-            Vec3  val = pathValue  (pp.knots, pp.closed, t);
-            Vec3  tan = pathTangent(pp.knots, pp.closed, t);
-            float len = pathLength (pp.knots, pp.closed, 0.0f, t);
-
-            // Use %f for all floats to ensure decimal points are always
-            // present in the JSON output (prevents integer-type parse on
-            // values like 0.0, 1.0, 2.0 where %g would strip the point).
-            return format(
-                `{"enabled":true,"value":[%f,%f,%f],"tangent":[%f,%f,%f],"length":%f}`,
-                val.x, val.y, val.z,
-                tan.x, tan.y, tan.z,
-                len);
-        });
-
-        // Helper: inject _positional args from the argstring pipeline into
-        // tool.* commands. Called from inside setCommandHandler after the
-        // generic injectParamsInto pass. Extracted to keep the handler tidy.
-        void injectToolCommandPositional(Command cmd, ref JSONValue pj)
-        {
-            import std.json : JSONType;
-            if (auto ts = cast(ToolSetCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            ts.setToolId(pos[0].str);
-                        if (pos.length >= 2 && pos[1].type == JSONType.string
-                            && pos[1].str == "off")
-                            ts.setTurnOff(true);
-                    }
-                }
-                // Collect named args (everything except _positional key).
-                import std.json : JSONValue;
-                JSONValue named = JSONValue(cast(JSONValue[string]) null);
-                if (pj.type == JSONType.object) {
-                    foreach (string k, ref v; pj.object) {
-                        if (k != "_positional") named[k] = v;
-                    }
-                }
-                ts.setNamedArgs(named);
-            } else if (auto ta = cast(ToolAttrCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            ta.setToolId(pos[0].str);
-                        if (pos.length >= 2 && pos[1].type == JSONType.string)
-                            ta.setAttrName(pos[1].str);
-                        if (pos.length >= 3) {
-                            // Forms-engine query idiom: a literal "?" in the
-                            // value slot flips the command into read-back mode
-                            // (resolve + box the live value, mutate nothing)
-                            // instead of writing. Any other value writes as
-                            // before — backward-compatible.
-                            if (pos[2].type == JSONType.string && pos[2].str == "?")
-                                ta.setQuery(true);
-                            else
-                                ta.setAttrValue(pos[2]);
-                        }
-                    }
-                }
-            } else if (auto tr = cast(ToolResetCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            tr.setToolId(pos[0].str);
-                    }
-                }
-            } else if (auto tpa = cast(ToolPipeAttrCommand)cmd) {
-                // tool.pipe.attr <stageId> <name> <value>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            tpa.setStageId(pos[0].str);
-                        if (pos.length >= 2 && pos[1].type == JSONType.string)
-                            tpa.setAttrName(pos[1].str);
-                        if (pos.length >= 3 && pos[2].type == JSONType.string
-                            && pos[2].str == "?") {
-                            // Forms-engine query idiom (stage namespace).
-                            tpa.setQuery(true);
-                        } else if (pos.length >= 3) {
-                            // Value is whatever scalar form was passed —
-                            // stringify so the stage's setAttr can parse it.
-                            import std.conv : to;
-                            string sval;
-                            if      (pos[2].type == JSONType.string)   sval = pos[2].str;
-                            else if (pos[2].type == JSONType.integer)  sval = pos[2].integer.to!string;
-                            else if (pos[2].type == JSONType.uinteger) sval = pos[2].uinteger.to!string;
-                            else if (pos[2].type == JSONType.float_)   sval = pos[2].floating.to!string;
-                            else if (pos[2].type == JSONType.true_)    sval = "true";
-                            else if (pos[2].type == JSONType.false_)   sval = "false";
-                            tpa.setAttrValue(sval);
-                        }
-                    }
-                }
-            } else if (auto la = cast(LayerAttr)cmd) {
-                // layer.attr <index> <attr> <value|?>
-                //   positional[0] = layer index (int; -1 → active)
-                //   positional[1] = attr name (e.g. "pos.x", "name")
-                //   positional[2] = value, or the literal "?" for read-back
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1) {
-                            if      (pos[0].type == JSONType.integer)  la.setIndex(cast(int)pos[0].integer);
-                            else if (pos[0].type == JSONType.uinteger) la.setIndex(cast(int)pos[0].uinteger);
-                            else if (pos[0].type == JSONType.string)   { try { la.setIndex(pos[0].str.to!int); } catch (Exception) {} }
-                        }
-                        if (pos.length >= 2 && pos[1].type == JSONType.string)
-                            la.setAttrName(pos[1].str);
-                        if (pos.length >= 3) {
-                            // Forms-engine query idiom: a literal "?" in the
-                            // value slot flips the command into read-back mode.
-                            if (pos[2].type == JSONType.string && pos[2].str == "?")
-                                la.setQuery(true);
-                            else
-                                la.setAttrValue(pos[2]);
-                        }
-                    }
-                }
-            } else if (auto tpe = cast(ToolPanelEditCommand)cmd) {
-                // tool.panelEdit <dx> <dy> <dz> (test-only). Accept int / float
-                // / string scalar forms for each component.
-                import math : Vec3;
-                float comp(JSONValue v) {
-                    if      (v.type == JSONType.integer)  return cast(float)v.integer;
-                    else if (v.type == JSONType.uinteger) return cast(float)v.uinteger;
-                    else if (v.type == JSONType.float_)   return cast(float)v.floating;
-                    else if (v.type == JSONType.string)   { try { return v.str.to!float; } catch (Exception) {} }
-                    return 0.0f;
-                }
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        float dx = pos.length >= 1 ? comp(pos[0]) : 0.0f;
-                        float dy = pos.length >= 2 ? comp(pos[1]) : 0.0f;
-                        float dz = pos.length >= 3 ? comp(pos[2]) : 0.0f;
-                        tpe.setDelta(Vec3(dx, dy, dz));
-                    }
-                }
-            } else if (auto stt = cast(SnapToggleTypeCommand)cmd) {
-                // snap.toggleType <typeName>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            stt.setTypeName(pos[0].str);
-                    }
-                }
-            } else if (auto snm = cast(SnapModeCommand)cmd) {
-                // snap.mode <global|component|item>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            snm.setModeName(pos[0].str);
-                    }
-                }
-            } else if (auto crc = cast(CoordRoundingCommand)cmd) {
-                // pref.coordRounding <none|normal|fine|fixed|forcedFixed>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            crc.setModeName(pos[0].str);
-                    }
-                }
-            } else if (auto tbp = cast(TrackballPrefCommand)cmd) {
-                // pref.trackball <global|override|viewport|speed|tabletSpeed> <value>
-                //
-                // The VALUE is stringified from whatever scalar the argstring
-                // parser produced, not read as a string only: `speed 1.0`
-                // arrives as a JSON number and `global true` as a JSON bool, so
-                // a string-only read silently dropped both and the command then
-                // reported "value required" for an argument that was right
-                // there. The command owns the parsing of the resulting text.
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            tbp.setSubject(pos[0].str);
-                        if (pos.length >= 2)
-                            tbp.setValue(scalarArgToString(pos[1]));
-                    }
-                }
-            } else if (auto utp = cast(UiToolPropertiesCommand)cmd) {
-                // ui.toolProperties <show|hide> (test-only).
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            utp.setVisible(pos[0].str);
-                    }
-                }
-            } else if (auto ull = cast(UiLayerListCommand)cmd) {
-                // ui.layerList <show|hide> (test-only).
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            ull.setVisible(pos[0].str);
-                    }
-                }
-            } else if (auto uvp = cast(UiViewportPropsCommand)cmd) {
-                // ui.viewportProps <show|hide> (test-only).
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            uvp.setVisible(pos[0].str);
-                    }
-                }
-            } else if (auto fad = cast(FalloffAddCommand)cmd) {
-                // falloff.add <type>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            fad.setTypeName(pos[0].str);
-                    }
-                }
-            } else if (auto frm = cast(FalloffRemoveCommand)cmd) {
-                // falloff.remove <id>
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            frm.setTargetId(pos[0].str);
-                    }
-                }
-            } else if (auto fas = cast(FalloffAutoSizeCommand)cmd) {
-                // falloff.autosize <axis>  (x / y / z)
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            fas.setAxis(pos[0].str);
-                    }
-                }
-            } else if (auto pdc = cast(PathDefineCommand)cmd) {
-                // path.define <csv-verts> [closed]
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            pdc.setVertsCsv(pos[0].str);
-                        if (pos.length >= 2 && pos[1].type == JSONType.string)
-                            pdc.setClosed(pos[1].str == "true");
-                    }
-                }
-            }
-            // tool.doApply has no params.
-
-            // workplane.* commands: read named args (cenX/Y/Z, rotX/Y/Z,
-            // axis, angle, dist). All argstring keys; we
-            // accept JSON scalar types for the value and stringify /
-            // floatify as needed.
-            import std.math : isNaN;
-            bool isNaNFloat(float f) { return isNaN(f); }
-            float readFloat(string key) {
-                if (auto p = key in pj) {
-                    if      (p.type == JSONType.integer)  return cast(float)p.integer;
-                    else if (p.type == JSONType.uinteger) return cast(float)p.uinteger;
-                    else if (p.type == JSONType.float_)   return cast(float)p.floating;
-                    else if (p.type == JSONType.string)   {
-                        try { return p.str.to!float; } catch (Exception) {}
-                    }
-                }
-                return float.nan;
-            }
-            string readString(string key) {
-                if (auto p = key in pj)
-                    if (p.type == JSONType.string) return p.str;
-                return "";
-            }
-            if (auto we = cast(WorkplaneEditCommand)cmd) {
-                float cx = readFloat("cenX");
-                float cy = readFloat("cenY");
-                float cz = readFloat("cenZ");
-                float rx = readFloat("rotX");
-                float ry = readFloat("rotY");
-                float rz = readFloat("rotZ");
-                we.setCenX(cx); we.setCenY(cy); we.setCenZ(cz);
-                we.setRotX(rx); we.setRotY(ry); we.setRotZ(rz);
-            } else if (auto wr = cast(WorkplaneRotateCommand)cmd) {
-                wr.setAxis(readString("axis"));
-                float a = readFloat("angle");
-                if (!isNaNFloat(a)) wr.setAngle(a);
-            } else if (auto wo = cast(WorkplaneOffsetCommand)cmd) {
-                wo.setAxis(readString("axis"));
-                float d = readFloat("dist");
-                if (!isNaNFloat(d)) wo.setDist(d);
-            }
-        }
-
-        // Helper: inject _positional args for select.* commands.
-        // Called from setCommandHandler after injectToolCommandPositional.
-        void injectSelectCommandPositional(Command cmd, ref JSONValue pj)
-        {
-            import std.json : JSONType;
-            if (auto stf = cast(SelectTypeFromCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            stf.setTargetType(pos[0].str);
-                    }
-                }
-            } else if (auto sd = cast(SelectDropCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            sd.setTargetType(pos[0].str);
-                    }
-                }
-            } else if (auto se = cast(SelectElementCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            se.setTargetType(pos[0].str);
-                        if (pos.length >= 2 && pos[1].type == JSONType.string)
-                            se.setAction(pos[1].str);
-                        int[] idx;
-                        foreach (pi; 2 .. pos.length) {
-                            if (pos[pi].type == JSONType.integer)
-                                idx ~= cast(int)pos[pi].integer;
-                            else if (pos[pi].type == JSONType.uinteger)
-                                idx ~= cast(int)pos[pi].uinteger;
-                        }
-                        se.setIndices(idx);
-                    }
-                }
-            } else if (auto sc = cast(SelectConvertCommand)cmd) {
-                if (auto pp = "_positional" in pj) {
-                    if (pp.type == JSONType.array) {
-                        auto pos = pp.array;
-                        if (pos.length >= 1 && pos[0].type == JSONType.string)
-                            sc.setTargetType(pos[0].str);
-                    }
-                }
-            }
-        }
-
-        // Assign the named delegate declared in outer scope so that the UI
-        // replay button calls the same dispatch path as /api/command.
-        commandHandlerDelegate = (string id, string paramsJson) {
-            import std.json : parseJSON, JSONType;
-            import commands.file.load : FileLoad;
-            import commands.file.save : FileSave;
-            import params : injectParamsInto;
-
-            // viewport.view <preset> — camera-only preset switch, no undo entry.
-            // Sets the active viewport's projection kind and axis preset.
-            // Axis presets (Top/Bottom/Front/Back/Right/Left) → ProjKind.Ortho;
-            // Perspective/Camera → ProjKind.Perspective.
-            if (id == "viewport.view") {
-                import view : ProjKind, ViewPreset;
-                import viewport : applyCellViewPreset;
-                string presetStr = "";
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    if (pjv.type == JSONType.string) {
-                        // Raw string param (e.g. from JSON {"command":"viewport.view","params":"Top"}).
-                        presetStr = pjv.str;
-                    } else if (pjv.type == JSONType.object) {
-                        if (auto pp = "_positional" in pjv) {
-                            if (pp.type == JSONType.array && pp.array.length >= 1
-                                && pp.array[0].type == JSONType.string)
-                                presetStr = pp.array[0].str;
-                        }
-                        if (presetStr.length == 0) {
-                            if (auto pp = "preset" in pjv)
-                                if (pp.type == JSONType.string) presetStr = pp.str;
-                        }
-                    }
-                }
-                // Map string → preset. projKind is derived from the preset
-                // by the shared helper (Perspective/Camera → Perspective,
-                // every axis preset → Ortho) — same mapping this switch used
-                // to hardcode per-case.
-                ViewPreset vp3preset = ViewPreset.Perspective;
-                switch (presetStr) {
-                    case "Top":         vp3preset = ViewPreset.Top;         break;
-                    case "Bottom":      vp3preset = ViewPreset.Bottom;      break;
-                    case "Front":       vp3preset = ViewPreset.Front;       break;
-                    case "Back":        vp3preset = ViewPreset.Back;        break;
-                    case "Right":       vp3preset = ViewPreset.Right;       break;
-                    case "Left":        vp3preset = ViewPreset.Left;        break;
-                    case "Camera":      vp3preset = ViewPreset.Camera;      break;
-                    default:            vp3preset = ViewPreset.Perspective; break;
-                }
-                // Hardwired to the ACTIVE cell (viewport.view does not do
-                // ?viewport=N resolution — that's the separate camera-set
-                // handler registered via setCameraSetHandler; adding it here
-                // would be scope creep for task 0215).
-                applyCellViewPreset(vpm.views[vpm.activeId], vp3preset);
-                return;
-            }
-
-            // viewport.layout <preset> — switch layout (Single/SplitH/SplitV/Quad).
-            if (id == "viewport.layout") {
-                import viewport : LayoutPreset;
-                string presetStr = "";
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    if (pjv.type == JSONType.string) {
-                        presetStr = pjv.str;
-                    } else if (pjv.type == JSONType.object) {
-                        if (auto pp = "_positional" in pjv) {
-                            if (pp.type == JSONType.array && pp.array.length >= 1
-                                && pp.array[0].type == JSONType.string)
-                                presetStr = pp.array[0].str;
-                        }
-                        if (presetStr.length == 0) {
-                            if (auto pp = "preset" in pjv)
-                                if (pp.type == JSONType.string) presetStr = pp.str;
-                        }
-                    }
-                }
-                LayoutPreset lp = LayoutPreset.Single;
-                switch (presetStr) {
-                    case "SplitH": lp = LayoutPreset.SplitH; break;
-                    case "SplitV": lp = LayoutPreset.SplitV; break;
-                    case "Quad":   lp = LayoutPreset.Quad;   break;
-                    default:       lp = LayoutPreset.Single;  break;
-                }
-                vpm.applyLayout(lp);
-                // Mirrors the recentFiles/lastDir/toolDefaults precedent: just
-                // update g_prefs in-memory here, no per-command file write —
-                // it flushes to disk once at clean shutdown (persistPrefsOnExit,
-                // gated on prefsActive). Harmless no-op in --test (never saved).
-                g_prefs.viewportLayout = lp;
-                return;
-            }
-
-            // viewport.indCenter/indScale/indRotate <yes|no> — per-cell independence
-            // flags, camera-only, no undo entry.
-            if (id == "viewport.indCenter" || id == "viewport.indScale" || id == "viewport.indRotate") {
-                bool val = true;
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    string s = "";
-                    if (pjv.type == JSONType.string) {
-                        s = pjv.str;
-                    } else if (pjv.type == JSONType.object) {
-                        if (auto pp = "_positional" in pjv) {
-                            if (pp.type == JSONType.array && pp.array.length >= 1
-                                && pp.array[0].type == JSONType.string)
-                                s = pp.array[0].str;
-                        }
-                        if (s.length == 0) {
-                            if (auto pp = "value" in pjv)
-                                if (pp.type == JSONType.string) s = pp.str;
-                        }
-                    }
-                    // Tolerant parse: "no"/"false"/"0" → false; anything else → true
-                    if (s == "no" || s == "false" || s == "0") val = false;
-                }
-                if (id == "viewport.indCenter")       vpm.views[vpm.activeId].indCenter = val;
-                else if (id == "viewport.indScale")   vpm.views[vpm.activeId].indScale  = val;
-                else                                  vpm.views[vpm.activeId].indRotate = val;
-                vpm.views[vpm.activeId].dirty = true;
-                return;
-            }
-
-            // viewport.displayStyle / wireOverlay / wireAlpha — per-cell
-            // display state (task 0559 Phase 2). Camera-class commands: they
-            // touch no document state, so no undo entry, exactly like
-            // viewport.indCenter above.
-            //
-            // TWO THINGS HERE ARE DIFFERENT FROM EVERY viewport.* COMMAND
-            // ABOVE, and both are deliberate.
-            //
-            // 1. A CELL SELECTOR. The four older viewport.* commands all
-            //    hardwire vpm.views[vpm.activeId]. Display style is the first
-            //    genuinely PER-CELL render input, so "set the style on a cell
-            //    that is not the active one" has to be expressible — without
-            //    it, the isolation property (a style change reaches exactly
-            //    one cell) is not testable at all, and a shipped
-            //    implementation in which all four cells share one mode would
-            //    look identical to a working one. Defaults to activeId, so
-            //    every existing call shape is unchanged.
-            //
-            // 2. UNCONSUMED ENUM VALUES ARE REJECTED, NOT ACCEPTED. The
-            //    display enums are declared wider than the renderer currently
-            //    honours, on purpose, so the value space is right from the
-            //    start. But a command that accepts a value and then renders
-            //    something else is worse than a command that refuses it: the
-            //    first is a silent lie that a test can be written against and
-            //    pass forever. So the parse below accepts exactly the values
-            //    whose plan fields a pass actually reads today, and names
-            //    what is missing for the rest.
-            if (id == "viewport.displayStyle" || id == "viewport.wireOverlay"
-                || id == "viewport.wireAlpha") {
-                import std.string : toLower, strip;
-                import std.conv   : to, ConvException;
-                import std.format : format;
-
-                string sval = "";
-                int    cell = -1;
-                bool   haveNum = false;
-                double nval = 0;
-
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    void takeScalar(JSONValue v) {
-                        switch (v.type) {
-                            case JSONType.string:   sval = v.str; break;
-                            case JSONType.float_:   nval = v.floating;          haveNum = true; break;
-                            case JSONType.integer:  nval = cast(double)v.integer;  haveNum = true; break;
-                            case JSONType.uinteger: nval = cast(double)v.uinteger; haveNum = true; break;
-                            default: break;
-                        }
-                    }
-                    if (pjv.type != JSONType.object) {
-                        takeScalar(pjv);
-                    } else {
-                        if (auto pp = "_positional" in pjv)
-                            if (pp.type == JSONType.array && pp.array.length >= 1)
-                                takeScalar(pp.array[0]);
-                        if (sval.length == 0 && !haveNum) {
-                            // Named forms: the generic "value", plus a
-                            // per-command alias so a caller can be explicit.
-                            foreach (key; ["value", "style", "wire", "overlay", "alpha"]) {
-                                if (auto pp = key in pjv) { takeScalar(*pp); break; }
-                            }
-                        }
-                        if (auto pp = "viewport" in pjv) {
-                            if (pp.type == JSONType.integer)       cell = cast(int)pp.integer;
-                            else if (pp.type == JSONType.uinteger) cell = cast(int)pp.uinteger;
-                            else if (pp.type == JSONType.float_)   cell = cast(int)pp.floating;
-                            else if (pp.type == JSONType.string) {
-                                try { cell = to!int(pp.str.strip); }
-                                catch (ConvException) { /* keep -1 = active */ }
-                            }
-                        }
-                    }
-                }
-
-                // Out of range is an ERROR, not a silent clamp to the active
-                // cell: a test that addresses cell 2 in a Single layout and
-                // silently gets cell 0 would pass while asserting nothing.
-                if (cell == -1) cell = vpm.activeId;
-                if (cell < 0 || cell >= vpm.cellCount)
-                    throw new Exception(format(
-                        "%s: viewport %d is out of range — the current layout "
-                        ~ "has %d cell(s)", id, cell, vpm.cellCount));
-
-                Viewport3D tv = vpm.views[cell];
-
-                if (id == "viewport.displayStyle") {
-                    switch (sval.strip.toLower) {
-                        case "wireframe": tv.display.active.style = DisplayStyle.Wireframe; break;
-                        case "shaded":    tv.display.active.style = DisplayStyle.Shaded;    break;
-                        // Task 0589: 'solid' used to be refused here, and the
-                        // refusal said exactly what was missing — "an unlit
-                        // surface needs a shader uniform that does not exist".
-                        // That uniform now exists (`u_lit` in shader.d) and the
-                        // face pass reads `DrawPlan.facesLit`, so the value is
-                        // consumed and the refusal would now be the lie. The
-                        // rest of the switch keeps refusing by name.
-                        case "solid":     tv.display.active.style = DisplayStyle.Solid;     break;
-                        default:
-                            throw new Exception(
-                                "viewport.displayStyle: expected 'wireframe', "
-                                ~ "'solid' or 'shaded', got '" ~ sval ~ "'");
-                    }
-                } else if (id == "viewport.wireOverlay") {
-                    switch (sval.strip.toLower) {
-                        case "none":    tv.display.active.wire = WireOverlay.None;    break;
-                        case "uniform": tv.display.active.wire = WireOverlay.Uniform; break;
-                        case "colored":
-                            throw new Exception(
-                                "viewport.wireOverlay: 'colored' needs a "
-                                ~ "per-item line colour that no layer carries "
-                                ~ "yet, and the colour source is still an open "
-                                ~ "question. Refusing rather than guessing.");
-                        default:
-                            throw new Exception(
-                                "viewport.wireOverlay: expected 'none' or "
-                                ~ "'uniform', got '" ~ sval ~ "'");
-                    }
-                } else {
-                    if (!haveNum && sval.length > 0) {
-                        try { nval = to!double(sval.strip); haveNum = true; }
-                        catch (ConvException) { /* reported below */ }
-                    }
-                    if (!haveNum)
-                        throw new Exception(
-                            "viewport.wireAlpha: expected a number in 0..1");
-                    if (nval < 0.0 || nval > 1.0)
-                        throw new Exception(format(
-                            "viewport.wireAlpha: %.4f is outside 0..1", nval));
-                    tv.display.active.wireAlpha = cast(float)nval;
-                }
-
-                // Task 0594: this cell's style is now a CHOICE, not an
-                // inheritance. Set on every arm of the branch above — including
-                // wireAlpha — because all three are the display controls the
-                // layout template would otherwise re-seed, and a user who set
-                // only the opacity has still expressed a preference about this
-                // cell's display. Only reached on success: every rejection
-                // above throws, so a refused value never marks the cell.
-                tv.displayUserSet = true;
-
-                // Mandatory, and the reason the older viewport.* commands all
-                // end this way: without it a non-hovered cell keeps re-blitting
-                // its cached colour texture and the change appears to do
-                // nothing until that cell's camera happens to move.
-                tv.dirty = true;
-
-                // Mirror into the in-memory prefs, exactly like
-                // viewport.layout above: no per-command file write, one flush
-                // at clean shutdown, harmless no-op under --test (never
-                // saved). Mirrored from the VIEW rather than from the parsed
-                // input so the two can never disagree about what was applied.
-                if (cell < g_prefs.viewportDisplay.length) {
-                    g_prefs.viewportDisplay[cell].style     = tv.display.active.style;
-                    g_prefs.viewportDisplay[cell].wire      = tv.display.active.wire;
-                    g_prefs.viewportDisplay[cell].wireAlpha = tv.display.active.wireAlpha;
-                    // Task 0594: and the provenance with them — this is the
-                    // write that makes the saved value outrank the shipped
-                    // template on the next run.
-                    g_prefs.viewportDisplay[cell].styleUserSet = true;
-                }
-                return;
-            }
-
-            // viewport.gridSteps <mask> — the grid's mantissa ladder (task
-            // 0570). APPLICATION-WIDE, so no cell selector: the ladder is one
-            // setting and a cell's grid differs from its neighbour's only
-            // through its own zoom.
-            //
-            // Accepts the mask as a number 0..7, or as the rung set spelled
-            // out ("1,2,5,10"). The second form exists because the number is
-            // a bit set and unreadable at a call site, and because it is what
-            // the panel shows — a test and a UI naming the same thing the
-            // same way is worth the parse.
-            //
-            // Out of range is an ERROR, not a clamp: 8 is not a coarser 7,
-            // it is a value with no ladder behind it.
-            if (id == "viewport.gridSteps") {
-                import std.string : strip, toLower, split, join;
-                import std.conv   : to, ConvException;
-                import std.format : format;
-
-                string sval = "";
-                long   mval = long.min;
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    void takeScalar(JSONValue v) {
-                        switch (v.type) {
-                            case JSONType.string:   sval = v.str;                  break;
-                            case JSONType.integer:  mval = v.integer;              break;
-                            case JSONType.uinteger: mval = cast(long)v.uinteger;   break;
-                            case JSONType.float_:   mval = cast(long)v.floating;   break;
-                            default: break;
-                        }
-                    }
-                    if (pjv.type != JSONType.object) takeScalar(pjv);
-                    else {
-                        if (auto pp = "_positional" in pjv)
-                            if (pp.type == JSONType.array && pp.array.length >= 1)
-                                takeScalar(pp.array[0]);
-                        if (sval.length == 0 && mval == long.min)
-                            foreach (key; ["value", "mask", "steps", "rungs"])
-                                if (auto pp = key in pjv) { takeScalar(*pp); break; }
-                    }
-                }
-
-                if (sval.length > 0 && mval == long.min) {
-                    immutable string s = sval.strip;
-                    // Plain number in a string ("5"), else a rung set.
-                    try { mval = to!long(s); }
-                    catch (ConvException) {
-                        // Match the spelled-out set against the eight ladders.
-                        string canon(const(double)[] r) {
-                            string[] parts;
-                            foreach (v; r) {
-                                // 2.5 keeps its decimal; the rest print whole.
-                                parts ~= (v == cast(double)cast(long)v)
-                                         ? format("%d", cast(long)v)
-                                         : format("%.1f", v);
-                            }
-                            return parts.join(",");
-                        }
-                        string want;
-                        foreach (piece; s.split(",")) want ~= (want.length ? "," : "") ~ piece.strip;
-                        foreach (m; kGridMaskMin .. kGridMaskMax + 1)
-                            if (canon(gridRungs(m)) == want) { mval = m; break; }
-                        if (mval == long.min)
-                            throw new Exception(format(
-                                "viewport.gridSteps: '%s' is neither a mask 0..7 "
-                                ~ "nor one of the eight rung sets (e.g. \"1,2,5,10\")", s));
-                    }
-                }
-
-                if (mval == long.min)
-                    throw new Exception(
-                        "viewport.gridSteps: expected a mask 0..7 or a rung set");
-                if (mval < kGridMaskMin || mval > kGridMaskMax)
-                    throw new Exception(format(
-                        "viewport.gridSteps: %d is outside 0..7 — the mask is a "
-                        ~ "3-bit SET (bit 0 admits 2, bit 1 admits 2.5, bit 2 "
-                        ~ "admits 5), so out-of-range is refused rather than "
-                        ~ "clamped to a ladder that was not asked for", mval));
-
-                g_viewGrid.rungMask = cast(int)mval;
-                g_prefs.gridStepMask = cast(int)mval;
-
-                // Every cell must re-render: the grid step is not part of any
-                // cell's camera, so without this a cell keeps re-blitting its
-                // cached texture and the ladder change appears to do nothing
-                // until that cell's camera happens to move.
-                foreach (k; 0 .. vpm.views.length) vpm.views[k].dirty = true;
-                return;
-            }
-
-            // viewport.master <id> — set per-cell master override, camera-only, no undo.
-            if (id == "viewport.master") {
-                int mid = -1;
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    string s = "";
-                    if (pjv.type == JSONType.integer)      { mid = cast(int)pjv.integer; }
-                    else if (pjv.type == JSONType.uinteger){ mid = cast(int)pjv.uinteger; }
-                    else if (pjv.type == JSONType.float_)  { mid = cast(int)pjv.floating; }
-                    else if (pjv.type == JSONType.string)  { s = pjv.str; }
-                    else if (pjv.type == JSONType.object) {
-                        if (auto pp = "_positional" in pjv) {
-                            if (pp.type == JSONType.array && pp.array.length >= 1) {
-                                auto v0 = pp.array[0];
-                                if (v0.type == JSONType.integer)      mid = cast(int)v0.integer;
-                                else if (v0.type == JSONType.uinteger) mid = cast(int)v0.uinteger;
-                                else if (v0.type == JSONType.float_)   mid = cast(int)v0.floating;
-                                else if (v0.type == JSONType.string)   s = v0.str;
-                            }
-                        }
-                    }
-                    if (s.length > 0) {
-                        import std.conv : to, ConvException;
-                        try { mid = to!int(s); } catch (ConvException) { /* keep -1 */ }
-                    }
-                }
-                // Out-of-range clamps to -1 (self via group master at resolve time).
-                if (mid < -1 || mid >= vpm.cellCount) mid = -1;
-                vpm.views[vpm.activeId].masterId = mid;
-                vpm.views[vpm.activeId].dirty = true;
-                return;
-            }
-
-            auto factory = id in reg.commandFactories;
-            if (factory is null)
-                throw new Exception("unknown command id '" ~ id ~ "'");
-            auto cmd = (*factory)();
-
-            // FormsPanel interactive write: mark a `tool.attr` interactive so
-            // the reEvaluate() seam opens the tool's live session on the first
-            // edit. The latch is set ONLY by formsInteractiveDispatch around one
-            // dispatch — the raw HTTP path never sets it, so wire `tool.attr`
-            // stays inert (faithful). Programmatic-only, never an argstring arg.
-            if (formsInteractiveLatch)
-                if (auto ta = cast(ToolAttrCommand)cmd)
-                    ta.setInteractive(true);
-
-            if (paramsJson.length > 0) {
-                auto pj = parseJSON(paramsJson);
-                if (pj.type == JSONType.object) {
-                    // Path special-case for file.load/file.save (OS-native
-                    // dialog quirk — schema-based migration deferred to phase 4).
-                    if ("path" in pj && pj["path"].type == JSONType.string) {
-                        string path = pj["path"].str;
-                        if (auto fl = cast(FileLoad)cmd) fl.setPath(path);
-                        else if (auto fs = cast(FileSave)cmd) fs.setPath(path);
-                    }
-
-                    // Schema-driven injection — works for any command with a
-                    // non-empty params() schema (currently vert.merge,
-                    // vert.join, mesh.move_vertex).
-                    if (cmd.params().length > 0)
-                        injectParamsInto(cmd.params(), pj);
-
-                    // tool.* commands: inject _positional args and named args.
-                    injectToolCommandPositional(cmd, pj);
-
-                    // select.* commands: inject positional args.
-                    injectSelectCommandPositional(cmd, pj);
-
-                    // Falloff side-channel — mesh.smooth / mesh.jitter /
-                    // mesh.quantize accept a `falloff` JSON object that
-                    // doesn't fit Param[]'s typed-pointer schema (it's
-                    // a multi-field FalloffPacket). Push it into the
-                    // command via the IFalloffAware interface — single
-                    // cast replaces the per-Command cast-chain that
-                    // existed before Phase 4. Reference-diff cases use
-                    // this to drive cross-engine linear-falloff parity
-                    // for the convolve tools.
-                    if (auto fj = "falloff" in pj.object) {
-                        if (fj.type == JSONType.object) {
-                            import falloff : parseFalloffJson, IFalloffAware;
-                            if (auto fa = cast(IFalloffAware)cmd) {
-                                auto fp = parseFalloffJson(*fj);
-                                fa.setFalloff(fp);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Phase C: while a refire block is open, fire() reverts the
-            // previous live command before applying the new one — net stack
-            // effect = 1 entry per drag/edit cycle. Outside refire, fire()
-            // falls through to plain apply()+record(), preserving Phase A
-            // semantics.
-            {
-                auto zCmd = g_perf.scope_(Cat.commandApply);
-                // Forms-engine query (`?` read-back) short-circuit. A query
-                // command resolves + boxes the live value WITHOUT mutating;
-                // it records no history and bypasses the refire/coalesce path
-                // entirely (a pure read). The boxed JSON is stashed for the
-                // HTTP thread via setCmdResult(); the in-process renderer reads
-                // queryResult() directly. A non-query (write) tool.attr /
-                // tool.pipe.attr falls through to the normal paths below.
-                if (auto taq = cast(ToolAttrCommand)cmd) {
-                    if (taq.isQuery()) {
-                        if (!taq.apply())
-                            throw new Exception("command '" ~ id ~ "' did not apply");
-                        if (httpServer !is null)
-                            httpServer.setCmdResult(taq.queryResultJsonOrEmpty());
-                        return;
-                    }
-                }
-                if (auto tpaq = cast(ToolPipeAttrCommand)cmd) {
-                    if (tpaq.isQuery()) {
-                        if (!tpaq.apply())
-                            throw new Exception("command '" ~ id ~ "' did not apply");
-                        if (httpServer !is null)
-                            httpServer.setCmdResult(tpaq.queryResultJsonOrEmpty());
-                        return;
-                    }
-                }
-                // layer.attr query (`?`): same pure-read short-circuit as the
-                // tool/stage attr queries — resolve + box the live layer Param
-                // value, record no history, return the boxed JSON.
-                if (auto laq = cast(LayerAttr)cmd) {
-                    if (laq.isQuery()) {
-                        if (!laq.apply())
-                            throw new Exception("command '" ~ id ~ "' did not apply");
-                        if (httpServer !is null)
-                            httpServer.setCmdResult(laq.queryResultJsonOrEmpty());
-                        return;
-                    }
-                }
-                // Refire (undo/redo migration P4) — the dispatch decision +
-                // driver bracket live in EditSession.tryRefireDispatch (task
-                // 0428): a tool.attr inside an open refire window on an
-                // opted-in tool fires the tool's rebuilt command instead of
-                // the plain path below. Non-tool.attr commands inside a
-                // refire window (and non-opted-in tools) keep the plain
-                // fire(cmd) path.
-                if (!session.tryRefireDispatch(cmd, id)) {
-                    // Programmatic command-dispatch path: route through
-                    // recordCoalescing() so consecutive COMPATIBLE delta edits
-                    // (same targets, same edit label) collapse into a single
-                    // undo entry. compareOp() defaults to Different for every
-                    // command except the opted-in delta edit, so every other
-                    // command appends exactly as record() would. Interactive
-                    // tool commits stay on record() (one entry per gesture).
-                    applyOrRefire(cmd, RecordMode.Coalescing,
-                                  "command '" ~ id ~ "' did not apply");
-                }
-
-                // P-E: a DISCRETE pipe-config tweak opens a NEW tweak
-                // generation, so the re-grade it triggers (recorded later, on the
-                // next XfrmTransformTool.update() tick) APPENDS as its OWN
-                // in-session undo step rather than REPLACING the prior re-grade
-                // (reference fact G2: each separate setAttr command is one step).
-                // Gate: a tool.pipe.attr WRITE (not a `?` query) that is NOT part
-                // of a held interactive interaction. The forms-panel slider scrub
-                // raises formsInteractiveLatch and fires MANY tool.pipe.attr
-                // writes as the mouse drags one slider — those must SHARE one
-                // generation (REPLACE into one step), so the latch suppresses the
-                // per-setAttr bump; the slider's end-of-scrub deactivate bumps the
-                // generation instead (forms_render.d). A raw /api/command or
-                // /api/script tool.pipe.attr (latch down) is a discrete tweak and
-                // bumps here. A falloff-handle drag bypasses this dispatcher
-                // entirely (it setAttrs the stage directly) and bumps on
-                // mouse-up (xfrm_transform.d). bumpTweakGeneration() is a no-op on
-                // history state otherwise — it only advances the token a future
-                // re-grade reads.
-                if (id == "tool.pipe.attr" && !formsInteractiveLatch) {
-                    bool isQuery = false;
-                    if (auto tpa = cast(ToolPipeAttrCommand)cmd) isQuery = tpa.isQuery();
-                    if (!isQuery) history.bumpTweakGeneration();
-                }
-            }
-        };
-        httpServer.setCommandHandler(commandHandlerDelegate);
-
-        // Test-automation seam: let /api/script?interactive=true raise the same
-        // formsInteractiveLatch the forms-panel scrub uses, so a sequence of
-        // tool.pipe.attr writes shares ONE tweak generation (REPLACE-coalesce
-        // into one in-session re-grade step) — the headless analogue of a held
-        // falloff-handle drag. Runs on the main thread inside tickCommand, the
-        // same thread that reads the latch, so no synchronisation is needed.
-        httpServer.setInteractiveLatchHook((bool raised) {
-            formsInteractiveLatch = raised;
-        });
-
-        // FormsPanel value writes go through here: raise the latch, dispatch the
-        // ordinary `tool.attr` via the same handler, lower the latch. The handler
-        // marks the built ToolAttrCommand interactive while the latch is up, so
-        // the first forms edit opens the tool's live session (reEvaluate seam).
-        formsInteractiveDispatch = (string id, string paramsJson) {
-            formsInteractiveLatch = true;
-            scope(exit) formsInteractiveLatch = false;
-            commandHandlerDelegate(id, paramsJson);
-        };
-
-        // P-E: wire the forms panel's tweak-boundary hook to the history's
-        // generation counter. A panel slider/drag deactivate (end of a continuous
-        // scrub) or a combo selection (a single discrete pick) bumps the
-        // generation so the NEXT pipe tweak APPENDS as its own in-session undo
-        // step rather than REPLACING the just-finished one (reference fact G2).
-        // The per-frame setAttrs DURING a scrub do NOT bump (the interactive
-        // latch suppresses the app.d per-command bump), so the scrub coalesces
-        // into ONE step; this end-of-scrub hook closes that window.
-        formsPanel.setTweakEndHook(() { history.bumpTweakGeneration(); });
-
-        // Phase 5.6: assign the outer-scope replayUndoEntry delegate so the
-        // History panel replay button can call it from the main-loop render.
-        replayUndoEntry = (size_t index) {
-            import argstring : parseArgstring;
-            string line = history.undoEntryCommandLine(index);
-            if (line.length == 0) return;
-            auto parsed = parseArgstring(line);
-            if (parsed.isEmpty) return;
-            try {
-                commandHandlerDelegate(parsed.commandId, parsed.params.toString());
-            } catch (Exception) {
-                // Replay is best-effort; the panel has no error-reporting UI.
-            }
-        };
-
-        httpServer.setUndoHandler(() {
-            return history.undo();
-        });
-        httpServer.setRedoHandler(() {
-            return history.redo();
-        });
-        // History panel Phase 2 — multi-step jump via /api/history/jump.
-        httpServer.setJumpHandler((size_t target) {
-            return history.jumpToVisible(target);
-        });
-        httpServer.setHistoryProvider(() {
-            // JSON: { "undo": [{"label":..,"args":..,"command":..,"ui":bool,
-            //                   "inSession":bool,"refire":bool,"runId":N}, ...],
-            //         "redo":[..] }
-            // "ui" is true when the entry is UI-undo class (selection / edit-mode
-            // state) rather than Model-undo (geometry) — see HistoryFlags.UiUndo.
-            // "inSession" is true when the entry is one step of an open tool RUN
-            // (a per-gesture in-session entry, tagged HistoryFlags.InSession);
-            // "refire" is true when an in-session entry is a falloff RE-GRADE of
-            // the run's last gesture (HistoryFlags.Refire — always implies
-            // inSession); "runId" groups the gestures of one run. All surface the
-            // record+consolidate structure for a future command-history panel.
-            import std.json : JSONValue;
-            import command_history : HistoryFlags;
-            JSONValue[] undoArr;
-            foreach (ref e; history.undoEntriesVisible()) {
-                auto obj = JSONValue.emptyObject;
-                obj["label"]     = JSONValue(e.label);
-                obj["args"]      = JSONValue(e.args);
-                obj["command"]   = JSONValue(e.commandName);
-                obj["flags"]     = JSONValue(cast(long)e.flags);
-                obj["ui"]        = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
-                obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
-                obj["refire"]    = JSONValue((e.flags & HistoryFlags.Refire) != 0);
-                obj["runId"]     = JSONValue(cast(long)e.runId);
-                // P-E: pipe-tweak generation token (load-bearing on Refire
-                // entries — see HistoryEntry.tweakGeneration). Surfaced so a test
-                // can assert two discrete tweaks carry DIFFERENT generations.
-                obj["tweakGen"]  = JSONValue(cast(long)e.tweakGeneration);
-                undoArr ~= obj;
-            }
-            JSONValue[] redoArr;
-            foreach (ref e; history.redoEntriesVisible()) {
-                auto obj = JSONValue.emptyObject;
-                obj["label"]     = JSONValue(e.label);
-                obj["args"]      = JSONValue(e.args);
-                obj["command"]   = JSONValue(e.commandName);
-                obj["flags"]     = JSONValue(cast(long)e.flags);
-                obj["ui"]        = JSONValue((e.flags & HistoryFlags.UiUndo) != 0);
-                obj["inSession"] = JSONValue((e.flags & HistoryFlags.InSession) != 0);
-                obj["refire"]    = JSONValue((e.flags & HistoryFlags.Refire) != 0);
-                obj["runId"]     = JSONValue(cast(long)e.runId);
-                obj["tweakGen"]  = JSONValue(cast(long)e.tweakGeneration);
-                redoArr ~= obj;
-            }
-            JSONValue payload = JSONValue.emptyObject;
-            payload["undo"] = JSONValue(undoArr);
-            payload["redo"] = JSONValue(redoArr);
-            return payload.toString();
-        });
-
-        // GET /api/trace / POST /api/trace/reset — non-destructive per-step
-        // capture (task: step-trace). stepTrace is appended to by
-        // captureStepTrace() (installed on history.onRecord above); the
-        // provider here is just a snapshot-at-request-time read guarded by
-        // StepTrace's own Mutex. This provider-wiring block runs even when
-        // startHttpServer is false (httpServer is always constructed — see
-        // the comment at its declaration — only .start() is gated), so
-        // stepTrace can still be null here; null-guard so a stray call
-        // returns an empty trace instead of a null-dereference crash.
-        httpServer.setTraceProvider(() =>
-            stepTrace !is null ? stepTrace.snapshotJson() : "[]");
-        httpServer.setTraceResetHandler(() {
-            if (stepTrace !is null) stepTrace.reset();
-        });
-
-        // Read-only undo-service status for automation: {state, lockout,
-        // canUndo, canRedo, modelDepth, uiDepth, canUndoModel, canUndoUi}.
-        // modelDepth/uiDepth — count of Model vs UI-class entries on the undo
-        // stack; canUndoModel — whether a plain undo would step a Model entry
-        // (false → B1 fallback to UI head). All are pure reads, safe on the
-        // HTTP server thread.
-        httpServer.setUndoStatusProvider(() {
-            import std.json : JSONValue;
-            import command_history : UndoState;
-            string stateStr;
-            final switch (history.state()) {
-                case UndoState.Active:  stateStr = "active";  break;
-                case UndoState.Suspend: stateStr = "suspend"; break;
-                case UndoState.Invalid: stateStr = "invalid"; break;
-            }
-            size_t modelDepth, uiDepth;
-            history.undoDepthCounts(modelDepth, uiDepth);
-            JSONValue payload = JSONValue.emptyObject;
-            payload["state"]        = JSONValue(stateStr);
-            payload["lockout"]      = JSONValue(history.lockedOut());
-            payload["canUndo"]      = JSONValue(history.canUndo());
-            payload["canRedo"]      = JSONValue(history.canRedo());
-            payload["modelDepth"]   = JSONValue(cast(long)modelDepth);
-            payload["uiDepth"]      = JSONValue(cast(long)uiDepth);
-            payload["canUndoModel"]       = JSONValue(history.canUndoModel());
-            payload["canUndoUi"]          = JSONValue(history.canUndo() && !history.canUndoModel());
-            payload["toolLifecycleCount"] = JSONValue(cast(long)history.toolLifecycleCount());
-            payload["canUndoLifecycle"]   = JSONValue(history.canUndoLifecycle());
-            return payload.toString();
-        });
-
-        // Phase 5.5: re-execute the argstring of any undo stack entry against
-        // the current mesh state.  The original entry is not modified; a new
-        // history entry is created by the normal apply()+record() path.
-        httpServer.setReplayProvider((size_t i) {
-            return history.undoEntryCommandLine(i);
-        });
-
-        // Phase C: /api/refire opens/closes a refire block on the history.
-        // The bracket is driven by EditSession on the main thread; this
-        // endpoint exists for HTTP-driven tests that want to verify the
-        // refire-coalescing behavior without going through SDL. refireEnded()
-        // carries the P4 opted-in-tool commit notification.
-        httpServer.setRefireHandler((string action) {
-            if (action == "begin")     session.refireBegin();
-            else if (action == "end")  session.refireEnded();
-            else throw new Exception("invalid refire action '" ~ action ~ "'");
-        });
-
-        // /api/history/block opens/closes a command block on the history.
-        // N undoable commands recorded between begin and end collapse into a
-        // single CompositeCommand undo entry. Exists for HTTP-driven tests and
-        // any future macro/replay consumer that wants to group sub-commands.
-        httpServer.setBlockHandler((string action, string label) {
-            if (action == "begin")     history.blockBegin(label);
-            else if (action == "end")  history.blockEnd();
-            else throw new Exception("invalid block action '" ~ action ~ "'");
-        });
-
-        // Phase A.5: dispatch /api/select through the unified Command path
-        // (MeshSelect) so selection changes land on the undo stack and
-        // share the same snapshot/revert mechanism as everything else.
-        httpServer.setSelectionHandler((string mode, int[] indices) {
-            auto cmd = cast(MeshSelect)reg.commandFactories["mesh.select"]();
-            cmd.setMode(mode);
-            cmd.setIndices(indices);
-            applyOrRefire(cmd, RecordMode.Record, "mesh.select did not apply");
-        });
-
-        // Phase A.5: dispatch /api/transform through MeshTransform command.
-        httpServer.setTransformHandler((string kind, JSONValue params) {
-            import math : Vec3;
-
-            // Helper to read a 3-vector field with default value.
-            Vec3 vec3From(string field, Vec3 def) {
-                if (field !in params) return def;
-                auto a = params[field].array;
-                if (a.length != 3) throw new Exception("'" ~ field ~ "' must be [x,y,z]");
-                Vec3 r;
-                foreach (i, n; a) {
-                    double v;
-                    switch (n.type) {
-                        case JSONType.integer:  v = cast(double)n.integer;  break;
-                        case JSONType.uinteger: v = cast(double)n.uinteger; break;
-                        case JSONType.float_:   v = n.floating;             break;
-                        default: throw new Exception("'" ~ field ~ "' components must be numbers");
-                    }
-                    if (i == 0) r.x = cast(float)v;
-                    if (i == 1) r.y = cast(float)v;
-                    if (i == 2) r.z = cast(float)v;
-                }
-                return r;
-            }
-            float floatFrom(string field, float def) {
-                if (field !in params) return def;
-                auto n = params[field];
-                switch (n.type) {
-                    case JSONType.integer:  return cast(float)n.integer;
-                    case JSONType.uinteger: return cast(float)n.uinteger;
-                    case JSONType.float_:   return cast(float)n.floating;
-                    default: throw new Exception("'" ~ field ~ "' must be a number");
-                }
-            }
-
-            auto cmd = cast(MeshTransform)reg.commandFactories["mesh.transform"]();
-            cmd.setKind(kind);
-            cmd.setDelta (vec3From("delta",  Vec3(0, 0, 0)));
-            cmd.setAxis  (vec3From("axis",   Vec3(0, 1, 0)));
-            cmd.setAngle (floatFrom("angle", 0.0f));
-            cmd.setFactor(vec3From("factor", Vec3(1, 1, 1)));
-            cmd.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
-            applyOrRefire(cmd, RecordMode.Record, "mesh.transform did not apply");
-        });
-
-        // Phase A.5: dispatch /api/reset through SceneReset command.
-        // Note: scene.reset is undoable but since /api/reset is also used
-        // by tests to bring vibe3d to a fresh state, we may want a way
-        // to NOT push it onto the stack — handled via cmd.isUndoable in
-        // future if needed.
-        httpServer.setResetHandler((string primitiveType, bool empty, int param) {
-            auto cmd = cast(SceneReset)reg.commandFactories["scene.reset"]();
-            if (empty)
-                cmd.setEmpty(true);
-            else {
-                cmd.setPrimitive(primitiveType);
-                cmd.setPrimitiveParam(param);   // grid n / subdivcube levels
-            }
-            if (!cmd.apply())
-                throw new Exception("scene.reset did not apply");
-            // Viewport manager reset (layout / cellCount / activeId / per-cell
-            // ortho preset / independence flags — nothing bleeds into the next
-            // test on the shared --test instance) now happens INSIDE cmd.apply()
-            // via the factory's onViewportReset delegate (V3: single reset
-            // owner, same delegate file.new / bare scene.reset use) — no
-            // second explicit call needed here.
-            // The host now owns the no-tool falloff drag (step 3 of the
-            // stage-gizmo refactor); a reset must drop any in-flight drag.
-            pipeGizmoHost.cancelDrag();
-            {
-                import ai.debug_trace : clearLatestAiDebugTraces;
-                clearLatestAiDebugTraces();
-            }
-            // A scene reset returns the editor to its known-good default state;
-            // the AI master switch is off by default, so clear it too. Without
-            // this, an earlier session (or an earlier test on the shared --test
-            // instance) that enabled AI would leave `aiState.enabled` stuck on
-            // across the reset (the test_ai_toggle "AI must default off" failure).
-            aiState.setEnabled(false);
-            // Same argument, second global: park the REPLAYED POINTER. Every
-            // replayed motion/button event moves it and nothing ever moved it
-            // back, so it outlives the test that put it there — and `run_test.d`
-            // shares one `--test` instance across a worker's whole slice, so the
-            // next test's re-baselined scene keeps being hover-picked against
-            // the previous test's cursor. That is a hover the next test never
-            // asked for: one extra vertex-dot submission if the cursor landed on
-            // a vertex, a gizmo part repainted in the hover colour if it landed
-            // on a handle — enough to fail an assertion about draw counts or
-            // about pixels, and only when the slice happens to put those two
-            // tests together, which the LPT scheduler re-decides every run.
-            // Deliberately here and NOT in SceneReset: file.new goes through the
-            // command too, and for a human the pointer really IS where it is.
-            // See eventlog.parkOverrideMouse.
-            {
-                import eventlog : parkOverrideMouse;
-                parkOverrideMouse();
-            }
-            // selTypeOrder is kept in lockstep with editMode by the
-            // promoteGeometryType hook installed on the scene.reset factory — no
-            // manual re-sync needed here (the old reverse-sync is deleted).
-            history.record(cmd);
-            // Discard any exploration pending on reset — the candidate set is
-            // stale after a reset and any undo that follows belongs to the new
-            // scene, not the pre-reset grab.
-            aiExplore.discardPending();
-            // A reset returns to a known-good empty trace too — otherwise a
-            // test-automation instance's /api/trace would keep accumulating
-            // entries from a scene it just discarded. Null when HTTP is off
-            // (release/default runs never construct stepTrace).
-            if (stepTrace !is null) stepTrace.reset();
-        });
-
-        // Test-only raw-mesh injection (POST /api/load-mesh). Parses the
-        // JSON payload into Vec3 verts + uint[] faces, then dispatches the
-        // MeshLoadRaw command on the main thread (GPU upload + cache refresh
-        // need the GL/main thread). MeshLoadRaw re-validates degree / index
-        // range before touching the live mesh.
-        httpServer.setLoadMeshHandler((JSONValue params) {
-            import math : Vec3;
-
-            if ("vertices" !in params || params["vertices"].type != JSONType.array)
-                throw new Exception("missing 'vertices' array field");
-            if ("faces" !in params || params["faces"].type != JSONType.array)
-                throw new Exception("missing 'faces' array field");
-
-            double numFrom(JSONValue n) {
-                switch (n.type) {
-                    case JSONType.integer:  return cast(double)n.integer;
-                    case JSONType.uinteger: return cast(double)n.uinteger;
-                    case JSONType.float_:   return n.floating;
-                    default: throw new Exception("vertex components must be numbers");
-                }
-            }
-
-            auto vArr = params["vertices"].array;
-            Vec3[] verts = new Vec3[](vArr.length);
-            foreach (i, vj; vArr) {
-                if (vj.type != JSONType.array || vj.array.length != 3)
-                    throw new Exception("each vertex must be [x,y,z]");
-                verts[i] = Vec3(cast(float)numFrom(vj.array[0]),
-                                cast(float)numFrom(vj.array[1]),
-                                cast(float)numFrom(vj.array[2]));
-            }
-
-            auto fArr = params["faces"].array;
-            uint[][] faces = new uint[][](fArr.length);
-            foreach (i, fj; fArr) {
-                if (fj.type != JSONType.array)
-                    throw new Exception("each face must be an array of vertex indices");
-                auto idxArr = fj.array;
-                uint[] face = new uint[](idxArr.length);
-                foreach (k, ij; idxArr) {
-                    if (ij.type != JSONType.integer && ij.type != JSONType.uinteger)
-                        throw new Exception("face indices must be integers");
-                    long v = ij.integer;
-                    if (v < 0)
-                        throw new Exception("face index must be non-negative");
-                    face[k] = cast(uint)v;
-                }
-                faces[i] = face;
-            }
-
-            auto cmd = cast(MeshLoadRaw)reg.commandFactories["scene.loadMesh"]();
-            cmd.setData(verts, faces);
-            if (!cmd.apply())
-                throw new Exception("scene.loadMesh did not apply");
-            history.record(cmd);
-        });
-    }
+    // ---------------------------------------------------------------------
+    // HTTP endpoint wiring (all /api providers + handlers, ~2410 lines) --
+    // moved VERBATIM to source/http_providers.d's wireHttpProviders (app.d
+    // decomp, phase B; same `with (app)` seam as 0415's registration.d and
+    // 0419's ui/panels.d). The CALL sits right after the task-0419 LATE
+    // ctx-wiring below, so every EditorApp field the moved block reads is
+    // already wired when the closures are built.
+    // ---------------------------------------------------------------------
 
     int lastMouseX, lastMouseY;
 
@@ -6517,8 +4004,11 @@ void main(string[] args) {
     app.gridShader               = gridShader;
     app.formsPanel                = formsPanel;
     app.io                        = io;
-    app.commandHandlerDelegate    = commandHandlerDelegate;
-    app.formsInteractiveDispatch  = formsInteractiveDispatch;
+    // app.commandHandlerDelegate / app.formsInteractiveDispatch are NOT
+    // wired here anymore (their pre-move `= commandHandlerDelegate;` lines
+    // copied a still-null local): the moved HTTP block ASSIGNS both through
+    // wireHttpProviders's `ref EditorApp app` parameter, and the call site
+    // below syncs main()'s same-named locals back from `app`.
 
     app.runCommand           = cast(void delegate(Command))&runCommand;
     app.tryOpenArgsDialog    = cast(bool delegate(string))&tryOpenArgsDialog;
@@ -6543,6 +4033,38 @@ void main(string[] args) {
     app.anyFalloffActive     = cast(bool delegate())&anyFalloffActive;
     app.rebuildLoopHoverMask = cast(const(bool)[] delegate(int))&rebuildLoopHoverMask;
 
+    // Phase-B ctx wiring (source/http_providers.d): same rules as the blocks
+    // above. Pointer-backed selTypeOrder (mutated via .touch() on both
+    // sides); by-value class refs bvhPick/stepTrace/session (each assigned
+    // exactly once, all before this point); hook delegates for main()'s
+    // nested functions. app.replayUndoEntry is NOT wired here -- the moved
+    // block ASSIGNS it through the `ref EditorApp app` parameter (synced
+    // back below, next to commandHandlerDelegate).
+    app.selTypeOrderPtr      = &selTypeOrder;
+    app.bvhPick              = bvhPick;
+    app.stepTrace            = stepTrace;
+    app.session              = session;
+    app.ensureDisplayCurrent = cast(void delegate())&ensureDisplayCurrent;
+    app.derivedEditMode      = cast(EditMode delegate())&derivedEditMode;
+    app.formsInteractiveLatchPtr = &formsInteractiveLatch;
+    app.applyOrRefire        = &applyOrRefire;
+
+    // Phase-B HTTP wiring call (was the inline `if (httpServer !is null) {
+    // ... }` block that sat right after this main()'s outer-scope delegate
+    // declarations, app.d ~3633-6044 pre-move). httpServer is ALWAYS
+    // constructed (the listener is gated separately on start()), so this
+    // runs unconditionally exactly like the block it replaces. Placed HERE,
+    // after the 0419 LATE wiring, because the moved block reads fields from
+    // BOTH wiring blocks (0415's at ~2873 and 0419's above).
+    wireHttpProviders(httpServer, app);
+    // Sync-back: the moved block assigns these three delegates through the
+    // `ref EditorApp app` parameter; main()'s later read sites (copilot
+    // draw, script-action status line, History panel replay button) keep
+    // their original local names, so mirror the values back once.
+    commandHandlerDelegate   = app.commandHandlerDelegate;
+    formsInteractiveDispatch = app.formsInteractiveDispatch;
+    replayUndoEntry          = app.replayUndoEntry;
+
     // Interactive history-navigation chokepoint (undo/redo migration P0;
     // in-session record+consolidate Phase 1). MAIN-THREAD ONLY — never call
     // from the HTTP server thread (it touches the active tool). The body —
@@ -6557,6 +4079,10 @@ void main(string[] args) {
     bool navHistory(bool isUndo) {
         return session.navigate(isUndo);
     }
+    // Phase-B panel wiring: the moved Command History panel
+    // (ui/panels.d's drawCommandHistoryPanel) drags its cursor row through
+    // this chokepoint; declared HERE because navHistory only exists now.
+    app.navHistory = &navHistory;
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         // Active tool gets first dibs on key events. Tools that handle keys
@@ -7470,77 +4996,53 @@ void main(string[] args) {
         lastMouseY = mot.y;
     }
 
-    void pickVertices(ref Viewport vp, bool doingCameraDrag) {
+    // pickVertices / pickEdges share one body — they differ only in the
+    // SelectMode/EditMode pair, the symmetricSelect* function, the pick
+    // radius (4 px for verts, 6 px for edges) and the hovered* slot written.
+    void pickHover(SelectMode sm, EditMode em, alias symSel, int radius)(
+            ref Viewport vp, bool doingCameraDrag) {
+        static if (em == EditMode.Vertices)
+            alias hovered = hoveredVertex;
+        else
+            alias hovered = hoveredEdge;
         ensureDisplayCurrent(); // mid-batch pull-guard: VBO reader below
         // Freeze hover during an active tool drag (element-move haul): return
         // WITHOUT re-picking so the element picked at drag-start stays
-        // highlighted instead of every vertex the moving cursor passes over.
+        // highlighted instead of every element the moving cursor passes over.
         if (activeTool !is null && activeTool.isDragging()) return;
-        hoveredVertex = -1;
+        hovered = -1;
         if (!viewportInputAllowed() || doingCameraDrag) return;
         // No active tool → only the current editMode picks. With an
         // active tool, defer to `wantsHoverForType` so tools like
         // XfrmTransformTool (with falloff.element wired) can opt in to multi-type hover regardless
         // of editMode (Stage 14.9).
         if (activeTool is null) {
-            if (editMode != EditMode.Vertices) return;
+            if (editMode != em) return;
         } else {
-            if (!activeTool.wantsHoverForType(EditMode.Vertices)) return;
+            if (!activeTool.wantsHoverForType(em)) return;
         }
 
         int mx, my;
         queryMouse(mx, my);
 
-        // Offscreen ID buffer: GPU rasterises every cage vertex as a 1-px
-        // point with `gl_VertexID + 1` as the ID, depth-tested against
-        // the face surface so verts inside / behind opaque geometry
-        // drop out. Subpatch mode maps VBO indices back to cage indices
-        // via gpu.vertOriginGpu inside GpuSelectBuffer.pick.
-        enum int PICK_RADIUS_PX = 4;
-        int hit = gpuSelect.pick(SelectMode.Vertex, mx, my, PICK_RADIUS_PX,
-                                  mesh, gpu, vp);
+        // Offscreen ID buffer: GPU rasterises every cage element as an
+        // ID-tagged primitive, depth-tested against the face surface so
+        // elements inside / behind opaque geometry drop out. Subpatch mode
+        // maps VBO indices back to cage indices inside GpuSelectBuffer.pick
+        // (the picker handles its own cache + VBO→cage translation).
+        int hit = gpuSelect.pick(sm, mx, my, radius, mesh, gpu, vp);
         if (hit < 0) return;
 
-        hoveredVertex = hit;
+        hovered = hit;
         if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-            symmetricSelectVertex(&mesh(), vp, editMode,
-                                  hoveredVertex, /*deselect=*/false);
+            symSel(&mesh(), vp, editMode, hovered, /*deselect=*/false);
         else if (dragMode == DragMode.SelectRemove)
-            symmetricSelectVertex(&mesh(), vp, editMode,
-                                  hoveredVertex, /*deselect=*/true);
+            symSel(&mesh(), vp, editMode, hovered, /*deselect=*/true);
     }
-
-    void pickEdges(ref Viewport vp, bool doingCameraDrag) {
-        ensureDisplayCurrent(); // mid-batch pull-guard: VBO reader below
-        if (activeTool !is null && activeTool.isDragging()) return;  // freeze hover mid-drag
-        hoveredEdge = -1;
-        if (!viewportInputAllowed() || doingCameraDrag) return;
-        if (activeTool is null) {
-            if (editMode != EditMode.Edges) return;
-        } else {
-            if (!activeTool.wantsHoverForType(EditMode.Edges)) return;
-        }
-
-        int mx, my;
-        queryMouse(mx, my);
-
-        // Offscreen ID buffer: GPU depth-tested per pixel, so the
-        // returned ID is exactly the cage edge whose pixel sits closest
-        // to the cursor among those NOT occluded by any face. The
-        // picker handles its own cache + subpatch VBO→cage translation.
-        enum int PICK_RADIUS_PX = 6;
-        int hit = gpuSelect.pick(SelectMode.Edge, mx, my, PICK_RADIUS_PX,
-                                  mesh, gpu, vp);
-
-        if (hit < 0) return;
-        hoveredEdge = hit;
-        if (dragMode == DragMode.Select || dragMode == DragMode.SelectAdd)
-            symmetricSelectEdge(&mesh(), vp, editMode,
-                                hoveredEdge, /*deselect=*/false);
-        else if (dragMode == DragMode.SelectRemove)
-            symmetricSelectEdge(&mesh(), vp, editMode,
-                                hoveredEdge, /*deselect=*/true);
-    }
+    alias pickVertices = pickHover!(SelectMode.Vertex, EditMode.Vertices,
+                                    symmetricSelectVertex, 4);
+    alias pickEdges    = pickHover!(SelectMode.Edge,   EditMode.Edges,
+                                    symmetricSelectEdge,   6);
 
     void pickFaces(ref Viewport vp, bool doingCameraDrag) {
         // Mid-batch pull-guard — covers BOTH engines: the GPU path reads the
@@ -7677,7 +5179,9 @@ void main(string[] args) {
     // local imports at their call sites, below.
     import ui.panels : drawSidePanel, drawStatusBar, drawTabPanel,
         pushPopupStyle, popPopupStyle, pushPanelChromeStyle,
-        popPanelChromeStyle, renderViewportSceneToFbo;
+        popPanelChromeStyle, renderViewportSceneToFbo,
+        drawAi3dModal, drawRemeshModal, drawQuitGuardModal,
+        drawCommandHistoryPanel;
 
     // -------------------------------------------------------------------------
     // Main loop
@@ -8178,390 +5682,19 @@ void main(string[] args) {
         drawTabPanel(app);
 
         // ---- AI3D Generate modal (task 0381 Phase 3) -----------------------
-        // Same BeginPopupModal convention as ArgsDialog (args_dialog.d:48):
-        // pendingOpen → OpenPopup once, then cleared; BeginPopupModal
-        // returns true while open, false after ESC/[X]/CloseCurrentPopup.
-        // Reads ONLY the immutable ai3dModal snapshot (written by
-        // onAi3dEvent, near runCommand) plus the controller's busy()/
-        // start()/requestCancel() surface — it never touches the queue or
-        // any Document/Mesh state directly.
-        if (ai3dModalOpen) {
-            import std.format : format;
-            import std.string : fromStringz;
-
-            if (ai3dModalPendingOpen) {
-                ImGui.OpenPopup("Generate 3D");
-                ai3dModalPendingOpen = false;
-            }
-
-            if (ImGui.BeginPopupModal("Generate 3D", null, ImGuiWindowFlags.AlwaysAutoResize)) {
-                // Auto-close once the generated mesh has landed as a new layer:
-                // the action happened, so the modal dismisses itself. A failure
-                // (state != "succeeded") keeps it open so the error stays visible.
-                if (ai3dModal.state == "succeeded") {
-                    ImGui.CloseCurrentPopup();
-                    ai3dModalOpen = false;
-                }
-
-                // ---- AI worker lifecycle (task 0403) ---------------------------
-                // Ai3dWorkerManager tracks ONLY the subprocess the editor itself
-                // spawned (worker_manager.d's module doc) — Start/Stop here can
-                // never touch a worker some other process started. The manual
-                // "Worker URL" field below stays live for advanced users who
-                // point the editor at an externally-managed worker instead; a
-                // successful Start overwrites it with the spawned worker's URL.
-                {
-                    import core.time : seconds;
-
-                    final switch (ai3dWorkerManager.state()) {
-                        case Ai3dWorkerState.notInstalled:
-                            ImGui.Text("AI worker: not installed");
-                            if (ai3dWorkerManager.installBusy()) {
-                                ImGui.Text(ai3dWorkerManager.installState() == Ai3dInstallState.runningInstall
-                                    ? "Installing runtime..." : "Downloading model...");
-                                ImGui.BeginChild("ai3dInstallLog", ImVec2(360, 90), true);
-                                ImGui.TextUnformatted(ai3dWorkerManager.installLogTail(2000));
-                                ImGui.SetScrollHereY(1.0f);
-                                ImGui.EndChild();
-                                if (ImGui.Button("Cancel Install")) ai3dWorkerManager.cancelInstall();
-                            } else {
-                                if (ai3dWorkerManager.installState() == Ai3dInstallState.failed)
-                                    ImGui.TextUnformatted("Install failed: " ~ ai3dWorkerManager.installMessage());
-                                if (ImGui.Button("Install")) {
-                                    ai3dWorkerManager.clearInstall();
-                                    ai3dInstallConfirmOpen        = true;
-                                    ai3dInstallConfirmPendingOpen = true;
-                                }
-                            }
-                            break;
-                        case Ai3dWorkerState.installedStopped:
-                            ImGui.Text(ai3dWorkerManager.modelPresent()
-                                ? "AI worker: installed, not running"
-                                : "AI worker: installed (model not downloaded yet), not running");
-                            if (ImGui.Button("Start")) {
-                                if (ai3dWorkerManager.startWorker()) {
-                                    ai3dWorkerStarting        = true;
-                                    ai3dWorkerStartDeadline   = MonoTime.currTime + 90.seconds;
-                                    ai3dWorkerNextHealthProbe = MonoTime.currTime;
-                                    const spawnedUrl = ai3dWorkerManager.workerUrl();
-                                    ai3dWorkerUrlBuf[] = 0;
-                                    ai3dWorkerUrlBuf[0 .. spawnedUrl.length] = spawnedUrl;
-                                }
-                            }
-                            break;
-                        case Ai3dWorkerState.running:
-                            ImGui.Text("AI worker: running (" ~ ai3dWorkerManager.workerUrl() ~ ")");
-                            if (ImGui.Button("Stop")) {
-                                ai3dWorkerManager.stopWorker();
-                                ai3dWorkerStarting = false;
-                            }
-                            break;
-                    }
-
-                    // Post-Start health poll: throttled to ~1/s (never
-                    // per-frame — probeHealth() spawns a short-lived thread
-                    // per call) against the SAME ai3dModal.health* snapshot
-                    // the manual health line below reads.
-                    if (ai3dWorkerStarting) {
-                        ImGui.Text("Waiting for the worker to become ready...");
-                        if (MonoTime.currTime >= ai3dWorkerNextHealthProbe) {
-                            ai3dController.probeHealth(ai3dWorkerManager.workerUrl());
-                            ai3dWorkerNextHealthProbe = MonoTime.currTime + 1.seconds;
-                        }
-                        if (ai3dModal.healthChecked && ai3dModal.healthOk) {
-                            ai3dWorkerStarting = false;
-                        } else if (MonoTime.currTime >= ai3dWorkerStartDeadline) {
-                            ai3dWorkerStarting     = false;
-                            ai3dModal.errorCode    = "worker_start_timeout";
-                            ai3dModal.errorMessage = "AI worker did not become ready in time";
-                        }
-                    }
-                }
-
-                // Install confirmation — nested popup, same pendingOpen
-                // convention as the Generate 3D modal itself (ai3dModalOpen /
-                // ai3dModalPendingOpen above).
-                if (ai3dInstallConfirmOpen) {
-                    if (ai3dInstallConfirmPendingOpen) {
-                        ImGui.OpenPopup("Install AI Worker?");
-                        ai3dInstallConfirmPendingOpen = false;
-                    }
-                    if (ImGui.BeginPopupModal("Install AI Worker?", null, ImGuiWindowFlags.AlwaysAutoResize)) {
-                        ImGui.TextUnformatted(format(
-                            "Installs the AI generation runtime to\n%s (~6-8 GB)\n"
-                            ~ "and downloads the ~4 GB model afterwards. Continue?",
-                            ai3dDefaultInstallLocation()));
-                        if (ImGui.Button("Install")) {
-                            ai3dWorkerManager.runInstall();
-                            ImGui.CloseCurrentPopup();
-                            ai3dInstallConfirmOpen = false;
-                        }
-                        ImGui.SameLine();
-                        if (ImGui.Button("Cancel")) {
-                            ImGui.CloseCurrentPopup();
-                            ai3dInstallConfirmOpen = false;
-                        }
-                        ImGui.EndPopup();
-                    } else {
-                        ai3dInstallConfirmOpen = false; // closed via ESC
-                    }
-                }
-
-                ImGui.Separator();
-
-                ImGui.Text("Image: " ~ ai3dPickedImagePath);
-
-                ImGui.SetNextItemWidth(280);
-                ImGui.InputText("Worker URL", ai3dWorkerUrlBuf[]);
-
-                ImGui.SetNextItemWidth(280);
-                ImGui.SliderInt("Max faces", &ai3dMaxFaces, 1_000, cast(int) Ai3dMaxTotalFaces);
-                // SliderInt's vMin/vMax only bound the drag/click gesture —
-                // its text-entry mode (Ctrl+click) can still land an
-                // out-of-range value, so clamp right after, same as every
-                // other numeric-from-widget value in this codebase.
-                if (ai3dMaxFaces < 1_000) ai3dMaxFaces = 1_000;
-                if (ai3dMaxFaces > cast(int) Ai3dMaxTotalFaces) ai3dMaxFaces = cast(int) Ai3dMaxTotalFaces;
-
-                const bool ai3dJobRunning = ai3dController.busy();
-
-                if (!ai3dModal.healthChecked) {
-                    ImGui.Text("Checking worker health…");
-                } else if (!ai3dModal.healthOk) {
-                    ImGui.Text("Worker not ready: "
-                        ~ (ai3dModal.healthMessage.length ? ai3dModal.healthMessage : ai3dModal.errorCode));
-                } else {
-                    ImGui.Text(format("Worker ready (backend=%s, protocol=%d)",
-                                       ai3dModal.healthBackend, ai3dModal.healthProtocol));
-                }
-
-                // Health-gated (Phase 0/3): Generate only enables once a
-                // standalone probeHealth() round trip reports a compatible
-                // protocol and OBJ capability. The backend id (triposr,
-                // trellis, fake, …) is informational only — any conformant
-                // worker that speaks protocol 1 and emits OBJ is accepted, so
-                // we deliberately do NOT pin a specific backend name here.
-                const bool healthy = ai3dModal.healthChecked && ai3dModal.healthOk
-                    && ai3dModal.healthProtocol == 1
-                    && ai3dModal.healthObjCapable;
-
-                ImGui.Separator();
-
-                // Cancel is the single close affordance (no separate Dismiss):
-                // idle -> just closes; running -> aborts the job AND closes so a
-                // job can't complete and silently import a layer after the modal
-                // is gone. A successful generate auto-closes above.
-                void closeAi3dModal() {
-                    if (ai3dController.busy()) ai3dController.requestCancel();
-                    ImGui.CloseCurrentPopup();
-                    ai3dModalOpen = false;
-                }
-
-                if (!ai3dJobRunning) {
-                    if (!healthy) ImGui.BeginDisabled();
-                    if (ImGui.Button("Generate")) {
-                        ai3dModal.state       = "";
-                        ai3dModal.stage       = "";
-                        ai3dModal.progress    = 0;
-                        ai3dModal.errorCode    = null;
-                        ai3dModal.errorMessage = null;
-                        const workerUrl = cast(string) fromStringz(ai3dWorkerUrlBuf.ptr).dup;
-                        // Cold-start budget: the first generation after a worker
-                        // launch loads the ~5 GB model AND JIT-compiles the spconv /
-                        // flexicubes CUDA kernels, which can run several minutes — a
-                        // 2-min cap cut that off client-side (BrokenPipe) even though
-                        // the worker finished the mesh. Warm jobs still return in
-                        // ~15-35 s, so the 10-min ceiling costs steady-state nothing.
-                        ai3dController.start(ai3dPickedImagePath,
-                            workerUrl.length ? workerUrl : "http://127.0.0.1:47831",
-                            Ai3dMaxGenerationDeadlineMs, ai3dMaxFaces);
-                    }
-                    if (!healthy) ImGui.EndDisabled();
-                    ImGui.SameLine();
-                    if (ImGui.Button("Cancel")) closeAi3dModal();
-                } else {
-                    ImGui.Text(format("%s: %s (%.0f%%)",
-                        ai3dModal.state.length ? ai3dModal.state : "running",
-                        ai3dModal.stage, ai3dModal.progress * 100.0));
-                    ImGui.SameLine();
-                    if (ImGui.Button("Cancel")) closeAi3dModal();
-                }
-
-                // Only the error survives on screen (a success auto-closes).
-                // TextUnformatted (not printf-style Text): an error message can
-                // carry a "%" that Text would read as a conversion off an empty
-                // va_list.
-                if (ai3dModal.errorCode.length)
-                    ImGui.TextUnformatted("Error: " ~ ai3dModal.errorCode
-                                          ~ " — " ~ ai3dModal.errorMessage);
-                ImGui.EndPopup();
-            } else {
-                // Closed via ESC — same semantics as the Cancel button: abort
-                // any in-flight job so it can't land after the modal is gone.
-                if (ai3dController.busy()) ai3dController.requestCancel();
-                ai3dModalOpen = false;
-            }
-        }
+        // Moved VERBATIM to ui/panels.d's drawAi3dModal (app.d decomp,
+        // phase B; same `with (app)` seam as the 0419 panels).
+        drawAi3dModal(app);
 
         // ---- Quad Remesh modal (source/remesh/remesh_job.d) -----------------
-        // Same BeginPopupModal convention as the AI3D modal above. Opened by
-        // `mesh.remesh.open` (registered below, near the other mesh.remesh.*
-        // factories). Unlike ai3dModal, this reads remeshJob.state()/busy()/
-        // message() DIRECTLY every frame — RemeshJob is polled synchronously
-        // in this same thread (no worker thread / event queue to snapshot).
-        if (remeshModalOpen) {
-            if (remeshModalPendingOpen) {
-                ImGui.OpenPopup("Remesh (Quad)");
-                remeshModalPendingOpen = false;
-            }
-
-            if (ImGui.BeginPopupModal("Remesh (Quad)", null, ImGuiWindowFlags.AlwaysAutoResize)) {
-                // Auto-close once a remesh has actually landed (set by
-                // tickRemeshJob on a successful apply): the action happened, so
-                // the window dismisses itself — no manual close needed.
-                if (remeshModalPendingClose) {
-                    remeshModalPendingClose = false;
-                    ImGui.CloseCurrentPopup();
-                    remeshModalOpen = false;
-                }
-
-                ImGui.SetNextItemWidth(280);
-                ImGui.SliderInt("Target Quads", &remeshTargetQuads,
-                                 MIN_REMESH_TARGET_QUADS, cast(int) MAX_REMESH_TARGET_QUADS);
-                // SliderInt's vMin/vMax only bound the drag/click gesture — its
-                // text-entry mode (Ctrl+click) can still land an out-of-range
-                // value, so clamp right after (same convention as ai3dMaxFaces
-                // above; the REAL authority is RemeshJob.start()'s kernel clamp).
-                if (remeshTargetQuads < MIN_REMESH_TARGET_QUADS) remeshTargetQuads = MIN_REMESH_TARGET_QUADS;
-                if (remeshTargetQuads > cast(int) MAX_REMESH_TARGET_QUADS) remeshTargetQuads = cast(int) MAX_REMESH_TARGET_QUADS;
-
-                ImGui.SetNextItemWidth(280);
-                ImGui.SliderFloat("Adaptivity", &remeshAdaptivity, 0.0f, 10.0f);
-                if (remeshAdaptivity < 0.0f) remeshAdaptivity = 0.0f;
-                if (remeshAdaptivity > 10.0f) remeshAdaptivity = 10.0f;
-
-                ImGui.SetNextItemWidth(280);
-                ImGui.SliderFloat("Sharp Edge (deg)", &remeshSharpEdge, 0.0f, 180.0f);
-                if (remeshSharpEdge < 0.0f) remeshSharpEdge = 0.0f;
-                if (remeshSharpEdge > 180.0f) remeshSharpEdge = 180.0f;
-
-                ImGui.Separator();
-
-                // Cancel is the single close affordance (no separate Dismiss):
-                // idle -> just closes the window; running -> aborts the job AND
-                // closes. A successful remesh auto-closes above, so the only
-                // time you click Cancel after starting is to abandon a run.
-                void closeRemeshModal() {
-                    if (remeshJob.busy()) remeshJob.cancel();
-                    ImGui.CloseCurrentPopup();
-                    remeshModalOpen = false;
-                }
-
-                const bool remeshBusy = remeshJob.busy();
-                if (!remeshBusy) {
-                    if (ImGui.Button("Remesh")) {
-                        remeshLastError   = null;
-                        remeshLastSummary = null;
-                        RemeshParams p;
-                        p.targetQuads = remeshTargetQuads;
-                        p.adaptivity  = remeshAdaptivity;
-                        p.sharpEdge   = remeshSharpEdge;
-                        // Task 0385: a non-empty face selection remeshes just
-                        // that region and stitches it back in (see
-                        // commands.mesh.remesh.RemeshStart, which mirrors this
-                        // same selection -> region-mask translation for the
-                        // headless/HTTP `mesh.remesh.start` path).
-                        const(bool)[] regionMask =
-                            mesh().hasAnySelectedFaces() ? mesh().selectedFaces : null;
-                        remeshJob.start(mesh(), p, regionMask);
-                        if (remeshJob.state() == RemeshJob.State.failed)
-                            remeshLastError = remeshJob.message();
-                    }
-                    ImGui.SameLine();
-                    if (ImGui.Button("Cancel")) closeRemeshModal();
-                } else {
-                    ImGui.TextUnformatted("Remeshing...");
-                    ImGui.SameLine();
-                    if (ImGui.Button("Cancel")) closeRemeshModal();
-                }
-
-                // The error survives on screen across the modal staying open
-                // (a full success auto-closes it). A PARTIAL success (task
-                // 0386: some region components skipped) still auto-closes —
-                // remeshLastSummary shows for the one frame before that
-                // happens, same as a plain "Done" summary always has.
-                // TextUnformatted (not Text): either message can carry the
-                // helper's raw stderr tail with stray "%", which the printf-
-                // style ImGui.Text would read as a conversion off an empty
-                // va_list.
-                if (remeshLastError.length)
-                    ImGui.TextUnformatted("Error: " ~ remeshLastError);
-                else if (remeshLastSummary.length)
-                    ImGui.TextUnformatted(remeshLastSummary);
-                ImGui.EndPopup();
-            } else {
-                // Closed via ESC — same semantics as the Cancel button: abort
-                // any in-flight job so it can't land after the modal is gone.
-                if (remeshJob.busy()) remeshJob.cancel();
-                remeshModalOpen = false;
-            }
-        }
+        // Moved VERBATIM to ui/panels.d's drawRemeshModal (app.d decomp,
+        // phase B; same `with (app)` seam as the 0419 panels).
+        drawRemeshModal(app);
 
         // ---- Unsaved-changes quit guard + confirmation modal (task 0434) ----
-        // Drain the close request once per frame. Placed inside the ImGui frame
-        // (after the menu bar and the other modals are drawn) so a same-frame
-        // File→Quit, a Ctrl+Q from the event phase, and an SDL_QUIT all land
-        // here. A dirty document opens the confirm modal; a clean one — or any
-        // --test session (the harness closes the window and must not block on a
-        // dialog) — exits immediately.
-        if (quitRequested) {
-            import io.doc_state : docDirty;
-            quitRequested = false;
-            if (docDirty() && !command.g_testMode) {
-                quitConfirmOpen    = true;
-                quitConfirmPending = true;
-            } else {
-                running = false;
-            }
-        }
-        if (quitConfirmOpen) {
-            if (quitConfirmPending) {
-                ImGui.OpenPopup("Unsaved Changes");
-                quitConfirmPending = false;
-            }
-            if (ImGui.BeginPopupModal("Unsaved Changes", null,
-                                      ImGuiWindowFlags.AlwaysAutoResize)) {
-                ImGui.TextUnformatted(
-                    "You have unsaved changes. Do you really want to exit?");
-                ImGui.Separator();
-                // Save: write via the ordinary file.save command (prompts if the
-                // document is untitled). The exit is DEFERRED to the post-flush
-                // settle (quitAfterSave) so a cancelled Save dialog — which
-                // leaves the document dirty — aborts the quit instead of losing
-                // work. Save→exit is the destructive-safe default, so it leads.
-                if (ImGui.Button("Save")) {
-                    runCommand(reg.commandFactories["file.save"]());
-                    quitAfterSave   = true;
-                    quitConfirmOpen = false;
-                    ImGui.CloseCurrentPopup();
-                }
-                ImGui.SameLine();
-                if (ImGui.Button("Yes")) {          // discard changes and exit
-                    running         = false;
-                    quitConfirmOpen = false;
-                    ImGui.CloseCurrentPopup();
-                }
-                ImGui.SameLine();
-                if (ImGui.Button("No")) {           // cancel the quit
-                    quitConfirmOpen = false;
-                    ImGui.CloseCurrentPopup();
-                }
-                ImGui.EndPopup();
-            } else {
-                // Closed via ESC / [X] — same semantics as No: cancel the quit.
-                quitConfirmOpen = false;
-            }
-        }
+        // Moved VERBATIM to ui/panels.d's drawQuitGuardModal (app.d decomp,
+        // phase B; same `with (app)` seam as the 0419 panels).
+        drawQuitGuardModal(app);
 
         drawStatusBar(app);
         version (WithRender) drawIPRPanel(&mesh(), cameraView);
@@ -8832,353 +5965,9 @@ void main(string[] args) {
         }
 
         // ---- Command History (floating) ----
-        // Toggled by the history.show command. Layout (history-panel
-        // design doc Phase 1): single chronological list, OLDEST top →
-        // NEWEST bottom, with a
-        // cursor row marking the current undo point. Entries below
-        // the cursor are pending-redo and render dimmed. Per-undo
-        // row keeps the `>` replay button.
-        if (showHistoryPanel) {
-            pushPanelChromeStyle();
-            ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 130), ImGuiCond.FirstUseEver);
-            ImGui.SetNextWindowSize(ImVec2(320, 380), ImGuiCond.FirstUseEver);
-            bool open = showHistoryPanel;
-            if (ImGui.Begin("Command History", &open)) {
-                import imgui_style : pushPopupStyle, popPopupStyle;
-                auto undoArr = history.undoEntries();
-                auto redoArr = history.redoEntries();
-                size_t total = undoArr.length + redoArr.length;
-
-                // Panel-chrome text is BLACK on grey(143). The
-                // default TextDisabled (semi-transparent gray) reads
-                // washed out — drop to the popup palette's "disabled"
-                // shade (60,60,60) which has the same readability as
-                // a status-bar menu item.
-                ImGui.PushStyleColor(ImGuiCol.Text,
-                    ImVec4(0.235f, 0.235f, 0.235f, 1.0f));
-                ImGui.Text("%d / %d",
-                    cast(int)undoArr.length, cast(int)total);
-                ImGui.PopStyleColor();
-
-                // Phase 7: macro recorder strip. Three small buttons
-                // route through the same `macro.*` command path that
-                // /api/command uses, so headless tests and UI clicks
-                // exercise one code path. Buttons grey-out based on
-                // recorder state to keep affordances obvious.
-                ImGui.SameLine();
-                bool recActive = macroRecorder.active;
-                if (recActive)
-                    ImGui.PushStyleColor(ImGuiCol.Text,
-                        ImVec4(0.95f, 0.3f, 0.3f, 1.0f));
-                ImGui.BeginDisabled(recActive);
-                if (ImGui.SmallButton("Rec")) {
-                    if (commandHandlerDelegate !is null)
-                        commandHandlerDelegate("macro.record",
-                            `{"state":1}`);
-                }
-                ImGui.EndDisabled();
-                if (recActive) ImGui.PopStyleColor();
-                ImGui.SameLine();
-                ImGui.BeginDisabled(!recActive);
-                if (ImGui.SmallButton("Stop")) {
-                    if (commandHandlerDelegate !is null)
-                        commandHandlerDelegate("macro.record",
-                            `{"state":0}`);
-                }
-                ImGui.EndDisabled();
-                ImGui.SameLine();
-                ImGui.BeginDisabled(macroRecorder.length == 0);
-                if (ImGui.SmallButton("Save..."))
-                    tryOpenArgsDialog("macro.saveRecorded");
-                ImGui.EndDisabled();
-                if (recActive) {
-                    ImGui.SameLine();
-                    ImGui.TextColored(
-                        ImVec4(0.95f, 0.3f, 0.3f, 1.0f),
-                        "REC %d", cast(int)macroRecorder.length);
-                }
-
-                // Phase 4: inline filter row. Substring narrows the
-                // list; "Args" toggle hides arg dimmed-text for a
-                // compact view. Phase 6 adds a gear "..." popover
-                // with display toggles (row numbers, timestamps,
-                // command-id-vs-label).
-                ImGui.SetNextItemWidth(-110);
-                ImGui.InputTextWithHint("##hist-filter", "Filter...",
-                    historyFilter[]);
-                ImGui.SameLine();
-                ImGui.Checkbox("Args", &historyShowArgs);
-                ImGui.SameLine();
-                if (ImGui.SmallButton("..."))
-                    ImGui.OpenPopup("hist-display-opts");
-                // Wrap popups in the status-bar popup palette so the
-                // grey/beige look matches the menu chrome the rest of
-                // the app uses (see source/imgui_style.d).
-                pushPopupStyle();
-                if (ImGui.BeginPopup("hist-display-opts")) {
-                    ImGui.Checkbox("Show row numbers",
-                                   &historyShowRowNumbers);
-                    ImGui.Checkbox("Show timestamps",
-                                   &historyShowTimestamps);
-                    ImGui.Checkbox("Show command IDs (internal names)",
-                                   &historyShowCommandIds);
-                    ImGui.EndPopup();
-                }
-                popPopupStyle();
-
-                // Read the filter buffer once per frame into a D
-                // string for comparisons.
-                import std.string : fromStringz;
-                string filter = cast(string) fromStringz(historyFilter.ptr);
-
-                // Phase 3: panel-level right-click menu — fires when
-                // the user right-clicks empty space within the list.
-                // Per-row menu (defined inside the row loop below)
-                // gets priority via ImGui's hit-test ordering.
-                pushPopupStyle();
-                if (ImGui.BeginPopupContextWindow("hist-panel-ctx",
-                        ImGuiPopupFlags.MouseButtonRight
-                      | ImGuiPopupFlags.NoOpenOverItems)) {
-                    if (ImGui.MenuItem("Save as Script..."))
-                        tryOpenArgsDialog("history.saveAsScript");
-                    if (ImGui.MenuItem("Clear history"))
-                        history.clear();
-                    ImGui.EndPopup();
-                }
-                popPopupStyle();
-
-                // Single scrolling region — keeps the cursor row in
-                // view as the stack grows (we explicitly SetScrollHere
-                // at the cursor below). Each row is a Selectable so
-                // clicking jumps the cursor there (Phase 2 multi-step
-                // jump). Target index = "desired undoStack length
-                // AFTER the walk".
-                //
-                // Reserve the last row of the window for the Phase 5
-                // REPL bar — negative Y leaves N px at the bottom.
-                float replHeight = ImGui.GetFrameHeightWithSpacing();
-                if (ImGui.BeginChild("hist-list", ImVec2(0, -replHeight))) {
-                    import std.algorithm : canFind;
-                    import std.format : format;
-                    import command_history : HistoryEntry, HistoryFlags;
-                    // Phase 6: timestamps are formatted relative to
-                    // the first entry's timestamp so a single line
-                    // can show "+1.2s" without showing wall-clock.
-                    long t0 = undoArr.length > 0
-                        ? undoArr[0].timestampMs
-                        : (redoArr.length > 0 ? redoArr[0].timestampMs : 0);
-                    // Phase 7: per-row status badge mapped from
-                    // HistoryFlags. Anything that landed on the stack
-                    // is Succeeded today; the Failed/Quiet/SideEffect
-                    // bits are reserved for the dispatcher widening
-                    // that captures non-undoable and failed commands.
-                    // Badges chosen from the Basic-Latin range so the
-                    // default ImGui font (ProggyClean, ASCII-only)
-                    // renders them — Unicode glyphs like ✓ / ✗ / ⋯
-                    // come out as `?` until we ship a richer font.
-                    string flagBadge(uint f) {
-                        if (f & HistoryFlags.Failed)     return "! ";
-                        if (f & HistoryFlags.Quiet)      return ". ";
-                        if (f & HistoryFlags.SideEffect) return "~ ";
-                        // Succeeded is the common case — blank keeps
-                        // the row visually clean instead of stamping
-                        // every line with a tick.
-                        return "  ";
-                    }
-                    string fmtRow(size_t rowIdx, ref const HistoryEntry e) {
-                        // Phase 6+7 composition: badge + optional row
-                        // number + optional timestamp + label-or-id +
-                        // optional args.
-                        string head = flagBadge(e.flags);
-                        if (historyShowRowNumbers)
-                            head ~= format!"%3d "(rowIdx);
-                        if (historyShowTimestamps)
-                            head ~= format!"+%5.1fs "
-                                (cast(double)(e.timestampMs - t0) / 1000.0);
-                        string body_ = historyShowCommandIds
-                            ? e.commandName : e.label;
-                        if (historyShowArgs && e.args.length > 0)
-                            return head ~ body_ ~ "  " ~ e.args;
-                        return head ~ body_;
-                    }
-                    foreach (i, ref e; undoArr) {
-                        // Phase 4: filter — skip rows that don't
-                        // match the substring (case-sensitive). Empty
-                        // filter = show all.
-                        if (filter.length > 0
-                            && !e.label.canFind(filter)
-                            && !e.args.canFind(filter)
-                            && !e.commandName.canFind(filter))
-                            continue;
-                        ImGui.PushID(cast(int)i);
-                        if (replayUndoEntry !is null) {
-                            if (ImGui.SmallButton(">"))
-                                replayUndoEntry(i);
-                            if (ImGui.IsItemHovered()) {
-                                pushPopupStyle();
-                                ImGui.SetTooltip("Re-run this entry against current state");
-                                popPopupStyle();
-                            }
-                            ImGui.SameLine();
-                        }
-                        string rowText = fmtRow(i, e);
-                        // Clicking an undo row means "I want history
-                        // to be at state after this row's command";
-                        // target = i + 1 leaves undoStack[0..=i]
-                        // applied.
-                        if (ImGui.Selectable(rowText, false))
-                            history.jumpTo(i + 1);
-                        if (ImGui.IsItemHovered()) {
-                            pushPopupStyle();
-                            ImGui.SetTooltip("Jump cursor here (undo back %d step(s))",
-                                cast(int)(undoArr.length - (i + 1)));
-                            popPopupStyle();
-                        }
-                        // Phase 3: right-click context menu per row.
-                        pushPopupStyle();
-                        if (ImGui.BeginPopupContextItem("hist-row-ctx")) {
-                            if (ImGui.MenuItem("Re-run") && replayUndoEntry !is null)
-                                replayUndoEntry(i);
-                            if (ImGui.MenuItem("Copy argstring")) {
-                                string line = history.undoEntryCommandLine(i);
-                                ImGui.SetClipboardText(line);
-                            }
-                            ImGui.Separator();
-                            if (ImGui.MenuItem("Clear history"))
-                                history.clear();
-                            ImGui.EndPopup();
-                        }
-                        popPopupStyle();
-                        ImGui.PopID();
-                    }
-
-                    // Cursor row — "you are here". The user can grab
-                    // this row and drag it up/down to
-                    // walk through history. Each row-height worth of
-                    // vertical drag fires one undo() (drag UP, walks
-                    // backward) or one redo() (drag DOWN, walks
-                    // forward). The cursor visually follows the
-                    // mouse because every undo/redo shifts the list
-                    // by exactly one row.
-                    ImGui.PushStyleColor(ImGuiCol.Text,
-                        ImVec4(0.95f, 0.7f, 0.2f, 1.0f));
-                    ImGui.Selectable("=== cursor (drag to undo/redo) ===",
-                                     false);
-                    ImGui.PopStyleColor();
-                    if (ImGui.IsItemHovered() || ImGui.IsItemActive())
-                        ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeNS);
-                    if (ImGui.IsItemActive()) {
-                        ImVec2 dd = ImGui.GetMouseDragDelta(
-                            ImGuiMouseButton.Left, 0.0f);
-                        float rowH = ImGui.GetTextLineHeightWithSpacing();
-                        // Whole-row steps; sub-row deltas accumulate
-                        // across frames via the drag-delta state.
-                        int steps = cast(int)(dd.y / rowH);
-                        if (steps > 0) {
-                            foreach (_; 0 .. steps)
-                                if (!navHistory(false)) break;
-                            ImGui.ResetMouseDragDelta(
-                                ImGuiMouseButton.Left);
-                        } else if (steps < 0) {
-                            foreach (_; 0 .. -steps)
-                                if (!navHistory(true)) break;
-                            ImGui.ResetMouseDragDelta(
-                                ImGuiMouseButton.Left);
-                        }
-                    }
-                    if (cast(int)total > 12)
-                        ImGui.SetScrollHereY(0.5f);
-
-                    // Redo entries — dimmed, in chronological order
-                    // continuing past the cursor. redoStack stores
-                    // most-recent-first; iterate reversed so timeline
-                    // reads top-down. Click jumps forward through
-                    // pending commands: redo idx (redoArr.length-1-k)
-                    // → target = undoArr.length + k + 1.
-                    foreach_reverse (i, ref e; redoArr) {
-                        if (filter.length > 0
-                            && !e.label.canFind(filter)
-                            && !e.args.canFind(filter)
-                            && !e.commandName.canFind(filter))
-                            continue;
-                        ImGui.PushID(cast(int)(undoArr.length + 1 + i));
-                        // Redo rows: dark grey on the panel's light
-                        // grey background. Matches the popup
-                        // "disabled" shade in source/imgui_style.d
-                        // (60,60,60) — readable but visually
-                        // subordinate to active undo rows (black).
-                        ImGui.PushStyleColor(ImGuiCol.Text,
-                            ImVec4(0.235f, 0.235f, 0.235f, 1.0f));
-                        // Redo row index in the chronological view =
-                        // undoArr.length + (number of redo entries
-                        // already past in this loop).
-                        size_t redoRowIdx = undoArr.length
-                                          + (redoArr.length - 1 - i);
-                        string rowText = fmtRow(redoRowIdx, e);
-                        // Steps forward from current = (redoArr.length - i).
-                        size_t k = redoArr.length - 1 - i;
-                        size_t jumpTarget = undoArr.length + k + 1;
-                        if (ImGui.Selectable(rowText, false))
-                            history.jumpTo(jumpTarget);
-                        if (ImGui.IsItemHovered()) {
-                            pushPopupStyle();
-                            ImGui.SetTooltip("Jump cursor here (redo %d step(s))",
-                                cast(int)(k + 1));
-                            popPopupStyle();
-                        }
-                        ImGui.PopStyleColor();
-                        ImGui.PopID();
-                    }
-                }
-                ImGui.EndChild();
-
-                // Phase 5: REPL bar — fixed at the bottom. Enter or
-                // the Run button submits the input to the command
-                // dispatcher (same path /api/command takes); the
-                // command also lands in the history above as a new
-                // entry (provided it's recordable). Parse errors
-                // tint the input red until the user edits.
-                if (historyReplLastWasError)
-                    ImGui.PushStyleColor(ImGuiCol.FrameBg,
-                        ImVec4(0.45f, 0.18f, 0.18f, 1.0f));
-                ImGui.SetNextItemWidth(-60);  // leave room for "Run"
-                bool submitted = ImGui.InputText("##hist-repl",
-                    historyReplInput[], ImGuiInputTextFlags.EnterReturnsTrue);
-                if (historyReplLastWasError)
-                    ImGui.PopStyleColor();
-                ImGui.SameLine();
-                if (ImGui.SmallButton("Run")) submitted = true;
-                if (submitted) {
-                    import std.string : fromStringz;
-                    import argstring : parseArgstring;
-                    string line = cast(string) fromStringz(historyReplInput.ptr).dup;
-                    if (line.length > 0) {
-                        bool ok = false;
-                        try {
-                            auto parsed = parseArgstring(line);
-                            if (!parsed.isEmpty
-                                && commandHandlerDelegate !is null) {
-                                commandHandlerDelegate(parsed.commandId,
-                                    parsed.params.toString());
-                                ok = true;
-                            }
-                        } catch (Exception) {
-                            // Parse failure — keep input + red tint.
-                        }
-                        if (ok) {
-                            historyReplInput[] = 0;
-                            historyReplLastWasError = false;
-                        } else {
-                            historyReplLastWasError = true;
-                        }
-                    }
-                }
-            }
-            ImGui.End();
-            // Honor the [x] close button on the window.
-            if (!open) showHistoryPanel = false;
-            popPanelChromeStyle();
-        }
+        // Moved VERBATIM to ui/panels.d's drawCommandHistoryPanel (app.d
+        // decomp, phase B; same `with (app)` seam as the 0419 panels).
+        drawCommandHistoryPanel(app);
 
         // ---- Universal args dialog ----
         // Any command whose params() returns non-empty gets a modal dialog

@@ -264,7 +264,8 @@ import ai3d.job_events           : Ai3dEvent, Ai3dEventKind;
 import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationDeadlineMs;
 import ai3d.scene_validator      : Ai3dMaxTotalFaces;
 import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
-    Ai3dInstallState, ai3dDefaultInstallLocation;
+    Ai3dInstallState, ai3dDefaultInstallLocation, ai3dDefaultWorkerUrl;
+import core.time : MonoTime;  // phase-B drawAi3dModal: MonoTime.currTime health-poll throttle
 import commands.ai3d.import_result : Ai3dImportResult;
 import remesh.remesh_job         : RemeshJob, RemeshParams,
     MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
@@ -2444,5 +2445,777 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
 
     // Restore default framebuffer.
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+}
+
+// =========================================================================
+// app.d decomp phase B: the four inline ImGui panels of app.d's main loop,
+// moved VERBATIM (same `with (app)` seam as the 0419 panels above):
+//   drawAi3dModal            -- was app.d ~5650-5874 ("AI3D Generate modal")
+//   drawRemeshModal          -- was app.d ~5876-5978 ("Quad Remesh modal")
+//   drawQuitGuardModal       -- was app.d ~5980-6034 ("Unsaved-changes quit
+//                               guard + confirmation modal")
+//   drawCommandHistoryPanel  -- was app.d ~6304-6651 ("Command History")
+// The ONLY body edits vs the pre-move text are Edit-class-2 address-of
+// sites (precedent: registration.d's &switchToItemType): ImGui's
+// SliderInt/SliderFloat/Checkbox take a raw pointer, and `&prop` on a
+// @property ref field yields the property FUNCTION's address, so the 8
+// widget calls read the `namePtr` storage field directly:
+//   &ai3dMaxFaces -> ai3dMaxFacesPtr, &remeshTargetQuads ->
+//   remeshTargetQuadsPtr, &remeshAdaptivity -> remeshAdaptivityPtr,
+//   &remeshSharpEdge -> remeshSharpEdgePtr, &historyShowArgs ->
+//   historyShowArgsPtr, &historyShowRowNumbers -> historyShowRowNumbersPtr,
+//   &historyShowTimestamps -> historyShowTimestampsPtr,
+//   &historyShowCommandIds -> historyShowCommandIdsPtr.
+// =========================================================================
+
+void drawAi3dModal(EditorApp app) {
+    with (app) {
+        // ---- AI3D Generate modal (task 0381 Phase 3) -----------------------
+        // Same BeginPopupModal convention as ArgsDialog (args_dialog.d:48):
+        // pendingOpen → OpenPopup once, then cleared; BeginPopupModal
+        // returns true while open, false after ESC/[X]/CloseCurrentPopup.
+        // Reads ONLY the immutable ai3dModal snapshot (written by
+        // onAi3dEvent, near runCommand) plus the controller's busy()/
+        // start()/requestCancel() surface — it never touches the queue or
+        // any Document/Mesh state directly.
+        if (ai3dModalOpen) {
+            import std.format : format;
+            import std.string : fromStringz;
+
+            if (ai3dModalPendingOpen) {
+                ImGui.OpenPopup("Generate 3D");
+                ai3dModalPendingOpen = false;
+            }
+
+            if (ImGui.BeginPopupModal("Generate 3D", null, ImGuiWindowFlags.AlwaysAutoResize)) {
+                // Auto-close once the generated mesh has landed as a new layer:
+                // the action happened, so the modal dismisses itself. A failure
+                // (state != "succeeded") keeps it open so the error stays visible.
+                if (ai3dModal.state == "succeeded") {
+                    ImGui.CloseCurrentPopup();
+                    ai3dModalOpen = false;
+                }
+
+                // ---- AI worker lifecycle (task 0403) ---------------------------
+                // Ai3dWorkerManager tracks ONLY the subprocess the editor itself
+                // spawned (worker_manager.d's module doc) — Start/Stop here can
+                // never touch a worker some other process started. The manual
+                // "Worker URL" field below stays live for advanced users who
+                // point the editor at an externally-managed worker instead; a
+                // successful Start overwrites it with the spawned worker's URL.
+                {
+                    import core.time : seconds;
+
+                    final switch (ai3dWorkerManager.state()) {
+                        case Ai3dWorkerState.notInstalled:
+                            ImGui.Text("AI worker: not installed");
+                            if (ai3dWorkerManager.installBusy()) {
+                                ImGui.Text(ai3dWorkerManager.installState() == Ai3dInstallState.runningInstall
+                                    ? "Installing runtime..." : "Downloading model...");
+                                ImGui.BeginChild("ai3dInstallLog", ImVec2(360, 90), true);
+                                ImGui.TextUnformatted(ai3dWorkerManager.installLogTail(2000));
+                                ImGui.SetScrollHereY(1.0f);
+                                ImGui.EndChild();
+                                if (ImGui.Button("Cancel Install")) ai3dWorkerManager.cancelInstall();
+                            } else {
+                                if (ai3dWorkerManager.installState() == Ai3dInstallState.failed)
+                                    ImGui.TextUnformatted("Install failed: " ~ ai3dWorkerManager.installMessage());
+                                if (ImGui.Button("Install")) {
+                                    ai3dWorkerManager.clearInstall();
+                                    ai3dInstallConfirmOpen        = true;
+                                    ai3dInstallConfirmPendingOpen = true;
+                                }
+                            }
+                            break;
+                        case Ai3dWorkerState.installedStopped:
+                            ImGui.Text(ai3dWorkerManager.modelPresent()
+                                ? "AI worker: installed, not running"
+                                : "AI worker: installed (model not downloaded yet), not running");
+                            if (ImGui.Button("Start")) {
+                                if (ai3dWorkerManager.startWorker()) {
+                                    ai3dWorkerStarting        = true;
+                                    ai3dWorkerStartDeadline   = MonoTime.currTime + 90.seconds;
+                                    ai3dWorkerNextHealthProbe = MonoTime.currTime;
+                                    const spawnedUrl = ai3dWorkerManager.workerUrl();
+                                    ai3dWorkerUrlBuf[] = 0;
+                                    ai3dWorkerUrlBuf[0 .. spawnedUrl.length] = spawnedUrl;
+                                }
+                            }
+                            break;
+                        case Ai3dWorkerState.running:
+                            ImGui.Text("AI worker: running (" ~ ai3dWorkerManager.workerUrl() ~ ")");
+                            if (ImGui.Button("Stop")) {
+                                ai3dWorkerManager.stopWorker();
+                                ai3dWorkerStarting = false;
+                            }
+                            break;
+                    }
+
+                    // Post-Start health poll: throttled to ~1/s (never
+                    // per-frame — probeHealth() spawns a short-lived thread
+                    // per call) against the SAME ai3dModal.health* snapshot
+                    // the manual health line below reads.
+                    if (ai3dWorkerStarting) {
+                        ImGui.Text("Waiting for the worker to become ready...");
+                        if (MonoTime.currTime >= ai3dWorkerNextHealthProbe) {
+                            ai3dController.probeHealth(ai3dWorkerManager.workerUrl());
+                            ai3dWorkerNextHealthProbe = MonoTime.currTime + 1.seconds;
+                        }
+                        if (ai3dModal.healthChecked && ai3dModal.healthOk) {
+                            ai3dWorkerStarting = false;
+                        } else if (MonoTime.currTime >= ai3dWorkerStartDeadline) {
+                            ai3dWorkerStarting     = false;
+                            ai3dModal.errorCode    = "worker_start_timeout";
+                            ai3dModal.errorMessage = "AI worker did not become ready in time";
+                        }
+                    }
+                }
+
+                // Install confirmation — nested popup, same pendingOpen
+                // convention as the Generate 3D modal itself (ai3dModalOpen /
+                // ai3dModalPendingOpen above).
+                if (ai3dInstallConfirmOpen) {
+                    if (ai3dInstallConfirmPendingOpen) {
+                        ImGui.OpenPopup("Install AI Worker?");
+                        ai3dInstallConfirmPendingOpen = false;
+                    }
+                    if (ImGui.BeginPopupModal("Install AI Worker?", null, ImGuiWindowFlags.AlwaysAutoResize)) {
+                        ImGui.TextUnformatted(format(
+                            "Installs the AI generation runtime to\n%s (~6-8 GB)\n"
+                            ~ "and downloads the ~4 GB model afterwards. Continue?",
+                            ai3dDefaultInstallLocation()));
+                        if (ImGui.Button("Install")) {
+                            ai3dWorkerManager.runInstall();
+                            ImGui.CloseCurrentPopup();
+                            ai3dInstallConfirmOpen = false;
+                        }
+                        ImGui.SameLine();
+                        if (ImGui.Button("Cancel")) {
+                            ImGui.CloseCurrentPopup();
+                            ai3dInstallConfirmOpen = false;
+                        }
+                        ImGui.EndPopup();
+                    } else {
+                        ai3dInstallConfirmOpen = false; // closed via ESC
+                    }
+                }
+
+                ImGui.Separator();
+
+                ImGui.Text("Image: " ~ ai3dPickedImagePath);
+
+                ImGui.SetNextItemWidth(280);
+                ImGui.InputText("Worker URL", ai3dWorkerUrlBuf[]);
+
+                ImGui.SetNextItemWidth(280);
+                ImGui.SliderInt("Max faces", ai3dMaxFacesPtr, 1_000, cast(int) Ai3dMaxTotalFaces);
+                // SliderInt's vMin/vMax only bound the drag/click gesture —
+                // its text-entry mode (Ctrl+click) can still land an
+                // out-of-range value, so clamp right after, same as every
+                // other numeric-from-widget value in this codebase.
+                if (ai3dMaxFaces < 1_000) ai3dMaxFaces = 1_000;
+                if (ai3dMaxFaces > cast(int) Ai3dMaxTotalFaces) ai3dMaxFaces = cast(int) Ai3dMaxTotalFaces;
+
+                const bool ai3dJobRunning = ai3dController.busy();
+
+                if (!ai3dModal.healthChecked) {
+                    ImGui.Text("Checking worker health…");
+                } else if (!ai3dModal.healthOk) {
+                    ImGui.Text("Worker not ready: "
+                        ~ (ai3dModal.healthMessage.length ? ai3dModal.healthMessage : ai3dModal.errorCode));
+                } else {
+                    ImGui.Text(format("Worker ready (backend=%s, protocol=%d)",
+                                       ai3dModal.healthBackend, ai3dModal.healthProtocol));
+                }
+
+                // Health-gated (Phase 0/3): Generate only enables once a
+                // standalone probeHealth() round trip reports a compatible
+                // protocol and OBJ capability. The backend id (triposr,
+                // trellis, fake, …) is informational only — any conformant
+                // worker that speaks protocol 1 and emits OBJ is accepted, so
+                // we deliberately do NOT pin a specific backend name here.
+                const bool healthy = ai3dModal.healthChecked && ai3dModal.healthOk
+                    && ai3dModal.healthProtocol == 1
+                    && ai3dModal.healthObjCapable;
+
+                ImGui.Separator();
+
+                // Cancel is the single close affordance (no separate Dismiss):
+                // idle -> just closes; running -> aborts the job AND closes so a
+                // job can't complete and silently import a layer after the modal
+                // is gone. A successful generate auto-closes above.
+                void closeAi3dModal() {
+                    if (ai3dController.busy()) ai3dController.requestCancel();
+                    ImGui.CloseCurrentPopup();
+                    ai3dModalOpen = false;
+                }
+
+                if (!ai3dJobRunning) {
+                    if (!healthy) ImGui.BeginDisabled();
+                    if (ImGui.Button("Generate")) {
+                        ai3dModal.state       = "";
+                        ai3dModal.stage       = "";
+                        ai3dModal.progress    = 0;
+                        ai3dModal.errorCode    = null;
+                        ai3dModal.errorMessage = null;
+                        const workerUrl = cast(string) fromStringz(ai3dWorkerUrlBuf.ptr).dup;
+                        // Cold-start budget: the first generation after a worker
+                        // launch loads the ~5 GB model AND JIT-compiles the spconv /
+                        // flexicubes CUDA kernels, which can run several minutes — a
+                        // 2-min cap cut that off client-side (BrokenPipe) even though
+                        // the worker finished the mesh. Warm jobs still return in
+                        // ~15-35 s, so the 10-min ceiling costs steady-state nothing.
+                        ai3dController.start(ai3dPickedImagePath,
+                            workerUrl.length ? workerUrl : ai3dDefaultWorkerUrl,
+                            Ai3dMaxGenerationDeadlineMs, ai3dMaxFaces);
+                    }
+                    if (!healthy) ImGui.EndDisabled();
+                    ImGui.SameLine();
+                    if (ImGui.Button("Cancel")) closeAi3dModal();
+                } else {
+                    ImGui.Text(format("%s: %s (%.0f%%)",
+                        ai3dModal.state.length ? ai3dModal.state : "running",
+                        ai3dModal.stage, ai3dModal.progress * 100.0));
+                    ImGui.SameLine();
+                    if (ImGui.Button("Cancel")) closeAi3dModal();
+                }
+
+                // Only the error survives on screen (a success auto-closes).
+                // TextUnformatted (not printf-style Text): an error message can
+                // carry a "%" that Text would read as a conversion off an empty
+                // va_list.
+                if (ai3dModal.errorCode.length)
+                    ImGui.TextUnformatted("Error: " ~ ai3dModal.errorCode
+                                          ~ " — " ~ ai3dModal.errorMessage);
+                ImGui.EndPopup();
+            } else {
+                // Closed via ESC — same semantics as the Cancel button: abort
+                // any in-flight job so it can't land after the modal is gone.
+                if (ai3dController.busy()) ai3dController.requestCancel();
+                ai3dModalOpen = false;
+            }
+        }
+    }
+}
+
+void drawRemeshModal(EditorApp app) {
+    with (app) {
+        // ---- Quad Remesh modal (source/remesh/remesh_job.d) -----------------
+        // Same BeginPopupModal convention as the AI3D modal above. Opened by
+        // `mesh.remesh.open` (registered below, near the other mesh.remesh.*
+        // factories). Unlike ai3dModal, this reads remeshJob.state()/busy()/
+        // message() DIRECTLY every frame — RemeshJob is polled synchronously
+        // in this same thread (no worker thread / event queue to snapshot).
+        if (remeshModalOpen) {
+            if (remeshModalPendingOpen) {
+                ImGui.OpenPopup("Remesh (Quad)");
+                remeshModalPendingOpen = false;
+            }
+
+            if (ImGui.BeginPopupModal("Remesh (Quad)", null, ImGuiWindowFlags.AlwaysAutoResize)) {
+                // Auto-close once a remesh has actually landed (set by
+                // tickRemeshJob on a successful apply): the action happened, so
+                // the window dismisses itself — no manual close needed.
+                if (remeshModalPendingClose) {
+                    remeshModalPendingClose = false;
+                    ImGui.CloseCurrentPopup();
+                    remeshModalOpen = false;
+                }
+
+                ImGui.SetNextItemWidth(280);
+                ImGui.SliderInt("Target Quads", remeshTargetQuadsPtr,
+                                 MIN_REMESH_TARGET_QUADS, cast(int) MAX_REMESH_TARGET_QUADS);
+                // SliderInt's vMin/vMax only bound the drag/click gesture — its
+                // text-entry mode (Ctrl+click) can still land an out-of-range
+                // value, so clamp right after (same convention as ai3dMaxFaces
+                // above; the REAL authority is RemeshJob.start()'s kernel clamp).
+                if (remeshTargetQuads < MIN_REMESH_TARGET_QUADS) remeshTargetQuads = MIN_REMESH_TARGET_QUADS;
+                if (remeshTargetQuads > cast(int) MAX_REMESH_TARGET_QUADS) remeshTargetQuads = cast(int) MAX_REMESH_TARGET_QUADS;
+
+                ImGui.SetNextItemWidth(280);
+                ImGui.SliderFloat("Adaptivity", remeshAdaptivityPtr, 0.0f, 10.0f);
+                if (remeshAdaptivity < 0.0f) remeshAdaptivity = 0.0f;
+                if (remeshAdaptivity > 10.0f) remeshAdaptivity = 10.0f;
+
+                ImGui.SetNextItemWidth(280);
+                ImGui.SliderFloat("Sharp Edge (deg)", remeshSharpEdgePtr, 0.0f, 180.0f);
+                if (remeshSharpEdge < 0.0f) remeshSharpEdge = 0.0f;
+                if (remeshSharpEdge > 180.0f) remeshSharpEdge = 180.0f;
+
+                ImGui.Separator();
+
+                // Cancel is the single close affordance (no separate Dismiss):
+                // idle -> just closes the window; running -> aborts the job AND
+                // closes. A successful remesh auto-closes above, so the only
+                // time you click Cancel after starting is to abandon a run.
+                void closeRemeshModal() {
+                    if (remeshJob.busy()) remeshJob.cancel();
+                    ImGui.CloseCurrentPopup();
+                    remeshModalOpen = false;
+                }
+
+                const bool remeshBusy = remeshJob.busy();
+                if (!remeshBusy) {
+                    if (ImGui.Button("Remesh")) {
+                        remeshLastError   = null;
+                        remeshLastSummary = null;
+                        RemeshParams p;
+                        p.targetQuads = remeshTargetQuads;
+                        p.adaptivity  = remeshAdaptivity;
+                        p.sharpEdge   = remeshSharpEdge;
+                        // Task 0385: a non-empty face selection remeshes just
+                        // that region and stitches it back in (see
+                        // commands.mesh.remesh.RemeshStart, which mirrors this
+                        // same selection -> region-mask translation for the
+                        // headless/HTTP `mesh.remesh.start` path).
+                        const(bool)[] regionMask =
+                            mesh().hasAnySelectedFaces() ? mesh().selectedFaces : null;
+                        remeshJob.start(mesh(), p, regionMask);
+                        if (remeshJob.state() == RemeshJob.State.failed)
+                            remeshLastError = remeshJob.message();
+                    }
+                    ImGui.SameLine();
+                    if (ImGui.Button("Cancel")) closeRemeshModal();
+                } else {
+                    ImGui.TextUnformatted("Remeshing...");
+                    ImGui.SameLine();
+                    if (ImGui.Button("Cancel")) closeRemeshModal();
+                }
+
+                // The error survives on screen across the modal staying open
+                // (a full success auto-closes it). A PARTIAL success (task
+                // 0386: some region components skipped) still auto-closes —
+                // remeshLastSummary shows for the one frame before that
+                // happens, same as a plain "Done" summary always has.
+                // TextUnformatted (not Text): either message can carry the
+                // helper's raw stderr tail with stray "%", which the printf-
+                // style ImGui.Text would read as a conversion off an empty
+                // va_list.
+                if (remeshLastError.length)
+                    ImGui.TextUnformatted("Error: " ~ remeshLastError);
+                else if (remeshLastSummary.length)
+                    ImGui.TextUnformatted(remeshLastSummary);
+                ImGui.EndPopup();
+            } else {
+                // Closed via ESC — same semantics as the Cancel button: abort
+                // any in-flight job so it can't land after the modal is gone.
+                if (remeshJob.busy()) remeshJob.cancel();
+                remeshModalOpen = false;
+            }
+        }
+    }
+}
+
+void drawQuitGuardModal(EditorApp app) {
+    with (app) {
+        // ---- Unsaved-changes quit guard + confirmation modal (task 0434) ----
+        // Drain the close request once per frame. Placed inside the ImGui frame
+        // (after the menu bar and the other modals are drawn) so a same-frame
+        // File→Quit, a Ctrl+Q from the event phase, and an SDL_QUIT all land
+        // here. A dirty document opens the confirm modal; a clean one — or any
+        // --test session (the harness closes the window and must not block on a
+        // dialog) — exits immediately.
+        if (quitRequested) {
+            import io.doc_state : docDirty;
+            quitRequested = false;
+            if (docDirty() && !command.g_testMode) {
+                quitConfirmOpen    = true;
+                quitConfirmPending = true;
+            } else {
+                running = false;
+            }
+        }
+        if (quitConfirmOpen) {
+            if (quitConfirmPending) {
+                ImGui.OpenPopup("Unsaved Changes");
+                quitConfirmPending = false;
+            }
+            if (ImGui.BeginPopupModal("Unsaved Changes", null,
+                                      ImGuiWindowFlags.AlwaysAutoResize)) {
+                ImGui.TextUnformatted(
+                    "You have unsaved changes. Do you really want to exit?");
+                ImGui.Separator();
+                // Save: write via the ordinary file.save command (prompts if the
+                // document is untitled). The exit is DEFERRED to the post-flush
+                // settle (quitAfterSave) so a cancelled Save dialog — which
+                // leaves the document dirty — aborts the quit instead of losing
+                // work. Save→exit is the destructive-safe default, so it leads.
+                if (ImGui.Button("Save")) {
+                    runCommand(reg.commandFactories["file.save"]());
+                    quitAfterSave   = true;
+                    quitConfirmOpen = false;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Yes")) {          // discard changes and exit
+                    running         = false;
+                    quitConfirmOpen = false;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("No")) {           // cancel the quit
+                    quitConfirmOpen = false;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.EndPopup();
+            } else {
+                // Closed via ESC / [X] — same semantics as No: cancel the quit.
+                quitConfirmOpen = false;
+            }
+        }
+    }
+}
+
+void drawCommandHistoryPanel(EditorApp app) {
+    with (app) {
+        // ---- Command History (floating) ----
+        // Toggled by the history.show command. Layout (history-panel
+        // design doc Phase 1): single chronological list, OLDEST top →
+        // NEWEST bottom, with a
+        // cursor row marking the current undo point. Entries below
+        // the cursor are pending-redo and render dimmed. Per-undo
+        // row keeps the `>` replay button.
+        if (showHistoryPanel) {
+            pushPanelChromeStyle();
+            ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 130), ImGuiCond.FirstUseEver);
+            ImGui.SetNextWindowSize(ImVec2(320, 380), ImGuiCond.FirstUseEver);
+            bool open = showHistoryPanel;
+            if (ImGui.Begin("Command History", &open)) {
+                import imgui_style : pushPopupStyle, popPopupStyle;
+                auto undoArr = history.undoEntries();
+                auto redoArr = history.redoEntries();
+                size_t total = undoArr.length + redoArr.length;
+
+                // Panel-chrome text is BLACK on grey(143). The
+                // default TextDisabled (semi-transparent gray) reads
+                // washed out — drop to the popup palette's "disabled"
+                // shade (60,60,60) which has the same readability as
+                // a status-bar menu item.
+                ImGui.PushStyleColor(ImGuiCol.Text,
+                    ImVec4(0.235f, 0.235f, 0.235f, 1.0f));
+                ImGui.Text("%d / %d",
+                    cast(int)undoArr.length, cast(int)total);
+                ImGui.PopStyleColor();
+
+                // Phase 7: macro recorder strip. Three small buttons
+                // route through the same `macro.*` command path that
+                // /api/command uses, so headless tests and UI clicks
+                // exercise one code path. Buttons grey-out based on
+                // recorder state to keep affordances obvious.
+                ImGui.SameLine();
+                bool recActive = macroRecorder.active;
+                if (recActive)
+                    ImGui.PushStyleColor(ImGuiCol.Text,
+                        ImVec4(0.95f, 0.3f, 0.3f, 1.0f));
+                ImGui.BeginDisabled(recActive);
+                if (ImGui.SmallButton("Rec")) {
+                    if (commandHandlerDelegate !is null)
+                        commandHandlerDelegate("macro.record",
+                            `{"state":1}`);
+                }
+                ImGui.EndDisabled();
+                if (recActive) ImGui.PopStyleColor();
+                ImGui.SameLine();
+                ImGui.BeginDisabled(!recActive);
+                if (ImGui.SmallButton("Stop")) {
+                    if (commandHandlerDelegate !is null)
+                        commandHandlerDelegate("macro.record",
+                            `{"state":0}`);
+                }
+                ImGui.EndDisabled();
+                ImGui.SameLine();
+                ImGui.BeginDisabled(macroRecorder.length == 0);
+                if (ImGui.SmallButton("Save..."))
+                    tryOpenArgsDialog("macro.saveRecorded");
+                ImGui.EndDisabled();
+                if (recActive) {
+                    ImGui.SameLine();
+                    ImGui.TextColored(
+                        ImVec4(0.95f, 0.3f, 0.3f, 1.0f),
+                        "REC %d", cast(int)macroRecorder.length);
+                }
+
+                // Phase 4: inline filter row. Substring narrows the
+                // list; "Args" toggle hides arg dimmed-text for a
+                // compact view. Phase 6 adds a gear "..." popover
+                // with display toggles (row numbers, timestamps,
+                // command-id-vs-label).
+                ImGui.SetNextItemWidth(-110);
+                ImGui.InputTextWithHint("##hist-filter", "Filter...",
+                    historyFilter[]);
+                ImGui.SameLine();
+                ImGui.Checkbox("Args", historyShowArgsPtr);
+                ImGui.SameLine();
+                if (ImGui.SmallButton("..."))
+                    ImGui.OpenPopup("hist-display-opts");
+                // Wrap popups in the status-bar popup palette so the
+                // grey/beige look matches the menu chrome the rest of
+                // the app uses (see source/imgui_style.d).
+                pushPopupStyle();
+                if (ImGui.BeginPopup("hist-display-opts")) {
+                    ImGui.Checkbox("Show row numbers",
+                                   historyShowRowNumbersPtr);
+                    ImGui.Checkbox("Show timestamps",
+                                   historyShowTimestampsPtr);
+                    ImGui.Checkbox("Show command IDs (internal names)",
+                                   historyShowCommandIdsPtr);
+                    ImGui.EndPopup();
+                }
+                popPopupStyle();
+
+                // Read the filter buffer once per frame into a D
+                // string for comparisons.
+                import std.string : fromStringz;
+                string filter = cast(string) fromStringz(historyFilter.ptr);
+
+                // Phase 3: panel-level right-click menu — fires when
+                // the user right-clicks empty space within the list.
+                // Per-row menu (defined inside the row loop below)
+                // gets priority via ImGui's hit-test ordering.
+                pushPopupStyle();
+                if (ImGui.BeginPopupContextWindow("hist-panel-ctx",
+                        ImGuiPopupFlags.MouseButtonRight
+                      | ImGuiPopupFlags.NoOpenOverItems)) {
+                    if (ImGui.MenuItem("Save as Script..."))
+                        tryOpenArgsDialog("history.saveAsScript");
+                    if (ImGui.MenuItem("Clear history"))
+                        history.clear();
+                    ImGui.EndPopup();
+                }
+                popPopupStyle();
+
+                // Single scrolling region — keeps the cursor row in
+                // view as the stack grows (we explicitly SetScrollHere
+                // at the cursor below). Each row is a Selectable so
+                // clicking jumps the cursor there (Phase 2 multi-step
+                // jump). Target index = "desired undoStack length
+                // AFTER the walk".
+                //
+                // Reserve the last row of the window for the Phase 5
+                // REPL bar — negative Y leaves N px at the bottom.
+                float replHeight = ImGui.GetFrameHeightWithSpacing();
+                if (ImGui.BeginChild("hist-list", ImVec2(0, -replHeight))) {
+                    import std.algorithm : canFind;
+                    import std.format : format;
+                    import command_history : HistoryEntry, HistoryFlags;
+                    // Phase 6: timestamps are formatted relative to
+                    // the first entry's timestamp so a single line
+                    // can show "+1.2s" without showing wall-clock.
+                    long t0 = undoArr.length > 0
+                        ? undoArr[0].timestampMs
+                        : (redoArr.length > 0 ? redoArr[0].timestampMs : 0);
+                    // Phase 7: per-row status badge mapped from
+                    // HistoryFlags. Anything that landed on the stack
+                    // is Succeeded today; the Failed/Quiet/SideEffect
+                    // bits are reserved for the dispatcher widening
+                    // that captures non-undoable and failed commands.
+                    // Badges chosen from the Basic-Latin range so the
+                    // default ImGui font (ProggyClean, ASCII-only)
+                    // renders them — Unicode glyphs like ✓ / ✗ / ⋯
+                    // come out as `?` until we ship a richer font.
+                    string flagBadge(uint f) {
+                        if (f & HistoryFlags.Failed)     return "! ";
+                        if (f & HistoryFlags.Quiet)      return ". ";
+                        if (f & HistoryFlags.SideEffect) return "~ ";
+                        // Succeeded is the common case — blank keeps
+                        // the row visually clean instead of stamping
+                        // every line with a tick.
+                        return "  ";
+                    }
+                    string fmtRow(size_t rowIdx, ref const HistoryEntry e) {
+                        // Phase 6+7 composition: badge + optional row
+                        // number + optional timestamp + label-or-id +
+                        // optional args.
+                        string head = flagBadge(e.flags);
+                        if (historyShowRowNumbers)
+                            head ~= format!"%3d "(rowIdx);
+                        if (historyShowTimestamps)
+                            head ~= format!"+%5.1fs "
+                                (cast(double)(e.timestampMs - t0) / 1000.0);
+                        string body_ = historyShowCommandIds
+                            ? e.commandName : e.label;
+                        if (historyShowArgs && e.args.length > 0)
+                            return head ~ body_ ~ "  " ~ e.args;
+                        return head ~ body_;
+                    }
+                    foreach (i, ref e; undoArr) {
+                        // Phase 4: filter — skip rows that don't
+                        // match the substring (case-sensitive). Empty
+                        // filter = show all.
+                        if (filter.length > 0
+                            && !e.label.canFind(filter)
+                            && !e.args.canFind(filter)
+                            && !e.commandName.canFind(filter))
+                            continue;
+                        ImGui.PushID(cast(int)i);
+                        if (replayUndoEntry !is null) {
+                            if (ImGui.SmallButton(">"))
+                                replayUndoEntry(i);
+                            if (ImGui.IsItemHovered()) {
+                                pushPopupStyle();
+                                ImGui.SetTooltip("Re-run this entry against current state");
+                                popPopupStyle();
+                            }
+                            ImGui.SameLine();
+                        }
+                        string rowText = fmtRow(i, e);
+                        // Clicking an undo row means "I want history
+                        // to be at state after this row's command";
+                        // target = i + 1 leaves undoStack[0..=i]
+                        // applied.
+                        if (ImGui.Selectable(rowText, false))
+                            history.jumpTo(i + 1);
+                        if (ImGui.IsItemHovered()) {
+                            pushPopupStyle();
+                            ImGui.SetTooltip("Jump cursor here (undo back %d step(s))",
+                                cast(int)(undoArr.length - (i + 1)));
+                            popPopupStyle();
+                        }
+                        // Phase 3: right-click context menu per row.
+                        pushPopupStyle();
+                        if (ImGui.BeginPopupContextItem("hist-row-ctx")) {
+                            if (ImGui.MenuItem("Re-run") && replayUndoEntry !is null)
+                                replayUndoEntry(i);
+                            if (ImGui.MenuItem("Copy argstring")) {
+                                string line = history.undoEntryCommandLine(i);
+                                ImGui.SetClipboardText(line);
+                            }
+                            ImGui.Separator();
+                            if (ImGui.MenuItem("Clear history"))
+                                history.clear();
+                            ImGui.EndPopup();
+                        }
+                        popPopupStyle();
+                        ImGui.PopID();
+                    }
+
+                    // Cursor row — "you are here". The user can grab
+                    // this row and drag it up/down to
+                    // walk through history. Each row-height worth of
+                    // vertical drag fires one undo() (drag UP, walks
+                    // backward) or one redo() (drag DOWN, walks
+                    // forward). The cursor visually follows the
+                    // mouse because every undo/redo shifts the list
+                    // by exactly one row.
+                    ImGui.PushStyleColor(ImGuiCol.Text,
+                        ImVec4(0.95f, 0.7f, 0.2f, 1.0f));
+                    ImGui.Selectable("=== cursor (drag to undo/redo) ===",
+                                     false);
+                    ImGui.PopStyleColor();
+                    if (ImGui.IsItemHovered() || ImGui.IsItemActive())
+                        ImGui.SetMouseCursor(ImGuiMouseCursor.ResizeNS);
+                    if (ImGui.IsItemActive()) {
+                        ImVec2 dd = ImGui.GetMouseDragDelta(
+                            ImGuiMouseButton.Left, 0.0f);
+                        float rowH = ImGui.GetTextLineHeightWithSpacing();
+                        // Whole-row steps; sub-row deltas accumulate
+                        // across frames via the drag-delta state.
+                        int steps = cast(int)(dd.y / rowH);
+                        if (steps > 0) {
+                            foreach (_; 0 .. steps)
+                                if (!navHistory(false)) break;
+                            ImGui.ResetMouseDragDelta(
+                                ImGuiMouseButton.Left);
+                        } else if (steps < 0) {
+                            foreach (_; 0 .. -steps)
+                                if (!navHistory(true)) break;
+                            ImGui.ResetMouseDragDelta(
+                                ImGuiMouseButton.Left);
+                        }
+                    }
+                    if (cast(int)total > 12)
+                        ImGui.SetScrollHereY(0.5f);
+
+                    // Redo entries — dimmed, in chronological order
+                    // continuing past the cursor. redoStack stores
+                    // most-recent-first; iterate reversed so timeline
+                    // reads top-down. Click jumps forward through
+                    // pending commands: redo idx (redoArr.length-1-k)
+                    // → target = undoArr.length + k + 1.
+                    foreach_reverse (i, ref e; redoArr) {
+                        if (filter.length > 0
+                            && !e.label.canFind(filter)
+                            && !e.args.canFind(filter)
+                            && !e.commandName.canFind(filter))
+                            continue;
+                        ImGui.PushID(cast(int)(undoArr.length + 1 + i));
+                        // Redo rows: dark grey on the panel's light
+                        // grey background. Matches the popup
+                        // "disabled" shade in source/imgui_style.d
+                        // (60,60,60) — readable but visually
+                        // subordinate to active undo rows (black).
+                        ImGui.PushStyleColor(ImGuiCol.Text,
+                            ImVec4(0.235f, 0.235f, 0.235f, 1.0f));
+                        // Redo row index in the chronological view =
+                        // undoArr.length + (number of redo entries
+                        // already past in this loop).
+                        size_t redoRowIdx = undoArr.length
+                                          + (redoArr.length - 1 - i);
+                        string rowText = fmtRow(redoRowIdx, e);
+                        // Steps forward from current = (redoArr.length - i).
+                        size_t k = redoArr.length - 1 - i;
+                        size_t jumpTarget = undoArr.length + k + 1;
+                        if (ImGui.Selectable(rowText, false))
+                            history.jumpTo(jumpTarget);
+                        if (ImGui.IsItemHovered()) {
+                            pushPopupStyle();
+                            ImGui.SetTooltip("Jump cursor here (redo %d step(s))",
+                                cast(int)(k + 1));
+                            popPopupStyle();
+                        }
+                        ImGui.PopStyleColor();
+                        ImGui.PopID();
+                    }
+                }
+                ImGui.EndChild();
+
+                // Phase 5: REPL bar — fixed at the bottom. Enter or
+                // the Run button submits the input to the command
+                // dispatcher (same path /api/command takes); the
+                // command also lands in the history above as a new
+                // entry (provided it's recordable). Parse errors
+                // tint the input red until the user edits.
+                if (historyReplLastWasError)
+                    ImGui.PushStyleColor(ImGuiCol.FrameBg,
+                        ImVec4(0.45f, 0.18f, 0.18f, 1.0f));
+                ImGui.SetNextItemWidth(-60);  // leave room for "Run"
+                bool submitted = ImGui.InputText("##hist-repl",
+                    historyReplInput[], ImGuiInputTextFlags.EnterReturnsTrue);
+                if (historyReplLastWasError)
+                    ImGui.PopStyleColor();
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Run")) submitted = true;
+                if (submitted) {
+                    import std.string : fromStringz;
+                    import argstring : parseArgstring;
+                    string line = cast(string) fromStringz(historyReplInput.ptr).dup;
+                    if (line.length > 0) {
+                        bool ok = false;
+                        try {
+                            auto parsed = parseArgstring(line);
+                            if (!parsed.isEmpty
+                                && commandHandlerDelegate !is null) {
+                                commandHandlerDelegate(parsed.commandId,
+                                    parsed.params.toString());
+                                ok = true;
+                            }
+                        } catch (Exception) {
+                            // Parse failure — keep input + red tint.
+                        }
+                        if (ok) {
+                            historyReplInput[] = 0;
+                            historyReplLastWasError = false;
+                        } else {
+                            historyReplLastWasError = true;
+                        }
+                    }
+                }
+            }
+            ImGui.End();
+            // Honor the [x] close button on the window.
+            if (!open) showHistoryPanel = false;
+            popPanelChromeStyle();
+        }
     }
 }

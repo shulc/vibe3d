@@ -38,7 +38,7 @@ mixin template MeshBridgeOps() {
         const N = loopA.length;
         auto edgeFaces = buildEdgeFaces();
         bool edgeAdjSubpatch(uint va, uint vb) {
-            auto p = edgeKeyOrdered(va, vb) in edgeFaces;
+            auto p = edgeKey(va, vb) in edgeFaces;
             if (p is null) return false;
             return ((*p)[0] >= 0 && isFaceSubpatch((*p)[0]))
                 || ((*p)[1] >= 0 && isFaceSubpatch((*p)[1]));
@@ -301,7 +301,7 @@ mixin template MeshBridgeOps() {
         auto edgeFaces = buildEdgeFaces();     // pre-existing snapshot — subpatch source ONLY, untouched
         auto liveEdgeFaces = edgeFaces.dup;    // grows with THIS strip's own faces — winding source
         bool edgeAdjSubpatch(uint va, uint vb) {
-            auto p = edgeKeyOrdered(va, vb) in edgeFaces;
+            auto p = edgeKey(va, vb) in edgeFaces;
             if (p is null) return false;
             return ((*p)[0] >= 0 && isFaceSubpatch((*p)[0]))
                 || ((*p)[1] >= 0 && isFaceSubpatch((*p)[1]));
@@ -376,7 +376,7 @@ mixin template MeshBridgeOps() {
         auto edgeFaces = buildEdgeFaces();     // pre-existing snapshot — subpatch source ONLY, untouched
         auto liveEdgeFaces = edgeFaces.dup;    // grows with THIS fan's own faces — winding source
         bool edgeAdjSubpatch(uint va, uint vb) {
-            auto p = edgeKeyOrdered(va, vb) in edgeFaces;
+            auto p = edgeKey(va, vb) in edgeFaces;
             if (p is null) return false;
             return ((*p)[0] >= 0 && isFaceSubpatch((*p)[0]))
                 || ((*p)[1] >= 0 && isFaceSubpatch((*p)[1]));

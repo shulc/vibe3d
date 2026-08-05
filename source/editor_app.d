@@ -247,6 +247,7 @@ import ai3d.stage_artifact       : Ai3dDefaultRequestedFaces, Ai3dMaxGenerationD
 import ai3d.scene_validator      : Ai3dMaxTotalFaces;
 import ai3d.worker_manager       : Ai3dWorkerManager, Ai3dWorkerState,
     Ai3dInstallState, ai3dDefaultInstallLocation;
+import core.time : MonoTime;  // phase-B panel ctx fields (ai3dWorker*Deadline/Probe)
 import commands.ai3d.import_result : Ai3dImportResult;
 import remesh.remesh_job         : RemeshJob, RemeshParams,
     MAX_REMESH_TARGET_QUADS, MIN_REMESH_TARGET_QUADS;
@@ -263,6 +264,12 @@ import viewport : LayoutPreset;
 import document       : Document;
 import command_history : CommandHistory;
 import viewport        : ViewportManager;
+
+// app.d decomp phase B (source/http_providers.d): types of the new ctx
+// fields below (see the phase-B section at the bottom of EditorApp).
+import step_trace  : StepTrace;
+import edit_session : EditSession;
+import gpu_select   : GpuSelectBuffer;
 
 // AI Modeling Copilot (task 0402): version(WithAI)-only, mirroring app.d's
 // own gating at its import block (see app.d's doc comment there) so a
@@ -380,6 +387,12 @@ ulong edgeKey(uint a, uint b) {
     uint lo = a < b ? a : b, hi = a < b ? b : a;
     return (cast(ulong)lo << 32) | hi;
 }
+
+/// Relocated verbatim from app.d's main() (app.d decomp phase B): was a
+/// main()-local enum (declared right above applyOrRefire), moved to module
+/// scope so EditorApp's applyOrRefire hook-delegate field can name the type
+/// -- exact analog of the BgGpu relocation above.
+enum RecordMode { Record, Coalescing }
 
 int countSelected(bool[] sel) {
     int n = 0;
@@ -828,4 +841,128 @@ struct EditorApp {
     void delegate(out SubjectPacket, ref VectorStack) buildToolVts;
     bool delegate()              anyFalloffActive;
     const(bool)[] delegate(int) rebuildLoopHoverMask;
+
+    // =========================================================================
+    // app.d decomp phase B (source/http_providers.d): members backing
+    // wireHttpProviders's moved /api endpoint-wiring block. Same ROOT RULE
+    // as above: pointer-backed for a mutated value-type; by-value only for
+    // class refs assigned exactly once before the call site (app.d, right
+    // before `wireHttpProviders(httpServer, app);`); hook delegates for
+    // main()'s nested functions; a computed @property for the nested-func
+    // `gpuSelect()` shape (the moved block reads it bare, `gpuSelect.pick`,
+    // so a property preserves every call site verbatim).
+    // =========================================================================
+
+    // ---- (a) pointer-backed: struct mutated via .touch()/.order writes in
+    //      both main() and the moved block. formsInteractiveLatch: bool
+    //      latch assigned by the moved block's formsInteractiveDispatch and
+    //      read by its command handler -- closure-frame shared state, so it
+    //      must alias main()'s local, not copy it. ----
+    SelTypeOrder* selTypeOrderPtr;
+    @property ref SelTypeOrder selTypeOrder() { return *selTypeOrderPtr; }
+    bool* formsInteractiveLatchPtr;
+    @property ref bool formsInteractiveLatch() { return *formsInteractiveLatchPtr; }
+
+    // ---- (б) by-value class refs, each assigned exactly once in main()
+    //      before the wireHttpProviders call (grep-verified: bvhPick app.d
+    //      ~1618, stepTrace ~2647, session ~3350). The moved block only
+    //      READS stepTrace (null-guarded) and calls methods on session.
+    //      replayUndoEntry is the reverse direction: ASSIGNED by the moved
+    //      block (like commandHandlerDelegate/formsInteractiveDispatch
+    //      above) and synced back into main()'s local after the call. ----
+    BvhPick     bvhPick;
+    StepTrace   stepTrace;
+    EditSession session;
+    void delegate(size_t) replayUndoEntry;
+
+    // ---- computed: mirrors main()'s nested `auto gpuSelect() { return
+    //      vpm.views[vpm.activeId].gpuSel; }` verbatim ----
+    @property GpuSelectBuffer gpuSelect() { return vpm.views[vpm.activeId].gpuSel; }
+
+    // ---- (г) hook delegates: nested functions in main(), captured via
+    //      cast+&funcName; always called with explicit parens in the moved
+    //      block. derivedEditMode is `const` in main() -- hence the cast at
+    //      the wiring site (same precedent as runCommand above). ----
+    void delegate()     ensureDisplayCurrent;
+    EditMode delegate() derivedEditMode;
+    // applyOrRefire: main()'s command-apply funnel (nested func, declared
+    // right after the RecordMode enum that now lives at this module's top
+    // level); called with explicit args/parens in the moved block.
+    void delegate(Command, RecordMode, string) applyOrRefire;
+
+    // =========================================================================
+    // app.d decomp phase B (source/ui/panels.d main-loop panels): members
+    // backing drawAi3dModal / drawRemeshModal / drawQuitGuardModal /
+    // drawCommandHistoryPanel. Pointer-backed throughout: every value-type
+    // here is either mutated or address-taken (ImGui SliderInt/SliderFloat/
+    // Checkbox/InputText all take `&field` / `field[]`) by the moved blocks.
+    // ai3dWorkerManager is a class ref assigned exactly once (app.d ~1179);
+    // navHistory is a main() nested function captured as a hook delegate
+    // (always called with explicit args/parens in the moved block).
+    // =========================================================================
+
+    // ---- forwards into ai3dRefs/remeshRefs (the 0415 clusters above): the
+    //      moved main-loop panel bodies read these bare under `with (app)`,
+    //      so EditorApp re-exposes the cluster leaves at its own top level.
+    //      (No new storage -- these forward to the same pointers the 0415
+    //      ctx block wires.) ----
+    @property ref Ai3dModalState ai3dModal() { return ai3dRefs.ai3dModal; }
+    @property ref bool ai3dModalOpen() { return ai3dRefs.ai3dModalOpen; }
+    @property ref bool ai3dModalPendingOpen() { return ai3dRefs.ai3dModalPendingOpen; }
+    @property ref string ai3dPickedImagePath() { return ai3dRefs.ai3dPickedImagePath; }
+    @property ref char[256] ai3dWorkerUrlBuf() { return ai3dRefs.ai3dWorkerUrlBuf; }
+    @property ref bool remeshModalOpen() { return remeshRefs.remeshModalOpen; }
+    @property ref bool remeshModalPendingOpen() { return remeshRefs.remeshModalPendingOpen; }
+    @property ref string remeshLastError() { return remeshRefs.remeshLastError; }
+    @property ref string remeshLastSummary() { return remeshRefs.remeshLastSummary; }
+
+    // ---- AI3D Generate modal ----
+    bool* ai3dWorkerStartingPtr;
+    @property ref bool ai3dWorkerStarting() { return *ai3dWorkerStartingPtr; }
+    MonoTime* ai3dWorkerStartDeadlinePtr;
+    @property ref MonoTime ai3dWorkerStartDeadline() { return *ai3dWorkerStartDeadlinePtr; }
+    MonoTime* ai3dWorkerNextHealthProbePtr;
+    @property ref MonoTime ai3dWorkerNextHealthProbe() { return *ai3dWorkerNextHealthProbePtr; }
+    bool* ai3dInstallConfirmOpenPtr;
+    @property ref bool ai3dInstallConfirmOpen() { return *ai3dInstallConfirmOpenPtr; }
+    bool* ai3dInstallConfirmPendingOpenPtr;
+    @property ref bool ai3dInstallConfirmPendingOpen() { return *ai3dInstallConfirmPendingOpenPtr; }
+    int* ai3dMaxFacesPtr;
+    @property ref int ai3dMaxFaces() { return *ai3dMaxFacesPtr; }
+    Ai3dWorkerManager ai3dWorkerManager;
+
+    // ---- Quad Remesh modal ----
+    bool* remeshModalPendingClosePtr;
+    @property ref bool remeshModalPendingClose() { return *remeshModalPendingClosePtr; }
+    int* remeshTargetQuadsPtr;
+    @property ref int remeshTargetQuads() { return *remeshTargetQuadsPtr; }
+    float* remeshAdaptivityPtr;
+    @property ref float remeshAdaptivity() { return *remeshAdaptivityPtr; }
+    float* remeshSharpEdgePtr;
+    @property ref float remeshSharpEdge() { return *remeshSharpEdgePtr; }
+
+    // ---- quit guard + confirmation modal ----
+    bool* quitConfirmOpenPtr;
+    @property ref bool quitConfirmOpen() { return *quitConfirmOpenPtr; }
+    bool* quitConfirmPendingPtr;
+    @property ref bool quitConfirmPending() { return *quitConfirmPendingPtr; }
+    bool* quitAfterSavePtr;
+    @property ref bool quitAfterSave() { return *quitAfterSavePtr; }
+
+    // ---- Command History panel ----
+    char[256]* historyFilterPtr;
+    @property ref char[256] historyFilter() { return *historyFilterPtr; }
+    bool* historyShowArgsPtr;
+    @property ref bool historyShowArgs() { return *historyShowArgsPtr; }
+    bool* historyShowRowNumbersPtr;
+    @property ref bool historyShowRowNumbers() { return *historyShowRowNumbersPtr; }
+    bool* historyShowTimestampsPtr;
+    @property ref bool historyShowTimestamps() { return *historyShowTimestampsPtr; }
+    bool* historyShowCommandIdsPtr;
+    @property ref bool historyShowCommandIds() { return *historyShowCommandIdsPtr; }
+    bool* historyReplLastWasErrorPtr;
+    @property ref bool historyReplLastWasError() { return *historyReplLastWasErrorPtr; }
+    char[512]* historyReplInputPtr;
+    @property ref char[512] historyReplInput() { return *historyReplInputPtr; }
+    bool delegate(bool) navHistory;
 }

@@ -188,6 +188,28 @@ alias TopoPenFillFactory = MeshSessionEdit delegate();
 alias TopoPenRemoveEdgeFactory   = MeshSessionEdit delegate();
 alias TopoPenRemoveVertexFactory = MeshSessionEdit delegate();
 
+/// The 13 per-gesture undo factories, grouped (refactor): they used to be 13
+/// sibling `*EditFactory_` fields on the tool, each under its own P*
+/// provenance header — those headers now live on the fields below. The tool
+/// carries ONE member (`factories_`); the pre-grouping field names survive
+/// as `ref` shims on the class, because the same-module direct-construction
+/// rigs assign them one at a time. Prod code reads `factories_` directly.
+private struct TopoPenFactories {
+    TopoPenBuildFactory        build;         // P3 (doc/topopen_p3_plan.md)
+    TopoPenMoveFactory         move;          // P4 (doc/topopen_p4_plan.md, OBJ-3 FOLDED)
+    TopoPenRemoveFactory       remove;        // P5 (doc/topopen_p5_remove_plan.md, opponent KILLER-1)
+    TopoPenRemoveEdgeFactory   removeEdge;    // task 0494: Remove's edge-latched primitive
+    TopoPenRemoveVertexFactory removeVertex;  // task 0494: Remove's vertex-latched primitive
+    TopoPenAddLoopFactory      addLoop;       // P6 (doc/topopen_p6_addloop_plan.md, REV1 opponent obj-1)
+    TopoPenSlideFactory        slide;         // P7 (doc/topopen_p7_slide_plan.md, REV1)
+    TopoPenSmoothFactory       smooth;        // P8 (doc/topopen_p8_smooth_plan.md)
+    TopoPenSplitFactory        split;         // P9 (doc/topopen_p9_split_plan.md)
+    TopoPenMoveLoopFactory     moveLoop;      // P10 (doc/topopen_p10_moveloop_plan.md)
+    TopoPenDupLoopFactory      dupLoop;       // P11 (doc/topopen_p11_duploop_plan.md)
+    TopoPenSmoothLoopFactory   smoothLoop;    // P12 (doc/topopen_p12_smoothloop_plan.md)
+    TopoPenFillFactory         fill;          // Fill mode (task 0477 continuation, doc/topopen_fill_plan.md)
+}
+
 /// The four connectivity outcomes a drag-from-vertex build gesture can
 /// resolve to on release, per `classifySource` below (capture-verified,
 /// doc/topopen_p3_plan.md's mechanism table). `None` covers BOTH "the
@@ -226,8 +248,9 @@ private enum PenMode { Move, Duplicate, Remove, Split, AddLoop, Point, Fill, Smo
 // Why a Ctrl+LMB Slide press did not arm — see `slideDecline_`'s own doc
 // comment for the full rationale. `None` also covers "the press armed
 // normally", so a consumer reads `slideDeclineReason == "none"` as "no decline
-// to explain". A plain enum + `final switch` in `toolStateJson` (the
-// `BuildCase`/`HoverTargetKind` precedent) rather than an `IntEnumEntry` table:
+// to explain". A plain enum + `final switch` in `slideDeclineTag` (the
+// `BuildCase`/`HoverTargetKind` precedent, likewise `buildCaseTag`/
+// `hoverTargetKindTag`) rather than an `IntEnumEntry` table:
 // this is not a `Param`, nothing parses it back, and the `final switch` keeps
 // the token mapping compile-time exhaustive.
 private enum SlideDecline { None, NoEdge, NoContinuation }
@@ -466,112 +489,6 @@ private immutable InputBinding[] kTopoPenBindings = [
     InputBinding(InputButton.Right,  InputMod.Ctrl,                   TopoPenChord.CtrlRmb),
     InputBinding(InputButton.Middle, InputMod.Shift | InputMod.Ctrl,  TopoPenChord.ShiftCtrlMmb),
 ];
-
-// ---------------------------------------------------------------------------
-// kTopoPenBindings — exhaustive resolver-grid pin. A single pure,
-// camera-free regression guard covering EVERY (button, modifier) combo this
-// tool's grid can see — replaces the 7 scattered `resolveGestureSlot` guards
-// the pre-Phase-2 classifier used to need (Ctrl+MMB/Shift+MMB/Ctrl+LMB/
-// plain-MMB/plain-RMB/Shift+RMB/Shift+Ctrl+RMB), consolidated into ONE table
-// so a bad merge that silently drops or misroutes a row is caught here
-// rather than by 7 separate best-effort pins. All 12 slots of the grid now
-// resolve to their own chord id (task 0499 wired the last two, Ctrl+RMB and
-// Shift+Ctrl+MMB); every Alt-held combo resolves to `PassThrough` (Alt is
-// hard-blocked by `resolveToolAction` itself, above the table scan — this
-// pin also proves that holds for THIS tool's table).
-// ---------------------------------------------------------------------------
-unittest {
-    // The 10 wired slots, each resolving to its own CHORD id (task 0487 —
-    // the id names the chord now; which GESTURE it runs is resolved later
-    // from the chord's override plus the user's dropdown/flags).
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.None)
-        == TopoPenChord.Lmb, "plain LMB");
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Shift)
-        == TopoPenChord.ShiftLmb, "Shift+LMB");
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Ctrl)
-        == TopoPenChord.CtrlLmb, "Ctrl+LMB");
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Shift | InputMod.Ctrl)
-        == TopoPenChord.ShiftCtrlLmb, "Shift+Ctrl+LMB");
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.None)
-        == TopoPenChord.Mmb, "plain MMB");
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Shift)
-        == TopoPenChord.ShiftMmb, "Shift+MMB");
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Ctrl)
-        == TopoPenChord.CtrlMmb, "Ctrl+MMB");
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.None)
-        == TopoPenChord.Rmb, "plain RMB");
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Shift)
-        == TopoPenChord.ShiftRmb, "Shift+RMB");
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Shift | InputMod.Ctrl)
-        == TopoPenChord.ShiftCtrlRmb, "Shift+Ctrl+RMB");
-    // The 2 slots the reference's dispatcher has no case for — WIRED (task
-    // 0499) as rows that override nothing, after being measured executing the
-    // dropdown's own mode. They used to answer `PassThrough` here.
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Ctrl)
-        == TopoPenChord.CtrlRmb, "Ctrl+RMB");
-    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Shift | InputMod.Ctrl)
-        == TopoPenChord.ShiftCtrlMmb, "Shift+Ctrl+MMB");
-
-    // Every chord belongs to the button its own slot names — the mapping the
-    // dispatch books a gesture against, taken from the SLOT so a synthetic
-    // press with no `button` field still lands on the right one.
-    assert(chordButton(TopoPenChord.Lmb)          == InputButton.Left);
-    assert(chordButton(TopoPenChord.ShiftCtrlLmb) == InputButton.Left);
-    assert(chordButton(TopoPenChord.Mmb)          == InputButton.Middle);
-    assert(chordButton(TopoPenChord.CtrlMmb)      == InputButton.Middle);
-    assert(chordButton(TopoPenChord.Rmb)          == InputButton.Right);
-    assert(chordButton(TopoPenChord.ShiftCtrlRmb) == InputButton.Right);
-    assert(chordButton(TopoPenChord.CtrlRmb)      == InputButton.Right);
-    assert(chordButton(TopoPenChord.ShiftCtrlMmb) == InputButton.Middle);
-
-    // The override table itself — the measured half stated as assertions, so a
-    // future edit that levels the FlagOv distinction away fails here.
-    assert(kChordOv[TopoPenChord.Rmb].loop       == FlagOv.ForceOn,
-        "plain RMB FORCES the loop flag (measured: the literal-1 store)");
-    assert(kChordOv[TopoPenChord.ShiftRmb].loop  == FlagOv.ForceOn,
-        "Shift+RMB FORCES the loop flag (measured bit-identical across loop=false/true)");
-    assert(kChordOv[TopoPenChord.ShiftLmb].loop  == FlagOv.FromUser,
-        "Shift+LMB READS the loop flag (measured: 1 quad vs 3 on one seed)");
-    assert(kChordOv[TopoPenChord.Lmb].mode       == ModeOv.FromUser,
-        "the base slot never overrides the dropdown");
-    assert(kChordOv[TopoPenChord.Rmb].mode       == ModeOv.FromUser,
-        "plain RMB runs the DROPDOWN's mode — it is not an absolute move-loop");
-    assert(kChordOv[TopoPenChord.ShiftLmb].mode  == ModeOv.Duplicate);
-    assert(kChordOv[TopoPenChord.ShiftRmb].mode  == ModeOv.Duplicate);
-    assert(kChordOv[TopoPenChord.CtrlLmb].slide  == FlagOv.ForceOn,
-        "Ctrl+LMB forces Edge Slide");
-    assert(kChordOv[TopoPenChord.Rmb].slide      == FlagOv.FromUser,
-        "and Ctrl+RMB was measured NOT forcing slide, so the rule is not 'Ctrl forces slide'");
-
-    // The 2 rows task 0499 wired: they override NOTHING, on all three columns.
-    // Stated column by column because each one pins a separate half of the
-    // measurement, and each one is a different way to get this wrong:
-    //   * mode  — the slot is not "the base slot of its own button" (base MMB
-    //             forces Split, base RMB forces the loop);
-    //   * loop  — it is not an RMB-family forced loop either;
-    //   * slide — the measured "Ctrl+RMB ran a plain move, no slide" is the
-    //             very reason `CtrlLmb`'s slide row is NOT generalised to
-    //             "Ctrl forces slide". Level this one out and that asymmetry
-    //             loses its evidence.
-    foreach (c; [TopoPenChord.CtrlRmb, TopoPenChord.ShiftCtrlMmb]) {
-        assert(kChordOv[c].mode  == ModeOv.FromUser,
-            "an unbound slot runs the DROPDOWN's mode, not its own button's base mode");
-        assert(kChordOv[c].loop  == FlagOv.FromUser,
-            "an unbound slot does not force the loop flag");
-        assert(kChordOv[c].slide == FlagOv.FromUser,
-            "an unbound slot does not force Edge Slide (measured on Ctrl+RMB)");
-    }
-
-    // Every Alt combo -> PassThrough, on every button, with or without other
-    // modifiers held alongside it (Alt is hard-blocked above the table scan,
-    // per `resolveToolAction`'s own contract).
-    foreach (btn; [InputButton.Left, InputButton.Middle, InputButton.Right]) {
-        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt) == PassThrough);
-        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt | InputMod.Shift) == PassThrough);
-        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt | InputMod.Ctrl) == PassThrough);
-        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt | InputMod.Shift | InputMod.Ctrl) == PassThrough);
-    }
-}
 
 // ---------------------------------------------------------------------------
 // TopologyPenTool — Phases P0 + P1 + P2 + P3 + P4 + P5 + P6 + P7 of the
@@ -864,46 +781,25 @@ private:
     CommandHistory    history_;
     VertexNewFactory  addVertexFactory_;
 
-    // --- P3 drag-build gesture deps (doc/topopen_p3_plan.md) ---
-    TopoPenBuildFactory buildEditFactory_;
-
-    // --- P4 Move gesture deps (doc/topopen_p4_plan.md, OBJ-3 FOLDED) ---
-    TopoPenMoveFactory moveEditFactory_;
-
-    // --- P5 Remove gesture deps (doc/topopen_p5_remove_plan.md, opponent
-    // KILLER-1) ---
-    TopoPenRemoveFactory removeEditFactory_;
-
-    // --- Remove's OTHER two primitives (task 0494): the same gesture, but the
-    // press latched an edge / a vertex rather than a polygon. Own factories,
-    // own wire names — see their aliases. ---
-    TopoPenRemoveEdgeFactory   removeEdgeEditFactory_;
-    TopoPenRemoveVertexFactory removeVertexEditFactory_;
-
-    // --- P6 Add Loop gesture deps (doc/topopen_p6_addloop_plan.md, REV1
-    // opponent obj-1) ---
-    TopoPenAddLoopFactory addLoopEditFactory_;
-
-    // --- P7 Slide gesture deps (doc/topopen_p7_slide_plan.md, REV1) ---
-    TopoPenSlideFactory slideEditFactory_;
-
-    // --- P8 Smooth gesture deps (doc/topopen_p8_smooth_plan.md) ---
-    TopoPenSmoothFactory smoothEditFactory_;
-
-    // --- P9 Split gesture deps (doc/topopen_p9_split_plan.md) ---
-    TopoPenSplitFactory splitEditFactory_;
-
-    // --- P10 Move Loop gesture deps (doc/topopen_p10_moveloop_plan.md) ---
-    TopoPenMoveLoopFactory moveLoopEditFactory_;
-
-    // --- P11 Dup Loop gesture deps (doc/topopen_p11_duploop_plan.md) ---
-    TopoPenDupLoopFactory dupLoopEditFactory_;
-
-    // --- P12 Smooth+Loop gesture deps (doc/topopen_p12_smoothloop_plan.md) ---
-    TopoPenSmoothLoopFactory smoothLoopEditFactory_;
-
-    // --- Fill mode deps (task 0477 continuation, doc/topopen_fill_plan.md) ---
-    TopoPenFillFactory fillEditFactory_;
+    // --- Per-gesture undo factories (P3..P12 + Fill, task 0494) — grouped
+    // into `TopoPenFactories` (see its own doc comment for each field's
+    // provenance). The `ref` shims below keep the pre-grouping field names
+    // working for the same-module direct-construction rigs, which assign
+    // them one at a time; prod code reads `factories_` directly.
+    TopoPenFactories factories_;
+    @property ref TopoPenBuildFactory        buildEditFactory_()        { return factories_.build; }
+    @property ref TopoPenMoveFactory         moveEditFactory_()         { return factories_.move; }
+    @property ref TopoPenRemoveFactory       removeEditFactory_()       { return factories_.remove; }
+    @property ref TopoPenRemoveEdgeFactory   removeEdgeEditFactory_()   { return factories_.removeEdge; }
+    @property ref TopoPenRemoveVertexFactory removeVertexEditFactory_() { return factories_.removeVertex; }
+    @property ref TopoPenAddLoopFactory      addLoopEditFactory_()      { return factories_.addLoop; }
+    @property ref TopoPenSlideFactory        slideEditFactory_()        { return factories_.slide; }
+    @property ref TopoPenSmoothFactory       smoothEditFactory_()       { return factories_.smooth; }
+    @property ref TopoPenSplitFactory        splitEditFactory_()        { return factories_.split; }
+    @property ref TopoPenMoveLoopFactory     moveLoopEditFactory_()     { return factories_.moveLoop; }
+    @property ref TopoPenDupLoopFactory      dupLoopEditFactory_()      { return factories_.dupLoop; }
+    @property ref TopoPenSmoothLoopFactory   smoothLoopEditFactory_()   { return factories_.smoothLoop; }
+    @property ref TopoPenFillFactory         fillEditFactory_()         { return factories_.fill; }
 
     // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
@@ -1833,19 +1729,19 @@ public:
                         TopoPenRemoveVertexFactory rvf = null) {
         history_           = h;
         addVertexFactory_  = f;
-        buildEditFactory_  = bf;
-        moveEditFactory_   = mf;
-        removeEditFactory_ = rf;
-        addLoopEditFactory_ = alf;
-        slideEditFactory_   = sf;
-        smoothEditFactory_  = smf;
-        splitEditFactory_   = spf;
-        moveLoopEditFactory_ = mlf;
-        dupLoopEditFactory_  = dlf;
-        smoothLoopEditFactory_ = slf;
-        fillEditFactory_     = flf;
-        removeEdgeEditFactory_   = ref_;
-        removeVertexEditFactory_ = rvf;
+        factories_.build         = bf;
+        factories_.move          = mf;
+        factories_.remove        = rf;
+        factories_.addLoop       = alf;
+        factories_.slide         = sf;
+        factories_.smooth        = smf;
+        factories_.split         = spf;
+        factories_.moveLoop      = mlf;
+        factories_.dupLoop       = dlf;
+        factories_.smoothLoop    = slf;
+        factories_.fill          = flf;
+        factories_.removeEdge    = ref_;
+        factories_.removeVertex  = rvf;
     }
 
     override string name() const { return "Topology Pen"; }
@@ -4541,7 +4437,7 @@ public:
     private void recordLiveMove() {
         if (!moveDirty_) return;
         auto m = mesh;
-        if (m is null || history_ is null || moveEditFactory_ is null) return;
+        if (m is null || !commitReady(factories_.move)) return;
 
         // A drag that wandered and came home again HAS written the mesh
         // (`moveDirty_`), but its net effect is nothing — recording it would
@@ -4561,10 +4457,7 @@ public:
         }
         if (!net) return;
 
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = moveEditFactory_();
-        cmd.setSnapshots(moveBefore_, after, "Topology Move");
-        history_.record(cmd);
+        recordSnapshotUndo(m, moveBefore_, factories_.move, "Topology Move");
         // Position-only edit: no `resyncSession()` — no index this or any
         // sibling gesture caches can have been invalidated (the same
         // reasoning `commitMoveLoop` documents).
@@ -5953,7 +5846,7 @@ public:
         // `buildEditFactory_` — this IS the Shift+LMB Duplicate/build slot,
         // so the entry carries that slot's own wire name, never the loop
         // gesture's (the OBJ-3/D4 discipline every commit path here follows).
-        commitDupEdges(edges, dx, dy, vp, buildEditFactory_, "Topology Duplicate Edge");
+        commitDupEdges(edges, dx, dy, vp, factories_.build, "Topology Duplicate Edge");
         return true;
     }
 
@@ -6042,6 +5935,37 @@ public:
         }
     }
 
+    // The remaining enum→token mappings `toolStateJson` needs, extracted
+    // from its body under the same `final switch` discipline as
+    // `moveElemTag`/`penGestureTag` above (see the comment at
+    // `moveElemTag`): compile-time exhaustive, so a new enum member is a
+    // compile error here instead of a silently unlabelled state field.
+    private static string hoverTargetKindTag(HoverTargetKind k) {
+        final switch (k) {
+        case HoverTargetKind.None:   return "none";
+        case HoverTargetKind.Vertex: return "vertex";
+        case HoverTargetKind.Edge:   return "edge";
+        case HoverTargetKind.Face:   return "face";
+        }
+    }
+
+    private static string buildCaseTag(BuildCase c) {
+        final switch (c) {
+        case BuildCase.None: return "none";
+        case BuildCase.Edge: return "edge";
+        case BuildCase.Tri:  return "tri";
+        case BuildCase.Quad: return "quad";
+        }
+    }
+
+    private static string slideDeclineTag(SlideDecline d) {
+        final switch (d) {
+        case SlideDecline.None:           return "none";
+        case SlideDecline.NoEdge:         return "no_edge";
+        case SlideDecline.NoContinuation: return "no_continuation";
+        }
+    }
+
     // Phase-2 input-dispatch migration (doc/topopen_input_dispatch_phase2_plan.md):
     // delivers one resolved action at one phase — the LIVE seam
     // `onMouseButtonDown`/`onMouseButtonUp` above now route through
@@ -6118,6 +6042,32 @@ public:
         return cast(int)(mesh.vertices.length - 1);
     }
 
+    // The pre-commit gate every snapshot-undo commit below opens with: mesh
+    // source, history, and the gesture's own dedicated factory all wired
+    // (registration.d). A partially-constructed tool (no-arg ctor + partial
+    // `setUndoBindings` — every direct-construction rig below) must bail
+    // BEFORE any mutation, so it never mutates-then-fails-to-record (which
+    // would leave an applied-but-un-undoable edit — the same hazard
+    // `placeVertexAt`'s own guard documents).
+    private bool commitReady(MeshSessionEdit delegate() factory) {
+        return meshSrc_ !is null && history_ !is null && factory !is null;
+    }
+
+    // The shared undo tail every snapshot-bracketed commit below ends with
+    // (the `pen.d:903-926` `commitPolygonWithUndo` precedent): capture the
+    // post-mutation snapshot, mint the gesture's command through its OWN
+    // dedicated factory (never a sibling's — the wire name and editScope are
+    // baked into the factory at app.d's construction site, per every
+    // factory alias's doc comment above), pair the two snapshots under the
+    // gesture's label, and record ONE non-coalescing entry.
+    private void recordSnapshotUndo(Mesh* m, MeshSnapshot before,
+                                    MeshSessionEdit delegate() factory, string label) {
+        MeshSnapshot after = MeshSnapshot.capture(*m);
+        auto cmd = factory();
+        cmd.setSnapshots(before, after, label);
+        history_.record(cmd);
+    }
+
     // P7 (doc/topopen_p7_slide_plan.md Phase 3): commit the armed Slide
     // gesture — writes AT MOST 2 vertex positions (the grabbed edge's own
     // endpoints; a HELD-FIXED endpoint, `nA`/`nB == -1`, keeps its CURRENT
@@ -6141,7 +6091,7 @@ public:
     // DIRECTION. See `slideEndpointPos` for the per-endpoint law and for why
     // there is no `[0,1]` clamp any more.
     private void commitSlide(uint seed, int eA, int eB, int nA, int nB, double deltaK) {
-        if (meshSrc_ is null || history_ is null || slideEditFactory_ is null) return;
+        if (!commitReady(factories_.slide)) return;
         auto m = mesh;
         if (m is null) return;
         if (eA < 0 || eA >= cast(int)m.vertices.length) return;
@@ -6165,11 +6115,7 @@ public:
         m.vertices[eA] = pA;
         m.vertices[eB] = pB;
         m.commitChange(MeshEditScope.Position);
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-
-        auto cmd = slideEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Slide");
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factories_.slide, "Topology Slide");
 
         // Position-only: no resyncSession() — see this method's own doc
         // comment / plan §Risks.
@@ -6442,7 +6388,7 @@ public:
     // patch with no bg layer is exactly this), so the guard runs on EVERY
     // commit, never skipped.
     private void applySmoothPasses(int passCount) {
-        if (meshSrc_ is null || history_ is null || smoothEditFactory_ is null) return;
+        if (!commitReady(factories_.smooth)) return;
         auto m = mesh;
         if (m is null) return;
 
@@ -6523,10 +6469,7 @@ public:
         // values on the routine no-op gesture the guard above just caught.
         m.commitChange(MeshEditScope.Position);
 
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = smoothEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Smooth");
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factories_.smooth, "Topology Smooth");
 
         // Position-only: no resyncSession() — see this method's own doc
         // comment / plan §Undo.
@@ -6569,7 +6512,7 @@ public:
     // `commitMoveLoop`'s/`applySmoothPasses`'s own reasoning: a pure
     // position write can never dangle a sibling gesture's cached INDEX).
     private void applySmoothLoopPasses(int passCount) {
-        if (meshSrc_ is null || history_ is null || smoothLoopEditFactory_ is null) return;
+        if (!commitReady(factories_.smoothLoop)) return;
         auto m = mesh;
         if (m is null) return;
         auto verts = smoothLoopVerts_;   // REV1 FIX-2: the DOWN-time cache, reused verbatim
@@ -6624,10 +6567,7 @@ public:
         if (!changed) { before.restore(*m); return; }   // no mutation worth recording -- no GPU churn
 
         m.commitChange(MeshEditScope.Position);
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = smoothLoopEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Smooth Loop");
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factories_.smoothLoop, "Topology Smooth Loop");
 
         // Position-only: no resyncSession() — see this method's own doc
         // comment above.
@@ -6646,7 +6586,7 @@ public:
     // is the unconditional mutation + undo-record + display-refresh tail.
     private void buildFromSource(int a, BuildCase casee, int n, int p, int q,
                                  int triFi, Vec3 bPos) {
-        if (meshSrc_ is null || history_ is null || buildEditFactory_ is null) return;
+        if (!commitReady(factories_.build)) return;
         auto m = mesh;
         if (m is null) return;
 
@@ -6721,10 +6661,7 @@ public:
             }
         }
 
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = buildEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Build");
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factories_.build, "Topology Build");
 
         m.syncSelection();
         if (gpu_ !is null) gpu_.upload(*m);
@@ -6751,7 +6688,7 @@ public:
     // again — the same idiom `resyncSession` already provides for an
     // external undo/redo navigation.
     private void removeFaceAt(int faceIdx) {
-        if (meshSrc_ is null || history_ is null || removeEditFactory_ is null) return;
+        if (!commitReady(factories_.remove)) return;
         auto m = mesh;
         if (m is null || faceIdx < 0 || faceIdx >= cast(int)m.faces.length) return;
 
@@ -6761,10 +6698,7 @@ public:
         mask[faceIdx] = true;
         m.deleteFacesByMask(mask, /*keepOrphans*/true, /*keepFloatingEdges*/true);
 
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = removeEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Remove");
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factories_.remove, "Topology Remove");
 
         // Opponent KILLER-2: invalidate any OTHER armed gesture's cached
         // indices now that faces[] has been compacted out from under them.
@@ -6826,7 +6760,7 @@ public:
     /// polygons. See `Mesh.consumedFanVertexMask` for the rule and for why it
     /// is not the 2-valent one.
     private void removeEdgeAt(int edgeIdx, bool loop) {
-        if (meshSrc_ is null || history_ is null || removeEdgeEditFactory_ is null) return;
+        if (!commitReady(factories_.removeEdge)) return;
         auto m = mesh;
         if (m is null || edgeIdx < 0 || edgeIdx >= cast(int)m.edges.length) return;
 
@@ -6847,10 +6781,7 @@ public:
 
         if (m.removeEdgesByMask(mask, keepVertex_) == 0) { before.restore(*m); return; }
 
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = removeEdgeEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Remove Edge");
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factories_.removeEdge, "Topology Remove Edge");
 
         // Same reason `removeFaceAt` calls it: the kernel COMPACTS `faces[]`
         // and `vertices[]`, so any sibling gesture armed on another button is
@@ -6889,7 +6820,7 @@ public:
     /// nothing rather than guessing — which also keeps a bare retopo chain out
     /// of a kernel that would rebuild the edge array around it.
     private void removeVertexAt(int vertIdx) {
-        if (meshSrc_ is null || history_ is null || removeVertexEditFactory_ is null) return;
+        if (!commitReady(factories_.removeVertex)) return;
         auto m = mesh;
         if (m is null || vertIdx < 0 || vertIdx >= cast(int)m.vertices.length) return;
 
@@ -6932,10 +6863,7 @@ public:
             m.dissolveVerticesByMask(vmask, /*keepOrphans*/true);
         }
 
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = removeVertexEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Remove Vertex");
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factories_.removeVertex, "Topology Remove Vertex");
 
         resyncSession();
 
@@ -6973,7 +6901,7 @@ public:
     // already rebuilds the selection arrays itself; the `after` snapshot +
     // `syncSelection` cover it.
     private void commitAddLoop(uint seedEdge, float r) {
-        if (meshSrc_ is null || history_ is null || addLoopEditFactory_ is null) return;
+        if (!commitReady(factories_.addLoop)) return;
         auto m = mesh;
         if (m is null) return;
 
@@ -6993,10 +6921,7 @@ public:
         bool ok = m.insertEdgeLoops(seedEdge, [r]);
         if (!ok) { before.restore(*m); return; }
 
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = addLoopEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Add Loop");
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factories_.addLoop, "Topology Add Loop");
 
         // REV1 KILLER-2: invalidate any OTHER armed gesture's cached
         // indices now that faces[] has been wholesale-rebuilt.
@@ -7029,7 +6954,7 @@ public:
     // is still the uniform, cheap-to-call safety net every sibling commit
     // uses.
     private void commitSplit(int a, int c) {
-        if (meshSrc_ is null || history_ is null || splitEditFactory_ is null) return;
+        if (!commitReady(factories_.split)) return;
         auto m = mesh;
         if (m is null) return;
 
@@ -7042,10 +6967,7 @@ public:
         size_t n = m.splitFaceByVertices(cast(uint)fi, cast(uint)a, cast(uint)c);
         if (n == 0) return;   // defensive; `before` discarded, mesh unmutated
 
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = splitEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Split");
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factories_.split, "Topology Split");
 
         // KILLER-2: invalidate any OTHER armed gesture's cached face/edge
         // indices now that faces[]/edges[] have been rebuilt.
@@ -7102,7 +7024,7 @@ public:
     // tool never overrides `isDragging()`, so a Fill click CAN fire
     // mid-build/mid-move/mid-slide on a different button).
     private void commitFill(const(uint)[] ringVerts) {
-        if (meshSrc_ is null || history_ is null || fillEditFactory_ is null) return;
+        if (!commitReady(factories_.fill)) return;
         auto m = mesh;
         if (m is null) return;
         if (ringVerts.length != 4 && ringVerts.length != 3) return;
@@ -7114,10 +7036,7 @@ public:
 
         consumeDegeneratePolysOnRing(m, ringVerts);
 
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-        auto cmd = fillEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Fill");
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factories_.fill, "Topology Fill");
 
         // KILLER-2: invalidate any OTHER armed gesture's cached face/edge
         // indices now that faces[]/edges[] have been rebuilt.
@@ -7199,7 +7118,7 @@ public:
     // welds — the one failure mode worth a compile error.
     private void commitMoveLoop(const(uint)[] verts, const(Vec3)[] targets,
                                 const ref Viewport vp) {
-        if (meshSrc_ is null || history_ is null || moveLoopEditFactory_ is null) return;
+        if (!commitReady(factories_.moveLoop)) return;
         auto m = mesh;
         if (m is null) return;
         if (verts.length == 0 || verts.length != targets.length) return;
@@ -7221,11 +7140,7 @@ public:
         // than per cursor. Inside the snapshot pair, so the whole gesture is
         // still ONE undo entry; a no-op unless the shared snap enable is on.
         immutable bool welded = weldMovedVertices(verts, vp) > 0;
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-
-        auto cmd = moveLoopEditFactory_();
-        cmd.setSnapshots(before, after, "Topology Move Loop");
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factories_.moveLoop, "Topology Move Loop");
 
         // Position-only: no resyncSession() — see this method's own doc
         // comment / plan §Undo. UNLESS the landing welded, which rebuilds and
@@ -7276,8 +7191,8 @@ public:
     // index would dangle.
     private void commitDupLoop(const(int)[] loopEdges, int dx, int dy,
                                const ref Viewport vp) {
-        if (dupLoopEditFactory_ is null) return;
-        commitDupEdges(loopEdges, dx, dy, vp, dupLoopEditFactory_,
+        if (factories_.dupLoop is null) return;
+        commitDupEdges(loopEdges, dx, dy, vp, factories_.dupLoop,
                        "Topology Duplicate Loop");
     }
 
@@ -7289,7 +7204,7 @@ public:
     private void commitDupEdges(const(int)[] loopEdges, int dx, int dy,
                                 const ref Viewport vp,
                                 MeshSessionEdit delegate() factory, string label) {
-        if (meshSrc_ is null || history_ is null || factory is null) return;
+        if (!commitReady(factory)) return;
         auto m = mesh;
         if (m is null || loopEdges.length == 0) return;
 
@@ -7319,11 +7234,7 @@ public:
         // FIX-3: Position-only follow-up write -- extendEdgesByMask already
         // committed Geometry above.
         m.commitChange(MeshEditScope.Position);
-        MeshSnapshot after = MeshSnapshot.capture(*m);
-
-        auto cmd = factory();
-        cmd.setSnapshots(before, after, label);
-        history_.record(cmd);
+        recordSnapshotUndo(m, before, factory, label);
 
         resyncSession();   // KILLER-2: topology grew -- clear every sibling arm
 
@@ -7490,18 +7401,44 @@ public:
         sweepFamily(false);
     }
 
+    // Split into one private helper per ghost (refactor — pure extraction,
+    // no behavior change; every block below moved verbatim, comments
+    // included). Draw order is unchanged and load-bearing: every
+    // ARMED-gesture ghost first, each independent of `lastHit_`/CONS and
+    // therefore BEFORE the `!lastHit_.hit` early-return (see each helper's
+    // own header for why); then the unarmed hover/fill affordances; then
+    // the CONS-hit marker and the two ghosts keyed off it.
     override void draw(const ref Shader shader, const ref Viewport vp,
                        ref VectorStack vts, bool visualOnly = false) {
         auto dl = ImGui.GetForegroundDrawList();
 
-        // P6 (doc/topopen_p6_addloop_plan.md Phase 5): the Add Loop ghost is
-        // independent of `lastHit_`/CONS (this gesture never touches the
-        // background constraint — pure current-layer topology op), so it is
-        // drawn BEFORE the `lastHit_.hit` early-return below: a primary-only
-        // scene with no background layer (hence no CONS hit ever) must still
-        // preview the armed seed ring. Purely re-reads already-classified
-        // state (`addLoopSeed_`/`seedRailA_`/`seedRailB_`/`addLoopRatio_`) —
-        // no mesh mutation, no raycast.
+        drawAddLoopGhost(dl, vp);
+        drawSlideGhost(dl, vp);
+        drawSmoothGhost(dl);
+        drawSplitGhost(dl, vp);
+        drawMoveLoopGhost(dl, vp);
+        drawDupGhosts(dl, vp);
+        drawSmoothLoopGhost(dl, vp);
+        drawHoverHighlight(dl, vp);
+        drawFillRingPreview(dl, vp);
+        drawFillRadiusOverlay(dl);
+
+        if (!lastHit_.hit) return;
+
+        drawSnapTargetMarker(dl, vp);
+        drawBuildGhost(dl, vp);
+        drawMoveGhost(dl, vp);
+    }
+
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 5): the Add Loop ghost is
+    // independent of `lastHit_`/CONS (this gesture never touches the
+    // background constraint — pure current-layer topology op), so it is
+    // drawn BEFORE the `lastHit_.hit` early-return below: a primary-only
+    // scene with no background layer (hence no CONS hit ever) must still
+    // preview the armed seed ring. Purely re-reads already-classified
+    // state (`addLoopSeed_`/`seedRailA_`/`seedRailB_`/`addLoopRatio_`) —
+    // no mesh mutation, no raycast.
+    private void drawAddLoopGhost(ImDrawList* dl, const ref Viewport vp) {
         if (addLoopArmed_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null && addLoopSeed_ >= 0 && addLoopSeed_ < cast(int)m.edges.length) {
@@ -7525,20 +7462,22 @@ public:
                     dl.AddCircleFilled(mk, 5.0f, loopCol, 16);
             }
         }
+    }
 
-        // P7 (doc/topopen_p7_slide_plan.md Phase 4): the Slide ghost is
-        // likewise independent of `lastHit_`/CONS (Slide never touches the
-        // background constraint — pure current-layer edge-line constrained
-        // move), so it too is drawn BEFORE the `lastHit_.hit` early-return,
-        // mirroring the Add Loop ghost above. Purely re-reads already-armed
-        // state (`slideEndA_`/`slideEndB_`/`slideNbrA_`/`slideNbrB_`/
-        // `slideDeltaK_`) — no mesh mutation, no raycast. A
-        // held-fixed endpoint (`slideNbrA_`/`slideNbrB_ < 0`) draws at its
-        // CURRENT (unmoved) position, same as `commitSlide` would leave it.
-        // The ghost runs the SAME `slideEndpointPos` the commit does, so an
-        // unbounded (past-the-neighbour) slide previews truthfully — the
-        // faint rail below is drawn edge-to-neighbour only and is a reference
-        // line, not a bound.
+    // P7 (doc/topopen_p7_slide_plan.md Phase 4): the Slide ghost is
+    // likewise independent of `lastHit_`/CONS (Slide never touches the
+    // background constraint — pure current-layer edge-line constrained
+    // move), so it too is drawn BEFORE the `lastHit_.hit` early-return,
+    // mirroring the Add Loop ghost above. Purely re-reads already-armed
+    // state (`slideEndA_`/`slideEndB_`/`slideNbrA_`/`slideNbrB_`/
+    // `slideDeltaK_`) — no mesh mutation, no raycast. A
+    // held-fixed endpoint (`slideNbrA_`/`slideNbrB_ < 0`) draws at its
+    // CURRENT (unmoved) position, same as `commitSlide` would leave it.
+    // The ghost runs the SAME `slideEndpointPos` the commit does, so an
+    // unbounded (past-the-neighbour) slide previews truthfully — the
+    // faint rail below is drawn edge-to-neighbour only and is a reference
+    // line, not a bound.
+    private void drawSlideGhost(ImDrawList* dl, const ref Viewport vp) {
         if (slideArmed_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null
@@ -7571,40 +7510,44 @@ public:
                 faintRail(slideEndB_, slideNbrB_);
             }
         }
+    }
 
-        // P8 (doc/topopen_p8_smooth_plan.md Phase 4): a cheap "Smooth
-        // armed" affordance — a colored ring at the CURSOR'S OWN screen
-        // position while `smoothArmed_`. Unlike the P1 hover marker below
-        // (which needs a CONS hit against a background layer) or the Add
-        // Loop/Slide ghosts above (which key off an armed seed edge's
-        // WORLD position), Smooth has neither a source pick nor a
-        // background dependency — it relaxes the WHOLE primary mesh, so
-        // tying its affordance to `lastHit_.point` would make it invisible
-        // in exactly the bg-less scene this preview must still cover.
-        // Drawn in pure screen space (no projectPt/raycast, no mesh
-        // access), so it is unconditionally visible and unconditionally
-        // cheap; placed BEFORE the `lastHit_.hit` early-return immediately
-        // below, mirroring the Add Loop/Slide ghosts' positioning in this
-        // function. No per-pass relaxation preview (deferred/expensive —
-        // consistent with the deferred-commit divergence, plan §Undo).
+    // P8 (doc/topopen_p8_smooth_plan.md Phase 4): a cheap "Smooth
+    // armed" affordance — a colored ring at the CURSOR'S OWN screen
+    // position while `smoothArmed_`. Unlike the P1 hover marker below
+    // (which needs a CONS hit against a background layer) or the Add
+    // Loop/Slide ghosts above (which key off an armed seed edge's
+    // WORLD position), Smooth has neither a source pick nor a
+    // background dependency — it relaxes the WHOLE primary mesh, so
+    // tying its affordance to `lastHit_.point` would make it invisible
+    // in exactly the bg-less scene this preview must still cover.
+    // Drawn in pure screen space (no projectPt/raycast, no mesh
+    // access), so it is unconditionally visible and unconditionally
+    // cheap; placed BEFORE the `lastHit_.hit` early-return immediately
+    // below, mirroring the Add Loop/Slide ghosts' positioning in this
+    // function. No per-pass relaxation preview (deferred/expensive —
+    // consistent with the deferred-commit divergence, plan §Undo).
+    private void drawSmoothGhost(ImDrawList* dl) {
         if (smoothArmed_) {
             enum uint smoothCol = IM_COL32(120, 255, 200, 220);   // smoothing green-blue
             ImVec2 cur = ImVec2(cast(float)smoothLastX_, cast(float)smoothLastY_);
             dl.AddCircle(cur, 14.0f, smoothCol, 24, 2.5f);
             dl.AddCircleFilled(cur, 4.0f, smoothCol, 16);
         }
+    }
 
-        // P9 (doc/topopen_p9_split_plan.md Phase 4): the Split ghost is
-        // likewise independent of `lastHit_`/CONS (Split never touches the
-        // background constraint — pure current-layer topology op), so it too
-        // is drawn BEFORE the `lastHit_.hit` early-return, mirroring the Add
-        // Loop/Slide ghosts above. A line from the armed source A to the
-        // current snap target C (drawn only once C resolves to a real
-        // vertex — a release that resolves no vertex is a no-op, so there
-        // is nothing to preview),
-        // plus a small filled circle at C as the snap affordance. Purely
-        // re-reads already-armed state (`splitSourceVert_`/
-        // `splitTargetVert_`) — no mesh mutation, no raycast.
+    // P9 (doc/topopen_p9_split_plan.md Phase 4): the Split ghost is
+    // likewise independent of `lastHit_`/CONS (Split never touches the
+    // background constraint — pure current-layer topology op), so it too
+    // is drawn BEFORE the `lastHit_.hit` early-return, mirroring the Add
+    // Loop/Slide ghosts above. A line from the armed source A to the
+    // current snap target C (drawn only once C resolves to a real
+    // vertex — a release that resolves no vertex is a no-op, so there
+    // is nothing to preview),
+    // plus a small filled circle at C as the snap affordance. Purely
+    // re-reads already-armed state (`splitSourceVert_`/
+    // `splitTargetVert_`) — no mesh mutation, no raycast.
+    private void drawSplitGhost(ImDrawList* dl, const ref Viewport vp) {
         if (splitArmed_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null && splitSourceVert_ >= 0 && splitSourceVert_ < cast(int)m.vertices.length) {
@@ -7620,20 +7563,22 @@ public:
                 }
             }
         }
+    }
 
-        // P10 (doc/topopen_p10_moveloop_plan.md Phase 4): the Move Loop
-        // ghost is likewise independent of `lastHit_`/CONS's OWN hit
-        // (unlike P4 Move's ghost below, which reuses `lastHit_.point` —
-        // MOVE-LOOP resolves its OWN N per-vertex re-snap targets via
-        // `resnapToBackground`, not the single CONS-published hit), so it
-        // too is drawn BEFORE the `lastHit_.hit` early-return, mirroring
-        // every other armed-gesture ghost above: a primary-only scene with
-        // no background layer must still preview the armed loop (every
-        // vertex simply staying at its own original position, per the miss
-        // policy). Purely re-reads already-armed state
-        // (`moveLoopSeed_`/`moveLoopVerts_`/`moveLoopStartX_`/`_Y_`/
-        // `moveLoopCurX_`/`_Y_`) plus the live cursor delta — no mesh
-        // mutation.
+    // P10 (doc/topopen_p10_moveloop_plan.md Phase 4): the Move Loop
+    // ghost is likewise independent of `lastHit_`/CONS's OWN hit
+    // (unlike P4 Move's ghost below, which reuses `lastHit_.point` —
+    // MOVE-LOOP resolves its OWN N per-vertex re-snap targets via
+    // `resnapToBackground`, not the single CONS-published hit), so it
+    // too is drawn BEFORE the `lastHit_.hit` early-return, mirroring
+    // every other armed-gesture ghost above: a primary-only scene with
+    // no background layer must still preview the armed loop (every
+    // vertex simply staying at its own original position, per the miss
+    // policy). Purely re-reads already-armed state
+    // (`moveLoopSeed_`/`moveLoopVerts_`/`moveLoopStartX_`/`_Y_`/
+    // `moveLoopCurX_`/`_Y_`) plus the live cursor delta — no mesh
+    // mutation.
+    private void drawMoveLoopGhost(ImDrawList* dl, const ref Viewport vp) {
         if (moveLoopArmed_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null && moveLoopSeed_ >= 0 && moveLoopSeed_ < cast(int)m.edges.length) {
@@ -7673,32 +7618,37 @@ public:
                 }
             }
         }
+    }
 
-        // P11 (doc/topopen_p11_duploop_plan.md Phase 4): the Dup Loop
-        // ghost — preview of the coincident-then-dragged duplicate ring +
-        // bridge quads, recomputed every frame from the LIVE cursor
-        // (`dupLoopCurX_`/`dupLoopCurY_`), mirroring the Move Loop ghost
-        // immediately above (same `resnapToBackground`/`projectPt`
-        // primitives, no mesh mutation, no extrude — pure preview).
-        // Independent of `lastHit_`/CONS, drawn before the same
-        // `!lastHit_.hit` early-return as every other gesture ghost.
+    // P11 (doc/topopen_p11_duploop_plan.md Phase 4): the Dup Loop
+    // ghost — preview of the coincident-then-dragged duplicate ring +
+    // bridge quads, recomputed every frame from the LIVE cursor
+    // (`dupLoopCurX_`/`dupLoopCurY_`), mirroring the Move Loop ghost
+    // immediately above (same `resnapToBackground`/`projectPt`
+    // primitives, no mesh mutation, no extrude — pure preview).
+    // Independent of `lastHit_`/CONS, drawn before the same
+    // `!lastHit_.hit` early-return as every other gesture ghost.
+    //
+    // Task 0485: the SAME ghost for the Shift+LMB single-edge duplicate —
+    // one edge instead of a loop, identical preview arithmetic.
+    private void drawDupGhosts(ImDrawList* dl, const ref Viewport vp) {
         if (dupLoopArmed_ && meshSrc_ !is null) drawDupGhost(dl, vp, dupLoopEdges_,
             dupLoopCurX_ - dupLoopStartX_, dupLoopCurY_ - dupLoopStartY_);
 
-        // Task 0485: the SAME ghost for the Shift+LMB single-edge duplicate —
-        // one edge instead of a loop, identical preview arithmetic.
         if (dupEdgeArmed_ && dupEdgeEdges_.length && meshSrc_ !is null)
             drawDupGhost(dl, vp, dupEdgeEdges_,
                          dupEdgeCurX_ - dupEdgeStartX_, dupEdgeCurY_ - dupEdgeStartY_);
+    }
 
-        // P12 (doc/topopen_p12_smoothloop_plan.md Phase 4): the Smooth+Loop
-        // ghost — highlights the ARMED loop at its CURRENT (pre-relax)
-        // vertex positions (no per-pass relaxation preview — deferred/
-        // expensive, consistent with the whole-mesh Smooth ghost's own
-        // restraint above), plus a P8-style cursor ring at the live drag
-        // position (`smoothLoopCurX_`/`_Y_`). Independent of `lastHit_`/
-        // CONS, drawn before the same `!lastHit_.hit` early-return as every
-        // other gesture ghost above.
+    // P12 (doc/topopen_p12_smoothloop_plan.md Phase 4): the Smooth+Loop
+    // ghost — highlights the ARMED loop at its CURRENT (pre-relax)
+    // vertex positions (no per-pass relaxation preview — deferred/
+    // expensive, consistent with the whole-mesh Smooth ghost's own
+    // restraint above), plus a P8-style cursor ring at the live drag
+    // position (`smoothLoopCurX_`/`_Y_`). Independent of `lastHit_`/
+    // CONS, drawn before the same `!lastHit_.hit` early-return as every
+    // other gesture ghost above.
+    private void drawSmoothLoopGhost(ImDrawList* dl, const ref Viewport vp) {
         if (smoothLoopArmed_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null && smoothLoopSeed_ >= 0 && smoothLoopSeed_ < cast(int)m.edges.length) {
@@ -7716,20 +7666,22 @@ public:
                 dl.AddCircleFilled(cur, 4.0f, smoothLoopCol, 16);
             }
         }
+    }
 
-        // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
-        // 4). MINOR-5: placed AFTER the LAST pre-`!lastHit_.hit`-return
-        // ghost block above (P10 Move Loop, P11 Dup Loop, P12 Smooth+Loop)
-        // rather than literally "after smooth" — Split (P9), Move Loop
-        // (P10), Dup Loop (P11), and Smooth+Loop (P12) all now sit between
-        // the whole-mesh Smooth ghost and this early-return too. Independent
-        // of `lastHit_`/CONS
-        // (over the PRIMARY, not the background), like every ghost above,
-        // so a primary-only scene still shows it. Gated on
-        // `!anyGestureArmed()` (mode ghosts win when armed — Pinned Decision
-        // 5) AND `hoverOverMesh_` (the REV1 FIX-1 gate resolved in
-        // `onMouseMotion`). Draw order — edge, then hatch, then square — so
-        // the square reads on top and the hatch sits under the edge line.
+    // Generic Hover-Highlight (doc/topopen_hover_highlight_plan.md Phase
+    // 4). MINOR-5: placed AFTER the LAST pre-`!lastHit_.hit`-return
+    // ghost block above (P10 Move Loop, P11 Dup Loop, P12 Smooth+Loop)
+    // rather than literally "after smooth" — Split (P9), Move Loop
+    // (P10), Dup Loop (P11), and Smooth+Loop (P12) all now sit between
+    // the whole-mesh Smooth ghost and this early-return too. Independent
+    // of `lastHit_`/CONS
+    // (over the PRIMARY, not the background), like every ghost above,
+    // so a primary-only scene still shows it. Gated on
+    // `!anyGestureArmed()` (mode ghosts win when armed — Pinned Decision
+    // 5) AND `hoverOverMesh_` (the REV1 FIX-1 gate resolved in
+    // `onMouseMotion`). Draw order — edge, then hatch, then square — so
+    // the square reads on top and the hatch sits under the edge line.
+    private void drawHoverHighlight(ImDrawList* dl, const ref Viewport vp) {
         if (!anyGestureArmed() && hoverOverMesh_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null) {
@@ -7797,18 +7749,20 @@ public:
                 }
             }
         }
+    }
 
-        // Fill candidate-ring preview (MANDATORY opponent fix #2): its
-        // OWN sibling gate — `penMode_ == Fill && fillRing_.length >= 3` —
-        // deliberately NOT folded into the `hoverOverMesh_` block above.
-        // Three corners as readily as four, because `quadOnly` off is a
-        // measured build (task 0488).
-        // `hoverOverMesh_` requires a pick within `topoPenPressPickPx`, which is
-        // FALSE when hovering the center of an empty gap cell (the defining
-        // Fill-mode case: no vertex/edge/face is anywhere near the
-        // cursor) — nesting this there would make the preview never render
-        // for that scenario. Still gated on `!anyGestureArmed()` (mode
-        // ghosts win when armed, same precedent as every other ghost).
+    // Fill candidate-ring preview (MANDATORY opponent fix #2): its
+    // OWN sibling gate — `penMode_ == Fill && fillRing_.length >= 3` —
+    // deliberately NOT folded into the `hoverOverMesh_` block above.
+    // Three corners as readily as four, because `quadOnly` off is a
+    // measured build (task 0488).
+    // `hoverOverMesh_` requires a pick within `topoPenPressPickPx`, which is
+    // FALSE when hovering the center of an empty gap cell (the defining
+    // Fill-mode case: no vertex/edge/face is anywhere near the
+    // cursor) — nesting this there would make the preview never render
+    // for that scenario. Still gated on `!anyGestureArmed()` (mode
+    // ghosts win when armed, same precedent as every other ghost).
+    private void drawFillRingPreview(ImDrawList* dl, const ref Viewport vp) {
         if (!anyGestureArmed() && penMode_ == PenMode.Fill
                                 && fillRing_.length >= 3 && meshSrc_ !is null) {
             auto m = mesh;
@@ -7829,37 +7783,42 @@ public:
                 }
             }
         }
+    }
 
-        // Fill mode radius overlay (task 0477 continuation, the derived
-        // radius law — full provenance in the PRIVATE toolcard,
-        // toolcards/topology_pen/fill_radius_law_capture.md): a cosmetic
-        // screen-space circle OUTLINE, centered on the LIVE cursor pixel,
-        // sized to `fillRadiusPx_` (resolved in `onMouseMotion` above). Its
-        // OWN sibling gate — `penMode_ == Fill && fillRadiusValid_` —
-        // mirrors the candidate-cell preview immediately above and is,
-        // for the identical reason, NOT folded into the `hoverOverMesh_`
-        // block earlier in this function: it must still render while
-        // hovering the open middle of a gap, where `hoverOverMesh_` is
-        // false. Still gated on `!anyGestureArmed()` (mode ghosts win when
-        // armed, same precedent as every other ghost). Re-polls the cursor
-        // via `queryMouse` — the same draw()-time live-cursor idiom used
-        // by this tool's own hover ghosts elsewhere in the codebase —
-        // rather than any cached (e.x,e.y), so the circle keeps tracking
-        // the cursor between motion events exactly like the derived law's
-        // own "re-polled every redraw" cursor semantics. Draw-only: no
-        // mesh read, no command, no undo interaction.
+    // Fill mode radius overlay (task 0477 continuation, the derived
+    // radius law — full provenance in the PRIVATE toolcard,
+    // toolcards/topology_pen/fill_radius_law_capture.md): a cosmetic
+    // screen-space circle OUTLINE, centered on the LIVE cursor pixel,
+    // sized to `fillRadiusPx_` (resolved in `onMouseMotion` above). Its
+    // OWN sibling gate — `penMode_ == Fill && fillRadiusValid_` —
+    // mirrors the candidate-cell preview immediately above and is,
+    // for the identical reason, NOT folded into the `hoverOverMesh_`
+    // block earlier in this function: it must still render while
+    // hovering the open middle of a gap, where `hoverOverMesh_` is
+    // false. Still gated on `!anyGestureArmed()` (mode ghosts win when
+    // armed, same precedent as every other ghost). Re-polls the cursor
+    // via `queryMouse` — the same draw()-time live-cursor idiom used
+    // by this tool's own hover ghosts elsewhere in the codebase —
+    // rather than any cached (e.x,e.y), so the circle keeps tracking
+    // the cursor between motion events exactly like the derived law's
+    // own "re-polled every redraw" cursor semantics. Draw-only: no
+    // mesh read, no command, no undo interaction.
+    private void drawFillRadiusOverlay(ImDrawList* dl) {
         if (!anyGestureArmed() && penMode_ == PenMode.Fill && fillRadiusValid_) {
             int qmx, qmy;
             queryMouse(qmx, qmy);
             dl.AddCircle(ImVec2(cast(float)qmx, cast(float)qmy), fillRadiusPx_,
                         kFillRadiusCol, kFillRadiusSegments, kFillRadiusThicknessPx);
         }
+    }
 
-        if (!lastHit_.hit) return;
-
-        // Re-resolve for THIS cell's camera — a multi-viewport draw may
-        // run once per eligible cell, each with its own `vp`; the cached
-        // `lastTarget_` (motion-time) stays what toolStateJson() reports.
+    // The CONS-hit marker and the resolved snap-target highlight. Called
+    // only when `lastHit_.hit` (the dispatcher early-returns otherwise).
+    //
+    // Re-resolve for THIS cell's camera — a multi-viewport draw may
+    // run once per eligible cell, each with its own `vp`; the cached
+    // `lastTarget_` (motion-time) stays what toolStateJson() reports.
+    private void drawSnapTargetMarker(ImDrawList* dl, const ref Viewport vp) {
         auto ht = resolveHoverTarget(lastHit_, vp, topoPenPressPickPx(vp));
 
         enum uint markerCol = IM_COL32(255, 150, 0, 230);   // pen orange
@@ -7896,13 +7855,19 @@ public:
             case HoverTargetKind.None:
                 break;   // marker only — no element to highlight
         }
+    }
 
-        // P3 (doc/topopen_p3_plan.md): ghost preview of an in-progress
-        // drag-build — a line from the armed source A to the current
-        // (CONS-snapped) release point, plus a line from whichever existing
-        // neighbor(s) the classified case will auto-connect (Tri: N; Quad:
-        // P and Q). No mesh mutation, no raycast — purely re-reads the
-        // already-classified state and the packet-sourced `lastHit_`.
+    // P3 (doc/topopen_p3_plan.md): ghost preview of an in-progress
+    // drag-build — a line from the armed source A to the current
+    // (CONS-snapped) release point, plus a line from whichever existing
+    // neighbor(s) the classified case will auto-connect (Tri: N; Quad:
+    // P and Q). No mesh mutation, no raycast — purely re-reads the
+    // already-classified state and the packet-sourced `lastHit_`.
+    private void drawBuildGhost(ImDrawList* dl, const ref Viewport vp) {
+        // `hitPt` recomputed locally — pre-split it was shared with the
+        // snap-target marker block above (`hitPtOk`).
+        ImVec2 hitPt;
+        bool   hitPtOk = projectPt(lastHit_.point, vp, hitPt);
         if (dragArmed_ && hitPtOk && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null && sourceVert_ >= 0 && sourceVert_ < cast(int)m.vertices.length) {
@@ -7925,15 +7890,17 @@ public:
                 }
             }
         }
+    }
 
-        // Move drag affordance (P4's ghost, re-purposed by task 0484). P4
-        // drew a line from the grabbed vertex's pre-commit position to the
-        // live re-snap point, because the mesh did not move until release and
-        // that line was the ONLY feedback. The drag is live now — the
-        // geometry itself is the feedback — so the line would connect a point
-        // to itself. What remains is a marker on the moving set, so the user
-        // can still see WHICH element they grabbed once it is sitting under
-        // the cursor: a small square per moving vertex, in the same green.
+    // Move drag affordance (P4's ghost, re-purposed by task 0484). P4
+    // drew a line from the grabbed vertex's pre-commit position to the
+    // live re-snap point, because the mesh did not move until release and
+    // that line was the ONLY feedback. The drag is live now — the
+    // geometry itself is the feedback — so the line would connect a point
+    // to itself. What remains is a marker on the moving set, so the user
+    // can still see WHICH element they grabbed once it is sitting under
+    // the cursor: a small square per moving vertex, in the same green.
+    private void drawMoveGhost(ImDrawList* dl, const ref Viewport vp) {
         if (moveArmed_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null) {
@@ -7999,16 +7966,18 @@ public:
     }
 
     // ----- Test-introspection (task 0234 pattern, GET /api/tool/state) ----
+    // A Vec3 as a `[x, y, z]` JSON array — the shape every position/normal
+    // field below reports in.
+    private static JSONValue vec3Json(Vec3 v) {
+        return JSONValue([cast(double)v.x, cast(double)v.y, cast(double)v.z]);
+    }
+
     override JSONValue toolStateJson() const {
         auto root = JSONValue.emptyObject;
         root["tool"]        = JSONValue("mesh.topoPen");
         root["hit"]         = JSONValue(lastHit_.hit);
-        root["point"]       = JSONValue([cast(double)lastHit_.point.x,
-                                          cast(double)lastHit_.point.y,
-                                          cast(double)lastHit_.point.z]);
-        root["normal"]      = JSONValue([cast(double)lastHit_.normal.x,
-                                          cast(double)lastHit_.normal.y,
-                                          cast(double)lastHit_.normal.z]);
+        root["point"]       = vec3Json(lastHit_.point);
+        root["normal"]      = vec3Json(lastHit_.normal);
         root["layer"]       = JSONValue(lastHit_.layer);
         root["face"]        = JSONValue(lastHit_.face);
         root["nearestVert"] = JSONValue(lastHit_.nearestVert);
@@ -8019,20 +7988,9 @@ public:
         // Tier-C test.
         auto hv = JSONValue.emptyObject;
         hv["hit"]    = JSONValue(lastHit_.hit);
-        hv["point"]  = JSONValue([cast(double)lastHit_.point.x,
-                                   cast(double)lastHit_.point.y,
-                                   cast(double)lastHit_.point.z]);
-        hv["normal"] = JSONValue([cast(double)lastHit_.normal.x,
-                                   cast(double)lastHit_.normal.y,
-                                   cast(double)lastHit_.normal.z]);
-        string kindToken;
-        final switch (lastTarget_.kind) {
-            case HoverTargetKind.None:   kindToken = "none";   break;
-            case HoverTargetKind.Vertex: kindToken = "vertex"; break;
-            case HoverTargetKind.Edge:   kindToken = "edge";   break;
-            case HoverTargetKind.Face:   kindToken = "face";   break;
-        }
-        hv["targetKind"] = JSONValue(kindToken);
+        hv["point"]  = vec3Json(lastHit_.point);
+        hv["normal"] = vec3Json(lastHit_.normal);
+        hv["targetKind"] = JSONValue(hoverTargetKindTag(lastTarget_.kind));
         hv["targetVert"] = JSONValue(lastTarget_.vert);
         hv["targetEdge"] = JSONValue(lastTarget_.edge);
         root["hover"] = hv;
@@ -8043,14 +8001,7 @@ public:
         // driving a full build.
         root["sourceVert"] = JSONValue(sourceVert_);
         root["dragArmed"]  = JSONValue(dragArmed_);
-        string caseToken;
-        final switch (classifiedCase_) {
-            case BuildCase.None: caseToken = "none"; break;
-            case BuildCase.Edge: caseToken = "edge"; break;
-            case BuildCase.Tri:  caseToken = "tri";  break;
-            case BuildCase.Quad: caseToken = "quad"; break;
-        }
-        root["case"] = JSONValue(caseToken);
+        root["case"] = JSONValue(buildCaseTag(classifiedCase_));
 
         // P4 (doc/topopen_p4_plan.md): the armed Move/Place disambiguation
         // state, for Tier-C tests to assert WHICH gesture a plain-LMB press
@@ -8112,13 +8063,7 @@ public:
         //                        the hold-fixed contract leaves nothing to
         //                        slide. A deliberate decline, NOT a miss —
         //                        do not score it as a pick failure.
-        string slideDeclineToken;
-        final switch (slideDecline_) {
-            case SlideDecline.None:           slideDeclineToken = "none";            break;
-            case SlideDecline.NoEdge:         slideDeclineToken = "no_edge";         break;
-            case SlideDecline.NoContinuation: slideDeclineToken = "no_continuation"; break;
-        }
-        root["slideDeclineReason"] = JSONValue(slideDeclineToken);
+        root["slideDeclineReason"] = JSONValue(slideDeclineTag(slideDecline_));
         root["slideDeclineSeed"]   = JSONValue(slideDeclineSeed_);
 
         // P8 (doc/topopen_p8_smooth_plan.md Phase 4): the armed Smooth
@@ -8245,6 +8190,127 @@ public:
         root["hoverIndicator"] = hi;
 
         return root;
+    }
+}
+
+// ===========================================================================
+// TEST RIGS — everything below this line is same-module unittest
+// infrastructure for TopologyPenTool. The rigs are WHITE-BOX: they drive the
+// tool's PRIVATE members directly (`meshSrc_`, `history_`,
+// `buildEditFactory_`, `buildFromSource`, `trimBorderRunAroundSeed`, ...),
+// which is the only reason they live in this module — D scopes `private` to
+// the module, and the black-box HTTP-runner tests live under
+// `tests/test_topopen_*.d` / `tests/test_fixture_topology_pen_*.d` instead.
+// Nothing below is compiled into a non-unittest build: bare
+// `unittest { ... }` blocks plus `version (unittest)` helpers only. The
+// production class ends at the `}` just above this banner — keep new
+// production code ABOVE it and new test rigs BELOW it.
+// Run with: dub test --config=modeling.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// kTopoPenBindings — exhaustive resolver-grid pin. A single pure,
+// camera-free regression guard covering EVERY (button, modifier) combo this
+// tool's grid can see — replaces the 7 scattered `resolveGestureSlot` guards
+// the pre-Phase-2 classifier used to need (Ctrl+MMB/Shift+MMB/Ctrl+LMB/
+// plain-MMB/plain-RMB/Shift+RMB/Shift+Ctrl+RMB), consolidated into ONE table
+// so a bad merge that silently drops or misroutes a row is caught here
+// rather than by 7 separate best-effort pins. All 12 slots of the grid now
+// resolve to their own chord id (task 0499 wired the last two, Ctrl+RMB and
+// Shift+Ctrl+MMB); every Alt-held combo resolves to `PassThrough` (Alt is
+// hard-blocked by `resolveToolAction` itself, above the table scan — this
+// pin also proves that holds for THIS tool's table).
+// ---------------------------------------------------------------------------
+unittest {
+    // The 10 wired slots, each resolving to its own CHORD id (task 0487 —
+    // the id names the chord now; which GESTURE it runs is resolved later
+    // from the chord's override plus the user's dropdown/flags).
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.None)
+        == TopoPenChord.Lmb, "plain LMB");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Shift)
+        == TopoPenChord.ShiftLmb, "Shift+LMB");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Ctrl)
+        == TopoPenChord.CtrlLmb, "Ctrl+LMB");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Left, InputMod.Shift | InputMod.Ctrl)
+        == TopoPenChord.ShiftCtrlLmb, "Shift+Ctrl+LMB");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.None)
+        == TopoPenChord.Mmb, "plain MMB");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Shift)
+        == TopoPenChord.ShiftMmb, "Shift+MMB");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Ctrl)
+        == TopoPenChord.CtrlMmb, "Ctrl+MMB");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.None)
+        == TopoPenChord.Rmb, "plain RMB");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Shift)
+        == TopoPenChord.ShiftRmb, "Shift+RMB");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Shift | InputMod.Ctrl)
+        == TopoPenChord.ShiftCtrlRmb, "Shift+Ctrl+RMB");
+    // The 2 slots the reference's dispatcher has no case for — WIRED (task
+    // 0499) as rows that override nothing, after being measured executing the
+    // dropdown's own mode. They used to answer `PassThrough` here.
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Right, InputMod.Ctrl)
+        == TopoPenChord.CtrlRmb, "Ctrl+RMB");
+    assert(resolveToolAction(kTopoPenBindings, InputButton.Middle, InputMod.Shift | InputMod.Ctrl)
+        == TopoPenChord.ShiftCtrlMmb, "Shift+Ctrl+MMB");
+
+    // Every chord belongs to the button its own slot names — the mapping the
+    // dispatch books a gesture against, taken from the SLOT so a synthetic
+    // press with no `button` field still lands on the right one.
+    assert(chordButton(TopoPenChord.Lmb)          == InputButton.Left);
+    assert(chordButton(TopoPenChord.ShiftCtrlLmb) == InputButton.Left);
+    assert(chordButton(TopoPenChord.Mmb)          == InputButton.Middle);
+    assert(chordButton(TopoPenChord.CtrlMmb)      == InputButton.Middle);
+    assert(chordButton(TopoPenChord.Rmb)          == InputButton.Right);
+    assert(chordButton(TopoPenChord.ShiftCtrlRmb) == InputButton.Right);
+    assert(chordButton(TopoPenChord.CtrlRmb)      == InputButton.Right);
+    assert(chordButton(TopoPenChord.ShiftCtrlMmb) == InputButton.Middle);
+
+    // The override table itself — the measured half stated as assertions, so a
+    // future edit that levels the FlagOv distinction away fails here.
+    assert(kChordOv[TopoPenChord.Rmb].loop       == FlagOv.ForceOn,
+        "plain RMB FORCES the loop flag (measured: the literal-1 store)");
+    assert(kChordOv[TopoPenChord.ShiftRmb].loop  == FlagOv.ForceOn,
+        "Shift+RMB FORCES the loop flag (measured bit-identical across loop=false/true)");
+    assert(kChordOv[TopoPenChord.ShiftLmb].loop  == FlagOv.FromUser,
+        "Shift+LMB READS the loop flag (measured: 1 quad vs 3 on one seed)");
+    assert(kChordOv[TopoPenChord.Lmb].mode       == ModeOv.FromUser,
+        "the base slot never overrides the dropdown");
+    assert(kChordOv[TopoPenChord.Rmb].mode       == ModeOv.FromUser,
+        "plain RMB runs the DROPDOWN's mode — it is not an absolute move-loop");
+    assert(kChordOv[TopoPenChord.ShiftLmb].mode  == ModeOv.Duplicate);
+    assert(kChordOv[TopoPenChord.ShiftRmb].mode  == ModeOv.Duplicate);
+    assert(kChordOv[TopoPenChord.CtrlLmb].slide  == FlagOv.ForceOn,
+        "Ctrl+LMB forces Edge Slide");
+    assert(kChordOv[TopoPenChord.Rmb].slide      == FlagOv.FromUser,
+        "and Ctrl+RMB was measured NOT forcing slide, so the rule is not 'Ctrl forces slide'");
+
+    // The 2 rows task 0499 wired: they override NOTHING, on all three columns.
+    // Stated column by column because each one pins a separate half of the
+    // measurement, and each one is a different way to get this wrong:
+    //   * mode  — the slot is not "the base slot of its own button" (base MMB
+    //             forces Split, base RMB forces the loop);
+    //   * loop  — it is not an RMB-family forced loop either;
+    //   * slide — the measured "Ctrl+RMB ran a plain move, no slide" is the
+    //             very reason `CtrlLmb`'s slide row is NOT generalised to
+    //             "Ctrl forces slide". Level this one out and that asymmetry
+    //             loses its evidence.
+    foreach (c; [TopoPenChord.CtrlRmb, TopoPenChord.ShiftCtrlMmb]) {
+        assert(kChordOv[c].mode  == ModeOv.FromUser,
+            "an unbound slot runs the DROPDOWN's mode, not its own button's base mode");
+        assert(kChordOv[c].loop  == FlagOv.FromUser,
+            "an unbound slot does not force the loop flag");
+        assert(kChordOv[c].slide == FlagOv.FromUser,
+            "an unbound slot does not force Edge Slide (measured on Ctrl+RMB)");
+    }
+
+    // Every Alt combo -> PassThrough, on every button, with or without other
+    // modifiers held alongside it (Alt is hard-blocked above the table scan,
+    // per `resolveToolAction`'s own contract).
+    foreach (btn; [InputButton.Left, InputButton.Middle, InputButton.Right]) {
+        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt) == PassThrough);
+        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt | InputMod.Shift) == PassThrough);
+        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt | InputMod.Ctrl) == PassThrough);
+        assert(resolveToolAction(kTopoPenBindings, btn, InputMod.Alt | InputMod.Shift | InputMod.Ctrl) == PassThrough);
     }
 }
 

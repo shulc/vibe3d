@@ -70,6 +70,11 @@ enum int kAi3dConfigVersion = 1;
 /// the hermetic sync-check unittest below.
 enum int kAi3dDefaultPort = 47831;
 
+/// The loopback URL matching kAi3dDefaultPort above: the AI3D panel's
+/// worker-address field is pre-filled with it, and it is the fallback
+/// `ai3dController.start` uses when the field is left empty.
+enum string ai3dDefaultWorkerUrl = "http://127.0.0.1:47831";
+
 /// The model install_linux.sh provisions by default (TrellisBackend's own
 /// default in vibe3d_ai3d_worker/server.py — kept in sync manually, this is
 /// display/probe-only, never sent to the worker itself: the worker resolves
