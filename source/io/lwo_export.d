@@ -85,10 +85,17 @@ void exportLwoDocument(ref const Document doc, string path)
     size_t[string] nameToIndex;
 
     Lwo2Layer[] layers;
-    layers.reserve(doc.layers.length);
+    // Task 0615 Stage 4: interchange export has no non-mesh concept — iterate
+    // `doc.meshLayers`, not `doc.layers`, so a non-mesh layer is silently
+    // skipped rather than reaching `meshRef()`. Reserve is sized to match —
+    // `doc.layers.length` would over-reserve whenever a non-mesh layer is
+    // present (harmless, but `walkLength` over the same filtered range is
+    // exact for free).
+    import std.range : walkLength;
+    layers.reserve(doc.meshLayers.walkLength);
 
-    foreach (const(Layer) l; doc.layers) {
-        const ref Mesh src = l.mesh;
+    foreach (const(Layer) l; doc.meshLayers) {
+        const ref Mesh src = l.meshRef();
 
         Lwo2Layer lay;
         lay.name   = l.name;

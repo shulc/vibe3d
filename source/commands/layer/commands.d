@@ -27,7 +27,7 @@ import mesh;
 import view;
 import editmode;
 import params : Param, paramToJson, injectParamsInto;
-import document : Document, Layer;
+import document : Document, Layer, ItemKind;
 import layer_params : LayerPropsProvider;
 import seltype : SelMode, selModeFromToken;
 import change_bus : MeshChangeAll, noteLayerChange, LayerChange,
@@ -153,7 +153,7 @@ final class LayerAdd : LayerCommandBase {
 // layer.duplicate — deep-copy the primary layer (or the layer at `index`) into
 // a new Layer, append it, and make the clone the selected primary. Model undo.
 //
-// Deep copy: MeshSnapshot.capture(src.mesh).restore(clone.mesh) dups every
+// Deep copy: MeshSnapshot.capture(src.meshRef()).restore(clone.meshRef()) dups every
 // array (vertices/edges/faces/marks/maps/surfaces/faceMaterial) and calls
 // buildLoops + resizeAllMeshMaps, so the clone's mesh is fully independent.
 // Name, xform (value struct → value copy), and parent are also copied;
@@ -209,9 +209,14 @@ final class LayerDuplicate : LayerCommandBase {
         auto src = doc.layers[srcIdx];
 
         // Build the clone — deep-copy the source mesh in place into a fresh
-        // Layer object (never alias the GC-managed arrays).
+        // Layer object (never alias the GC-managed arrays). Task 0615 Stage 4:
+        // the clone must carry the source's `kind` too (a non-mesh layer's
+        // clone was silently forced to `ItemKind.Mesh` before this), and the
+        // mesh snapshot only makes sense when the source actually has one.
         auto l2 = new Layer;
-        MeshSnapshot.capture(src.mesh).restore(l2.mesh);
+        l2.kind = src.kind;
+        if (src.hasMesh)
+            MeshSnapshot.capture(src.meshRef()).restore(l2.meshRef());
         l2.name    = src.name ~ " copy";
         l2.visible = true;
         l2.xform   = src.xform;    // ItemXform is a value struct → value copy
@@ -925,6 +930,7 @@ unittest {
     assert(doc.primary is dup.added, "apply: primary is the clone");
     assert(dup.added.selected, "apply: clone is selected");
     assert(dup.added.visible, "apply: clone is visible");
+    assert(dup.added.kind == src.kind, "apply: clone kind matches source kind");
     // Name derived from the source — do NOT hard-code "Layer 1 copy" here;
     // check against the actual source name so the test stays correct if the
     // bootstrap name ever changes.
@@ -932,18 +938,18 @@ unittest {
            "apply: clone name == source.name ~ ' copy'");
 
     // --- deep-copy independence: distinct backing arrays ---------------------
-    assert(dup.added.mesh.vertices.ptr !is src.mesh.vertices.ptr,
+    assert(dup.added.meshRef().vertices.ptr !is src.meshRef().vertices.ptr,
            "clone has its own vertex backing array (not an alias of the source)");
-    assert(dup.added.mesh.vertices.length == src.mesh.vertices.length,
+    assert(dup.added.meshRef().vertices.length == src.meshRef().vertices.length,
            "clone vertex count matches source");
-    foreach (i; 0 .. src.mesh.vertices.length)
-        assert(dup.added.mesh.vertices[i] == src.mesh.vertices[i],
+    foreach (i; 0 .. src.meshRef().vertices.length)
+        assert(dup.added.meshRef().vertices[i] == src.meshRef().vertices[i],
                "clone vertex positions match source element-wise");
 
     // Mutate source vertex 0 — the clone must not see the change.
-    auto cloneV0 = dup.added.mesh.vertices[0];
-    src.mesh.vertices[0] = Vec3(99, 99, 99);
-    assert(dup.added.mesh.vertices[0] == cloneV0,
+    auto cloneV0 = dup.added.meshRef().vertices[0];
+    src.meshRef().vertices[0] = Vec3(99, 99, 99);
+    assert(dup.added.meshRef().vertices[0] == cloneV0,
            "editing source mesh does not affect the clone (deep copy verified)");
 
     // --- xform value copy ----------------------------------------------------
@@ -964,6 +970,51 @@ unittest {
 
     // --- single-layer duplicate: no 'refuse' guard (unlike layer.delete) ----
     // (already proven above — apply succeeded on a single-layer doc.)
+}
+
+// ---------------------------------------------------------------------------
+// Task 0615 S2 (review round 3): duplicating a NON-MESH layer. Pins the
+// deliberate behaviour change at apply()'s `l2.kind = src.kind;` /
+// `if (src.hasMesh) ...` pair — before this task, a non-mesh clone was
+// silently forced to `ItemKind.Mesh`. This mirrors the shape of the mixed
+// fixture at `document.d`'s `mixedDoc()` ([mesh(primary), non-mesh, ...]);
+// that helper is `private` to `document`'s module and cannot be imported
+// here, so the fixture is rebuilt inline.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import view : View;
+
+    auto doc = Document.bootstrap(makeCube());        // "Layer 1" == meshA
+    auto meshA = doc.layers[0];
+    auto empty = new Layer;
+    empty.name = "Empty";
+    empty.kind = ItemKind.Empty;
+    doc.layers ~= empty;                               // [meshA(primary), empty]
+    assert(doc.primary is meshA, "fixture: meshA starts as primary");
+    assert(!empty.hasMesh, "fixture: empty has no mesh capability");
+
+    auto v   = new View(0, 0, 800, 600);
+    auto dup = new LayerDuplicate(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
+    dup.indexArg = 1;                                  // target the non-mesh layer
+
+    assert(dup.apply(), "apply must succeed on a non-mesh source");
+    assert(doc.layers.length == 3, "apply: layer count == 3");
+    assert(dup.added.kind == ItemKind.Empty, "clone of a non-mesh source keeps its kind");
+    assert(!dup.added.hasMesh, "clone of a non-mesh source has no mesh capability");
+    // The existing all-mesh test above asserts `doc.primary is dup.added` —
+    // that would be FALSE here: a non-mesh layer can never become primary
+    // (`ItemKindInfo.canBePrimary`), so the mesh snapshot the ctor's `mesh`
+    // pointer aliases is correctly skipped, and the mesh edit target must
+    // stay put.
+    assert(doc.primary is meshA, "apply: a non-mesh clone never becomes primary");
+    assert(doc.focusedItem is dup.added, "apply: the clone still becomes the item focus");
+    assert(dup.added.selected, "apply: clone is selected");
+    assert(meshA.selected, "apply: the mesh primary stays selected too");
+
+    assert(dup.revert(), "revert must succeed");
+    assert(doc.layers.length == 2, "revert: back to 2 layers");
+    assert(doc.primary is meshA, "revert: meshA is still primary");
 }
 
 // ---------------------------------------------------------------------------

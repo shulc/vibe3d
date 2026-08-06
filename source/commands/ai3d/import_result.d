@@ -74,12 +74,15 @@ final class Ai3dImportResult : Command {
             return false;
         }
 
-        auto prevLayer = doc.active();
+        // Task 0615 (NIT, review round 3): `doc.primary`, not `doc.active()`
+        // — the role-clear name (see `commands/scene/reset.d`'s matching
+        // rename), naming what this actually is: the mesh edit target.
+        auto prevLayer = doc.primary;
         const prevIndex = doc.activeIndex;
 
         if (inserted is null) {
             preActiveIndex = doc.activeIndex;
-            prePrimary = doc.active();
+            prePrimary = doc.primary;
             preSelected = null;
             foreach (l; doc.layers) preSelected[l] = l.selected;
 
@@ -101,8 +104,10 @@ final class Ai3dImportResult : Command {
             }
 
             auto layer = new Layer;
-            layer.mesh = flattenToMesh(scene);
-            if (layer.mesh.vertices.length == 0 || layer.mesh.faces.length == 0) {
+            // Task 0615 (§Tier-2 :103-105): the imported layer is always
+            // mesh-kind — `layer.kind` stays at its default (`ItemKind.Mesh`).
+            layer.meshRef() = flattenToMesh(scene);
+            if (layer.meshRef().vertices.length == 0 || layer.meshRef().faces.length == 0) {
                 failCode_ = "artifact_invalid";
                 failMessage_ = "imported mesh is empty";
                 try logWarn("ai3d", "importResult failed: flattened mesh is empty");
@@ -123,8 +128,8 @@ final class Ai3dImportResult : Command {
                                                    ~ doc.layers[insertedIndex .. $];
         doc.setActive(insertedIndex);
 
-        inserted.mesh.syncSelection();
-        inserted.mesh.noteChange(MeshChangeAll);
+        inserted.meshRef().syncSelection();
+        inserted.meshRef().noteChange(MeshChangeAll);
         noteLayerChange(LayerChange.Added);
         fireSwitchIfChanged(prevLayer, prevIndex);
         applied = true;

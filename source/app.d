@@ -6124,18 +6124,23 @@ void main(string[] args) {
                 static bool  warnedMissedPublisher = false;
 
                 foreach (layer; document.layers) {
+                    // Task 0615 Stage 4 (R7): a non-mesh layer never advances
+                    // a mutationVersion, so it must never get a
+                    // `lastSeenMutVer` entry — skip BEFORE the first read/seed,
+                    // not after.
+                    if (!layer.hasMesh) continue;
                     // Guard-serviced bits count as pending for their owner —
                     // without this, a mutation whose flags ensureDisplayCurrent
                     // transferred into the shadow word would read as "version
                     // advanced, zero flags" and latch a spurious warning.
-                    const lf = layer.mesh.pendingChanges_
-                        | ((&layer.mesh) is displayEnsuredMesh_
+                    const lf = layer.meshRef().pendingChanges_
+                        | ((&layer.meshRef()) is displayEnsuredMesh_
                                ? displayEnsured_ : 0u);
                     auto seen = layer in lastSeenMutVer;
                     if (seen is null) {
                         // First observation of this layer — seed, do not compare.
-                        lastSeenMutVer[layer] = layer.mesh.mutationVersion;
-                    } else if (layer.mesh.mutationVersion != *seen && lf == 0) {
+                        lastSeenMutVer[layer] = layer.meshRef().mutationVersion;
+                    } else if (layer.meshRef().mutationVersion != *seen && lf == 0) {
                         // Test-introspectable count (via /api/changes) — always
                         // ticks, even after the one-shot stderr line latches, so
                         // a regression test can assert it stays 0 (task 0462).
@@ -6146,21 +6151,24 @@ void main(string[] args) {
                                 "advanced (%llu) with no pending change flags; a " ~
                                 "mutation site bumped the version but did not " ~
                                 "noteChange/commitChange.\n",
-                                cast(ulong)layer.mesh.mutationVersion);
+                                cast(ulong)layer.meshRef().mutationVersion);
                             warnedMissedPublisher = true;
                         }
-                        lastSeenMutVer[layer] = layer.mesh.mutationVersion;
+                        lastSeenMutVer[layer] = layer.meshRef().mutationVersion;
                     } else {
-                        lastSeenMutVer[layer] = layer.mesh.mutationVersion;
+                        lastSeenMutVer[layer] = layer.meshRef().mutationVersion;
                     }
                 }
             }
 
             foreach (layer; document.layers) {
-                meshFlags  |= layer.mesh.pendingChanges_;
-                selDomains |= layer.mesh.pendingSelDomains_;
-                layer.mesh.pendingChanges_    = 0;
-                layer.mesh.pendingSelDomains_ = 0;
+                // Task 0615 Stage 4 (R7): same skip as the debug loop above —
+                // a non-mesh layer has no pending flags to aggregate.
+                if (!layer.hasMesh) continue;
+                meshFlags  |= layer.meshRef().pendingChanges_;
+                selDomains |= layer.meshRef().pendingSelDomains_;
+                layer.meshRef().pendingChanges_    = 0;
+                layer.meshRef().pendingSelDomains_ = 0;
             }
 
             // Transfer-back (phase-2 dedup): bits `ensureDisplayCurrent`

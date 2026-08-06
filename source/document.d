@@ -107,6 +107,21 @@ private immutable ItemKindInfo[ItemKind.max + 1] kItemKindTable = [
     ItemKindInfo("empty", false, true,  false, false),  // ItemKind.Empty
 ];
 
+// `drawsGeometry` implies `hasMesh`, as a compile-time PROOF over the table
+// rather than a convention every row author has to remember. It holds for
+// every kind declared above only because nothing has violated it yet — the
+// consumer side leans on that: `ui/panels.d`'s per-frame draw loop gates on
+// `drawsGeometry` and then dereferences `lyr.meshRef()` unconditionally,
+// while its snap loop ~20 lines below gates on `hasMesh` instead. If a
+// future row ever set `drawsGeometry` true without `hasMesh`, the draw
+// loop's `meshRef()` call would be reachable on a non-mesh layer (hitting
+// its `debug`-only assert, or worse in a release build) despite passing its
+// own gate. This `static foreach` makes that impossible to compile instead
+// of merely being true today.
+static foreach (row; kItemKindTable)
+    static assert(!row.drawsGeometry || row.hasMesh,
+        "ItemKindInfo(\"" ~ row.token ~ "\"): drawsGeometry requires hasMesh");
+
 /// The capability row for `k`.
 ref immutable(ItemKindInfo) kindInfo(ItemKind k) pure nothrow @nogc @safe {
     return kItemKindTable[k];
@@ -147,7 +162,12 @@ string tokenOf(ItemKind k) pure nothrow @nogc @safe { return kindInfo(k).token; 
 ///       the GC traces, so a layer whose edits are still on the undo stack
 ///       cannot dangle even after the layer is deleted from `layers[]`.
 final class Layer {
-    Mesh   mesh;               ///< the layer's geometry (stable heap address)
+    // Task 0615 Stage 5: PRIVATE + renamed from the public `mesh`. This is the
+    // enforcement mechanism, not cosmetics — every direct payload consumer
+    // outside this module becomes a compile error, and the compiler's error
+    // list IS the audit (§Consumer inventory, tier 1). Reach it only through
+    // `hasMesh()` / `meshOrNull()` / `meshRef()` / `Document.meshLayers()`.
+    private Mesh mesh_;         ///< the layer's geometry (stable heap address)
     // Task 0615: a plain DEFAULTED field, so every pre-existing `new Layer`
     // site (~15 of them) keeps compiling and keeps meaning "mesh item"
     // without being touched.
@@ -179,7 +199,7 @@ final class Layer {
     /// that only ever read through a `const(Layer)` — `io/lwo_export.d`,
     /// `io/scene_export.d`, `io/native.d`, `io/scene_ir.d` — need this
     /// accessor too, and a single `inout` definition covers both call shapes.
-    inout(Mesh)* meshOrNull() inout { return hasMesh ? &mesh : null; }
+    inout(Mesh)* meshOrNull() inout { return hasMesh ? &mesh_ : null; }
 
     /// Reference to the geometry payload. `inout` for the same reason as
     /// `meshOrNull()` (S6). The `debug`-only assert is a DEV-ONLY backstop
@@ -198,7 +218,7 @@ final class Layer {
     /// comment) — neither check is production enforcement.
     ref inout(Mesh) meshRef() inout {
         debug assert(hasMesh, "meshRef() called on a non-mesh item");
-        return mesh;
+        return mesh_;
     }
 }
 
@@ -259,12 +279,35 @@ struct Document {
     /// The active (foreground) layer object — i.e. the primary.
     Layer     active()        { return primary; }
     /// Pointer to the primary layer's mesh (interior pointer, GC-traced).
-    Mesh*     activeMesh()    { return &primary.mesh; }
+    /// `primary` is always `hasMesh` (the document invariant, §Q2) — the
+    /// `debug` assert in `meshRef()` is the dev-only backstop for that.
+    Mesh*     activeMesh()    { return &primary.meshRef(); }
     /// Reference to the primary layer's mesh.
-    ref Mesh  activeMeshRef() { return primary.mesh; }
+    ref Mesh  activeMeshRef() { return primary.meshRef(); }
 
     /// True iff `l` is the primary (the single edit target).
     bool isPrimary(const(Layer) l) const { return l is primary; }
+
+    /// Lazy range over just the mesh-kind layers — for "iterate the meshes"
+    /// consumers that must not see a non-mesh layer (task 0615, R1 mitigation
+    /// #1). A `std.algorithm.filter` over the slice, NOT `.array` — this is
+    /// reached from per-frame draw/snap loops (`ui/panels.d`), so it must not
+    /// allocate (0585 / [[selection_property_on2_trap]] precedent).
+    ///
+    /// A `this This` template parameter, not a plain `inout` function:
+    /// `std.algorithm.filter`'s `FilterResult` stores the range in a field,
+    /// and D forbids an `inout` FIELD (only parameters/stack locals may be
+    /// `inout`) — instantiating `filter!` over an `inout(Layer)[]` fails to
+    /// compile. Deducing `This` (`Document` or `const(Document)` per call
+    /// site) sidesteps `inout` entirely — each instantiation sees a
+    /// concrete, non-`inout` element type — so `const`-qualified callers
+    /// (`io/scene_ir.d`'s `flattenDocument`, `io/scene_export.d`,
+    /// `io/lwo_export.d` — all take `const ref Document`) and mutable
+    /// callers share this one declaration instead of two near-duplicates.
+    auto meshLayers(this This)() {
+        import std.algorithm : filter;
+        return layers.filter!(l => l.hasMesh);
+    }
 
     /// Foreground / background DERIVATION (Stage 2b: the SOLE source of truth).
     ///
@@ -562,7 +605,7 @@ struct Document {
     /// into a fresh "Layer 1" which becomes the (only, active, selected) layer.
     static Document bootstrap(Mesh m) {
         auto l = new Layer;
-        l.mesh = m;
+        l.mesh_ = m;
         l.name = "Layer 1";
         l.visible = true;
         l.selected = true;
@@ -612,12 +655,12 @@ unittest {
     Mesh* p2 = doc.activeMesh();
     assert(p1 is p2, "activeMesh() is stable across calls");
 
-    assert(p1 is &doc.active().mesh,
+    assert(p1 is &doc.active().meshRef(),
            "activeMesh() points at the active layer's mesh field");
     assert(&doc.activeMeshRef() is p1,
            "activeMeshRef() and activeMesh() identify the same mesh");
     // primary aliases the active mesh.
-    assert(p1 is &doc.primary.mesh, "activeMesh() points at the primary's mesh");
+    assert(p1 is &doc.primary.meshRef(), "activeMesh() points at the primary's mesh");
 
     // Layer is a class: a copy of the Document struct shares the same Layer
     // object (reference), hence the same interior mesh pointer.
@@ -646,7 +689,7 @@ unittest {
     doc.setActive(1);
     Mesh* a1 = doc.activeMesh();
     assert(a0 !is a1, "distinct layers have distinct mesh addresses");
-    assert(a1 is &doc.layers[1].mesh, "activeMesh() follows the primary");
+    assert(a1 is &doc.layers[1].meshRef(), "activeMesh() follows the primary");
     assert(doc.activeIndex == 1, "activeIndex tracks the active move");
     assert(doc.primary is doc.layers[1], "primary tracks the active move");
     assert(doc.layers[1].selected && !doc.layers[0].selected,
@@ -940,8 +983,8 @@ unittest {  // a default-constructed Layer is a mesh item.
     assert(l.kind == ItemKind.Mesh, "new Layer defaults to ItemKind.Mesh");
     assert(l.hasMesh, "a default Layer has a mesh");
     assert(l.meshOrNull !is null, "meshOrNull is non-null for a mesh item");
-    assert(l.meshOrNull is &l.mesh, "meshOrNull points at the mesh field");
-    assert(&l.meshRef() is &l.mesh, "meshRef() aliases the same mesh field");
+    assert(l.meshOrNull is &l.mesh_, "meshOrNull points at the mesh field");
+    assert(&l.meshRef() is &l.mesh_, "meshRef() aliases the same mesh field");
 }
 
 unittest {  // a non-mesh item reports no mesh through the capability accessors.
@@ -1166,6 +1209,37 @@ unittest {  // Stage 3b: indexOf resolves by identity; absent ⇒ layers.length.
     assert(doc.indexOf(doc.layers[2]) == 2);
     auto stray = new Layer;
     assert(doc.indexOf(stray) == doc.layers.length, "absent layer ⇒ layers.length sentinel");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0615 S3 (review round 3): `meshLayers()` is the plan's primary
+// mitigation for the tier the compiler cannot check — its whole claim is
+// "iterating it can never yield a non-mesh layer". Exercise BOTH overload
+// instantiations (mutable `This=Document`, const `This=const(Document)`)
+// against the mixed fixture, so the claim is actually proved rather than
+// merely asserted in a comment.
+// ---------------------------------------------------------------------------
+
+unittest {  // meshLayers() — mutable receiver.
+    auto doc = mixedDoc();                       // [MeshA(primary), Empty, MeshB]
+    size_t seen = 0;
+    foreach (l; doc.meshLayers()) {
+        assert(l.hasMesh, "meshLayers() (mutable) must never yield a non-mesh layer");
+        ++seen;
+    }
+    assert(seen == 2, "meshLayers() (mutable) yields exactly the mesh-kind layers");
+}
+
+unittest {  // meshLayers() — const receiver, the shape every real caller uses
+            // (io/scene_ir.d, io/scene_export.d, io/lwo_export.d all take
+            // `const ref Document`).
+    const doc = mixedDoc();
+    size_t seen = 0;
+    foreach (l; doc.meshLayers()) {
+        assert(l.hasMesh, "meshLayers() (const) must never yield a non-mesh layer");
+        ++seen;
+    }
+    assert(seen == 2, "meshLayers() (const) yields exactly the mesh-kind layers");
 }
 
 unittest {  // S5: selectItem/setPrimary must guard MEMBERSHIP, not just

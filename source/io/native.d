@@ -304,7 +304,7 @@ void writeV3d(ref const Document document, string path)
         JSONValue xj;
         if (xformToJson(layer.xform, xj))
             lj["xform"] = xj;
-        lj["mesh"]     = meshToJson(layer.mesh);
+        lj["mesh"]     = meshToJson(layer.meshRef());
         layers ~= lj;
     }
     doc["layers"] = JSONValue(layers);
@@ -408,7 +408,10 @@ bool readV3d(string path, ref Document document)
                 return false;
             }
             auto layer = new Layer;
-            if (!meshFromJson(*mp, layer.mesh))
+            // v7 has no "type" key (Stage 8/v8 is out of scope for this task —
+            // cancelled, see task 0616); every layer this reader builds is
+            // mesh-kind (`Layer.kind` defaults to `ItemKind.Mesh`).
+            if (!meshFromJson(*mp, layer.meshRef()))
                 return false;
             // Name + flags (all optional; sensible defaults preserved).
             layer.name = format("Layer %d", li + 1);

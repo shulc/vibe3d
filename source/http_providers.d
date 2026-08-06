@@ -336,7 +336,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         httpServer.setLayerModelProvider((int layer) {
             size_t idx = layer < 0 ? document.activeIndex : cast(size_t)layer;
             if (idx >= document.layers.length) idx = document.layers.length - 1;
-            return meshToDetailedJson(document.layers[idx].mesh);
+            return meshToDetailedJson(document.layers[idx].meshRef());
         });
         // GET /api/layers — index/name/visible/background/active + per-layer
         // vertex & face counts + the per-layer mutationVersion (a read-only
@@ -395,8 +395,8 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                     i == document.activeIndex ? "true" : "false",
                     l.selected ? "true" : "false",
                     document.isPrimary(l) ? "true" : "false",
-                    l.mesh.vertices.length, l.mesh.faces.length,
-                    cast(ulong)l.mesh.mutationVersion, xb.data, parentIdx));
+                    l.meshRef().vertices.length, l.meshRef().faces.length,
+                    cast(ulong)l.meshRef().mutationVersion, xb.data, parentIdx));
             }
             a.put("]}");
             return a.data;

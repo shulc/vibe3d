@@ -273,7 +273,7 @@ import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider;
-import document       : Layer, Document;
+import document       : Layer, Document, kindInfo;
 import snap           : ItemSnapFrame;
 import viewport       : LayoutPreset, ViewportManager, Viewport3D;
 
@@ -2081,7 +2081,13 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         foreach (lyr, bg; bgGpuByLayer) {
             bool stillBg = false;
             foreach (ll; document.layers)
-                if (ll is lyr && ll.visible && !document.isPrimary(ll)) {
+                // Task 0615 (tier-2, §Tier-2 :2083-2090): a non-mesh layer must
+                // never be "still bg" — it never gets a BgGpu entry to begin
+                // with, so any prior entry for it (impossible today, but the
+                // guard is the eviction side of the drawsGeometry gate below)
+                // must be dropped.
+                if (ll is lyr && ll.visible && !document.isPrimary(ll)
+                    && kindInfo(ll.kind).drawsGeometry) {
                     stillBg = true;
                     break;
                 }
@@ -2101,6 +2107,11 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         // upload, only the DRAWS are gated.
         foreach (i, lyr; document.layers) {
             if (document.isPrimary(lyr) || !lyr.visible) continue;
+            // Task 0615 Stage 4 (§Tier-2 :2102): a non-mesh layer participates
+            // in neither the bg draw nor the GPU upload — skip BEFORE the
+            // `BgGpu` allocation below, not after (mirrors the eviction guard
+            // just above).
+            if (!kindInfo(lyr.kind).drawsGeometry) continue;
             float[16] bgModel = lyr.xform.composedMatrix();
 
             auto pp = lyr in bgGpuByLayer;
@@ -2112,9 +2123,9 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             } else {
                 bg = *pp;
             }
-            if (bg.uploadedVersion != lyr.mesh.mutationVersion) {
-                bg.gpu.upload(lyr.mesh);
-                bg.uploadedVersion = lyr.mesh.mutationVersion;
+            if (bg.uploadedVersion != lyr.meshRef().mutationVersion) {
+                bg.gpu.upload(lyr.meshRef());
+                bg.uploadedVersion = lyr.meshRef().mutationVersion;
             }
 
             // Perf: attribute this layer's submissions to the BACKDROP slots.
@@ -2125,7 +2136,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             auto zBackdrop = g_fc.backdrop();
             if (backdropPlan.drawFaces) {
                 litShader.useProgram(bgModel, vp);
-                litShader.setSurfaces(lyr.mesh.surfaces);
+                litShader.setSurfaces(lyr.meshRef().surfaces);
                 litShader.setDim(backdropPlan.dim);
                 litShader.setLit(backdropPlan.facesLit);
                 litShader.setFillColor(backdropPlan.fillColor);
@@ -2160,8 +2171,10 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         int[] snapSrcLayerIdx;
         if (document.layers.length > 1) {
             foreach (i, lyr; document.layers) {
-                if (Document.background(lyr)) {
-                    snapSrc ~= cast(const(Mesh)*)&lyr.mesh;
+                // Task 0615 Stage 4 (§Tier-2 :2162): a non-mesh layer is not a
+                // snap source.
+                if (Document.background(lyr) && lyr.hasMesh) {
+                    snapSrc ~= cast(const(Mesh)*)&lyr.meshRef();
                     snapSrcLayerIdx ~= cast(int)i;
                 }
             }

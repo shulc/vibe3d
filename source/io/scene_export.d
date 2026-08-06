@@ -522,14 +522,28 @@ private SceneStorage buildDocumentScene(ref const Document doc, double unitScale
     st.material = new aiMaterial;
     st.nameProp = new aiMaterialProperty;
 
-    const size_t n = doc.layers.length;
+    // Task 0615 Stage 4: interchange export has no non-mesh concept (§Scope,
+    // Out of scope) — `n` counts only MESH layers, and both branches below
+    // iterate `doc.meshLayers`, not `doc.layers`, so a non-mesh layer is
+    // silently skipped rather than reaching `meshRef()`. The ≥1-mesh document
+    // invariant (`document.d`, §Q2) guarantees `doc.meshLayers` is never empty
+    // — asserted below rather than left as a comment's claim: an all-non-mesh
+    // document would otherwise fall through into the `n >= 2` branch further
+    // down and silently emit an empty scene instead of failing loudly.
+    // (NIT, review round 3: `front` is not imported here — `FilterResult`
+    // already has it as a member, which wins over the free function in
+    // `std.range`, so importing it would be dead.)
+    import std.range : walkLength;
+    const size_t n = doc.meshLayers.walkLength;
+    assert(n >= 1, "buildDocumentScene: no mesh-kind layers — violates the "
+        ~ "document invariant that at least one always exists (§Q2)");
 
     // --- N == 1: the root-mesh special-case (byte-closest to today). The single
     // layer's xform is identity in practice; if it is NOT, bake it into the root
     // mesh's verts so the root-only shape still carries the transform. ----------
     if (n == 1) {
-        const Layer l = doc.layers[0];
-        MeshPiece piece = buildAiMesh(l.mesh, unitScale, l.name.length ? l.name : "Mesh");
+        const Layer l = doc.meshLayers.front;
+        MeshPiece piece = buildAiMesh(l.meshRef(), unitScale, l.name.length ? l.name : "Mesh");
         // Bake a non-identity single-layer xform into the verts (no child node to
         // carry it). Identity xform leaves verts verbatim (back-compat).
         bakePieceXform(piece, l.xform.composedMatrix(), cast(float) unitScale);
@@ -561,9 +575,12 @@ private SceneStorage buildDocumentScene(ref const Document doc, double unitScale
 
     // --- N >= 2: child-node-per-layer ------------------------------------------
     auto meshPtrs   = appender!(aiMesh*[]);
-    foreach (i, l; doc.layers) {
+    // `meshLayers()` is a plain `filter` InputRange, not an array — a 2-var
+    // `foreach` needs the explicit `.enumerate` wrapper to get an index.
+    import std.range : enumerate;
+    foreach (i, l; doc.meshLayers.enumerate) {
         MeshPiece piece = buildAiMesh(
-            l.mesh, unitScale, l.name.length ? l.name : ("Layer" ~ itoa(i)));
+            l.meshRef(), unitScale, l.name.length ? l.name : ("Layer" ~ itoa(i)));
         st.pieces ~= piece;        // root the backing arrays
         meshPtrs.put(piece.mesh);
 

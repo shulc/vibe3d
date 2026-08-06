@@ -348,7 +348,7 @@ Document toLayers(const ref ImportedScene scene) {
     layers.length = scene.parts.length;
     foreach (pi, ref part; scene.parts) {
         auto l = new Layer;
-        l.mesh       = partToMesh(part);
+        l.meshRef() = partToMesh(part);
         l.name       = part.name.length ? part.name
                                         : "Layer " ~ to!string(pi + 1);
         // Stage 5: visibility rides in from the source format's hidden flag
@@ -356,6 +356,11 @@ Document toLayers(const ref ImportedScene scene) {
         // is decided below by the primary-visible guard, not assumed to be part 0.
         l.visible    = part.visible;
         l.selected   = false;
+        // Task 0615 (§Tier-2 :341-380): every interchange-imported layer is
+        // mesh-kind — `l.kind` is left at its default (`ItemKind.Mesh`), never
+        // set otherwise here. Assert it so a future change to this loop that
+        // starts assigning `kind` cannot silently import a non-mesh layer.
+        assert(l.hasMesh, "toLayers: imported layers are always mesh-kind (task 0615)");
         layers[pi] = l;
     }
 
@@ -420,9 +425,12 @@ Mesh flattenDocument(const ref Document doc) {
     bool     anyUv = false;
 
     uint vertexOffset = 0;
-    foreach (l; doc.layers) {
+    // Task 0615 Stage 4: interchange export has no non-mesh concept — iterate
+    // `doc.meshLayers`, not `doc.layers`, so a non-mesh layer is silently
+    // skipped rather than reaching `meshRef()`.
+    foreach (l; doc.meshLayers) {
         if (!l.visible) continue;
-        const ref Mesh src = l.mesh;
+        const ref Mesh src = l.meshRef();
         const(MeshMap)* srcUv = src.meshMap(kUvMapName);
         const bool layerHasUv = srcUv !is null
             && srcUv.domain == MapDomain.PolyVertex && srcUv.dim == 2;

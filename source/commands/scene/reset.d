@@ -115,13 +115,30 @@ class SceneReset : Command {
         if (document !is null && document.layers.length > 0) {
             prevLayers      = document.layers.dup;   // shallow: Layer refs kept
             prevActiveIndex = document.activeIndex;
-            auto keep       = document.active();     // the layer `mesh` points at
+            // Task 0615 (§R4): explicitly `document.primary`, not
+            // `document.active()` — this is the MESH EDIT TARGET the fire-time
+            // `mesh` pointer aliases and the `*mesh = …` write below lands in
+            // (today the two are the same object, but the name says which role
+            // this is; `focusedItem` would be the wrong pointer to survive a
+            // reset targeting the edit surface).
+            auto keep       = document.primary;
             keptPrevName       = keep.name;
             keptPrevVisible    = keep.visible;
             keptPrevXform      = keep.xform;
             keptPrevParent     = keep.parent;
             keep.name       = "Layer 1";
             keep.visible    = true;
+            // Task 0615 (review round 3, S1): deliberately NOT writing
+            // `keep.kind` here. `keep` is `document.primary`, which the
+            // document invariant (§Q2) guarantees is always mesh-kind — so a
+            // `keep.kind = ItemKind.Mesh` write here is provably a no-op
+            // today. It is also UNSNAPSHOTTED, unlike its four siblings
+            // above/below: an undoable command that writes state it cannot
+            // restore is a defect waiting for the one state that makes the
+            // write non-trivial — a non-mesh primary — which is exactly the
+            // state Stage 6+ (not started; out of scope here) would have to
+            // define the semantics for. Adding snapshot/restore now would be
+            // building undo support for a state this task must not create.
             // Channels P4: reset clears the per-item transform back to identity
             // (render-only field — vertices are untouched either way).
             keep.xform      = ItemXform.init;

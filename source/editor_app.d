@@ -411,7 +411,10 @@ ItemSnapFrame buildItemFrame(Layer lyr)
     Vec3 mn = Vec3( float.infinity,  float.infinity,  float.infinity);
     Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
     bool seen = false;
-    foreach (v; lyr.mesh.vertices) {
+    // Task 0615 Stage 4: a non-mesh item has no vertices to bound — `meshOrNull`
+    // is null and the loop below simply never runs, so `seen` stays false and
+    // `hasBBox` comes out false while `pivot` (set above) is still meaningful.
+    if (auto mp = lyr.meshOrNull) foreach (v; mp.vertices) {
         if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
         if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
         if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
