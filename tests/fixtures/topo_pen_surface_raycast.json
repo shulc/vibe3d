@@ -5,7 +5,7 @@
     "schema": 1,
     "source": "analytic",
     "reference": "analytic",
-    "method": "hand + independent Python re-derivation",
+    "method": "closed-form",
     "captured_utc": "unknown",
     "harness": null,
     "task": "topopen-p0-p2",

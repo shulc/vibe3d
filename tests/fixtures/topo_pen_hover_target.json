@@ -5,7 +5,7 @@
     "schema": 1,
     "source": "analytic",
     "reference": "analytic",
-    "method": "hand + independent Python re-derivation of math.d/view.d (sphericalToCartesian, lookAt, perspectiveMatrix, projectToWindowFull)",
+    "method": "closed-form",
     "captured_utc": "unknown",
     "harness": null,
     "task": "topopen-p1-p2",

@@ -4,9 +4,9 @@
   "source": "live reference-editor capture, task 0395 (private capture harness, task 0395, worker_id=31)",
   "provenance": {
     "schema": 1,
-    "source": "live",
-    "reference": "reference-editor headless capture",
-    "method": "live-capture",
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "self-drive",
     "captured_utc": "2026-07-14",
     "harness": "atlas capture (private harness, task 0395)",
     "task": "0395",
