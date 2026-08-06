@@ -453,7 +453,14 @@ bool readV3d(string path, ref Document document)
         // Re-assert the selection-set invariants via the Stage-0/2a mutators
         // (never by writing raw fields). Start from a clean baseline: the
         // primary is the edit target AND the single member of the set
-        // (setActive enforces exactly-one-selected + primary selected+visible).
+        // (setActive enforces primary selected+visible; task 0615 NIT,
+        // review round 2 — it no longer enforces exactly-one-selected in
+        // general: naming a non-mesh `primaryIndex` here leaves the selected
+        // set at exactly TWO, {that layer, the still-selected mesh primary}
+        // — see document.d's exclusiveSelect/§L2. `parsed[primaryIndex]`
+        // is still resolved to a mesh-kind layer by construction as of this
+        // stage, so that case does not fire here yet; it is the exposure
+        // L3/Stage 8 must close).
         document.setActive(primaryIndex);
         // Force the primary visible if the file marked it hidden (an
         // inconsistent file can't leave the edit target invisible).
