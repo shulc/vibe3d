@@ -352,16 +352,31 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                      ~ ` has no mesh (kind ` ~ tokenOf(lyr.kind) ~ `)"}`;
             return meshToDetailedJson(lyr.meshRef());
         });
-        // GET /api/layers — index/name/visible/background/active + per-layer
+        // GET /api/layers — index/name/type/visible/background/active + per-layer
         // vertex & face counts + the per-layer mutationVersion (a read-only
         // diagnostic the Stage-6 cross-layer-undo torture test reads to confirm
         // two identical layers genuinely share a version — the cache-key
         // collision precondition the address-augmented keys defend against).
+        // Task 0615 Stage 9: "type" (the wire token, e.g. "mesh"/"empty") and
+        // "focused" (item-selection focus, distinct from "primary" — the mesh
+        // edit target — once a non-mesh item is selected) close the gap that
+        // forced every test in this task to reach for an in-module unittest
+        // instead of the HTTP surface. "vertexCount"/"faceCount"/
+        // "mutationVersion" are JSON `null` exactly when "type" is not
+        // "mesh" — never `0`, which is a legal empty MESH and must stay
+        // distinguishable from "no mesh at all" to an HTTP-only caller.
+        //
+        // NAMING ASYMMETRY (intentional, review round): this read surface —
+        // and /api/selection's `items[]`, same shape — reports the kind as
+        // "type". The test-only write route, POST /api/test/layer (below,
+        // testMode-gated), takes it as "kind" instead. The two are not
+        // meant to be copy-pasted between; a client author reading only one
+        // of them should not assume the other's field name.
         httpServer.setLayersDataProvider(() {
             import std.array  : appender;
             import std.format : format;
             import std.json   : JSONValue;
-            import document   : Document;   // Document.background (derived, 2b)
+            import document   : Document, tokenOf;   // Document.background (derived, 2b)
             auto a = appender!string();
             a.put(format(`{"active":%d,"layers":[`, document.activeIndex));
             foreach (i, l; document.layers) {
@@ -398,32 +413,32 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                     foreach (pi, pl; document.layers)
                         if (pl is l.parent) { parentIdx = cast(int)pi; break; }
                 }
-                // Task 0615 Stage 7: a non-mesh layer has no `meshRef()` to
-                // read — calling it unconditionally (as this loop did before
-                // a mixed document was reachable) would trip its `debug`
-                // assert. Report 0 counts / version rather than crash; the
-                // fuller Stage 9 shape (a `"type"` field so a client can
-                // distinguish "0 counts, no mesh" from "0 counts, a genuinely
-                // empty mesh") is out of scope for this slice.
-                size_t vCount = 0, fCount = 0;
-                ulong  mVer   = 0;
+                // Task 0615 Stage 7 fixed the crash (a non-mesh layer has no
+                // `meshRef()` to dereference unconditionally — it trips the
+                // `debug` assert in `meshRef()`). Stage 9 fixes the SHAPE:
+                // the three counters are JSON `null` for a non-mesh layer,
+                // not `0` — `0` is a legal empty mesh and the two must stay
+                // distinguishable to a caller that only has this response.
+                string vcJson = "null", fcJson = "null", mvJson = "null";
                 if (l.hasMesh) {
-                    vCount = l.meshRef().vertices.length;
-                    fCount = l.meshRef().faces.length;
-                    mVer   = cast(ulong) l.meshRef().mutationVersion;
+                    vcJson = l.meshRef().vertices.length.to!string;
+                    fcJson = l.meshRef().faces.length.to!string;
+                    mvJson = (cast(ulong) l.meshRef().mutationVersion).to!string;
                 }
                 a.put(format(
-                    `{"index":%d,"name":%s,"visible":%s,"background":%s,` ~
-                    `"active":%s,"selected":%s,"primary":%s,` ~
-                    `"vertexCount":%d,"faceCount":%d,` ~
-                    `"mutationVersion":%d,"xform":%s,"parent":%d}`,
+                    `{"index":%d,"name":%s,"type":%s,"visible":%s,"background":%s,` ~
+                    `"active":%s,"selected":%s,"primary":%s,"focused":%s,` ~
+                    `"vertexCount":%s,"faceCount":%s,` ~
+                    `"mutationVersion":%s,"xform":%s,"parent":%d}`,
                     i, JSONValue(l.name).toString(),
+                    JSONValue(tokenOf(l.kind)).toString(),
                     l.visible ? "true" : "false",
                     Document.background(l) ? "true" : "false",
                     i == document.activeIndex ? "true" : "false",
                     l.selected ? "true" : "false",
                     document.isPrimary(l) ? "true" : "false",
-                    vCount, fCount, mVer, xb.data, parentIdx));
+                    document.isFocused(l) ? "true" : "false",
+                    vcJson, fcJson, mvJson, xb.data, parentIdx));
             }
             a.put("]}");
             return a.data;
@@ -872,10 +887,12 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             // ordering — lowercase singular token (vertex/edge/polygon/item),
             // matching the geometry payload's vocabulary. `selTypeOrder` is the
             // full most-recent-first ordering (front == current); `items` is the
-            // item (layer) selection view — one `{selected,primary}` entry per
-            // layer, in layer order. These are the Stage 4 final shapes; the
+            // item (layer) selection view — one `{selected,primary,type,focused}`
+            // entry per layer, in layer order. These are the Stage 4 final
+            // shapes plus the Stage 9 `type`/`focused` additions; the
             // geometry-selection arrays are unchanged.
             import std.json : JSONValue;
+            import document : tokenOf;
             JSONValue[] orderArr;
             foreach (t; selTypeOrder.order)
                 orderArr ~= JSONValue(selTypeToken(t));
@@ -884,6 +901,8 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 auto item = JSONValue.emptyObject;
                 item["selected"] = JSONValue(l.selected);
                 item["primary"]  = JSONValue(document.isPrimary(l));
+                item["type"]     = JSONValue(tokenOf(l.kind));
+                item["focused"]  = JSONValue(document.isFocused(l));
                 itemsArr ~= item;
             }
             JSONValue selectedIndices(bool[] sel) {

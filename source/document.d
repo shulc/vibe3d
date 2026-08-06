@@ -318,6 +318,11 @@ struct Document {
     /// True iff `l` is the primary (the single edit target).
     bool isPrimary(const(Layer) l) const { return l is primary; }
 
+    /// True iff `l` holds the item-selection focus. Distinct from `isPrimary`
+    /// only once a non-mesh item is selected (task 0615, §Q2) — on an
+    /// all-mesh document `focusedItem is primary` always, so the two agree.
+    bool isFocused(const(Layer) l) const { return l is focusedItem; }
+
     /// Lazy range over just the mesh-kind layers — for "iterate the meshes"
     /// consumers that must not see a non-mesh layer (task 0615, R1 mitigation
     /// #1). A `std.algorithm.filter` over the slice, NOT `.array` — this is
@@ -673,6 +678,8 @@ unittest {
     foreach (l; doc.layers) if (l.selected) ++selCount;
     assert(selCount == 1, "exactly one layer selected (SET-of-one)");
     assert(doc.isPrimary(doc.active()), "isPrimary(active) is true");
+    assert(doc.isFocused(doc.focusedItem), "isFocused(focusedItem) is true");
+    assert(doc.isFocused(doc.active()), "on an all-mesh document, focus == primary");
 }
 
 unittest {
@@ -875,6 +882,14 @@ unittest {  // S3: selectItem(Remove) must re-home focus ONLY when the
     doc.selectItem(empty, SelMode.Add);        // + empty selected; focus->empty, primary stays meshA
     assertDocInvariants(doc);
     assert(doc.primary is meshA && doc.focusedItem is empty && meshB.selected);
+    // Discriminating check for `isFocused` (review round): the bootstrap
+    // unittest's `isFocused` checks pass even if the predicate were
+    // mis-written to compare against the edit target (`primary`/`active()`)
+    // instead of `focusedItem`, because on an all-mesh document the two
+    // coincide. Here they deliberately do NOT: meshA is primary but must NOT
+    // be focused, empty holds focus but is NOT primary.
+    assert(!doc.isFocused(meshA), "isFocused: the mesh primary is not the focus here");
+    assert(doc.isFocused(empty),  "isFocused: the non-mesh item holds the focus here");
 
     doc.selectItem(meshB, SelMode.Remove);     // remove meshB: neither primary(meshA) nor focus(empty)
     assertDocInvariants(doc);

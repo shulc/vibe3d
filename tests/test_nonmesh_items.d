@@ -1,8 +1,10 @@
-// Task 0615 Stages 6/7 — non-mesh item types: the layer lifecycle commands
+// Task 0615 Stages 6/7/9 — non-mesh item types: the layer lifecycle commands
 // and the layer list panel behave correctly WHEN a non-mesh ("empty") item
-// is present in the document, and a live MIXED document survives every
+// is present in the document, a live MIXED document survives every
 // layer.*/mesh.* command (+ undo/redo), scene.reset, and the per-frame draw
-// loop without a missed-publisher warning.
+// loop without a missed-publisher warning, and the HTTP surface (Stage 9)
+// reports the kind and the focus/primary distinction directly instead of
+// forcing every caller to infer them behaviorally.
 //
 // Stage 6 was deliberately re-scoped: the `.v3d` format cannot yet persist a
 // non-mesh item (that work moved to task 0616), so THIS SLICE ships the
@@ -12,19 +14,23 @@
 // (source/http_server.d + source/http_providers.d), which bypasses the
 // Command/undo system entirely (it is scaffolding, not a document edit).
 //
-// Spec cases (plan §Stage 6 validation + §Stage 7):
-//   - the injected layer shows up in /api/layers, deselected, non-primary.
+// Spec cases (plan §Stage 6 validation + §Stage 7 + §Stage 9):
+//   - the injected layer shows up in /api/layers, deselected, non-primary,
+//     reporting "type":"empty" with null vertexCount/faceCount/mutationVersion
+//     (not 0 — 0 is a legal empty MESH and the two must stay distinguishable).
 //   - selecting it moves item FOCUS, never the mesh PRIMARY (§L2): the
-//     selected set becomes exactly {target} ∪ {primary-after}, and the mesh
-//     primary is never reclassified background.
+//     selected set becomes exactly {target} ∪ {primary-after}, the mesh
+//     primary is never reclassified background, and /api/layers +
+//     /api/selection both report "focused" distinctly from "primary".
 //   - a mesh.* command still edits the mesh primary while the non-mesh item
 //     is focused.
-//   - /api/model?layer=N on the non-mesh layer reports an explicit error,
-//     not a silent empty mesh.
+//   - /api/model?layer=N on the non-mesh layer reports an explicit error
+//     naming the kind, not a silent empty mesh.
 //   - deleting the LAST layer that can be the mesh edit target is refused,
 //     even when the document has more than one layer left (§L1).
-//   - deleting the non-mesh layer succeeds; undo restores it (kind included,
-//     verified BEHAVIORALLY — no `"type"` field is reported in this slice).
+//   - deleting the non-mesh layer succeeds; undo restores it, kind included —
+//     directly asserted via "type" on /api/layers (Stage 9), plus the
+//     original Stage 6/7 behavioral checks (still-refuses-primary, still-no-mesh).
 //   - cross-command ordering the unit tests cannot reach: delete the primary
 //     while the non-mesh item is focused; reorder it above the primary then
 //     delete the primary; hide the primary when the only other selected
@@ -34,9 +40,10 @@
 
 import std.net.curl;
 import std.json;
-import std.conv    : to;
-import core.thread : Thread;
-import core.time   : msecs;
+import std.conv       : to;
+import std.algorithm  : canFind;
+import core.thread    : Thread;
+import core.time      : msecs;
 
 void main() {}
 
@@ -139,6 +146,20 @@ unittest {
     assert(ls[1]["selected"].type == JSONType.false_, "injected layer starts deselected");
     assert(ls[1]["primary"].type == JSONType.false_, "injected layer starts non-primary");
     assert(ls[0]["primary"].type == JSONType.true_, "A is still primary");
+
+    // Stage 9: /api/layers reports the kind directly, and the three mesh
+    // counters are JSON null (not 0) for a non-mesh layer — 0 is a legal
+    // empty mesh, so the two must stay distinguishable to an HTTP-only caller.
+    assert(ls[0]["type"].str == "mesh", "A reports type:\"mesh\"");
+    assert(ls[1]["type"].str == "empty", "E reports type:\"empty\"");
+    assert(ls[2]["type"].str == "mesh", "B reports type:\"mesh\"");
+    assert(ls[1]["vertexCount"].type == JSONType.null_,
+        "a non-mesh layer's vertexCount is null, not 0");
+    assert(ls[1]["faceCount"].type == JSONType.null_,
+        "a non-mesh layer's faceCount is null, not 0");
+    assert(ls[1]["mutationVersion"].type == JSONType.null_,
+        "a non-mesh layer's mutationVersion is null, not 0");
+    assert(ls[0]["vertexCount"].integer == 8, "A (a cube) reports a real vertexCount");
 }
 
 unittest {
@@ -172,9 +193,23 @@ unittest {
     foreach (l; ls) if (l["selected"].type == JSONType.true_) ++selCount;
     assert(selCount == 2, "§L2: selected set == {target} ∪ {primary-after}, size 2");
 
+    // Stage 9: /api/layers now reports "focused" distinctly from "primary" —
+    // E holds the focus, A stays the mesh edit target, and the two disagree.
+    assert(ls[0]["focused"].type == JSONType.false_,  "§L2: A holds primary but not focus");
+    assert(ls[1]["focused"].type == JSONType.true_,   "§L2: E holds focus but not primary");
+
     // selType promotes to "item" (SelType.Item is kind-agnostic).
     assert(getSelection()["selType"].str == "item",
         "selecting a layer (of any kind) promotes SelType.Item");
+
+    // Stage 9: /api/selection's items array carries the same "type"/"focused"
+    // pair as /api/layers, independently derived — the two surfaces must agree.
+    auto selItems = getSelection()["items"].array;
+    assert(selItems[0]["type"].str == "mesh" && selItems[1]["type"].str == "empty",
+        "/api/selection reports type per item, same as /api/layers");
+    assert(selItems[0]["focused"].type == JSONType.false_
+        && selItems[1]["focused"].type == JSONType.true_,
+        "/api/selection reports focused per item, same as /api/layers");
 
     // A mesh.* command still edits the mesh PRIMARY (A), unaffected by a
     // non-mesh item holding focus.
@@ -184,11 +219,18 @@ unittest {
         if (approx(v.array[0].floating, 3.0)) moved = true;
     assert(moved, "mesh.* still edits the mesh primary A while E is focused");
 
-    // /api/model?layer=1 (the non-mesh layer) reports an explicit error, not
-    // a silent empty mesh (task 0615 Stage 7 crash-prevention guard).
+    // /api/model?layer=1 (the non-mesh layer) reports an explicit error
+    // naming the kind, not a silent empty mesh. The error string itself
+    // (`"... has no mesh (kind " ~ tokenOf(lyr.kind) ~ ")"`) is Stage 7's
+    // crash-prevention guard, unchanged by Stage 9 — this assertion is a
+    // regression PIN for that pre-existing body, not new Stage-9 coverage
+    // (review round: the earlier comment here overstated it as a Stage 9
+    // requirement, but it is green with this diff reverted).
     auto e = getJson("/api/model?layer=1");
     assert("error" in e,
         "a non-mesh layer's /api/model reports an explicit error, not a silent empty mesh");
+    assert(e["error"].str.canFind("empty"),
+        "the error body names the kind (\"empty\"), not just \"no mesh\"");
 }
 
 // ---------------------------------------------------------------------------
@@ -216,10 +258,11 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Stage 6 — undo/redo of a delete restores the kind. No `"type"` field is
-// reported over HTTP in this slice (Stage 9 is out of scope), so this is
-// verified BEHAVIORALLY: the restored layer still refuses to become primary,
-// and /api/model on it still reports "no mesh".
+// Stage 6/9 — undo/redo of a delete restores the kind. Stage 9 added a
+// `"type"` field to /api/layers, so this is now asserted DIRECTLY rather
+// than only behaviorally; the original behavioral checks (still-refuses-
+// primary, /api/model still reports "no mesh") are kept as an independent
+// second proof that the two surfaces agree.
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -233,18 +276,23 @@ unittest {
     assert(layerCount() == 3, "undo restores the deleted layer");
     assert(getLayers()["layers"].array[1]["name"].str == "E",
         "the restored layer is E, back at its original slot");
+    assert(getLayers()["layers"].array[1]["type"].str == "empty",
+        "the restored layer's kind survived undo, asserted directly via \"type\"");
 
     // Redo BEFORE dispatching any other command — a fresh command clears the
     // redo stack, so the redo check must come first.
     redoOk("redo the delete of E");
     assert(layerCount() == 2, "redo removes E again");
 
-    // Undo once more, then verify the restored layer's KIND survived
-    // BEHAVIORALLY: it still refuses to become primary, and /api/model on
-    // it still reports "no mesh". Dispatching `layer.select` here is fine —
-    // this test is done exercising undo/redo of the delete entry itself.
+    // Undo once more, then verify the restored layer's KIND survived both
+    // DIRECTLY ("type") and BEHAVIORALLY: it still refuses to become
+    // primary, and /api/model on it still reports "no mesh". Dispatching
+    // `layer.select` here is fine — this test is done exercising undo/redo
+    // of the delete entry itself.
     undoOk("restore E again for the kind-survival check");
     assert(layerCount() == 3);
+    assert(getLayers()["layers"].array[1]["type"].str == "empty",
+        "kind survived a second undo round-trip");
 
     auto primaryBefore = activeLayer();
     cmd("layer.select index:1 mode:set");   // try to make the restored E primary
@@ -252,6 +300,40 @@ unittest {
         "the restored layer is still non-mesh: selecting it never moves primary");
     auto e = getJson("/api/model?layer=1");
     assert("error" in e, "the restored layer still reports no mesh — kind survived undo");
+}
+
+// ---------------------------------------------------------------------------
+// Stage 9 review finding — accepted pre-existing gap, pinned rather than
+// fixed: undoing the deletion of a FOCUSED non-mesh item does not restore
+// focus to it. `LayerDelete` (source/commands/layer/commands.d) only
+// snapshots `prevPrimary` (the mesh edit target), never `focusedItem`; its
+// `revert()` re-lands on the primary via `doc.setPrimary`/`doc.setActive`,
+// both of which unconditionally write `focusedItem` as part of their
+// contract (document.d). This predates task 0615 — `LayerDelete` never
+// tracked focus — but Stage 9's "focused" field is what makes it observable
+// over HTTP, and the undo/redo test above only pins "type" surviving, not
+// "focused". Pinned here so a future change to this behaviour is a
+// deliberate, reviewed decision, not an accidental drift.
+// ---------------------------------------------------------------------------
+
+unittest {
+    mixedDoc();                             // [A, E, B]; A primary+focus
+    cmd("layer.select index:1 mode:set");   // E becomes focus; A stays primary
+    assert(getLayers()["layers"].array[1]["focused"].type == JSONType.true_,
+        "E holds focus before the delete");
+    clearHistory();
+
+    cmd("layer.delete index:1");            // delete the FOCUSED item E
+    assert(layerCount() == 2, "E deleted");           // [A, B]
+
+    undoOk("restore the deleted, previously-focused non-mesh layer");
+    assert(layerCount() == 3, "undo restores E");
+    auto ls = getLayers()["layers"].array;
+    assert(ls[1]["name"].str == "E", "E is back at its original slot");
+    assert(ls[0]["focused"].type == JSONType.true_,
+        "ACCEPTED GAP: focus lands back on the mesh primary A, not on the restored E");
+    assert(ls[1]["focused"].type == JSONType.false_,
+        "ACCEPTED GAP: the restored E does not recover the focus it held before the delete");
 }
 
 // ---------------------------------------------------------------------------
