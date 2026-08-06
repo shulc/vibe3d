@@ -284,15 +284,45 @@ private bool xformToJson(ref const ItemXform x, out JSONValue xj)
 /// persists its item transform as an OPTIONAL grouped `xform` block (omitted
 /// when all-default — see `xformToJson`). Each layer's `mesh` sub-object goes
 /// through the shared `meshToJson` codec.
-void writeV3d(ref const Document document, string path)
+///
+/// Returns `true` when every layer in `document.layers` was written, `false`
+/// when at least one non-mesh layer was SKIPPED (task 0615 Stage 6/7 review
+/// round 2, should-fix 4). The file is still written successfully in the
+/// `false` case — with whatever layers v7 CAN represent — but the on-disk
+/// document no longer matches the in-memory one. A caller that tracks a
+/// dirty/clean flag (`commands/file/save.d`'s `FileSave`) must not treat a
+/// `false` return as "saved clean".
+bool writeV3d(ref const Document document, string path)
 {
     JSONValue doc;
     doc["formatVersion"] = JSONValue(kV3dFormatVersion);
-    doc["primaryLayer"]  = JSONValue(cast(long) document.activeIndex);
 
+    // Task 0615 (Stage 7 finding): v7 has no representation for a non-mesh
+    // item — Stage 8/v8 (which would add a `"type"` token) is deferred to
+    // task 0616 by owner decision (doc/nonmesh_item_types_plan.md). A
+    // non-mesh layer only exists via this task's Stage 6/7 test-injection
+    // path in this slice (no UI/command surface can create one), but the
+    // WRITER must not crash if the live document holds one anyway —
+    // `layer.meshRef()`'s `debug` assert would fire, exactly the crash
+    // Stage 7's live mixed-document sweep hit. Skip the layer entirely
+    // rather than write a `"mesh"`-less entry: the READER's own guard
+    // (below, "mesh required") rejects the WHOLE file over one such entry,
+    // which is worse than simply omitting the layer. `primaryLayer` is
+    // written relative to THIS SAME filtered sequence, not the original
+    // layer indices — otherwise a non-mesh layer positioned before the
+    // primary would silently shift which layer loads back as primary.
+    size_t primaryIdxOut = 0;
+    bool skippedAny = false;
     JSONValue[] layers;
     layers.reserve(document.layers.length);
     foreach (ref const layer; document.layers) {
+        if (!layer.hasMesh) {
+            v3dWarn("skipping non-mesh layer \"" ~ layer.name
+                ~ "\" — v7 cannot represent it (see task 0616)");
+            skippedAny = true;
+            continue;
+        }
+        if (layer is document.primary) primaryIdxOut = layers.length;
         JSONValue lj;
         lj["name"]     = JSONValue(layer.name);
         lj["visible"]  = JSONValue(layer.visible);
@@ -307,11 +337,13 @@ void writeV3d(ref const Document document, string path)
         lj["mesh"]     = meshToJson(layer.meshRef());
         layers ~= lj;
     }
+    doc["primaryLayer"] = JSONValue(cast(long) primaryIdxOut);
     doc["layers"] = JSONValue(layers);
 
     // toPrettyString keeps the document human-readable + diff-able, matching
     // the format's design goal (source of truth, reviewable in git).
     write(path, doc.toPrettyString());
+    return !skippedAny;
 }
 
 // ---------------------------------------------------------------------------
@@ -885,4 +917,72 @@ float jsonFloat(const JSONValue v)
         case JSONType.uinteger:  return cast(float) v.uinteger;
         default:                 return 0.0f;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Task 0615 Stage 7 (finding): `writeV3d(ref const Document, string)` used to
+// call `layer.meshRef()` unconditionally for EVERY layer — v7 has no
+// `"type"` concept at all, so nothing gated that call. Once a non-mesh layer
+// became constructible (Stages 1-6), that was a live crash: `meshRef()`'s
+// `debug` assert fires on a non-mesh layer, and the Stage 7 mixed-document
+// sweep hit it via a plain File > Save. The fix skips non-mesh layers (with
+// a warning) and recomputes `primaryLayer` relative to the FILTERED
+// sequence actually written, not the original layer indices — this
+// in-module test pins both halves: no crash, and a non-mesh layer sitting
+// BEFORE the primary in `document.layers` must not shift which layer loads
+// back as primary.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.file   : tempDir, remove, exists;
+    import std.path   : buildPath;
+    import std.format : format;
+    import std.random : uniform;
+    import mesh        : makeCube;
+    import document     : ItemKind;
+
+    auto path = buildPath(tempDir(),
+        format("vibe3d_native_ut_%d.v3d", uniform(0, int.max)));
+    scope(exit) if (exists(path)) remove(path);
+
+    // [Empty(non-mesh), MeshA(primary), MeshB] — the primary sits BEFORE
+    // another mesh layer, not at the end of `document.layers` (task 0615
+    // Stage 6/7 review round 2, should-fix 3). With the primary LAST (the
+    // original fixture here), the READER's out-of-range clamp
+    // (`primaryIndex` clamped into `[0, parsed.length-1]`, above) happens to
+    // land on the right layer even under the UNFIXED writer — which wrote
+    // the raw, pre-filter `document.activeIndex` (2) — because clamping 2
+    // into the filtered 2-entry range also yields 1. That fixture could not
+    // tell the fixed writer from the buggy one. Here the buggy write (raw
+    // index 1, already in-range for a 2-entry output — no clamp kicks in)
+    // loads MeshB; the fixed write (index 0, relative to the FILTERED
+    // output) loads MeshA. RED before the fix, GREEN after.
+    auto doc = Document.bootstrap(makeCube());     // "Layer 1" == MeshA
+    auto meshA = doc.layers[0];
+    auto empty = new Layer; empty.name = "Empty"; empty.kind = ItemKind.Empty;
+    auto meshB = new Layer; meshB.name = "MeshB"; meshB.meshRef() = makeCube();
+    doc.layers = [empty, meshA, meshB];
+    doc.setActive(1);                              // MeshA stays primary (index 1)
+    assert(doc.primary is meshA);
+
+    // Writing must not crash (the `debug` assert this used to trip). It must
+    // also report the skip via its return value (should-fix 4) — a caller
+    // that gates a dirty/clean flag on this return must see `false` here.
+    assert(!writeV3d(doc, path),
+        "writeV3d must report false: the Empty layer was skipped");
+
+    // Round-trip: the reader only ever produces mesh-kind layers (v7 has no
+    // `"type"`), so the loaded document has exactly the two MESH layers, in
+    // their relative order, and the primary is correctly MeshA — NOT
+    // shifted onto MeshB by the dropped Empty layer.
+    Document loaded;
+    assert(readV3d(path, loaded), "round-trip load must succeed");
+    assert(loaded.layers.length == 2,
+        "the non-mesh layer is dropped; only the 2 mesh layers survive");
+    assert(loaded.layers[0].name == "Layer 1", "MeshA kept its bootstrap name");
+    assert(loaded.layers[1].name == "MeshB");
+    assert(loaded.primary is loaded.layers[0],
+        "primaryLayer must be written relative to the FILTERED sequence — "
+        ~ "MeshA is output index 0, not its original index 1 (the unfixed "
+        ~ "writer would have emitted the raw index 1 and loaded MeshB instead)");
+    assert(loaded.primary.hasMesh);
 }

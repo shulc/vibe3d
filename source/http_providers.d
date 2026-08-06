@@ -334,9 +334,23 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         // /api/model?layer=N — N<0 (default) → active layer; otherwise clamp
         // into range. Same detailed JSON shape, just a different source layer.
         httpServer.setLayerModelProvider((int layer) {
+            import document : tokenOf;
             size_t idx = layer < 0 ? document.activeIndex : cast(size_t)layer;
             if (idx >= document.layers.length) idx = document.layers.length - 1;
-            return meshToDetailedJson(document.layers[idx].meshRef());
+            auto lyr = document.layers[idx];
+            // Task 0615 Stage 7: a non-mesh layer has no `meshRef()` to hand
+            // out — calling it unconditionally would trip its `debug` assert
+            // (a live mixed document is now reachable via the Stage 6/7 test
+            // injector, so this is a real crash the sweep hit, not a
+            // hypothetical). Report the kind explicitly instead of a silent
+            // empty mesh — the fuller Stage 9 HTTP-surface shape (a `"type"`
+            // on every /api/layers row, etc.) is out of scope for this
+            // slice; this is the minimal guard needed so a mixed-document
+            // test does not crash the app.
+            if (!lyr.hasMesh)
+                return `{"error":"layer ` ~ idx.to!string
+                     ~ ` has no mesh (kind ` ~ tokenOf(lyr.kind) ~ `)"}`;
+            return meshToDetailedJson(lyr.meshRef());
         });
         // GET /api/layers — index/name/visible/background/active + per-layer
         // vertex & face counts + the per-layer mutationVersion (a read-only
@@ -384,6 +398,20 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                     foreach (pi, pl; document.layers)
                         if (pl is l.parent) { parentIdx = cast(int)pi; break; }
                 }
+                // Task 0615 Stage 7: a non-mesh layer has no `meshRef()` to
+                // read — calling it unconditionally (as this loop did before
+                // a mixed document was reachable) would trip its `debug`
+                // assert. Report 0 counts / version rather than crash; the
+                // fuller Stage 9 shape (a `"type"` field so a client can
+                // distinguish "0 counts, no mesh" from "0 counts, a genuinely
+                // empty mesh") is out of scope for this slice.
+                size_t vCount = 0, fCount = 0;
+                ulong  mVer   = 0;
+                if (l.hasMesh) {
+                    vCount = l.meshRef().vertices.length;
+                    fCount = l.meshRef().faces.length;
+                    mVer   = cast(ulong) l.meshRef().mutationVersion;
+                }
                 a.put(format(
                     `{"index":%d,"name":%s,"visible":%s,"background":%s,` ~
                     `"active":%s,"selected":%s,"primary":%s,` ~
@@ -395,8 +423,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                     i == document.activeIndex ? "true" : "false",
                     l.selected ? "true" : "false",
                     document.isPrimary(l) ? "true" : "false",
-                    l.meshRef().vertices.length, l.meshRef().faces.length,
-                    cast(ulong)l.meshRef().mutationVersion, xb.data, parentIdx));
+                    vCount, fCount, mVer, xb.data, parentIdx));
             }
             a.put("]}");
             return a.data;
@@ -2712,5 +2739,72 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 throw new Exception("scene.loadMesh did not apply");
             history.record(cmd);
         });
+
+        // Test-only layer injection (POST /api/test/layer) — task 0615
+        // Stage 6/7. Appends (or inserts) a new `Layer` of the requested
+        // `kind` DIRECTLY into `document.layers`, bypassing the Command/undo
+        // system entirely: this is scaffolding for a test to build a mixed
+        // (non-mesh) document, not a document edit a user should be able to
+        // undo/redo. It never selects, focuses, or primaries the new layer —
+        // a test drives that afterward through the normal `layer.*`
+        // commands, so the resulting state is exactly what a real command
+        // sequence would produce, not a hand-special-cased shortcut. See
+        // http_server.d's `injectLayerHandler` field doc comment for why
+        // this is the ONLY source of a non-mesh item in this slice.
+        //
+        // Blocker fix (review round 2): the ROUTE is gated on `testMode` in
+        // http_server.d (mirroring /api/changes / /api/play-events), which
+        // is the load-bearing fix — but the handler itself is also only
+        // INSTALLED under `--test` here, belt-and-suspenders, so a release
+        // build never even wires a delegate capable of splicing an
+        // undo-invisible layer into the live document.
+        if (command.g_testMode) {
+        httpServer.setInjectLayerHandler((JSONValue params) {
+            import document : ItemKind, kindFromToken;
+            import std.conv : to;
+
+            if ("kind" !in params || params["kind"].type != JSONType.string)
+                throw new Exception("missing 'kind' string field");
+            ItemKind k;
+            if (!kindFromToken(params["kind"].str, k))
+                throw new Exception("unknown layer kind '" ~ params["kind"].str ~ "'");
+
+            auto l = new Layer;
+            l.kind    = k;
+            l.name    = ("name" in params && params["name"].type == JSONType.string)
+                ? params["name"].str
+                : ("Layer " ~ to!string(document.layers.length + 1));
+            l.visible = true;
+            // Deliberately left deselected/unfocused/non-primary — see the
+            // doc comment above.
+
+            // NIT (task 0615 review round 2): a malformed 'index' used to be
+            // silently downgraded to an append (out-of-range value, wrong
+            // JSON type, negative — all fell through unchanged), while
+            // 'kind' errors properly above. Reject the same way 'kind' does:
+            // a test that typo'd its index gets a loud failure, not a
+            // layer landing somewhere it didn't ask for.
+            size_t insertAt = document.layers.length;
+            if (auto ip = "index" in params) {
+                if (ip.type != JSONType.integer && ip.type != JSONType.uinteger)
+                    throw new Exception("'index' must be an integer");
+                long raw = ip.type == JSONType.integer
+                    ? ip.integer : cast(long)ip.uinteger;
+                if (raw < 0 || cast(size_t)raw > document.layers.length)
+                    throw new Exception("'index' out of range");
+                insertAt = cast(size_t)raw;
+            }
+            document.layers = document.layers[0 .. insertAt] ~ l
+                                                             ~ document.layers[insertAt .. $];
+            // Structural kind, matching what a real `layer.add`-style
+            // mutation would publish — keeps `/api/changes`'
+            // missedPublishers count meaningful even though this bypasses
+            // the command system (a non-mesh layer never advances a
+            // mutationVersion, so it cannot itself trip that counter either
+            // way; this is purely for the layer-list-changed signal).
+            import change_bus : noteLayerChange, LayerChange;
+            noteLayerChange(LayerChange.Added);
+        });
+        }
     }
 }

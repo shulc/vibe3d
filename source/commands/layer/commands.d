@@ -27,7 +27,7 @@ import mesh;
 import view;
 import editmode;
 import params : Param, paramToJson, injectParamsInto;
-import document : Document, Layer, ItemKind;
+import document : Document, Layer, ItemKind, kindInfo;
 import layer_params : LayerPropsProvider;
 import seltype : SelMode, selModeFromToken;
 import change_bus : MeshChangeAll, noteLayerChange, LayerChange,
@@ -257,8 +257,15 @@ final class LayerDuplicate : LayerCommandBase {
             auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
             l.selected  = wasSel;
         }
-        if (prevPrimary !is null) doc.setPrimary(prevPrimary);
-        else                      doc.setActive(prevActiveIndex);
+        if (prevPrimary !is null) {
+            // R5 (task 0615): `prevPrimary` was `doc.primary` at snapshot
+            // time, so it is always `canBePrimary` — see LayerDelete.revert.
+            debug assert(kindInfo(prevPrimary.kind).canBePrimary,
+                "LayerDuplicate.revert: prevPrimary must be canBePrimary (R5)");
+            doc.setPrimary(prevPrimary);
+        } else {
+            doc.setActive(prevActiveIndex);
+        }
 
         // Undo of a duplicate is effectively a remove; the switch hook fires
         // because the active OBJECT changed from the clone back to prevPrimary.
@@ -303,22 +310,40 @@ final class LayerReorder : LayerCommandBase {
                  Param.int_("to",   "To",   &toArg,   -1) ];
     }
 
-    // Move the layer at `src` to index `dst`, shifting the rest to fill, and
-    // re-point activeIndex at whatever Layer object was active before. Returns
-    // the (pre-move) active Layer + its index so the caller can decide whether
-    // the switch hook fires.
+    // Move the layer at `src` to index `dst`, shifting the rest to fill. A
+    // pure list-order edit: it must not touch selection/focus at all.
     private void moveLayer(size_t src, size_t dst) {
         auto prevLayer = doc.active();
+        // Task 0615: `prevLayer` is `doc.primary` (== `doc.active()`), always
+        // `canBePrimary` by the document invariant. Verified, not relied
+        // upon: assert it rather than special-case it.
+        debug assert(kindInfo(prevLayer.kind).canBePrimary,
+            "LayerReorder.moveLayer: the active layer must be canBePrimary");
         auto moved = doc.layers[src];
         // Splice out, then splice in at the destination.
         doc.layers = doc.layers[0 .. src] ~ doc.layers[src + 1 .. $];
         doc.layers = doc.layers[0 .. dst] ~ moved ~ doc.layers[dst .. $];
-        // Recompute the active index from the layer OBJECT (identity-
-        // preserving): the same Layer stays active, so primary/selected do not
-        // change object — setActive re-points activeIndex + primary at it (the
-        // single selected layer is unchanged in the SET-of-one).
-        foreach (i, l; doc.layers)
-            if (l is prevLayer) { doc.setActive(i); break; }
+        // NIT (task 0615 Stage 6 review round 2): no explicit re-point of
+        // `primary`/`activeIndex` needed here, and — load-bearing — none
+        // must be done. `primary` (and `focusedItem`) are class REFERENCES;
+        // the splice above moves array SLOTS, not object identity, so both
+        // keep pointing at the exact same `Layer` objects they did before
+        // the move. `Document.activeIndex` is a DERIVED scan for
+        // `primary`'s current position (`document.d`), so it comes back
+        // correct on its own — nothing to write.
+        //
+        // The code this replaced called `doc.setActive(i)` "to re-point
+        // activeIndex", which was never necessary for that reason (there is
+        // no stored index to desync) — but `setActive` routes through
+        // `exclusiveSelect`, which unconditionally deselects every OTHER
+        // layer and resets `focusedItem` to the reselected target. On an
+        // all-mesh document that's invisible (the SET-of-one already had
+        // nothing else selected), but once a non-mesh item can hold FOCUS
+        // independent of `primary` (§L2), that old call silently collapsed
+        // any multi-selection or non-mesh focus back down to just `primary`
+        // on EVERY reorder, even one that never touched the focused/
+        // selected layer at all. Doing nothing here is the correct, and
+        // strictly cheaper, fix.
     }
 
     override bool apply() {
@@ -357,6 +382,106 @@ final class LayerReorder : LayerCommandBase {
 }
 
 // ---------------------------------------------------------------------------
+// Task 0615 Stage 6 review round 2, NIT: `LayerReorder.moveLayer` used to
+// call `doc.setActive(i)` to "re-point activeIndex" after the splice —
+// unnecessary (`activeIndex` is a derived scan for `primary`'s identity, not
+// a stored value), and that call's ACTUAL effect was `exclusiveSelect`'s
+// unconditional "deselect everyone, refocus the reselected target" reset.
+// On an all-mesh document that was invisible (nothing else was ever
+// selected), but on a mixed document with a non-mesh item holding FOCUS
+// independent of `primary` (§L2) plus another layer in the foreground
+// (multi-select), a reorder that never even touches those layers silently
+// collapsed the whole selection/focus state back down to just `primary`.
+// Pin the fix directly: a reorder must leave selection/focus untouched.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import view : View;
+
+    auto doc = Document.bootstrap(makeCube());        // [meshA(primary+focus+selected)]
+    auto meshA = doc.layers[0];
+    auto empty = new Layer; empty.name = "Empty"; empty.kind = ItemKind.Empty;
+    auto meshB = new Layer; meshB.name = "MeshB"; meshB.meshRef() = makeCube();
+    doc.layers ~= empty;
+    doc.layers ~= meshB;                               // [meshA, empty, meshB]
+
+    // Reach {meshA, meshB, empty} all selected, primary == meshA, focus ==
+    // empty — through REAL mutators (mirrors document.d's own split-state
+    // fixture): Add on a canBePrimary layer moves primary+focus to it;
+    // setPrimary moves both back to meshA; Add on the non-mesh layer moves
+    // focus WITHOUT moving primary (§L2) — exactly the split the old
+    // `moveLayer` code could not tell apart from a plain SET-of-one.
+    doc.selectItem(meshB, SelMode.Add);   // meshA, meshB selected; meshB primary+focus
+    doc.setPrimary(meshA);                // primary+focus back to meshA
+    doc.selectItem(empty, SelMode.Add);   // + empty selected; focus -> empty, primary stays meshA
+    assert(doc.primary is meshA && doc.focusedItem is empty && meshB.selected,
+        "setup: primary=meshA, focus=empty, {meshA,meshB,empty} all selected");
+
+    auto v = new View(0, 0, 800, 600);
+    auto reorder = new LayerReorder(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
+    reorder.fromArg = 2;   // move meshB (index 2) to the front — touches
+    reorder.toArg   = 0;   // neither the primary nor the focused layer.
+    assert(reorder.apply(), "reorder must succeed");
+
+    assert(doc.layers[0] is meshB, "meshB moved to the front");
+    assert(doc.primary is meshA, "reorder must never move primary");
+    assert(doc.focusedItem is empty,
+        "NIT fix: reorder must not clobber focus back onto primary");
+    assert(meshA.selected && meshB.selected && empty.selected,
+        "NIT fix: reorder must not collapse the multi-selection down to "
+        ~ "{primary} — it never touched selection at all");
+}
+
+// ---------------------------------------------------------------------------
+// The `layer.delete` refusal predicate — TRUE iff `target` can be removed
+// from `doc`. Shared by `LayerDelete.apply` (below) and the Layers panel's
+// Delete button (`layerDeleteButtonState`, `source/ui/panels.d`) so the
+// button's enabled state and the command's own refusal are always evaluated
+// against the SAME candidate layer through the SAME logic (task 0615 Stage
+// 6 review round 2, blocker 2). Two independent copies is exactly how the
+// bug happened: the button asked "can the PRIMARY be deleted?" while the
+// click handler dispatched a delete of the FOCUSED row — two different
+// layers, each internally consistent, silently disagreeing with each other.
+//
+// Two refusals:
+//   - the document invariant `layers.length >= 1`: never delete the last
+//     layer, full stop.
+//   - the primary-availability invariant: never delete the last
+//     `canBePrimary` layer — `Document.primary` must always name a
+//     `canBePrimary` survivor (§Q2), and `Document.rehomePrimary` has
+//     nothing to rehome to otherwise (see the crash-prevention comment
+//     inside `LayerDelete.apply`, below). A non-`canBePrimary` target (e.g.
+//     an `Empty`) is unaffected by this second refusal — deleting it never
+//     touches who CAN be primary.
+bool canDeleteLayer(const(Document)* doc, const(Layer) target) {
+    if (doc.layers.length <= 1) return false;
+    if (target is null) return false;
+    if (kindInfo(target.kind).canBePrimary) {
+        foreach (l; doc.layers)
+            if (l !is target && kindInfo(l.kind).canBePrimary) return true;
+        return false;
+    }
+    return true;
+}
+
+/// The Layers panel's Delete-button target + enabled state (task 0615 Stage
+/// 6 review round 2, blocker 2): computed from `doc.focusedItem` — the
+/// item-selection FOCUS, i.e. the row the panel highlights as active — NOT
+/// `doc.activeIndex`/`doc.primary`. A non-mesh row can be the focus without
+/// ever becoming primary (§L2), so the two diverge exactly when a non-mesh
+/// item is selected; using `activeIndex` there deletes a different layer
+/// than the one the user highlighted. `source/ui/panels.d` calls this
+/// directly (not a hand-copy of the formula) so the drawn state and the
+/// dispatched command can never disagree — see `canDeleteLayer` above.
+struct LayerDeleteButtonState { size_t index; bool enabled; }
+LayerDeleteButtonState layerDeleteButtonState(Document* doc) {
+    auto   target = doc.focusedItem;
+    size_t idx    = doc.indexOf(target);
+    bool   ok     = idx < doc.layers.length && canDeleteLayer(doc, target);
+    return LayerDeleteButtonState(idx, ok);
+}
+
+// ---------------------------------------------------------------------------
 // layer.delete — remove a layer (default active). Refuses the LAST layer.
 // Model undo: stores the removed Layer + its index + the prior activeIndex.
 // ---------------------------------------------------------------------------
@@ -391,14 +516,24 @@ final class LayerDelete : LayerCommandBase {
     }
 
     override bool apply() {
-        // Refuse to delete the last layer — the document invariant is
-        // layers.length >= 1.
-        if (doc.layers.length <= 1) return false;
-
         removedIndex    = resolveIndex(indexArg);
         prevActiveIndex = doc.activeIndex;
         removed         = doc.layers[removedIndex];   // class ref kept for revert
         auto prevLayer  = doc.active();
+
+        // Task 0615 §L1 (blocker 2, review round 2): the refusal predicate
+        // now lives in the free function `canDeleteLayer` (above) so the
+        // Layers panel's Delete button can evaluate the SAME guard against
+        // the SAME candidate layer, instead of duplicating (and risking
+        // drifting from) this logic. Refuses before any mutation: deleting
+        // the last layer in the document at all, or the last `canBePrimary`
+        // layer — which would leave `rehomePrimary` below with nothing to
+        // return (`exclusiveSelect`'s own stale-primary fallback would then
+        // silently no-op, leaving `primary` dangling on the just-spliced-out
+        // layer — worse than a null primary: it dereferences without
+        // crashing).
+        if (!canDeleteLayer(doc, removed)) return false;
+
         // Snapshot the full prior selection set + primary by identity (review #6)
         // BEFORE the splice / setActive collapse, so revert restores the exact
         // multi-selection (including the deleted layer's own bit).
@@ -416,26 +551,47 @@ final class LayerDelete : LayerCommandBase {
         // Splice the layer out.
         doc.layers = doc.layers[0 .. removedIndex] ~ doc.layers[removedIndex + 1 .. $];
 
-        // New active: deleting the active layer activates the next (or the
-        // previous if it was the last). Otherwise keep pointing at the same
-        // layer object — which may have shifted down by one if it sat after
-        // the removed index.
-        size_t newActive;
-        if (prevActiveIndex == removedIndex) {
-            newActive = removedIndex < doc.layers.length
-                ? removedIndex : doc.layers.length - 1;
-        } else if (prevActiveIndex > removedIndex) {
-            newActive = prevActiveIndex - 1;
-        } else {
-            newActive = prevActiveIndex;
-        }
+        // Task 0615 §L1: decide the successor by OBJECT IDENTITY, not by
+        // array position. If the removed layer was NOT the primary, the
+        // primary object is untouched and stays put — `setActive` just
+        // re-points `activeIndex` at its (possibly shifted) new slot. If it
+        // WAS the primary, `rehomePrimary` finds the nearest `canBePrimary`
+        // survivor (forward from the vacated slot, then backward) — the
+        // guard just above guarantees one exists. On an all-mesh document
+        // this degenerates EXACTLY to the old positional rule (see
+        // `rehomePrimary`'s doc comment), which is what keeps
+        // `test_layers.d` / `test_layers_undo.d` / `test_layer_duplicate.d`
+        // green unmodified.
+        Layer survivor = (removed is prevPrimary)
+            ? doc.rehomePrimary(removedIndex) : prevPrimary;
+        // NIT (task 0615 Stage 6 review round 2): `rehomePrimary` filters
+        // candidates on `canBePrimary` alone — unlike its sibling
+        // `anotherPrimaryCandidate` (used by hide-primary promotion and the
+        // multi-select `Remove` case), which also requires `l.visible` (and
+        // `l.selected`). Deleting the primary can therefore re-home it onto
+        // a HIDDEN mesh layer, where the other paths never would. This is
+        // PRE-EXISTING (`rehomePrimary` predates this task; this call is
+        // merely its first production caller — see its doc comment in
+        // document.d) and deliberately NOT changed here: adding a
+        // visibility filter would make `rehomePrimary` return `null` in
+        // cases `canDeleteLayer`'s guard (above) currently treats as safe
+        // (a hidden `canBePrimary` layer counts as "another candidate"
+        // there too), breaking the "`rehomePrimary` returns null only in a
+        // state the delete guard already forbids" contract — fixing it
+        // properly means updating the guard and `rehomePrimary` together,
+        // which is out of scope for this slice. Left faithfully preserved.
         // Stage-0 lockstep: set primary + selected + activeIndex together,
-        // BEFORE fireSwitchIfChanged.
-        doc.setActive(newActive);
+        // BEFORE fireSwitchIfChanged. `survivor` is `canBePrimary` by
+        // construction (guard above / `rehomePrimary`'s contract), so this
+        // takes `setActive`'s unchanged, exclusive-select branch.
+        doc.setActive(doc.indexOf(survivor));
         applied = true;
         // Removed kind from the command; the hook contributes ActiveChanged iff
         // the active layer OBJECT changed (deleting a layer below the active one
-        // shifts the index but keeps the same mesh → no ActiveChanged).
+        // shifts the index but keeps the same mesh → no ActiveChanged). Because
+        // `primary` genuinely moves when IT is the one deleted, this now fires
+        // for that case too (§L1) — the pre-Stage-6 positional rewrite silently
+        // skipped it.
         noteLayerChange(LayerChange.Removed);
         fireSwitchIfChanged(prevLayer, prevActiveIndex);
         return true;
@@ -458,8 +614,18 @@ final class LayerDelete : LayerCommandBase {
             auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
             l.selected  = wasSel;
         }
-        if (prevPrimary !is null) doc.setPrimary(prevPrimary);  // selected ⇒ no-op reselect
-        else                      doc.setActive(prevActiveIndex);
+        if (prevPrimary !is null) {
+            // R5: `prevPrimary` was `doc.primary` at snapshot time, and the
+            // document invariant guarantees a primary is always
+            // `canBePrimary` — so this can never re-establish an illegal
+            // (non-mesh) primary. `setPrimary` on an already-selected layer
+            // is a no-op reselect.
+            debug assert(kindInfo(prevPrimary.kind).canBePrimary,
+                "LayerDelete.revert: prevPrimary must be canBePrimary (R5)");
+            doc.setPrimary(prevPrimary);
+        } else {
+            doc.setActive(prevActiveIndex);
+        }
         // Task 0082: restore parent links for any layers that had been orphaned.
         foreach (l; orphanedChildren_) l.parent = removed;
         // Undo of a delete is an add; ActiveChanged via the hook iff it changed.
@@ -548,8 +714,14 @@ final class LayerSelect : LayerCommandBase {
         }
         // Restore the prior primary by identity (it is guaranteed selected in
         // the restored set since it was the primary at snapshot time).
-        if (prevPrimary !is null) doc.setPrimary(prevPrimary);
-        else                       doc.setActive(prevActiveIndex);
+        if (prevPrimary !is null) {
+            // R5 (task 0615): see LayerDelete.revert.
+            debug assert(kindInfo(prevPrimary.kind).canBePrimary,
+                "LayerSelect.revert: prevPrimary must be canBePrimary (R5)");
+            doc.setPrimary(prevPrimary);
+        } else {
+            doc.setActive(prevActiveIndex);
+        }
         fireSwitchIfChanged(prevLayer, prevIdx);
         noteItemSelectionChange();
         if (onItemSelect !is null) onItemSelect();
@@ -671,8 +843,12 @@ final class LayerSetVisible : LayerCommandBase {
         // lands on the exact prior edit target. (It is still selected; setPrimary
         // is a no-op if it is already primary.)
         if (prevPrimaryObj !is null && doc.active() !is prevPrimaryObj
-            && prevPrimaryObj.visible)
+            && prevPrimaryObj.visible) {
+            // R5 (task 0615): see LayerDelete.revert.
+            debug assert(kindInfo(prevPrimaryObj.kind).canBePrimary,
+                "LayerSetVisible.revert: prevPrimaryObj must be canBePrimary (R5)");
             doc.setPrimary(prevPrimaryObj);
+        }
         noteLayerChange(LayerChange.VisibilityChanged);
         fireSwitchIfChanged(curPrimary, prevIdx);
         return true;
@@ -1011,10 +1187,192 @@ unittest {
     assert(doc.focusedItem is dup.added, "apply: the clone still becomes the item focus");
     assert(dup.added.selected, "apply: clone is selected");
     assert(meshA.selected, "apply: the mesh primary stays selected too");
+    // §L2 / R12 (task 0615 Stage 6): `doc.setActive(addedIndex)` at apply()'s
+    // call site is the EXACT call the pre-revision wording would have
+    // deselected the mesh primary through — pin the formula, not just the
+    // absence of the bug. RED under that wording: `:170`'s unconditional
+    // deselect would clear `meshA.selected` and `background()` would then
+    // reclassify the live edit target as background.
+    assert(!Document.background(meshA),
+        "§L2: the mesh primary must never be reclassified background by a "
+        ~ "non-mesh duplicate becoming focus+selected");
+    {
+        size_t selCount = 0;
+        foreach (l; doc.layers) if (l.selected) ++selCount;
+        assert(selCount == 2,
+            "§L2: selected set is exactly {target} ∪ {primary-after} == "
+            ~ "{clone, meshA}, size 2");
+    }
 
     assert(dup.revert(), "revert must succeed");
     assert(doc.layers.length == 2, "revert: back to 2 layers");
     assert(doc.primary is meshA, "revert: meshA is still primary");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0615 Stage 6 §L2 / R12: `LayerAdd.apply()`'s `doc.setActive(addedIndex)`
+// (`:124`, `doc.layers ~= l; … doc.setActive(addedIndex);`) is the exact call
+// the pre-revision plan wording would have deselected the mesh primary
+// through. There is no `kind` param on `layer.add` — the Stage 6 gate
+// forbids any user/command-reachable path to a non-mesh item — so this test
+// reproduces `apply()`'s own call SHAPE directly (append, then
+// `doc.setActive` on the appended index) rather than through the command,
+// which can only ever construct a mesh-kind layer. This proves the formula
+// holds at the production call site's exact shape, not just at `Document`'s
+// own unit tests (Stage 3 already proves the type-level mutator).
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+
+    auto doc = Document.bootstrap(makeCube());
+    auto meshA = doc.layers[0];
+
+    auto added = new Layer;
+    added.name    = "Empty";
+    added.kind    = ItemKind.Empty;
+    added.visible = true;
+    doc.layers ~= added;
+    doc.setActive(doc.layers.length - 1);   // mirrors LayerAdd.apply()'s doc.setActive(addedIndex)
+
+    assert(!Document.background(meshA),
+        "§L2 (LayerAdd): the mesh primary must never be reclassified "
+        ~ "background by a non-mesh layer.add target");
+    assert(meshA.selected, "§L2 (LayerAdd): the mesh primary stays selected");
+    assert(doc.primary is meshA, "§L2 (LayerAdd): primary never moves to a non-mesh target");
+    assert(doc.focusedItem is added, "§L2 (LayerAdd): focus moves to the new item");
+    {
+        size_t selCount = 0;
+        foreach (l; doc.layers) if (l.selected) ++selCount;
+        assert(selCount == 2,
+            "§L2 (LayerAdd): selected set is exactly {target} ∪ {primary-after}, size 2");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task 0615 Stage 6 §L1: `LayerDelete` — the identity-based successor
+// rewrite. `[MeshA(primary), Empty, MeshB]`, delete index 0 (the primary
+// itself). RED against the pre-revision positional wording: `newActive =
+// removedIndex < length ? removedIndex : length-1` would land on index 0 of
+// the post-splice `[Empty, MeshB]`, i.e. the `Empty` layer — `setActive`
+// would then find `primary` (MeshA) stale-but-non-null and, under the OLD
+// (pre-Stage-3b) semantics, either strand it outside `layers` or (as this
+// codebase's actual `exclusiveSelect` stale-primary fallback happens to
+// recover via `rehomePrimary(0)`) land on the WRONG survivor when a
+// non-mesh layer precedes a mesh layer that is not first — see the plan's
+// worked example. The rewrite decides by identity + `rehomePrimary
+// (removedIndex)` directly, matching the plan's algorithm exactly rather
+// than relying on that incidental fallback.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import view : View;
+
+    auto doc = Document.bootstrap(makeCube());       // "Layer 1" == MeshA
+    auto meshA = doc.layers[0];
+    auto empty = new Layer; empty.name = "Empty"; empty.kind = ItemKind.Empty;
+    auto meshB = new Layer; meshB.name = "MeshB";
+    doc.layers ~= empty;
+    doc.layers ~= meshB;                              // [MeshA(primary), Empty, MeshB]
+    assert(doc.primary is meshA);
+
+    auto v = new View(0, 0, 800, 600);
+    bool switchFired = false;
+    auto del = new LayerDelete(doc.activeMesh(), v, EditMode.Vertices, &doc,
+        (size_t prev, size_t next) { switchFired = true; });
+    del.indexArg = 0;                                 // delete MeshA (the primary)
+
+    assert(del.apply(), "delete of the primary must succeed (MeshB survives)");
+    assert(doc.layers.length == 2, "MeshA spliced out");
+    assert(doc.primary is meshB,
+        "§L1: primary rehomes to the surviving MESH layer, never to Empty");
+    assert(doc.primary.hasMesh, "§L1: primary always hasMesh");
+    assert(doc.layers[doc.activeIndex] is doc.primary,
+        "§L1: activeIndex tracks the rehomed primary (false under the "
+        ~ "pre-revision wording, where activeIndex silently falls back to 0)");
+    assert(switchFired,
+        "§L1 / R11: the switch hook must fire — primary genuinely moved "
+        ~ "off the deleted layer (the pre-revision wording's stale-primary "
+        ~ "identity check would have skipped this)");
+
+    // §L1 guard: deleting the LAST canBePrimary layer is refused, even
+    // though the document has more than one layer left ([Empty, MeshB]).
+    auto del2 = new LayerDelete(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
+    del2.indexArg = 1;                                // MeshB is now the ONLY mesh layer
+    assert(!del2.apply(), "§L1 guard: refuse deleting the last canBePrimary layer");
+    assert(doc.layers.length == 2, "refused delete leaves the document untouched");
+    assert(doc.primary is meshB, "refused delete leaves primary untouched");
+
+    // §L1 undo symmetry: undo the FIRST delete restores MeshA as primary and
+    // the full prior selection set.
+    assert(del.revert(), "undo the delete of MeshA");
+    assert(doc.layers.length == 3, "MeshA reinserted");
+    assert(doc.primary is meshA, "undo restores MeshA as primary");
+    assert(doc.layers[doc.activeIndex] is doc.primary,
+        "undo: activeIndex tracks the restored primary");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0615 Stage 6 review round 2, BLOCKER 2: the Layers panel's Delete
+// button dispatched against `document.activeIndex` (the primary) while
+// `:983-990` rendered a row as active when it was either the primary OR the
+// FOCUS — so clicking a non-mesh row (which becomes focus, never primary,
+// §L2) and pressing Delete removed a DIFFERENT layer than the one the user
+// highlighted. Repro straight from the review, reproduced at the `Document`
+// + `LayerDelete` level (the same layer `layerDeleteButtonState` and the
+// fixed panel code both call — see `source/ui/panels.d`):
+// `[MeshA(primary), MeshB, Empty]`, click the Empty row (focus moves there,
+// primary correctly stays MeshA), press Delete. Pins WHICH layer survives,
+// not merely that a delete occurred — the whole point of this blocker.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import view : View;
+
+    auto doc = Document.bootstrap(makeCube());        // "Layer 1" == MeshA
+    auto meshA = doc.layers[0];
+    auto meshB = new Layer; meshB.name = "MeshB"; meshB.meshRef() = makeCube();
+    auto empty = new Layer; empty.name = "Empty"; empty.kind = ItemKind.Empty;
+    doc.layers ~= meshB;
+    doc.layers ~= empty;                               // [MeshA(primary), MeshB, Empty]
+    assert(doc.primary is meshA);
+
+    // "Click the Empty row" — an exclusive select of a non-mesh target moves
+    // FOCUS only (§L2); primary is untouched.
+    doc.selectItem(empty, SelMode.Set);
+    assert(doc.focusedItem is empty, "setup: clicking Empty moves focus to it");
+    assert(doc.primary is meshA, "setup: primary correctly stays on MeshA");
+
+    // Sanity: this is EXACTLY the split the old code could not see — the
+    // buggy formula (`document.activeIndex`) targets a DIFFERENT layer than
+    // the one the panel highlights as active (`focusedItem`).
+    assert(doc.activeIndex == 0,
+        "sanity: the OLD buggy formula (activeIndex) points at MeshA, the "
+        ~ "primary — not the row the user just clicked");
+
+    auto state = layerDeleteButtonState(&doc);
+    assert(state.index == doc.indexOf(empty),
+        "blocker 2 fix: the Delete button must target the FOCUSED row "
+        ~ "(Empty), not document.activeIndex (MeshA)");
+    assert(state.index != doc.activeIndex,
+        "blocker 2 fix: the fixed target must differ from the old buggy "
+        ~ "target in exactly this split-focus scenario");
+    assert(state.enabled,
+        "deleting a non-mesh layer is always allowed here — two "
+        ~ "canBePrimary layers (MeshA, MeshB) remain either way");
+
+    // Actually perform the delete the fixed panel code would dispatch —
+    // `{"index": state.index}` — and assert WHICH layer is gone.
+    auto v = new View(0, 0, 800, 600);
+    auto del = new LayerDelete(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
+    del.indexArg = cast(int) state.index;
+    assert(del.apply(), "delete of the focused (non-mesh) row must succeed");
+
+    assert(doc.layers.length == 2, "exactly one layer removed");
+    assert(doc.layers[0] is meshA && doc.layers[1] is meshB,
+        "blocker 2: MeshA AND MeshB both survive — only the highlighted "
+        ~ "(focused) Empty row was deleted, not the primary");
+    assert(doc.primary is meshA,
+        "primary is untouched — it was never the delete target");
 }
 
 // ---------------------------------------------------------------------------

@@ -370,6 +370,21 @@ class HttpServer {
     private alias LoadMeshHandler = void delegate(JSONValue params);
     private LoadMeshHandler loadMeshHandler;
 
+    // ----- /api/test/layer synchronous bridge -------------------------------
+    // POST /api/test/layer {"kind":"empty","name":"...","index":N}
+    // appends (or inserts) a layer of the given KIND directly into the live
+    // document — task 0615 Stage 6/7. This is deliberately NOT a Command: it
+    // is unreachable from `/api/command` by name, from `config/buttons.yaml`,
+    // and from any UI affordance. The document format cannot yet persist a
+    // non-mesh item (Stage 8/v8 is deferred to task 0616 by owner decision —
+    // see doc/nonmesh_item_types_plan.md §Stage 6), so no path a real user
+    // could reach — command argument, button, or menu — may create one in
+    // this slice; a test driving this ONE dedicated endpoint is the sole
+    // source. Mirrors `/api/load-mesh`'s main-thread bridge (the live
+    // `Document` is touched from the main/GL thread only).
+    private alias InjectLayerHandler = void delegate(JSONValue params);
+    private InjectLayerHandler injectLayerHandler;
+
     // ----- /api/undo + /api/redo synchronous bridge ------------------------
     // The handler returns true on success (an entry was undone/redone) or
     // false on stack-empty / revert-failure. /api/history is a read-only
@@ -536,6 +551,10 @@ class HttpServer {
     struct LoadMeshReq  { JSONValue params; }
     struct LoadMeshResp { string error; }
     private MainThreadBridge!(LoadMeshReq, LoadMeshResp) loadMeshBridge;
+
+    struct InjectLayerReq  { JSONValue params; }
+    struct InjectLayerResp { string error; }
+    private MainThreadBridge!(InjectLayerReq, InjectLayerResp) injectLayerBridge;
 
     struct CamSetReq  { JSONValue params; }
     struct CamSetResp { string error; }
@@ -810,6 +829,20 @@ class HttpServer {
                 } else {
                     try {
                         loadMeshHandler(req.params);
+                        resp.error = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        injectLayerBridge = new MainThreadBridge!(InjectLayerReq, InjectLayerResp)(this,
+            (ref InjectLayerReq req, ref InjectLayerResp resp) {
+                if (injectLayerHandler is null) {
+                    resp.error = "inject-layer handler not set";
+                } else {
+                    try {
+                        injectLayerHandler(req.params);
                         resp.error = "";
                     } catch (Exception e) {
                         resp.error = e.msg;
@@ -1182,6 +1215,15 @@ class HttpServer {
      */
     public void setLoadMeshHandler(LoadMeshHandler handler) {
         this.loadMeshHandler = handler;
+    }
+
+    /**
+     * Set the test-only layer-injection handler (POST /api/test/layer). Same
+     * synchronous main-thread dispatch as setLoadMeshHandler. See the
+     * `injectLayerHandler` field doc comment for the full rationale.
+     */
+    public void setInjectLayerHandler(InjectLayerHandler handler) {
+        this.injectLayerHandler = handler;
     }
 
     /**
@@ -2174,6 +2216,47 @@ class HttpServer {
                 }
             }
             response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/test/layer" && request.method == "POST") {
+            // Test-only layer injection (task 0615 Stage 6/7) — see the
+            // `injectLayerHandler` field doc comment above for the full
+            // rationale. Blocker (review round 2): unlike every sibling
+            // test-only endpoint (`/api/changes`, `/api/play-events` above),
+            // this route had NO test-mode gate — a release binary always
+            // constructs the HttpServer and always wires this handler
+            // (http_providers.d), and even `--http-port` without `--test`
+            // turns the listener on without turning test mode on (app.d).
+            // Gated here exactly like its siblings: 403 outside `--test`.
+            if (!testMode) {
+                response.statusCode = 403;
+                response.body = `{"error":"test/layer is only available in --test mode"}`;
+                response.headers["Content-Type"] = "application/json";
+            } else if (injectLayerHandler is null) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"inject-layer handler not set"}`;
+            } else {
+                try {
+                    auto j = parseJSON(request.body);
+                    if (j.type != JSONType.object)
+                        throw new Exception("body must be a JSON object");
+                    injectLayerBridge.req.params = j;
+                    injectLayerBridge.resp.error = "";
+                    if (!injectLayerBridge.submitAndWait())
+                        injectLayerBridge.resp.error = "timeout waiting for main thread";
+                    if (injectLayerBridge.resp.error.length == 0) {
+                        response.statusCode = 200;
+                        response.body = `{"status":"ok"}`;
+                    } else {
+                        response.statusCode = 200;
+                        response.body = `{"status":"error","message":"`
+                                        ~ injectLayerBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                    }
+                } catch (Exception e) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/select" && request.method == "POST") {
             if (selectionHandler is null) {
                 response.statusCode = 200;
@@ -2701,6 +2784,45 @@ class HttpResponse {
         this.headers["Connection"] = "close";
         this.body = "";
     }
+}
+
+// ---------------------------------------------------------------------------
+// Task 0615 Stage 6/7 review round 2, BLOCKER 1: `/api/test/layer` must be
+// gated on `testMode` exactly like its sibling test-only endpoints
+// (`/api/changes`, `/api/play-events`) — a release binary always
+// constructs the HttpServer and always wires the injector handler
+// (http_providers.d), and even `--http-port` without `--test` turns the
+// listener on without turning test mode on (app.d). Without the gate, a
+// plain `dub build && ./vibe3d` (or a release binary re-opened with
+// `--http-port`) would accept a POST that splices an un-undoable,
+// unsaveable layer into a real user's document.
+//
+// Pinned directly against `handleRequest` — module-private, reachable from
+// an in-module unittest — rather than a live socket: no listener/thread is
+// started here, this is a pure in-process check of the routing branch.
+// ---------------------------------------------------------------------------
+unittest {
+    auto srv = new HttpServer();                // testMode defaults false
+    auto req = new HttpRequest("POST", "/api/test/layer", "HTTP/1.1");
+    req.body = `{"kind":"empty"}`;
+
+    auto resp = srv.handleRequest(req);
+    assert(resp.statusCode == 403,
+        "blocker 1: /api/test/layer must 403 outside --test mode, exactly "
+        ~ "like /api/changes and /api/play-events (got "
+        ~ to!string(resp.statusCode) ~ ")");
+
+    // With testMode on, the gate must NOT block it — the request should
+    // fall through to the (unset-handler) branch instead of another
+    // refusal, proving this is a testMode gate and not an unconditional one.
+    srv.setTestMode(true);
+    auto resp2 = srv.handleRequest(req);
+    assert(resp2.statusCode == 200,
+        "with testMode on, /api/test/layer must pass the gate (got "
+        ~ to!string(resp2.statusCode) ~ ")");
+    assert(resp2.body.canFind("handler not set"),
+        "with no handler installed this must reach the null-handler "
+        ~ "branch, not another refusal: " ~ resp2.body);
 }
 
 // Parse `?key=N` (or `&key=N`) from a request path. Returns `def` when the

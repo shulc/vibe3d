@@ -221,7 +221,7 @@ import snapshot : SelectionSnapshot;
 import commands.tool.host     : ToolHost;
 import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
-import commands.layer.commands : LayerAttr;
+import commands.layer.commands : LayerAttr, layerDeleteButtonState;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
@@ -273,7 +273,7 @@ import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
 import property_panel : PropertyPanel;
 import forms_render;
 import layer_params   : LayerPropsProvider;
-import document       : Layer, Document, kindInfo;
+import document       : Layer, Document, kindInfo, tokenOf;
 import snap           : ItemSnapFrame;
 import viewport       : LayoutPreset, ViewportManager, Viewport3D;
 
@@ -892,12 +892,21 @@ void drawViewportPropsPanel(EditorApp app) {
 //   - an "F" (foreground) checkbox → `layer.select index:N mode:add/remove`
 //     (foreground == selected; background is the derived complement)
 // plus an "Add" button (`layer.add`) and a "Delete" button
-// (`layer.delete index:N`, disabled when only one layer remains — the
-// command refuses the last layer regardless, this just greys the affordance).
+// (`layer.delete index:N`, targeting the item-selection FOCUS — the row the
+// panel highlights, see `layerDeleteButtonState` — disabled when deleting it
+// would leave no layer able to be the mesh edit target; the command refuses
+// that regardless, this just greys the affordance).
 //
 // EVERY interaction dispatches through commandHandlerDelegate — the same
 // path /api/command uses — so undo/history/coalescing all work. The panel
 // NEVER mutates `document` directly. It is pure UI: no toolpipe, no mesh.
+//
+// Task 0615 Stage 6: the panel renders correctly WHEN a non-mesh item is
+// present (row marker, kind badge, delete-guard) — but there is still no
+// button/menu/command-argument through which a user can CREATE one in this
+// slice (the `.v3d` format cannot yet persist it; see
+// doc/nonmesh_item_types_plan.md §Stage 6). Only a test can put one in the
+// live document (the `/api/test/layer` injector, http_providers.d).
 //
 // Visibility mirrors Tool Properties: always shown in a normal run; in
 // --test it is HIDDEN by default (so it cannot capture viewport drags) and
@@ -918,13 +927,25 @@ void drawLayerListPanel(EditorApp app) {
                 commandHandlerDelegate("layer.add", "{}");
         }
         ImGui.SameLine();
-        // ---- Delete button (disabled at one layer) ----
-        bool lastLayer = document.layers.length <= 1;
-        ImGui.BeginDisabled(lastLayer);
+        // ---- Delete button ----
+        // Targets `document.focusedItem` — the item-selection FOCUS, i.e.
+        // the row the panel highlights as active (the ">" primary marker OR
+        // the "@" focus marker below) — NOT `document.activeIndex`/`primary`.
+        // Task 0615 Stage 6 review round 2, BLOCKER 2: a non-mesh row can be
+        // the focus without ever becoming primary (§L2), and the old code
+        // always dispatched against the primary regardless of which row was
+        // highlighted — so clicking a highlighted non-mesh row and pressing
+        // Delete silently deleted the (different, unhighlighted) primary
+        // instead. `layerDeleteButtonState` (commands/layer/commands.d) is
+        // the SAME function driving both the enabled/disabled guard AND the
+        // dispatched index, so the two can never disagree with each other
+        // the way the primary-vs-focus split did.
+        auto delState = layerDeleteButtonState(&document());
+        ImGui.BeginDisabled(!delState.enabled);
         if (ImGui.SmallButton("Delete")) {
-            if (commandHandlerDelegate !is null)
+            if (delState.enabled && commandHandlerDelegate !is null)
                 commandHandlerDelegate("layer.delete",
-                    `{"index":` ~ to!string(document.activeIndex) ~ `}`);
+                    `{"index":` ~ to!string(delState.index) ~ `}`);
         }
         ImGui.EndDisabled();
 
@@ -936,27 +957,57 @@ void drawLayerListPanel(EditorApp app) {
             int idx = cast(int)i;
             ImGui.PushID(idx);
 
-            // Primary / selection indicator + exclusive-select handle
-            // (Stage 4). The primary layer is the single edit target; the
-            // `selected` layers form the foreground set. The marker shows
-            // both states at a glance:
-            //   ">"  primary (always selected + visible)
-            //   "*"  selected (foreground) but not primary
+            // Primary / focus / selection indicator + exclusive-select handle
+            // (Stage 4; extended task 0615 Stage 6 for the focus/primary
+            // split — §Q2). `primary` is the single MESH EDIT TARGET;
+            // `focusedItem` is the item-selection FOCUS (item transform /
+            // property panel / item ops) and may be ANY kind — the two
+            // coincide except when the current focus is on a non-mesh item
+            // (a non-mesh layer can never become primary). The marker shows
+            // all three states at a glance:
+            //   ">"  primary (the mesh edit target; always selected + visible)
+            //   "@"  focused (item-selection focus) but NOT primary — only
+            //        reachable via a non-mesh item, since on an all-mesh
+            //        document focus and primary always coincide
+            //   "*"  selected (foreground) but neither primary nor focus
             //   " "  deselected (derived background)
             // Clicking this handle is an EXCLUSIVE select (`mode:set`):
-            // it makes this the sole selected layer AND the primary. The
-            // command compares object identity, so re-clicking the primary
-            // is a no-op switch; guard against re-dispatching every frame
-            // the row is held. Multi-select lives on the name (ctrl-click).
+            // it makes this the sole selected layer, the focus, AND the
+            // primary IF this layer can be one (a non-mesh row becomes focus
+            // only — the mesh edit target is untouched; §L2). The command
+            // compares object identity, so re-clicking the primary/focus row
+            // is a no-op switch; guard against re-dispatching every frame the
+            // row is held. Multi-select lives on the name (ctrl-click).
             bool isPrimaryRow = document.isPrimary(l);
-            immutable marker = isPrimaryRow ? ">" : (l.selected ? "*" : " ");
-            if (ImGui.Selectable(marker, isPrimaryRow,
+            bool isFocusRow   = document.focusedItem is l;
+            immutable marker = isPrimaryRow ? ">"
+                              : isFocusRow   ? "@"
+                              : l.selected   ? "*" : " ";
+            bool rowActive = isPrimaryRow || isFocusRow;
+            if (ImGui.Selectable(marker, rowActive,
                                  ImGuiSelectableFlags.AllowItemOverlap,
                                  ImVec2(14, 0))) {
-                if (!isPrimaryRow && commandHandlerDelegate !is null)
+                if (!rowActive && commandHandlerDelegate !is null)
                     commandHandlerDelegate("layer.select",
                         `{"index":` ~ to!string(idx) ~ `,"mode":"set"}`);
             }
+            ImGui.SameLine();
+            // Kind badge (task 0615 Stage 6) — a dim wire token
+            // ("mesh"/"empty") so a non-mesh row is legible in the panel even
+            // before any dedicated icon exists. Purely informational: no
+            // interaction, no dispatch.
+            //
+            // NIT (review round 2): `TextDisabled` is printf-style
+            // (`ImGui::TextDisabled(const char* fmt, ...)`); passing a
+            // runtime string directly as `fmt` is a documented crash class
+            // in this codebase (a token containing `%` would be
+            // misinterpreted as a format specifier). `tokenOf` only ever
+            // returns one of the fixed literals in `kItemKindTable`
+            // (document.d) today, so this was safe in practice, but pass it
+            // as a `%s` arg — the same pattern already used two call sites
+            // below (`ImGui.TextDisabled("%s", it.label);`) — so it stays
+            // safe if a future kind's token ever contains one.
+            ImGui.TextDisabled("%s", tokenOf(l.kind));
             ImGui.SameLine();
 
             // Name — double-click to rename in place.

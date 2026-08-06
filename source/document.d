@@ -122,6 +122,35 @@ static foreach (row; kItemKindTable)
     static assert(!row.drawsGeometry || row.hasMesh,
         "ItemKindInfo(\"" ~ row.token ~ "\"): drawsGeometry requires hasMesh");
 
+// `hasXform` has ZERO consumers today (task 0615 Stage 6 review round 2,
+// should-fix 5): `source/layer_params.d`'s `LayerPropsProvider` exposes the
+// 12 transform-component params (pos.*/rot.*/scl.*/pivot.*) UNCONDITIONALLY
+// — it never reads this capability at all. That is a deliberate deferral,
+// not an oversight: every kind declared so far has `hasXform == true`, so a
+// gated branch would be dead code with no fixture able to exercise the
+// other side. The deferral is silent, though — nothing stops a FUTURE row
+// from declaring `hasXform == false` and compiling clean while
+// `LayerPropsProvider` keeps exposing transform channels for an item that
+// has none (item.pos/rot/scl/pivot writes would silently mutate a
+// transform nothing ever reads).
+//
+// This `static foreach` is the forcing function, in the same style as the
+// `drawsGeometry`/`hasMesh` proof above: it holds today only because every
+// row happens to agree, and turns "a future row disagrees" into a build
+// failure AT THE ROW BEING EDITED rather than a silent gap. When that
+// happens: gate `source/layer_params.d`'s `LayerPropsProvider.params()` (and
+// its get/set path) on `kindInfo(kind).hasXform` — the P4 primary-transform
+// interlock (`transformGuard_`, same file) is the existing precedent for a
+// per-row param disable — then relax this assertion to match (mirroring
+// `!row.drawsGeometry || row.hasMesh` once there is a real gate to couple
+// it to).
+static foreach (row; kItemKindTable)
+    static assert(row.hasXform,
+        "ItemKindInfo(\"" ~ row.token ~ "\"): hasXform == false has no "
+        ~ "consumer yet — gate source/layer_params.d's LayerPropsProvider "
+        ~ "(transform-component params) on this capability before adding a "
+        ~ "kind like this, then relax this assertion");
+
 /// The capability row for `k`.
 ref immutable(ItemKindInfo) kindInfo(ItemKind k) pure nothrow @nogc @safe {
     return kItemKindTable[k];
@@ -227,16 +256,17 @@ final class Layer {
 ///
 /// Invariants — enforced today by every TYPE-LEVEL mutator declared on this
 /// struct (`setActive`, `selectItem`, `setPrimary`,
-/// `promoteAwayFromHiddenPrimary`, `exclusiveSelect`, `rehomePrimary`). They
-/// are NOT yet enforced by every production LIFECYCLE writer (task 0615,
-/// plan §Lifecycle invariants): `commands/layer/commands.d`'s `LayerDelete`
-/// still picks the delete-time successor by array position rather than
-/// calling `rehomePrimary` (which has zero callers as of this stage — L1,
-/// Stage 6), and `io/native.d`'s `.v3d` loader still raw-writes
-/// `document.primary = parsed[primaryIndex]` before any mutator runs (L3,
-/// Stage 8). A caller reaching `Document` only through those two sites can
-/// still violate the invariants below on a mixed (non-mesh) document until
-/// those stages land.
+/// `promoteAwayFromHiddenPrimary`, `exclusiveSelect`, `rehomePrimary`), AND
+/// (task 0615 Stage 6) by `commands/layer/commands.d`'s `LayerDelete`, which
+/// now decides the delete-time successor by OBJECT IDENTITY and calls
+/// `rehomePrimary` when the deleted layer was itself the primary (L1) —
+/// `rehomePrimary`'s first production caller. `io/native.d`'s `.v3d` loader
+/// still raw-writes `document.primary = parsed[primaryIndex]` before any
+/// mutator runs (L3) — currently harmless because the v7 reader can only ever
+/// produce mesh-kind layers (Stage 8/v8, which would let a non-mesh `"type"`
+/// reach that raw write, is deferred to task 0616 by owner decision). A
+/// caller reaching `Document` only through that one remaining site could
+/// still violate the invariants below once a non-mesh layer becomes loadable.
 ///   * `layers.length >= 1` and `activeIndex < layers.length`.
 ///   * `primary !is null`; `primary` ∈ `layers`; `primary is layers[activeIndex]`;
 ///     `primary` always `canBePrimary` (today: always mesh-kind) — at least
