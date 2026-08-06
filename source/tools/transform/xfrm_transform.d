@@ -80,6 +80,7 @@ import math : Vec3, Pin, Viewport, translationMatrix,
                identityMatrix, matMul4, wrapAboutPivot, wrapAboutPivotStable, eulerZYXFromMatrix,
                frameMatrix, frameMatrixInverse;
 import editmode : EditMode;
+import seltype : SelType;
 import mesh;
 import handler  : ToolHandles;
 import eventlog : queryMouse;
@@ -569,11 +570,16 @@ public:
     // baseline, so the rotation is needed only during the synchronous per-frame
     // applyTRS call — a transient parameter is sufficient.
 
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
-        super(meshSrc, gpu, editMode);
-        moveSub   = new MoveTool  (meshSrc, gpu, editMode);
-        rotateSub = new RotateTool(meshSrc, gpu, editMode);
-        scaleSub  = new ScaleTool (meshSrc, gpu, editMode);
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
+         SelType delegate() selTypeSrc = null) {
+        super(meshSrc, gpu, editMode, selTypeSrc);
+        // Blocker 1 (0614 review): the sub-tools each have their OWN
+        // buildLocalVts call sites (applyHeadless / property-panel replay —
+        // scale.d:320,1217,1311, rotate.d:224,1226,1316), so the same live
+        // selType source must reach every one of them, not just the wrapper.
+        moveSub   = new MoveTool  (meshSrc, gpu, editMode, selTypeSrc);
+        rotateSub = new RotateTool(meshSrc, gpu, editMode, selTypeSrc);
+        scaleSub  = new ScaleTool (meshSrc, gpu, editMode, selTypeSrc);
         toolHandles = new ToolHandles();
         toolHandles.setAiHoverPreviewEnabled(true);
         toolHandles.setAiHoverPreviewPredicate(
@@ -1347,13 +1353,24 @@ public:
         } else {
             currentBasis(b0X, b0Y, b0Z, vts);
         }
-        // axisTracksSelection — read the published axis mode (no stage lookup).
+        // Read the PUBLISHED capability, not the mode name (no stage
+        // lookup, and NOT a call to `AxisStage.axisTracksSelection()` —
+        // that instance method has no production caller; see its own doc
+        // comment in axis.d). Item mode 0614 / review should-fix 1: read
+        // `AxisPacket.tracksSelection` directly off the packet below (not a
+        // re-derive off `ap.type` via `AxisStage.modeTracksSelection`) —
+        // `type` still names e.g. Select
+        // even when AxisStage's item-mode guard made this evaluation publish
+        // the Auto/world basis instead, so re-deriving from `type` alone
+        // used to render a world-fixed item frame as if it co-rotated with
+        // the gesture. `tracksSelection` is computed once, in AxisStage's
+        // own evaluate(), from the SAME subject type that produced
+        // right/up/fwd — this is the single place that formula must live.
         bool tracksSelection = false;
         {
-            import toolpipe.packets      : AxisPacket;
-            import toolpipe.stages.axis  : AxisStage;
+            import toolpipe.packets : AxisPacket;
             if (auto ap = vts.get!AxisPacket())
-                tracksSelection = AxisStage.modeTracksSelection(cast(AxisStage.Mode) ap.type);
+                tracksSelection = ap.tracksSelection;
         }
         if (!tracksSelection) {
             rX = b0X; rY = b0Y; rZ = b0Z;     // plain / fixed axis modes hold B0
@@ -3625,6 +3642,52 @@ noBankConsumed:
         refirePreValid      = false;   // fresh window ⇒ recapture pre-config
     }
 
+    // Phase 2.5 of doc/item_mode_transform_plan.md (task 0614) — VERBATIM
+    // extraction of applyTRS's run-frame freeze into its own function, no
+    // behaviour change (R11). Reads only `pivot`/`bX`/`bY`/`bZ`, `frame.valid`
+    // and `moveCenterBoxDragActive()`; writes only `runFrameOrigin`/`R`/`U`/`F`
+    // + `runFrameValid`. Extracted so the coming item-mode branch (Phase 3)
+    // can call the SAME freeze instead of skipping it — the freeze must not be
+    // downgraded there; see the plan's boxed warning at §(b). The call site in
+    // `applyTRS` keeps its own P-F/M6 ordering comment (freeze BEFORE
+    // applyFold/composeFor read the frame); this function's body carries the
+    // rest of the original explanation verbatim.
+    private void freezeRunFrameIfNeeded(Vec3 pivot, Vec3 bX, Vec3 bY, Vec3 bZ) {
+        if (!runFrameValid) {
+            // Chain a new gesture off the PERSISTED gizmo frame: when a prior
+            // gesture left a settled basis (frame.settled, and the selection/mode
+            // hasn't changed to clear it), freeze THIS run's B0 from the unified
+            // `frame` instead of the live world-snapped currentBasis. runFrame is the
+            // SINGLE B0 that feeds BOTH the rendered frame (renderBasis drag branch)
+            // AND the apply-path translate (tX/tY/tZ at applyFold), so this one swap
+            // keeps render + apply coherent — the move-after-rotate gizmo draws
+            // rotated AND translates along the rotated axes. The sub-tools' input
+            // projection reads the same `frame` (pushed in begin*DragSession) so the
+            // drag DIRECTION matches the rendered arrows (never split sources).
+            // Gated by acenSettleAllowed() (the frame's own gate) so Element/Local —
+            // which never persist a frame — re-derive fresh.
+            // The Move center-box free-plane drag (dragAxis 3) is basis-free on the
+            // input side, so it stays on the LIVE basis here too — else decompose
+            // (live) vs re-expand (rotated runFrame) would round-trip to R·worldDelta.
+            Vec3 f0X = bX, f0Y = bY, f0Z = bZ;
+            // Gesture-frame unification — runFrame's CHAINED source reads the unified
+            // `frame` (the single source of truth). `frame.valid` IS `frame.settled
+            // && acenSettleAllowed()` by construction. The non-chained default
+            // (bX/bY/bZ over the restored baseline) and the moveCenterBoxDragActive()
+            // exclusion stay verbatim — runFrame itself, its freeze, runFrameValid,
+            // the publish, and the translate read are untouched (runFrame is the
+            // 6->2 boundary, it stays).
+            if (frame.valid && !moveCenterBoxDragActive()) {
+                f0X = frame.right; f0Y = frame.up; f0Z = frame.axis;
+            }
+            runFrameOrigin = pivot;
+            runFrameR      = f0X;
+            runFrameU      = f0Y;
+            runFrameF      = f0Z;
+            runFrameValid  = true;
+        }
+    }
+
     // Single geometry-apply entry point — the "evaluate" of this tool.
     // Drag, property-panel sliders, and headless `tool.doApply` all run
     // through here. Absolute-from-baseline: the caller supplies the
@@ -3719,39 +3782,10 @@ noBankConsumed:
         // (incl. the bare-write replay path) has a valid frame to publish;
         // resetRun() at every geometry-run boundary clears it so a relocate
         // re-freezes a fresh frame next apply.
-        if (!runFrameValid) {
-            // Chain a new gesture off the PERSISTED gizmo frame: when a prior
-            // gesture left a settled basis (frame.settled, and the selection/mode
-            // hasn't changed to clear it), freeze THIS run's B0 from the unified
-            // `frame` instead of the live world-snapped currentBasis. runFrame is the
-            // SINGLE B0 that feeds BOTH the rendered frame (renderBasis drag branch)
-            // AND the apply-path translate (tX/tY/tZ at applyFold), so this one swap
-            // keeps render + apply coherent — the move-after-rotate gizmo draws
-            // rotated AND translates along the rotated axes. The sub-tools' input
-            // projection reads the same `frame` (pushed in begin*DragSession) so the
-            // drag DIRECTION matches the rendered arrows (never split sources).
-            // Gated by acenSettleAllowed() (the frame's own gate) so Element/Local —
-            // which never persist a frame — re-derive fresh.
-            // The Move center-box free-plane drag (dragAxis 3) is basis-free on the
-            // input side, so it stays on the LIVE basis here too — else decompose
-            // (live) vs re-expand (rotated runFrame) would round-trip to R·worldDelta.
-            Vec3 f0X = bX, f0Y = bY, f0Z = bZ;
-            // Gesture-frame unification — runFrame's CHAINED source reads the unified
-            // `frame` (the single source of truth). `frame.valid` IS `frame.settled
-            // && acenSettleAllowed()` by construction. The non-chained default
-            // (bX/bY/bZ over the restored baseline) and the moveCenterBoxDragActive()
-            // exclusion stay verbatim — runFrame itself, its freeze, runFrameValid,
-            // the publish, and the translate read are untouched (runFrame is the
-            // 6->2 boundary, it stays).
-            if (frame.valid && !moveCenterBoxDragActive()) {
-                f0X = frame.right; f0Y = frame.up; f0Z = frame.axis;
-            }
-            runFrameOrigin = pivot;
-            runFrameR      = f0X;
-            runFrameU      = f0Y;
-            runFrameF      = f0Z;
-            runFrameValid  = true;
-        }
+        // NIT (0614 review): no post-call assert here — freezeRunFrameIfNeeded
+        // sets runFrameValid=true on the only path where it was false, so
+        // asserting it afterward is a tautology that can never catch a bug.
+        freezeRunFrameIfNeeded(pivot, bX, bY, bZ);
 
         // MS-4.3/4.4 — canonical-matrix FOLD. The whole T->R->S chain is composed
         // into ONE pivot-relative matrix (per cluster in the ACEN.Local case) and

@@ -758,6 +758,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             SubjectPacket subj;
             subj.mesh        = &mesh();
             subj.editMode    = editMode;
+            subj.selType     = currentSelType(selTypeOrder);
             subj.viewport    = vpm.activeSnapshot();
             subj.cursorX     = x;
             subj.cursorY     = y;
@@ -1046,6 +1047,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             SubjectPacket subj;
             subj.mesh             = &mesh();
             subj.editMode         = editMode;
+            subj.selType          = currentSelType(selTypeOrder);
             subj.viewport         = vpm.activeSnapshot();
 
             import operator             : VectorStack;
@@ -1336,6 +1338,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 SubjectPacket subj;
                 subj.mesh             = &mesh();
                 subj.editMode         = editMode;
+                subj.selType          = currentSelType(selTypeOrder);
                 subj.viewport         = vp;
                 VectorStack vts;
                 vts.put(&subj);
@@ -1453,6 +1456,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 SubjectPacket subj;
                 subj.mesh     = &mesh();
                 subj.editMode = editMode;
+                subj.selType  = currentSelType(selTypeOrder);
                 subj.viewport = vp;
                 VectorStack vts;
                 vts.put(&subj);
@@ -1495,6 +1499,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             SubjectPacket subj;
             subj.mesh     = &mesh();
             subj.editMode = editMode;
+            subj.selType  = currentSelType(selTypeOrder);
             subj.viewport = vpm.activeSnapshot();
 
             VectorStack vts;

@@ -112,6 +112,12 @@ class Command {
             SubjectPacket subj;
             subj.mesh     = mesh;
             subj.editMode = editMode;
+            // subj.selType left at its default (Vertex): this generic base
+            // command carries only mesh/view/editMode (see the protected
+            // fields below), not the app's SelTypeOrder, so there is nothing
+            // to read here. Every mesh-Operator command reached through this
+            // path is inherently geometry-scoped, so Vertex is also the
+            // correct answer, not merely a safe fallback.
             vts.put(&subj);
             return op.evaluate(vts);
         }

@@ -124,6 +124,10 @@ private bool captureLiveSymmetry(Mesh* mesh, Viewport vp, EditMode em,
     SubjectPacket subj;
     subj.mesh             = mesh;
     subj.editMode         = em;
+    // selType left at its default (Vertex): symmetry pairing is a
+    // geometry-element operation (SYMM mirrors vertex pairs, see
+    // doc/item_mode_transform_plan.md §Q2 — "not consumed" in item mode),
+    // and this free function has no SelType/SelTypeOrder to read.
     subj.viewport         = vp;
     VectorStack vts;
     vts.put(&subj);

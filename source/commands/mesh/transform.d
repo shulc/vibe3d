@@ -109,6 +109,10 @@ class MeshTransform : Command, Operator {
                 SubjectPacket symmSubj;
                 symmSubj.mesh             = mesh;
                 symmSubj.editMode         = editMode;
+                // selType left at its default (Vertex): this is the legacy
+                // vertex/edge/polygon transform command (the item path is
+                // XfrmTransformTool, not MeshTransform), and this class has
+                // no SelType/SelTypeOrder reference to read.
                 symmSubj.viewport         = effectiveViewport();
                 VectorStack symmVts;
                 symmVts.put(&symmSubj);

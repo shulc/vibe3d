@@ -5,6 +5,7 @@ import std.format : format;
 import math    : Vec3, Pin, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine;
 import mesh    : Mesh, MeshCacheKey;
 import editmode : EditMode;
+import seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAcen;
 import params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
 // pipeline imports moved to packet-only — Phase 6 cleanup
@@ -72,7 +73,27 @@ class ActionCenterStage : Stage, Operator {
         // Cache live viewport + upstream workplane so listAttrs
         // (called outside evaluation) and Screen mode can re-derive
         // the same value the pipeline just produced.
-        if (auto subj = vts.get!SubjectPacket()) lastView_ = subj.viewport;
+        //
+        // Item mode 0614 / review Blocker 2: the subject's SelType is
+        // deliberately NOT cached into a field the way lastView_/
+        // lastWpCenter_ are. The pipeline is a process-wide singleton
+        // (pipeline.d), and different evaluate() callers legitimately
+        // publish DIFFERENT, each-correct-for-itself SelTypes in the same
+        // process lifetime — command.d's generic base and MeshSelect are
+        // always geometry-scoped (Vertex) regardless of what the app's live
+        // selection type is; XfrmTransformTool's buildLocalVts tracks the
+        // live app state. A cached field would leak whichever evaluate()
+        // call ran last into every later reader (falloff_handles.d,
+        // listAttrs(), a mid-drag currentCenter() read from an UNRELATED
+        // evaluate() that ran in between) — order-dependent, no symptom
+        // until two callers disagree. So the decision is a function of
+        // THIS packet, at the point of use, right here — `subjType` is a
+        // local, not a field.
+        SelType subjType = SelType.Vertex;
+        if (auto subj = vts.get!SubjectPacket()) {
+            lastView_ = subj.viewport;
+            subjType  = subj.selType;
+        }
         if (auto wp = vts.get!WorkplanePacket()) {
             lastWpCenter_ = wp.center;
             lastWpNormal_ = wp.normal;
@@ -82,12 +103,22 @@ class ActionCenterStage : Stage, Operator {
         // partition (see localCenterAndClustersCached) so the O(E·V) BFS is
         // not redone every drag frame. All other modes use the const
         // computeCenter() path (cheap centroid/bbox scans).
+        //
+        // Item mode 0614: Local is one of the modes computeCenter()
+        // redirects to the item's world pivot (§Q3), but that redirect only
+        // fires INSIDE computeCenter() — so the BFS must be skipped here too,
+        // or it would run (and populate localCenters) despite its result
+        // being thrown away below. Skipping it also keeps `localCenters`
+        // empty, which is what keeps `pkt.clusterCenters`/`clusterOf` unset
+        // a few lines down (the `length >= 2` guard), so
+        // `ClusterPivots.active`/`ClusterAxes.active` read false downstream
+        // — item mode never has a multi-cluster partition.
         Vec3[] localCenters;
         int[]  localClusterOf;
-        if (mode == Mode.Local && mesh_ !is null) {
+        if (mode == Mode.Local && mesh_ !is null && subjType != SelType.Item) {
             pkt.center = localCenterAndClustersCached(localCenters, localClusterOf);
         } else {
-            pkt.center = computeCenter();
+            pkt.center = computeCenter(subjType);
         }
 
         // Phase 7.6 (BaseSide gizmo): when symmetry is on and the
@@ -97,11 +128,24 @@ class ActionCenterStage : Stage, Operator {
         // the axis of symmetry instead of the user's clicked half.
         // Restrict the centroid to base-side verts so the gizmo
         // follows the side the user anchored on.
+        //
+        // Item mode 0614 (review blocker): this is a SECOND writer of
+        // `pkt.center` — the first (computeCenter()/localCenterAndClusters-
+        // Cached above) already redirects to the item's world pivot for
+        // `itemRedirectMode(mode)` modes, but this block computed a pure
+        // vertex-geometry centroid with no awareness of that redirect.
+        // With an item subject there is no selected geometry to restrict
+        // to a symmetry side of, so this override must not fire at all —
+        // `subjType != SelType.Item` closes that gap. The existing
+        // Element/Local/Origin/Manual/Pivot/Parent exclusions are or-
+        // thogonal (those modes never want a centroid override, in any
+        // subject mode) and stay as-is.
         if (auto sym = vts.get!SymmetryPacket()) {
             if (sym.enabled
              && sym.vertSign.length == sym.pairOf.length
              && sym.vertSign.length > 0
              && !userPin.placed
+             && subjType != SelType.Item
              && mode != Mode.Origin && mode != Mode.Manual
              && mode != Mode.Element && mode != Mode.Local
              && mode != Mode.Pivot  && mode != Mode.Parent)
@@ -263,6 +307,18 @@ private:
     // Cached upstream workplane state (origin + normal) for Screen mode.
     Vec3      lastWpCenter_  = Vec3(0, 0, 0);
     Vec3      lastWpNormal_  = Vec3(0, 1, 0);
+    // Item mode 0614 / review Blocker 2: the LIVE external source for "what
+    // SelType is the CURRENT subject", used only by callers that reach
+    // computeCenter() WITHOUT a packet in hand (currentCenter() — listAttrs(),
+    // falloff_handles.d, transform.d/xfrm_transform.d's mid-drag
+    // currentCenter() reads). Deliberately a delegate queried fresh on every
+    // call, not a field cached from the last evaluate() (see evaluate()'s
+    // doc comment for why that was wrong) — matches the existing meshSrc_/
+    // primarySrc_ pattern below. Null in tests that don't wire item-mode
+    // awareness; liveSelType() then falls back to Vertex, matching
+    // SubjectPacket's own R4 default.
+    SelType delegate() selTypeSrc_;
+    private SelType liveSelType() const { return selTypeSrc_ ? selTypeSrc_() : SelType.Vertex; }
 
     // --- Local-mode cluster cache -----------------------------------------
     // During a transform drag the connected-component partition is INVARIANT
@@ -302,10 +358,12 @@ private:
 
 public:
     this(Mesh* delegate() meshSrc, EditMode* editMode,
-         Layer delegate() primarySrc = null) {
+         Layer delegate() primarySrc = null,
+         SelType delegate() selTypeSrc = null) {
         this.meshSrc_    = meshSrc;
         this.editMode_   = editMode;
         this.primarySrc_ = primarySrc;
+        this.selTypeSrc_ = selTypeSrc;
         publishState();
     }
 
@@ -730,7 +788,7 @@ public:
     // (falloff_handles.d's RMB-radius gesture) that need the canonical
     // pivot without walking the full pipeline.
     Vec3 currentCenter() const {
-        return computeCenter();
+        return computeCenter(liveSelType());
     }
 
     /// BUG-1 / flex_border_handles_plan.md Phase 3 — the 2-entry "is a gesture
@@ -792,11 +850,84 @@ public:
             && mode != Mode.Pivot  && mode != Mode.Parent;
     }
 
+    // Item mode 0614 (doc/item_mode_transform_plan.md §Q3 / §(a)). Modes
+    // whose center is SELECTION-derived (or the geometry-fallback "nothing
+    // selected") — in item mode there is no selected geometry to derive
+    // from, so these redirect to the item's world pivot instead.
+    // Origin/Manual/Pivot/Parent are excluded: they are either
+    // subject-independent (Origin, Manual) or already item-anchored
+    // (Pivot/Parent already read the item / its parent).
+    //
+    // A `final switch` — not the original OR-chain — so a Mode added later
+    // MUST be classified here or the file fails to compile (review should-
+    // fix: an OR-chain silently defaults an unlisted mode to "not
+    // redirected", which is exactly the wrong failure mode for a table that
+    // is supposed to be exhaustive).
+    //
+    // Screen: review should-fix 2. The excluded-list comment this replaced
+    // called Screen "already item-anchored" — false. Screen's centre body
+    // (below, `case Mode.Screen`) is the literal SAME call as Auto/None
+    // (`centroidWithGeometryFallback()`); only its AXIS is camera-derived
+    // (AxisStage, unaffected by this stage). There is no principled reason
+    // for its CENTRE to sit in a different bucket than Auto/None, so it
+    // joins them here.
+    //
+    // `capture-verified` for None (L1, Phase 0 case A); `capture-inferred`
+    // for the rest (only the default was measured) — see the plan's Q3
+    // provenance note. Screen's inclusion is inferred from CODE IDENTITY
+    // with Auto/None (same function call), not from a separate capture.
+    private static bool itemRedirectMode(Mode m) pure nothrow @nogc @safe {
+        final switch (m) {
+            case Mode.Auto:
+            case Mode.Select:
+            case Mode.SelectAuto:
+            case Mode.Screen:
+            case Mode.Element:
+            case Mode.Local:
+            case Mode.Border:
+            case Mode.None:
+                return true;
+            case Mode.Origin:
+            case Mode.Manual:
+            case Mode.Pivot:
+            case Mode.Parent:
+                return false;
+        }
+    }
+
+    /// The primary item's WORLD PIVOT — `applyAffine(composedMatrix(),
+    /// pivot)`, equivalently `pos + pivot` for ANY rot/scl (the local pivot
+    /// is a fixed point of `T(pivot)·R·S·T(-pivot)`, document.d:68).
+    /// Extracted so the explicit `Mode.Pivot` arm and the item-mode redirect
+    /// in `computeCenter()` share ONE implementation. `capture-verified`
+    /// (L1, doc/tasks/0614-evidence/phase0_findings.md case A): measured
+    /// `(0,0,0)` against geometry sitting at local `(3,0,0)`, and measured
+    /// rotation-invariant (case A′, item rotated 45° about Y still read
+    /// `(0,0,0)`).
+    private Vec3 itemPivotWorld() const {
+        auto l = primary_();
+        if (l is null) return Vec3(0, 0, 0);
+        return applyAffine(l.xform.composedMatrix(), l.xform.pivot);
+    }
+
 private:
 
-    Vec3 computeCenter() const {
+    // `subjType` is the subject's SelType AT THE POINT OF USE — the caller's
+    // packet (evaluate()) or a freshly-queried live value (currentCenter()),
+    // never a field cached from some earlier, possibly unrelated evaluate()
+    // call (review Blocker 2 — see evaluate()'s doc comment and
+    // `liveSelType()` above).
+    Vec3 computeCenter(SelType subjType) const {
         if (relocateAllowed(mode) && userPin.placed) return userPin.center;
         if (settlePinHonored()    && softPin.placed) return softPin.center;
+        // Item mode 0614: redirect the selection-derived modes to the
+        // item's world pivot BEFORE the geometry-selection switch below —
+        // there is no selection to derive a center from when the subject is
+        // an item. Sits after the pin-precedence checks above (a
+        // user-placed pin keeps winning, unchanged) and before the switch,
+        // per §(a) of the plan.
+        if (subjType == SelType.Item && itemRedirectMode(mode))
+            return itemPivotWorld();
         final switch (mode) {
             case Mode.Auto:
                 return centroidWithGeometryFallback();
@@ -813,7 +944,9 @@ private:
                 // Selection centroid — Screen mode's distinguishing
                 // feature is the AXIS orientation (camera-aligned),
                 // handled by AxisStage. The action-center POSITION
-                // tracks the selection like Auto does.
+                // tracks the selection like Auto does (byte-identical call —
+                // which is why item mode redirects it exactly like Auto/
+                // None too, see itemRedirectMode() above).
                 return centroidWithGeometryFallback();
             case Mode.Element:
                 // Click-pick (XfrmTransformTool.tryPickElement when
@@ -871,14 +1004,10 @@ private:
                     case EditMode.Edges:    return centroidWithGeometryFallback();
                     case EditMode.Polygons: return mesh_.selectionBorderBBoxCenterFaces();
                 }
-            case Mode.Pivot: {
-                // center = primary item's pivot world position.
-                // applyAffine(M, pivot) == pos + rotation·pivot for the general
-                // case; equals pos+pivot when unrotated. Capture-verified 3/3 exact.
-                auto l = primary_();
-                if (l is null) return Vec3(0, 0, 0);
-                return applyAffine(l.xform.composedMatrix(), l.xform.pivot);
-            }
+            case Mode.Pivot:
+                // center = primary item's pivot world position. See
+                // itemPivotWorld() above — shared with the item-mode redirect.
+                return itemPivotWorld();
             case Mode.Parent: {
                 // center = parent item's world position (parent.pivot=0 → parent.pos).
                 // Reads exactly ONE level (l.parent) — no ancestor-chain walk.
@@ -1891,4 +2020,340 @@ unittest {
         "Pivot settle test: after an item move following the settle, the "
         ~ "center must follow the NEW live pivot — a settle must never "
         ~ "freeze the Pivot gizmo");
+}
+
+// ---------------------------------------------------------------------------
+// Item mode 0614, Phase 2 — the ACEN item-center redirect
+// (doc/item_mode_transform_plan.md §Q3 / §(a)). Eight selection-derived
+// modes (Auto/Select/SelectAuto/Screen/Element/Local/Border/None) redirect
+// to the item's world pivot when the subject is SelType.Item; the other
+// four (Origin/Manual/Pivot/Parent) are unaffected — subject-independent or
+// already item-anchored. Screen joins the redirect set (review should-fix
+// 2): its centre body is the byte-identical `centroidWithGeometryFallback()`
+// call Auto/None make, so excluding it while including its two siblings had
+// no principled basis. `capture-verified` for the redirect's VALUE (L1,
+// doc/tasks/0614-evidence/phase0_findings.md case A): the rig below is the
+// same discriminator the capture used — geometry displaced to local
+// (3,0,0), item pos=pivot=(0,0,0) — so a bbox-centre fallback and the item
+// pivot disagree and the test proves which one actually fired.
+//
+// `currentSel` + the `() => currentSel` ctor delegate stand in for the LIVE
+// external selType source app.d wires (review Blocker 2 — computeCenter()
+// no longer reads a field cached from evaluate(), so a test drives it via
+// the same live-query seam production uses instead of poking a field).
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh     : makeCube;
+    import std.math : fabs;
+    import std.conv : to;
+
+    bool vecEq(Vec3 a, Vec3 b) {
+        return fabs(a.x - b.x) < 1e-6f && fabs(a.y - b.y) < 1e-6f
+            && fabs(a.z - b.z) < 1e-6f;
+    }
+
+    Mesh cube = makeCube();
+    foreach (ref v; cube.vertices) v = v + Vec3(3, 0, 0);   // geometry ~ local (3,0,0)
+    cube.resetSelection();
+    Mesh* meshPtr = &cube;
+    EditMode em = EditMode.Vertices;
+
+    auto parentLayer = new Layer();
+    parentLayer.xform.pivot = Vec3(9, 9, 9);
+    auto itemLayer = new Layer();
+    itemLayer.xform.pos    = Vec3(0, 0, 0);
+    itemLayer.xform.pivot  = Vec3(0, 0, 0);
+    itemLayer.parent       = parentLayer;
+    Layer itemRef = itemLayer;
+
+    SelType currentSel = SelType.Vertex;
+    auto acs = new ActionCenterStage(() => meshPtr, &em, () => itemRef,
+                                      () => currentSel);
+    acs.manualCenter = Vec3(7, 8, 9);
+
+    immutable Vec3 itemPivot     = Vec3(0, 0, 0);   // item's world pivot
+    immutable Vec3 geomCentroid  = Vec3(3, 0, 0);   // what the geometry fallback reads
+    immutable Vec3 parentPivot   = Vec3(9, 9, 9);
+
+    alias Mode = ActionCenterStage.Mode;
+
+    // The eight redirect modes: same computeCenter() call, only the live
+    // selType source differs — geometry-mode is byte-identical to the
+    // pre-0614 behaviour (proves the redirect costs nothing when inactive);
+    // item-mode reads the item pivot instead of the geometry centroid.
+    foreach (m; [Mode.Auto, Mode.Select, Mode.SelectAuto, Mode.Screen,
+                 Mode.Element, Mode.Local, Mode.Border, Mode.None]) {
+        acs.mode = m;
+        currentSel = SelType.Vertex;
+        assert(vecEq(acs.currentCenter(), geomCentroid),
+            m.to!string ~ ": Vertex subject must read the geometry fallback "
+            ~ "unchanged (0614 must not touch existing behaviour)");
+        currentSel = SelType.Item;
+        assert(vecEq(acs.currentCenter(), itemPivot),
+            m.to!string ~ ": Item subject must redirect to the item's world "
+            ~ "pivot, not the geometry centroid — §Q3");
+    }
+
+    // The four unaffected modes: an Item subject must NOT change their
+    // result relative to a Vertex subject.
+    acs.mode = Mode.Origin;
+    currentSel = SelType.Vertex;
+    assert(vecEq(acs.currentCenter(), Vec3(0, 0, 0)));
+    currentSel = SelType.Item;
+    assert(vecEq(acs.currentCenter(), Vec3(0, 0, 0)),
+        "Origin: subject-independent, must ignore item mode entirely");
+
+    acs.mode = Mode.Manual;
+    currentSel = SelType.Vertex;
+    assert(vecEq(acs.currentCenter(), acs.manualCenter));
+    currentSel = SelType.Item;
+    assert(vecEq(acs.currentCenter(), acs.manualCenter),
+        "Manual: subject-independent, must ignore item mode entirely");
+
+    acs.mode = Mode.Pivot;
+    currentSel = SelType.Vertex;
+    assert(vecEq(acs.currentCenter(), itemPivot));
+    currentSel = SelType.Item;
+    assert(vecEq(acs.currentCenter(), itemPivot),
+        "Pivot: already item-anchored regardless of subject type");
+
+    acs.mode = Mode.Parent;
+    currentSel = SelType.Vertex;
+    assert(vecEq(acs.currentCenter(), parentPivot));
+    currentSel = SelType.Item;
+    assert(vecEq(acs.currentCenter(), parentPivot),
+        "Parent: already item-anchored regardless of subject type");
+}
+
+// ---------------------------------------------------------------------------
+// Item mode 0614, Phase 2 — the Local-mode cluster BFS must NOT run when the
+// subject is an item (doc/item_mode_transform_plan.md §(a) step 3 / §Q3).
+// Drives the REAL evaluate() path (not computeCenter() directly) with a
+// selection that forms two disjoint clusters — the same rig the D5 dedup
+// unittest above uses — so this exercises the exact early-out that guards
+// `localCenterAndClustersCached`, not merely `computeCenter`'s own switch.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh              : makeCube;
+    import operator          : VectorStack;
+    import toolpipe.packets  : SubjectPacket;
+
+    Mesh cube = makeCube();
+    cube.resetSelection();
+    cube.selectFace(4);   // y=+0.5 face — cluster 0
+    cube.selectFace(5);   // y=-0.5 face — disconnected, cluster 1
+    Mesh* meshPtr = &cube;
+    EditMode em = EditMode.Polygons;
+
+    auto itemLayer = new Layer();
+    itemLayer.xform.pivot = Vec3(2, 2, 2);
+    Layer itemRef = itemLayer;
+
+    auto acs = new ActionCenterStage(() => meshPtr, &em, () => itemRef);
+    acs.mode = ActionCenterStage.Mode.Local;
+
+    SubjectPacket subj;
+    subj.mesh     = meshPtr;
+    subj.editMode = em;
+    subj.selType  = SelType.Item;
+    VectorStack vts;
+    vts.put(&subj);
+    assert(acs.evaluate(vts), "evaluate() must succeed");
+
+    auto pkt = vts.get!ActionCenterPacket();
+    assert(pkt !is null);
+    assert(pkt.clusterCenters.length == 0,
+        "item mode: the two-cluster selection must NOT reach the Local "
+        ~ "cluster BFS — clusterCenters must stay empty so "
+        ~ "ClusterPivots.active reads false downstream");
+    assert(pkt.clusterOf.length == 0,
+        "item mode: clusterOf must stay empty alongside clusterCenters");
+    assert(pkt.center.x == 2 && pkt.center.y == 2 && pkt.center.z == 2,
+        "item mode: Local's redirect must still publish the item's world "
+        ~ "pivot as the single center, exactly like every other redirect mode");
+}
+
+// ---------------------------------------------------------------------------
+// Review Blocker 2 — the item decision must NOT be a field cached from
+// whichever evaluate() call ran last. Reproduces the review's concrete
+// example: an item-scoped evaluate() (the drag/render path) followed by an
+// UNRELATED evaluate() that is deliberately geometry-scoped (mirrors
+// source/tools/common/command_wrapper.d's preview tick, which hardcodes
+// Vertex edit mode and never sets a selection type) — currentCenter() (the
+// path falloff_handles.d / listAttrs() read) must still report the item
+// pivot afterward, as long as the LIVE external truth (`selTypeSrc_`) still
+// says Item. A field cached from the SECOND (geometry-scoped) evaluate()
+// call would wrongly clobber it back to the geometry fallback here —
+// order-dependent, exactly the "no symptom until two callers disagree" bug
+// the review names.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh              : makeCube;
+    import operator          : VectorStack;
+    import toolpipe.packets  : SubjectPacket;
+    import std.math          : fabs;
+    import std.conv          : to;
+
+    bool vecEq(Vec3 a, Vec3 b) {
+        return fabs(a.x - b.x) < 1e-6f && fabs(a.y - b.y) < 1e-6f
+            && fabs(a.z - b.z) < 1e-6f;
+    }
+
+    Mesh cube = makeCube();
+    foreach (ref v; cube.vertices) v = v + Vec3(5, 0, 0);   // geometry ~ (5,0,0)
+    cube.resetSelection();
+    Mesh* meshPtr = &cube;
+    EditMode em = EditMode.Vertices;
+
+    auto itemLayer = new Layer();
+    itemLayer.xform.pos = Vec3(9, 0, 0);
+    Layer itemRef = itemLayer;
+
+    // The live app-state truth: item is current — wired exactly like app.d
+    // wires ActionCenterStage to `() => currentSelType(selTypeOrder)`.
+    SelType liveTruth = SelType.Item;
+    auto acs = new ActionCenterStage(() => meshPtr, &em, () => itemRef,
+                                      () => liveTruth);
+    acs.mode = ActionCenterStage.Mode.Auto;
+
+    immutable Vec3 itemPivot    = Vec3(9, 0, 0);
+    immutable Vec3 geomCentroid = Vec3(5, 0, 0);
+
+    // Step 1: the real drag/render evaluate() — subject correctly Item.
+    SubjectPacket subjItem;
+    subjItem.mesh = meshPtr; subjItem.editMode = em; subjItem.selType = SelType.Item;
+    VectorStack vtsItem;
+    vtsItem.put(&subjItem);
+    assert(acs.evaluate(vtsItem), "evaluate() must succeed (item subject)");
+    assert(vecEq(acs.currentCenter(), itemPivot),
+        "sanity: item-scoped evaluate() must publish the item pivot");
+
+    // Step 2: an UNRELATED evaluate() call — mirrors command_wrapper.d's
+    // preview tick, which hardcodes Vertex and never sets selType (left at
+    // its packet default). This must NOT poison any later reader.
+    SubjectPacket subjPreview;
+    subjPreview.mesh = meshPtr; subjPreview.editMode = em;
+    VectorStack vtsPreview;
+    vtsPreview.put(&subjPreview);
+    assert(acs.evaluate(vtsPreview), "evaluate() must succeed (preview subject)");
+
+    // Step 3: currentCenter() must STILL report the item pivot — the live
+    // external truth is still Item, and it must be consulted FRESH here,
+    // not read off a field the preview tick's evaluate() call clobbered.
+    assert(vecEq(acs.currentCenter(), itemPivot),
+        "currentCenter() must reflect the LIVE current subject, not "
+        ~ "whichever evaluate() call happened to run last — review Blocker 2. "
+        ~ "Got " ~ acs.currentCenter().x.to!string ~ "," ~ acs.currentCenter().y.to!string
+        ~ "," ~ acs.currentCenter().z.to!string ~ " (geometry fallback would "
+        ~ "be " ~ geomCentroid.x.to!string ~ "," ~ geomCentroid.y.to!string
+        ~ "," ~ geomCentroid.z.to!string ~ ")");
+}
+
+// ---------------------------------------------------------------------------
+// Item mode 0614 review BLOCKER — a second writer of `pkt.center`. The
+// symmetry base-side override (evaluate(), the block right after the
+// computeCenter()/localCenterAndClustersCached() call above) restricts the
+// centroid to base-side verts whenever symmetry is on and the selection
+// straddles the plane. It used to run for six of the eight
+// `itemRedirectMode()` modes (everything except Element/Local, which it was
+// ALREADY excluding for an unrelated reason), silently clobbering the item
+// pivot the first writer had just published — including Mode.Auto, the
+// default. `currentCenter()` (the listAttrs()/display path,
+// GET /api/toolpipe) never runs this override at all, so the two readers of
+// "the action center" split: the evaluate()-published packet
+// (GET /api/toolpipe/eval) read the geometry base-side centroid while the
+// display path kept reporting the item pivot, for the SAME frame.
+//
+// Reproduces the review's repro almost verbatim: item world pivot at
+// x=2 (pos=(2,0,0), pivot=0), symmetry on (X axis, plane at x=0), ALL cube
+// vertices selected (both sides of the plane, so `baseSideCentroid` finds
+// base-side verts and actually overrides — count==0 would silently no-op
+// and defeat the test). The four selected +X-side vertices average to
+// (0.5,0,0) — discriminates from the item pivot (2,0,0), so a clobber is
+// observable, not coincidentally masked.
+//
+// This must hold across every one of the eight redirect modes, not just the
+// default: the pre-fix exclusion list was itself mode-specific (it happened
+// to already exclude Element/Local), so a single-mode assertion could not
+// tell "fixed for all six exposed modes" from "fixed for the one mode
+// tested".
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh              : makeCube;
+    import operator          : VectorStack;
+    import toolpipe.packets  : SubjectPacket, SymmetryPacket;
+    import std.math          : fabs;
+    import std.conv          : to;
+
+    bool vecEq(Vec3 a, Vec3 b) {
+        return fabs(a.x - b.x) < 1e-6f && fabs(a.y - b.y) < 1e-6f
+            && fabs(a.z - b.z) < 1e-6f;
+    }
+
+    Mesh cube = makeCube();               // symmetric ±0.5 corners about x=0
+    cube.resetSelection();
+    foreach (i; 0 .. cube.vertices.length)
+        cube.selectVertex(cast(int)i);    // ALL verts — both sides of the plane
+    Mesh* meshPtr = &cube;
+    EditMode em = EditMode.Vertices;
+
+    auto itemLayer = new Layer();
+    itemLayer.xform.pos = Vec3(2, 0, 0);  // world pivot = pos+pivot = (2,0,0)
+    Layer itemRef = itemLayer;
+
+    SelType liveTruth = SelType.Item;
+    auto acs = new ActionCenterStage(() => meshPtr, &em, () => itemRef,
+                                      () => liveTruth);
+
+    immutable Vec3 itemPivot     = Vec3(2, 0, 0);
+    // The base-side (+X) centroid of the 4 selected x=+0.5 corners — what
+    // the pre-fix override would wrongly publish instead of itemPivot.
+    immutable Vec3 baseSideCen   = Vec3(0.5f, 0, 0);
+    assert(!vecEq(itemPivot, baseSideCen),
+        "test rig must discriminate the item pivot from the base-side "
+        ~ "centroid, or a clobber would be invisible");
+
+    SymmetryPacket sym;
+    sym.enabled   = true;
+    sym.axisIndex = 0;                    // X
+    sym.baseSide  = 1;                    // +X is the anchored side
+    sym.vertSign.length = cube.vertices.length;
+    foreach (i, v; cube.vertices) sym.vertSign[i] = (v.x >= 0) ? 1 : -1;
+    sym.pairOf.length = cube.vertices.length;
+    foreach (ref p; sym.pairOf) p = -1;   // unused by baseSideCentroid; only
+                                          // the length-match gate cares.
+
+    alias Mode = ActionCenterStage.Mode;
+    // The eight redirect modes (itemRedirectMode() == true) — same universe
+    // the earlier item-redirect unittest exercises.
+    foreach (m; [Mode.Auto, Mode.Select, Mode.SelectAuto, Mode.Screen,
+                 Mode.Element, Mode.Local, Mode.Border, Mode.None]) {
+        acs.mode = m;
+
+        SubjectPacket subj;
+        subj.mesh = meshPtr; subj.editMode = em; subj.selType = SelType.Item;
+        VectorStack vts;
+        vts.put(&subj);
+        vts.put(&sym);
+        assert(acs.evaluate(vts), m.to!string ~ ": evaluate() must succeed");
+
+        auto pkt = vts.get!ActionCenterPacket();
+        assert(pkt !is null);
+
+        Vec3 published = pkt.center;
+        Vec3 displayed = acs.currentCenter();
+
+        assert(vecEq(published, itemPivot),
+            m.to!string ~ ": symmetry-on item mode must publish the item "
+            ~ "pivot, not a geometry base-side centroid — got "
+            ~ published.x.to!string ~ "," ~ published.y.to!string ~ ","
+            ~ published.z.to!string);
+        assert(vecEq(published, displayed),
+            m.to!string ~ ": the evaluate()-published center and the "
+            ~ "listAttrs()/currentCenter() display center must AGREE for "
+            ~ "the same frame — published=" ~ published.x.to!string ~ ","
+            ~ published.y.to!string ~ "," ~ published.z.to!string
+            ~ " displayed=" ~ displayed.x.to!string ~ ","
+            ~ displayed.y.to!string ~ "," ~ displayed.z.to!string);
+    }
 }

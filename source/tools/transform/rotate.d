@@ -8,6 +8,7 @@ import tools.transform.transform;
 import handler;
 import mesh;
 import editmode;
+import seltype : SelType;
 import math;
 import shader;
 import toolpipe.packets : FalloffPacket;
@@ -143,8 +144,9 @@ public:
     // locally where needed. Null for any standalone (unit-test) instance.
     TransformTool wrapperRef;
 
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
-        super(meshSrc, gpu, editMode);
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
+         SelType delegate() selTypeSrc = null) {
+        super(meshSrc, gpu, editMode, selTypeSrc);
         handler = new RotateHandler(Vec3(0, 0, 0));
     }
 

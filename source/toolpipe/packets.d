@@ -3,6 +3,7 @@ module toolpipe.packets;
 import math : Vec3, Viewport;
 import mesh : Mesh;
 import editmode : EditMode;
+import seltype : SelType;
 
 // ---------------------------------------------------------------------------
 // Packet types — the wire format between tool pipe stages.
@@ -23,6 +24,15 @@ import editmode : EditMode;
 struct SubjectPacket {
     Mesh*      mesh;
     EditMode   editMode;
+    // What kind of thing the pipe is operating on: a geometry element
+    // (Vertex/Edge/Polygon, mirroring `editMode`) or the layer/item itself
+    // (`SelType.Item`). Stages read this to decide whether to compute a
+    // geometry-derived value (selection centroid, mesh basis, ...) or an
+    // item-derived one (the layer's world pivot / world axes). Defaults to
+    // `Vertex` so a builder that forgets to set it degrades to the existing
+    // geometry-mode behaviour rather than spuriously entering item mode
+    // (doc/item_mode_transform_plan.md Phase 1, R4).
+    SelType    selType = SelType.Vertex;
     // Selection is NOT snapshotted into this packet. Stages that compute
     // selection-derived values (Action Center "selection center", Falloff
     // weight/lasso) read it straight from `mesh` via the non-allocating
@@ -57,6 +67,20 @@ struct SubjectPacket {
     int  cursorX     = -1;
     int  cursorY     = -1;
     bool cursorValid = false;
+}
+
+// The default `selType` is `Vertex`, not `Item`. This is the R4 mitigation
+// (doc/item_mode_transform_plan.md, "Owner decisions" Q1 reasons / risk
+// table): a subject builder that forgets to set `selType` publishes a
+// geometry-mode packet — the pre-existing behaviour — never a spurious item
+// write. Every stage's item branch must be reachable ONLY by an explicit
+// `selType == SelType.Item`, never by omission.
+unittest {
+    SubjectPacket subj;
+    assert(subj.selType == SelType.Vertex,
+           "SubjectPacket.selType must default to Vertex so an omitted "
+           ~ "builder degrades to the existing geometry-mode behaviour, "
+           ~ "never to a spurious item-mode branch");
 }
 
 /// The cooked 2D event — the single place a gesture's pixel state is stated.
@@ -197,6 +221,19 @@ struct AxisPacket {
     // toolpipe.stages.axis.AxisStage.Mode for full list.
     int  type    = 0;
     bool isAuto  = true;
+    // Item mode 0614 (review should-fix 1): the SINGLE declared "does this
+    // basis co-rotate with a selection-derived gesture?" capability —
+    // `AxisStage.modeTracksSelection(type)` narrowed by the SAME subject
+    // selType the evaluate() call that produced `right/up/fwd` actually
+    // used. Publishing it here (rather than leaving consumers to recompute
+    // `modeTracksSelection(type)` themselves against the raw `type`) is
+    // load-bearing: `type` still names the configured mode (e.g. Select)
+    // even when the item-mode guard in `computeBasis()` made THIS evaluation
+    // fall back to the Auto/world basis, so a consumer keyed off `type`
+    // alone would believe a world-fixed item frame co-rotates with the
+    // gesture. Consumers (xfrm_transform.d's renderBasis) must read this
+    // field, not re-derive from `type`.
+    bool tracksSelection = false;
     // Per-cluster basis (Phase 4 of the action-center design doc).
     // Mirrors ActionCenterPacket.clusterCenters / clusterOf semantics:
     // when `clusterRight.length >= 2` the packet is in multi-cluster

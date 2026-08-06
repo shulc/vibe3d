@@ -9,6 +9,7 @@ import handler;
 import viewport_scheme : schemeColor, SchemeColor;
 import mesh;
 import editmode;
+import seltype : SelType;
 import math;
 import shader;
 
@@ -290,8 +291,9 @@ class MoveTool : TransformTool {
     private GLuint constraintLineVbo;
 
 public:
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
-        super(meshSrc, gpu, editMode);
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
+         SelType delegate() selTypeSrc = null) {
+        super(meshSrc, gpu, editMode, selTypeSrc);
         handler = new MoveHandler(Vec3(0, 0, 0));
         cachedCenter = Vec3(0, 0, 0);
     }

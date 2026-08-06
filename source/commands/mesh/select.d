@@ -179,6 +179,10 @@ class MeshSelect : Command {
         SubjectPacket subj;
         subj.mesh             = mesh;
         subj.editMode         = *editModePtr;
+        // subj.selType left at its default (Vertex): this command only ever
+        // mirrors a GEOMETRY selection (vertex/edge/polygon), never an item
+        // one — `layer.select` is the separate command for item selection —
+        // and this class carries no SelType/SelTypeOrder reference to read.
         subj.viewport         = effectiveViewport();
         VectorStack vts;
         vts.put(&subj);

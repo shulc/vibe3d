@@ -7,6 +7,7 @@ import math    : Vec3, Viewport, cross, dot, normalize, frameMatrix, frameMatrix
                  applyAffine;
 import mesh    : Mesh;
 import editmode : EditMode;
+import seltype : SelType;
 import toolpipe.stage    : Stage, TaskCode, ordAxis;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : AxisPacket;
@@ -56,7 +57,24 @@ class AxisStage : Stage, Operator {
                                   ActionCenterPacket;
         // Cache upstream state — both the viewport (subject) and the
         // workplane (its packet) are needed by computeBasis().
-        if (auto subj = vts.get!SubjectPacket()) lastView_ = subj.viewport;
+        //
+        // Item mode 0614 / review Blocker 2: the subject's SelType is
+        // deliberately NOT cached into a field (see actcenter.d's evaluate()
+        // for the full rationale — the pipeline is a process-wide singleton
+        // and different evaluate() callers legitimately publish different,
+        // each-correct-for-itself SelTypes). `subjType` is a local, read
+        // from THIS packet, at the point of use below. No redirect lives
+        // here (L3: the measured default is already world,
+        // doc/item_mode_transform_plan.md §(a)), only a guard on the three
+        // selection-derived modes below plus the `tracksSelection` capability
+        // published on the packet (should-fix 1 — the real consumer,
+        // xfrm_transform.d's renderBasis, reads the packet, not the
+        // instance method).
+        SelType subjType = SelType.Vertex;
+        if (auto subj = vts.get!SubjectPacket()) {
+            lastView_ = subj.viewport;
+            subjType  = subj.selType;
+        }
         if (auto wp = vts.get!WorkplanePacket()) {
             lastWpAxis1_  = wp.axis1;
             lastWpNormal_ = wp.normal;
@@ -65,7 +83,7 @@ class AxisStage : Stage, Operator {
         }
         AxisPacket pkt;
         Vec3 r, u, f;
-        computeBasis(r, u, f);
+        computeBasis(r, u, f, subjType);
         pkt.right   = r;
         pkt.up      = u;
         pkt.fwd     = f;
@@ -80,6 +98,13 @@ class AxisStage : Stage, Operator {
         pkt.axIndex = axIndex;
         pkt.type    = cast(int)mode;
         pkt.isAuto  = (mode == Mode.Auto);
+        // Should-fix 1 (0614 review): the declared "does this basis
+        // co-rotate with the gesture" capability, narrowed by the SAME
+        // subjType this evaluation just used for the Element/Select/Local
+        // guard above — NOT re-derived by a consumer from `pkt.type` alone
+        // (that was the bug: `type` still names e.g. Select even when the
+        // guard made THIS evaluation fall back to the Auto/world basis).
+        pkt.tracksSelection = modeTracksSelection(mode) && subjType != SelType.Item;
         pkt.clusterRight = null;
         pkt.clusterUp    = null;
         pkt.clusterFwd   = null;
@@ -157,8 +182,32 @@ class AxisStage : Stage, Operator {
     static bool modeTracksSelection(Mode m) pure nothrow @nogc @safe {
         return m == Mode.Select || m == Mode.Local;
     }
-    bool axisTracksSelection() const pure nothrow @nogc @safe {
-        return modeTracksSelection(mode);
+    // Item mode 0614: under the item guard (computeBasis's Element/Select/
+    // Local arms below), Select/Local no longer deliver a selection-derived
+    // basis in item mode — they fall back to Auto — so the declared
+    // capability must follow the frame's ACTUAL source, not the mode's name
+    // (the exact failure class axis.d's own comment above names).
+    //
+    // Review should-fix 1: THIS method has zero production callers — the
+    // real consumer (xfrm_transform.d's renderBasis) cannot reach an
+    // AxisStage instance (it only sees published packets), so it now reads
+    // `AxisPacket.tracksSelection` instead, computed in evaluate() from the
+    // packet's own subject type at the point of use. It has no *production*
+    // caller left; it stays only because this file's own unittest below
+    // calls it directly against a live `AxisStage` instance, as a same-
+    // module cross-check that the instance-level formula agrees with the
+    // packet-published capability the real consumer reads — not because any
+    // external/API caller holds a stage instance. Delete it if that
+    // cross-check is ever dropped.
+    //
+    // Not `pure nothrow @nogc @safe` like `modeTracksSelection` above: the
+    // `liveSelType()` call is a plain (unannotated) delegate invocation, so
+    // the compiler cannot infer purity/safety through it — the same
+    // structural reason `currentBasis()` (which also calls `liveSelType()`)
+    // carries no attributes either. Not a silent regression to chase; a
+    // consequence of the delegate field's type.
+    bool axisTracksSelection() const {
+        return modeTracksSelection(mode) && liveSelType() != SelType.Item;
     }
 
     // Default = None — companion of ActionCenterStage's default (see
@@ -181,6 +230,15 @@ private:
     Vec3     lastWpNormal_ = Vec3(0, 1, 0);
     Vec3     lastWpAxis2_  = Vec3(0, 0, 1);
     bool     lastWpIsAuto_ = true;
+    // Item mode 0614 / review Blocker 2: the LIVE external source for "what
+    // SelType is the CURRENT subject", used only by callers that reach
+    // computeBasis() WITHOUT a packet in hand (currentBasis() — listAttrs(),
+    // axisTracksSelection() above). Queried fresh on every call, never
+    // cached (see actcenter.d's twin field for the full rationale). Null in
+    // tests that don't wire item-mode awareness; liveSelType() then falls
+    // back to Vertex, matching SubjectPacket's own R4 default.
+    SelType delegate() selTypeSrc_;
+    private SelType liveSelType() const { return selTypeSrc_ ? selTypeSrc_() : SelType.Vertex; }
     // Direct mesh refs for Element / Local modes (face/edge/vertex
     // normals). Optional — the stage works without when only World /
     // Workplane / Auto modes are used.
@@ -193,10 +251,12 @@ private:
 
 public:
     this(Mesh* delegate() meshSrc = null, EditMode* editMode = null,
-         Layer delegate() primarySrc = null) {
+         Layer delegate() primarySrc = null,
+         SelType delegate() selTypeSrc = null) {
         this.meshSrc_    = meshSrc;
         this.editMode_   = editMode;
         this.primarySrc_ = primarySrc;
+        this.selTypeSrc_ = selTypeSrc;
         publishState();
     }
 
@@ -253,13 +313,26 @@ public:
 
     /// Snapshot-friendly basis read for callers outside the pipeline
     /// (e.g. listAttrs / property panel). Uses last-cached upstream
-    /// values when called between evaluate() passes.
+    /// values when called between evaluate() passes, and the LIVE
+    /// `liveSelType()` source (not a field cached from evaluate() — review
+    /// Blocker 2) for the item-mode guard.
     void currentBasis(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
-        computeBasis(right, up, fwd);
+        computeBasis(right, up, fwd, liveSelType());
     }
 
 private:
-    void computeBasis(out Vec3 r, out Vec3 u, out Vec3 f) const {
+    // `subjType` is the subject's SelType AT THE POINT OF USE — the caller's
+    // packet (evaluate()) or a freshly-queried live value (currentBasis()),
+    // never a field cached from some earlier, possibly unrelated evaluate()
+    // call.
+    // Review nit: `subjType` has NO default — unlike `computeBasis`'s twin,
+    // `ActionCenterStage.computeCenter(SelType subjType)`, which also takes
+    // it as a plain required parameter. A caller that omitted it here would
+    // silently get geometry (Vertex) behaviour instead of the live subject;
+    // both call sites below already pass it explicitly, so this costs
+    // nothing today and only forecloses that failure mode for later ones.
+    void computeBasis(out Vec3 r, out Vec3 u, out Vec3 f,
+                       SelType subjType) const {
         final switch (mode) {
             case Mode.World:
             case Mode.Origin:
@@ -299,7 +372,13 @@ private:
                 r = manualRight; u = manualUp; f = manualFwd;
                 return;
             case Mode.Element:
-                if (computeElementBasis(r, u, f)) return;
+                // Item mode 0614: a vertex/edge/face selection surviving a
+                // mode switch (EditMode persists under SelType.Item,
+                // seltype.d) must NOT orient the item gizmo off stale
+                // geometry — skip straight to the Auto fallback WITHOUT
+                // consulting the mesh selection at all (§Q3 AXIS guard).
+                if (subjType != SelType.Item && computeElementBasis(r, u, f))
+                    return;
                 goto case Mode.Auto;       // fall back to workplane basis
             case Mode.SelectAuto:
                 // THE CENTRE AND THE FRAME ARE SEPARATE INPUTS, AND THIS MODE
@@ -319,7 +398,11 @@ private:
                 // out of the shipped presets.
                 goto case Mode.Auto;
             case Mode.Select:
-                if (computeSelectionBboxBasis(r, u, f)) return;
+                // Item mode 0614: same guard as Element above — a stale
+                // vertex/edge/face selection must not orient the item
+                // gizmo, so skip the mesh-selection read entirely.
+                if (subjType != SelType.Item && computeSelectionBboxBasis(r, u, f))
+                    return;
                 goto case Mode.Auto;
             case Mode.Local:
                 // Local's GLOBAL frame is the SELECTION's frame, the same
@@ -348,7 +431,10 @@ private:
                 // clusters) and is unchanged; this is the frame the gizmo uses
                 // when there is one cluster, which until now disagreed with the
                 // per-cluster one on the very same selection.
-                if (computeSelectionBboxBasis(r, u, f)) return;
+                //
+                // Item mode 0614: same guard as Element/Select above.
+                if (subjType != SelType.Item && computeSelectionBboxBasis(r, u, f))
+                    return;
                 goto case Mode.Auto;
             case Mode.Screen: {
                 // Screen basis = camera frame remapped (capture-verified,
@@ -950,4 +1036,168 @@ unittest {
     assert(isClose(mx.x, pkt.right.x, tol, tol));
     assert(isClose(mx.y, pkt.right.y, tol, tol));
     assert(isClose(mx.z, pkt.right.z, tol, tol));
+}
+
+// ---------------------------------------------------------------------------
+// Item mode 0614, Phase 2 — the AXIS "non-change" pin
+// (doc/item_mode_transform_plan.md §Q3 / §(a)). L3 OVERTURNED the plan's
+// original design: there is no item-basis redirect here at all — the
+// measured default (Mode.None, world identity, Phase 0 case A′) already
+// matches the capture with zero code, and adding a redirect would have
+// INTRODUCED a divergence from behaviour vibe3d already had right. This
+// test exists solely to guard that fact: "we changed nothing and it is
+// already right" is only true until someone adds the redirect back.
+// ---------------------------------------------------------------------------
+unittest {
+    import document : Layer;
+    import seltype  : SelType;
+
+    bool vecEq(Vec3 a, Vec3 b) {
+        return isClose(a.x, b.x, 1e-6f, 1e-6f) && isClose(a.y, b.y, 1e-6f, 1e-6f)
+            && isClose(a.z, b.z, 1e-6f, 1e-6f);
+    }
+
+    // The exact rig Phase 0 case A′ measured: item rotated 45° about world Y.
+    auto itemLayer = new Layer();
+    itemLayer.xform.rot = Vec3(0, 45, 0);
+    Layer itemRef = itemLayer;
+
+    // `currentSel` + the `() => currentSel` ctor delegate stand in for the
+    // LIVE external selType source app.d wires (review Blocker 2 —
+    // computeBasis() no longer reads a field cached from evaluate()).
+    SelType currentSel = SelType.Vertex;
+    auto st = new AxisStage(null, null, () => itemRef, () => currentSel);
+    st.mode = AxisStage.Mode.None;   // the stage's own default (axis.d:166ish)
+
+    Vec3 r, u, f;
+
+    currentSel = SelType.Vertex;
+    st.currentBasis(r, u, f);
+    assert(vecEq(r, Vec3(1, 0, 0)) && vecEq(u, Vec3(0, 1, 0)) && vecEq(f, Vec3(0, 0, 1)),
+        "Vertex subject, default mode: world identity (unchanged baseline)");
+
+    currentSel = SelType.Item;
+    st.currentBasis(r, u, f);
+    assert(vecEq(r, Vec3(1, 0, 0)) && vecEq(u, Vec3(0, 1, 0)) && vecEq(f, Vec3(0, 0, 1)),
+        "Item subject, default mode, ROTATED item: basis must STILL read "
+        ~ "world identity — an item-basis redirect (r ≈ (0.707,0,-0.707)) "
+        ~ "would be the overturned design (L3, phase0_findings.md case A′)");
+
+    // Companion: Mode.Pivot IS the explicit route to the item's own basis,
+    // and it stays reachable — the item's rotated frame shows up there,
+    // proving L3 removed a DEFAULT, not a CAPABILITY.
+    st.mode = AxisStage.Mode.Pivot;
+    st.currentBasis(r, u, f);
+    assert(!vecEq(r, Vec3(1, 0, 0)),
+        "Mode.Pivot must still reflect the item's own (rotated) basis — "
+        ~ "L3 only removed the DEFAULT redirect, not this explicit mode");
+}
+
+// ---------------------------------------------------------------------------
+// Item mode 0614, Phase 2 — the Select/Local/Element guard
+// (doc/item_mode_transform_plan.md §Q3 / §(a) step 2, R6-adjacent). A
+// vertex/edge/face selection that survives a mode switch (EditMode persists
+// under SelType.Item, seltype.d) must not orient the item gizmo. In item
+// mode these three modes must fall onto their existing Auto fallback
+// WITHOUT consulting the mesh selection at all, and axisTracksSelection()
+// must report false so a flex-gizmo consumer does not believe a
+// world-fixed item frame co-rotates with the gesture.
+//
+// Should-fix 1 (0614 review): `axisTracksSelection()` had ZERO production
+// callers — the real consumer (xfrm_transform.d's renderBasis) reads
+// `AxisPacket.tracksSelection` off the VectorStack, which it cannot reach
+// without driving a real `evaluate()`. The second half of this test does
+// exactly that, so the assertions pin the path production actually runs,
+// not just the instance-method mirror of it.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh     : makeCube;
+    import seltype  : SelType;
+    import std.conv : to;
+
+    bool vecEq(Vec3 a, Vec3 b) {
+        return isClose(a.x, b.x, 1e-6f, 1e-6f) && isClose(a.y, b.y, 1e-6f, 1e-6f)
+            && isClose(a.z, b.z, 1e-6f, 1e-6f);
+    }
+
+    // A real, non-trivial face selection — if the guard failed to skip it,
+    // computeSelectionBboxBasis would install a NON-identity basis here.
+    Mesh cube = makeCube();
+    cube.resetSelection();
+    cube.selectFace(4);   // +Y face
+    Mesh* meshPtr = &cube;
+    EditMode em = EditMode.Polygons;
+
+    SelType currentSel = SelType.Vertex;
+    auto st = new AxisStage(() => meshPtr, &em, null, () => currentSel);
+
+    foreach (m; [AxisStage.Mode.Select, AxisStage.Mode.Local, AxisStage.Mode.Element]) {
+        st.mode = m;
+
+        currentSel = SelType.Vertex;
+        Vec3 r, u, f;
+        st.currentBasis(r, u, f);
+        assert(!vecEq(r, Vec3(1, 0, 0)) || !vecEq(u, Vec3(0, 1, 0)) || !vecEq(f, Vec3(0, 0, 1)),
+            m.to!string ~ ": with a real selection and a Vertex subject, the "
+            ~ "selection basis must be read (non-identity) — sanity check "
+            ~ "that the rig actually discriminates");
+
+        currentSel = SelType.Item;
+        st.currentBasis(r, u, f);
+        assert(vecEq(r, Vec3(1, 0, 0)) && vecEq(u, Vec3(0, 1, 0)) && vecEq(f, Vec3(0, 0, 1)),
+            m.to!string ~ ": Item subject must skip the stale selection "
+            ~ "entirely and fall onto the Auto (world) fallback");
+
+        assert(!st.axisTracksSelection(),
+            m.to!string ~ ": axisTracksSelection() must report false in item "
+            ~ "mode — under the guard this mode no longer delivers a "
+            ~ "selection-derived basis");
+    }
+
+    // Cross-check: the SAME modes with a Vertex subject still track.
+    currentSel = SelType.Vertex;
+    foreach (m; [AxisStage.Mode.Select, AxisStage.Mode.Local]) {
+        st.mode = m;
+        assert(st.axisTracksSelection(),
+            m.to!string ~ ": Vertex subject must keep tracking the selection "
+            ~ "(the guard is item-mode-only, R6/axis.d:152-156 unaffected)");
+    }
+
+    // The REAL production path: drive evaluate() with an explicit
+    // SubjectPacket (no reliance on the live `currentSel` source — this is
+    // exactly how xfrm_transform.d's renderBasis reaches the value, via
+    // `vts.get!AxisPacket().tracksSelection`) and check the published
+    // packet field for Select (tracks) and its item-mode guard (does not).
+    import operator         : VectorStack;
+    import toolpipe.packets : SubjectPacket, AxisPacket;
+    st.mode = AxisStage.Mode.Select;
+
+    SubjectPacket subjVertex;
+    subjVertex.mesh     = meshPtr;
+    subjVertex.editMode = em;
+    subjVertex.selType  = SelType.Vertex;
+    VectorStack vtsVertex;
+    vtsVertex.put(&subjVertex);
+    assert(st.evaluate(vtsVertex), "evaluate() must succeed (Vertex subject)");
+    auto pktVertex = vtsVertex.get!AxisPacket();
+    assert(pktVertex !is null);
+    assert(pktVertex.tracksSelection,
+        "AxisPacket.tracksSelection must be true for Select+Vertex — the "
+        ~ "exact field xfrm_transform.d's renderBasis reads");
+
+    SubjectPacket subjItem;
+    subjItem.mesh     = meshPtr;
+    subjItem.editMode = em;
+    subjItem.selType  = SelType.Item;
+    VectorStack vtsItem;
+    vtsItem.put(&subjItem);
+    assert(st.evaluate(vtsItem), "evaluate() must succeed (Item subject)");
+    auto pktItem = vtsItem.get!AxisPacket();
+    assert(pktItem !is null);
+    assert(!pktItem.tracksSelection,
+        "AxisPacket.tracksSelection must be false for Select+Item — `type` "
+        ~ "still reports Select (mode name unchanged) but the basis this "
+        ~ "same evaluate() call published is the Auto/world fallback, so a "
+        ~ "consumer keyed off `type` alone would wrongly believe it "
+        ~ "co-rotates with the gesture");
 }

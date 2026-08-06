@@ -9,6 +9,7 @@ import tools.transform.transform;
 import handler;
 import mesh;
 import editmode;
+import seltype : SelType;
 import math;
 import shader;
 import toolpipe.packets : FalloffPacket;
@@ -231,8 +232,9 @@ public:
     // standalone (unit-test) instance, which keeps the legacy kernel path.
     TransformTool wrapperRef;
 
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
-        super(meshSrc, gpu, editMode);
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
+         SelType delegate() selTypeSrc = null) {
+        super(meshSrc, gpu, editMode, selTypeSrc);
         handler = new ScaleHandler(Vec3(0, 0, 0));
         headX = new ScaleHeadHandle(handler.arrowX);
         headY = new ScaleHeadHandle(handler.arrowY);

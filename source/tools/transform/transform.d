@@ -3,6 +3,7 @@ import tool;
 import operator : VectorStack;
 import mesh;
 import editmode;
+import seltype : SelType;
 import math : Vec3, Viewport;
 import change_bus : MeshEditScope;
 import command_history : CommandHistory;
@@ -107,6 +108,35 @@ protected:
     GpuMesh*  gpu;
     EditMode* editMode;
 
+    // Blocker 1 (0614 review): the LIVE external source for "what SelType is
+    // the CURRENT subject" — the SAME authority app.d's buildToolVts uses
+    // (`currentSelType(selTypeOrder)`, app.d's `buildToolVts`). Wired at
+    // construction (registration.d); null in tests / geometry-only tools
+    // (e.g. EdgeExtendTool's embedded `xfrm` — edge_extend.d:153 constructs
+    // it with no selTypeSrc). NIT (0614 review, 3rd instance of this class
+    // of over-claim in this task): the omission there is harmless, but NOT
+    // because "there is no item subject to misreport" — item-select does
+    // NOT drop an armed tool (see below), so an item subject can very much
+    // be live while EdgeExtendTool is armed. It is harmless because that
+    // embedded `xfrm` never routes through THIS builder at all: EdgeExtendTool
+    // drives its gizmo banks (`moveBank()`/`rotateBank()`/`scaleBank()`,
+    // `onMouseButtonDown`/`draw`/`update`) with a `vts` handed in from
+    // app.d's `buildToolVts` — which DOES read the live subject — and its
+    // own apply path never calls `xfrm.doApply()`/`xfrm`'s `buildLocalVts()`,
+    // only EdgeExtendTool's own `applyHeadless()`. If a future change ever
+    // makes the embedded `xfrm` call ITS `buildLocalVts()` (e.g. a headless
+    // apply routed through it directly), this null wiring reintroduces the
+    // exact split Blocker 1 fixed, silently.
+    //
+    // Before this field existed, buildLocalVts (below) left
+    // SubjectPacket.selType at its Vertex default unconditionally, while
+    // app.d's buildToolVts (the RENDER path — the gizmo you see) correctly
+    // read the live app state. Item-select does not drop the active tool
+    // (app.d's switchToItemType), so the two paths could — and did —
+    // disagree on the subject for the SAME gesture: the gizmo drawn at the
+    // item's world pivot, the drag applied about the geometry centroid.
+    SelType delegate() selTypeSrc_;
+
     // Phase C.2: undo support. history is the global stack; vertexEditFactory
     // builds a MeshVertexEdit pre-wired to the same gpu/caches the tool
     // mutates. Both are nullable for tests / older callers; tools must
@@ -186,10 +216,12 @@ protected:
     // so the gizmo (= selection centroid) must be recomputed.
     ulong  lastMutationVersion;
 
-    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode) {
-        this.meshSrc_ = meshSrc;
-        this.gpu      = gpu;
-        this.editMode = editMode;
+    this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
+         SelType delegate() selTypeSrc = null) {
+        this.meshSrc_    = meshSrc;
+        this.gpu         = gpu;
+        this.editMode    = editMode;
+        this.selTypeSrc_ = selTypeSrc;
     }
 
     // Inject undo plumbing — called by app.d after construction. Tools
@@ -530,6 +562,12 @@ protected:
         if (g_pipeCtx is null || mesh is null) return false;
         subj.mesh             = mesh;
         subj.editMode         = *editMode;
+        // Blocker 1 (0614 review): match app.d's buildToolVts — read the
+        // SAME live authority so the apply path (this function) and the
+        // render path (buildToolVts) agree on the subject. Left at the
+        // packet's own Vertex default when no live source is wired (see
+        // `selTypeSrc_`'s doc comment above).
+        if (selTypeSrc_) subj.selType = selTypeSrc_();
         subj.viewport         = cachedVp;
         vts.put(&subj);
         g_pipeCtx.pipeline.evaluate(vts);

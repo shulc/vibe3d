@@ -3183,10 +3183,18 @@ void main(string[] args) {
         g_pipeCtx.pipeline.add(new SymmetryStage(() => &mesh(), &editMode));
         g_pipeCtx.pipeline.add(new SnapStage());
         g_pipeCtx.pipeline.add(new ConstrainStage());
+        // Blocker 2 (0614 review): a live `SelType delegate()`, queried fresh
+        // on every call (not cached — see each stage's own doc comment),
+        // for external/non-evaluate() readers of the item-mode redirect
+        // (currentCenter()/currentBasis() → listAttrs(), falloff_handles.d,
+        // mid-drag reads from transform.d/xfrm_transform.d). The SAME
+        // authority buildToolVts uses below for the per-frame SubjectPacket.
         g_pipeCtx.pipeline.add(new ActionCenterStage(() => &mesh(), &editMode,
-                                                       () => document.primary));
+                                                       () => document.primary,
+                                                       () => currentSelType(selTypeOrder)));
         g_pipeCtx.pipeline.add(new AxisStage(() => &mesh(), &editMode,
-                                              () => document.primary));
+                                              () => document.primary,
+                                              () => currentSelType(selTypeOrder)));
         g_pipeCtx.pipeline.add(new FalloffStage(() => &mesh(), &editMode));
         import toolpipe.stages.path : PathStage;
         g_pipeCtx.pipeline.add(new PathStage(() => &mesh()));
@@ -3228,6 +3236,15 @@ void main(string[] args) {
     app.editModePtr = &editMode;
     app.documentPtr = &document;
     app.regPtr      = &reg;
+    // Blocker 1 (0614 review): wired HERE, not at the later "Phase-B ctx
+    // wiring" block (~selTypeOrderPtr's other assignment, further down) —
+    // this earlier block is copied BY VALUE into registerTools(app) below,
+    // so a tool factory built there (XfrmTransformTool's `() =>
+    // currentSelType(selTypeOrder)`) needs the pointer live before that
+    // copy is taken, or it captures a null. The later assignment stays;
+    // re-assigning the same address twice is harmless (idempotent) and
+    // serves wireHttpProviders' separate `ref EditorApp app`.
+    app.selTypeOrderPtr = &selTypeOrder;
 
     app.subpatchPreviewPtr  = &subpatchPreview;
     app.activeToolPtr       = &activeTool;
@@ -3965,6 +3982,7 @@ void main(string[] args) {
                       GesturePacket gest = GesturePacket.init) {
         subj.mesh             = &mesh();
         subj.editMode         = editMode;
+        subj.selType          = currentSelType(selTypeOrder);
         subj.viewport         = vpm.inputSnapshot();
         subj.cursorX          = curX;
         subj.cursorY          = curY;
