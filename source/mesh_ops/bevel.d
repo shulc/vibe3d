@@ -1524,14 +1524,14 @@ mixin template MeshBevelOps() {
         uint[]   newMat;
         uint[]   newPart;
         int[]    newOrd;
-        bool[]   newSub;
+        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
         foreach (fi; 0 .. baseFaces.length) {
             newFaces ~= threadRails(baseFaces[fi]);
             newMat  ~=faceAttrOr(faceMaterial, fi);
             newPart ~=faceAttrOr(facePart, fi);
             newOrd  ~=faceAttrOr(faceSelectionOrder, fi);
-            newSub  ~= isFaceSubpatch(fi);
+            newWord ~= faceAttrOr(faceMarks, fi);
         }
 
         // Emit the chamfer strip per qualifying edge.  At L>0 every endpoint
@@ -1543,11 +1543,20 @@ mixin template MeshBevelOps() {
             auto cV1L = cornerAtVF[vfKey(sp.v1, sp.fL)];
             auto cV1R = cornerAtVF[vfKey(sp.v1, sp.fR)];
             auto cV0R = cornerAtVF[vfKey(sp.v0, sp.fR)];
-            immutable bool sub = isFaceSubpatch(sp.fL) || isFaceSubpatch(sp.fR);
+            // Two-source combine (task 0613 §4.2, code review S5 — was
+            // OR-only via isFaceSubpatch(fL) || isFaceSubpatch(fR)): the
+            // chamfer strip has TWO source faces. Subpatch still ORs (any
+            // source contributes the bit); Hide now ANDs instead of ORing —
+            // a chamfer strip between a hidden face and a visible one is
+            // VISIBLE, matching the vertex-hidden derivation law in §1.2
+            // rather than making newly-created geometry disappear. See
+            // Mesh.combineFaceMarksWords.
+            immutable uint word = combineFaceMarksWords(faceAttrOr(faceMarks, sp.fL),
+                                                         faceAttrOr(faceMarks, sp.fR));
 
             if (roundLevel == 0 || !roundedSpan[si]) {
                 newFaces ~= [cV0L.vert, cV1L.vert, cV1R.vert, cV0R.vert];
-                newMat ~= 0u; newPart ~= 0u; newOrd ~= 0; newSub ~= sub;
+                newMat ~= 0u; newPart ~= 0u; newOrd ~= 0; newWord ~= word;
                 continue;
             }
 
@@ -1565,7 +1574,7 @@ mixin template MeshBevelOps() {
 
             foreach (t; 0 .. n) {
                 newFaces ~= [r0[t], r1[t], r1[t + 1], r0[t + 1]];
-                newMat ~= 0u; newPart ~= 0u; newOrd ~= 0; newSub ~= sub;
+                newMat ~= 0u; newPart ~= 0u; newOrd ~= 0; newWord ~= word;
             }
         }
 
@@ -2036,7 +2045,7 @@ mixin template MeshBevelOps() {
                             newMat  ~=faceAttrOr(faceMaterial, srcFi);
                             newPart ~=faceAttrOr(facePart, srcFi);
                             newOrd  ~= 0;
-                            newSub  ~= isFaceSubpatch(srcFi);
+                            newWord ~= faceAttrOr(faceMarks, srcFi);
                         }
                     continue;
                 }
@@ -2118,7 +2127,7 @@ mixin template MeshBevelOps() {
                             newMat  ~=faceAttrOr(faceMaterial, srcFi);
                             newPart ~=faceAttrOr(facePart, srcFi);
                             newOrd  ~= 0;
-                            newSub  ~= isFaceSubpatch(srcFi);
+                            newWord ~= faceAttrOr(faceMarks, srcFi);
                         }
                     continue;
                 }
@@ -2128,7 +2137,7 @@ mixin template MeshBevelOps() {
             newMat  ~=faceAttrOr(faceMaterial, srcFi);
             newPart ~=faceAttrOr(facePart, srcFi);
             newOrd  ~= 0;
-            newSub  ~= isFaceSubpatch(srcFi);
+            newWord ~= faceAttrOr(faceMarks, srcFi);
         }
 
         // Emit one free-end / partial-fan cap per `freeEndCapRing` vertex
@@ -2224,7 +2233,7 @@ mixin template MeshBevelOps() {
                     newMat  ~=faceAttrOr(faceMaterial, srcFiN);
                     newPart ~=faceAttrOr(facePart, srcFiN);
                     newOrd  ~= 0;
-                    newSub  ~= isFaceSubpatch(srcFiN);
+                    newWord ~= faceAttrOr(faceMarks, srcFiN);
                 }
                 continue;
             }
@@ -2254,7 +2263,7 @@ mixin template MeshBevelOps() {
             newMat  ~=faceAttrOr(faceMaterial, srcFi);
             newPart ~=faceAttrOr(facePart, srcFi);
             newOrd  ~= 0;
-            newSub  ~= isFaceSubpatch(srcFi);
+            newWord ~= faceAttrOr(faceMarks, srcFi);
         }
 
         // Assign reconstructed arrays.
@@ -2263,11 +2272,9 @@ mixin template MeshBevelOps() {
         facePart           = newPart;
         faceSelectionOrder = newOrd;
 
-        // Rebuild faceMarks: zero all, then restore subpatch bits.
-        faceMarks.length = faces.length;
-        faceMarks[]      = 0;
-        foreach (fi, s; newSub)
-            if (s) faceMarks[fi] |= Marks.Subpatch;
+        // Rebuild faceMarks: zero all, then restore the whole word (task 0613
+        // §4.2 — was Subpatch-only).
+        setFaceMarksFrom(newWord, ~Marks.Select);
 
         // task 0436: new-vertex merge. `toolcards/edge.bevel/
         // clamp_findings.md` — geometry-only pass ("Follow-up pass —
@@ -2926,7 +2933,7 @@ mixin template MeshBevelOps() {
         uint[]   newMat;
         uint[]   newPart;
         int[]    newOrd;
-        bool[]   newSub;
+        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
         // (a) surviving / substituted faces
         foreach (fi; 0 .. faces.length) {
@@ -2948,7 +2955,7 @@ mixin template MeshBevelOps() {
             newMat  ~=faceAttrOr(faceMaterial, fi);
             newPart ~=faceAttrOr(facePart, fi);
             newOrd  ~=faceAttrOr(faceSelectionOrder, fi);
-            newSub  ~= isFaceSubpatch(cast(uint)fi);
+            newWord ~= faceAttrOr(faceMarks, fi);
         }
 
         // (b) cap faces — attrs carried from capSrc, not the chamfer 0u literal
@@ -2987,7 +2994,7 @@ mixin template MeshBevelOps() {
             newMat   ~=faceAttrOr(faceMaterial, srcFi);
             newPart  ~=faceAttrOr(facePart, srcFi);
             newOrd   ~= 0;
-            newSub   ~= isFaceSubpatch(srcFi);
+            newWord  ~= faceAttrOr(faceMarks, srcFi);
         }
 
         // (c) commit arrays
@@ -2996,10 +3003,9 @@ mixin template MeshBevelOps() {
         facePart           = newPart;
         faceSelectionOrder = newOrd;
 
-        faceMarks.length = faces.length;
-        faceMarks[]      = 0;
-        foreach (fi, s; newSub)
-            if (s) faceMarks[fi] |= Marks.Subpatch;
+        // Rebuild faceMarks: zero all, then restore the whole word (task 0613
+        // §4.2 — was Subpatch-only).
+        setFaceMarksFrom(newWord, ~Marks.Select);
 
         faceSelectionOrderCounter = 0;
         foreach (fi; capStart .. faces.length)
@@ -3089,6 +3095,82 @@ unittest { // bevelEdgesByMask: cube edge (6,7) between +Y and +Z faces, width=0
     }
     float dot = n.y * (1.0f/sqrt(2.0f)) + n.z * (1.0f/sqrt(2.0f));
     assert(dot > 0.9f, "chamfer normal should point outward (+Y+Z direction)");
+}
+
+// Find the chamfer face produced by the fixture above, by its known centroid
+// (0, 0.45, 0.45) — geometry-keyed, not selection-keyed, so it works even
+// when the chamfer itself ends up Hidden (a hidden face cannot be selected,
+// §3.1 — selection would find nothing in that case).
+version (unittest) private int findChamferByCentroid(ref Mesh m) {
+    import std.math : abs;
+    foreach (fi; 0 .. m.faces.length) {
+        if (m.faces[fi].length != 4) continue;
+        Vec3 c = Vec3(0, 0, 0);
+        foreach (vi; m.faces[fi]) c = c + m.vertices[vi];
+        c = c * (1.0f / 4.0f);
+        if (abs(c.x) < 1e-3f && abs(c.y - 0.45f) < 1e-3f && abs(c.z - 0.45f) < 1e-3f)
+            return cast(int)fi;
+    }
+    return -1;
+}
+
+unittest { // S4/S5 code review (task 0613 §4.2): the chamfer strip's
+    // multi-source Hide combine is ALL-source AND (Mesh.combineFaceMarksWords),
+    // not the ANY-source OR that Subpatch still (correctly) uses. Same
+    // fixture as the byte-identical bevel test above: cube edge (6,7) shared
+    // by face1=[4,5,6,7](+Z) and face4=[3,7,6,2](+Y).
+    //
+    // Discriminator: hide ONLY face1, leave face4 visible, then bevel the
+    // shared edge. An ANY-source OR reads the chamfer as hidden (one source
+    // was); the correct ALL-source AND reads it as visible (not every
+    // source was) — the same law §1.2 uses to derive a vertex's hidden state
+    // from its incident faces.
+    auto m = makeCube();
+    m.buildLoops();
+    m.syncSelection();
+    m.setFaceHidden(1, true);   // face1 (+Z) only
+    assert(!m.isFaceHidden(4)); // face4 (+Y) stays visible
+
+    int ei = -1;
+    foreach (i; 0 .. m.edges.length) {
+        uint a = m.edges[i][0], b = m.edges[i][1];
+        if ((a == 6 && b == 7) || (a == 7 && b == 6)) { ei = cast(int)i; break; }
+    }
+    assert(ei >= 0, "edge (6,7) not found in cube");
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+    assert(m.bevelEdgesByMask(mask, 0.1f) == 1, "should process 1 edge");
+
+    immutable int chamferFi = findChamferByCentroid(m);
+    assert(chamferFi >= 0, "chamfer face not found by centroid");
+    assert(!m.isFaceHidden(chamferFi),
+        "S5: chamfer strip must be VISIBLE when only ONE of its two source "
+        ~ "faces was hidden (ALL-source AND, not ANY-source OR)");
+}
+
+unittest { // S4/S5 companion — BOTH sources hidden: the chamfer strip must
+    // still come back Hidden. Proves the AND rule actually ANDs instead of
+    // degenerating to "never hidden" (which would pass the row above but
+    // fail this one).
+    auto m = makeCube();
+    m.buildLoops();
+    m.syncSelection();
+    m.setFaceHidden(1, true);
+    m.setFaceHidden(4, true);
+
+    int ei = -1;
+    foreach (i; 0 .. m.edges.length) {
+        uint a = m.edges[i][0], b = m.edges[i][1];
+        if ((a == 6 && b == 7) || (a == 7 && b == 6)) { ei = cast(int)i; break; }
+    }
+    assert(ei >= 0, "edge (6,7) not found in cube");
+    bool[] mask; mask.length = m.edges.length; mask[] = false; mask[ei] = true;
+    assert(m.bevelEdgesByMask(mask, 0.1f) == 1, "should process 1 edge");
+
+    immutable int chamferFi = findChamferByCentroid(m);
+    assert(chamferFi >= 0, "chamfer face not found by centroid");
+    assert(m.isFaceHidden(chamferFi),
+        "S5 companion: chamfer strip must be HIDDEN when BOTH source faces "
+        ~ "were");
 }
 
 // Width-mode dihedral conversion (parity task, fuzz divergence D1). In WIDTH

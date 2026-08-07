@@ -1589,12 +1589,12 @@ mixin template MeshExtrudeOps() {
                 editRecorder_.recordReshapeFaces(reduceReshapeIdx, reduceReshapeBefore, reduceReshapeAfter);
             if (anyDrop) {
                 uint[][] keptFaces;
-                bool[]   keptSubpatch;
+                uint[]   keptWord;   // whole faceMarks word (task 0613 §4.2)
                 int[]    keptOrder;
                 uint[]   keptMaterial;
                 uint[]   keptPart;
                 keptFaces.reserve(faces.length);
-                keptSubpatch.reserve(faces.length);
+                keptWord.reserve(faces.length);
                 keptOrder.reserve(faces.length);
                 keptMaterial.reserve(faces.length);
                 keptPart.reserve(faces.length);
@@ -1619,7 +1619,7 @@ mixin template MeshExtrudeOps() {
                     faceRemap[fi] = cast(int)newIdx;
                     ++newIdx;
                     keptFaces    ~= f;
-                    keptSubpatch ~= isFaceSubpatch(fi);
+                    keptWord     ~= faceAttrOr(faceMarks, fi);
                     keptOrder    ~= faceAttrOr(faceSelectionOrder, fi);
                     keptMaterial ~= faceAttrOr(faceMaterial, fi);
                     keptPart     ~= faceAttrOr(facePart, fi);
@@ -1628,7 +1628,11 @@ mixin template MeshExtrudeOps() {
                     editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
                                                     droppedFaceMat, droppedFacePart, droppedFaceSub);
                 faces              = keptFaces;
-                setFaceSubpatchFrom(keptSubpatch);
+                // Select ends up cleared regardless (clearFaceSelection() runs
+                // later in this function), so dropping it here via keepMask
+                // changes nothing observable — kept for consistency with
+                // every other compaction site.
+                setFaceMarksFrom(keptWord, ~Marks.Select);
                 faceSelectionOrder = keptOrder;
                 faceMaterial       = keptMaterial;
                 facePart           = keptPart;
@@ -2032,7 +2036,7 @@ mixin template MeshExtrudeOps() {
         uint[]   newMat;
         uint[]   newPart;
         int[]    newOrd;
-        bool[]   newSub;
+        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
         foreach (fi; 0 .. origFaceCount) {
             auto orig  = faces[fi];
@@ -2053,7 +2057,7 @@ mixin template MeshExtrudeOps() {
             newMat  ~=faceAttrOr(faceMaterial, fi);
             newPart ~=faceAttrOr(facePart, fi);
             newOrd  ~=faceAttrOr(faceSelectionOrder, fi);
-            newSub  ~= isFaceSubpatch(fi);
+            newWord ~= faceAttrOr(faceMarks, fi);
         }
 
         foreach (nf; extraFaces) {
@@ -2061,7 +2065,7 @@ mixin template MeshExtrudeOps() {
             newMat   ~=faceAttrOr(faceMaterial, nf.srcFi);
             newPart  ~=faceAttrOr(facePart, nf.srcFi);
             newOrd   ~= 0;
-            newSub   ~= isFaceSubpatch(nf.srcFi);
+            newWord  ~= faceAttrOr(faceMarks, nf.srcFi);
         }
 
         faces              = newFaces;
@@ -2069,10 +2073,10 @@ mixin template MeshExtrudeOps() {
         facePart           = newPart;
         faceSelectionOrder = newOrd;
 
-        faceMarks.length = faces.length;
-        faceMarks[]      = 0;
-        foreach (fi, s; newSub)
-            if (s) faceMarks[fi] |= Marks.Subpatch;
+        // Rebuild faceMarks from scratch (resize+zero ALL bits, then set from
+        // newWord) — was Subpatch-only; now carries the whole word (task 0613
+        // §4.2), so Hide rides this rebuild instead of being silently wiped.
+        setFaceMarksFrom(newWord, ~Marks.Select);
 
         resizeVertexSelection();
         clearEdgeSelectionResize();
@@ -2942,7 +2946,7 @@ mixin template MeshExtrudeOps() {
         uint[]   newMat;
         uint[]   newPart;
         int[]    newOrd;
-        bool[]   newSub;
+        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
         // Non-selected originals, kept as-is.
         foreach (fi; 0 .. faces.length) {
@@ -2951,7 +2955,7 @@ mixin template MeshExtrudeOps() {
             newMat   ~=faceAttrOr(faceMaterial, fi);
             newPart  ~=faceAttrOr(facePart, fi);
             newOrd   ~=faceAttrOr(faceSelectionOrder, fi);
-            newSub   ~= isFaceSubpatch(fi);
+            newWord  ~= faceAttrOr(faceMarks, fi);
         }
         immutable size_t capStart = newFaces.length;   // first cap index in newFaces
 
@@ -2966,7 +2970,7 @@ mixin template MeshExtrudeOps() {
             newMat   ~=faceAttrOr(faceMaterial, fi);
             newPart  ~=faceAttrOr(facePart, fi);
             newOrd   ~= 0;
-            newSub   ~= isFaceSubpatch(fi);
+            newWord  ~= faceAttrOr(faceMarks, fi);
         }
 
         // Wall quads: one per boundary edge, oriented by the orientability rule.
@@ -2993,8 +2997,9 @@ mixin template MeshExtrudeOps() {
             newPart ~=faceAttrOr(facePart, be.selFi);
             newOrd  ~= 0;
             // Task 0389: side wall inherits Subpatch from the extruded source
-            // face it skirts, same as its material/part above.
-            newSub  ~= isFaceSubpatch(be.selFi);
+            // face it skirts, same as its material/part above (task 0613 §4.2:
+            // now the whole word, so Hide inherits the same way).
+            newWord ~= faceAttrOr(faceMarks, be.selFi);
         }
 
         // Assign reconstructed arrays.
@@ -3002,12 +3007,10 @@ mixin template MeshExtrudeOps() {
         faceMaterial       = newMat;
         facePart           = newPart;
         faceSelectionOrder = newOrd;
-        // Rebuild faceMarks from scratch: resize+zero ALL bits (clears both
-        // Select and stale Subpatch from the old ordering), then set Subpatch.
-        faceMarks.length = faces.length;
-        faceMarks[]      = 0;
-        foreach (fi, s; newSub)
-            if (s) faceMarks[fi] |= Marks.Subpatch;
+        // Rebuild faceMarks from scratch: resize+zero ALL bits (clears stale
+        // Select from the old ordering), then set from newWord (task 0613
+        // §4.2 — was Subpatch-only).
+        setFaceMarksFrom(newWord, ~Marks.Select);
 
         // New selection = cap faces (so a follow-up op chains off the top).
         faceSelectionOrderCounter = 0;
@@ -3222,7 +3225,7 @@ mixin template MeshExtrudeOps() {
         uint[]   newMat;
         uint[]   newPart;
         int[]    newOrd;
-        bool[]   newSub;
+        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
         foreach (fi; 0 .. faces.length) {
             if (mask[fi]) continue;
@@ -3230,7 +3233,7 @@ mixin template MeshExtrudeOps() {
             newMat   ~=faceAttrOr(faceMaterial, fi);
             newPart  ~=faceAttrOr(facePart, fi);
             newOrd   ~=faceAttrOr(faceSelectionOrder, fi);
-            newSub   ~= isFaceSubpatch(fi);
+            newWord  ~= faceAttrOr(faceMarks, fi);
         }
         immutable size_t capStart = newFaces.length;
 
@@ -3247,7 +3250,7 @@ mixin template MeshExtrudeOps() {
             newMat   ~=faceAttrOr(faceMaterial, fi);
             newPart  ~=faceAttrOr(facePart, fi);
             newOrd   ~= 0;
-            newSub   ~= isFaceSubpatch(fi);
+            newWord  ~= faceAttrOr(faceMarks, fi);
         }
 
         // Thicken: retain the ORIGINAL (unmoved) face verts, winding
@@ -3263,10 +3266,11 @@ mixin template MeshExtrudeOps() {
                 newPart  ~=faceAttrOr(facePart, fi);
                 newOrd   ~= 0;
                 // Task 0389: the retained skin is a reversed duplicate of the
-                // source face at its ORIGINAL position — inherit its Subpatch
-                // bit rather than always dropping it, so a Thicken on a
-                // subdiv-marked face keeps both shells subdiv.
-                newSub   ~= isFaceSubpatch(fi);
+                // source face at its ORIGINAL position — inherit its whole
+                // marks word rather than always dropping it, so a Thicken on
+                // a subdiv-marked (or, now, hidden) face keeps both shells
+                // matching (task 0613 §4.2).
+                newWord  ~= faceAttrOr(faceMarks, fi);
             }
         }
 
@@ -3291,18 +3295,16 @@ mixin template MeshExtrudeOps() {
             newPart ~=faceAttrOr(facePart, be.selFi);
             newOrd  ~= 0;
             // Task 0389: skin wall inherits Subpatch from the source face it
-            // skirts, same as its material/part above.
-            newSub  ~= isFaceSubpatch(be.selFi);
+            // skirts, same as its material/part above (task 0613 §4.2: now
+            // the whole word).
+            newWord ~= faceAttrOr(faceMarks, be.selFi);
         }
 
         faces              = newFaces;
         faceMaterial       = newMat;
         facePart           = newPart;
         faceSelectionOrder = newOrd;
-        faceMarks.length = faces.length;
-        faceMarks[]      = 0;
-        foreach (fi, s; newSub)
-            if (s) faceMarks[fi] |= Marks.Subpatch;
+        setFaceMarksFrom(newWord, ~Marks.Select);
 
         // New selection = cap faces (chains a follow-up op off the top, same
         // as extrudeFacesByMask). The retained thicken skin is NOT selected.

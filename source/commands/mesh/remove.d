@@ -43,13 +43,13 @@ class MeshRemove : Command, Operator {
     // Phase 3 delta path — see MeshDelete for the rationale. Vertex/face
     // selection is index-keyed (SelectionSnapshot); edge selection is endpoint-
     // keyed (re-derived edge order is not index-stable across rebuildEdges); the
-    // Subpatch (POL_TYPE) plane is index-keyed (re-overlaid on revert — the delta
-    // only carries the subpatch bit for DROPPED faces, see MeshDelete + the
-    // Phase 4 burn-in finding in test_marks_authority).
+    // Subpatch + Hide (task 0613) planes are index-keyed (re-overlaid on revert —
+    // the delta only carries the subpatch bit for DROPPED faces, see MeshDelete +
+    // the Phase 4 burn-in finding in test_marks_authority).
     private MeshEditDelta      delta_;
     private SelectionSnapshot  preSel_;
     private uint[]             preEdgeEnds_;
-    private bool[]             preSubpatch_;
+    private uint[]             preMarksWord_;
     private bool               useDelta_;
 
     // Stable label: captured once in runKernel() — see MeshDelete.appliedMode_.
@@ -135,18 +135,18 @@ class MeshRemove : Command, Operator {
         }
 
         if (undoTrackerEnabled()) {
-            preSel_      = SelectionSnapshot.capture(*mesh);
-            preEdgeEnds_ = captureSelectedEdgeEnds(*mesh);
-            preSubpatch_ = mesh.isSubpatch.dup;
+            preSel_       = SelectionSnapshot.capture(*mesh);
+            preEdgeEnds_  = captureSelectedEdgeEnds(*mesh);
+            preMarksWord_ = mesh.faceMarks.dup;
             auto rec = MeshEditTracker();
             mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
             const affected = runKernel();
             delta_ = mesh.endEditBatch();
             if (affected == 0 || delta_.isEmpty) {
-                delta_       = MeshEditDelta.init;
-                preSel_      = SelectionSnapshot.init;
-                preEdgeEnds_ = null;
-                preSubpatch_ = null;
+                delta_        = MeshEditDelta.init;
+                preSel_       = SelectionSnapshot.init;
+                preEdgeEnds_  = null;
+                preMarksWord_ = null;
                 return false;
             }
             useDelta_ = true;
@@ -165,12 +165,24 @@ class MeshRemove : Command, Operator {
     override bool revert() {
         if (useDelta_) {
             delta_.revert(*mesh);
-            // See MeshDelete.revert: preSel_ restores vertex/face by index;
-            // override the (index-unstable) edge selection with the endpoint
-            // capture.
+            // See MeshDelete.revert (code review BLOCKER, task 0613): this
+            // full-word overwrite MUST run BEFORE preSel_.restore() below —
+            // setFaceMarksFrom assigns the whole word, so running it after
+            // the selection restore would zero the Select bit restore just
+            // set. `~Marks.Select` keeps this write from resurrecting a
+            // stale Select bit of its own ahead of the restore.
+            if (preMarksWord_.length) {
+                assert(preMarksWord_.length == mesh.faces.length,
+                    "MeshRemove.revert: preMarksWord_ length != restored face "
+                    ~ "count — the delta revert did not land on the exact "
+                    ~ "pre-op face index space this capture assumes");
+                mesh.setFaceMarksFrom(preMarksWord_, ~Mesh.Marks.Select);
+            }
+            // preSel_ restores vertex/face selection by index (setFacesSelectedFrom
+            // touches ONLY the Select bit, so it is safe to run after the
+            // full-word overwrite above); override the (index-unstable) edge
+            // selection with the endpoint capture.
             preSel_.restore(*mesh);
-            if (preSubpatch_.length)
-                mesh.setFaceSubpatchFrom(preSubpatch_);
             mesh.clearEdgeSelection();
             restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
             return true;

@@ -806,14 +806,16 @@ mixin template MeshLoopSliceOps() {
 
         uint[][] newFaces;
         newFaces.reserve(faces.length + rings.length * positions.length * 4);
-        // Parallel to `newFaces` (task 0389): every entry pushed to `newFaces`
-        // gets a matching Subpatch bit pushed here in lock-step, so `faceMarks`
-        // can be rebuilt (Template A) once `faces = newFaces` lands below.
-        // `faces = newFaces` is a whole-array rebuild — without this,
-        // `faceMarks` would stay aligned to the OLD `faces` slot indices and
-        // every bit would land on the wrong (or a nonexistent) face.
-        bool[] newSub;
-        newSub.reserve(faces.length + rings.length * positions.length * 4);
+        // Parallel to `newFaces` (task 0389, generalized task 0613 §4.2):
+        // every entry pushed to `newFaces` gets a matching WHOLE marks word
+        // (Subpatch + Hide, was Subpatch-only) pushed here in lock-step, so
+        // `faceMarks` can be rebuilt (Template A) once `faces = newFaces`
+        // lands below. `faces = newFaces` is a whole-array rebuild — without
+        // this, `faceMarks` would stay aligned to the OLD `faces` slot
+        // indices and every bit would land on the wrong (or a nonexistent)
+        // face.
+        uint[] newWord;
+        newWord.reserve(faces.length + rings.length * positions.length * 4);
 
         // Slice ONE non-quad ring-crossed face (task 0250 "Slice N-gon"). The
         // chord runs from the entry-edge rail to the exit-edge rail, splitting
@@ -952,18 +954,19 @@ mixin template MeshLoopSliceOps() {
                 }
         }
 
-        // Subpatch-tracking wrapper around `splitFace` (task 0389): every
-        // sub-face `splitFace(fi)` emits — single-ring, n-gon, or a 2-ring
-        // grid — inherits the SOURCE ring face `fi`'s Subpatch bit. Rather
-        // than threading `fi` through emitSingleRingSplit/emitNgonRingSplit/
-        // the grid-split branch individually, record `newFaces.length`
-        // before/after the call and backfill `newSub` for whatever range
+        // Marks-tracking wrapper around `splitFace` (task 0389, generalized
+        // task 0613 §4.2): every sub-face `splitFace(fi)` emits — single-ring,
+        // n-gon, or a 2-ring grid — inherits the SOURCE ring face `fi`'s WHOLE
+        // marks word (Subpatch + Hide, was Subpatch-only). Rather than
+        // threading `fi` through emitSingleRingSplit/emitNgonRingSplit/the
+        // grid-split branch individually, record `newFaces.length`
+        // before/after the call and backfill `newWord` for whatever range
         // `splitFace` just appended.
         void splitFaceTracked(uint fi) {
             immutable size_t before = newFaces.length;
             splitFace(fi);
-            immutable bool sub = isFaceSubpatch(fi);
-            foreach (i; before .. newFaces.length) newSub ~= sub;
+            immutable uint word = faceAttrOr(faceMarks, fi);
+            foreach (i; before .. newFaces.length) newWord ~= word;
         }
 
         // Read-only rail lookup for the absorb pass — returns the existing
@@ -1000,7 +1003,7 @@ mixin template MeshLoopSliceOps() {
             // index order, dup non-ring faces, split ring faces.
             foreach (uint fi; 0 .. cast(uint)faces.length) {
                 if (fi in perFaceRings) splitFaceTracked(fi);
-                else { newFaces ~= faces[fi].dup; newSub ~= isFaceSubpatch(fi); }
+                else { newFaces ~= faces[fi].dup; newWord ~= faceAttrOr(faceMarks, fi); }
             }
         } else {
             // Slice-Selected / Keep-Quads path — TWO passes. Pass 1 splits the
@@ -1022,7 +1025,7 @@ mixin template MeshLoopSliceOps() {
                     foreach (m; absorbMids(va, vb)) nf ~= m;
                 }
                 newFaces ~= nf;
-                newSub ~= isFaceSubpatch(fi);
+                newWord ~= faceAttrOr(faceMarks, fi);
             }
         }
 
@@ -1049,15 +1052,29 @@ mixin template MeshLoopSliceOps() {
             bool[uint] loSet, hiSet;
             foreach (pr; splitSeams) { loSet[pr[0]] = true; hiSet[pr[1]] = true; }
 
-            // Subpatch for a cap face (task 0389): a cap seals a WHOLE shell's
-            // boundary loop, which can be stitched together from more than one
-            // original ring face — there is no single "source face" the way
-            // there is for a split sub-quad. Fall back to the OR-across-sources
-            // rule used elsewhere for multi-source new faces (chamfer/bridge):
-            // the cap is Subpatch if ANY ring face this cut passed through was.
-            bool anyRingSubpatch = false;
-            foreach (fi, _; perFaceRings)
-                if (isFaceSubpatch(fi)) { anyRingSubpatch = true; break; }
+            // Marks word for a cap face (task 0389, generalized task 0613
+            // §4.2, and combine rule revised by code review S5): a cap seals
+            // a WHOLE shell's boundary loop, which can be stitched together
+            // from more than one original ring face — there is no single
+            // "source face" the way there is for a split sub-quad. Fold
+            // every ring face's word through Mesh.combineFaceMarksWords:
+            // Subpatch is still the ANY-source OR (cosmetic, unchanged from
+            // task 0389), Hide is the ALL-source AND (the same law §1.2
+            // uses to derive a vertex's hidden state from its incident
+            // faces) — so a cap is hidden only when EVERY ring face this cut
+            // passed through was, not merely one, matching bevel's chamfer
+            // strip. `Marks.Hide` is the fold's identity element.
+            uint capWord = Marks.Hide;
+            foreach (fi, _; perFaceRings) {
+                capWord = combineFaceMarksWords(capWord, faceAttrOr(faceMarks, fi));
+                // Early exit (kept from the pre-0613 Subpatch-only bool
+                // loop, which broke as soon as one subpatch source was
+                // found): once Subpatch is latched ON and Hide is latched
+                // OFF, neither the ALL-source AND nor the ANY-source OR can
+                // move again, so further sources cannot change the result.
+                if ((capWord & Marks.Subpatch) != 0 && (capWord & Marks.Hide) == 0)
+                    break;
+            }
 
             // Chain each shell's incidence-1 boundary edges into reversed cap
             // polygons via the shared `capShellCycles` helper (same geometry the
@@ -1068,7 +1085,7 @@ mixin template MeshLoopSliceOps() {
                 foreach (cyc; capShellCycles(newFaces, set)) {
                     newFaces ~= cyc;
                     newFaceIndices ~= cast(uint)(newFaces.length - 1);
-                    newSub ~= anyRingSubpatch;
+                    newWord ~= capWord;
                 }
             }
             capBoundaryLoops(loSet);
@@ -1122,19 +1139,18 @@ mixin template MeshLoopSliceOps() {
 
         faces = newFaces;
         // Rebuild faceMarks in lock-step with the just-replaced `faces`
-        // (task 0389 — Template A, mirrors bevelEdgesByMask): `newSub` was
-        // populated 1:1 with every `newFaces` append above (dup'd untouched
-        // faces keep their own bit; ring-split sub-faces and section caps
-        // inherit from their source ring face(s)). resetSelection() below no
-        // longer clears subpatch on its own, so this is the only place the
-        // new mesh's Subpatch bits get set — without it every face would
-        // silently default to non-subpatch (faceMarks zero-fills on resize).
-        assert(newSub.length == faces.length,
-               "insertEdgeLoopsMulti: newSub/newFaces length mismatch");
-        faceMarks.length = faces.length;
-        faceMarks[]      = 0;
-        foreach (fi, s; newSub)
-            if (s) faceMarks[fi] |= Marks.Subpatch;
+        // (task 0389 — Template A, mirrors bevelEdgesByMask; generalized to
+        // the whole word by task 0613 §4.2): `newWord` was populated 1:1
+        // with every `newFaces` append above (dup'd untouched faces keep
+        // their own word; ring-split sub-faces and section caps inherit from
+        // their source ring face(s)). resetSelection() below no longer
+        // clears subpatch on its own, so this is the only place the new
+        // mesh's Subpatch/Hide bits get set — without it every face would
+        // silently default to non-subpatch/non-hidden (faceMarks zero-fills
+        // on resize).
+        assert(newWord.length == faces.length,
+               "insertEdgeLoopsMulti: newWord/newFaces length mismatch");
+        setFaceMarksFrom(newWord, ~Marks.Select);
         rebuildEdges();
         buildLoops();
         resetSelection();   // resizes + clears all selection; calls commitChange
@@ -2699,4 +2715,66 @@ unittest {
     assert(m.vertices.length == vBefore, "vertex count must not change");
     assert(m.edges.length    == eBefore, "edge count must not change");
     assert(m.faces.length    == fBefore, "face count must not change");
+}
+
+// S4/S5 code review (task 0613 §4.2): the section cap's multi-source Hide
+// combine is ALL-source AND (Mesh.combineFaceMarksWords), not the ANY-source
+// OR that Subpatch still (correctly) uses. Fixture: makeCube(), seed edge
+// (0,1) with Split+Caps on (same seed as the byte-identical "Split ON, caps
+// ON" fixture above). Empirically confirmed (by inspecting the split-only,
+// caps-off result) that this seed's ring is the FOUR faces
+// {0:[0,3,2,1](-Z), 1:[4,5,6,7](+Z), 4:[3,7,6,2](+Y), 5:[0,1,5,4](-Y)} —
+// each split into two fragments — while {2:[0,4,7,3](-X), 3:[1,2,6,5](+X)}
+// stay whole (not ring faces, one per shell). Both new caps fold their word
+// from the SAME `perFaceRings` set, so this fixture drives both caps at once.
+unittest { // S4/S5 — ONE ring face hidden, three visible: caps must be VISIBLE.
+    // Discriminator: an ANY-source OR would read both caps as hidden (one
+    // ring face was); the correct ALL-source AND reads them as visible (not
+    // every ring face was) — the same law §1.2 uses to derive a vertex's
+    // hidden state from its incident faces.
+    auto m = makeCube();
+    m.buildLoops();
+    m.syncSelection();
+    m.setFaceHidden(0, true);   // ring face -Z only
+    assert(!m.isFaceHidden(1) && !m.isFaceHidden(4) && !m.isFaceHidden(5),
+        "the other three ring faces must stay visible");
+
+    uint ei = m.edgeIndex(0, 1);
+    uint[] nf;
+    assert(m.insertEdgeLoopsMulti([ei], [0.5f], nf, null, false, false,
+                                   /*split*/true, /*caps*/true),
+        "split-on caps-on insert must succeed");
+
+    // The 2 cap faces are the newly-appended tail entries (Select-New's own
+    // convention, confirmed by the byte-identical fixture above:
+    // "caps on: 2 extra new faces vs caps-off").
+    assert(nf.length >= 2, "expected at least the 2 cap faces among the new faces");
+    immutable uint cap0 = nf[$ - 2], cap1 = nf[$ - 1];
+    assert(!m.isFaceHidden(cap0) && !m.isFaceHidden(cap1),
+        "S5: section caps must be VISIBLE when only ONE of the ring's four "
+        ~ "source faces was hidden (ALL-source AND, not ANY-source OR)");
+}
+
+unittest { // S4/S5 companion — ALL FOUR ring faces hidden: caps must still
+    // be HIDDEN. Proves the AND rule actually ANDs instead of degenerating
+    // to "never hidden" (which would pass the row above but fail this one).
+    auto m = makeCube();
+    m.buildLoops();
+    m.syncSelection();
+    m.setFaceHidden(0, true);
+    m.setFaceHidden(1, true);
+    m.setFaceHidden(4, true);
+    m.setFaceHidden(5, true);
+
+    uint ei = m.edgeIndex(0, 1);
+    uint[] nf;
+    assert(m.insertEdgeLoopsMulti([ei], [0.5f], nf, null, false, false,
+                                   /*split*/true, /*caps*/true),
+        "split-on caps-on insert must succeed");
+
+    assert(nf.length >= 2, "expected at least the 2 cap faces among the new faces");
+    immutable uint cap0 = nf[$ - 2], cap1 = nf[$ - 1];
+    assert(m.isFaceHidden(cap0) && m.isFaceHidden(cap1),
+        "S5 companion: section caps must be HIDDEN when ALL FOUR ring source "
+        ~ "faces were");
 }

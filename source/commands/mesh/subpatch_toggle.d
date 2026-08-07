@@ -62,7 +62,21 @@ class SubpatchToggle : Command, Operator {
 
     override bool revert() {
         if (!captured) return false;
-        mesh.setFaceSubpatchFrom(origSubpatch);
+        // Restore ONLY the Subpatch bit at each index — no compaction ran
+        // between capture and revert (a toggle changes no topology), so index
+        // i still names the same face. Merge the captured Subpatch value onto
+        // the CURRENT word at that index (task 0613 §4.2 — setFaceSubpatchFrom
+        // used to do exactly this internally) by mutating `mesh.faceMarks`
+        // directly (code review NIT: the old call reused the captured array
+        // with no intermediate allocation; going through setFaceMarksFrom
+        // would need a full replacement-word array built just to throw away,
+        // undo path only but still cheap to avoid) — Select and Hide,
+        // whatever they are right now, ride through untouched.
+        foreach (i, wasSubpatch; origSubpatch) {
+            if (i >= mesh.faceMarks.length) continue;
+            if (wasSubpatch) mesh.faceMarks[i] |= Mesh.Marks.Subpatch;
+            else             mesh.faceMarks[i] &= ~Mesh.Marks.Subpatch;
+        }
         // Marks-class flip (subpatch bit). isSubpatch[] drives subpatch preview
         // OUTPUT topology, so we keep the topologyVersion bump explicitly
         // (commitChange(Marks) alone bumps only mutationVersion). Counters end

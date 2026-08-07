@@ -169,12 +169,12 @@ mixin template MeshCleanupOps() {
         uint[] oldLoopOfNewLoop;
 
         uint[][] newFaces;
-        bool[]   newSubpatch;
+        uint[]   newWord;   // whole faceMarks word per survivor (task 0613 §4.2)
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
         newFaces.reserve(faces.length);
-        newSubpatch.reserve(faces.length);
+        newWord.reserve(faces.length);
         newOrder.reserve(faces.length);
         newMaterial.reserve(faces.length);
         newPart.reserve(faces.length);
@@ -200,9 +200,13 @@ mixin template MeshCleanupOps() {
             // Face is kept; count it as fixed if its arity changed.
             if (f.length != face.length) ++fixed;
             newFaces    ~= f;
-            // isFaceSubpatch(fi), not the allocating `isSubpatch` @property —
-            // same O(F²)-in-a-loop trap as deleteFacesByMask above (task 0396).
-            newSubpatch ~= isFaceSubpatch(fi);
+            // faceAttrOr(faceMarks, fi), not the allocating `isSubpatch`
+            // @property — same O(F²)-in-a-loop trap as deleteFacesByMask
+            // above (task 0396). Carries the WHOLE word (Subpatch + Hide),
+            // not just Subpatch (task 0613 §4.2). (Code review NIT: this
+            // used to be a hand-rolled ternary that the comment already
+            // described as `faceAttrOr` — now it actually is one.)
+            newWord     ~= faceAttrOr(faceMarks, fi);
             newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
             newMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
             newPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
@@ -215,7 +219,7 @@ mixin template MeshCleanupOps() {
         if (removed == 0 && fixed == 0) return 0;
 
         faces              = newFaces;
-        setFaceSubpatchFrom(newSubpatch);
+        setFaceMarksFrom(newWord, ~Marks.Select);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;

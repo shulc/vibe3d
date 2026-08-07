@@ -469,6 +469,31 @@ struct Mesh {
     // (faceMaterial / facePart / faceSelectionOrder): an index past the
     // array's current length yields the default (T.init), not a RangeError.
     private static T faceAttrOr(T)(in T[] attr, size_t fi) { return fi < attr.length ? attr[fi] : T.init; }
+
+    // Combine two face-marks words for a NEW face created FROM multiple
+    // source faces — bevel's chamfer strip/cap, loop-slice's section cap
+    // (task 0613 §4.2, code review S5). The two bits this mixes are NOT
+    // symmetric:
+    //  * Subpatch keeps the pre-existing ANY-source OR — a bridging/blended
+    //    face inherits smoothness if any of its sources asked for it. This is
+    //    cosmetic and unions safely.
+    //  * Hide instead uses ALL-source AND — the same law §1.2 of
+    //    doc/hide_geometry_plan.md already uses to derive a VERTEX's hidden
+    //    state from its incident faces (hidden iff EVERY incident face is
+    //    hidden), applied here to a face born from several sources instead of
+    //    a vertex born from several incident faces. OR-ing Hide instead would
+    //    make newly-created geometry straddling a hide boundary disappear on
+    //    creation — a chamfer strip or section cap the user just built in the
+    //    visible part of the mesh would read hidden even though no command
+    //    ever asked to hide it.
+    // `Marks.Hide` alone (every other bit 0) is this operator's identity
+    // element: `combineFaceMarksWords(Marks.Hide, w) == w` for any `w` — so a
+    // fold over N sources can seed its accumulator with `Marks.Hide` and get
+    // the correct "vacuously all-hidden" value if it ever folds zero sources,
+    // exactly like `&&`'s identity is `true`.
+    private static uint combineFaceMarksWords(uint a, uint b) {
+        return ((a | b) & ~Marks.Hide) | (a & b & Marks.Hide);
+    }
     // Monotonic counter bumped on any topology or vertex-position change that
     // invalidates the subpatch preview. Mutators that touch geometry should
     // increment this so cached previews can detect the change.
@@ -938,7 +963,7 @@ struct Mesh {
     /// fewer than 3 distinct corners are removed entirely.
     private void applyVertexRemapAndRebuild(in int[] remap) {
         uint[][] newFaces;
-        bool[]   newSubpatch;
+        uint[]   newWord;   // whole faceMarks word per survivor (task 0613 §4.2)
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
@@ -953,14 +978,14 @@ struct Mesh {
             if (f.length > 1 && f[$ - 1] == f[0]) f = f[0 .. $ - 1];
             if (f.length >= 3) {
                 newFaces    ~= f;
-                newSubpatch ~= isFaceSubpatch(fi);
+                newWord     ~= faceAttrOr(faceMarks, fi);
                 newOrder    ~= faceAttrOr(faceSelectionOrder, fi);
                 newMaterial ~= faceAttrOr(faceMaterial, fi);
                 newPart     ~= faceAttrOr(facePart, fi);
             }
         }
         faces              = newFaces;
-        setFaceSubpatchFrom(newSubpatch);
+        setFaceMarksFrom(newWord, ~Marks.Select);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
@@ -2107,13 +2132,13 @@ struct Mesh {
                              bool keepFloatingEdges = false) {
         if (mask.length != faces.length) return 0;
         uint[][] keptFaces;
-        bool[]   keptSubpatch;
+        uint[]   keptWord;   // whole faceMarks word per survivor (task 0613 §4.2)
         int[]    keptOrder;
         uint[]   keptMaterial;
         uint[]   keptPart;
         size_t   removed = 0;
         keptFaces.reserve(faces.length);
-        keptSubpatch.reserve(faces.length);
+        keptWord.reserve(faces.length);
         keptOrder.reserve(faces.length);
         keptMaterial.reserve(faces.length);
         keptPart.reserve(faces.length);
@@ -2147,16 +2172,21 @@ struct Mesh {
                 continue;
             }
             keptFaces ~= f;
-            // isFaceSubpatch(i), NOT `isSubpatch[i]`: `isSubpatch` is a
-            // `@property` that materializes a fresh `bool[faces.length]` on
-            // EVERY read (see its definition above) — indexing it inside this
-            // per-face loop was an O(F²) trap (task 0396: this loop runs once
-            // per surviving face, and until this fix each iteration re-built
-            // the whole array just to read one bit). `isFaceSubpatch` is the
-            // established O(1) non-allocating counterpart (already used two
-            // lines up for `droppedFaceSub`), same fix class as the
-            // `selectedX`-@property-in-loop sweep (commits c1d9526/4acf93b).
-            keptSubpatch ~= isFaceSubpatch(i);
+            // faceAttrOr(faceMarks, i), NOT isFaceSubpatch/isSubpatch[i]:
+            // carries the WHOLE marks word (Subpatch + Hide + reserved Lock),
+            // not just one bit (task 0613 §4.2 — this is the fix for the GAP
+            // that used to be documented right here: `setFaceSubpatchFrom`
+            // only patched in the Subpatch bit at each NEW index, leaving
+            // whatever Hide bit already sat there from truncation, so a
+            // deleted face's Hide bit would silently MOVE onto whichever
+            // face slides into its vacated slot instead of following its own
+            // face or vanishing with it). `keptWord` below re-establishes the
+            // word at its captured OLD index `i`, so `setFaceMarksFrom`
+            // writes each survivor's OWN word at its new position — same
+            // O(F²) trap avoided as the old isFaceSubpatch comment noted
+            // (task 0396: a `@property` read here would rebuild a fresh
+            // array every iteration; `faceAttrOr` is O(1) non-allocating).
+            keptWord     ~= faceAttrOr(faceMarks, i);
             keptOrder    ~= faceAttrOr(faceSelectionOrder, i);
             keptMaterial ~= faceAttrOr(faceMaterial, i);
             keptPart     ~= faceAttrOr(facePart, i);
@@ -2169,7 +2199,12 @@ struct Mesh {
             editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
                                             droppedFaceMat, droppedFacePart, droppedFaceSub);
         faces              = keptFaces;
-        setFaceSubpatchFrom(keptSubpatch);
+        // Select is still dropped deliberately (~Marks.Select) — the
+        // subsequent clearFaceSelectionResize() below relied on that being
+        // true regardless, so this stays behaviourally identical for Select;
+        // Subpatch and Hide now BOTH ride along in the same word, at the
+        // survivor's own captured index, not whatever slot they land in.
+        setFaceMarksFrom(keptWord, ~Marks.Select);
         faceSelectionOrder = keptOrder;
         faceMaterial       = keptMaterial;
         facePart           = keptPart;
@@ -2181,22 +2216,6 @@ struct Mesh {
         // Selection bits don't survive index changes; clear and let caller
         // restore as needed.
         clearFaceSelectionResize();
-        // KNOWN GAP (code review, task 0613; doc/hide_geometry_plan.md Stage
-        // 1's own cost centre) — unlike Subpatch (rewritten above, in NEW
-        // index order, from `keptSubpatch`) and unlike Select (blanket-
-        // cleared just above by clearFaceSelectionResize), the Hide bit is
-        // NEITHER carried through this compaction NOR cleared: `faceMarks`
-        // itself is never reordered here, only length-truncated (via
-        // setFaceSubpatchFrom's `faceMarks.length = src.length`), so a
-        // survivor's Hide bit is whatever raw word already sat at its NEW
-        // index before the shrink. When a face is deleted from the interior
-        // of the array (not the last index), the Hide bit does not vanish
-        // with it — it silently MOVES onto whichever face compaction slides
-        // into that slot. Inert today: no production command sets Hide on a
-        // real user mesh yet (Stage 0 only). Stage 1 must give Hide the same
-        // carry-through `setFaceSubpatchFrom` gives Subpatch before any hide
-        // command is safe across delete/remove (see T-S0d's own comment,
-        // below, for the same gap in the delta-replay `finalize()` path).
         // Re-derive edges from the surviving faces. Some edges may be gone
         // entirely (only-touched the deleted faces); others stay. Always
         // do this even if no verts were orphaned — compactUnreferenced
@@ -2305,12 +2324,12 @@ struct Mesh {
         // Rebuild faces array, dropping each masked vert from every face's
         // boundary. Faces shrunk below 3 verts (degenerate) are dropped.
         uint[][] newFaces;
-        bool[]   newSubpatch;
+        uint[]   newWord;   // whole faceMarks word per survivor (task 0613 §4.2)
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
         newFaces.reserve(faces.length);
-        newSubpatch.reserve(faces.length);
+        newWord.reserve(faces.length);
         newOrder.reserve(faces.length);
         newMaterial.reserve(faces.length);
         newPart.reserve(faces.length);
@@ -2351,7 +2370,7 @@ struct Mesh {
                     reshapeAfter  ~= kept.dup;
                 }
                 newFaces    ~= kept;
-                newSubpatch ~= isFaceSubpatch(fi);
+                newWord     ~= faceAttrOr(faceMarks, fi);
                 newOrder    ~= faceAttrOr(faceSelectionOrder, fi);
                 newMaterial ~= faceAttrOr(faceMaterial, fi);
                 newPart     ~= faceAttrOr(facePart, fi);
@@ -2377,7 +2396,7 @@ struct Mesh {
                                             removedFaceMat, removedFacePart, removedFaceSub);
         }
         faces              = newFaces;
-        setFaceSubpatchFrom(newSubpatch);
+        setFaceMarksFrom(newWord, ~Marks.Select);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
@@ -2802,7 +2821,7 @@ struct Mesh {
         // merged polygon. Single-face components are untouched.
         bool[] dropFace      = new bool[](nFaces);
         uint[][] newPolyList;
-        bool[]   newPolySubpatch;
+        uint[]   newPolyWord;   // whole faceMarks word, task 0613 §4.2
         int[]    newPolyOrder;
         uint[]   newPolyMaterial;
         uint[]   newPolyPart;
@@ -2894,11 +2913,12 @@ struct Mesh {
             // merged polygon will replace them.
             foreach (fi; comp) dropFace[fi] = true;
 
-            // Inherit subpatch flag and selection-order from the FIRST
-            // face in the component (arbitrary but deterministic).
+            // Inherit the whole marks word (Subpatch + Hide + reserved Lock,
+            // task 0613 §4.2 — was Subpatch-only) and selection-order from the
+            // FIRST face in the component (arbitrary but deterministic).
             int firstFi = cast(int)comp[0];
             newPolyList      ~= poly;
-            newPolySubpatch  ~= isFaceSubpatch(firstFi);
+            newPolyWord      ~= faceAttrOr(faceMarks, cast(size_t)firstFi);
             newPolyOrder     ~= faceAttrOr(faceSelectionOrder, firstFi);
             newPolyMaterial  ~= faceAttrOr(faceMaterial, firstFi);
             newPolyPart      ~= faceAttrOr(facePart, firstFi);
@@ -2925,7 +2945,7 @@ struct Mesh {
         uint[]   droppedFacePart;
         uint[]   droppedFaceSub;
         uint[][] keptFaces;
-        bool[]   keptSubpatch;
+        uint[]   keptWord;   // whole faceMarks word per face (task 0613 §4.2)
         int[]    keptOrder;
         uint[]   keptMaterial;
         uint[]   keptPart;
@@ -2947,7 +2967,7 @@ struct Mesh {
                 continue;
             }
             keptFaces ~= faces[fi];
-            keptSubpatch ~= isFaceSubpatch(fi);
+            keptWord     ~= faceAttrOr(faceMarks, fi);
             keptOrder    ~= faceAttrOr(faceSelectionOrder, fi);
             keptMaterial ~= faceAttrOr(faceMaterial, fi);
             keptPart     ~= faceAttrOr(facePart, fi);
@@ -2960,7 +2980,7 @@ struct Mesh {
         const size_t firstMerged = keptFaces.length;
         foreach (i; 0 .. newPolyList.length) {
             keptFaces    ~= newPolyList[i];
-            keptSubpatch ~= newPolySubpatch[i];
+            keptWord     ~= newPolyWord[i];
             keptOrder    ~= newPolyOrder[i];
             keptMaterial ~= newPolyMaterial[i];
             keptPart     ~= newPolyPart[i];
@@ -2981,7 +3001,7 @@ struct Mesh {
                                          cast(uint)keptFaces.length, mergedLists);
         }
         faces              = keptFaces;
-        setFaceSubpatchFrom(keptSubpatch);
+        setFaceMarksFrom(keptWord, ~Marks.Select);
         faceSelectionOrder = keptOrder;
         faceMaterial       = keptMaterial;
         facePart           = keptPart;
@@ -3033,7 +3053,7 @@ struct Mesh {
         uint[] oldLoopOfNewLoop;
 
         uint[][] newFaces;
-        bool[]   newSubpatch;
+        uint[]   newWord;   // whole faceMarks word per emitted face (task 0613 §4.2)
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
@@ -3042,8 +3062,8 @@ struct Mesh {
         size_t changed = 0;
 
         foreach (fi; 0 .. faces.length) {
-            auto f   = faces[fi];
-            bool sub = isFaceSubpatch(fi);
+            auto f    = faces[fi];
+            uint word = faceAttrOr(faceMarks, fi);
             int  ord = faceAttrOr(faceSelectionOrder, fi);
             uint mat = faceAttrOr(faceMaterial, fi);
             uint prt = faceAttrOr(facePart, fi);
@@ -3051,7 +3071,7 @@ struct Mesh {
             if (!mask[fi] || f.length <= 3) {
                 // Pass through untouched.
                 newFaces    ~= f.dup;
-                newSubpatch ~= sub;
+                newWord     ~= word;
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
@@ -3063,10 +3083,13 @@ struct Mesh {
                                                              cast(uint)c);
             } else {
                 // Fan from vertex 0: [f[0], f[i], f[i+1]] for i = 1 .. n-2.
+                // Every triangle of the fan inherits the source face's WHOLE
+                // marks word (Subpatch + Hide), same "each piece keeps the
+                // parent's word" rule as every other 1-to-many split above.
                 ++changed;
                 for (uint i = 1; i + 1 < f.length; ++i) {
                     newFaces    ~= [f[0], f[i], f[i + 1]];
-                    newSubpatch ~= sub;
+                    newWord     ~= word;
                     newOrder    ~= ord;
                     newMaterial ~= mat;
                     newPart     ~= prt;
@@ -3084,7 +3107,7 @@ struct Mesh {
         if (changed == 0) return 0;
 
         faces              = newFaces;
-        setFaceSubpatchFrom(newSubpatch);
+        setFaceMarksFrom(newWord, ~Marks.Select);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
@@ -3802,13 +3825,13 @@ struct Mesh {
                 import std.format : format;
                 bool[string] seenFp;
                 uint[][] keptFaces;
-                bool[]   keptSubpatch;
+                uint[]   keptWord;   // whole faceMarks word (task 0613 §4.2)
                 int[]    keptOrder;
                 bool[]   keptSelected;
                 uint[]   keptMaterial;
                 uint[]   keptPart;
                 keptFaces   .reserve(faces.length);
-                keptSubpatch.reserve(faces.length);
+                keptWord    .reserve(faces.length);
                 keptOrder   .reserve(faces.length);
                 keptSelected.reserve(faces.length);
                 keptMaterial.reserve(faces.length);
@@ -3820,14 +3843,17 @@ struct Mesh {
                     if (fp in seenFp) continue;
                     seenFp[fp] = true;
                     keptFaces    ~= f;
-                    keptSubpatch ~= isFaceSubpatch(fi);
+                    keptWord     ~= faceAttrOr(faceMarks, fi);
                     keptOrder    ~= faceAttrOr(faceSelectionOrder, fi);
                     keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
                     keptMaterial ~= faceAttrOr(faceMaterial, fi);
                     keptPart     ~= faceAttrOr(facePart, fi);
                 }
                 faces              = keptFaces;
-                setFaceSubpatchFrom(keptSubpatch);
+                // keptSelected is applied right after via setFacesSelectedFrom,
+                // so Select's bit in keptWord is irrelevant either way; drop it
+                // here anyway to match every other compaction site's convention.
+                setFaceMarksFrom(keptWord, ~Marks.Select);
                 faceSelectionOrder = keptOrder;
                 setFacesSelectedFrom(keptSelected);
                 faceMaterial       = keptMaterial;
@@ -5092,33 +5118,66 @@ struct Mesh {
     }
     void setFacesSelectedFrom(const bool[] src) {
         // Resize once, then touch ONLY the Select bit so this stays
-        // order-independent with setFaceSubpatchFrom (B4 — snapshot restore
-        // writes Select and Subpatch as two separate assigns). Resizing
-        // preserves the Subpatch bit of any pre-existing entries.
+        // order-independent with setFaceMarksFrom (B4 — snapshot restore
+        // writes Select and Subpatch/Hide as two separate assigns). Resizing
+        // preserves the other bits of any pre-existing entries.
         applySelectedFrom_(faceMarks, faceSelectionOrder, src, SelDomain.Face);
     }
-    void setFaceSubpatchFrom(const bool[] src) {
-        // Resize once, then touch ONLY the Subpatch bit (order-independent
-        // with setFacesSelectedFrom). Preserves the Select bit of existing
-        // entries.
+    // RETIRED (task 0613, Stage 1 — doc/hide_geometry_plan.md §4.2): this used
+    // to be `setFaceSubpatchFrom(const bool[] src)`, a masked single-bit
+    // writer. Every one of its ~13 call sites resized `faceMarks` to a NEW
+    // (usually shorter, always re-indexed) length and then patched in ONLY
+    // the Subpatch bit — leaving whatever raw word already sat at the new
+    // index (D array-shrink does not clear truncated tail slots, and a
+    // compaction's "new index i" is generally a DIFFERENT face than "old
+    // index i"). Select survived that unnoticed because every compaction site
+    // separately force-clears it afterward (`clearFaceSelectionResize` /
+    // `setFacesSelectedFrom`); Hide has no such second pass, so it would have
+    // silently MOVED onto whichever face slides into a deleted face's slot —
+    // documented in-place at `deleteFacesByMask` below before this fix.
+    // `setFaceMarksFrom` replaces it: the caller supplies the FULL new word
+    // per new index (typically the old face's whole `faceMarks` entry,
+    // captured in the same walk that used to capture just `isFaceSubpatch`),
+    // and `keepMask` says which of ITS bits survive — `~Marks.Select` at
+    // every compaction/wipe site (Select is still dropped, byte-identical to
+    // today), `uint.max` at a same-length restore that must preserve
+    // everything not explicitly overwritten by the caller. Raw (no
+    // commitChange), same "bulk/internal writer, caller commits" contract
+    // setFaceSubpatchFrom had.
+    void setFaceMarksFrom(const uint[] src, uint keepMask) {
         faceMarks.length = src.length;
-        foreach (i, s; src) {
-            if (s) faceMarks[i] |=  Marks.Subpatch;
-            else   faceMarks[i] &= ~Marks.Subpatch;
-        }
+        foreach (i, w; src) faceMarks[i] = w & keepMask;
     }
-    // Bulk face-plane write, same shape as setFaceSubpatchFrom above (raw —
+    unittest { // setFaceMarksFrom mask contract (code review NIT, task
+        // 0613): pin BOTH halves directly on the primitive, unmediated by
+        // any caller's OWN Select backstop. Every production call site
+        // (deleteFacesByMask's clearFaceSelectionResize, loop-slice's
+        // resetSelection, etc.) clears or restores Select unconditionally
+        // right afterward, so a keepMask regression AT THE CALL SITE is
+        // invisible from the outside — only a direct test of the primitive
+        // itself can discriminate it.
+        Mesh m;
+        m.setFaceMarksFrom([Marks.Select | Marks.Hide, Marks.Subpatch], ~Marks.Select);
+        assert(m.faceMarks[0] == Marks.Hide,
+            "setFaceMarksFrom: keepMask must drop the Select bit — a slip "
+            ~ "to uint.max would let it survive");
+        assert(m.faceMarks[1] == Marks.Subpatch,
+            "setFaceMarksFrom: keepMask must NOT drop bits outside itself — "
+            ~ "a slip to 0 (or to ~uint.max) would silently wipe "
+            ~ "Subpatch/Hide too");
+    }
+    // Bulk face-plane write, same shape as setFaceMarksFrom above (raw —
     // no commitChange, used by bulk/internal writers; a user-facing bulk
     // hide command calls this then refreshHiddenDerived() itself, exactly
     // the two-step S2 will use). Resize once, touch ONLY the Hide bit, so
     // this stays order-independent with setFacesSelectedFrom /
-    // setFaceSubpatchFrom (all three share the same word).
+    // setFaceMarksFrom (all three share the same word).
     void setFaceHiddenFrom(const bool[] src) {
         faceMarks.length = src.length;
         // §3.1 Select ∧ Hide = ∅ (BLOCKER, code review task 0613) — same
         // invariant as the scalar setFaceHidden above, owed by every writer
         // of the Hide plane, not only the single-index one. Raw shape (no
-        // commitChange — the caller does that, same as setFaceSubpatchFrom),
+        // commitChange — the caller does that, same as setFaceMarksFrom),
         // but a Select-domain change is still noted here if one happens, so
         // it is never silently lost regardless of what the caller does next.
         bool selChanged = false;
@@ -5534,6 +5593,178 @@ struct Mesh {
         auto emask = m2.operandEdgeMask();
         const uint e01 = m2.edgeIndex(0, 1);
         assert(!emask[e01], "operandEdgeMask must exclude an edge derived-hidden through its hidden endpoint");
+    }
+
+    // === T-S1 — Hide rides topology edits (doc/hide_geometry_plan.md §6 S1,
+    // §7) ======================================================================
+    //
+    // Fixture: a 2×2 grid of 4 coplanar quads at four distinct centroids —
+    //
+    //   v6--v7--v8        f2 = [3,4,7,6]  centroid (0.5, 1.5, 0)
+    //   |f2 |f3 |          f3 = [4,5,8,7]  centroid (1.5, 1.5, 0)
+    //   v3--v4--v5        f0 = [0,1,4,3]  centroid (0.5, 0.5, 0)
+    //   |f0 |f1 |          f1 = [1,2,5,4]  centroid (1.5, 0.5, 0)
+    //   v0--v1--v2
+    //
+    // Every row: hide f3 (its own vertices/edges are never touched by the op
+    // under test — verified per-op below — so its centroid stays exactly
+    // (1.5,1.5,0) after the op), run a topology op that removes/reshapes
+    // something else, then find the survivor BY CENTROID (not by index) and
+    // assert IT — and only it — is hidden. A missing carry-through either
+    // drops the bit (reads not-hidden at the right centroid) or plants it on
+    // a neighbour (a DIFFERENT face reads hidden) — both are caught, because
+    // the assertion checks both "the right face is hidden" AND "no other
+    // face is."
+    //
+    // Every row targets something OTHER than the highest index (mask.d/
+    // op-specific — see each case) — the HARD REQUIREMENT this task was
+    // briefed with: "a highest-index delete cannot tell truncation from
+    // compaction" (a last-element removal needs no shift, so truncating the
+    // marks array from the tail would coincidentally read correct).
+    version (unittest) {
+    private static Vec3 t_s1_centroid(ref Mesh m, size_t fi) {
+        Vec3 c = Vec3(0, 0, 0);
+        auto f = m.faces[fi];
+        foreach (vi; f) c = c + m.vertices[vi];
+        return Vec3(c.x / f.length, c.y / f.length, c.z / f.length);
+    }
+    private static size_t t_s1_findByCentroid(ref Mesh m, Vec3 target) {
+        foreach (fi; 0 .. m.faces.length)
+            if ((t_s1_centroid(m, fi) - target).length < 1e-4) return fi;
+        assert(false, "T-S1 fixture broke: no face survived at the expected centroid");
+    }
+    private static void t_s1_assertOnlyThatSurvivorHidden(ref Mesh m, Vec3 targetCentroid,
+                                                           string label) {
+        immutable size_t survivor = t_s1_findByCentroid(m, targetCentroid);
+        assert(m.isFaceHidden(survivor),
+            label ~ ": the face at f3's original centroid must still be hidden");
+        foreach (fi; 0 .. m.faces.length)
+            if (fi != survivor)
+                assert(!m.isFaceHidden(fi),
+                    label ~ ": no OTHER face may have picked up the bit");
+    }
+    private static Mesh t_s1_grid() {
+        Vec3[] verts = [
+            Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 0, 0),
+            Vec3(0, 1, 0), Vec3(1, 1, 0), Vec3(2, 1, 0),
+            Vec3(0, 2, 0), Vec3(1, 2, 0), Vec3(2, 2, 0),
+        ];
+        uint[][] faceList = [
+            [0, 1, 4, 3],   // f0, centroid (0.5, 0.5, 0)
+            [1, 2, 5, 4],   // f1, centroid (1.5, 0.5, 0)
+            [3, 4, 7, 6],   // f2, centroid (0.5, 1.5, 0)
+            [4, 5, 8, 7],   // f3, centroid (1.5, 1.5, 0) — the one we hide
+        ];
+        return buildRawMesh(verts, faceList);
+    }
+    private enum Vec3 t_s1_f3Centroid = Vec3(1.5f, 1.5f, 0);
+    }
+
+    unittest { // T-S1 (delete) — deleteFacesByMask, mesh.d's own compaction.
+        // Deletes f0 (index 0 — NOT the highest). Survivors [f1,f2,f3] shift
+        // down one slot each; f3 lands at NEW index 2, not its original 3.
+        auto m = t_s1_grid();
+        m.setFaceHidden(3, true);
+        m.selectFace(1);   // survivor, distinct from the hidden f3. NOTE
+                            // (code review NIT): this pins deleteFacesByMask's
+                            // OBSERVABLE contract ("Select does not survive a
+                            // delete"), but is NOT the discriminator for a
+                            // keepMask regression at its own
+                            // `setFaceMarksFrom(keptWord, ~Marks.Select)` call
+                            // — the very next line in deleteFacesByMask is an
+                            // unconditional clearFaceSelectionResize(), which
+                            // would mask a slip to an all-ones keepMask here
+                            // too (verified: break-testing that call site's
+                            // mask alone left this assertion green). The
+                            // actual discriminator for that mask argument is
+                            // setFaceMarksFrom's OWN direct unittest, next to
+                            // its definition above.
+        assert(m.isFaceSelected(1));
+        assert(m.faces.length == 4);
+        bool[] mask = new bool[](4);
+        mask[0] = true;
+        immutable size_t removed = m.deleteFacesByMask(mask);
+        assert(removed == 1);
+        assert(m.faces.length == 3, "T-S1 delete: one face removed");
+        immutable size_t f1New = t_s1_findByCentroid(m, Vec3(1.5f, 0.5f, 0));
+        assert(!m.isFaceSelected(f1New),
+            "T-S1 delete: Select must NOT survive the compaction");
+        t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 delete");
+    }
+
+    unittest { // T-S1 (dissolve) — dissolveVerticesByMask. Dissolving v0 AND
+        // v1 collapses f0=[0,1,4,3] below 3 corners (DROPPED); f1 reshapes to
+        // a triangle but survives. f3 never references v0/v1 — untouched.
+        auto m = t_s1_grid();
+        m.setFaceHidden(3, true);
+        bool[] mask = new bool[](m.vertices.length);
+        mask[0] = true;
+        mask[1] = true;
+        immutable size_t dissolved = m.dissolveVerticesByMask(mask);
+        assert(dissolved == 2);
+        assert(m.faces.length == 3, "T-S1 dissolve: f0 degenerated and was dropped");
+        t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 dissolve");
+    }
+
+    unittest { // T-S1 (triangulate) — triangulateFacesByMask. Triangulating
+        // f0 GROWS the array (one quad -> two triangles): everything after f0
+        // shifts UP by one instead of down — the complementary shift
+        // direction to delete/dissolve/weld's shrink. f3 ends at index 4, not 3.
+        auto m = t_s1_grid();
+        m.setFaceHidden(3, true);
+        bool[] mask = new bool[](4);
+        mask[0] = true;
+        immutable size_t changed = m.triangulateFacesByMask(mask);
+        assert(changed == 1);
+        assert(m.faces.length == 5, "T-S1 triangulate: f0 became 2 triangles");
+        t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 triangulate");
+    }
+
+    unittest { // T-S1 (removeEdges) — removeEdgesByMask, the MERGED-POLYGON
+        // path (§4.2's newPolyWord — a distinct code shape from the plain
+        // keptWord compaction the other rows exercise). Dissolving the
+        // f0/f1 shared edge (1,4) merges them into one hexagon, appended at
+        // the TAIL; f2, f3 are kept faces, shifting down two slots. f3 never
+        // references vertex 1 or the (1,4) edge — untouched.
+        auto m = t_s1_grid();
+        m.setFaceHidden(3, true);
+        const uint e14 = m.edgeIndex(1, 4);
+        bool[] emask = new bool[](m.edges.length);
+        emask[e14] = true;
+        immutable size_t n = m.removeEdgesByMask(emask);
+        assert(n == 1);
+        assert(m.faces.length == 3, "T-S1 removeEdges: f0+f1 merged into one polygon");
+        t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 removeEdges");
+    }
+
+    unittest { // T-S1 (weld) — weldVertexPairs -> applyVertexRemapAndRebuild.
+        // Welding v0 into v1 AND v3 into v4 (both adjacent-corner pairs of
+        // f0=[0,1,4,3]) collapses f0 to 2 distinct corners — DROPPED. f2
+        // references v3, so it reshapes to a triangle but survives. f3
+        // references v4 (kept, stays in place) but not v3 or v0 — untouched.
+        auto m = t_s1_grid();
+        m.setFaceHidden(3, true);
+        immutable size_t welded = m.weldVertexPairs([[1u, 0u], [4u, 3u]]);
+        assert(welded == 2);
+        assert(m.faces.length == 3, "T-S1 weld: f0 collapsed below 3 corners and was dropped");
+        t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 weld");
+    }
+
+    unittest { // T-S1 (extrude) — mesh_ops/extrude.d's extrudeFacesByMask, a
+        // WHOLESALE-WIPE site (§4.1a — `faceMarks[] = 0` + Subpatch-only
+        // rebuild before this fix), not a plain compaction. Extruding f0
+        // moves it to a cap face APPENDED at the tail (behind new wall
+        // quads); the "kept, non-selected" originals f1,f2,f3 are re-emitted
+        // FIRST, in relative order — f3 lands at new index 2. f3's own verts
+        // (4,5,8,7) are never part of f0's boundary — untouched.
+        auto m = t_s1_grid();
+        m.setFaceHidden(3, true);
+        bool[] mask = new bool[](4);
+        mask[0] = true;
+        immutable size_t affected = m.extrudeFacesByMask(mask, 1.0f);
+        assert(affected == 1);
+        assert(m.faces.length > 4, "T-S1 extrude: cap + wall quads appended");
+        t_s1_assertOnlyThatSurvivorHidden(m, t_s1_f3Centroid, "T-S1 extrude");
     }
 
     // --- Bulk SELECT (as opposed to bulk RESTORE) --------------------------
@@ -10135,7 +10366,7 @@ struct Mesh {
     {
         size_t origFaceCount = faces.length;
         uint[][] newFacesArr;
-        bool[]   newSubpatch;
+        uint[]   newWord;   // whole faceMarks word per emitted face (task 0613 §4.2)
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
@@ -10145,7 +10376,7 @@ struct Mesh {
         size_t nSplit = 0;
         foreach (fi; 0 .. origFaceCount) {
             uint[] face = faces[fi];
-            bool  sub = isFaceSubpatch(fi);
+            uint  word = faceAttrOr(faceMarks, fi);
             int   ord = faceAttrOr(faceSelectionOrder, fi);
             uint  mat = faceAttrOr(faceMaterial, fi);
             uint  prt = faceAttrOr(facePart, fi);
@@ -10156,7 +10387,7 @@ struct Mesh {
                             (fi < splitFaceMask.length && splitFaceMask[fi]);
             if (!eligible) {
                 newFacesArr ~= face.dup;
-                newSubpatch ~= sub;
+                newWord     ~= word;
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
@@ -10172,7 +10403,7 @@ struct Mesh {
 
             if (hits.length != 2) {
                 newFacesArr ~= face.dup;
-                newSubpatch ~= sub;
+                newWord     ~= word;
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
@@ -10186,7 +10417,7 @@ struct Mesh {
             bool adj = (j == i + 1) || (i == 0 && j == face.length - 1);
             if (adj) {
                 newFacesArr ~= face.dup;
-                newSubpatch ~= sub;
+                newWord     ~= word;
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
@@ -10201,7 +10432,7 @@ struct Mesh {
             if (f1.length < 3 || f2.length < 3) {
                 // Degenerate — guard above should prevent this; keep whole.
                 newFacesArr ~= face.dup;
-                newSubpatch ~= sub;
+                newWord     ~= word;
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
@@ -10211,7 +10442,7 @@ struct Mesh {
 
             // f1 (replaces parent slot)
             newFacesArr ~= f1;
-            newSubpatch ~= sub;
+            newWord     ~= word;
             newOrder    ~= ord;
             newMaterial ~= mat;
             newPart     ~= prt;
@@ -10219,9 +10450,10 @@ struct Mesh {
 
             // f2 (appended slot) — BOTH halves carry parent attrs, including
             // the Select bit: a selected parent yields two selected halves
-            // (reference-pinned behavior).
+            // (reference-pinned behavior). Same for Hide (task 0613): a
+            // hidden parent yields two hidden halves — `word` carries it.
             newFacesArr ~= f2;
-            newSubpatch ~= sub;
+            newWord     ~= word;
             newOrder    ~= ord;
             newMaterial ~= mat;
             newPart     ~= prt;
@@ -10234,14 +10466,14 @@ struct Mesh {
 
         // Apply new face arrays (mirrors weldVerticesByMask pattern).
         faces._store = newFacesArr;
-        setFaceSubpatchFrom(newSubpatch);
+        setFaceMarksFrom(newWord, ~Marks.Select);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
         // Inherit each parent's Select bit onto its emitted slot(s) instead of
         // clearing — a selected parent's split halves stay selected, an
         // unselected parent stays unselected, nothing-in ⇒ nothing-out.
-        // Writes ONLY the Select bit (Subpatch already written above).
+        // Writes ONLY the Select bit (Subpatch/Hide already written above).
         setFacesSelectedFrom(newSelected);
 
         rebuildEdges();
@@ -12951,10 +13183,8 @@ unittest { // triangulateFacesByMask: subpatch bit propagates to children
     Mesh m = makeCube();
     m.buildLoops();
     // Mark face 0 as subpatch before triangulating.
-    m.setFaceSubpatchFrom(new bool[](m.faces.length));  // ensure array exists
-    auto sp = m.isSubpatch.dup;
-    sp[0] = true;
-    m.setFaceSubpatchFrom(sp);
+    m.resizeSubpatch();       // ensure faceMarks exists (was setFaceSubpatchFrom's job)
+    m.setSubpatch(0, true);
     auto mask = new bool[](m.faces.length);
     mask[0] = true;  // only face 0
     m.triangulateFacesByMask(mask);

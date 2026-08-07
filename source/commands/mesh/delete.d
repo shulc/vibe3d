@@ -48,20 +48,24 @@ class MeshDelete : Command, Operator {
     // match the pre-op array, so an index-keyed restore would select the wrong
     // edges (doc §1.3, the same reason extrude uses EdgeSelByEnds).
     //
-    // SUBPATCH (POL_TYPE) plane is ALSO captured by face index and re-overlaid on
-    // revert. The op-log delta's RemoveFaces only carries the subpatch bit for the
-    // faces it DROPS; surviving-but-shifted faces have their Subpatch bit scrambled
-    // by the face re-insertion (faces.insertInPlace shifts `faces` but not the
-    // faceMarks word). The snapshot path restores the whole faceMarks word
-    // (Select+Subpatch together) and so never had this gap. Capturing the full
-    // pre-op subpatch plane here, index-keyed (the delta revert restores the exact
-    // pre-op face index space), re-establishes it bit-identically — mirroring how
-    // preSel_ re-overlays the Select plane. (Found by the Phase 4 burn-in gate:
-    // test_marks_authority B4 failed only under the delta path.)
+    // SUBPATCH (POL_TYPE) + HIDE (task 0613) planes are ALSO captured by face
+    // index and re-overlaid on revert. The op-log delta's RemoveFaces only
+    // carries the subpatch bit for the faces it DROPS; surviving-but-shifted
+    // faces have their marks scrambled by the face re-insertion
+    // (faces.insertInPlace shifts `faces` but not the faceMarks word — the
+    // exact same class of bug fixed at deleteFacesByMask's own compaction in
+    // task 0613 Stage 1, here on the REVERSE/undo side instead of the
+    // forward side). The snapshot path restores the whole faceMarks word
+    // (Select+Subpatch+Hide together) and so never had this gap. Capturing
+    // the full pre-op word here, index-keyed (the delta revert restores the
+    // exact pre-op face index space), re-establishes it bit-identically —
+    // mirroring how preSel_ re-overlays the Select plane. (Found by the
+    // Phase 4 burn-in gate: test_marks_authority B4 failed only under the
+    // delta path.)
     private MeshEditDelta      delta_;
     private SelectionSnapshot  preSel_;     // vertex/face index-keyed
     private uint[]             preEdgeEnds_; // flat [a,b, a,b, …] for edge mode
-    private bool[]             preSubpatch_; // face Subpatch (POL_TYPE) plane, by pre-op face index
+    private uint[]             preMarksWord_; // face Subpatch+Hide plane, by pre-op face index
     private bool               useDelta_;
 
     // Stable label: captured once in runKernel() after effectiveDeleteMode
@@ -156,9 +160,9 @@ class MeshDelete : Command, Operator {
         if (undoTrackerEnabled()) {
             // Delta path: capture the pre-op selection, run the kernel inside a
             // Mesh edit batch so it self-records an operation-log delta.
-            preSel_      = SelectionSnapshot.capture(*mesh);
-            preEdgeEnds_ = captureSelectedEdgeEnds(*mesh);
-            preSubpatch_ = mesh.isSubpatch.dup;   // full POL_TYPE plane, by face index
+            preSel_       = SelectionSnapshot.capture(*mesh);
+            preEdgeEnds_  = captureSelectedEdgeEnds(*mesh);
+            preMarksWord_ = mesh.faceMarks.dup;   // full marks word, by face index
             auto rec = MeshEditTracker();
             mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
             const affected = runKernel();
@@ -166,10 +170,10 @@ class MeshDelete : Command, Operator {
             if (affected == 0 || delta_.isEmpty) {
                 // No-op / degenerate delta — fall back to the snapshot path so
                 // a well-formed (but trivial) command is still recordable.
-                delta_       = MeshEditDelta.init;
-                preSel_      = SelectionSnapshot.init;
-                preEdgeEnds_ = null;
-                preSubpatch_ = null;
+                delta_        = MeshEditDelta.init;
+                preSel_       = SelectionSnapshot.init;
+                preEdgeEnds_  = null;
+                preMarksWord_ = null;
                 return false;
             }
             useDelta_ = true;
@@ -189,19 +193,35 @@ class MeshDelete : Command, Operator {
     override bool revert() {
         if (useDelta_) {
             delta_.revert(*mesh);     // LIFO inverse replay restores geometry
+            // Re-overlay the Subpatch + Hide (task 0613) planes FIRST: the
+            // delta revert restored the pre-op face index space, so the
+            // index-keyed capture re-aligns. `setFaceMarksFrom` is a FULL-WORD
+            // ASSIGN, not a merge (`faceMarks[i] = w & keepMask`) — it must
+            // therefore run BEFORE the selection restore below, or it
+            // clobbers the Select bits that restore just wrote (code review
+            // BLOCKER, task 0613: the old order zeroed every face's Select
+            // bit two statements after preSel_ set it, and the comment here
+            // claimed the opposite). `~Marks.Select` drops the Select bit
+            // from the captured word so this write can never itself
+            // resurrect a stale Select bit ahead of the restore below.
+            if (preMarksWord_.length) {
+                assert(preMarksWord_.length == mesh.faces.length,
+                    "MeshDelete.revert: preMarksWord_ length != restored face "
+                    ~ "count — the delta revert did not land on the exact "
+                    ~ "pre-op face index space this capture assumes");
+                mesh.setFaceMarksFrom(preMarksWord_, ~Mesh.Marks.Select);
+            }
             // Re-overlay the pre-op selection on the restored geometry. Vertex/
             // face selection re-aligns by index. preSel_ also restores edge
             // selection by INDEX, but the re-derived edge order is not index-
             // stable across rebuildEdges, so OVERRIDE the edge selection with
             // the endpoint-keyed capture (clear the index-keyed edges first,
             // then re-resolve the recorded endpoints through edgeIndexMap).
+            // setFacesSelectedFrom (called inside restore(), mesh.d) touches
+            // ONLY the Select bit — it is safe to run AFTER the full-word
+            // overwrite above without disturbing the Subpatch/Hide bits that
+            // write just landed.
             preSel_.restore(*mesh);
-            // Re-overlay the Subpatch (POL_TYPE) plane: the delta revert restored
-            // the pre-op face index space, so the index-keyed capture re-aligns.
-            // setFaceSubpatchFrom touches only the Subpatch bit, leaving the Select
-            // bits preSel_ just restored intact (different bit in the same word).
-            if (preSubpatch_.length)
-                mesh.setFaceSubpatchFrom(preSubpatch_);
             mesh.clearEdgeSelection();
             restoreSelectedEdgeEnds(*mesh, preEdgeEnds_);
             return true;

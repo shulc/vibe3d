@@ -101,6 +101,7 @@ struct MeshOpEntry {
         Reindex,        // perm = old->new vertex remap (~0u = dropped)
         SelectionDelta, // markIdx + markBefore / markAfter (Select bit, by element)
         SubpatchDelta,  // markIdx + markBefore / markAfter (Subpatch bit, by face)
+        HideDelta,      // markIdx + markBefore / markAfter (Hide bit, by face — task 0613)
         MaterialDelta,  // markIdx + markBefore / markAfter (faceMaterial[], by face)
         EdgeSelByEnds,  // edge selection keyed by VERTEX-INDEX endpoint pairs,
                         //   re-applied through edgeIndexMap AFTER finalize rebuilds
@@ -367,6 +368,21 @@ struct MeshEditTracker {
         log_ ~= e;
     }
 
+    // Mirrors recordSubpatchDelta exactly (task 0613 §4.2/S1) — same sparse
+    // face-indexed bit delta, one bit different. No production caller yet
+    // (same status as recordSubpatchDelta itself, which also has none): this
+    // is infrastructure that a future direct-mutation op can record into,
+    // proven by its own unittest.
+    void recordHideDelta(in uint[] idx, in uint[] before, in uint[] after) {
+        if (idx.length == 0) return;
+        MeshOpEntry e;
+        e.kind       = MeshOpEntry.Kind.HideDelta;
+        e.markIdx    = idx.dup;
+        e.markBefore = before.dup;
+        e.markAfter  = after.dup;
+        log_ ~= e;
+    }
+
     void recordMaterialDelta(in uint[] idx, in uint[] before, in uint[] after) {
         if (idx.length == 0) return;
         MeshOpEntry e;
@@ -442,6 +458,9 @@ private void applyForward(ref Mesh m, ref const MeshOpEntry e) {
         case MeshOpEntry.Kind.SubpatchDelta:
             patchSubpatch(m, e.markIdx, e.markAfter);
             break;
+        case MeshOpEntry.Kind.HideDelta:
+            patchHide(m, e.markIdx, e.markAfter);
+            break;
         case MeshOpEntry.Kind.MaterialDelta:
             patchMaterial(m, e.markIdx, e.markAfter);
             break;
@@ -496,6 +515,9 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e) {
         case MeshOpEntry.Kind.SubpatchDelta:
             patchSubpatch(m, e.markIdx, e.markBefore);
             break;
+        case MeshOpEntry.Kind.HideDelta:
+            patchHide(m, e.markIdx, e.markBefore);
+            break;
         case MeshOpEntry.Kind.MaterialDelta:
             patchMaterial(m, e.markIdx, e.markBefore);
             break;
@@ -526,11 +548,37 @@ private void applyReindexForward(ref Mesh m, in uint[] perm) {
     foreach (p; perm) if (p != ~0u) ++kept;
     Vec3[] nv;
     nv.length = kept;
+    // vertexMarks rides the SAME permutation as positions (task 0613 §4.2 —
+    // the "vertex-mark permutation gap"). Without this, a kept vertex's whole
+    // marks word — including a LOOSE vertex's own Hide bit, the only per-
+    // vertex Hide state that is not self-healed by refreshHiddenDerived()
+    // (a face-bound vertex's bit IS re-derived every geometry commit; a loose
+    // vertex's is not, since it never has an incident face to derive from) —
+    // stays parked at its OLD slot while the vertex itself moves to `p`,
+    // exactly the "bit slides onto whoever moves into the vacated slot"
+    // defect fixed at deleteFacesByMask's own compaction, here on the vertex
+    // side of a Reindex replay.
+    uint[] nm;
+    nm.length = kept;
+    // vertexSelectionOrder rides the SAME permutation (task 0613 §4.2, S3
+    // code review): before this task neither vertexMarks nor the order
+    // stamps moved with a compaction, so the two were consistently wrong
+    // TOGETHER. Fixing only vertexMarks would leave a kept vertex's mark
+    // word correctly at its new slot `p` while its selection-order stamp
+    // stayed behind at the OLD slot — the same "stale stamp" class this
+    // repository has already fixed three times elsewhere (see
+    // SelectionSnapshot.restore's own S3 fix in snapshot.d).
+    int[] no;
+    no.length = kept;
     foreach (old, p; perm) {
         if (p == ~0u) continue;
         if (old < m.vertices.length) nv[p] = m.vertices[old];
+        if (old < m.vertexMarks.length) nm[p] = m.vertexMarks[old];
+        if (old < m.vertexSelectionOrder.length) no[p] = m.vertexSelectionOrder[old];
     }
-    m.vertices = nv;
+    m.vertices             = nv;
+    m.vertexMarks          = nm;
+    m.vertexSelectionOrder = no;
     // Rewrite face vertex ids old->new.
     foreach (ref f; m.faces)
         foreach (ref vid; f)
@@ -551,11 +599,28 @@ private void applyReindexReverse(ref Mesh m, in uint[] perm) {
     if (perm.length == 0) return;
     Vec3[] nv;
     nv.length = perm.length;            // pre-compaction length (gaps included)
+    // vertexMarks rides the SAME reverse permutation — see applyReindexForward's
+    // comment (task 0613 §4.2). Dropped slots stay 0 (no bits), matching how
+    // `nv`'s dropped slots stay a Vec3.init gap: both are filled by the
+    // following RemoveVerts^-1 (positions only — see removeVertsReverse's own
+    // comment for why a removed vertex's marks are not restored here).
+    uint[] nm;
+    nm.length = perm.length;
+    // vertexSelectionOrder rides the SAME reverse permutation — see
+    // applyReindexForward's comment (task 0613 §4.2, S3 code review).
+    // Dropped slots stay 0 (not manually selected), same convention as
+    // `nm`'s dropped slots.
+    int[] no;
+    no.length = perm.length;
     foreach (old, p; perm) {
         if (p == ~0u) continue;         // dropped slot — gap, filled by RemoveVerts^-1
         if (p < m.vertices.length) nv[old] = m.vertices[p];
+        if (p < m.vertexMarks.length) nm[old] = m.vertexMarks[p];
+        if (p < m.vertexSelectionOrder.length) no[old] = m.vertexSelectionOrder[p];
     }
-    m.vertices = nv;
+    m.vertices             = nv;
+    m.vertexMarks          = nm;
+    m.vertexSelectionOrder = no;
     // Inverse map: new -> old. Build it once, then rewrite face vids.
     uint[] inv;
     inv.length = m.vertices.length; // == perm.length now; safe upper bound for `new` ids
@@ -587,6 +652,21 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
     nv.reserve(m.vertices.length);
     foreach (i, v; m.vertices) if (!drop[i]) nv ~= v;
     m.vertices = nv;
+    // Drop the same indices from vertexMarks (task 0613 §4.2 — same
+    // permutation-gap fix as applyReindexForward/Reverse above), so a
+    // surviving vertex's marks stay aligned with the dropped-then-repacked
+    // position array instead of one drifting relative to the other.
+    uint[] nm;
+    nm.reserve(m.vertexMarks.length);
+    foreach (i, w; m.vertexMarks) if (i >= drop.length || !drop[i]) nm ~= w;
+    m.vertexMarks = nm;
+    // Same drop for vertexSelectionOrder (task 0613 §4.2, S3 code review) —
+    // see applyReindexForward's comment for why the order stamp must move
+    // with the mark word, not just the position.
+    int[] no;
+    no.reserve(m.vertexSelectionOrder.length);
+    foreach (i, o; m.vertexSelectionOrder) if (i >= drop.length || !drop[i]) no ~= o;
+    m.vertexSelectionOrder = no;
 }
 
 // Reverse: restore the dropped verts at their recorded (pre-removal) indices.
@@ -599,14 +679,31 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
 //  * For a standalone RemoveVerts with no preceding Reindex (a future direct
 //    removal op), the slot does not exist yet, so we INSERT.
 // `idx` is ascending; low-to-high keeps later indices valid in the insert case.
+//
+// vertexMarks (task 0613 §4.2): kept in LENGTH lock-step with `vertices` at
+// every step, mirroring each of the three position operations exactly —
+// otherwise a LATER Reindex/RemoveVerts entry in the same batch (a multi-step
+// compaction) would see `vertexMarks.length != vertices.length` mid-replay,
+// not just at finalize()'s tail resize. The VALUE inserted is 0 (no bits),
+// not a restored capture: `MeshOpEntry.RemoveVerts` only records `vIdx` +
+// `pos` — a removed vertex's marks are not captured anywhere in the delta.
+// Re-inserting a vertex that was hidden (a loose point's own bit; a
+// face-bound vertex's bit self-heals via refreshHiddenDerived and needs no
+// capture) therefore comes back VISIBLE, same as the reference's own convention that
+// selection bits do not survive an index change elsewhere in mesh.d
+// (`clearFaceSelectionResize` et al.) — not a regression, a documented limit.
 private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
     foreach (i, vi; idx) {
-        if (vi < m.vertices.length)
+        if (vi < m.vertices.length) {
             m.vertices[vi] = pos[i];          // fill the gap re-opened by Reindex^-1
-        else if (vi == m.vertices.length)
+            if (vi < m.vertexMarks.length) m.vertexMarks[vi] = 0;
+        } else if (vi == m.vertices.length) {
             m.vertices ~= pos[i];             // contiguous append at the tail
-        else
+            m.vertexMarks ~= 0u;
+        } else {
             m.vertices.insertInPlace(vi, pos[i]); // standalone removal (no Reindex)
+            if (vi <= m.vertexMarks.length) m.vertexMarks.insertInPlace(vi, 0u);
+        }
     }
 }
 
@@ -622,6 +719,25 @@ private void removeFacesForward(ref Mesh m, in uint[] idx) {
     nf.reserve(m.faces.length);
     foreach (i, ref f; m.faces) if (!drop[i]) nf ~= f.dup;
     m.faces = nf;
+    // faceMarks rides the SAME compaction (task 0613 §4.2/S2 code review —
+    // the face-side twin of removeVertsForward's vertexMarks fix above).
+    // This is a real array compaction (drop + shift), not a positional
+    // insert/remove, so a surviving face's WHOLE marks word (Subpatch +
+    // Hide) must move with it to its new index — otherwise finalize()'s
+    // tail `faceMarks.length = m.faces.length` truncate/grow leaves the
+    // word at each surviving index stale, and a face's Hide bit silently
+    // lands on whichever OTHER face slides into its old slot. Same class of
+    // bug already fixed at deleteFacesByMask's own compaction
+    // (mesh.d:2149-2164, `keptWord`). Reached on the apply/redo path of
+    // MeshSessionEdit-backed tools (bevel, loop-slice, reduce,
+    // topology-pen-remove — commands/mesh/session_edit.d:108); delete/remove
+    // dodge it because their own revert() re-overlays the full pre-op word
+    // afterward (see MeshDelete.revert) and their redo re-runs the kernel
+    // instead of replaying this forward op.
+    uint[] nm;
+    nm.reserve(m.faceMarks.length);
+    foreach (i, w; m.faceMarks) if (i >= drop.length || !drop[i]) nm ~= w;
+    m.faceMarks = nm;
 }
 
 private void removeFacesReverse(ref Mesh m, in uint[] idx, in uint[][] lists,
@@ -635,6 +751,20 @@ private void removeFacesReverse(ref Mesh m, in uint[] idx, in uint[][] lists,
     foreach (i, fi; idx) {
         if (fi <= m.faces.length)
             m.faces.insertInPlace(fi, lists[i].dup);
+        // faceMarks shifts in LOCKSTEP with `m.faces` (task 0613 §4.2/S2 code
+        // review — the reverse-direction twin of removeFacesForward's fix
+        // above; mirrors how faceMaterial/facePart already insertInPlace at
+        // `fi` just below). Without this, `m.faces` grows by one at `fi`
+        // (shifting every surviving face after it up one slot) while
+        // `m.faceMarks` sits untouched until finalize()'s tail
+        // `faceMarks.length = m.faces.length` — a LENGTH GROW, which appends
+        // zeros at the TAIL, not at `fi` — so every surviving face's word
+        // ends up misaligned with its (now-shifted) face, not just the
+        // re-inserted one. Insert 0 (no bits): a re-inserted face's OWN word
+        // is not captured by this entry beyond `sub` (Subpatch, restored by
+        // name just below) — same "not a regression, a documented limit" as
+        // removeVertsReverse's vertexMarks insert above.
+        if (fi <= m.faceMarks.length) m.faceMarks.insertInPlace(fi, 0u);
     }
     // Restore parallel per-face arrays (material / part / subpatch) where carried.
     // The face selection/order arrays are restored by the SelectionDelta /
@@ -703,6 +833,32 @@ private void patchSubpatch(ref Mesh m, in uint[] idx, in uint[] vals) {
             m.setFaceSubpatch(e, vals[i] != 0);
 }
 
+// Mirrors patchSubpatch (task 0613 §4.2/S1) — sparse face-indexed Hide patch.
+// Routes through setHideBit below rather than poking the word directly, for
+// the same reason setSelectBit exists just above: this is a mark WRITER and
+// owes the §3.1 invariant, not a caller-side convenience.
+private void patchHide(ref Mesh m, in uint[] idx, in uint[] vals) {
+    foreach (i, e; idx)
+        if (e < m.faceMarks.length)
+            setHideBit(m.faceMarks[e], vals[i]);
+}
+
+private void setHideBit(ref uint word, uint on) {
+    // §3.1 Select ∧ Hide = ∅ — the same invariant setSelectBit enforces from
+    // the OTHER direction (refuse Select while Hide is set); this is the Hide
+    // side of it (clear Select when Hide gets set). Raw bit-twiddle — no
+    // commitChange, no refreshHiddenDerived here: finalize() does both ONCE
+    // for the whole replay (same convention as patchSubpatch/patchMaterial),
+    // and refreshHiddenDerived() is what re-derives the vertex/edge planes
+    // afterward — this function only owns the authoritative face bit.
+    if (on != 0) {
+        word |= Mesh.Marks.Hide;
+        word &= ~Mesh.Marks.Select;
+    } else {
+        word &= ~Mesh.Marks.Hide;
+    }
+}
+
 private void patchMaterial(ref Mesh m, in uint[] idx, in uint[] vals) {
     foreach (i, e; idx)
         if (e < m.faceMaterial.length)
@@ -744,12 +900,20 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     // sat at position `ei` from BEFORE this transaction, not this edge's
     // real hidden state. `applyEdgeSelByEnds` (via the guarded `selectEdge`)
     // would otherwise filter against those stale bits instead of the correct
-    // ones. Face/vertex indices ARE restored positionally by this module's
-    // forward/reverse ops (insert/remove at the recorded index, never an
-    // anonymous compaction), so the faceMarks/vertexMarks Hide bits feeding
-    // this refresh are already correct for their identity — only the derived
+    // ones. faceMarks/vertexMarks ARE correct for their identity by this
+    // point — but NOT because indices are merely "restored positionally":
+    // the FORWARD direction (removeFacesForward / the RemoveVerts+Reindex
+    // pair) is a real compaction (drop + shift), and the REVERSE direction
+    // (removeFacesReverse / removeVertsReverse) re-grows the array via
+    // insertInPlace at each recorded index — both a form of index movement.
+    // Each of those four functions was written to carry the WHOLE marks word
+    // through its own transformation (a parallel drop-filter on the forward
+    // side, a parallel insertInPlace on the reverse side — task 0613 §4.2/S2
+    // code review; a prior version of this comment claimed the positional
+    // case never arises, which was true only of the reverse direction and
+    // left the forward direction's compaction unfixed). Only the DERIVED
     // edge plane (and any transient vertex/edge desync from the resize
-    // itself) needs the recompute.
+    // itself) needs this call's recompute.
     m.refreshHiddenDerived();
     // Endpoint-keyed edge selection (doc §1.3). Applied here — AFTER rebuildEdges
     // re-derived `edges` + edgeIndexMap — because edge indices are unstable
@@ -831,4 +995,177 @@ private uint[][] dupLists(in uint[][] src) {
     r.length = src.length;
     foreach (i, ref l; src) r[i] = l.dup;
     return r;
+}
+
+// ---------------------------------------------------------------------------
+// T-OBJ4 (doc/hide_geometry_plan.md §7.1) — a SelectionDelta replay cannot
+// select a hidden element. `recordSelectionDelta` itself has no production
+// caller yet (same dormant status as `recordSubpatchDelta`/`recordHideDelta`
+// — grep finds only this file's definition and dispatch), so this pins the
+// invariant before the first real caller inherits it, not after.
+//
+// Discriminator: the delta patches BOTH a hidden face (2) and a visible one
+// (3) in ONE entry. A delta touching only the hidden face could not tell
+// "the guard fired" from "the replay did nothing" — both read
+// isFaceSelected(2)==false. Requiring face 3 to end up selected proves the
+// replay actually ran and the guard is selective, not a blanket no-op.
+unittest {
+    auto m = makeCube();
+    m.buildLoops();
+    m.syncSelection();
+    m.setFaceHidden(2, true);
+    assert(!m.isFaceSelected(2), "hiding drops any prior selection (§3.1)");
+
+    MeshEditTracker rec;
+    rec.recordSelectionDelta(MeshOpEntry.SelDomain.Face, [2, 3], [0, 0], [1, 1]);
+    auto delta = rec.finish();
+    assert(delta.apply(m));
+
+    assert(!m.isFaceSelected(2),
+        "T-OBJ4: setSelectBit must refuse Select on a hidden face during replay");
+    assert(m.isFaceSelected(3),
+        "T-OBJ4: the SAME replay must still select the untouched visible face — "
+        ~ "otherwise the guard could be a blanket no-op instead of a selective refusal");
+}
+
+// ---------------------------------------------------------------------------
+// Vertex-mark permutation gap (doc/hide_geometry_plan.md §4.2/S1 — "the
+// vertex-mark permutation gap at applyReindex*/removeVertsForward/Reverse").
+// A LOOSE vertex's Hide bit is the ONE per-vertex Hide state that is NOT
+// self-healed by refreshHiddenDerived() every geometry commit (a face-bound
+// vertex's bit IS re-derived from faceMarks; a loose vertex has no incident
+// face to derive from, so its own bit must physically ride the same
+// permutation its position does, or it silently lands on whichever vertex
+// now occupies its old slot).
+//
+// Constructed delta (not a real kernel run — for full control of the exact
+// permutation, the same style as T-OBJ4 above). Pre-compaction space had 5
+// verts [v0..v4]: v0 was dropped, v1..v4 shift down to new indices 0..3.
+// `m` starts at the POST-compaction state: a triangle [0,1,2] (old v1,v2,v3)
+// plus a LOOSE, HIDDEN vertex 3 (old v4). Reverting (undo) must re-open v0's
+// gap AND land v4's Hide bit back at its PRE-compaction index 4 — not leave
+// it stranded at its post-compaction index 3, which is now a REAL,
+// face-referenced triangle corner (old v3) in the restored mesh.
+unittest {
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(5, 5, 5)];
+    m.addFace([0, 1, 2]);
+    m.buildLoops();
+    m.syncSelection();
+    m.setVertexHidden(3, true);   // the loose point, at its POST-compaction index
+    assert(m.isVertexHidden(3));
+    // S3 code review: give a DIFFERENT (non-hidden — Select ∧ Hide = ∅ means
+    // a hidden vertex cannot legally carry a selection-order stamp) vertex a
+    // manual selection-order stamp, independent of the Select bit machinery,
+    // to test the order-array permutation on its own. Vertex 1 here is old
+    // v2 at its post-compaction index.
+    m.vertexSelectionOrder[1] = 7;
+
+    MeshOpEntry removeEntry;
+    removeEntry.kind = MeshOpEntry.Kind.RemoveVerts;
+    removeEntry.vIdx = [0u];                    // OLD (pre-compaction) index of the dropped vert
+    removeEntry.pos  = [Vec3(-1, -1, -1)];       // its original position
+
+    MeshOpEntry reindexEntry;
+    reindexEntry.kind = MeshOpEntry.Kind.Reindex;
+    reindexEntry.perm = [~0u, 0u, 1u, 2u, 3u];   // old->new: v0 dropped, v1..v4 -> 0..3
+
+    MeshEditDelta delta;
+    delta.log = [removeEntry, reindexEntry];     // forward order: drop-before-permute (LIFO undo: Reindex^-1 then RemoveVerts^-1)
+
+    assert(delta.revert(m));
+
+    assert(m.vertices.length == 5, "the dropped vertex must be re-inserted");
+    // NOTE (code review NIT): this assertion is a SANITY check, not a
+    // discriminator — index 3 is a face-bound vertex (a real triangle
+    // corner) in the restored mesh, and refreshHiddenDerived() recomputes a
+    // face-bound vertex's Hide bit from its incident faces' state on every
+    // commit regardless of whatever stale word the (possibly buggy)
+    // permutation left behind. It would read false even without the fix
+    // below, so it does not by itself prove the permutation moved anything.
+    assert(!m.isVertexHidden(3),
+        "vertex-mark permutation: old v3 (now a real triangle corner in the "
+        ~ "restored mesh) must NOT read hidden");
+    // This is the ONE assertion that actually discriminates: vertex 4 is the
+    // LOOSE point, whose Hide bit is authoritative (not derived — no
+    // incident face to derive it from), so it only lands correctly if the
+    // permutation fix physically moved it. Without the fix it reads false
+    // (stranded at, or overwritten by, the wrong slot).
+    assert(m.isVertexHidden(4),
+        "vertex-mark permutation: the loose vertex's Hide bit must land back at "
+        ~ "its PRE-compaction index (4), not stay stranded at its post-compaction "
+        ~ "index (3)");
+
+    // S3 code review: the selection-order stamp must ride the SAME reverse
+    // permutation as the mark word — old v2's stamp must land back at its
+    // PRE-compaction index (2), not stay behind at its post-compaction index
+    // (1), which is now a DIFFERENT vertex (old v1).
+    assert(m.vertexSelectionOrder[2] == 7,
+        "S3: old v2's selection-order stamp must land back at its "
+        ~ "PRE-compaction index (2)");
+    assert(m.vertexSelectionOrder[1] == 0,
+        "S3: old v1 (now at post-revert index 1) must NOT inherit v2's "
+        ~ "stale stamp");
+}
+
+// ---------------------------------------------------------------------------
+// S2 code review (doc/hide_geometry_plan.md §4.2 — "the face-side twin of
+// the vertex-mark permutation gap"): removeFacesForward/Reverse must carry
+// the WHOLE faceMarks word through the compaction in BOTH directions, the
+// same way applyReindexForward/Reverse already do for vertexMarks. Fixture:
+// 4 fully disconnected triangles (no shared vertices/edges — irrelevant to
+// this test, which only exercises the array-compaction mechanics) so
+// rebuildEdges()/buildLoops() inside finalize() have nothing non-manifold to
+// trip over.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0),  Vec3(1, 0, 0),  Vec3(0, 1, 0),    // face0 — dropped
+        Vec3(10, 0, 0), Vec3(11, 0, 0), Vec3(10, 1, 0),   // face1 — survivor, HIDDEN
+        Vec3(20, 0, 0), Vec3(21, 0, 0), Vec3(20, 1, 0),   // face2 — survivor
+        Vec3(30, 0, 0), Vec3(31, 0, 0), Vec3(30, 1, 0),   // face3 — survivor
+    ];
+    m.addFace([0, 1, 2]);
+    m.addFace([3, 4, 5]);
+    m.addFace([6, 7, 8]);
+    m.addFace([9, 10, 11]);
+    m.buildLoops();
+    m.syncSelection();
+    m.setFaceHidden(1, true);   // face1, at its PRE-drop index
+    assert(m.isFaceHidden(1));
+
+    MeshOpEntry removeEntry;
+    removeEntry.kind      = MeshOpEntry.Kind.RemoveFaces;
+    removeEntry.fIdx      = [0u];             // drop face0 — NOT the highest index,
+                                               // so every survivor must shift down
+    removeEntry.faceLists = [[0u, 1u, 2u]];
+    removeEntry.faceMat   = [0u];
+    removeEntry.facePrt   = [0u];
+    removeEntry.faceSub   = [0u];
+
+    MeshEditDelta delta;
+    delta.log = [removeEntry];
+
+    // FORWARD (apply/redo) — S2's primary finding: removeFacesForward used
+    // to compact `m.faces` without moving `m.faceMarks` at all.
+    assert(delta.apply(m));
+    assert(m.faces.length == 3, "one face dropped");
+    assert(m.isFaceHidden(0),
+        "S2 forward: surviving hidden face (old face1) must carry its Hide "
+        ~ "bit to its NEW compacted index (0), not leave it stranded at the "
+        ~ "stale word finalize()'s truncate would otherwise read");
+    assert(!m.isFaceHidden(1) && !m.isFaceHidden(2),
+        "S2 forward: no OTHER face may have picked up the bit");
+
+    // REVERSE (revert/undo), continuing from the compacted state above —
+    // removeFacesReverse used to insertInPlace `m.faces` (and
+    // faceMaterial/facePart) but never `m.faceMarks`.
+    assert(delta.revert(m));
+    assert(m.faces.length == 4, "the dropped face must be re-inserted");
+    assert(m.isFaceHidden(1),
+        "S2 reverse: the hidden face must return to its ORIGINAL pre-drop "
+        ~ "index (1)");
+    assert(!m.isFaceHidden(0) && !m.isFaceHidden(2) && !m.isFaceHidden(3),
+        "S2 reverse: no OTHER face may have picked up the bit");
 }

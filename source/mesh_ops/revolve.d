@@ -470,7 +470,7 @@ mixin template MeshRevolveOps() {
         uint[]   newMat;
         uint[]   newPart;
         int[]    newOrd;
-        bool[]   newSub;
+        uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
         foreach (fi; 0 .. faces.length) {
             if (mask[fi]) continue;
@@ -478,7 +478,7 @@ mixin template MeshRevolveOps() {
             newMat   ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
             newPart  ~= fi < facePart.length           ? facePart[fi]           : 0u;
             newOrd   ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
-            newSub   ~= isFaceSubpatch(fi);
+            newWord  ~= fi < faceMarks.length          ? faceMarks[fi]          : 0u;
         }
         immutable size_t facesBefore = faces.length;
         immutable size_t capStart    = newFaces.length;
@@ -493,7 +493,7 @@ mixin template MeshRevolveOps() {
             newMat   ~= fi < faceMaterial.length ? faceMaterial[fi] : 0u;
             newPart  ~= fi < facePart.length     ? facePart[fi]     : 0u;
             newOrd   ~= 0;
-            newSub   ~= isFaceSubpatch(fi);
+            newWord  ~= fi < faceMarks.length ? faceMarks[fi] : 0u;
         }
         immutable size_t capCount = toCloneFace.length;
 
@@ -516,7 +516,8 @@ mixin template MeshRevolveOps() {
             // Task 0389: revolve wall quads inherit Subpatch from their source
             // profile edge's face, like extrudeFacesByMask — so revolving a
             // subdiv profile keeps the swept surface subdiv (bounds-guarded).
-            newSub  ~= isFaceSubpatch(be.selFi);
+            // Task 0613 §4.2: now the whole word, so Hide inherits too.
+            newWord ~= be.selFi < faceMarks.length ? faceMarks[be.selFi] : 0u;
         }
 
         faces              = newFaces;
@@ -524,11 +525,9 @@ mixin template MeshRevolveOps() {
         facePart           = newPart;
         faceSelectionOrder = newOrd;
 
-        // Rebuild faceMarks from scratch: resize+zero ALL bits, then set Subpatch.
-        faceMarks.length = faces.length;
-        faceMarks[]      = 0;
-        foreach (fi, s; newSub)
-            if (s) faceMarks[fi] |= Marks.Subpatch;
+        // Rebuild faceMarks from scratch: resize+zero ALL bits, then set from
+        // newWord (task 0613 §4.2 — was Subpatch-only).
+        setFaceMarksFrom(newWord, ~Marks.Select);
 
         // New selection = cap faces (chains a follow-up op off the top,
         // and lets the top-level extrudeAlongPath loop derive the next
