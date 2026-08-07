@@ -1182,8 +1182,9 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // parameter `t` is (see visibleVertices's doc comment), so local-space
     // math would elect the wrong point under such a transform. The one
     // exception is the front-facing SIGN test in `faceVisible`, which stays
-    // local + a `vpLocal.eye` + `ms.mirrored` XOR, mirroring the identical
-    // cull in `Mesh.visibleVertices` (§3.7/§3.8).
+    // local + a `vpLocal.eye` (no `ms.mirrored` correction — see
+    // `ModelSpace.mirrored`'s doc comment in math.d for why one is not
+    // needed), mirroring the identical cull in `Mesh.visibleVertices`.
     void walkSource(const ref Mesh m, int slot, const(uint)[] exclude,
                     const ModelSpace ms) {
         const Viewport vpLocal = projectionSpace(vp, ms);
@@ -1209,7 +1210,6 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             Vec3 fn = cross(m.vertices[face[1]] - m.vertices[face[0]],
                             m.vertices[face[2]] - m.vertices[face[0]]);
             bool backFacing = dot(fn, m.vertices[face[0]] - vpLocal.eye) >= 0;
-            if (ms.mirrored) backFacing = !backFacing; // §3.7/§3.8 mirror flip
             if (backFacing) return false;
             foreach (v; face) if (v >= vis.length || !vis[v]) return false;
             return true;

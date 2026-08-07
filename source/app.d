@@ -4642,19 +4642,17 @@ void main(string[] args) {
                     return projectToWindow(vLocal, vpLocal, sx, sy, ndcZ);
                 }
                 bool frontFacing(Vec3 nLocal, Vec3 p0Local) {
-                    // Same SHAPE as the snap.d/mesh.d siblings (review NIT):
-                    // compute `backFacing` via `>= 0`, XOR the mirror flip,
-                    // THEN negate for this function's positive framing —
-                    // not `dot < 0` inverted at the comparison itself. The
-                    // two forms agree for every finite dot product, but
-                    // `>= 0` and `< 0` disagree on a NaN dot (both are
-                    // false for NaN under IEEE comparison rules), so only
-                    // this shape reproduces the siblings' NaN behaviour
-                    // byte-for-byte — unreachable with finite geometry, but
-                    // this was the one place identity was not literally
-                    // byte-identical to them.
+                    // No `ms.mirrored` correction here (task 0617 follow-up:
+                    // the flip that used to live on this line was WRONG and
+                    // has been removed — see math.d's `ModelSpace.mirrored`
+                    // doc comment for the identity that replaces §3.7/§3.8).
+                    // `vpLocal.eye` is already `M⁻¹·eyeWorld`
+                    // (`projectionSpace`), so `dot(nLocal, p0Local -
+                    // vpLocal.eye)` already answers "is the eye on the
+                    // outward side" correctly for ANY invertible `M`,
+                    // mirrored or not — XOR-ing `ms.mirrored` on top flipped
+                    // a right answer wrong under a mirror.
                     bool backFacing = dot(nLocal, p0Local - vpLocal.eye) >= 0;
-                    if (ms.mirrored) backFacing = !backFacing; // §3.7/§3.8 mirror flip
                     return !backFacing;
                 }
                 // GPU-pick-buffer-driven visibility for the lasso.

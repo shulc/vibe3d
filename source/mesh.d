@@ -6879,11 +6879,11 @@ struct Mesh {
     // reason `bvh_pick` leaves a ray's `t` alone, §3.4 of the plan) — so
     // running pass 2's occlusion depth-gate entirely in LOCAL space (local
     // eye, local vertices, local plane normals) reaches the same cull
-    // decisions as running it in world space would. The ONE quantity that
-    // is NOT a ratio is pass 1's front-facing SIGN test at the cull below
-    // — a mirrored `M` flips a local cross-product's sign relative to the
-    // drawn orientation, so that one test alone gets the `ms.mirrored` XOR
-    // (§3.7/§3.8 of doc/picking_item_transform_plan.md).
+    // decisions as running it in world space would. Pass 1's front-facing
+    // SIGN test at the cull below needs no `ms.mirrored` correction either:
+    // `localEye` is already `M⁻¹·eye`, which alone answers "is the eye on
+    // the outward side" correctly for any invertible `M` — see
+    // `ModelSpace.mirrored`'s doc comment in math.d for the identity.
     bool[] visibleVertices(Vec3 eye, const ref Viewport vp, const ModelSpace ms) const {
         import math : pointInPolygon2D, projectToWindowFull, projectionSpace, ModelSpace;
         import std.math : abs, sqrt;
@@ -6945,7 +6945,6 @@ struct Mesh {
                 bool backFacing = dotD(fn, cast(double)p0.x - localEye.x,
                                            cast(double)p0.y - localEye.y,
                                            cast(double)p0.z - localEye.z) >= 0;
-                if (ms.mirrored) backFacing = !backFacing; // §3.7/§3.8 mirror flip
                 if (backFacing) continue;
             }
             foreach (vi; face) vis[vi] = true;
@@ -9994,46 +9993,73 @@ struct Mesh {
 }
 
 // ---------------------------------------------------------------------------
-// visibleVertices: the §3.7/§3.8 mirror flip (task 0617 Stage 4).
+// visibleVertices under a mirrored ModelSpace (task 0617 follow-up).
 //
-// A single-face mesh whose LOCAL front-facing cull says "front-facing" (the
-// pre-0617 answer, and the WRONG one once a mirrored ModelSpace is in
-// play). `ms` mirrors the mesh across X with no rotation/translation, so the
-// DRAWN (world) face normal flips sign relative to the local one — the face
-// is actually drawn BACK-facing, and only the `ms.mirrored` XOR makes the
-// cull agree with that. Without the XOR this mesh's single vertex reads
-// back visible; with it, hidden.
+// The previous version of this fixture used a single flat quad centred on
+// the origin: mirroring across X maps that quad's vertex SET to itself (same
+// world pixels, same depth, only winding reversed), so the only thing the
+// old assertion could measure was "did the flip line run" — not whether its
+// answer was geometrically correct. It asserted visible-at-identity flips to
+// hidden-when-mirrored, which is wrong on its face: a quad that is drawn at
+// the literal same world position and orientation cannot become invisible
+// just because its LOCAL vertex order changed.
+//
+// This fixture uses a cube translated off the mirror axis (local x in
+// [1.5, 2.5], not straddling x=0), so the mirrored WORLD cube actually sits
+// somewhere else (x in [-2.5, -1.5]) — mirroring is no longer a no-op on the
+// drawn geometry. With the eye off-axis too (not on the mirror plane), the
+// two per-vertex corner classifications below are independently verifiable
+// by hand: at each pose, the cube corner nearest the eye must read visible,
+// and the corner farthest from the eye — occluded by the cube itself on
+// every side — must read hidden.
 // ---------------------------------------------------------------------------
 unittest {
     import math : lookAt, perspectiveMatrix, ModelSpace;
     import std.math : PI;
 
     Mesh m;
-    // A quad in the z=0 plane, wound so its LOCAL normal (cross(v1-v0,v2-v0))
-    // points toward +Z — i.e. toward an eye sitting on the +Z axis, which is
-    // the pre-0617 "front-facing" answer at identity.
+    // makeCube()'s layout, translated +2 along local X so the cube does not
+    // straddle x=0 (the mirror axis used below).
     m.vertices = [
-        Vec3(-0.5f, -0.5f, 0),
-        Vec3( 0.5f, -0.5f, 0),
-        Vec3( 0.5f,  0.5f, 0),
-        Vec3(-0.5f,  0.5f, 0),
+        Vec3( 1.5f, -0.5f, -0.5f), // 0
+        Vec3( 2.5f, -0.5f, -0.5f), // 1
+        Vec3( 2.5f,  0.5f, -0.5f), // 2
+        Vec3( 1.5f,  0.5f, -0.5f), // 3
+        Vec3( 1.5f, -0.5f,  0.5f), // 4
+        Vec3( 2.5f, -0.5f,  0.5f), // 5
+        Vec3( 2.5f,  0.5f,  0.5f), // 6
+        Vec3( 1.5f,  0.5f,  0.5f), // 7
     ];
-    m.faces = [[0u, 1u, 2u, 3u]];
+    m.faces = [
+        [0u, 3u, 2u, 1u], // z = -0.5 (-Z)
+        [4u, 5u, 6u, 7u], // z = +0.5 (+Z)
+        [0u, 4u, 7u, 3u], // x = +1.5 (min-X face of this cube)
+        [1u, 2u, 6u, 5u], // x = +2.5 (max-X face of this cube)
+        [3u, 7u, 6u, 2u], // y = +0.5 (+Y)
+        [0u, 1u, 5u, 4u], // y = -0.5 (-Y)
+    ];
 
     Viewport vp;
-    vp.eye  = Vec3(0, 0, 5);
+    vp.eye  = Vec3(5, 5, 5); // off both the mirror plane (x=0) and the cube
     vp.view = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
     vp.proj = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
     vp.width = 400; vp.height = 400;
 
-    // Fixture premise, stated rather than assumed: at IDENTITY this face
-    // must read visible — otherwise the mirrored case below proves nothing
-    // about the FLIP specifically (it would just be "always false").
+    // Fixture premise at IDENTITY: corner 6 (2.5,0.5,0.5) is the cube's
+    // nearest corner to the eye — it sits on all three eye-facing faces
+    // (+X, +Y, +Z) and nothing occludes it — so it must read visible.
+    // Corner 0 (1.5,-0.5,-0.5) is the farthest corner, sitting on all three
+    // AWAY-facing faces (min-X, -Y, -Z), so every face it belongs to is
+    // back-facing and it must read hidden.
     bool[] visIdentity = m.visibleVertices(vp.eye, vp, ModelSpace.world());
-    assert(visIdentity == [true, true, true, true],
-        "fixture: at identity every vertex of a front-facing quad must be visible");
+    assert(visIdentity[6] == true,
+        "fixture: at identity the cube corner nearest the eye must be visible");
+    assert(visIdentity[0] == false,
+        "fixture: at identity the cube corner farthest from the eye must be hidden");
 
-    // Mirror across X: m = diag(-1,1,1), self-inverse. det(m) = -1 < 0.
+    // Mirror across X: m = diag(-1,1,1), self-inverse, det < 0. Drawn world
+    // cube now spans x in [-2.5, -1.5] — a different place than the local
+    // cube, not a no-op.
     ModelSpace ms;
     ms.m          = [-1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1];
     ms.mInv       = ms.m;               // diag(-1,1,1) is its own inverse
@@ -10041,12 +10067,20 @@ unittest {
     ms.invertible = true;
     ms.mirrored   = true;
 
+    // Under the mirror, local corner 7 (1.5,0.5,0.5) is drawn at world
+    // (-1.5,0.5,0.5) — the corner of the mirrored cube nearest eye (5,5,5)
+    // (nearest in x among [-2.5,-1.5] is -1.5; nearest in y,z among
+    // [-0.5,0.5] is 0.5) — so it must read visible. Local corner 1
+    // (2.5,-0.5,-0.5) is drawn at world (-2.5,-0.5,-0.5), the farthest
+    // corner from the eye, and must read hidden. A cull that reintroduces
+    // the old `ms.mirrored` XOR gets this exactly backwards (see
+    // `ModelSpace.mirrored`'s doc comment in math.d): it would report
+    // corner 1 visible and corner 7 hidden instead.
     bool[] visMirrored = m.visibleVertices(vp.eye, vp, ms);
-    assert(visMirrored == [false, false, false, false],
-        "a mirrored ModelSpace must flip the front-facing cull: this quad, "
-        ~ "drawn under the mirror, faces AWAY from the eye and must read "
-        ~ "invisible — a cull that forgot the ms.mirrored XOR would keep it "
-        ~ "visible instead (the local cross-product's sign never changes)");
+    assert(visMirrored[7] == true,
+        "a mirrored ModelSpace's nearest-to-eye drawn corner must read visible");
+    assert(visMirrored[1] == false,
+        "a mirrored ModelSpace's farthest-from-eye drawn corner must read hidden");
 }
 
 // ---------------------------------------------------------------------------

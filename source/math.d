@@ -421,14 +421,37 @@ struct ModelSpace {
     float[16] mInv = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]; // world -> local (analytic; see document.d)
     bool      isIdentity = true;
     bool      invertible = true;
-    // det(m) < 0 — an odd number of negative scale components (§3.7 of the
-    // plan: for this composition order det(M) == scl.x*scl.y*scl.z, no
-    // general 3x3 determinant helper needed). A mirrored M flips apparent
-    // winding, so a front-facing test done in LOCAL space (a local normal
-    // dotted against a local-space eye/point) disagrees with what is
-    // actually drawn unless this sign is XOR'd in. Every such cull in the
-    // codebase must fold this in — see doc/picking_item_transform_plan.md
-    // §3.7-3.8 for the complete list.
+    // det(m) < 0 — an odd number of negative scale components (for this
+    // composition order det(M) == scl.x*scl.y*scl.z, no general 3x3
+    // determinant helper needed).
+    //
+    // A mirrored M does flip apparent WINDING: cross(M*u, M*v) ==
+    // det(M)*(M^-1)^T*cross(u,v), so a normal built by cross-producting two
+    // (possibly already-world) edge vectors points the wrong way whenever
+    // det(M) < 0. But a front-facing test done ENTIRELY in local space — a
+    // local normal dotted against a local-space eye/point, i.e.
+    // `dot(nLocal, pLocal - eyeLocal)` — needs NO correction for this,
+    // mirrored or not. The reason: `eyeLocal == M^-1 * eyeWorld` and
+    // `pLocal == M^-1 * pWorld` are already the exact local coordinates the
+    // drawn geometry was built from, so `dot(nLocal, pLocal - eyeLocal)` IS
+    // the local-space evaluation of "is the eye on the outward side" — no
+    // world quantity is being approximated or reconstructed, so there is
+    // nothing for `det(M)`'s sign to correct. (Equivalently: the true world
+    // outward normal is `toWorldNormal(nLocal) == (M^-1)^T * nLocal`, and
+    // `dot((M^-1)^T n, M v) == dot(n, v)` exactly, for ANY invertible M — the
+    // local dot product already equals the correct world one, sign and all.)
+    //
+    // A previous version of this field's doc comment, and three call sites
+    // (app.d's lasso `frontFacing`, snap.d's `faceVisible`, mesh.d's
+    // `visibleVertices`), got this backwards: they XOR'd `mirrored` onto a
+    // LOCAL-only front-facing test, which is the correction for the WINDING
+    // normal case above, not this one. That flip has been removed from all
+    // three; do not reintroduce it into a local-only cull. This field is not
+    // read anywhere in the tree as of this fix — see `toWorldNormal`'s doc
+    // comment below for the one construction (a normal built by
+    // cross-producting WORLD points/vectors) where the mirror sign genuinely
+    // does need correcting, and where `mirrored` itself still isn't the
+    // mechanism (the inverse-transpose is applied directly instead).
     bool      mirrored   = false;
 
     /// The identity ModelSpace. Every field already defaults to it — this
@@ -468,18 +491,24 @@ struct ModelSpace {
     /// result is not renormalized — callers that need a unit normal
     /// normalize it themselves.
     ///
-    /// UNUSED as of Stage 2 — no call site anywhere in the tree (checked;
-    /// grep for `toWorldNormal(` outside this declaration). It is the
-    /// correct rule for transforming an ALREADY-GIVEN local normal, but it
-    /// is explicitly NOT what `bvh_pick.d`'s `pickSurfaceRay` uses for its
-    /// cross-product face normal — see that function's comment: a normal
-    /// built by cross-producting two local EDGE VECTORS is a different,
-    /// stronger claim (`cross(Ma,Mb) == det(M)*(M^-1)^T*cross(a,b)`) that
-    /// this plain inverse-transpose does not satisfy under a mirrored `M`.
-    /// Kept for a possible later stage that needs to transform a normal
-    /// that did NOT come from a local cross product; do not treat its
-    /// presence here as evidence that it is the sanctioned path for one
-    /// that did.
+    /// This IS the sanctioned path for a normal built by cross-producting
+    /// two LOCAL edge vectors too (`bvh_pick.d`'s `pickSurfaceRay` calls it
+    /// on exactly such a normal): `cross(u,v)` computed in local space and
+    /// then mapped through this inverse-transpose gives the true outward
+    /// world normal for any invertible `M`, mirrored or not — the
+    /// `dot((M^-1)^T n, M v) == dot(n, v)` identity holds unconditionally. A
+    /// previous version of this comment claimed the opposite — that
+    /// `pickSurfaceRay` needed to cross-product already-WORLD vertices
+    /// instead — reasoning that `cross(Ma,Mb) ==
+    /// det(M)*(M^-1)^T*cross(a,b)` made the two paths "a different, stronger
+    /// claim". That is true as a statement about the WINDING normal (which
+    /// is exactly why cross-producting world vertices is wrong under a
+    /// mirror: it silently carries the `det(M)` sign, pointing the result
+    /// into the solid), but it does not apply here — this function is never
+    /// given a world cross product to begin with; it transforms the LOCAL
+    /// one, and the identity above holds without any determinant factor.
+    /// Do not "fix" a mirror-flipped normal by cross-producting world points
+    /// instead of calling this — that reintroduces the same defect.
     Vec3 toWorldNormal(Vec3 nLocal) const @safe pure nothrow @nogc {
         return Vec3(
             mInv[0]*nLocal.x + mInv[1]*nLocal.y + mInv[ 2]*nLocal.z,
@@ -538,28 +567,29 @@ unittest { // toLocalDir preserves a ray's `t`: mInv*(org + t*dir) == toLocalPoi
         "toLocalDir must stay un-normalized for `t` to keep meaning a world distance");
 }
 
-unittest { // §3.7/§3.8 end-to-end: the LOCAL front-facing test, XOR'd with
-    // `ms.mirrored`, agrees with the TRUE world front-facing test — computed
-    // by transforming the triangle's vertices to world with `toWorldPoint`
-    // and RE-DERIVING the normal there via cross product, i.e. "what is
-    // actually drawn". This is the identity every local-space cull in §3.8
-    // depends on: it stays entirely in local space (never calls
-    // `toWorldNormal`) and folds the sign correction in as a boolean XOR.
+unittest { // The LOCAL front-facing test agrees DIRECTLY (no XOR, no
+    // `mirrored` correction of any kind) with the TRUE GEOMETRIC world
+    // front-facing test, for any invertible ModelSpace including a mirror.
+    // "True geometric" here means the world outward normal is derived via
+    // `ms.toWorldNormal(nLocal)` (the inverse-transpose rule) rather than by
+    // cross-producting the triangle's WORLD-transformed vertices — the
+    // latter is the WINDING normal, and this is exactly the distinction the
+    // previous version of this unittest got backwards: it computed
+    // `nWorldTrue` via `cross(bw-aw, cw-aw)` and labelled that "what is
+    // ACTUALLY drawn", then asserted `localFront XOR mirrored` agreed with
+    // it. That labelled a winding artefact as ground truth, so the
+    // assertion just restated the determinant identity
+    // `cross(Ma,Mb) == det(M)*(M^-1)^T*cross(a,b)` — it could not have
+    // caught the flip being wrong, because it was built from the same
+    // premise as the flip.
     //
-    // NOTE, because it is easy to get backwards: this is NOT the claim
-    // "toWorldNormal flips sign under a mirror" — it provably does not.
-    // `dot((M^-1)^T n, M v) == dot(n, v)` for ANY invertible M, mirrored or
-    // not (toWorldNormal is the textbook inverse-transpose rule for an
-    // already-given normal, and that identity is exactly why it's the
-    // correct transform for a normal in general). The det(M) sign
-    // correction only shows up here because `nLocal` below is a CROSS
-    // PRODUCT of local edge vectors, and `cross(Ma,Mb) ==
-    // det(M)*(M^-1)^T*cross(a,b)` — a stronger, different claim than the
-    // generic normal-transform rule. `bvh_pick.d`'s `pickSurfaceRay`
-    // sidesteps the whole question by transforming the vertices to world
-    // and cross-producting THERE (see its comment) rather than transforming
-    // a local cross-product normal — this unittest pins the OTHER
-    // mechanism, the one §3.8's local-only culls actually use.
+    // The real identity: `dot((M^-1)^T n, M v) == dot(n, v)` EXACTLY (not
+    // just same sign) for ANY invertible M, mirrored or not. Since
+    // `pWorld - eyeWorld == M * (pLocal - eyeLocal)` for the linear part of
+    // M, this makes `dot(toWorldNormal(nLocal), pWorld - eyeWorld) ==
+    // dot(nLocal, pLocal - eyeLocal)` — literally the same number, no sign
+    // correction possible or needed. That is why the flip was wrong: there
+    // is nothing here for `ms.mirrored` to correct.
     void checkCase(float[16] m, float[16] mInv, bool mirrored) {
         ModelSpace ms;
         ms.m = m; ms.mInv = mInv; ms.isIdentity = false; ms.mirrored = mirrored;
@@ -568,19 +598,19 @@ unittest { // §3.7/§3.8 end-to-end: the LOCAL front-facing test, XOR'd with
         Vec3 eyeLocal = Vec3(0, 0, 5); // above the local A,B,C plane (+Z)
 
         Vec3 nLocal = cross(b - a, c - a);
-        bool localFront     = dot(nLocal, a - eyeLocal) < 0;
-        bool correctedFront = localFront != mirrored; // the XOR §3.8 prescribes
+        bool localFront = dot(nLocal, a - eyeLocal) < 0;
 
-        Vec3 aw = ms.toWorldPoint(a), bw = ms.toWorldPoint(b), cw = ms.toWorldPoint(c);
-        Vec3 eyeWorld    = ms.toWorldPoint(eyeLocal);
-        Vec3 nWorldTrue  = cross(bw - aw, cw - aw); // what is ACTUALLY drawn
-        bool worldFront  = dot(nWorldTrue, aw - eyeWorld) < 0;
+        Vec3 nWorldGeometric = ms.toWorldNormal(nLocal); // NOT a world cross product
+        Vec3 aw           = ms.toWorldPoint(a);
+        Vec3 eyeWorld      = ms.toWorldPoint(eyeLocal);
+        bool worldFrontGeometric = dot(nWorldGeometric, aw - eyeWorld) < 0;
 
-        assert(correctedFront == worldFront,
-            "local test XOR ms.mirrored must agree with the true world test");
+        assert(localFront == worldFrontGeometric,
+            "the local front-facing test must agree with the geometric world "
+            ~ "test directly — no mirror correction needed or applied");
     }
 
-    // Non-mirrored: scl=(2,1,1) (det > 0) — XOR with `false` is a no-op.
+    // Non-mirrored: scl=(2,1,1) (det > 0).
     checkCase(pivotScaleMatrix(Vec3(0,0,0), 2, 1, 1),
               pivotScaleMatrix(Vec3(0,0,0), 0.5f, 1, 1), false);
     // Mirrored: scl=(-1,1,1) (det < 0) — a single negative axis.

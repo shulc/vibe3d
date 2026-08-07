@@ -224,26 +224,29 @@ public:
 
         // Normal from the hit triangle's fan (face[0], face[i], face[i+1]) —
         // the SAME triangulation rebuildSurface used to build the BVH.
-        // Task 0617: computed by transforming the triangle's vertices to
-        // WORLD (`ms.toWorldPoint`) and cross-producting THERE, rather than
-        // cross-producting the local vertices and mapping the resulting
-        // normal through `ms.toWorldNormal`. The two are NOT equivalent
-        // under a mirrored M: `cross(Ma,Mb) == det(M)*(M^-1)^T*cross(a,b)`,
-        // so a local cross-product mapped by the plain inverse-transpose
-        // would come out pointing the WRONG way whenever det(M) < 0. Cross-
-        // producting the already-world-space vertices sidesteps the
-        // det(M) sign question entirely — it is just "the normal of the
-        // triangle that is actually drawn" by construction.
+        //
+        // Computed by cross-producting the LOCAL vertices, then mapping the
+        // result through `ms.toWorldNormal` (the inverse-transpose rule) —
+        // NOT by transforming the vertices to world first and cross-
+        // producting there. A previous version of this code did the latter,
+        // reasoning it was "the normal of the triangle that is actually
+        // drawn" and therefore det(M)-sign-safe by construction. That is
+        // backwards: cross-producting WORLD vertices computes the WINDING
+        // normal, and `cross(Ma,Mb) == det(M)*(M^-1)^T*cross(a,b)` means
+        // that normal carries `det(M)`'s sign — under a mirrored M it points
+        // INTO the solid. `toWorldNormal` is exactly the inverse-transpose
+        // rule that strips that sign back out: `dot((M^-1)^T n, M v) ==
+        // dot(n, v)` holds for ANY invertible M, so this is the one
+        // construction that is correct regardless of mirroring. See
+        // `ModelSpace.toWorldNormal`'s doc comment in math.d.
         if (result.face >= 0 && result.face < cast(int)sourceMesh.faces.length) {
             auto face = sourceMesh.faces[result.face];
             if (face.length >= 3) {
                 Vec3 a = sourceMesh.vertices[face[0]];
                 Vec3 b = sourceMesh.vertices[face[1]];
                 Vec3 c = sourceMesh.vertices[face[2]];
-                Vec3 aw = ms.isIdentity ? a : ms.toWorldPoint(a);
-                Vec3 bw = ms.isIdentity ? b : ms.toWorldPoint(b);
-                Vec3 cw = ms.isIdentity ? c : ms.toWorldPoint(c);
-                Vec3 n = cross(bw - aw, cw - aw);
+                Vec3 nLocal = cross(b - a, c - a);
+                Vec3 n = ms.isIdentity ? nLocal : ms.toWorldNormal(nLocal);
                 float len = n.length;
                 result.normal = (len > 1e-12f) ? n * (1.0f / len) : Vec3(0, 1, 0);
             }
@@ -746,6 +749,65 @@ unittest {
     SurfaceHit hit;
     bool ok = pick.pickSurfaceRay(Vec3(0, 5, 0), Vec3(0, -1, 0), src, ms, hit);
     assert(!ok && !hit.hit, "a non-invertible ModelSpace must report a pickSurfaceRay miss");
+}
+
+unittest {
+    // pickSurfaceRay's normal must point the true outward direction under a
+    // MIRRORED ModelSpace, not the winding direction. Fixture: a horizontal
+    // quad at local y=0, wound so `cross(v1-v0, v2-v0)` points -Y (straight
+    // down) -- verified below at identity first. Mirroring across X alone
+    // does not touch Y at all, so the physically correct answer after the
+    // mirror is UNCHANGED: still -Y (mirroring a horizontal plane about a
+    // vertical axis through it doesn't turn it over).
+    //
+    // A cross-product-of-WORLD-vertices implementation (the bug this pins)
+    // gets this backwards: mirroring flips the vertices' winding as seen
+    // from a fixed viewpoint even though the surface's physical facing did
+    // not change, so it reports +Y instead -- exactly the "points into the
+    // solid" defect. Confirmed by hand: reintroducing that computation here
+    // flips this assertion to `hit.normal.y > 0.9`.
+    import std.math : fabs;
+    import math : pivotScaleMatrix;
+
+    Mesh src;
+    src.vertices = [
+        Vec3(-1f, 0f, -1f), // 0
+        Vec3( 1f, 0f, -1f), // 1
+        Vec3( 1f, 0f,  1f), // 2
+        Vec3(-1f, 0f,  1f), // 3
+    ];
+    src.faces = [ cast(uint[])[0, 1, 2, 3] ]; // local normal cross(v1-v0,v2-v0) == -Y
+
+    // Sanity: confirm the -Y premise at identity before trusting the
+    // mirrored case below.
+    {
+        auto pickId = new BvhPick();
+        SurfaceHit hitId;
+        bool okId = pickId.pickSurfaceRay(Vec3(0, 5, 0), Vec3(0, -1, 0), src,
+                                          ModelSpace.world(), hitId);
+        assert(okId && hitId.hit, "fixture: identity ray must hit the quad");
+        assert(hitId.normal.y < -0.9f,
+            "fixture premise: this quad's normal must point -Y at identity");
+    }
+
+    // Mirror across X: m = diag(-1,1,1), self-inverse, det < 0.
+    ModelSpace ms;
+    ms.m          = pivotScaleMatrix(Vec3(0,0,0), -1, 1, 1);
+    ms.mInv       = ms.m;
+    ms.isIdentity = false;
+    ms.invertible = true;
+    ms.mirrored   = true;
+
+    auto pick = new BvhPick();
+    SurfaceHit hit;
+    bool ok = pick.pickSurfaceRay(Vec3(0, 5, 0), Vec3(0, -1, 0), src, ms, hit);
+    assert(ok && hit.hit, "expected a surface hit through the mirrored quad");
+    assert(hit.normal.y < -0.9f,
+        "a mirrored ModelSpace must not flip this quad's normal: an X-only "
+        ~ "mirror does not touch Y, so the true outward normal stays -Y -- "
+        ~ "a world-cross-product implementation would report +Y instead");
+    assert(fabs(hit.normal.x) < 1e-4f && fabs(hit.normal.z) < 1e-4f,
+        "normal must stay axis-aligned on -Y for this fixture");
 }
 
 // R5 (nanort must not back-face-cull, matching gpu_select's two-sided,
