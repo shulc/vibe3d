@@ -1,0 +1,44 @@
+{
+	"_comment-vendored": "VENDORED into vibe3d (task 0616). Single-header image decoder, upstream nothings/stb @ 013ac3beddff3dbffafd5177e7972067cd2b5083 (stb_image.h v2.30), dual-licensed MIT / public domain (Unlicense) -- see LICENSE. stb_image.h is byte-identical to upstream; stb_image_impl.c is the local translation unit that instantiates the implementation, restricts the compiled format set, disables the stdio path, and sets the compile-time dimension cap -- see PATCHES.md. Built with CMake+Ninja, mirroring third_party/nfde's shape -- that prerequisite is already required by this build (nfde), and it sidesteps a real failure mode: routing a single-file C library through dub's own built-in C-source compilation (its ImportC front end) fails on this project's dev host because the system libc headers use a C23 `nullptr` construct ImportC does not parse -- CMake invokes the platform's actual C compiler instead.",
+	"name": "stb-image-vendor",
+	"version": "2.30.0",
+	"description": "Vendored single-header image decoder (restricted format set, no file I/O)",
+	"license": "MIT",
+	"authors": [
+		"Sean Barrett"
+	],
+	"copyright": "Public domain / Copyright (c) 2017 Sean Barrett (dual-licensed -- see LICENSE)",
+	"targetType": "sourceLibrary",
+	"importPaths": [],
+	"systemDependencies": "CMake, Ninja",
+	"preBuildCommands-linux": [
+		"rm -rf $STB_IMAGE_VENDOR_PACKAGE_DIR/out && mkdir -p $STB_IMAGE_VENDOR_PACKAGE_DIR/out",
+		"cmake -B $STB_IMAGE_VENDOR_PACKAGE_DIR/out -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $STB_IMAGE_VENDOR_PACKAGE_DIR",
+		"cmake --build $STB_IMAGE_VENDOR_PACKAGE_DIR/out --config Release"
+	],
+	"preBuildCommands-osx": [
+		"rm -rf $STB_IMAGE_VENDOR_PACKAGE_DIR/out && mkdir -p $STB_IMAGE_VENDOR_PACKAGE_DIR/out",
+		"cmake -B $STB_IMAGE_VENDOR_PACKAGE_DIR/out -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $STB_IMAGE_VENDOR_PACKAGE_DIR",
+		"cmake --build $STB_IMAGE_VENDOR_PACKAGE_DIR/out --config Release"
+	],
+	"preBuildCommands-windows": [
+		"cmake -B $STB_IMAGE_VENDOR_PACKAGE_DIR\\out -DCMAKE_GENERATOR=Ninja $STB_IMAGE_VENDOR_PACKAGE_DIR",
+		"cmake --build $STB_IMAGE_VENDOR_PACKAGE_DIR\\out --config Release"
+	],
+	"lflags-posix": [
+		"$STB_IMAGE_VENDOR_PACKAGE_DIR/out/libstb_image_vendor.a"
+	],
+	"lflags-windows": [
+		"$STB_IMAGE_VENDOR_PACKAGE_DIR\\out\\stb_image_vendor.lib"
+	],
+	"configurations": [
+		{
+			"targetType": "sourceLibrary",
+			"name": "library"
+		},
+		{
+			"targetType": "sourceLibrary",
+			"name": "unittest"
+		}
+	]
+}

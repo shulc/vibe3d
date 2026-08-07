@@ -26,6 +26,7 @@ required for redistribution.
 | [lwo2-writer](https://github.com/shulc/D-Lwo2Writer) | ~master | MIT | Alexander Shagarov; clean-room LWO2 reader/writer |
 | [D-BVH](https://github.com/shulc/D-BVH) | ~main | MIT (wrapper) | Alexander Shagarov; bundles **nanort** (MIT) © Light Transport Entertainment, Inc., **statically linked** into the executable for ray picking |
 | [D-OnnxRuntime](https://github.com/shulc/D-OnnxRuntime) | ~master | MIT (wrapper) | Alexander Shagarov; bundles **ONNX Runtime** (MIT) © Microsoft Corporation — the AI candidate ranker, `WithAI` builds only |
+| [stb_image](https://github.com/nothings/stb) | v2.30, commit `013ac3b` (vendored: `third_party/stb_image`) | MIT (dual MIT / public domain — MIT exercised here) | Sean Barrett; single-header image decoder, **statically linked**, restricted to PNG/JPEG/TGA/BMP with file I/O disabled |
 | [Inter](https://rsms.me/inter/) (UI font) | 4.x | OFL-1.1 | The Inter Project Authors; `Inter-Regular.ttf` embedded into the executable |
 
 `assimp` is built as a **minimal static library** (only the OBJ / glTF / FBX
@@ -361,8 +362,10 @@ Copyright (c) 2006-2024, assimp team. All rights reserved.
 
 Applies to: Dear ImGui (vendored via `d_imgui`), lwo2-writer, D-BVH (wrapper)
 and its bundled nanort, D-OnnxRuntime (wrapper) and its bundled ONNX Runtime,
-and the Wayland `xdg-foreign-unstable-v1` protocol description bundled with
-`nfde` (`third_party/nfde`).
+the Wayland `xdg-foreign-unstable-v1` protocol description bundled with
+`nfde` (`third_party/nfde`), and stb_image (`third_party/stb_image`, dual
+MIT / public domain upstream — see that directory's `LICENSE` for both
+texts; the MIT grant below is the one vibe3d exercises).
 
 ```
 Copyright (c) 2014-2024 Omar Cornut
@@ -403,6 +406,9 @@ Copyright (c) Microsoft Corporation
 
 xdg-foreign-unstable-v1 (Wayland protocol description, bundled with nfde)
 Copyright © 2015-2016 Red Hat, Inc.
+
+stb_image
+Copyright (c) 2017 Sean Barrett
 ```
 
 ---

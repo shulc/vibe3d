@@ -51,6 +51,9 @@
 		"nfde": {
 			"path": "third_party/nfde"
 		},
+		"stb-image-vendor": {
+			"path": "third_party/stb_image"
+		},
 		"bindbc-loader": "~>1.1.5",
 		"dyaml": {
 			"version": "22e4724474795eefb64ee9742f980b49bb34f6ef",
