@@ -186,7 +186,7 @@ unittest {
             case RemoveFaces:    sawRemoveFaces = true; break;
             case AddVerts: case SetPos: case AddFaces: case ReshapeFaces:
             case SelectionDelta: case SubpatchDelta: case MaterialDelta:
-            case EdgeSelByEnds:  case MeshMapDelta:   break;
+            case EdgeSelByEnds:  case MeshMapDelta:   case HideDelta: break;
         }
     }
     assert(sawReindex,     "(b) log must contain Reindex");
