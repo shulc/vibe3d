@@ -286,6 +286,11 @@ import commands.prefs.trackball     : TrackballPrefCommand;
 import document       : Document;
 import command_history : CommandHistory;
 import viewport        : ViewportManager, Viewport3D;
+// Task 0617 — this module has no `Document` of its own (it operates on
+// `EditorApp app`'s pointer-backed properties via `with(app)`); the primary
+// layer's ModelSpace is resolved through the same global app.d's main()
+// installs for every other cross-module picking call site.
+import document       : primaryModelSpace;
 
 /// Moved VERBATIM from app.d's top level (app.d decomp phase B): private
 /// there, and its only call sites left app.d with the moved HTTP block.
@@ -709,13 +714,14 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             ensureDisplayCurrent();
             Viewport vp = vpm.activeSnapshot();
             int faceIdx;
+            // Task 0617: both engines pick the PRIMARY layer here.
             if (engine == "gpu") {
                 faceIdx = gpuSelect.pick(SelectMode.Face, x, y, /*r=*/0,
-                                          mesh, gpu, vp);
+                                          mesh, gpu, vp, primaryModelSpace());
             } else {
                 const(Mesh)* srcMesh = subpatchPreview.active
                     ? &subpatchPreview.mesh : &mesh();
-                faceIdx = bvhPick.pickFace(x, y, vp, *srcMesh, gpu);
+                faceIdx = bvhPick.pickFace(x, y, vp, *srcMesh, gpu, primaryModelSpace());
             }
             return format(`{"faceIndex":%d}`, faceIdx);
         });

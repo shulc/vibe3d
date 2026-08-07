@@ -391,6 +391,209 @@ unittest { // transformPoint matches a hand-computed T·R·S applied to a point.
         && isClose(got.z, 28.0f, 1e-4f, 1e-4f));
 }
 
+// ---------------------------------------------------------------------------
+// ModelSpace — the per-layer item transform, packaged for picking (task 0617,
+// doc/picking_item_transform_plan.md).
+//
+// Geometry is DRAWN through a layer's item matrix (`ItemXform.composedMatrix`,
+// document.d) but every picking path historically compared against raw LOCAL
+// vertex coordinates — a layer with a non-identity transform was picked where
+// it would sit at identity, not where it is actually drawn. `ModelSpace` is
+// the value that closes that gap: every picking entry point takes one of
+// these as a REQUIRED parameter (never defaulted — a call site that forgets
+// it is a build error, not a silent wrong answer) and transforms the QUERY
+// into the layer's local space, rather than baking world-space copies of the
+// geometry into the picking caches (the GPU ID-buffer's VBOs, the BVH, the
+// snap candidate grid). `document.ItemXform.modelSpace()` is the one
+// production factory; `ModelSpace.world()` below is the identity constant
+// used where there is no layer transform to apply (unit tests, and any path
+// provably always identity).
+//
+// `mInv` is analytic (§3.1 of the plan), not a general 4x4 inverse — this
+// module has none, and the composition order
+// `M = T(pos)·T(pivot)·Rz·Ry·Rx·S·T(-pivot)` (document.d) never needs one.
+// ---------------------------------------------------------------------------
+struct ModelSpace {
+    // Literal, not `= identityMatrix` (a static-array default field
+    // initializer can't array-cast an `immutable` global at compile time) —
+    // same nine 1s / zeros identityMatrix holds.
+    float[16] m    = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]; // local -> world
+    float[16] mInv = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]; // world -> local (analytic; see document.d)
+    bool      isIdentity = true;
+    bool      invertible = true;
+    // det(m) < 0 — an odd number of negative scale components (§3.7 of the
+    // plan: for this composition order det(M) == scl.x*scl.y*scl.z, no
+    // general 3x3 determinant helper needed). A mirrored M flips apparent
+    // winding, so a front-facing test done in LOCAL space (a local normal
+    // dotted against a local-space eye/point) disagrees with what is
+    // actually drawn unless this sign is XOR'd in. Every such cull in the
+    // codebase must fold this in — see doc/picking_item_transform_plan.md
+    // §3.7-3.8 for the complete list.
+    bool      mirrored   = false;
+
+    /// The identity ModelSpace. Every field already defaults to it — this
+    /// name exists so call sites can write `ModelSpace.world()` instead of
+    /// the less self-explanatory `ModelSpace.init`.
+    static ModelSpace world() @safe pure nothrow @nogc { return ModelSpace.init; }
+
+    /// World point -> local point (full affine, via `mInv`).
+    Vec3 toLocalPoint(Vec3 worldP) const @safe pure nothrow @nogc {
+        return applyAffine(mInv, worldP);
+    }
+    /// Local point -> world point (full affine, via `m`).
+    Vec3 toWorldPoint(Vec3 localP) const @safe pure nothrow @nogc {
+        return applyAffine(m, localP);
+    }
+    /// World-space DIRECTION -> local-space direction: the LINEAR part of
+    /// `mInv` only (no translation). Deliberately left UN-NORMALIZED — see
+    /// doc/picking_item_transform_plan.md §3.4. Because
+    /// `mInv·(org + t·dir) == mInv·org + t·(mInv·dir)`, leaving this
+    /// un-normalized preserves a ray's hit parameter `t` exactly as a WORLD
+    /// distance. Normalizing here (or at any caller) corrupts `t` — the
+    /// nearest-hit comparison across layers of different scale would
+    /// silently start favouring the smaller-scaled layer. Do not add a
+    /// `normalize()` call to this function or its call sites.
+    Vec3 toLocalDir(Vec3 worldDir) const @safe pure nothrow @nogc {
+        return Vec3(
+            mInv[0]*worldDir.x + mInv[4]*worldDir.y + mInv[ 8]*worldDir.z,
+            mInv[1]*worldDir.x + mInv[5]*worldDir.y + mInv[ 9]*worldDir.z,
+            mInv[2]*worldDir.x + mInv[6]*worldDir.y + mInv[10]*worldDir.z,
+        );
+    }
+    /// Local-space NORMAL -> world-space normal: `(M^-1)^T` applied to
+    /// `nLocal` — the standard normal-transform rule (normals do NOT
+    /// transform the same way points/directions do under a non-uniform
+    /// scale or shear), expressed directly as the transpose of `mInv`'s
+    /// linear 3x3 rather than `m`'s. Linear part only, no translation; the
+    /// result is not renormalized — callers that need a unit normal
+    /// normalize it themselves.
+    ///
+    /// UNUSED as of Stage 2 — no call site anywhere in the tree (checked;
+    /// grep for `toWorldNormal(` outside this declaration). It is the
+    /// correct rule for transforming an ALREADY-GIVEN local normal, but it
+    /// is explicitly NOT what `bvh_pick.d`'s `pickSurfaceRay` uses for its
+    /// cross-product face normal — see that function's comment: a normal
+    /// built by cross-producting two local EDGE VECTORS is a different,
+    /// stronger claim (`cross(Ma,Mb) == det(M)*(M^-1)^T*cross(a,b)`) that
+    /// this plain inverse-transpose does not satisfy under a mirrored `M`.
+    /// Kept for a possible later stage that needs to transform a normal
+    /// that did NOT come from a local cross product; do not treat its
+    /// presence here as evidence that it is the sanctioned path for one
+    /// that did.
+    Vec3 toWorldNormal(Vec3 nLocal) const @safe pure nothrow @nogc {
+        return Vec3(
+            mInv[0]*nLocal.x + mInv[1]*nLocal.y + mInv[ 2]*nLocal.z,
+            mInv[4]*nLocal.x + mInv[5]*nLocal.y + mInv[ 6]*nLocal.z,
+            mInv[8]*nLocal.x + mInv[9]*nLocal.y + mInv[10]*nLocal.z,
+        );
+    }
+}
+
+unittest { // ModelSpace.world() is the identity: m/mInv == identityMatrix, flags all default.
+    auto ms = ModelSpace.world();
+    foreach (i; 0 .. 16) {
+        assert(ms.m[i]    == identityMatrix[i]);
+        assert(ms.mInv[i] == identityMatrix[i]);
+    }
+    assert(ms.isIdentity && ms.invertible && !ms.mirrored);
+}
+
+unittest { // toLocalPoint / toWorldPoint round-trip through a non-trivial M/mInv pair.
+    // Pure translation is enough to exercise the full-affine (translation-
+    // including) path independently of the rotation/scale helpers below.
+    ModelSpace ms;
+    ms.m    = translationMatrix(Vec3(3, -2, 5));
+    ms.mInv = translationMatrix(Vec3(-3, 2, -5));
+    ms.isIdentity = false;
+
+    Vec3 localP = Vec3(1, 1, 1);
+    Vec3 worldP = ms.toWorldPoint(localP);
+    assert(isClose(worldP.x, 4.0f, 1e-5f, 1e-5f)
+        && isClose(worldP.y, -1.0f, 1e-5f, 1e-5f)
+        && isClose(worldP.z, 6.0f, 1e-5f, 1e-5f));
+    Vec3 backToLocal = ms.toLocalPoint(worldP);
+    assert(isClose(backToLocal.x, localP.x, 1e-5f, 1e-5f)
+        && isClose(backToLocal.y, localP.y, 1e-5f, 1e-5f)
+        && isClose(backToLocal.z, localP.z, 1e-5f, 1e-5f));
+}
+
+unittest { // toLocalDir preserves a ray's `t`: mInv*(org + t*dir) == toLocalPoint(org) + t*toLocalDir(dir).
+    // §3.4 — the identity this un-normalized transform exists to guarantee.
+    ModelSpace ms;
+    ms.m    = pivotScaleMatrix(Vec3(0,0,0), 2, 1, 1);
+    ms.mInv = pivotScaleMatrix(Vec3(0,0,0), 0.5f, 1, 1);
+    ms.isIdentity = false;
+
+    Vec3 org = Vec3(5, 5, 5);
+    Vec3 dir = Vec3(1, -2, 0.5f); // deliberately not axis-aligned, not unit length
+    float t = 3.7f;
+    Vec3 worldHit  = org + dir * t;
+    Vec3 localHit  = ms.toLocalPoint(worldHit);
+    Vec3 orgLocal  = ms.toLocalPoint(org);
+    Vec3 dirLocal  = ms.toLocalDir(dir); // must stay UN-normalized
+    Vec3 predicted = orgLocal + dirLocal * t;
+    assert(isClose(localHit.x, predicted.x, 1e-4f, 1e-4f)
+        && isClose(localHit.y, predicted.y, 1e-4f, 1e-4f)
+        && isClose(localHit.z, predicted.z, 1e-4f, 1e-4f),
+        "toLocalDir must stay un-normalized for `t` to keep meaning a world distance");
+}
+
+unittest { // §3.7/§3.8 end-to-end: the LOCAL front-facing test, XOR'd with
+    // `ms.mirrored`, agrees with the TRUE world front-facing test — computed
+    // by transforming the triangle's vertices to world with `toWorldPoint`
+    // and RE-DERIVING the normal there via cross product, i.e. "what is
+    // actually drawn". This is the identity every local-space cull in §3.8
+    // depends on: it stays entirely in local space (never calls
+    // `toWorldNormal`) and folds the sign correction in as a boolean XOR.
+    //
+    // NOTE, because it is easy to get backwards: this is NOT the claim
+    // "toWorldNormal flips sign under a mirror" — it provably does not.
+    // `dot((M^-1)^T n, M v) == dot(n, v)` for ANY invertible M, mirrored or
+    // not (toWorldNormal is the textbook inverse-transpose rule for an
+    // already-given normal, and that identity is exactly why it's the
+    // correct transform for a normal in general). The det(M) sign
+    // correction only shows up here because `nLocal` below is a CROSS
+    // PRODUCT of local edge vectors, and `cross(Ma,Mb) ==
+    // det(M)*(M^-1)^T*cross(a,b)` — a stronger, different claim than the
+    // generic normal-transform rule. `bvh_pick.d`'s `pickSurfaceRay`
+    // sidesteps the whole question by transforming the vertices to world
+    // and cross-producting THERE (see its comment) rather than transforming
+    // a local cross-product normal — this unittest pins the OTHER
+    // mechanism, the one §3.8's local-only culls actually use.
+    void checkCase(float[16] m, float[16] mInv, bool mirrored) {
+        ModelSpace ms;
+        ms.m = m; ms.mInv = mInv; ms.isIdentity = false; ms.mirrored = mirrored;
+
+        Vec3 a = Vec3(0, 0, 0), b = Vec3(1, 0, 0), c = Vec3(0, 1, 0);
+        Vec3 eyeLocal = Vec3(0, 0, 5); // above the local A,B,C plane (+Z)
+
+        Vec3 nLocal = cross(b - a, c - a);
+        bool localFront     = dot(nLocal, a - eyeLocal) < 0;
+        bool correctedFront = localFront != mirrored; // the XOR §3.8 prescribes
+
+        Vec3 aw = ms.toWorldPoint(a), bw = ms.toWorldPoint(b), cw = ms.toWorldPoint(c);
+        Vec3 eyeWorld    = ms.toWorldPoint(eyeLocal);
+        Vec3 nWorldTrue  = cross(bw - aw, cw - aw); // what is ACTUALLY drawn
+        bool worldFront  = dot(nWorldTrue, aw - eyeWorld) < 0;
+
+        assert(correctedFront == worldFront,
+            "local test XOR ms.mirrored must agree with the true world test");
+    }
+
+    // Non-mirrored: scl=(2,1,1) (det > 0) — XOR with `false` is a no-op.
+    checkCase(pivotScaleMatrix(Vec3(0,0,0), 2, 1, 1),
+              pivotScaleMatrix(Vec3(0,0,0), 0.5f, 1, 1), false);
+    // Mirrored: scl=(-1,1,1) (det < 0) — a single negative axis.
+    checkCase(pivotScaleMatrix(Vec3(0,0,0), -1, 1, 1),
+              pivotScaleMatrix(Vec3(0,0,0), -1, 1, 1), true);
+    // Mirrored: scl=(-1,-1,-1) (det < 0) — three negative axes (odd count).
+    checkCase(pivotScaleMatrix(Vec3(0,0,0), -1, -1, -1),
+              pivotScaleMatrix(Vec3(0,0,0), -1, -1, -1), true);
+    // Non-mirrored: scl=(-1,-1,1) (det > 0) — two negative axes (even count).
+    checkCase(pivotScaleMatrix(Vec3(0,0,0), -1, -1, 1),
+              pivotScaleMatrix(Vec3(0,0,0), -1, -1, 1), false);
+}
+
 // Build a column-major orthonormal frame matrix from a basis. The basis
 // vectors right/up/fwd are placed in columns 0/1/2 of the upper-left 3x3;
 // rotation-only (translation 0, w 1). Same column-major (m[row + col*4])
@@ -440,7 +643,12 @@ unittest { // frameMatrix * frameMatrixInverse ≈ identity for a rotated frame
 }
 
 // Column-major 4x4 matrix multiplication: C = A * B
-float[16] matMul4(float[16] a, float[16] b) {
+//
+// Task 0617: attributed @safe pure nothrow @nogc (it always qualified — pure
+// arithmetic over fixed-size stack arrays) so the "no allocation on a picking
+// path" property of `ModelSpace`/`projectionSpace` below is compiler-enforced
+// rather than merely asserted in a comment.
+float[16] matMul4(float[16] a, float[16] b) @safe pure nothrow @nogc {
     float[16] c;
     for (int col = 0; col < 4; col++)
         for (int row = 0; row < 4; row++) {
@@ -953,6 +1161,100 @@ bool projectToWindowFull(Vec3 world, const ref Viewport vp,
     px = (nx * 0.5f + 0.5f)          * vp.width  + vp.x;
     py = (1.0f - (ny * 0.5f + 0.5f)) * vp.height + vp.y;
     return true;
+}
+
+// Compose a layer's item transform into a Viewport for FORWARD PROJECTION
+// only: `proj*(view*M)*v_local == proj*view*(M*v_local)`, so folding `M`
+// into `vp.view` (and `vp.eye` into local space, per the plan) lets every
+// existing `projectToWindow*` call site pick up the item transform with a
+// one-line `vp` -> `projectionSpace(vp, ms)` swap. A stack copy of Viewport;
+// no allocation. Exact identity fast path (§3.5): `ms.isIdentity` returns
+// `vp` unchanged, byte-identical to every call site's pre-0617 behaviour.
+//
+// DO NOT use the result of this function to build a ray (`screenRay`,
+// `screenPointToRay`). Both derive the world ray direction by treating the
+// view matrix's upper-left 3x3 AS ITS OWN INVERSE (transpose-as-inverse —
+// see `screenRay`'s comment), which is only valid for an orthonormal
+// rotation. Composing a scale or shear into `view` breaks that assumption
+// SILENTLY — the ray direction comes out wrong with no error raised. Rays
+// must be built in WORLD space from the real (uncomposed) Viewport, and only
+// then transformed into local space with `ModelSpace.toLocalDir` /
+// `toLocalPoint`. See doc/picking_item_transform_plan.md §3.3 (task 0617).
+// `ms` is BY VALUE, not `const ref`: call sites routinely pass an rvalue
+// (`ModelSpace.world()`, `primaryModelSpace()`), which a `const ref`
+// parameter cannot bind without a compiler preview flag this project does
+// not use. `ModelSpace` is two `float[16]` + three `bool` (~132 bytes) — a
+// cheap stack copy, not a reason to reach for `ref`.
+//
+// DO NOT feed the result of this function into `viewPixelScale` (or any
+// other helper measuring `eye`-to-`focus` distance). This function is
+// PROJECTION-ONLY and deliberately transforms `eye` alone — `out_.focus` is
+// left as `vp.focus`, still in WORLD space, while `out_.eye` is now in the
+// LAYER's local space. `viewPixelScale` would then subtract a local-space
+// point from a world-space one and return a meaningless scale. Transforming
+// `focus` too would NOT fix this — it would make it WRONG in a different,
+// worse way: `viewPixelScale`'s own contract (see its doc comment) is that
+// the returned scale depends on the CAMERA ALONE, so every layer under one
+// camera shares one pixel size. Folding a per-layer `M` into the eye/focus
+// distance would make the "world units per pixel" answer depend on which
+// layer's `ModelSpace` happened to be composed in — a single scalar can't
+// mean that. Worse, under a NON-UNIFORM scale the local-space distance is
+// direction-dependent (an isotropic world sphere maps to an ellipsoid), so
+// no single scalar distance is even the right SHAPE of answer once `M` is
+// non-uniform. If a future stage needs a per-pixel measure in local space,
+// it has to be derived some other way — not by handing `projectionSpace`'s
+// output to `viewPixelScale`.
+Viewport projectionSpace(const ref Viewport vp, const ModelSpace ms) @safe pure nothrow @nogc {
+    if (ms.isIdentity) return vp; // exact fast path — no matMul4, byte-identical
+    Viewport out_ = vp;
+    out_.view = matMul4(vp.view, ms.m);
+    out_.eye  = ms.toLocalPoint(vp.eye);
+    return out_;
+}
+
+unittest { // projectionSpace: identity fast path returns `vp` unchanged (byte-identical).
+    Viewport vp;
+    vp.view = identityMatrix; vp.proj = identityMatrix;
+    vp.width = 800; vp.height = 600; vp.eye = Vec3(1, 2, 3);
+    auto vp2 = projectionSpace(vp, ModelSpace.world());
+    foreach (i; 0 .. 16) { assert(vp2.view[i] == vp.view[i]); assert(vp2.proj[i] == vp.proj[i]); }
+    assert(vp2.eye.x == vp.eye.x && vp2.eye.y == vp.eye.y && vp2.eye.z == vp.eye.z);
+}
+
+unittest { // projectionSpace: forward projection agrees with pre-transforming the point —
+    // projectToWindow(pLocal, projectionSpace(vp, ms)) == projectToWindow(ms.toWorldPoint(pLocal), vp).
+    import std.math : PI;
+
+    Vec3 eye = Vec3(0, 0, 8);
+    Viewport vp;
+    vp.view = lookAt(eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj = perspectiveMatrix(60.0f * PI / 180.0f, 1.0f, 0.01f, 100.0f);
+    vp.width = 400; vp.height = 400; vp.eye = eye;
+
+    ModelSpace ms;
+    ms.m    = matMul4(translationMatrix(Vec3(1, -0.5f, 0)),
+                       pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), 0.4f));
+    // mInv unused by projectionSpace's forward path except via toLocalPoint(eye);
+    // give it the analytic inverse of the same T*R so that leg is exact too.
+    ms.mInv = matMul4(pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), -0.4f),
+                       translationMatrix(Vec3(-1, 0.5f, 0)));
+    ms.isIdentity = false;
+
+    Vec3 pLocal = Vec3(0.3f, 0.2f, -0.1f);
+
+    Viewport vpLocal = projectionSpace(vp, ms);
+    float px1, py1, z1;
+    bool ok1 = projectToWindow(pLocal, vpLocal, px1, py1, z1);
+
+    Vec3 pWorld = ms.toWorldPoint(pLocal);
+    float px2, py2, z2;
+    bool ok2 = projectToWindow(pWorld, vp, px2, py2, z2);
+
+    assert(ok1 == ok2, "projectionSpace must agree with pre-transforming the point on visibility");
+    assert(ok1);
+    assert(isClose(px1, px2, 1e-3f, 1e-3f) && isClose(py1, py2, 1e-3f, 1e-3f)
+        && isClose(z1, z2, 1e-3f, 1e-3f),
+        "projectionSpace(vp,ms) projection must match projecting the pre-transformed world point");
 }
 
 // 2D point-in-polygon test (ray casting, works for convex and concave polygons).

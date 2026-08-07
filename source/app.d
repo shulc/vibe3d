@@ -1562,9 +1562,17 @@ void main(string[] args) {
     // fire time) — see the seam conversions below. Exactly ONE layer ever
     // exists in 0b (no layer.* commands until Stage 2), so this is provably
     // byte-neutral with the prior global mesh.
-    import document : Document;
+    import document : Document, primaryModelSpaceResolver, primaryModelSpace;
     Document document = Document.bootstrap(makeCube());
     ref Mesh mesh() { return document.activeMeshRef(); }
+    // Task 0617 — install the primary-layer ModelSpace resolver (mirrors
+    // `activeMeshResolver` right below): every picking entry point that
+    // needs "the current primary layer's transform" but has no `Document`
+    // of its own (http_providers.d's HTTP-bridged closures,
+    // tools/edit/topology_pen.d's TopologyPenTool) resolves it through
+    // `primaryModelSpace()` rather than a duplicated formula. app.d's own
+    // call sites below use the same free function — one accessor, not two.
+    primaryModelSpaceResolver = () => document.primary.xform.modelSpace();
     writefln("Mesh: %d verts, %d edges, %d faces",
              mesh.vertices.length, mesh.edges.length, mesh.faces.length);
 
@@ -4595,6 +4603,41 @@ void main(string[] args) {
                 if (activeTool.onMouseButtonUp(btn, vts)) return;
             }
             if (rmbPath.length >= 3) {
+                // ---------------------------------------------------------
+                // ⚠ SPLIT-BRAIN ON A TRANSFORMED PRIMARY — Stage 3 of
+                // doc/picking_item_transform_plan.md (task 0617) is a HARD
+                // PREREQUISITE before any release build ships past this
+                // point, NOT a follow-up.
+                //
+                // Stage 1 (already landed) made the ID-buffer occlusion
+                // probes below (`elementVisibility`, `endpointVisibleEdgeFbo`)
+                // render at the layer's DRAWN pose (they take `ModelSpace`
+                // and compose it internally). This block's OWN geometry
+                // test — every `projectToWindow(mesh.vertices[...], vp2, …)`
+                // / `projectToWindow(pv.vertices[...], vp2, …)` below — still
+                // projects RAW LOCAL vertices against the world `vp2`, i.e.
+                // the layer's IDENTITY pose. That split is Stage 3's to fix
+                // (§ Stage 3 of the plan); this block does not touch it.
+                //
+                // On a primary with a non-identity `ItemXform` this is not
+                // neutral, it is a REGRESSION this staging introduced:
+                //   - lasso the DRAWN (visible) geometry → the occlusion
+                //     probe agrees, but the geometry test projects the
+                //     UNMOVED local vertices, which land outside the lasso
+                //     polygon → miss.
+                //   - lasso the IDENTITY-pose footprint (nothing drawn
+                //     there) → the geometry test agrees, but the occlusion
+                //     probe looks up FBO pixels at the drawn location, where
+                //     the lasso never went → miss.
+                //   Net result: edge/vertex/face lasso selects NOTHING on a
+                //   transformed primary, in every one of the six branches
+                //   below.
+                //
+                // At IDENTITY (`ms.isIdentity`) both projections agree
+                // exactly, so this satisfies Stage 2's neutrality contract
+                // and every existing lasso test stays green. Do not read
+                // that as "safe to ship" — it is neutral ONLY at identity.
+                // ---------------------------------------------------------
                 SDL_Keymod mods = SDL_GetModState();
                 bool shift = (mods & KMOD_SHIFT) != 0;
                 bool ctrl  = (mods & KMOD_CTRL)  != 0;
@@ -4624,8 +4667,13 @@ void main(string[] args) {
                     case EditMode.Polygons: vbMode = SelectMode.Face;   break;
                 }
                 ensureDisplayCurrent(); // mid-batch pull-guard: FBO readback below renders from the VBO
+                // Task 0617: vp2 here is the WORLD viewport (`vpm.originSnapshot()`
+                // below) — gpuSelect composes `ms` internally, so this must stay
+                // world (R10: handing it an already-composed viewport would apply
+                // the item transform twice). The lasso body's own local-space
+                // projections are Stage 3 territory, not touched by this slice.
                 bool[] gpuVisible = gpuSelect.elementVisibility(
-                    vbMode, mesh, gpu, vp2);
+                    vbMode, mesh, gpu, vp2, primaryModelSpace());
 
                 bool preview = subpatchPreview.active;
                 // Phase 3c — preview.mesh.vertices may be stale after
@@ -4776,12 +4824,14 @@ void main(string[] args) {
                                 // vertex mapping is needed (we are asking "any
                                 // surviving edge pixel near this window point").
                                 import std.math : lround;
+                                // Task 0617: vp2 is WORLD (R10 — gpuSelect composes
+                                // `ms` internally; see the elementVisibility call above).
                                 if (!gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxa), cast(int)lround(sya),
-                                        gpu, vp2) ||
+                                        gpu, vp2, primaryModelSpace()) ||
                                     !gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxb), cast(int)lround(syb),
-                                        gpu, vp2)) {
+                                        gpu, vp2, primaryModelSpace())) {
                                     cageAllInside[cage] = false;
                                 }
                             }
@@ -4809,12 +4859,14 @@ void main(string[] args) {
                                 // This is intentionally stricter than click (which
                                 // only requires a surviving pixel near the cursor).
                                 import std.math : lround;
+                                // Task 0617: vp2 is WORLD — see the elementVisibility
+                                // call above (R10).
                                 if (!gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxa), cast(int)lround(sya),
-                                        gpu, vp2)) continue;
+                                        gpu, vp2, primaryModelSpace())) continue;
                                 if (!gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxb), cast(int)lround(syb),
-                                        gpu, vp2)) continue;
+                                        gpu, vp2, primaryModelSpace())) continue;
                                 symmetricSelectEdge(&mesh(), vp2, editMode,
                                                     cast(int)ei, /*deselect=*/ctrl);
                             }
@@ -5030,7 +5082,10 @@ void main(string[] args) {
         // elements inside / behind opaque geometry drop out. Subpatch mode
         // maps VBO indices back to cage indices inside GpuSelectBuffer.pick
         // (the picker handles its own cache + VBO→cage translation).
-        int hit = gpuSelect.pick(sm, mx, my, radius, mesh, gpu, vp);
+        // Task 0617: `mesh`/`vp` here are the PRIMARY layer's — pair with
+        // primaryModelSpace() so a transformed primary is picked where it's
+        // drawn, not at its identity pose.
+        int hit = gpuSelect.pick(sm, mx, my, radius, mesh, gpu, vp, primaryModelSpace());
         if (hit < 0) return;
 
         hovered = hit;
@@ -5066,14 +5121,16 @@ void main(string[] args) {
         // BVH: O(log n) per pick, view-independent, no GL readback. Keyed on
         // (gpu.uploadVersion, source-mesh-address) — identical to gpu_select.d:31.
         // GPU path retained as oracle for A/B equivalence testing.
+        // Task 0617: both engines pick against the PRIMARY layer here —
+        // primaryModelSpace() for both, so the BVH/GPU A/B stays apples-to-apples.
         int hit;
         if (useBvhFacePick) {
             const(Mesh)* srcMesh = subpatchPreview.active
                 ? &subpatchPreview.mesh : &mesh();
-            hit = bvhPick.pickFace(mx, my, vp, *srcMesh, gpu);
+            hit = bvhPick.pickFace(mx, my, vp, *srcMesh, gpu, primaryModelSpace());
         } else {
             hit = gpuSelect.pick(SelectMode.Face, mx, my, /*r=*/0,
-                                  mesh, gpu, vp);
+                                  mesh, gpu, vp, primaryModelSpace());
         }
         if (hit < 0) return;
 

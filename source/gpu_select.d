@@ -3,7 +3,7 @@ module gpu_select;
 import bindbc.opengl;
 import std.string : toStringz;
 
-import math   : Viewport;
+import math   : Viewport, ModelSpace, matMul4;
 import mesh   : GpuMesh, Mesh;
 import shader : compileShader;
 import perf_probe : g_perf, Cat, g_fc, DrawPass;
@@ -32,6 +32,18 @@ import perf_probe : g_perf, Cat, g_fc, DrawPass;
 // Cache key: (mode, gpu.uploadVersion, view, proj, FBO size). One
 // cache slot per mode so flipping edit modes 1/2/3 doesn't churn the
 // buffer; camera and mesh changes invalidate all three slots.
+//
+// Task 0617: the VBOs hold LOCAL (cage/preview) coordinates and the shaders
+// below carry no model uniform — so the layer's item transform is folded
+// into the VIEW matrix instead (`u_view := view * M`; forward projection
+// composes exactly, `proj*(view*M)*v_local == proj*view*(M*v_local)`, unlike
+// ray construction — see math.d's `projectionSpace` doc comment). Every
+// entry point below takes a REQUIRED `ModelSpace` for this reason; the
+// stored "view" in a cache slot is the COMPOSED `view*M`, not the raw
+// `vp.view` — the key is genuinely `(mode, uploadVersion, view*M, proj,
+// size)` now, not just `(..., view, ...)`. At `ms.isIdentity` this is an
+// exact no-op (§3.5 of doc/picking_item_transform_plan.md) — no `matMul4`,
+// byte-identical to the pre-0617 behaviour.
 //
 // Why `uploadVersion` and not `mesh.mutationVersion`: the transform
 // tools (Move/Rotate/Scale) mutate `mesh.vertices` directly during a
@@ -208,21 +220,25 @@ public:
     /// Returns -1 when the cursor is outside the viewport, the FBO has
     /// zero size, or nothing is within reach.
     int pick(SelectMode mode, int mx, int my, int r,
-             ref const Mesh mesh, ref const GpuMesh gpu, ref const Viewport vp)
+             ref const Mesh mesh, ref const GpuMesh gpu, ref const Viewport vp,
+             const ModelSpace ms)
     {
         auto z = g_perf.scope_(Cat.hoverPick);
         g_fc.bumpHoverPick();
         if (vp.width <= 0 || vp.height <= 0) return -1;
         ensureSize(vp.width, vp.height);
 
+        // Task 0617 — composed view; slot key stores THIS, not raw vp.view.
+        const float[16] mv = ms.isIdentity ? vp.view : matMul4(vp.view, ms.m);
+
         Slot* slot = &slots[mode];
         if (!slot.valid
             || slot.uploadVer != gpu.uploadVersion
             || slot.w != fboW || slot.h != fboH
-            || !matricesEqual(slot.view, vp.view)
+            || !matricesEqual(slot.view, mv)
             || !matricesEqual(slot.proj, vp.proj))
         {
-            renderMode(mode, gpu, vp);
+            renderMode(mode, gpu, vp, mv);
             // FBO now holds this mode's IDs only — every other
             // slot's cached state no longer matches the FBO
             // contents. See the Slot struct comment above.
@@ -231,7 +247,7 @@ public:
             }
             slot.valid  = true;
             slot.uploadVer = gpu.uploadVersion;
-            slot.view   = vp.view;
+            slot.view   = mv;
             slot.proj   = vp.proj;
             slot.w      = fboW;
             slot.h      = fboH;
@@ -326,10 +342,13 @@ public:
     /// semantics already expose per-id pixels, gpu_select.d:365-369).
     bool endpointVisibleEdgeFbo(int wx, int wy,
                                 ref const GpuMesh gpu, ref const Viewport vp,
+                                const ModelSpace ms,
                                 int rp = RP_DEFAULT)
     {
         if (vp.width <= 0 || vp.height <= 0) return false;
         ensureSize(vp.width, vp.height);
+
+        const float[16] mv = ms.isIdentity ? vp.view : matMul4(vp.view, ms.m);
 
         // Ensure the Edge ID-FBO slot is current (render if stale).
         // Identical guard to elementVisibility(SelectMode.Edge).
@@ -337,16 +356,16 @@ public:
         if (!slot.valid
             || slot.uploadVer != gpu.uploadVersion
             || slot.w != fboW || slot.h != fboH
-            || !matricesEqual(slot.view, vp.view)
+            || !matricesEqual(slot.view, mv)
             || !matricesEqual(slot.proj, vp.proj))
         {
-            renderMode(SelectMode.Edge, gpu, vp);
+            renderMode(SelectMode.Edge, gpu, vp, mv);
             foreach (mi, ref s; slots) {
                 if (cast(SelectMode)mi != SelectMode.Edge) s.valid = false;
             }
             slot.valid     = true;
             slot.uploadVer = gpu.uploadVersion;
-            slot.view      = vp.view;
+            slot.view      = mv;
             slot.proj      = vp.proj;
             slot.w         = fboW;
             slot.h         = fboH;
@@ -392,19 +411,21 @@ public:
     /// Returns `null` on empty viewport.
     bool[] elementVisibility(SelectMode mode,
                               ref const Mesh mesh, ref const GpuMesh gpu,
-                              ref const Viewport vp)
+                              ref const Viewport vp, const ModelSpace ms)
     {
         if (vp.width <= 0 || vp.height <= 0) return null;
         ensureSize(vp.width, vp.height);
+
+        const float[16] mv = ms.isIdentity ? vp.view : matMul4(vp.view, ms.m);
 
         Slot* slot = &slots[mode];
         if (!slot.valid
             || slot.uploadVer != gpu.uploadVersion
             || slot.w != fboW || slot.h != fboH
-            || !matricesEqual(slot.view, vp.view)
+            || !matricesEqual(slot.view, mv)
             || !matricesEqual(slot.proj, vp.proj))
         {
-            renderMode(mode, gpu, vp);
+            renderMode(mode, gpu, vp, mv);
             // Same shared-FBO invalidation as in pick() — see the
             // Slot struct comment for why.
             foreach (mi, ref s; slots) {
@@ -412,7 +433,7 @@ public:
             }
             slot.valid     = true;
             slot.uploadVer = gpu.uploadVersion;
-            slot.view      = vp.view;
+            slot.view      = mv;
             slot.proj      = vp.proj;
             slot.w         = fboW;
             slot.h         = fboH;
@@ -451,7 +472,15 @@ public:
     }
 
 private:
-    void renderMode(SelectMode mode, ref const GpuMesh gpu, ref const Viewport vp)
+    // `mv` is the ALREADY-COMPOSED view (`ms.isIdentity ? vp.view :
+    // matMul4(vp.view, ms.m)`) — every one of this method's three callers
+    // computes it first anyway (to compare against the cache slot's stored
+    // key before deciding whether a render is even needed), so it is passed
+    // in rather than recomputed here. Passing the matrix in also collapses
+    // "the key matches what was rendered" from a two-expression invariant
+    // (recompute-and-hope-they-agree) to a single value read twice.
+    void renderMode(SelectMode mode, ref const GpuMesh gpu, ref const Viewport vp,
+                    ref const float[16] mv)
     {
         // Save state we touch so the main renderer survives unchanged.
         // pickXxx is called mid-frame between shader.useProgram and
@@ -483,7 +512,7 @@ private:
         // the depth + colour buffers with one draw call.
         if (mode != SelectMode.Face && gpu.faceVertCount > 0) {
             glUseProgram(depthProgram);
-            glUniformMatrix4fv(depthLocView, 1, GL_FALSE, vp.view.ptr);
+            glUniformMatrix4fv(depthLocView, 1, GL_FALSE, mv.ptr);
             glUniformMatrix4fv(depthLocProj, 1, GL_FALSE, vp.proj.ptr);
             glEnable(GL_POLYGON_OFFSET_FILL);
             glPolygonOffset(1.0f, 1.0f);
@@ -500,7 +529,7 @@ private:
                 if (gpu.vertCount > 0) {
                     setupVertSelVao(gpu);
                     glUseProgram(vertProgram);
-                    glUniformMatrix4fv(vertLocView, 1, GL_FALSE, vp.view.ptr);
+                    glUniformMatrix4fv(vertLocView, 1, GL_FALSE, mv.ptr);
                     glUniformMatrix4fv(vertLocProj, 1, GL_FALSE, vp.proj.ptr);
                     glDrawArrays(GL_POINTS, 0, gpu.vertCount);
                     g_fc.draw(DrawPass.idPick, gpu.vertCount);
@@ -510,7 +539,7 @@ private:
                 if (gpu.edgeVertCount > 0) {
                     setupEdgeSelVao(gpu);
                     glUseProgram(edgeProgram);
-                    glUniformMatrix4fv(edgeLocView, 1, GL_FALSE, vp.view.ptr);
+                    glUniformMatrix4fv(edgeLocView, 1, GL_FALSE, mv.ptr);
                     glUniformMatrix4fv(edgeLocProj, 1, GL_FALSE, vp.proj.ptr);
                     glDrawArrays(GL_LINES, 0, gpu.edgeVertCount);
                     g_fc.draw(DrawPass.idPick, gpu.edgeVertCount);
@@ -520,7 +549,7 @@ private:
                 if (gpu.faceVertCount > 0) {
                     setupFaceSelVao(gpu);
                     glUseProgram(faceProgram);
-                    glUniformMatrix4fv(faceLocView, 1, GL_FALSE, vp.view.ptr);
+                    glUniformMatrix4fv(faceLocView, 1, GL_FALSE, mv.ptr);
                     glUniformMatrix4fv(faceLocProj, 1, GL_FALSE, vp.proj.ptr);
                     glDrawArrays(GL_TRIANGLES, 0, gpu.faceVertCount);
                     g_fc.draw(DrawPass.idPick, gpu.faceVertCount);

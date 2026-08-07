@@ -3,7 +3,7 @@ module document;
 import mesh    : Mesh;
 import seltype : SelMode;
 import math    : Vec3, identityMatrix, translationMatrix, matrixFromEulerZYX,
-                 pivotScaleMatrix, matMul4;
+                 pivotScaleMatrix, matMul4, ModelSpace;
 
 // source/document.d — imports mesh only; no GL, no render, no UI.
 //
@@ -76,6 +76,86 @@ struct ItemXform {
                matMul4(Tp,
                matMul4(R,
                matMul4(S, Tpi))));
+    }
+
+    /// The `ModelSpace` (task 0617, doc/picking_item_transform_plan.md §3.1)
+    /// packaging this transform for picking: `m` == `composedMatrix()`, plus
+    /// its ANALYTIC inverse and the `isIdentity`/`invertible`/`mirrored`
+    /// flags every picking entry point gates on.
+    ///
+    /// Exact identity fast path (§3.5, a HARD requirement): `pos`/`rot`/`scl`
+    /// compared by EXACT float equality against their defaults, not
+    /// `isClose` — the existing test suite is the neutrality proof for every
+    /// picking stage built on this, and a float-epsilon "close enough" would
+    /// turn that proof into noise. `pivot` is deliberately excluded from the
+    /// check: at rot=0/scl=1, `T(pivot)·I·T(-pivot) == I` for ANY pivot, so a
+    /// non-zero pivot alone never makes the composed matrix non-identity.
+    ///
+    /// `mInv` is analytic, not a general 4×4 inverse (`math.d` has none, and
+    /// this composition order never needs one — §3.1):
+    ///
+    ///     M⁻¹ = T(pivot) · S⁻¹ · Rᵀ · T(-pivot) · T(-pos)
+    ///
+    /// `S⁻¹ = diag(1/scl)`. `Rᵀ` is the TRANSPOSE of `matrixFromEulerZYX(rot)`
+    /// — NOT `matrixFromEulerZYX(-rot)`, which composes to `Rz(-)·Ry(-)·Rx(-)`,
+    /// the reverse-order product and NOT the inverse of `Rz·Ry·Rx` (pinned by
+    /// the unittest below; this is the trap the plan calls out by name).
+    /// Since `matrixFromEulerZYX` already returns a matrix with zero
+    /// translation and bottom row `(0,0,0,1)`, transposing the FULL `float[16]`
+    /// gives exactly the transpose of its 3×3 rotation block (the swapped
+    /// translation/bottom-row entries are all zero either way), so no
+    /// separate 3×3-only transpose helper is needed.
+    ///
+    /// Degenerate in exactly one place (§3.1): any `scl` component `== 0`
+    /// has no inverse — `invertible` is set false and `mInv` is left at
+    /// identity (meaningless; callers MUST check `invertible` first, per R2).
+    ///
+    /// `mirrored = det(M) < 0`. For this composition order
+    /// `det(M) = det(R)·det(S) = 1 · (scl.x·scl.y·scl.z)` (translations are
+    /// unit-determinant, `matrixFromEulerZYX` is a proper rotation) — so the
+    /// PRODUCT of the three scale components, not "any component negative"
+    /// (§3.7). No general 3×3 determinant helper is added; none is needed.
+    ModelSpace modelSpace() const {
+        immutable bool isId =
+               pos.x == 0 && pos.y == 0 && pos.z == 0
+            && rot.x == 0 && rot.y == 0 && rot.z == 0
+            && scl.x == 1 && scl.y == 1 && scl.z == 1;
+        if (isId) return ModelSpace.world();
+
+        immutable float det = scl.x * scl.y * scl.z; // §3.7 — no det3 helper
+
+        ModelSpace ms;
+        ms.m          = composedMatrix();
+        ms.isIdentity = false;
+        ms.mirrored   = det < 0;
+
+        if (scl.x == 0 || scl.y == 0 || scl.z == 0) {
+            ms.invertible = false;
+            ms.mInv       = identityMatrix; // meaningless; callers check `invertible` first
+            return ms;
+        }
+
+        float[16] R  = matrixFromEulerZYX(rot);
+        // R^T: matrixFromEulerZYX has zero translation + bottom row (0,0,0,1),
+        // so a full-matrix transpose IS the 3x3 rotation-block transpose.
+        float[16] Rt = [
+            R[0], R[4], R[ 8], 0,
+            R[1], R[5], R[ 9], 0,
+            R[2], R[6], R[10], 0,
+            0,    0,    0,     1,
+        ];
+        float[16] Sinv       = pivotScaleMatrix(Vec3(0, 0, 0), 1.0f/scl.x, 1.0f/scl.y, 1.0f/scl.z);
+        float[16] Tpiv       = translationMatrix(pivot);
+        float[16] TpivNeg    = translationMatrix(Vec3(-pivot.x, -pivot.y, -pivot.z));
+        float[16] TposNeg    = translationMatrix(Vec3(-pos.x, -pos.y, -pos.z));
+
+        // M^-1 = T(pivot) . S^-1 . R^T . T(-pivot) . T(-pos)
+        ms.mInv = matMul4(Tpiv,
+                  matMul4(Sinv,
+                  matMul4(Rt,
+                  matMul4(TpivNeg, TposNeg))));
+        ms.invertible = true;
+        return ms;
     }
 }
 
@@ -1509,4 +1589,167 @@ unittest {  // known TRS-about-pivot vs an INDEPENDENT hand-built expected matri
     foreach (i; 0 .. 16)
         assert(isClose(got[i], cast(float)exp[i], 1e-5f, 1e-5f),
                "composedMatrix mismatch vs independent hand formula at index");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0617: ItemXform.modelSpace() — the picking-facing ModelSpace factory.
+// ---------------------------------------------------------------------------
+
+unittest {  // default ItemXform -> isIdentity, invertible, not mirrored;
+    // m/mInv are literally identityMatrix (the exact fast path, §3.5).
+    import math : identityMatrix;
+    ItemXform x;
+    auto ms = x.modelSpace();
+    assert(ms.isIdentity && ms.invertible && !ms.mirrored);
+    foreach (i; 0 .. 16) {
+        assert(ms.m[i]    == identityMatrix[i]);
+        assert(ms.mInv[i] == identityMatrix[i]);
+    }
+}
+
+unittest {  // a non-zero pivot ALONE (rot=0, scl=1) must still be identity —
+    // T(pivot)*I*T(-pivot) == I for any pivot. Pins that the isIdentity
+    // check is deliberately blind to `pivot`.
+    ItemXform x;
+    x.pivot = Vec3(5, -3, 2);
+    auto ms = x.modelSpace();
+    assert(ms.isIdentity, "pivot alone (rot=0, scl=1) must not break the identity fast path");
+}
+
+unittest {  // M . M^-1 ~= I for a combined rot + non-uniform-scale + pivot xform.
+    import std.math : isClose;
+    ItemXform x;
+    x.pos   = Vec3(4, -1, 2);
+    x.rot   = Vec3(15, -40, 70);
+    x.scl   = Vec3(2, 0.5f, 3);
+    x.pivot = Vec3(1, 1, -1);
+    auto ms = x.modelSpace();
+    assert(!ms.isIdentity && ms.invertible);
+
+    auto prod = matMul4(ms.m, ms.mInv);
+    foreach (i; 0 .. 16)
+        assert(isClose(prod[i], identityMatrix[i], 1e-4f, 1e-4f),
+               "M * mInv must be ~identity for a rot+non-uniform-scale+pivot transform");
+}
+
+unittest {  // The trap the plan calls out by name: R^T (what modelSpace's
+    // mInv actually uses) is NOT the same matrix as matrixFromEulerZYX(-rot)
+    // (Rz(-)*Ry(-)*Rx(-), the reverse-order product) for a rotation that
+    // mixes more than one axis. If a future edit "simplifies" mInv's
+    // rotation term to matrixFromEulerZYX(-rot), THIS must fail.
+    import std.math : isClose;
+    Vec3 rot = Vec3(20, -35, 50); // multi-axis, away from any accidental symmetry
+    auto Rt = matrixFromEulerZYX(rot);
+    // Hand-transpose (same construction modelSpace() uses internally).
+    float[16] RtT = [
+        Rt[0], Rt[4], Rt[ 8], 0,
+        Rt[1], Rt[5], Rt[ 9], 0,
+        Rt[2], Rt[6], Rt[10], 0,
+        0,     0,     0,      1,
+    ];
+    auto wrongInverse = matrixFromEulerZYX(Vec3(-rot.x, -rot.y, -rot.z));
+    bool anyDifferent = false;
+    foreach (i; 0 .. 16)
+        if (!isClose(RtT[i], wrongInverse[i], 1e-4f, 1e-4f)) anyDifferent = true;
+    assert(anyDifferent,
+        "R^T must differ from matrixFromEulerZYX(-rot) for a multi-axis rotation "
+        ~ "-- if they match, the trap this test guards against has gone silent");
+}
+
+unittest {  // scl.z == 0 -> !invertible (and scl.x/scl.y likewise, R2).
+    ItemXform x;
+    x.scl = Vec3(2, 3, 0);
+    auto ms = x.modelSpace();
+    assert(!ms.isIdentity);
+    assert(!ms.invertible, "a zero scale component must report !invertible");
+}
+
+unittest {  // mirrored == true for exactly one OR three negative scale
+    // components, false for zero or two — the PRODUCT rule (§3.7), not
+    // "any component is negative".
+    ItemXform x;
+
+    x.scl = Vec3(2, 3, 4);      // zero negatives
+    assert(!x.modelSpace().mirrored);
+
+    x.scl = Vec3(-2, 3, 4);     // one negative
+    assert(x.modelSpace().mirrored);
+
+    x.scl = Vec3(-2, -3, 4);    // two negatives
+    assert(!x.modelSpace().mirrored);
+
+    x.scl = Vec3(-2, -3, -4);   // three negatives
+    assert(x.modelSpace().mirrored);
+}
+
+unittest {  // projectionSpace's forward-projection identity, exercised through
+    // the PRODUCTION factory (math.d's own unittest covers the general
+    // primitive; this pins document.ItemXform.modelSpace() specifically).
+    import std.math : PI, isClose;
+    import math : projectionSpace, projectToWindow, lookAt, perspectiveMatrix, Viewport;
+
+    ItemXform x;
+    x.pos = Vec3(2, 0, -1);
+    x.rot = Vec3(0, 25, 0);
+    x.scl = Vec3(1, 1, 1);
+    auto ms = x.modelSpace();
+    assert(!ms.isIdentity);
+
+    Vec3 eye = Vec3(0, 3, 10);
+    Viewport vp;
+    vp.view = lookAt(eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj = perspectiveMatrix(50.0f * PI / 180.0f, 1.0f, 0.01f, 100.0f);
+    vp.width = 300; vp.height = 300; vp.eye = eye;
+
+    Vec3 pLocal = Vec3(0.2f, 0.1f, 0.4f);
+    auto vpLocal = projectionSpace(vp, ms);
+    float px1, py1, z1;
+    bool ok1 = projectToWindow(pLocal, vpLocal, px1, py1, z1);
+
+    Vec3 pWorld = ms.toWorldPoint(pLocal);
+    float px2, py2, z2;
+    bool ok2 = projectToWindow(pWorld, vp, px2, py2, z2);
+
+    assert(ok1 == ok2 && ok1);
+    assert(isClose(px1, px2, 1e-3f, 1e-3f) && isClose(py1, py2, 1e-3f, 1e-3f),
+        "projectionSpace(vp, x.modelSpace()) must agree with pre-transforming the point");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0617: the primary-layer ModelSpace resolver.
+//
+// Picking code that needs the CURRENT primary layer's transform but has no
+// `Document` instance of its own — `http_providers.d`'s HTTP-thread-bridged
+// providers, `tools/edit/topology_pen.d`'s `TopologyPenTool` (its
+// `pickPrimaryFace` picks against the primary mesh via its own `BvhPick`) —
+// resolves it through this global, mirroring `display_sync.activeMeshResolver`
+// (the identical cross-module problem, already solved once in this codebase).
+// `app.d`'s main() installs the resolver once, right after the `Document` is
+// constructed; every call site — inside app.d's own nested closures too, so
+// there is exactly ONE formula, not a duplicated one — resolves the transform
+// through `primaryModelSpace()` rather than reaching into a `Document`.
+// ---------------------------------------------------------------------------
+
+__gshared ModelSpace delegate() primaryModelSpaceResolver;
+
+/// The current primary layer's `ModelSpace`. Identity when the resolver has
+/// not been installed (tools/tests built without a running app) — the same
+/// null-safety convention `display_sync.activeMeshResolver` uses.
+///
+/// Folds ONLY `primary.xform` (the per-layer item transform). The draw path
+/// (`ui/panels.d`'s "Per-item (per-layer) transform" feed-site) folds a
+/// SECOND matrix on top of that during an active `TransformTool` drag
+/// (`meshModel = matMul4(itemMatrix, tt.gpuMatrix)`) — the gizmo's live
+/// preview of an in-progress T/R/S edit, not yet committed to `xform`. This
+/// resolver does not know about `tt.gpuMatrix` and is not reachable from it,
+/// so a pick made while that second matrix is non-identity would be picking
+/// against a pose the draw path isn't actually drawing. This is currently
+/// unreachable in practice — picking is not exercised while a transform
+/// gizmo drag is in flight — but that is an invariant of the CALLERS, not of
+/// this function; if a future change starts picking mid-drag, this is where
+/// the mismatch would resurface.
+ModelSpace primaryModelSpace() {
+    return primaryModelSpaceResolver !is null
+        ? primaryModelSpaceResolver()
+        : ModelSpace.world();
 }

@@ -1971,6 +1971,10 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     // Per-item (per-layer) transform — RENDER-ONLY (channels P4). Feed-site #1.
+    // NOTE (task 0617): `document.primaryModelSpace()`, the ModelSpace picking
+    // resolves against, folds ONLY `itemMatrix` — not the `tt.gpuMatrix` fold
+    // below. Currently fine because picking isn't exercised mid-drag; see
+    // `primaryModelSpace()`'s doc comment in document.d if that ever changes.
     float[16] itemMatrix = document.primary.xform.composedMatrix();
     float[16] meshModel  = itemMatrix;
     {

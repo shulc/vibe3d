@@ -4558,7 +4558,12 @@ public:
         auto m = mesh;
         if (m is null) return -1;
         if (removePick_ is null) removePick_ = new BvhPick();
-        return removePick_.pickFace(mx, my, vp, *m, *gpu_);
+        // Task 0617: this picks the PRIMARY layer (per the doc comment
+        // above), so it resolves the live primary ModelSpace through the
+        // same cross-module accessor http_providers.d uses — this module
+        // has no `Document` of its own.
+        import document : primaryModelSpace;
+        return removePick_.pickFace(mx, my, vp, *m, *gpu_, primaryModelSpace());
     }
 
     // The Remove mode's DOWN leg (P5, doc/topopen_p5_remove_plan.md D2;

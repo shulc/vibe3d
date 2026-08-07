@@ -8,6 +8,7 @@ import popup_state      : setStatePath;
 import params           : Param, IntEnumEntry, wireTagForValue;
 import bvh_pick         : BvhPick, SurfaceHit;
 import mesh             : Mesh;
+import math              : ModelSpace;
 
 // Single-sourced geometry-mode token<->value table (task 0184 / audit-2 C2):
 // fullParams()'s IntEnum Param, the parse leg (via the base Stage.setAttr ->
@@ -180,7 +181,12 @@ public:
                 bp = *pp;
             }
             SurfaceHit sh;
-            if (!bp.pickSurface(subj.cursorX, subj.cursorY, subj.viewport, *src, sh))
+            // Task 0617: background layers get their real per-layer
+            // ModelSpace in Stage 4 (out of scope for this slice) —
+            // `ModelSpace.world()` keeps this call neutral (byte-identical
+            // to pre-0617 behaviour) until that lands.
+            if (!bp.pickSurface(subj.cursorX, subj.cursorY, subj.viewport, *src,
+                                ModelSpace.world(), sh))
                 continue;
             if (sh.t >= bestT) continue;
             bestT     = sh.t;
