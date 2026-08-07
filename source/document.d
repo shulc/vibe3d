@@ -437,14 +437,21 @@ string tokenOf(ItemKind k) pure nothrow @nogc @safe { return kindInfo(k).token; 
 /// which is exactly the un-refcounted-alias shape a cache must not repeat
 /// (the refcount bump on a shared clone is Stage 5's job, not this one's).
 ///
-/// Stage 2 (this stage) ships only the one field that already has a
-/// consumer: `storedPath`, so a duplicated image row has something
-/// non-default to compare against its source. Later stages extend this
-/// class rather than replace it: Stage 4 adds the derived
-/// `resolvedPath` / `width` / `height` / `missing` / `format` fields (the
-/// path model), Stage 5 adds the pixel-cache handle. Bend #4 (the plan)
-/// notes the limit this shape has, in advance: a faithful one-slot-per-kind
-/// payload for kind #2 and #3, a tagged union by kind #6 — not paid for now.
+/// Stage 2 shipped only the one field that already had a consumer:
+/// `storedPath`, so a duplicated image row had something non-default to
+/// compare against its source. Stage 3 (this stage) adds the two remaining
+/// v1 channels the item's provider bundle exposes — `colorspace` and
+/// `useAlpha` (`layer_params.d`'s `kindParams`, §Q2 of the plan). Both are
+/// inert today (nothing reads them; §Q2 records why) and both are AUTHORED
+/// fields, never computed — the distinction that keeps them out of the
+/// "derived value in a writable channel" trap `format` would have been.
+/// Later stages extend this class rather than replace it: Stage 4 adds the
+/// derived `resolvedPath` / `width` / `height` / `missing` / `format`
+/// fields (the path model; NONE of those become provider params — they are
+/// recomputed from the file, never authored), Stage 5 adds the pixel-cache
+/// handle. Bend #4 (the plan) notes the limit this shape has, in advance: a
+/// faithful one-slot-per-kind payload for kind #2 and #3, a tagged union by
+/// kind #6 — not paid for now.
 ///
 /// A hazard for Stage 5 specifically, flagged here in advance because this
 /// is the class the pixel-cache handle lands on: `io.image_decode
@@ -460,9 +467,19 @@ string tokenOf(ItemKind k) pure nothrow @nogc @safe { return kindInfo(k).token; 
 /// cautionary note above makes for the alias itself: ship the count, then
 /// the thing that needs it, not the other way around.
 final class ImageData {
-    string storedPath;   ///< the authored path, as it will be serialised
-                          ///< (Stage 4 owns the store-relative / resolve-
-                          ///< absolute rules; this stage only holds the field)
+    string storedPath;             ///< the authored path, as it will be
+                                    ///< serialised (Stage 4 owns the store-
+                                    ///< relative / resolve-absolute rules;
+                                    ///< this stage only holds the field)
+    // Task 0616 Stage 3 — the two inert v1 channels (plan §Q2). Measured
+    // defaults: `colorspace` `'(default)'`, `useAlpha` `1`. `colorspace` is
+    // narrowed to a closed three-tag ENUM rather than the measured open
+    // `string` (plan divergence 4) — the only reversal cost, if the tag set
+    // ever needs to be open-ended, is one `Param.enum_` → `Param.string_`
+    // swap in `layer_params.d`; this field's TYPE stays `string` either way.
+    string colorspace = "(default)"; ///< closed tag set: see kindParams' Enum
+                                      ///< declaration in layer_params.d
+    bool   useAlpha   = true;        ///< inert; round-tripped, nothing reads it
 }
 
 /// A single document layer. Deliberately a CLASS, for two reasons:

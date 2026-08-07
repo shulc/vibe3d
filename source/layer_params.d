@@ -1,7 +1,7 @@
 module layer_params;
 
 import params   : Param, ParamProvider;
-import document : Layer, kindInfo, ItemXform, MIN_ITEM_SCALE_MAG,
+import document : Layer, kindInfo, ItemKind, ItemXform, MIN_ITEM_SCALE_MAG,
                   MAX_ITEM_SCALE_MAG, sanitizeItemXform;
 import seltype  : SelType;
 
@@ -89,39 +89,61 @@ final class LayerPropsProvider : ParamProvider {
     // ParamProvider
     // -----------------------------------------------------------------------
 
-    /// The layer params: `name` + `visible`, plus — for a kind that
-    /// `hasXform` (task 0616 Stage 2) — the 12 transform-component Floats.
-    /// Pointers alias the live `Layer` fields, so a write through a param's
-    /// pointer mutates the layer (and vice-versa).
+    /// The layer params: `name` + `visible` (every kind), the 12
+    /// transform-component Floats for a kind that `hasXform` (task 0616
+    /// Stage 2), and — task 0616 Stage 3 — a per-kind CHANNEL bundle.
+    /// Pointers alias the live `Layer` fields (or, for the image bundle,
+    /// the live `ImageData` fields), so a write through a param's pointer
+    /// mutates the backing storage and vice-versa.
     ///
-    /// The transform bundle is gated on `kindInfo(layer_.kind).hasXform`
-    /// (task 0616 Stage 2, resolving the forcing `static assert` at
-    /// `document.d`'s `kItemKindTable`): an item with no transform
-    /// capability — the measured image item has none — must not expose
-    /// `pos.*`/`rot.*`/`scl.*`/`pivot.*` params it has no field backing that
-    /// is ever meaningfully read. This is also what makes `layer.attr <img>
-    /// pos.x 5` fail as an UNKNOWN attribute rather than silently succeed:
-    /// `LayerAttr` resolves attr names against exactly this list
+    /// The transform bundle stays gated on the `hasXform` CAPABILITY
+    /// (`kindInfo(layer_.kind).hasXform`, task 0616 Stage 2, resolving the
+    /// forcing `static assert` at `document.d`'s `kItemKindTable`) — real
+    /// factoring, on the evidence that TWO kinds (`mesh` and `empty`) sit on
+    /// the true side for the capability's own stated reason, not because
+    /// they happen to agree today. This is also what makes `layer.attr
+    /// <img> pos.x 5` fail as an UNKNOWN attribute rather than silently
+    /// succeed: `LayerAttr` resolves attr names against exactly this list
     /// (`commands/layer/commands.d`), so omitting the params here is both
-    /// the "get" and the "set" gate the forcing assert asked for — there is
-    /// no separate write path to close.
+    /// the "get" and the "set" gate — there is no separate write path to
+    /// close.
     ///
-    /// This is a per-kind BUNDLE gate, not the full per-kind channel split —
-    /// the image kind's own attributes (its path and colour handling) arrive
-    /// in a later stage; see the plan for the list. For now an image-kind
-    /// layer's provider exposes only `name`/`visible`.
+    /// The per-kind bundle below (the image kind's `filename` /
+    /// `colorspace` / `useAlpha`) is deliberately NOT gated on a
+    /// capability bit — the plan's rev-2 conclusion (Bend #3): a bit used
+    /// by exactly one kind is a kind check wearing a hat, and the next
+    /// resource kind this chain adds (the not-yet-written reference-image
+    /// item, task 0612) needs a THIRD bundle that fits neither `hasXform`'s
+    /// nor an image-shaped bit. Dispatch is an explicit `final switch
+    /// (layer_.kind)`, so a future `ItemKind` is a COMPILE ERROR at this
+    /// switch instead of a silently empty bundle — the same forcing-
+    /// function shape as the `static assert`s in `document.d`. Scaling
+    /// limit, written down and not paid for now (the plan's own words):
+    /// fine at three or four kinds; past that, move each kind's bundle
+    /// beside its `ItemKindInfo` row instead of growing this switch
+    /// forever.
     Param[] params() {
-        // NIT (review round 4): appending two array LITERALS (`result ~=
-        // [...]` twice) allocates the literal itself, then again on the
-        // append — up to four allocations a frame for what the module intro
-        // (line 16-ish, "one declaration") calls a per-frame snapshot.
-        // `reserve()` once up front, then append each `Param` individually
-        // (`~=` under a held capacity is amortized in-place, no further
-        // allocation) — one allocation total, matching every other
-        // steady-state-allocation-free path in this codebase.
         immutable bool hasXform = kindInfo(layer_.kind).hasXform;
+        // Task 0616 Stage 3: an Image-kind layer whose payload has not been
+        // constructed yet has nothing for the image bundle's pointers to
+        // bind to. Reachable today only through a still-open test-only hole
+        // (R15 / Stage 10 — no production path creates an image item
+        // without a payload); `params()` is a per-frame query, not the
+        // place to construct one as a side effect, so it falls back to the
+        // base bundle instead of dereferencing a null `ImageData`.
+        auto img = layer_.kind == ItemKind.Image ? layer_.imageOrNull() : null;
+
+        // NIT (review round 4, still honoured): reserve the EXACT capacity
+        // up front, then append each `Param` individually (`~=` under a
+        // held capacity is amortized in-place) — one allocation total for
+        // what the module intro (line 16-ish, "one declaration") calls a
+        // per-frame snapshot, never an array LITERAL append.
+        size_t cap = 2;              // name + visible, every kind
+        if (hasXform)     cap += 12; // pos/rot/scl/pivot
+        if (img !is null) cap += 3;  // filename, colorspace, useAlpha
+
         Param[] result;
-        result.reserve(hasXform ? 14 : 2);
+        result.reserve(cap);
         if (hasXform) {
             // Position (world translation).
             result ~= Param.float_("pos.x",   "Pos X",   &layer_.xform.pos.x,   0.0f);
@@ -153,6 +175,46 @@ final class LayerPropsProvider : ParamProvider {
             result ~= Param.float_("pivot.y", "Pivot Y", &layer_.xform.pivot.y, 0.0f);
             result ~= Param.float_("pivot.z", "Pivot Z", &layer_.xform.pivot.z, 0.0f);
         }
+
+        // Task 0616 Stage 3 — the per-kind channel bundle. `final switch`
+        // (never `if (layer_.kind == ItemKind.Image)`): the compiler forces
+        // every future `ItemKind` to be visited here, the same forcing-
+        // function shape as document.d's capability-table `static assert`s.
+        final switch (layer_.kind) {
+            case ItemKind.Mesh:
+            case ItemKind.Empty:
+                break; // no kind-specific channels of their own yet
+            case ItemKind.Image:
+                if (img !is null) {
+                    // `filename` is READ-ONLY on this generic path (plan
+                    // §Q2 / R14): authoring it here would bypass the
+                    // resolve + decode + refcount hook a later stage's
+                    // dedicated `image.replace` command owns to keep the
+                    // payload in sync with the path — the exact `visible`
+                    // precedent below, one call site over. `injectParamsInto`
+                    // does not itself consult the `readonly()` flag yet (a
+                    // later stage's concern — see the plan's R14); this
+                    // stage adds no channel whose write-time consequences
+                    // matter without that command existing to reach it.
+                    result ~= Param.string_("filename", "Filename",
+                                             &img.storedPath, "").readonly();
+                    // Enum over a CLOSED three-tag set (plan divergence 4) —
+                    // narrower than the measured open `string`; nothing
+                    // reads the value either way (plan §Q2), so the
+                    // narrowing is inert today and reversible to
+                    // `Param.string_` with no format change.
+                    result ~= Param.enum_("colorspace", "Colorspace",
+                                           &img.colorspace,
+                                           [["(default)", "(default)"],
+                                            ["sRGB",       "sRGB"],
+                                            ["linear",     "Linear"]],
+                                           "(default)");
+                    result ~= Param.bool_("useAlpha", "Use Alpha",
+                                           &img.useAlpha, true);
+                }
+                break;
+        }
+
         // Bespoke layer props.
         //
         // `name` rides the GENERIC registry end-to-end: it is a plain String
@@ -634,4 +696,129 @@ unittest {
     foreach (p; placeholderParams) placeholderSet[p.name] = true;
     assert(("pos.x" in placeholderSet) !is null,
         "pos.x must be PRESENT for Empty — a kind==Mesh check would wrongly omit it");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0616 Stage 3: the image kind's own channel bundle —
+// `filename` (readonly) / `colorspace` (Enum) / `useAlpha` (Bool) — bound
+// to a CONSTRUCTED `ImageData`. The unittest above already pins the
+// null-payload fallback (an image-kind layer with no `ImageData` yet reads
+// exactly 2 params, same as before this stage); this one pins the bundle
+// itself once a payload exists, and every assertion below was verified by a
+// deliberate, restored break: dropping `.readonly()` flips the readonly
+// assertion; swapping `Param.enum_` for `Param.string_` on `colorspace`
+// removes the `enumValues` entries and makes the bogus-tag inject NOT
+// throw; deleting the `if (img !is null)` guard's outer condition (i.e.
+// always emitting the bundle) makes the null-payload case in the unittest
+// above dereference a null `ImageData` instead of reading length 2.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.json  : JSONValue;
+    import params    : paramToJson, injectParamsInto;
+    import document  : ImageData;
+
+    auto img = new Layer;
+    img.name = "logo";
+    img.kind = ItemKind.Image;
+    img.imageRef() = new ImageData();
+    img.imageRef().storedPath = "assets/logo.png";
+
+    auto prov = new LayerPropsProvider(img);
+    auto ps = prov.params();
+
+    // Discriminating (count + set): a payload-bearing image layer gets
+    // EXACTLY 5 params — filename/colorspace/useAlpha + name/visible — not
+    // the bare 2 the null-payload fixture above reads, and not the 14 a
+    // hasXform-style bundle would give a kind that has none.
+    assert(ps.length == 5,
+        "payload-bearing image layer exposes filename+colorspace+useAlpha+name+visible");
+
+    Param* byName(Param[] arr, string n) {
+        foreach (ref p; arr) if (p.name == n) return &p;
+        return null;
+    }
+    auto filenameP   = byName(ps, "filename");
+    auto colorspaceP = byName(ps, "colorspace");
+    auto useAlphaP   = byName(ps, "useAlpha");
+    assert(filenameP   !is null, "filename channel present");
+    assert(colorspaceP !is null, "colorspace channel present");
+    assert(useAlphaP   !is null, "useAlpha channel present");
+    assert(byName(ps, "pos.x") is null, "image kind still has no transform channels");
+    assert(byName(ps, "format") is null,
+        "format is NEVER a channel — it is derived, not authored (plan §Q2)");
+
+    // ---- kinds, exactly (discriminates a String/Bool mix-up) ----------------
+    assert(filenameP.kind   == Param.Kind.String, "filename is a String param");
+    assert(colorspaceP.kind == Param.Kind.Enum,   "colorspace is an Enum param");
+    assert(useAlphaP.kind   == Param.Kind.Bool,   "useAlpha is a Bool param");
+
+    // ---- filename is read-only; the other two channels are NOT --------------
+    // Discriminating: a wrong implementation that forgets `.readonly()`
+    // reads `filenameP.readonly_ == false` here.
+    assert(filenameP.readonly_,    "filename must be marked readonly");
+    assert(!colorspaceP.readonly_, "colorspace is a writable channel");
+    assert(!useAlphaP.readonly_,   "useAlpha is a writable channel");
+
+    // ---- colorspace's tag set is the closed three-tag set, exactly ----------
+    assert(colorspaceP.enumValues.length == 3,
+        "colorspace has exactly the three declared tags");
+    bool[string] tags;
+    foreach (e; colorspaceP.enumValues) tags[e[0]] = true;
+    assert(("(default)" in tags) !is null);
+    assert(("sRGB"       in tags) !is null);
+    assert(("linear"     in tags) !is null);
+
+    // ---- defaults match the measured reference values (plan §Q2) ------------
+    assert(colorspaceP.default_.s == "(default)", "colorspace default is '(default)'");
+    assert(useAlphaP.default_.b   == true,        "useAlpha default is true");
+
+    // ---- pointers alias the live ImageData (both directions) ----------------
+    img.imageRef().storedPath = "changed/path.png";
+    auto ps2 = prov.params();
+    assert(paramToJson(*byName(ps2, "filename")).str == "changed/path.png",
+        "filename param reads the live storedPath");
+    *byName(ps2, "colorspace").sptr = "linear";
+    assert(img.imageRef().colorspace == "linear",
+        "writing through the colorspace param pointer mutates the payload");
+    *byName(ps2, "useAlpha").bptr = false;
+    assert(img.imageRef().useAlpha == false,
+        "writing through the useAlpha param pointer mutates the payload");
+
+    // ---- generic round-trip: paramToJson -> injectParamsInto ----------------
+    // Non-default values throughout (mirrors the plan's T8d reasoning: a
+    // default-valued fixture cannot tell a codec that drops the block from
+    // one that reads it correctly).
+    img.imageRef().colorspace = "sRGB";
+    img.imageRef().useAlpha  = false;
+    auto snap = prov.params();
+    JSONValue pj = JSONValue(cast(JSONValue[string]) null);
+    foreach (ref p; snap) if (!p.readonly_) pj[p.name] = paramToJson(p);
+
+    img.imageRef().colorspace = "(default)";
+    img.imageRef().useAlpha  = true;
+    auto sink = prov.params();
+    injectParamsInto(sink, pj);
+    assert(img.imageRef().colorspace == "sRGB",
+        "colorspace round-trips a NON-DEFAULT value through paramToJson/injectParamsInto");
+    assert(img.imageRef().useAlpha == false,
+        "useAlpha round-trips a NON-DEFAULT value through paramToJson/injectParamsInto");
+
+    // ---- Enum kind rejects an unknown tag; discriminates vs. a String impl --
+    // If `colorspace` were declared `Param.string_` (the measured reference
+    // type — plan divergence 4), this inject would NOT throw: it is
+    // specifically `Param.Kind.Enum`'s validation in `injectParamsInto`
+    // (params.d) that rejects an unrecognised tag.
+    auto sink2 = prov.params();
+    JSONValue bad = JSONValue(cast(JSONValue[string]) null);
+    bad["colorspace"] = JSONValue("not-a-real-tag");
+    bool threw = false;
+    try { injectParamsInto(sink2, bad); }
+    catch (Exception) { threw = true; }
+    assert(threw, "an unknown colorspace tag must be rejected by injectParamsInto");
+
+    // ---- filename is exposed for READING even though it is not authored
+    //      through this generic path (the `visible` precedent) -------------
+    auto ps3 = prov.params();
+    assert(paramToJson(*byName(ps3, "filename")).str == "changed/path.png",
+        "filename remains READABLE through the generic param path");
 }
