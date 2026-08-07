@@ -810,50 +810,108 @@ final class CommandHistory {
         size_t n = end - start;
         if (n == 0) return;                   // no matching tail — no-op.
 
-        // Downcast the gathered commands to MeshVertexEdit. Any non-vertex-edit
-        // in the run (not expected — runs are vertex edits) aborts the merge as
-        // a safe no-op rather than guessing a cross-type union.
+        // Arm 1 — MeshVertexEdit (the original, untouched path). Downcast the
+        // gathered commands; any non-vertex-edit anywhere in the run makes
+        // this arm decline (`allVertexEdits = false`) rather than aborting
+        // the whole function — task 0614 Phase 4 adds a second arm below that
+        // gets a turn when this one declines. Behaviour for an all-
+        // MeshVertexEdit run is byte-identical to before that second arm
+        // existed.
         import commands.mesh.vertex_edit : MeshVertexEdit;
-        MeshVertexEdit[] gathered;
-        gathered.reserve(n);
-        foreach (i; start .. end) {
-            auto mve = cast(MeshVertexEdit) undoStack[i].cmd;
-            if (mve is null) return;          // unexpected type — leave as-is.
-            gathered ~= mve;
+        {
+            MeshVertexEdit[] gathered;
+            gathered.reserve(n);
+            bool allVertexEdits = true;
+            foreach (i; start .. end) {
+                auto mve = cast(MeshVertexEdit) undoStack[i].cmd;
+                if (mve is null) { allVertexEdits = false; break; }
+                gathered ~= mve;
+            }
+            if (allVertexEdits) {
+                // Single-entry run: nothing to merge, but the run HAS ended,
+                // so the lone gesture entry IS the surviving consolidated
+                // form. Strip its InSession tag + runId in place so it
+                // presents as an ordinary surviving entry: /api/history no
+                // longer reports a closed run's entry as inSession, and a
+                // per-gesture-count consumer (test / panel) sees exactly the
+                // OPEN run's tagged steps. Navigation is unaffected (the
+                // entry's command + before/after are untouched).
+                if (n == 1) {
+                    undoStack[start].flags &=
+                        ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+                    undoStack[start].runId  = 0;
+                    return;
+                }
+
+                auto merged = MeshVertexEdit.mergeRun(gathered);
+
+                // Replace the gathered entries with ONE entry at the first's
+                // position. The merged entry is an ordinary (non-in-session)
+                // surviving entry — the run has ended. Preserve the first
+                // entry's label/timestamp shape via a fresh entry built from
+                // the merged command.
+                auto first = undoStack[start];
+                HistoryEntry mergedEntry = {
+                    label:       merged.label,
+                    args:        serializeParams(merged.params()),
+                    commandName: merged.name,
+                    cmd:         merged,
+                    timestampMs: first.timestampMs,
+                    flags:       historyFlagsFor(merged),
+                    runId:       0,
+                };
+
+                undoStack = undoStack[0 .. start] ~ mergedEntry ~ undoStack[end .. $];
+                return;
+            }
         }
 
-        // Single-entry run: nothing to merge, but the run HAS ended, so the
-        // lone gesture entry IS the surviving consolidated form. Strip its
-        // InSession tag + runId in place so it presents as an ordinary
-        // surviving entry: /api/history no longer reports a closed run's
-        // entry as inSession, and a per-gesture-count consumer (test / panel)
-        // sees exactly the OPEN run's tagged steps. Navigation is unaffected
-        // (the entry's command + before/after are untouched).
-        if (n == 1) {
-            undoStack[start].flags &=
-                ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
-            undoStack[start].runId  = 0;
-            return;
+        // Arm 2 — RunMergeable (task 0614 Phase 4, doc/item_mode_transform_
+        // plan.md §Undo). Tried only after Arm 1 declined. `first` is the
+        // run's EARLIEST gathered entry — it owns the run-start `before` and
+        // is asked to absorb the rest (`later`, oldest -> newest) via
+        // `mergeRunTail`. A `null` return (declined merge) or a first entry
+        // that is not `RunMergeable` (e.g. box's `BoxLiveEditCommand` ladder,
+        // which is neither `MeshVertexEdit` nor `RunMergeable`) falls all the
+        // way through to the unchanged final no-op below — R14: box's
+        // multi-entry run is left on the stack exactly as Arm 1 always left
+        // it, untouched, InSession flags and all.
+        //
+        // Deliberately NOT hoisting the n==1 tag-strip above the type
+        // dispatch: that would change behaviour for the box ladder (out of
+        // scope), which must keep a lone non-mergeable entry tagged
+        // InSession forever, matching the pre-Phase-4 code path exactly.
+        auto rmFirst = cast(RunMergeable) undoStack[start].cmd;
+        if (rmFirst !is null) {
+            if (n == 1) {
+                undoStack[start].flags &=
+                    ~cast(uint)(HistoryFlags.InSession | HistoryFlags.Refire);
+                undoStack[start].runId  = 0;
+                return;
+            }
+
+            Command[] later;
+            later.reserve(n - 1);
+            foreach (i; start + 1 .. end) later ~= undoStack[i].cmd;
+
+            auto merged = rmFirst.mergeRunTail(later);
+            if (merged is null) return;   // declined — leave the stack untouched.
+
+            auto first = undoStack[start];
+            HistoryEntry mergedEntry = {
+                label:       merged.label,
+                args:        serializeParams(merged.params()),
+                commandName: merged.name,
+                cmd:         merged,
+                timestampMs: first.timestampMs,
+                flags:       historyFlagsFor(merged),
+                runId:       0,
+            };
+
+            undoStack = undoStack[0 .. start] ~ mergedEntry ~ undoStack[end .. $];
         }
-
-        auto merged = MeshVertexEdit.mergeRun(gathered);
-
-        // Replace the gathered entries with ONE entry at the first's position.
-        // The merged entry is an ordinary (non-in-session) surviving entry —
-        // the run has ended. Preserve the first entry's label/timestamp shape
-        // via a fresh entry built from the merged command.
-        auto first = undoStack[start];
-        HistoryEntry mergedEntry = {
-            label:       merged.label,
-            args:        serializeParams(merged.params()),
-            commandName: merged.name,
-            cmd:         merged,
-            timestampMs: first.timestampMs,
-            flags:       historyFlagsFor(merged),
-            runId:       0,
-        };
-
-        undoStack = undoStack[0 .. start] ~ mergedEntry ~ undoStack[end .. $];
+        // else: neither arm recognizes the run's type — leave the stack as-is
+        // (exactly Arm 1's pre-Phase-4 "unexpected type — leave as-is" no-op).
     }
 
     /// Replace the current matching in-session tail with `cmd` as a normal
@@ -1614,6 +1672,174 @@ unittest { // consolidate does NOT bump undoEpoch
 
     h.consolidate(run);
     assert(h.undoEpoch == 0, "consolidate must not bump epoch");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0614 Phase 4 — consolidate()'s RunMergeable arm (doc/
+// item_mode_transform_plan.md §Undo). Three unittests, mirroring the plan's
+// "Tests that fail today" list verbatim:
+//   1. a RunMergeable run of 2 merges to 1 (FAILS before this phase's change
+//      — the MeshVertexEdit arm used to abort on the first non-vertex-edit
+//      downcast, above the n==1 tag-strip, stranding BOTH entries tagged).
+//   2. `replaceInSessionTailWith` CANNOT merge repeated calls in one run —
+//      pins the mechanism the first draft of this task wrongly relied on, so
+//      nobody re-proposes it (command_history.d's own tail-scan requires an
+//      InSession bit `replaceInSessionTailWith` never sets — see its body).
+//   3. a non-RunMergeable, non-MeshVertexEdit run (box's shape) is left
+//      completely untouched by BOTH arms — R14's byte-identical guarantee.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    // Minimal RunMergeable double. `mergeRunTail` keeps THIS entry's `before`
+    // and adopts the LAST later command's `after` — the same law
+    // MeshVertexEdit.mergeRun / LayerXformEdit.mergeRunTail use.
+    private final class _RunMergeableTestCmd : Command, RunMergeable {
+        import mesh    : Mesh;
+        import view    : View;
+        import editmode : EditMode;
+        private Mesh _mesh;
+        private View _view = new View(0, 0, 1, 1);
+        int before;
+        int after;
+        this(int before_, int after_) {
+            super(&_mesh, _view, EditMode.Vertices);
+            before = before_; after = after_;
+        }
+        override string   name()  const { return "test.runMergeable"; }
+        override string   label() const { return "RunMergeableTest"; }
+        override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+        override bool apply()  { return true; }
+        override bool revert() { return true; }
+
+        Command mergeRunTail(Command[] later) {
+            if (later.length == 0) return null;
+            auto last = cast(_RunMergeableTestCmd) later[$ - 1];
+            if (last is null) return null;
+            return new _RunMergeableTestCmd(this.before, last.after);
+        }
+    }
+
+    // A command that is neither MeshVertexEdit nor RunMergeable — stands in
+    // for box's BoxLiveEditCommand ladder shape (R14).
+    private final class _PlainTestCmd : Command {
+        import mesh    : Mesh;
+        import view    : View;
+        import editmode : EditMode;
+        private Mesh _mesh;
+        private View _view = new View(0, 0, 1, 1);
+        this() { super(&_mesh, _view, EditMode.Vertices); }
+        override string   name()  const { return "test.plain"; }
+        override string   label() const { return "PlainTest"; }
+        override CmdFlags cmdFlags() const { return CmdFlags.Model; }
+        override bool apply()  { return true; }
+        override bool revert() { return true; }
+    }
+}
+
+unittest { // RunMergeable arm: a run of 2 collapses to ONE surviving entry.
+    auto h = new CommandHistory();
+    auto run = h.nextRun();
+
+    auto c1 = new _RunMergeableTestCmd(0, 1);
+    h.recordInSession(c1, run);
+    auto c2 = new _RunMergeableTestCmd(1, 2);
+    h.recordInSession(c2, run);
+    assert(h.undoStack.length == 2, "setup: two tagged in-session entries");
+
+    h.consolidate(run);
+
+    assert(h.undoStack.length == 1,
+           "RunMergeable run of 2 must consolidate to ONE surviving entry");
+    auto merged = cast(_RunMergeableTestCmd) h.undoStack[0].cmd;
+    assert(merged !is null, "surviving entry must be the merged RunMergeable command");
+    assert(merged.before == 0, "merged entry must keep the RUN-START before (first-touch-wins)");
+    assert(merged.after  == 2, "merged entry must adopt the LATEST after");
+    assert((h.undoStack[0].flags & HistoryFlags.InSession) == 0,
+           "the surviving entry must NOT be flagged InSession — the run has closed");
+    assert(h.undoStack[0].runId == 0, "the surviving entry's runId must be cleared");
+}
+
+unittest { // Pin: replaceInSessionTailWith cannot merge repeated calls in one run.
+    // command_history.d:920's replaceInSessionTailWith stamps its output
+    // entry with `runId: 0` and NO HistoryFlags.InSession bit (see its body
+    // below), so its OWN tail scan — which requires exactly that bit AND a
+    // matching runId — never finds a prior call's output on a second call in
+    // the SAME run. Two calls therefore APPEND rather than merge: 2 entries,
+    // not 1. This is why Phase 4 does NOT reuse this primitive for the item
+    // undo path (doc/item_mode_transform_plan.md, "Do NOT reuse
+    // replaceInSessionTailWith either").
+    auto h = new CommandHistory();
+    auto run = h.nextRun();
+
+    auto c1 = new _RunMergeableTestCmd(0, 1);
+    h.recordInSession(c1, run);
+
+    auto c2 = new _RunMergeableTestCmd(1, 2);
+    h.replaceInSessionTailWith(run, c2);
+    auto c3 = new _RunMergeableTestCmd(2, 3);
+    h.replaceInSessionTailWith(run, c3);
+
+    assert(h.undoStack.length == 2,
+           "replaceInSessionTailWith cannot merge repeated calls within one run "
+         ~ "(command_history.d:920-934) — this pins the rejected mechanism");
+}
+
+unittest { // R14: a non-RunMergeable, non-MeshVertexEdit run is left byte-identical.
+    auto h = new CommandHistory();
+    auto run = h.nextRun();
+
+    auto c1 = new _PlainTestCmd();
+    h.recordInSession(c1, run);
+    auto c2 = new _PlainTestCmd();
+    h.recordInSession(c2, run);
+    assert(h.undoStack.length == 2, "setup: two tagged in-session entries");
+
+    h.consolidate(run);
+
+    assert(h.undoStack.length == 2,
+           "neither arm recognizes this type — the stack must be left untouched (R14)");
+    assert((h.undoStack[0].flags & HistoryFlags.InSession) != 0,
+           "R14: consolidate must NOT strip InSession from an unrecognized-type run, "
+         ~ "even though it strips it for a lone RunMergeable/MeshVertexEdit entry");
+    assert((h.undoStack[1].flags & HistoryFlags.InSession) != 0);
+}
+
+unittest { // NIT (0614 review) — a run MIXING a RunMergeable command with a
+    // foreign type: BOTH arms decline, so the run is left byte-identical,
+    // every entry still tagged InSession — FOREVER (nothing ever revisits a
+    // closed run to retry consolidation). Not hypothetical: an in-session
+    // vertex edit (MeshVertexEdit) and an in-session item edit
+    // (LayerXformEdit, itself RunMergeable) CAN land in the SAME tagged run
+    // if a user switches SelType mid-activation without crossing a run
+    // boundary — item-select does not drop the active tool (see
+    // test_item_gizmo_frame.d's own "the armed tool is NOT dropped"
+    // fixtures). Reproduced here with the existing test doubles rather than
+    // the real command types: the failure shape is generic to "first entry
+    // is RunMergeable, a later entry is a different concrete type" and
+    // needs neither the real item nor the real vertex machinery.
+    //
+    // KNOWN LIMITATION, pinned rather than fixed here (out of scope for this
+    // pass) — flagged so a future change to either arm's decline condition
+    // is noticed instead of silently altering this behaviour.
+    auto h = new CommandHistory();
+    auto run = h.nextRun();
+
+    auto c1 = new _RunMergeableTestCmd(0, 1);   // RunMergeable
+    h.recordInSession(c1, run);
+    auto c2 = new _PlainTestCmd();               // neither MeshVertexEdit nor
+                                                   // the same RunMergeable type
+    h.recordInSession(c2, run);
+    assert(h.undoStack.length == 2, "setup: two tagged in-session entries");
+
+    h.consolidate(run);
+
+    assert(h.undoStack.length == 2,
+           "a mixed-type run must be left untouched by both arms — Arm 1 "
+         ~ "declines (not all MeshVertexEdit), Arm 2 declines (mergeRunTail "
+         ~ "cannot cast the foreign later entry)");
+    assert((h.undoStack[0].flags & HistoryFlags.InSession) != 0
+        && (h.undoStack[1].flags & HistoryFlags.InSession) != 0,
+           "both entries stay tagged InSession — the known limitation this "
+         ~ "test pins");
 }
 
 unittest { // invalidateRedo (task 0429): kills redo; refused under Suspend/lockout

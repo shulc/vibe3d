@@ -301,11 +301,13 @@ void registerTools(EditorApp app) {
     reg.toolFactories["move"]   = () {
         import tools.transform.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
-                                        () => currentSelType(selTypeOrder));
+                                        () => currentSelType(selTypeOrder),
+                                        () => document().primary);
         t.flagT = true; t.flagR = false; t.flagS = false;
         t.handleFamily = 0;
         t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
+        t.setItemUndoFactory(layerXformEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         if (aiExplore.enabled && aiLogWriter.enabled)
             t.setAiExploreSilentHover(true);
@@ -314,11 +316,13 @@ void registerTools(EditorApp app) {
     reg.toolFactories["rotate"] = () {
         import tools.transform.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
-                                        () => currentSelType(selTypeOrder));
+                                        () => currentSelType(selTypeOrder),
+                                        () => document().primary);
         t.flagT = false; t.flagR = true; t.flagS = false;
         t.handleFamily = 1;
         t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
+        t.setItemUndoFactory(layerXformEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         if (aiExplore.enabled && aiLogWriter.enabled)
             t.setAiExploreSilentHover(true);
@@ -327,11 +331,13 @@ void registerTools(EditorApp app) {
     reg.toolFactories["scale"]  = () {
         import tools.transform.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
-                                        () => currentSelType(selTypeOrder));
+                                        () => currentSelType(selTypeOrder),
+                                        () => document().primary);
         t.flagT = false; t.flagR = false; t.flagS = true;
         t.handleFamily = 2;
         t.handlePresentation = "full";
         t.setUndoBindings(history, vxEditFactory);
+        t.setItemUndoFactory(layerXformEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         if (aiExplore.enabled && aiLogWriter.enabled)
             t.setAiExploreSilentHover(true);
@@ -340,8 +346,10 @@ void registerTools(EditorApp app) {
     reg.toolFactories["xfrm.transform"] = () {
         import tools.transform.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
-                                        () => currentSelType(selTypeOrder));
+                                        () => currentSelType(selTypeOrder),
+                                        () => document().primary);
         t.setUndoBindings(history, vxEditFactory);
+        t.setItemUndoFactory(layerXformEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         if (aiExplore.enabled && aiLogWriter.enabled)
             t.setAiExploreSilentHover(true);

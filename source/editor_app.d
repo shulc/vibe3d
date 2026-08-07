@@ -189,6 +189,7 @@ import commands.mesh.linear_align;
 import commands.mesh.polygon_align;
 import commands.mesh.radial_align;
 import commands.mesh.vertex_edit;
+import commands.layer.xform_edit : LayerXformEdit;
 import commands.scene.reset;
 import commands.scene.load_mesh;
 import commands.history.undo : HistoryUndo;
@@ -657,6 +658,10 @@ struct EditorApp {
     // ---- (в) by-value: the 13 typed MeshSessionEdit/MeshVertexEdit
     //      factories (app.d ~2785-2832), each assigned exactly once ----
     MeshVertexEdit  delegate() vxEditFactory;
+    // Task 0614 Phase 4 — item-transform gizmo-drag undo factory, the
+    // LayerXformEdit analogue of vxEditFactory. Injected into every
+    // XfrmTransformTool instance (registration.d) via setItemUndoFactory().
+    LayerXformEdit  delegate() layerXformEditFactory;
     MeshSessionEdit delegate() bevelEditFactory;
     MeshSessionEdit delegate() loopSliceEditFactory;
     MeshSessionEdit delegate() reduceEditFactory;

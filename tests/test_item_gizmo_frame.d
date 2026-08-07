@@ -203,19 +203,30 @@ unittest { // tool.set move + item-current: /api/tool/state pivot == pos+pivot.
 
 // -----------------------------------------------------------------------
 // 5. Blocker 1 (0614 review): the GIZMO pivot and the APPLIED pivot must
-//    be the SAME point. Before this diff's fix, `buildLocalVts` (the
-//    apply path — transform.d, reached by every applyHeadless / panel-
-//    replay call site: xfrm_transform.d's applyTRS/recaptureLivePipePackets
-//    /applyHeadless/captureBaselinePacketsNoSession, and scale.d's /
-//    rotate.d's own applyHeadless + property-panel replay) left
-//    `SubjectPacket.selType` at its Vertex default, while app.d's
+//    be the SAME point. Before that fix, `buildLocalVts` (the apply path —
+//    transform.d, reached by every applyHeadless / panel-replay call site)
+//    left `SubjectPacket.selType` at its Vertex default, while app.d's
 //    `buildToolVts` (the RENDER path — what test 4 above reads) correctly
 //    read the live selection type. So the gizmo was drawn at the item's
-//    world pivot while a drag/apply rotated the geometry about the
-//    geometry centroid instead — two different points for the SAME
-//    gesture. Item-select does not drop the active tool (app.d's
-//    switchToItemType), so a tool armed BEFORE the item-select stays armed
-//    through it — this reproduces that exact ordering.
+//    world pivot while a drag/apply rotated the MESH GEOMETRY about the
+//    geometry centroid instead. Item-select does not drop the active tool
+//    (app.d's switchToItemType), so a tool armed BEFORE the item-select
+//    stays armed through it — this reproduces that exact ordering.
+//
+//    UPDATED for Phase 3 (task 0614): the ORIGINAL version of this test
+//    (pre-Phase-3) proved the point via a rigid-rotation vertex-distance
+//    invariant, because at that time `applyHeadless` in item mode fell
+//    through to the ordinary VERTEX apply path (Phase 3 did not exist yet
+//    — there was no item-xform write to check). Phase 3 replaced that: a
+//    correctly-routed item apply now writes `layer.xform.rot` and leaves
+//    `mesh.vertices` BYTE IDENTICAL (the task's own non-negotiable
+//    requirement) — so the vertex-distance check is now VACUOUS (an
+//    untouched mesh trivially preserves every distance to every point).
+//    The discriminating rewrite: if Blocker 1 regressed (subj.selType read
+//    Vertex instead of Item inside applyHeadless), the code would fall
+//    through to the VERTEX branch instead of the item one — moving
+//    mesh.vertices and leaving layer.xform.rot untouched. This test now
+//    asserts the OPPOSITE of that failure mode directly.
 // -----------------------------------------------------------------------
 
 unittest { // tool.set rotate armed, THEN item-select: gizmo pivot == applied pivot.
@@ -233,45 +244,52 @@ unittest { // tool.set rotate armed, THEN item-select: gizmo pivot == applied pi
     assert(vecEq(f.center, itemPivot),
         "sanity: gizmo pivot must read the item's world pivot, got "
         ~ show(f.center));
-    // The rig must actually discriminate the two candidate pivots, or a
-    // wrong apply-path pivot could coincidentally agree with the right one.
+    // NIT (0614 review) — put back the discrimination check the Phase-3
+    // rewrite dropped. Without it, a future rig change that happened to
+    // move the item pivot back onto (0,0,0) would make the "pos stayed
+    // fixed" assertion below vacuous (pos never having moved would then be
+    // trivially true regardless of which pivot the apply path actually
+    // rotated about) with nothing to flag it.
     assert(!vecEq(itemPivot, geomCentroid),
-        "test rig must discriminate the two candidate pivots");
+        "test rig must discriminate the item pivot from the geometry "
+        ~ "centroid — otherwise the pos-untouched assertion below is vacuous");
 
     auto pre = dumpVerts();
+    auto xformBefore = parseJSON(cast(string)get(BASE ~ "/api/layers"))["layers"].array[0]["xform"];
 
     cmd("tool.attr rotate RY 90");
     cmd("tool.doApply");
 
     auto post_ = dumpVerts();
+    auto xformAfter = parseJSON(cast(string)get(BASE ~ "/api/layers"))["layers"].array[0]["xform"];
+
+    // The APPLY PATH must have taken the ITEM branch, not silently fallen
+    // through to the vertex one (the exact Blocker-1 failure mode): the
+    // item's own rot channel changed...
+    auto rb = xformBefore["rot"].array, ra = xformAfter["rot"].array;
+    bool rotChanged = !vecEq(Vec3(cast(float)rb[0].floating, cast(float)rb[1].floating, cast(float)rb[2].floating),
+                              Vec3(cast(float)ra[0].floating, cast(float)ra[1].floating, cast(float)ra[2].floating));
+    assert(rotChanged,
+        "the rotate apply must have written layer.xform.rot — if this is "
+        ~ "false the apply path fell through to the vertex branch instead "
+        ~ "of engaging the item one (Blocker 1 regressed)");
+    // ...and pos stayed fixed (L1's "rotate about the item's own pivot
+    // leaves pos untouched" invariant — only true when the apply pivot IS
+    // the gizmo's own reported pivot).
+    auto pb = xformBefore["pos"].array, pa = xformAfter["pos"].array;
+    assert(vecEq(Vec3(cast(float)pb[0].floating, cast(float)pb[1].floating, cast(float)pb[2].floating),
+                 Vec3(cast(float)pa[0].floating, cast(float)pa[1].floating, cast(float)pa[2].floating)),
+        "rotate about the item's own pivot must leave pos untouched — before="
+        ~ xformBefore["pos"].toString ~ " after=" ~ xformAfter["pos"].toString);
+
+    // ...and, the task's own non-negotiable requirement: mesh.vertices
+    // stayed BYTE IDENTICAL — the exact OPPOSITE of what the pre-Phase-3
+    // version of this test used to prove.
     assert(pre.length == post_.length, "vertex count must not change");
-
-    // The APPLIED pivot must be the gizmo's OWN reported pivot, not the
-    // geometry centroid — checked via the rigid-rotation invariant
-    // "distance to the TRUE pivot is preserved under a rotation about it",
-    // which needs no assumption about the exact matrix/sign convention RY
-    // uses (any pure rotation about P preserves |X - P|).
-    double errAtItemPivot = 0, errAtGeomCentroid = 0;
-    foreach (i; 0 .. pre.length) {
-        double dPre  = distTo(pre[i],  itemPivot);
-        double dPost = distTo(post_[i], itemPivot);
-        errAtItemPivot += (dPre - dPost) * (dPre - dPost);
-
-        double gPre  = distTo(pre[i],  geomCentroid);
-        double gPost = distTo(post_[i], geomCentroid);
-        errAtGeomCentroid += (gPre - gPost) * (gPre - gPost);
-    }
-    assert(errAtItemPivot < 1e-6,
-        "the applied rotation must preserve distance-to-item-pivot (i.e. it "
-        ~ "must actually rotate about the gizmo's own reported pivot, not "
-        ~ "the geometry centroid) — sum of squared radius drift = "
-        ~ errAtItemPivot.to!string);
-    assert(errAtGeomCentroid > 1e-3,
-        "sanity: the geometry centroid must NOT be distance-preserving here "
-        ~ "— proves the two candidate pivots are numerically distinguishable "
-        ~ "(otherwise a passing errAtItemPivot check alone could be "
-        ~ "coincidence) — sum of squared radius drift = "
-        ~ errAtGeomCentroid.to!string);
+    foreach (i; 0 .. pre.length)
+        assert(pre[i] == post_[i],
+            "item-mode apply must never touch mesh.vertices — vertex "
+            ~ i.to!string ~ " moved from " ~ show(pre[i]) ~ " to " ~ show(post_[i]));
 
     ok(post(BASE ~ "/api/script", "tool.set rotate off"), "tool.set rotate off");
 }

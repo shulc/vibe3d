@@ -3008,6 +3008,14 @@ void main(string[] args) {
     // the same gpu/caches the tool mutates. Tools call beginEdit() at drag
     // start and commitEdit() at drag end; one undo entry per drag.
     auto vxEditFactory = () => new MeshVertexEdit(&mesh(), cameraView, editMode);
+    // Task 0614 Phase 4 — the item-transform gizmo-drag undo factory
+    // (LayerXformEdit's analogue of vxEditFactory above). `mesh`/`cameraView`/
+    // `editMode` are unused by LayerXformEdit's own apply()/revert() (it
+    // writes Layer.xform, not mesh.vertices) but the base Command ctor still
+    // requires them, so the same live context is passed through for
+    // consistency with every other *EditFactory closure here.
+    import commands.layer.xform_edit : LayerXformEdit;
+    auto layerXformEditFactory = () => new LayerXformEdit(&mesh(), cameraView, editMode);
     // The eleven `*EditFactory` closures below all build the same generic
     // MeshSessionEdit (task 0408 / campaign 0407 §A.D1) — a (pre, post)
     // MeshSnapshot-pair record command — differing only in wireName /
@@ -3307,6 +3315,7 @@ void main(string[] args) {
     app.aiLogWriter     = aiLogWriter;
 
     app.vxEditFactory            = vxEditFactory;
+    app.layerXformEditFactory    = layerXformEditFactory;
     app.bevelEditFactory         = bevelEditFactory;
     app.loopSliceEditFactory     = loopSliceEditFactory;
     app.reduceEditFactory        = reduceEditFactory;

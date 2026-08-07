@@ -303,4 +303,25 @@ protected:
 
 private:
     Viewport delegate() resolvedVpProvider;
-};
+}
+
+// ---------------------------------------------------------------------------
+// RunMergeable — task 0614 Phase 4 (doc/item_mode_transform_plan.md, §Undo).
+//
+// A command that can absorb the LATER commands of the same in-session run
+// into itself, so `CommandHistory.consolidate` can collapse the run into ONE
+// surviving entry. `this` is the run's EARLIEST entry (it owns the run-start
+// `before`); `later` are the rest of the run, oldest -> newest. Return the
+// merged command to splice in at the run's position, or `null` to decline —
+// a decline leaves the stack untouched, exactly like an unrecognized command
+// type falling through `consolidate`'s existing `MeshVertexEdit` arm.
+//
+// `consolidate()` tries this arm only after the `MeshVertexEdit` arm has
+// declined (the gathered run is not all `MeshVertexEdit`), so an ordinary
+// vertex-edit run is byte-identical to before this interface existed.
+// `LayerXformEdit` (commands/layer/xform_edit.d) is the one production
+// implementer today.
+// ---------------------------------------------------------------------------
+interface RunMergeable {
+    Command mergeRunTail(Command[] later);
+}

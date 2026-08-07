@@ -99,6 +99,10 @@ import tools.transform.xform_kernels :
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import change_bus : MeshEditScope;
+// Task 0614 Phase 3/4 — the item-mode apply path + its undo command.
+import document : Layer, ItemXform;
+import tools.transform.item_xform_kernels : applyGestureToItems;
+import commands.layer.xform_edit : LayerXformEdit, LayerXformTarget;
 import perf_probe : g_perf, Cat, g_frames, Phase;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.stage    : TaskCode;
@@ -570,9 +574,66 @@ public:
     // baseline, so the rotation is needed only during the synchronous per-frame
     // applyTRS call — a transient parameter is sufficient.
 
+    // Task 0614 Phase 3 — the item-mode write target. Mirrors the
+    // `primarySrc_` pattern `ActionCenterStage`/`AxisStage` already use
+    // (actcenter.d:301, axis.d): a live delegate, never cached across calls,
+    // so a layer-select mid-session is picked up on the next apply. Null in
+    // tests / call sites that never engage item mode (edge_extend.d's
+    // embedded wrapper — its own apply path never reaches `applyTRS` here,
+    // same reasoning as `selTypeSrc_`'s doc comment on `TransformTool`).
+    private Layer delegate() primarySrc_;
+
+    // Cached subject type — refreshed once per input event in
+    // `syncInputViewport` (the SAME point that caches `cachedVp`), from the
+    // SAME `SubjectPacket` `selTypeSrc_` publishes into the toolpipe. A
+    // per-field cache here is safe (unlike the process-wide-singleton hazard
+    // Blocker 2 fixed on the pipe STAGES): this is a per-INSTANCE field on
+    // the tool itself, refreshed at the top of every mouse handler this
+    // instance receives, never read across a different tool's evaluate().
+    private SelType cachedSubjType_ = SelType.Vertex;
+    private bool itemSubjectActive() const { return cachedSubjType_ == SelType.Item; }
+
+    // Task 0614 Phase 4 — the factory for the item-transform undo command,
+    // mirroring `vertexEditFactory` (TransformTool). Injected by app.d
+    // alongside `setUndoBindings`; null in tests that never engage item mode
+    // (then the item commit branch skips recording, matching
+    // `vertexEditFactory is null`'s existing "skip undo recording" contract).
+    alias LayerXformEditFactory = LayerXformEdit delegate();
+    private LayerXformEditFactory layerXformEditFactory_;
+    public void setItemUndoFactory(LayerXformEditFactory factory) {
+        layerXformEditFactory_ = factory;
+    }
+
+    // Item-mode gesture-undo snapshot — the analogue of TransformTool's
+    // `editIdx`/`editBefore`/`editCapturing`, but keyed on `ItemXform`
+    // instead of vertex positions. Deliberately SEPARATE fields (not a
+    // reuse of the vertex ones): the item branch bypasses the
+    // `vertexEditFactory` requirement entirely (transform.d's `beginEdit()`/
+    // `commitEdit()` base bodies are never reached in item mode — see the
+    // overrides below), so there is nothing to alias into.
+    private ItemXform[] itemEditBefore_;
+    private Layer[]     itemEditTargets_;
+    private bool        itemEditCapturing_ = false;
+
+    // Task 0614 Phase 4 — `editIsOpen()` (transform.d) reads only the base
+    // class's vertex-only `editCapturing` flag, which the item branch never
+    // sets (it bypasses `super.beginEdit()` entirely). Every chokepoint that
+    // gates a commit on "is a session open" — `deactivate()`'s tool-drop
+    // commit, `hasUncommittedEdit()`, `hasLiveEval()` — calls `editIsOpen()`
+    // virtually, so overriding it here (rather than touching each call site)
+    // makes an open ITEM session visible everywhere an open VERTEX session
+    // already is. An open item session with no open vertex session (the
+    // common single-bank-preset case) would otherwise be silently dropped at
+    // tool-drop — never committed, never undoable.
+    protected override bool editIsOpen() const {
+        return itemEditCapturing_ || super.editIsOpen();
+    }
+
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
-         SelType delegate() selTypeSrc = null) {
+         SelType delegate() selTypeSrc = null,
+         Layer delegate() primarySrc = null) {
         super(meshSrc, gpu, editMode, selTypeSrc);
+        this.primarySrc_ = primarySrc;
         // Blocker 1 (0614 review): the sub-tools each have their OWN
         // buildLocalVts call sites (applyHeadless / property-panel replay —
         // scale.d:320,1217,1311, rotate.d:224,1226,1316), so the same live
@@ -683,6 +744,15 @@ public:
         // (task 0202) Idle tool should not pin the fold-source scratch buffer
         // between drags; the next drag's first frame re-allocates cold.
         foldSrc_.length                   = 0;
+        // Task 0614 Phase 4 — defensive: `deactivate()`'s tool-drop commit
+        // (gated on the `editIsOpen()` override above) already clears these
+        // via `commitItemEdit()`'s own scope(exit) before this ever runs in
+        // practice; cleared again here so a fresh activate() never inherits
+        // a stale open-session flag from any path that reaches
+        // resetTransientState() without going through deactivate() first.
+        itemEditCapturing_       = false;
+        itemEditTargets_.length  = 0;
+        itemEditBefore_.length   = 0;
     }
 
     override void deactivate() {
@@ -999,6 +1069,20 @@ public:
         // a FOREIGN cell's projection and must not clobber it. See
         // Tool.draw's doc comment (source/tool.d) for the full invariant.
         if (!visualOnly) cachedVp = vp;
+
+        // Task 0614 Phase 3 — refresh the cached subject type from THIS
+        // draw's own vts (the render-path packet app.d's buildToolVts
+        // publishes), so a render-only frame (no mouse event in between,
+        // e.g. after a layer-panel click) still sees the current subject
+        // for the centre-box visibility decision below. Mirrors
+        // `syncInputViewport`'s cache but for the draw entry point, which
+        // has no SDL event to gate a call to that method on. Gated on
+        // `!visualOnly` for the SAME reason `cachedVp` is, right above: a
+        // foreign-cell visual replica must not clobber the owner cell's
+        // cached state.
+        if (!visualOnly) {
+            if (auto sp = vts.get!SubjectPacket()) cachedSubjType_ = sp.selType;
+        }
 
         // Live falloff packet: frozen snapshot during a gizmo drag, live
         // (so the overlay/handles follow a dragged endpoint) otherwise.
@@ -1475,8 +1559,18 @@ public:
         // invisible → ToolHandles.test() skips it (so a central click falls
         // through to tryPickElement) AND BoxHandler.draw early-outs (so it
         // isn't shown). Axis arrows / plane handles stay live.
+        //
+        // Task 0614 Phase 3 / Phase 0c finding: item mode hides the SAME
+        // handle for a different, shipped-config-grounded reason — the
+        // item Move preset sets `cenHandle 0` ("Show center handle for
+        // translation"), where the bare Move preset and the item Rotate/
+        // Scale presets do not. Side benefit: this also makes
+        // `moveCenterBoxDragActive()` trivially false in item mode, so the
+        // freeze's `frame.valid && !moveCenterBoxDragActive()` seed
+        // condition simplifies rather than gaining a case.
         if (flagT)
-            moveSub.handler.centerBox.setVisible(!elementPickActive());
+            moveSub.handler.centerBox.setVisible(
+                !elementPickActive() && !itemSubjectActive());
 
         // Uniform scale mode: propagate the draw-suppression flag to the
         // handler so only the centre disc is rendered (arrows/circles are
@@ -1907,6 +2001,11 @@ noBankConsumed:
             moveSub.cachedVp   = sp.viewport;
             rotateSub.cachedVp = sp.viewport;
             scaleSub.cachedVp  = sp.viewport;
+            // Task 0614 Phase 3 — cache the subject type from the SAME packet
+            // `cachedVp` reads, at the SAME per-event refresh point, so
+            // `itemSubjectActive()` is a cheap field read instead of an
+            // extra `selTypeSrc_()` call at every use site.
+            cachedSubjType_    = sp.selType;
         }
     }
 
@@ -1964,7 +2063,13 @@ noBankConsumed:
             // Alt stays excluded (Ctrl+Alt+LMB = camera zoom, dispatched to the
             // view before the tool); Shift stays excluded (selection add).
             bool pickAllowed = (mods & (KMOD_ALT | KMOD_SHIFT)) == 0;   // Ctrl OK
-            if (pickAllowed && hitPart < 0) picked = tryPickElement(e.x, e.y);
+            // Task 0614 Phase 3 — tryPickElement is the element-falloff
+            // centroid pick (relocates the gizmo onto a clicked vertex/edge/
+            // face); falloff is not consumed in item mode (§Q2), so skip it
+            // here rather than let it relocate the gizmo off a mesh element
+            // while an item is the actual subject.
+            if (pickAllowed && hitPart < 0 && !itemSubjectActive())
+                picked = tryPickElement(e.x, e.y);
         }
 
         // Falloff endpoint handles claim the click first (Linear/Radial),
@@ -2220,6 +2325,10 @@ noBankConsumed:
         bool hadRun = runBaselineValid;
         runBaselineValid = false;
         runFrameValid    = false;
+        // Task 0614 Phase 3 — R15 lifecycle parity: the item baseline shares
+        // the vertex baseline's boundary exactly (same gate, same call
+        // site), so the next item run re-baselines + re-freezes together.
+        itemBaselineValid = false;
         // P-F Phase 3a (MAJOR-4) — a run boundary re-freezes the baseline from the
         // current mesh on the next beginRunGesture, at which point the GPU buffer
         // (uploaded at the prior gesture's mouse-up) reflects that baseline. So the
@@ -2358,6 +2467,20 @@ noBankConsumed:
                 dragBaseline[i] = mesh.vertices[i];
             resetGestureAttrs();
             runBaselineValid = true;
+
+            // Task 0614 Phase 3 — item-mode run baseline, captured on the
+            // SAME predicate as `dragBaseline` above: a same-bank repeat
+            // holds the run baseline (itemBaselineValid stays true, no
+            // re-capture below); a fresh run OR a rotate cross-axis re-bake
+            // re-captures. Refreshed from `primarySrc_()` on every rebake so
+            // a fresh run after a mid-session layer-select picks up the new
+            // primary. Phase 3 ships 0 or 1 element (primary-only); Phase 6
+            // widens this to the whole selected set.
+            itemTargets = (primarySrc_ !is null && primarySrc_() !is null)
+                        ? [primarySrc_()] : [];
+            itemDragBaseline.length = itemTargets.length;
+            foreach (i, t; itemTargets) itemDragBaseline[i] = t.xform;
+            itemBaselineValid = itemTargets.length > 0;
         }
         // else: reuse the held baseline; held banks stay. ALL THREE banks are now
         // run-absolute on the frozen (no-rebake) path, so NONE reset its bank attr
@@ -2580,6 +2703,13 @@ noBankConsumed:
     // flip (e.g. if falloff turned on between frames), violating the
     // "drag == numeric" contract the parity test pins.
     private bool wholeMeshGpuBypassAllowed(ClusterPivots cp) const {
+        // Task 0614 Phase 3 — item mode never takes the GPU bypass: the
+        // bypass composes `matMul4(itemMatrix, tt.gpuMatrix)`
+        // (ui/panels.d:~1928) on the assumption that `itemMatrix` is
+        // whatever the LAYER already holds; in item mode the item matrix
+        // itself is what the gesture is writing, so a non-identity
+        // `gpuMatrix` on top would double-apply it.
+        if (itemSubjectActive()) return false;
         return !dragFalloff.enabled
             && !dragSymmetry.enabled
             && !cp.active
@@ -2689,6 +2819,15 @@ noBankConsumed:
         // symmetry/fast-path); the geometry is applied through `applyTRS`. The
         // session deliberately stays on `rotateSub` (MS-5 decision) — keeping
         // it there avoids the cross-instance commit problem entirely.
+        //
+        // Task 0614 Phase 4 EXCEPTION: in item mode `rotateSub`'s own vertex
+        // session is a harmless no-op (applyItemTRS never touches
+        // mesh.vertices, so `rotateSub.buildEditCmd` always finds nothing
+        // changed and records nothing) — the WRAPPER is the only instance
+        // holding `itemTargets` and the item undo factory, so item recording
+        // routes through the WRAPPER's own beginEdit()/commitEdit() instead,
+        // mirroring how the Move bank already does it.
+        if (itemSubjectActive()) beginEdit();
 
         // Run-scoped baseline + held-attr discipline (apply-path Phase 2/3b): a
         // cross-bank rotate (e.g. after a held move) reuses the run baseline +
@@ -2804,6 +2943,12 @@ noBankConsumed:
     // only the GEOMETRY drag state; geometry is applied through `applyTRS`.
     void beginScaleDragSession(ref VectorStack vts) {
         beginDragSessionPrologue(vts);
+
+        // Task 0614 Phase 4 — item mode routes recording through the
+        // WRAPPER's own beginEdit()/commitEdit() (see beginRotateDragSession's
+        // matching comment for the full reasoning); `scaleSub`'s own vertex
+        // session stays a harmless no-op in item mode.
+        if (itemSubjectActive()) beginEdit();
 
         // Run-scoped baseline + held-attr discipline (apply-path Phase 2): a
         // cross-bank scale reuses the run baseline + resets ONLY run.s,
@@ -3522,6 +3667,11 @@ noBankConsumed:
         // does not re-fire this gesture's stale snapshot.
         rotateSub.wrapperFieldApplyHook  = null;
         rotateSub.wrapperFieldRevertHook = null;
+        // Task 0614 Phase 4 — item mode: `rotateSub.commitGesture()` above is
+        // a harmless vertex no-op here (see beginRotateDragSession); this is
+        // the call that actually records the item gesture, mirroring the
+        // Move bank's own commitEdit("Move") at its gesture-end.
+        if (itemSubjectActive()) commitEdit("Rotate");
 
         // In-session falloff re-grade — staleness stamp + window reset
         // (OBJ-1 / OBJ-3), mirroring the Move commit above. Without these an
@@ -3630,6 +3780,10 @@ noBankConsumed:
         // does not re-fire this gesture's stale snapshot.
         scaleSub.wrapperFieldApplyHook  = null;
         scaleSub.wrapperFieldRevertHook = null;
+        // Task 0614 Phase 4 — item mode: `scaleSub.commitGesture()` above is
+        // a harmless vertex no-op here (see beginScaleDragSession); this is
+        // the call that actually records the item gesture.
+        if (itemSubjectActive()) commitEdit("Scale");
 
         // In-session falloff re-grade — staleness stamp + window reset
         // (OBJ-1 / OBJ-3), mirroring the Move + Rotate commits above. Same
@@ -3686,6 +3840,77 @@ noBankConsumed:
             runFrameF      = f0Z;
             runFrameValid  = true;
         }
+    }
+
+    // Task 0614 Phase 3 — item-mode analogue of `restoreBaseline()` (the
+    // closure inside `applyTRS`, `:3799-3801`). Restores every item target's
+    // `ItemXform` from `itemDragBaseline` (the RUN-START snapshot) before
+    // each apply, so `applyGestureToItems` always folds the run-absolute
+    // gesture against the same baseline `restoreBaseline()` gives the vertex
+    // path — required for the SAME reason: a live drag re-evaluates every
+    // motion frame, and without restoring first each frame would compose on
+    // top of the PREVIOUS frame's write instead of the run start.
+    //
+    // Headless fallback: `applyHeadless()` (`:4413-...`) never calls
+    // `beginRunGesture` — it hands `applyTRS` a FRESH `mesh.vertices.dup`
+    // baseline on every call instead of reusing a run-scoped one (there is
+    // no gizmo mouse-down to open a run). The item path's baseline has no
+    // equivalent "passed in fresh" seam (`applyGestureToItems` reads
+    // `itemDragBaseline`, a FIELD, not a parameter), so when no drag session
+    // is open (`itemBaselineValid` false) this captures a fresh one-shot
+    // baseline from the LIVE `primarySrc_()` state right here — mirroring
+    // `mesh.vertices.dup`'s freshness for the vertex path. Without this a
+    // bare `tool.attr <bank> ... ; tool.doApply` in item mode with no
+    // preceding drag silently no-ops (itemTargets stays empty).
+    private void restoreItemBaseline() {
+        if (!itemBaselineValid) {
+            // NIT (0614 review) — assign into the existing length-one slot
+            // instead of a fresh `[primarySrc_()]` literal; this runs once
+            // per RUN (not per frame), but the allocation is free to avoid.
+            if (primarySrc_ !is null && primarySrc_() !is null) {
+                if (itemTargets.length != 1) itemTargets.length = 1;
+                itemTargets[0] = primarySrc_();
+            } else {
+                itemTargets.length = 0;
+            }
+            itemDragBaseline.length = itemTargets.length;
+            foreach (i, t; itemTargets) itemDragBaseline[i] = t.xform;
+            itemBaselineValid = itemTargets.length > 0;
+            return;   // freshly captured from the live state == already "restored"
+        }
+        if (itemTargets.length != itemDragBaseline.length) return;
+        foreach (i, t; itemTargets) t.xform = itemDragBaseline[i];
+    }
+
+    // Task 0614 Phase 3 — the item-mode consumer of `item_xform_kernels`.
+    // Called ONLY from `applyTRS`'s item branch, AFTER `restoreItemBaseline`
+    // and `freezeRunFrameIfNeeded` have both already run this call — so the
+    // frozen input frame (`frame`/`runFrame`) and the frozen centre
+    // (`runFrameOrigin`, R15) are both valid by the time this reads them.
+    //
+    // Reads the SAME run-absolute TRS truth the vertex fold reads
+    // (`run.t`/`run.r`/`run.s` — MATRIX-AS-TRUTH, `:391-392`) rather than a
+    // parallel per-bank state, so an item drag and a vertex drag driven by
+    // the identical gesture scalars land on the identical inputs (the basis
+    // of `test_item_drag_law_parity.d`). `run.t` is already expressed LOCAL
+    // to the frozen frame (the same value the Move drain accumulates,
+    // `:2868`), matching the kernel's `tLocal` parameter directly — no
+    // extra decomposition needed.
+    private bool applyItemTRS() {
+        if (itemTargets.length == 0) return false;
+        if (itemTargets.length != itemDragBaseline.length) return false;
+
+        // The FROZEN input frame — `frame.valid ? frame.{right,up,axis} :
+        // runFrame{R,U,F}` — is the SAME expression `beginMoveDragSession`
+        // pushes as the sub-tools' `inputBasis` (`:2661-2662`) and the SAME
+        // one the vertex fold's translate term reads (`tX/tY/tZ`,
+        // `:5232-5234`). NEVER `currentBasis` — REVIEW-1's whole point.
+        Vec3 iX = frame.valid ? frame.right : runFrameR;
+        Vec3 iY = frame.valid ? frame.up    : runFrameU;
+        Vec3 iZ = frame.valid ? frame.axis  : runFrameF;
+
+        return applyGestureToItems(itemTargets, itemDragBaseline, runFrameOrigin,
+                                    iX, iY, iZ, run.t, run.r, run.s);
     }
 
     // Single geometry-apply entry point — the "evaluate" of this tool.
@@ -3763,6 +3988,31 @@ noBankConsumed:
         Vec3 pivot = queryActionCenter(vts);
         auto cp    = queryClusterPivots(vts);
         auto ap    = queryClusterAxes(vts);
+
+        // Task 0614 Phase 3 — item branch. Short-circuits BEFORE
+        // buildVertexCacheIfNeeded() (Q2 hazard: mesh.selectedVertexIndices*
+        // returns ALL vertices on an empty selection, so reaching the vertex
+        // path in item mode would translate the whole layer's mesh). Reads
+        // `subj.selType` FRESH from THIS call's own `buildLocalVts` above —
+        // not the instance-cached `cachedSubjType_` (which only `syncInput-
+        // Viewport`'s mouse-handler call sites refresh) — so a headless/
+        // panel-replay `applyTRS` call with no preceding mouse event still
+        // resolves the LIVE subject correctly.
+        //
+        // Goes THROUGH the freeze (REVIEW-1 / Phase 2.5), not around it:
+        // restoreItemBaseline() (the item analogue of restoreBaseline())
+        // FIRST, then currentBasis(), then freezeRunFrameIfNeeded() — the
+        // SAME three-step prologue the vertex path below runs, just against
+        // the item baseline instead of the vertex one. An early return above
+        // the freeze would strand runFrameValid false for the whole item run
+        // (§(b) of the plan's boxed warning).
+        if (subj.selType == SelType.Item) {
+            restoreItemBaseline();
+            Vec3 ibX, ibY, ibZ;
+            currentBasis(ibX, ibY, ibZ, vts);
+            freezeRunFrameIfNeeded(pivot, ibX, ibY, ibZ);
+            return applyItemTRS();
+        }
 
         buildVertexCacheIfNeeded();
         if (vertexProcessCount == 0) return false;
@@ -4508,6 +4758,54 @@ noBankConsumed:
     // already true) must NOT re-snapshot — that would capture mid-edit values
     // and defeat the restore. super.beginEdit() is itself idempotent.
     protected override void beginEdit() {
+        // Task 0614 Phase 4 — item branch. Bypasses the base class entirely
+        // (transform.d's `if (history is null || vertexEditFactory is null)
+        // return;` guard would otherwise refuse to open — the item path
+        // needs `history` but never `vertexEditFactory`, per the plan's "the
+        // merge, not the tool, owns run-start state"). Snapshots THIS
+        // GESTURE's opening ItemXform per target — a SEPARATE snapshot from
+        // `itemDragBaseline` (the RUN-scoped fold baseline `beginRunGesture`
+        // captures): `itemDragBaseline` feeds `applyGestureToItems`'s fold
+        // math, this feeds the per-gesture undo `before`. Mirrors
+        // editIdx/editBefore/editCapturing's role on the vertex path.
+        // Idempotent — a repeat call before commitEdit() is a no-op, same
+        // contract as the base.
+        if (itemSubjectActive()) {
+            if (itemEditCapturing_) return;
+            // Read `primarySrc_()` directly rather than the `itemTargets`
+            // field: `beginEdit()` runs BEFORE `beginRunGesture()` in every
+            // begin*DragSession (load-bearing for the vertex path's pin/attr
+            // baseline capture below, which this branch does not disturb),
+            // so `itemTargets` — populated only by beginRunGesture's rebake
+            // — is not yet valid at this point in a fresh run. Self-
+            // sufficient capture from the live state sidesteps the ordering
+            // entirely, mirroring restoreItemBaseline()'s headless fallback.
+            // NIT (0614 review) — assign into the existing length-one slot
+            // instead of a fresh `[primarySrc_()]` literal; this runs once
+            // per SESSION (not per frame), but the allocation is free to
+            // avoid.
+            if (primarySrc_ !is null && primarySrc_() !is null) {
+                if (itemEditTargets_.length != 1) itemEditTargets_.length = 1;
+                itemEditTargets_[0] = primarySrc_();
+            } else {
+                itemEditTargets_.length = 0;
+            }
+            itemEditBefore_.length = itemEditTargets_.length;
+            foreach (i, t; itemEditTargets_) itemEditBefore_[i] = t.xform;
+            itemEditCapturing_ = true;
+            // S2 (0614 review) — snapshot the panel display mirrors at
+            // session-open too, mirroring the vertex branch below
+            // (attrBaseTranslate/Rotate/Scale). Without this,
+            // cancelUncommittedEdit()'s item arm has nothing correct to
+            // restore RX/RY/RZ/SX/SY/SZ to, and would leave the panel
+            // showing the cancelled gesture's stale values even though the
+            // item's own xform correctly reverted.
+            attrBaseTranslate = run.t;
+            attrBaseRotate    = headlessRotate;
+            attrBaseScale     = run.s;
+            return;
+        }
+
         bool wasOpen = editIsOpen();
         super.beginEdit();
         if (!wasOpen && editIsOpen()) {
@@ -4568,6 +4866,24 @@ noBankConsumed:
     // e.g. a relocate-boundary commit on an already-closed session: a no-op cmd)
     // fall back to the current pin for BOTH endpoints, making the hooks inert.
     protected override void commitEdit(string label) {
+        // Task 0614 Phase 4 — item branch. Builds a LayerXformEdit from the
+        // gesture-open snapshot (itemEditBefore_) versus the CURRENT
+        // (post-drag) xform, mirroring buildEditCmd's `if (!changed) return
+        // null` so a no-op gesture records nothing, and routes the result
+        // through the SAME `recordCommit` chokepoint every vertex
+        // commitEdit override uses (recordViaInSession ? recordInSession :
+        // record — command.d:365-370).
+        if (itemSubjectActive()) {
+            if (suppressCommit) {
+                itemEditCapturing_      = false;
+                itemEditTargets_.length = 0;
+                itemEditBefore_.length  = 0;
+                return;
+            }
+            commitItemEdit();
+            return;
+        }
+
         if (suppressCommit) { cancelEdit(); return; }
 
         // Base commit discards the frozen pin snapshot, then builds + records the
@@ -4673,6 +4989,42 @@ noBankConsumed:
                 if (haveSy) if (auto sy = activeSymmetryStage()) sy.restoreConfigFromPacket(sySnap);
             },
         );
+        recordCommit(cmd);
+    }
+
+    // Task 0614 Phase 4 — item-mode commit body, called from `commitEdit`'s
+    // item branch (Move-bank gestures) AND from the Rotate/Scale gesture-end
+    // sites (§Undo — every bank routes item recording through this ONE
+    // wrapper method, since the wrapper is the only instance holding
+    // `itemTargets`/the layer-xform undo factory). Builds ONE
+    // `LayerXformEdit` covering every target, comparing the gesture-open
+    // snapshot against the CURRENT xform; records nothing when nothing
+    // changed (mirrors `buildEditCmd`'s no-op guard) or when undo plumbing
+    // isn't wired (tests that never call `setItemUndoFactory`).
+    private void commitItemEdit() {
+        if (!itemEditCapturing_) return;
+        scope(exit) {
+            itemEditCapturing_      = false;
+            itemEditTargets_.length = 0;
+            itemEditBefore_.length  = 0;
+        }
+        if (history is null || layerXformEditFactory_ is null) return;
+        if (itemEditTargets_.length == 0) return;
+        if (itemEditTargets_.length != itemEditBefore_.length) return;
+
+        LayerXformTarget[] payload;
+        payload.reserve(itemEditTargets_.length);
+        bool changed = false;
+        foreach (i, t; itemEditTargets_) {
+            ItemXform before = itemEditBefore_[i];
+            ItemXform after  = t.xform;
+            if (before != after) changed = true;
+            payload ~= LayerXformTarget(t, before, after);
+        }
+        if (!changed) return;
+
+        auto cmd = layerXformEditFactory_();
+        cmd.setEdit(payload);
         recordCommit(cmd);
     }
 
@@ -4790,8 +5142,31 @@ noBankConsumed:
                                                      || headlessRotate.z != 0);
         bool hasS = flagS && (run.s.x != 1 || run.s.y != 1
                                                     || run.s.z != 1);
-        if (hasR) rotateSub.applyRotatePanelValue(headlessRotate);
-        if (hasS) scaleSub.applyScalePanelValue(run.s);
+        // BLOCKER (0614 review) — rotateSub.applyRotatePanelValue /
+        // scaleSub.applyScalePanelValue open the SUB-TOOL's OWN vertex-edit
+        // session (their inherited TransformTool.beginEdit()), never the
+        // WRAPPER's item session. applyTRS's item branch (reached underneath,
+        // via applyRotateAbsoluteFromRun/applyScaleAbsoluteFromRun) correctly
+        // writes layer.xform either way — but in item mode NOTHING then opens
+        // itemEditCapturing_/itemEditTargets_/itemEditBefore_ for a panel-
+        // only R/S edit, so the drop-boundary commit (editIsOpen()-gated in
+        // deactivate()/update()) never fires commitItemEdit(): the item
+        // moves, but no undo entry is ever recorded (measured: a panel
+        // rotate/scale in item mode is untouched by the next Ctrl+Z). Mirror
+        // beginRotateDragSession/beginScaleDragSession's own
+        // `if (itemSubjectActive()) beginEdit();` — the WRAPPER's own
+        // beginEdit(), idempotent once open, so the eventual boundary commit
+        // has an item session to commit. Translate doesn't need this: its
+        // arm (replayTranslateFromBaseline -> captureDragBaselineIfStale)
+        // already funnels through the wrapper's own beginEdit().
+        if (hasR) {
+            if (itemSubjectActive()) beginEdit();
+            rotateSub.applyRotatePanelValue(headlessRotate);
+        }
+        if (hasS) {
+            if (itemSubjectActive()) beginEdit();
+            scaleSub.applyScalePanelValue(run.s);
+        }
     }
 
     // ----- Test-only headless session opener (re-eval plan D5, Phase 3) -----
@@ -4863,8 +5238,24 @@ noBankConsumed:
         // reachable directly; bail when there is nothing open on EITHER the
         // wrapper or a sub-tool. (subToolEditOpen() folds in the R/S sessions
         // MS-5 keeps off the wrapper.)
-        bool wrapperOpen = editIsOpen();
-        if (!wrapperOpen && !subToolEditOpen()) return;
+        //
+        // S2 (0614 review) — split the WRAPPER'S OWN "open" state into its two
+        // DISJOINT sub-sessions instead of reading the combined editIsOpen()
+        // override (`itemEditCapturing_ || super.editIsOpen()`). The combined
+        // read is right for "is there anything to cancel at all" but WRONG as
+        // a gate for the vertex-restore body below: with only an item session
+        // open, editIsOpen() still reads true, so the vertex arm used to run
+        // anyway — restoring an EMPTY editIndices()/editBaseline() (beginEdit()'s
+        // item branch bypasses super.beginEdit() entirely, so those base-class
+        // fields were never populated for this session), then unconditionally
+        // calling mesh.commitChange(Position) + gpu.upload on a mesh that was
+        // never touched. That phantom mutationVersion bump made the NEXT
+        // update() see a "mutation" and commit the still-applied item edit
+        // instead of the cancel having reverted it — the first Ctrl+Z did
+        // nothing, the second one (now undoing that phantom commit) did.
+        bool itemOpen   = itemEditCapturing_;
+        bool vertexOpen = super.editIsOpen();
+        if (!itemOpen && !vertexOpen && !subToolEditOpen()) return;
 
         // Cancel the open R/S sub-tool sessions FIRST, in a deterministic order
         // (R then S), so one in-session Ctrl+Z reverts the WHOLE open run — the
@@ -4885,13 +5276,37 @@ noBankConsumed:
         suppressCommit = true;
         scope(exit) suppressCommit = false;
 
-        // Wrapper-side restore (Move / T session). Only runs when the WRAPPER
-        // session is open — a pure R/S panel-edit cancel (no Move session) skips
-        // it; the sub-tool cancels above already reverted the geometry + GPU and
-        // restored the R/S attr mirrors. The action-center pin snapshot is frozen
-        // by beginEdit() ONLY on the wrapper session's open, so its restore lives
+        // Item arm (S2, 0614 review). Restores every captured target's
+        // PRE-edit xform — the same beginEdit()-open snapshot commitItemEdit()
+        // would otherwise have diffed against — then clears the trio so
+        // editIsOpen() reports closed afterward, and restores the panel
+        // display mirrors captured alongside it. Deliberately does NOT touch
+        // mesh.vertices / mesh.commitChange / gpu.upload: nothing on the mesh
+        // ever changed for an item-mode session (applyTRS's item branch never
+        // reaches mesh.vertices), so running that code here would be both
+        // wrong (nothing to restore) and actively harmful (the phantom
+        // version bump described above).
+        if (itemOpen) {
+            foreach (i, t; itemEditTargets_) {
+                if (i < itemEditBefore_.length) t.xform = itemEditBefore_[i];
+            }
+            run.t          = attrBaseTranslate;
+            headlessRotate = attrBaseRotate;
+            run.s          = attrBaseScale;
+            itemEditCapturing_      = false;
+            itemEditTargets_.length = 0;
+            itemEditBefore_.length  = 0;
+        }
+
+        // Wrapper-side restore (Move / T session). Only runs when the WRAPPER's
+        // OWN vertex session is open — a pure item-mode cancel (no vertex
+        // session — see the item arm above) skips it entirely; a pure R/S
+        // panel-edit cancel (no Move session) also skips it; the sub-tool
+        // cancels above already reverted the geometry + GPU and restored the
+        // R/S attr mirrors. The action-center pin snapshot is frozen by
+        // beginEdit() ONLY on the wrapper session's open, so its restore lives
         // here too.
-        if (wrapperOpen) {
+        if (vertexOpen) {
             // Restore the moving set to its pre-edit positions. editIndices() /
             // editBaseline() are the per-selected-vertex snapshot beginEdit()
             // captured; restoring them is exactly what an undo of this session
@@ -5754,6 +6169,20 @@ private:
         root["dragging"]   = JSONValue(activeDrag !is null);
         Vec3 pivot = moveGizmoCenter();
         root["pivot"] = JSONValue([JSONValue(pivot.x), JSONValue(pivot.y), JSONValue(pivot.z)]);
+        // Task 0614 Phase 3 — expose which subject the apply path is
+        // targeting, so a test can assert the item branch engaged rather
+        // than inferring it indirectly from a byte-identical vertex diff.
+        root["subject"] = JSONValue(cachedSubjType_ == SelType.Item ? "item" : "component");
+        // Echo the frozen run frame (R11/Phase 2.5), so a test can prove an
+        // item run actually froze one rather than silently falling back to a
+        // live re-derived basis every frame.
+        auto runFrameObj = JSONValue.emptyObject;
+        runFrameObj["valid"]  = JSONValue(runFrameValid);
+        runFrameObj["origin"] = JSONValue([JSONValue(runFrameOrigin.x), JSONValue(runFrameOrigin.y), JSONValue(runFrameOrigin.z)]);
+        runFrameObj["right"]  = JSONValue([JSONValue(runFrameR.x), JSONValue(runFrameR.y), JSONValue(runFrameR.z)]);
+        runFrameObj["up"]     = JSONValue([JSONValue(runFrameU.x), JSONValue(runFrameU.y), JSONValue(runFrameU.z)]);
+        runFrameObj["fwd"]    = JSONValue([JSONValue(runFrameF.x), JSONValue(runFrameF.y), JSONValue(runFrameF.z)]);
+        root["runFrame"] = runFrameObj;
         return root;
     }
 
@@ -6165,6 +6594,25 @@ private:
     // change vertex count, so a same-length-but-stale baseline must be
     // distinguished from a fresh-run one, which length alone cannot do.
     bool runBaselineValid = false;
+
+    // Task 0614 Phase 3 — the item-mode analogue of `dragBaseline`/
+    // `runBaselineValid`. `itemDragBaseline[i]` is `itemTargets[i]`'s
+    // `ItemXform` at the START of the current geometry run; `applyTRS`'s item
+    // branch restores from it before every apply (mirrors
+    // `restoreBaseline()`), and `applyGestureToItems` folds the run-absolute
+    // gesture against it (mirrors the "Evaluate-from-original" shape the
+    // vertex fold uses). Captured inside `beginRunGesture`'s `if (rebake)`
+    // block — the SAME predicate `dragBaseline` uses, so a same-bank repeat
+    // holds the run baseline and a cross-axis rotate bakes the held rotation
+    // in, exactly as the vertex path does. Cleared in `resetRun()` alongside
+    // `runBaselineValid`/`runFrameValid` (R15 lifecycle parity).
+    //
+    // Phase 3 ships primary-only: `itemTargets` is always a 0- or 1-element
+    // slice holding `primarySrc_()`. Phase 6 widens both arrays to the whole
+    // selected set — the kernel signature is already N-ready.
+    private Layer[]     itemTargets;
+    private ItemXform[] itemDragBaseline;
+    private bool        itemBaselineValid = false;
 
     // P-F (run-absolute panel) — the FROZEN per-run gizmo frame. Lifetime is
     // IDENTICAL to the geometry-run baseline (`runBaselineValid`): captured ONCE

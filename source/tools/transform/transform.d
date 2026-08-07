@@ -6,6 +6,7 @@ import editmode;
 import seltype : SelType;
 import math : Vec3, Viewport;
 import change_bus : MeshEditScope;
+import command : Command;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
 import snap : SnapResult;
@@ -362,7 +363,14 @@ protected:
     // In-session: stamp the entry with the history's current run id; plain:
     // ordinary append. Keeps the rotate/scale per-gesture accumulator hooks
     // (set on `cmd` before this call) intact — only the terminal record changes.
-    protected void recordCommit(MeshVertexEdit cmd) {
+    //
+    // Widened from `MeshVertexEdit` to the base `Command` (task 0614 Phase 4)
+    // so the item-mode commit branch (XfrmTransformTool's commitEdit override)
+    // can route a `LayerXformEdit` through this SAME chokepoint instead of a
+    // parallel copy — purely a signature widening, every existing
+    // `MeshVertexEdit`-typed call site upcasts implicitly, byte-identical
+    // behaviour for the vertex path.
+    protected void recordCommit(Command cmd) {
         if (recordViaInSession)
             history.recordInSession(cmd, history.currentRunId);
         else
