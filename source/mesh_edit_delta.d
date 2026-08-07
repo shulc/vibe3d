@@ -685,6 +685,14 @@ private void patchSelection(ref Mesh m, MeshOpEntry.SelDomain dom,
 }
 
 private void setSelectBit(ref uint word, uint on) {
+    // §3.1 Select ∧ Hide = ∅ (doc/hide_geometry_plan.md, code review task
+    // 0613 — S2) — this sparse patch is the delta-backed undo/redo replay's
+    // own Select writer (delete / remove / edge extrude / edge extend), and
+    // it does not go through any of mesh.d's guarded selectX /
+    // setXSelectedFrom primitives. Refuse the same way they do — silently —
+    // or a redo/undo round-trip could resurrect a Select bit on an element
+    // that is (still) hidden at this index.
+    if (on != 0 && (word & Mesh.Marks.Hide) != 0) return;
     if (on) word |=  Mesh.Marks.Select;
     else    word &= ~Mesh.Marks.Select;
 }
@@ -727,6 +735,22 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     m.faceMaterial.length         = m.faces.length;
     m.facePart.length             = m.faces.length;
     m.resizeAllMeshMaps();
+    // Hide (code review, task 0613 — S4): refresh the derived vertex/edge
+    // planes NOW, right after the length-resize above and BEFORE the edge
+    // selection restore below. `rebuildEdges()` gave `edges`/`edgeIndexMap` a
+    // brand-new index space, but `edgeMarks.length = m.edges.length` just
+    // above is a raw truncate/grow — it does not move any bits — so until
+    // this call, `edgeMarks[ei]`'s Hide bit is whatever stale word already
+    // sat at position `ei` from BEFORE this transaction, not this edge's
+    // real hidden state. `applyEdgeSelByEnds` (via the guarded `selectEdge`)
+    // would otherwise filter against those stale bits instead of the correct
+    // ones. Face/vertex indices ARE restored positionally by this module's
+    // forward/reverse ops (insert/remove at the recorded index, never an
+    // anonymous compaction), so the faceMarks/vertexMarks Hide bits feeding
+    // this refresh are already correct for their identity — only the derived
+    // edge plane (and any transient vertex/edge desync from the resize
+    // itself) needs the recompute.
+    m.refreshHiddenDerived();
     // Endpoint-keyed edge selection (doc §1.3). Applied here — AFTER rebuildEdges
     // re-derived `edges` + edgeIndexMap — because edge indices are unstable
     // across the rebuild. The vertex-index endpoints are in the space the replay

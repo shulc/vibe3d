@@ -342,7 +342,7 @@ struct Mesh {
     enum Marks : uint {
         Select   = 1 << 0,
         Subpatch = 1 << 1,
-        Hide     = 1 << 2, // reserved, unused
+        Hide     = 1 << 2, // per-element hide (task 0613) — see refreshHiddenDerived()
         Lock     = 1 << 3, // reserved, unused
     }
     uint[]    vertexMarks;
@@ -395,6 +395,29 @@ struct Mesh {
     bool isFaceSubpatch(size_t i) const {
         return i < faceMarks.length && (faceMarks[i] & Marks.Subpatch) != 0;
     }
+    // --- Hide (Marks.Hide, task 0613) --------------------------------------
+    // The polygon plane is the ONLY stored authority (§1.2 of
+    // doc/hide_geometry_plan.md, measured — not the "conservative" guess the
+    // plan's own pre-capture fallback made, which the capture refuted).
+    // Vertex and edge are DERIVED and cached in place by
+    // refreshHiddenDerived(): a vertex is hidden iff it has at least one
+    // incident face and EVERY one of them is hidden (a loose vertex — no
+    // incident face — keeps its own settable bit, untouched by the
+    // derivation); an edge is hidden iff AT LEAST ONE endpoint vertex is
+    // hidden (derived from VERTICES, not polygons — measured: two adjacent
+    // hidden polygons do NOT hide the edge they share, because both
+    // endpoints still touch a third, visible face). These three scalar
+    // readers are non-allocating, same bounds-check-and-return-false
+    // contract as isFaceSubpatch above.
+    bool isVertexHidden(size_t i) const {
+        return i < vertexMarks.length && (vertexMarks[i] & Marks.Hide) != 0;
+    }
+    bool isEdgeHidden(size_t i) const {
+        return i < edgeMarks.length && (edgeMarks[i] & Marks.Hide) != 0;
+    }
+    bool isFaceHidden(size_t i) const {
+        return i < faceMarks.length && (faceMarks[i] & Marks.Hide) != 0;
+    }
     // Non-allocating selection popcounts: scan the Select bit directly over
     // the marks arrays instead of materializing a `bool[]` snapshot to count.
     int countSelectedVertices() const {
@@ -410,6 +433,14 @@ struct Mesh {
     int countSelectedFaces() const {
         int n = 0;
         foreach (m; faceMarks) if (m & Marks.Select) n++;
+        return n;
+    }
+    // Recomputing accessor (never a guard — see refreshHiddenDerived()'s own
+    // early-out, which is self-computed and caches no count). A UI readout
+    // for "N hidden" (R9 — the isolate trap must never be invisible).
+    int countHiddenFaces() const {
+        int n = 0;
+        foreach (m; faceMarks) if (m & Marks.Hide) n++;
         return n;
     }
     int[]     vertexSelectionOrder;  // 1-based counter; 0 = not manually selected
@@ -544,7 +575,15 @@ struct Mesh {
     void commitChange(uint flags) {
         noteChange(flags);
         ++mutationVersion;
-        if (flags & MeshEditScope.Geometry) ++topologyVersion;
+        if (flags & MeshEditScope.Geometry) {
+            ++topologyVersion;
+            // Hide (task 0613, §1.2): the derived vertex/edge planes ride
+            // EVERY geometry-mutating commit through this one funnel, so a
+            // topology edit can never leave them stale. refreshHiddenDerived
+            // owns its own early-out (a three-plane word-OR) and costs
+            // nothing when nothing is hidden anywhere.
+            refreshHiddenDerived();
+        }
     }
 
     // Accumulate a SELECTION change (Stage 5): OR `Marks` into the mesh-class
@@ -2142,6 +2181,22 @@ struct Mesh {
         // Selection bits don't survive index changes; clear and let caller
         // restore as needed.
         clearFaceSelectionResize();
+        // KNOWN GAP (code review, task 0613; doc/hide_geometry_plan.md Stage
+        // 1's own cost centre) — unlike Subpatch (rewritten above, in NEW
+        // index order, from `keptSubpatch`) and unlike Select (blanket-
+        // cleared just above by clearFaceSelectionResize), the Hide bit is
+        // NEITHER carried through this compaction NOR cleared: `faceMarks`
+        // itself is never reordered here, only length-truncated (via
+        // setFaceSubpatchFrom's `faceMarks.length = src.length`), so a
+        // survivor's Hide bit is whatever raw word already sat at its NEW
+        // index before the shrink. When a face is deleted from the interior
+        // of the array (not the last index), the Hide bit does not vanish
+        // with it — it silently MOVES onto whichever face compaction slides
+        // into that slot. Inert today: no production command sets Hide on a
+        // real user mesh yet (Stage 0 only). Stage 1 must give Hide the same
+        // carry-through `setFaceSubpatchFrom` gives Subpatch before any hide
+        // command is safe across delete/remove (see T-S0d's own comment,
+        // below, for the same gap in the delta-replay `finalize()` path).
         // Re-derive edges from the surviving faces. Some edges may be gone
         // entirely (only-touched the deleted faces); others stay. Always
         // do this even if no verts were orphaned — compactUnreferenced
@@ -4294,6 +4349,18 @@ struct Mesh {
         foreach (m; faceMarks) if (m & Marks.Subpatch) return true;
         return false;
     }
+    bool hasAnyHiddenVertices() const {
+        foreach (m; vertexMarks) if (m & Marks.Hide) return true;
+        return false;
+    }
+    bool hasAnyHiddenEdges() const {
+        foreach (m; edgeMarks) if (m & Marks.Hide) return true;
+        return false;
+    }
+    bool hasAnyHiddenFaces() const {
+        foreach (m; faceMarks) if (m & Marks.Hide) return true;
+        return false;
+    }
     /// True when the given edit mode has no active selection. By
     /// convention an empty selection means "operate on the whole mesh",
     /// so commands and tools treat this as "everything is selected"
@@ -4306,6 +4373,90 @@ struct Mesh {
             case EditMode.Edges:    return !hasAnySelectedEdges();
             case EditMode.Polygons: return !hasAnySelectedFaces();
         }
+    }
+    /// L1 funnel (doc/hide_geometry_plan.md §3.2) — the single home the "empty
+    /// selection ⇒ whole mesh" convention collapses into once hidden geometry
+    /// exists. NOT wired into any caller yet (that is Stage 1/3 work); added
+    /// now so the derivation law and the fallback subtraction live in one
+    /// place from the start.
+    ///
+    /// Returns the vertices touched by `mode`'s current selection — vertex
+    /// selection directly, or the vertices touched by the selected edges /
+    /// faces, exactly the modal fan-in every open-coded copy of this idiom
+    /// already performs (smooth/quantize/jitter/magnet/the align family, and
+    /// the three `selectedVertexIndices{Vertices,Edges,Faces}` accessors).
+    /// When `mode` has no selection, returns every VISIBLE vertex instead of
+    /// every vertex. A real selection can never contain a hidden element
+    /// (§3.1's `Select ∧ Hide = ∅` invariant, enforced in the select*
+    /// writers below), so only the fallback branch needs the subtraction.
+    bool[] operandVertexMask(EditMode mode) const {
+        auto vmask = new bool[](vertices.length);
+        bool any = false;
+        // Bound every scan loop by vmask.length (== vertices.length), not by
+        // the marks array's own length (code review, task 0613): the marks
+        // arrays only grow-and-keep, so clearing the mesh (Mesh.clear())
+        // empties vertices/edges/faces without shrinking vertexMarks /
+        // edgeMarks / faceMarks — a loop bound by the (now stale, longer)
+        // marks length would write vmask[i] out of range.
+        final switch (mode) {
+            case EditMode.Vertices:
+                foreach (i; 0 .. vertexMarks.length) {
+                    if (i >= vmask.length) break;
+                    if (isVertexSelected(i)) { vmask[i] = true; any = true; }
+                }
+                break;
+            case EditMode.Edges:
+                foreach (i; 0 .. edgeMarks.length) {
+                    if (i >= edges.length) break;
+                    if (isEdgeSelected(i))
+                        foreach (vi; edges[i]) if (vi < vmask.length) { vmask[vi] = true; any = true; }
+                }
+                break;
+            case EditMode.Polygons:
+                foreach (i; 0 .. faceMarks.length) {
+                    if (i >= faces.length) break;
+                    if (isFaceSelected(i))
+                        foreach (vi; faces[i]) if (vi < vmask.length) { vmask[vi] = true; any = true; }
+                }
+                break;
+        }
+        if (!any)
+            foreach (i; 0 .. vertices.length)
+                if (!isVertexHidden(i)) vmask[i] = true;
+        return vmask;
+    }
+    /// L1 funnel, edge plane: the selected edges when any are selected, else
+    /// every VISIBLE edge. No modal fan-in — the edge-flavoured copies of
+    /// this idiom always key off the edge selection itself.
+    bool[] operandEdgeMask() const {
+        auto emask = new bool[](edges.length);
+        bool any = false;
+        // Bound by emask.length, not edgeMarks.length — same stale-marks-
+        // after-clear() hazard as operandVertexMask above.
+        foreach (i; 0 .. edgeMarks.length) {
+            if (i >= emask.length) break;
+            if (isEdgeSelected(i)) { emask[i] = true; any = true; }
+        }
+        if (!any)
+            foreach (i; 0 .. edges.length)
+                if (!isEdgeHidden(i)) emask[i] = true;
+        return emask;
+    }
+    /// L1 funnel, face plane: the selected faces when any are selected, else
+    /// every VISIBLE face (shapes B/C's face-flavoured fallback).
+    bool[] operandFaceMask() const {
+        auto fmask = new bool[](faces.length);
+        bool any = false;
+        // Bound by fmask.length, not faceMarks.length — same stale-marks-
+        // after-clear() hazard as operandVertexMask above.
+        foreach (i; 0 .. faceMarks.length) {
+            if (i >= fmask.length) break;
+            if (isFaceSelected(i)) { fmask[i] = true; any = true; }
+        }
+        if (!any)
+            foreach (i; 0 .. faces.length)
+                if (!isFaceHidden(i)) fmask[i] = true;
+        return fmask;
     }
     /// The geometry type that mesh.delete / mesh.remove should operate on.
     ///
@@ -4430,6 +4581,98 @@ struct Mesh {
         // Same as setSubpatch: Marks-class flip that also invalidates subpatch
         // preview output topology — keep the topologyVersion bump explicitly.
         if (any) { commitChange(MeshEditScope.Marks); ++topologyVersion; }
+    }
+
+    // --- Hide writers (Marks.Hide, task 0613) — authoritative plane only ---
+    // Single-index face write, same shape as setSubpatch above, EXCEPT it
+    // does NOT bump topologyVersion: unlike Subpatch, Hide never changes the
+    // subdivision preview's output topology (doc/hide_geometry_plan.md R5 —
+    // Hide is stamped onto the OSD OUTPUT marks, never fed to its input), so
+    // a plain Marks-class commit is the whole story here.
+    void setFaceHidden(size_t idx, bool on) {
+        if (idx >= faceMarks.length) return;
+        bool cur = (faceMarks[idx] & Marks.Hide) != 0;
+        if (cur != on) {
+            if (on) {
+                faceMarks[idx] |= Marks.Hide;
+                // §3.1 Select ∧ Hide = ∅ (BLOCKER, code review task 0613) —
+                // this writer sets the Hide bit directly, not through
+                // refreshHiddenDerived(), so it owes the invariant too: a
+                // face that just became hidden cannot stay selected. Same
+                // word write, order stamp zeroed alongside, bus note only if
+                // it actually flipped.
+                if (faceMarks[idx] & Marks.Select) {
+                    faceMarks[idx] &= ~Marks.Select;
+                    if (idx < faceSelectionOrder.length) faceSelectionOrder[idx] = 0;
+                    noteSelectionChange(SelDomain.Face);
+                }
+            } else {
+                faceMarks[idx] &= ~Marks.Hide;
+            }
+            commitChange(MeshEditScope.Marks);
+            // S5 (code review) — a Marks-class commit does not reach
+            // refreshHiddenDerived (commitChange only calls it for a
+            // Geometry-class commit, above), so the derived vertex/edge
+            // planes would otherwise read stale between this hide and the
+            // next geometry-mutating commit. Its own early-out keeps this
+            // free when nothing is hidden anywhere.
+            refreshHiddenDerived();
+        }
+    }
+    // True iff vertex `vi` is referenced by at least one face. O(1): the
+    // same vertLoop-based "isolated vertex" test the fan-walk accessors
+    // above (verticesAroundVertex / edgesAroundVertex / facesAroundVertex)
+    // already rely on — vertLoop[vi] == ~0u means no dart starts at vi, i.e.
+    // no incident face-corner, after buildLoops(); out-of-range reads the
+    // same "no loop" answer, which is also the right answer for a vertex
+    // added since the last build (code review, task 0613: was an O(faces ×
+    // corners) scan — this replaces it, not merely a second copy).
+    private bool hasIncidentFace(size_t vi) const {
+        return vi < vertLoop.length && vertLoop[vi] != ~0u;
+    }
+    // Loose points ONLY. A vertex with at least one incident face has its
+    // Hide bit fully DERIVED by refreshHiddenDerived() — offering a writer
+    // for that case would let a caller fight the derivation and reintroduce
+    // exactly the derived-from-polygons mistake the capture refuted (§1.2).
+    // Returns whether the write landed (code review, task 0613: a debug
+    // assert here crashed an ordinary developer build on a legal user
+    // action — hiding a loose vertex in a mesh that also has face-bound
+    // vertices — while release silently dropped it; `hasIncidentFace` is
+    // private, so the caller had no way to test the precondition itself).
+    // Same silent-refusal contract in both builds now: false means "this
+    // vertex has a face — its Hide bit is derived, not directly settable".
+    bool setVertexHidden(size_t idx, bool on) {
+        if (idx >= vertexMarks.length) return false;
+        if (hasIncidentFace(idx)) return false;
+        bool cur = (vertexMarks[idx] & Marks.Hide) != 0;
+        if (cur != on) {
+            if (on) vertexMarks[idx] |=  Marks.Hide;
+            else    vertexMarks[idx] &= ~Marks.Hide;
+            commitChange(MeshEditScope.Marks);
+        }
+        return true;
+    }
+    // Masked clear, same shape as clearSubpatch — ONLY the face plane (the
+    // authoritative one). `&= ~Marks.Hide`, never `= 0` (Select/Subpatch
+    // share this word). Does not touch the derived vertex/edge planes or a
+    // loose vertex's own bit directly; a caller that needs those cleared too
+    // calls refreshHiddenDerived() / clears loose bits itself (Stage 2 —
+    // the `mesh.unhideAll` command — owns that decision).
+    void clearHidden() {
+        bool any = false;
+        foreach (m; faceMarks) if (m & Marks.Hide) { any = true; break; }
+        foreach (ref m; faceMarks) m &= ~Marks.Hide;
+        if (any) {
+            commitChange(MeshEditScope.Marks);
+            // S5 (code review) — same reasoning as setFaceHidden above: a
+            // Marks-only commit never reaches refreshHiddenDerived, so an
+            // unhide must call it directly or the derived vertex/edge planes
+            // stay hidden until the next geometry-mutating commit. Clearing
+            // can only ever DROP Hide bits, never set one, so there is no new
+            // Select ∧ Hide collision to fix here — only the stale derived
+            // planes to recompute.
+            refreshHiddenDerived();
+        }
     }
 
     // The clear* setters compare-before-set too: only publish if at least one
@@ -4828,9 +5071,15 @@ struct Mesh {
         if (order.length < src.length)
             order.length = src.length;
         foreach (i, s; src) {
+            // Invariant (doc/hide_geometry_plan.md §3.1): Select ∧ Hide = ∅,
+            // enforced in the WRITER so it holds for every caller — including
+            // undo/redo snapshot replay, which is exactly the path a
+            // per-caller guard would miss. A hidden element simply cannot be
+            // asked to select; it is not an error, it is a silent refusal.
+            const bool want = s && (marks[i] & Marks.Hide) == 0;
             const cur = (marks[i] & Marks.Select) != 0;
-            if (cur != s) changed = true;
-            if (s) marks[i] |=  Marks.Select;
+            if (cur != want) changed = true;
+            if (want) marks[i] |=  Marks.Select;
             else { marks[i] &= ~Marks.Select; order[i] = 0; }
         }
         if (changed) noteSelectionChange(dom);
@@ -4857,6 +5106,434 @@ struct Mesh {
             if (s) faceMarks[i] |=  Marks.Subpatch;
             else   faceMarks[i] &= ~Marks.Subpatch;
         }
+    }
+    // Bulk face-plane write, same shape as setFaceSubpatchFrom above (raw —
+    // no commitChange, used by bulk/internal writers; a user-facing bulk
+    // hide command calls this then refreshHiddenDerived() itself, exactly
+    // the two-step S2 will use). Resize once, touch ONLY the Hide bit, so
+    // this stays order-independent with setFacesSelectedFrom /
+    // setFaceSubpatchFrom (all three share the same word).
+    void setFaceHiddenFrom(const bool[] src) {
+        faceMarks.length = src.length;
+        // §3.1 Select ∧ Hide = ∅ (BLOCKER, code review task 0613) — same
+        // invariant as the scalar setFaceHidden above, owed by every writer
+        // of the Hide plane, not only the single-index one. Raw shape (no
+        // commitChange — the caller does that, same as setFaceSubpatchFrom),
+        // but a Select-domain change is still noted here if one happens, so
+        // it is never silently lost regardless of what the caller does next.
+        bool selChanged = false;
+        foreach (i, s; src) {
+            if (s) {
+                faceMarks[i] |= Marks.Hide;
+                if (faceMarks[i] & Marks.Select) {
+                    faceMarks[i] &= ~Marks.Select;
+                    if (i < faceSelectionOrder.length) faceSelectionOrder[i] = 0;
+                    selChanged = true;
+                }
+            } else {
+                faceMarks[i] &= ~Marks.Hide;
+            }
+        }
+        if (selChanged) noteSelectionChange(SelDomain.Face);
+    }
+
+    // --- The derivation (doc/hide_geometry_plan.md §1.2) --------------------
+    // Recompute the DERIVED hidden planes (vertexMarks / edgeMarks) from the
+    // AUTHORITATIVE one (faceMarks) — the measured law:
+    //   * a vertex is hidden iff it has >= 1 incident face and EVERY one of
+    //     them is hidden (a loose vertex — no incident face — keeps its own
+    //     settable bit, untouched here — see setVertexHidden above);
+    //   * an edge is hidden iff AT LEAST ONE endpoint vertex is hidden —
+    //     derived from VERTICES, not polygons (measured: two adjacent hidden
+    //     polygons do NOT hide the edge they share, because both endpoints
+    //     still touch a third, visible face — T-S0a's discriminator).
+    //
+    // Self-guarding and deliberately owns NO cached field (REV2/objection 5
+    // — a `hiddenFaceCount_`-style counter has no snapshot-restore path: a
+    // wholesale `faceMarks = faceMarks.dup` + commitChange bypasses any
+    // writer-maintained counter, so undo/redo INTO a hidden state would skip
+    // the refresh while `faceMarks` says otherwise). Instead: a three-plane
+    // word-OR computed fresh from the arrays about to be read. A mesh with
+    // nothing hidden anywhere — the overwhelmingly common case — pays three
+    // tight scans (one load + one OR per element, no branch, no allocation)
+    // and returns.
+    //
+    // Called from every geometry-mutating commitChange (mesh.d, the single
+    // geometry-mutation funnel — see commitChange() below), so a topology
+    // edit can never leave these planes stale; also called directly by the
+    // hide commands (Stage 2) right after they write the face plane, and by
+    // setFaceHidden/clearHidden above (S5 — a Marks-only commit does not
+    // reach here through commitChange, so those two call it explicitly).
+    //
+    // Reused scratch buffers (S6 — code review, task 0613): grow-only,
+    // mirroring mesh_gpu.d's upload() scratch pattern, so a mesh of stable
+    // size pays the allocation only the first time it grows, not on every
+    // call — this matters because this function is reachable from an
+    // interactive drag (a preview tool restores a snapshot and re-runs its
+    // kernel per mouse-move, both of which commit geometry). Confirmed
+    // unreachable from any per-frame draw/pick path — those commit a
+    // Position-only scope, which carries no Geometry class and never reaches
+    // commitChange's refreshHiddenDerived() call.
+    private bool[] hiddenDerivedHasFaceScratch_;
+    private bool[] hiddenDerivedAllHiddenScratch_;
+
+    void refreshHiddenDerived() {
+        uint anyHide = 0;
+        foreach (w; faceMarks)   anyHide |= w;
+        foreach (w; vertexMarks) anyHide |= w;
+        foreach (w; edgeMarks)   anyHide |= w;
+        if (!(anyHide & Marks.Hide)) return;   // nothing hidden anywhere ⇒ nothing to derive
+
+        if (hiddenDerivedHasFaceScratch_.length < vertexMarks.length)
+            hiddenDerivedHasFaceScratch_.length = vertexMarks.length;
+        if (hiddenDerivedAllHiddenScratch_.length < vertexMarks.length)
+            hiddenDerivedAllHiddenScratch_.length = vertexMarks.length;
+        auto hasFace   = hiddenDerivedHasFaceScratch_[0 .. vertexMarks.length];
+        auto allHidden = hiddenDerivedAllHiddenScratch_[0 .. vertexMarks.length];
+        hasFace[]   = false;  // reused buffer: a prior call's data must not leak in
+        allHidden[] = true;   // AND-reduced below; a vertex with no incident
+                               // face never flips this, so hasFace gates it.
+
+        foreach (fi, face; faces) {
+            const bool faceHidden = fi < faceMarks.length && (faceMarks[fi] & Marks.Hide) != 0;
+            foreach (vi; face) {
+                if (vi >= hasFace.length) continue;   // transient desync (mid-grow) — self-heals next refresh
+                hasFace[vi] = true;
+                if (!faceHidden) allHidden[vi] = false;
+            }
+        }
+
+        // §3.1 Select ∧ Hide = ∅ — this derivation is ITSELF a Hide writer
+        // (BLOCKER, code review task 0613): a vertex/edge that transitions to
+        // hidden here cannot stay selected, or the invariant is breakable
+        // with Stage 0 code alone — select a vertex, hide the faces around
+        // it, let this funnel run, and (before this fix) it ends up both
+        // selected and hidden, with no hide COMMAND anywhere in the call
+        // stack for a later stage to guard. Cleared in the SAME word write
+        // that sets Hide; the order stamp is zeroed alongside (a stale
+        // nonzero order on a non-selected element is the corruption fixed
+        // elsewhere in this stage); the selection-change bus note fires only
+        // if something actually flipped.
+        bool vertSelChanged = false;
+        foreach (vi; 0 .. vertexMarks.length) {
+            if (!hasFace[vi]) continue;   // loose point: own bit stays, untouched
+            if (allHidden[vi]) {
+                if (vertexMarks[vi] & Marks.Select) {
+                    vertexMarks[vi] &= ~Marks.Select;
+                    if (vi < vertexSelectionOrder.length) vertexSelectionOrder[vi] = 0;
+                    vertSelChanged = true;
+                }
+                vertexMarks[vi] |= Marks.Hide;
+            } else {
+                vertexMarks[vi] &= ~Marks.Hide;
+            }
+        }
+        if (vertSelChanged) noteSelectionChange(SelDomain.Vertex);
+
+        bool edgeSelChanged = false;
+        foreach (ei; 0 .. edgeMarks.length) {
+            if (ei >= edges.length) continue;
+            const e = edges[ei];
+            const bool hidden =
+                (e[0] < vertexMarks.length && (vertexMarks[e[0]] & Marks.Hide) != 0) ||
+                (e[1] < vertexMarks.length && (vertexMarks[e[1]] & Marks.Hide) != 0);
+            if (hidden) {
+                if (edgeMarks[ei] & Marks.Select) {
+                    edgeMarks[ei] &= ~Marks.Select;
+                    if (ei < edgeSelectionOrder.length) edgeSelectionOrder[ei] = 0;
+                    edgeSelChanged = true;
+                }
+                edgeMarks[ei] |= Marks.Hide;
+            } else {
+                edgeMarks[ei] &= ~Marks.Hide;
+            }
+        }
+        if (edgeSelChanged) noteSelectionChange(SelDomain.Edge);
+    }
+
+    // === Tests: the measured hide/derivation law (doc/hide_geometry_plan.md
+    // §1.2/§5, Stage 0's own T-S0a/b/c/d — each case is chosen so a WRONG
+    // law reads a DIFFERENT number, not merely "nothing happened", per the
+    // plan's own testing gate, §7). makeCube()'s faces (defined further down
+    // this module): f0=[0,3,2,1], f1=[4,5,6,7], f2=[0,4,7,3], f3=[1,2,6,5],
+    // f4=[3,7,6,2], f5=[0,1,5,4] — so vertex 0's three incident faces are
+    // exactly {f0, f2, f5}.
+    unittest { // T-S0a — the edge rule derives from VERTICES, not polygons
+        auto m = makeCube();
+        m.syncSelection();   // makeCube() does not size the marks arrays itself
+        // f0 and f2 share edge (0,3). Hiding both is exactly the case the
+        // plan's pre-capture "conservative" guess got wrong: a
+        // derived-FROM-POLYGONS rule would hide edge (0,3), because both of
+        // its incident faces are hidden. The measured rule does not,
+        // because vertex 0 still touches f5 and vertex 3 still touches f4,
+        // and NEITHER of those is hidden.
+        m.setFaceHidden(0, true);
+        m.setFaceHidden(2, true);
+        m.refreshHiddenDerived();
+        const uint e03 = m.edgeIndex(0, 3);
+        assert(e03 != ~0u, "cube must have an edge (0,3)");
+        assert(!m.isEdgeHidden(e03),
+            "edge (0,3) must stay visible — both endpoints still touch a third, visible face");
+        // The discriminator only means something if f0/f2 really are edge
+        // (0,3)'s ONLY incident faces (not merely that f0/f2 themselves are
+        // hidden, which says nothing about which edge they border) — confirm
+        // the incidence itself, via facesAroundEdge, or a stray third
+        // incident face (visible or not) would make this assertion pass for
+        // the wrong reason (code review, task 0613).
+        uint[] incident;
+        foreach (fi; m.facesAroundEdge(e03)) incident ~= fi;
+        import std.algorithm.sorting : sort;
+        incident.sort();
+        assert(incident == [0u, 2u], "edge (0,3)'s incident faces must be exactly {f0, f2}");
+        assert(m.isFaceHidden(0) && m.isFaceHidden(2));
+    }
+    unittest { // T-S0b — the vertex rule is ALL-incident, not ANY
+        auto m = makeCube();
+        m.syncSelection();   // makeCube() does not size the marks arrays itself
+        // (i) hide two ADJACENT faces (f0, f2 — share vertices 0 and 3): an
+        // ANY-incident rule would read 6 hidden vertices (4 + 4 - 2
+        // shared); the measured ALL-incident rule reads 0, because every
+        // vertex of f0/f2 still touches a third, visible face.
+        m.setFaceHidden(0, true);
+        m.setFaceHidden(2, true);
+        m.refreshHiddenDerived();
+        foreach (vi; 0 .. m.vertices.length)
+            assert(!m.isVertexHidden(vi),
+                "two adjacent hidden faces must hide ZERO vertices (ALL-incident, not ANY)");
+
+        // (ii) hide the THIRD face meeting vertex 0 (f0, f2, f5 are exactly
+        // vertex 0's incident faces) — vertex 0 must become hidden, and it
+        // must be the ONLY one: no other vertex has all of ITS incident
+        // faces hidden yet.
+        m.setFaceHidden(5, true);
+        m.refreshHiddenDerived();
+        assert(m.isVertexHidden(0), "vertex 0's incident faces (f0, f2, f5) are all hidden now");
+        foreach (vi; 1 .. m.vertices.length)
+            assert(!m.isVertexHidden(vi), "no OTHER vertex has all of its incident faces hidden yet");
+    }
+    unittest { // T-S0c — the two per-component cases that pin the model
+        // (i) A lone quad: hiding its only polygon hides all 4 of its
+        // vertices AND all 4 of its edges. A purely-stored implementation
+        // (no vertex/edge derivation at all) fails this half.
+        {
+            Mesh m;
+            m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+            m.addFace([0, 1, 2, 3]);
+            m.buildLoops();
+            m.syncSelection();
+            m.setFaceHidden(0, true);
+            m.refreshHiddenDerived();
+            foreach (vi; 0 .. 4)
+                assert(m.isVertexHidden(vi), "the quad's only face is hidden — every vertex must derive hidden");
+            foreach (ei; 0 .. m.edges.length)
+                assert(m.isEdgeHidden(ei), "the quad's only face is hidden — every edge must derive hidden");
+        }
+        // (ii) A loose vertex (no incident face): hiding EVERY polygon in
+        // the mesh must NOT touch it — it keeps its own, independently
+        // settable bit. A purely-derived implementation (no own-bit
+        // concept) fails this half.
+        {
+            auto m = makeCube();
+            const uint loose = m.addVertex(Vec3(10, 10, 10));
+            m.syncSelection();   // grow vertexMarks to include the new vertex
+            foreach (fi; 0 .. m.faces.length) m.setFaceHidden(fi, true);
+            m.refreshHiddenDerived();
+            foreach (vi; 0 .. 8)
+                assert(m.isVertexHidden(vi), "every cube vertex's incident faces are all hidden");
+            assert(!m.isVertexHidden(loose),
+                "a loose vertex has no incident face — a polygon hide must not touch it");
+            m.setVertexHidden(loose, true);
+            assert(m.isVertexHidden(loose), "a loose vertex's own bit is directly settable");
+            m.refreshHiddenDerived();   // must NOT clear the own bit — hasFace[loose] is false
+            assert(m.isVertexHidden(loose), "refreshHiddenDerived must not touch a loose vertex's own bit");
+        }
+    }
+    unittest { // T-S0d — refreshHiddenDerived() self-heals after a topology
+        // change, with NO hide command running: the whole point of routing
+        // it through commitChange rather than only the (not-yet-built,
+        // Stage 2) hide commands.
+        //
+        // A 3-face fan around vertex 0 (an open tetrahedron corner):
+        // f0=[0,1,2], f1=[0,2,3], f2=[0,3,1]. Vertex 0 touches all three;
+        // vertices 1/2/3 each touch exactly two. f2 is hidden LAST
+        // (highest index) deliberately: deleteFacesByMask's compaction does
+        // not yet carry marks through an index shift (that is Stage 1's own
+        // cost centre, T-S1, out of scope here) — deleting the
+        // HIGHEST-indexed face is a stable-filter no-op for every surviving
+        // index, so this case isolates the S0 claim under test (the funnel
+        // refreshes on ANY geometry commit) from the S1 claim (a shift
+        // preserves the bit on the right face), which this test does not
+        // exercise.
+        Mesh m;
+        m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0), Vec3(-1,0,0)];
+        m.addFace([0, 1, 2]);  // f0
+        m.addFace([0, 2, 3]);  // f1
+        m.addFace([0, 3, 1]);  // f2 — the last visible face touching vertex 0
+        m.buildLoops();
+        m.syncSelection();
+
+        m.setFaceHidden(0, true);
+        m.setFaceHidden(1, true);
+        m.refreshHiddenDerived();
+        assert(!m.isVertexHidden(0), "vertex 0 still touches the visible f2");
+
+        // Delete f2 — no hide command runs. deleteFacesByMask ends in
+        // commitChange(MeshEditScope.Geometry), which must call
+        // refreshHiddenDerived() on our behalf. No vertex is orphaned by
+        // this delete (1, 2 and 3 each still belong to a surviving face),
+        // so compaction does not renumber anything either.
+        bool[] mask = [false, false, true];
+        const removed = m.deleteFacesByMask(mask);
+        assert(removed == 1);
+        assert(m.faces.length == 2, "f0 and f1 survive, unshifted — f2 was the last index");
+
+        assert(m.isVertexHidden(0),
+            "vertex 0's only surviving incident faces (f0, f1) are both hidden, and " ~
+            "nothing called refreshHiddenDerived() explicitly after the delete");
+    }
+
+    // §3.1 — the marks invariant Select ∧ Hide = ∅, enforced in the WRITERS
+    // (not the callers), so it holds on paths nobody thought to guard —
+    // including undo/redo snapshot replay, which is exactly the path a
+    // per-caller guard would miss.
+    unittest { // face plane: the scalar writer, the bulk restore writer, and
+        // the bulk SELECT writer's order-stamping side effect.
+        auto m = makeCube();
+        m.syncSelection();   // makeCube() does not size the marks arrays itself
+        m.setFaceHidden(2, true);
+
+        // Direct scalar writer. Both a hidden AND a visible face in the same
+        // sequence, so "refused" reads differently from "did nothing".
+        m.selectFace(2);
+        m.selectFace(3);
+        assert(!m.isFaceSelected(2), "selectFace must refuse a hidden face");
+        assert(m.isFaceSelected(3),  "selectFace must still select a visible one");
+
+        // Bulk restore writer (setFacesSelectedFrom / applySelectedFrom_ —
+        // undo/redo snapshot replay's own primitive). One mask naming BOTH
+        // faces at once.
+        m.clearFaceSelection();
+        auto want = new bool[](m.faces.length);
+        want[2] = true; want[3] = true;
+        m.setFacesSelectedFrom(want);
+        assert(m.countSelectedFaces() == 1,
+            "the mask asked for 2 faces; the hidden one must be refused — not both, not neither");
+        assert(!m.isFaceSelected(2) && m.isFaceSelected(3));
+
+        // Bulk SELECT writer (selectFacesFrom) must not stamp an order entry
+        // for the refused face — a stale nonzero order on a
+        // never-actually-selected element would corrupt select.more/less
+        // and click-order-derived face winding.
+        m.clearFaceSelection();
+        m.selectFacesFrom(want);
+        assert(m.faceSelectionOrder[2] == 0, "a refused (hidden) face must not receive an order stamp");
+        assert(m.faceSelectionOrder[3] != 0, "the visible face must still be stamped");
+    }
+    unittest { // vertex and edge planes — same invariant, the other two
+        // scalar writers.
+        auto m = makeCube();
+        m.syncSelection();   // makeCube() does not size the marks arrays itself
+        // Direct poke, not setVertexHidden: vertex 0 has incident faces, so
+        // the production writer would refuse it (§1.2 — derived, not
+        // settable). This test is only about the SELECT-side guard, so it
+        // stamps the bit the way refreshHiddenDerived() itself would.
+        m.vertexMarks[0] |= Marks.Hide;
+        const uint e01 = m.edgeIndex(0, 1);
+        m.edgeMarks[e01] |= Marks.Hide;
+
+        m.selectVertex(0);
+        m.selectVertex(1);
+        assert(!m.isVertexSelected(0), "selectVertex must refuse a hidden vertex");
+        assert(m.isVertexSelected(1));
+
+        const uint e12 = m.edgeIndex(1, 2);
+        m.selectEdge(e01);
+        m.selectEdge(e12);
+        assert(!m.isEdgeSelected(e01), "selectEdge must refuse a hidden edge");
+        assert(m.isEdgeSelected(e12));
+    }
+    unittest { // T-S0e — the DERIVATION ITSELF owes Select ∧ Hide = ∅
+        // (BLOCKER, code review task 0613). T-S0d already proves
+        // refreshHiddenDerived() sets the Hide bit on vertices/edges with NO
+        // hide command anywhere in the call stack (it rides every geometry
+        // commit). If it does not ALSO clear a pre-existing Select bit in
+        // that same word write, §3.1 is breakable with Stage 0 code alone:
+        // select an element while it is visible, hide it by a route that
+        // never calls a hide command (any geometry-mutating commit that
+        // happens to remove its last visible incident face), and it ends up
+        // both selected and hidden — exactly what the review flagged.
+        //
+        // Direct marks pokes (not setFaceHidden) so this isolates
+        // refreshHiddenDerived()'s OWN obligation from setFaceHidden's
+        // (already covered by its own unittest above).
+        auto m = makeCube();
+        m.syncSelection();
+
+        // Select vertex 0 and the edge (0,1) it anchors WHILE both are still
+        // visible — a legal selection at this point.
+        m.selectVertex(0);
+        const uint e01 = m.edgeIndex(0, 1);
+        m.selectEdge(e01);
+        assert(m.isVertexSelected(0) && m.isEdgeSelected(e01));
+
+        // Hide vertex 0's three incident faces (f0, f2, f5 — see the comment
+        // at the top of the T-S0 block above) directly on faceMarks, then run
+        // ONLY the derivation — no hide command, matching T-S0d's own shape.
+        m.faceMarks[0] |= Marks.Hide;
+        m.faceMarks[2] |= Marks.Hide;
+        m.faceMarks[5] |= Marks.Hide;
+        m.refreshHiddenDerived();
+
+        assert(m.isVertexHidden(0), "vertex 0's incident faces (f0, f2, f5) are all hidden");
+        assert(!m.isVertexSelected(0),
+            "a vertex the derivation just hid must not stay selected — no hide command ran");
+        assert(m.vertexSelectionOrder[0] == 0, "its order stamp must be cleared too");
+
+        assert(m.isEdgeHidden(e01), "edge (0,1) derives hidden through its now-hidden endpoint");
+        assert(!m.isEdgeSelected(e01),
+            "an edge the derivation just hid must not stay selected — no hide command ran");
+        assert(m.edgeSelectionOrder[e01] == 0, "its order stamp must be cleared too");
+    }
+
+    // §3.2 — the L1 operand-mask funnel: the fallback branch ("nothing
+    // selected ⇒ the whole mesh") must mean "every VISIBLE element", not
+    // "every element". A real selection can never contain a hidden element
+    // (§3.1, just above), so only the fallback branch needs checking.
+    unittest {
+        auto m = makeCube();
+        m.syncSelection();   // makeCube() does not size the marks arrays itself
+        m.setFaceHidden(0, true);
+        m.setFaceHidden(4, true);   // non-adjacent, and index 0 is the low-index trap
+
+        auto fmask = m.operandFaceMask();
+        assert(fmask.length == 6);
+        foreach (fi; 0 .. 6)
+            assert(fmask[fi] == (fi != 0 && fi != 4),
+                "operandFaceMask must select every VISIBLE face when nothing is selected");
+
+        // A real selection must be returned as-is — the fallback must NOT
+        // fire once something is selected.
+        m.selectFace(1);
+        auto fmask2 = m.operandFaceMask();
+        assert(fmask2[1] && !fmask2[2], "a real selection must win over the whole-mesh fallback");
+
+        // Vertex/edge fallbacks. Faces 0/4 alone hide no vertex (T-S0b), so
+        // hide vertex 0's whole corner to get a discriminating case.
+        auto m2 = makeCube();
+        m2.syncSelection();
+        m2.setFaceHidden(0, true);
+        m2.setFaceHidden(2, true);
+        m2.setFaceHidden(5, true);   // vertex 0's three incident faces
+        m2.refreshHiddenDerived();
+        assert(m2.isVertexHidden(0));
+
+        auto vmask = m2.operandVertexMask(EditMode.Vertices);
+        assert(!vmask[0], "operandVertexMask must exclude a hidden vertex from the whole-mesh fallback");
+        assert(vmask[1],  "a visible vertex must still be included");
+
+        auto emask = m2.operandEdgeMask();
+        const uint e01 = m2.edgeIndex(0, 1);
+        assert(!emask[e01], "operandEdgeMask must exclude an edge derived-hidden through its hidden endpoint");
     }
 
     // --- Bulk SELECT (as opposed to bulk RESTORE) --------------------------
@@ -4889,25 +5566,35 @@ struct Mesh {
         bool[] added = new bool[](src.length);
         foreach (i, s; src) added[i] = s && !isVertexSelected(i);
         setVerticesSelectedFrom(src);   // also grows vertexSelectionOrder
+        // Re-check isVertexSelected AFTER the call: `added` was computed from
+        // the request, but setVerticesSelectedFrom's Select ∧ Hide = ∅ guard
+        // may have silently refused a hidden element — stamping its order
+        // anyway would leave a nonzero order entry for something that was
+        // never actually selected.
         foreach (i, a; added)
-            if (a) vertexSelectionOrder[i] = ++vertexSelectionOrderCounter;
+            if (a && isVertexSelected(i)) vertexSelectionOrder[i] = ++vertexSelectionOrderCounter;
     }
     void selectEdgesFrom(const bool[] src) {
         bool[] added = new bool[](src.length);
         foreach (i, s; src) added[i] = s && !isEdgeSelected(i);
         setEdgesSelectedFrom(src);      // also grows edgeSelectionOrder
         foreach (i, a; added)
-            if (a) edgeSelectionOrder[i] = ++edgeSelectionOrderCounter;
+            if (a && isEdgeSelected(i)) edgeSelectionOrder[i] = ++edgeSelectionOrderCounter;
     }
     void selectFacesFrom(const bool[] src) {
         bool[] added = new bool[](src.length);
         foreach (i, s; src) added[i] = s && !isFaceSelected(i);
         setFacesSelectedFrom(src);      // also grows faceSelectionOrder
         foreach (i, a; added)
-            if (a) faceSelectionOrder[i] = ++faceSelectionOrderCounter;
+            if (a && isFaceSelected(i)) faceSelectionOrder[i] = ++faceSelectionOrderCounter;
     }
 
+    // selectVertex / selectEdge / selectFace: the direct scalar writers.
+    // Same invariant as applySelectedFrom_ above (§3.1) — refuse to select a
+    // hidden element. Checked first so a refusal touches neither the order
+    // counter nor the bus publish.
     void selectVertex(int idx) {
+        if (vertexMarks[idx] & Marks.Hide) return;
         if ((vertexMarks[idx] & Marks.Select) == 0)
             vertexSelectionOrder[idx] = ++vertexSelectionOrderCounter;
         vertexMarks[idx] |= Marks.Select;
@@ -4920,6 +5607,7 @@ struct Mesh {
     }
 
     void selectEdge(int idx) {
+        if (edgeMarks[idx] & Marks.Hide) return;
         if ((edgeMarks[idx] & Marks.Select) == 0)
             edgeSelectionOrder[idx] = ++edgeSelectionOrderCounter;
         edgeMarks[idx] |= Marks.Select;
@@ -4932,6 +5620,7 @@ struct Mesh {
     }
 
     void selectFace(int idx) {
+        if (faceMarks[idx] & Marks.Hide) return;
         if ((faceMarks[idx] & Marks.Select) == 0)
             faceSelectionOrder[idx] = ++faceSelectionOrderCounter;
         faceMarks[idx] |= Marks.Select;

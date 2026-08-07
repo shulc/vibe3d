@@ -250,8 +250,61 @@ struct SelectionSnapshot {
         mesh.vertexSelectionOrder        = vertexSelectionOrder.dup;
         mesh.edgeSelectionOrder          = edgeSelectionOrder.dup;
         mesh.faceSelectionOrder          = faceSelectionOrder.dup;
+        // Hide (code review, task 0613 — S3): the bulk setters above may
+        // have silently refused a now-hidden element (Mesh's own Select ∧
+        // Hide = ∅ invariant, doc/hide_geometry_plan.md §3.1 — their guard
+        // zeroes that element's order entry when it refuses). The wholesale
+        // order-array overwrite just above was captured BEFORE any refusal,
+        // so it can resurrect a stale nonzero stamp for an element that the
+        // setter just refused to select — same corruption class fixed at
+        // mesh.d's selectVerticesFrom/selectEdgesFrom/selectFacesFrom. Re-zero
+        // here too, keyed off the mesh's actual (post-refusal) selection
+        // state, not the snapshot's.
+        foreach (i; 0 .. mesh.vertexSelectionOrder.length)
+            if (!mesh.isVertexSelected(i)) mesh.vertexSelectionOrder[i] = 0;
+        foreach (i; 0 .. mesh.edgeSelectionOrder.length)
+            if (!mesh.isEdgeSelected(i)) mesh.edgeSelectionOrder[i] = 0;
+        foreach (i; 0 .. mesh.faceSelectionOrder.length)
+            if (!mesh.isFaceSelected(i)) mesh.faceSelectionOrder[i] = 0;
         mesh.vertexSelectionOrderCounter = vertexSelectionOrderCounter;
         mesh.edgeSelectionOrderCounter   = edgeSelectionOrderCounter;
         mesh.faceSelectionOrderCounter   = faceSelectionOrderCounter;
     }
+}
+
+unittest { // S3 — code review, task 0613: a snapshot restore must not
+    // resurrect a stale nonzero order stamp for an element that became
+    // hidden AFTER the snapshot was captured (the production path this
+    // covers: select.* commands' revert(), e.g. select-then-undo across an
+    // intervening hide).
+    auto m = makeCube();
+    m.syncSelection();
+    m.selectVertex(0);   // legal — vertex 0 is visible at capture time
+    assert(m.vertexSelectionOrder[0] != 0);
+    auto snap = SelectionSnapshot.capture(m);
+    assert(snap.selectedVertices[0] && snap.vertexSelectionOrder[0] != 0);
+
+    // Vertex 0 becomes hidden AFTER the snapshot: hide its three incident
+    // faces (f0, f2, f5 — see the makeCube() face table comment above the
+    // T-S0 unittests in mesh.d). refreshHiddenDerived()'s own BLOCKER fix
+    // clears its Select bit and order stamp right here, independent of this
+    // snapshot.
+    m.setFaceHidden(0, true);
+    m.setFaceHidden(2, true);
+    m.setFaceHidden(5, true);
+    assert(m.isVertexHidden(0));
+    assert(!m.isVertexSelected(0) && m.vertexSelectionOrder[0] == 0);
+
+    // Restore the stale snapshot. setVerticesSelectedFrom's Select ∧ Hide = ∅
+    // guard refuses vertex 0 (still hidden) — but the snapshot's OWN
+    // vertexSelectionOrder[0] is still nonzero (captured before the hide).
+    // Discriminator: without the S3 fix, the wholesale
+    // `mesh.vertexSelectionOrder = vertexSelectionOrder.dup;` a few lines up
+    // in restore() resurrects that stale nonzero stamp even though
+    // isVertexSelected(0) correctly reads false — a wrong implementation
+    // reads order[0] != 0 here.
+    snap.restore(m);
+    assert(!m.isVertexSelected(0), "restore must not resurrect Select on a now-hidden vertex");
+    assert(m.vertexSelectionOrder[0] == 0,
+        "restore must not resurrect a stale order stamp for a refused (hidden) element");
 }
