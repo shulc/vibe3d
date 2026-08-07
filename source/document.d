@@ -252,11 +252,13 @@ bool sanitizeItemXform(ref ItemXform x, ref const ItemXform before) {
 
 /// The kind of document item a `Layer` represents. `Mesh` is the only kind
 /// the pre-0615 editor path assumed; `Empty` is the first non-geometry kind
-/// (task 0615) — a transform-only item with no mesh payload. New kinds
-/// append here; the enum VALUE is never persisted (`.v3d` / HTTP carry the
-/// wire TOKEN from `ItemKindInfo.token`, resolved through `kindFromToken`),
-/// so appending never reshuffles a stored file.
-enum ItemKind : ubyte { Mesh = 0, Empty = 1 }
+/// (task 0615) — a transform-only item with no mesh payload. `Image` (task
+/// 0616) is the first RESOURCE kind — it is neither geometry nor a thing
+/// positioned in space; consumers reference it, it does not sit in the
+/// scene. New kinds append here; the enum VALUE is never persisted (`.v3d` /
+/// HTTP carry the wire TOKEN from `ItemKindInfo.token`, resolved through
+/// `kindFromToken`), so appending never reshuffles a stored file.
+enum ItemKind : ubyte { Mesh = 0, Empty = 1, Image = 2 }
 
 /// The per-kind capability row. Every field is a CAPABILITY, never spelled
 /// `kind == ItemKind.Mesh` at a call site — that is what makes a future
@@ -269,13 +271,29 @@ struct ItemKindInfo {
     bool   hasXform;      ///< participates in the item transform
     bool   canBePrimary;  ///< may become the mesh edit target (`Document.primary`)
     bool   drawsGeometry; ///< participates in the bg/foreground geometry draw
+    // Task 0616 Stage 2 — the second non-mesh kind's two genuine new axes.
+    // Both pass the plan's honesty test for a capability bit: does the NEXT
+    // kind land on a side for the bit's OWN stated reason, not merely "how
+    // many kinds agree today".
+    bool   hasImage;      ///< owns a decoded-pixel payload (`Layer.image_`).
+                           ///< The reference-image item ([[0612]]) LINKS to an
+                           ///< image rather than owning one, so it is false
+                           ///< there for the same reason it is true here.
+    bool   isSceneItem;   ///< appears in the scene/layer list, not just the
+                           ///< item list. A document RESOURCE (an image, and
+                           ///< the reference's sibling sequence/folder/group
+                           ///< kinds) has no transform and nothing to see in
+                           ///< the viewport, so it lives only in its own
+                           ///< panel — false here for that reason, not as a
+                           ///< kind check wearing a hat (Bend #2).
 }
 
 /// One row per `ItemKind`, indexed by the enum's numeric value — kept in
 /// enum declaration order so `kItemKindTable[k]` is a plain array index.
 private immutable ItemKindInfo[ItemKind.max + 1] kItemKindTable = [
-    ItemKindInfo("mesh",  true,  true,  true,  true),   // ItemKind.Mesh
-    ItemKindInfo("empty", false, true,  false, false),  // ItemKind.Empty
+    ItemKindInfo("mesh",  true,  true,  true,  true,  false, true),   // ItemKind.Mesh
+    ItemKindInfo("empty", false, true,  false, false, false, true),   // ItemKind.Empty
+    ItemKindInfo("image", false, false, false, false, true,  false),  // ItemKind.Image
 ];
 
 // `drawsGeometry` implies `hasMesh`, as a compile-time PROOF over the table
@@ -293,34 +311,88 @@ static foreach (row; kItemKindTable)
     static assert(!row.drawsGeometry || row.hasMesh,
         "ItemKindInfo(\"" ~ row.token ~ "\"): drawsGeometry requires hasMesh");
 
-// `hasXform` has ZERO consumers today (task 0615 Stage 6 review round 2,
-// should-fix 5): `source/layer_params.d`'s `LayerPropsProvider` exposes the
-// 12 transform-component params (pos.*/rot.*/scl.*/pivot.*) UNCONDITIONALLY
-// — it never reads this capability at all. That is a deliberate deferral,
-// not an oversight: every kind declared so far has `hasXform == true`, so a
-// gated branch would be dead code with no fixture able to exercise the
-// other side. The deferral is silent, though — nothing stops a FUTURE row
-// from declaring `hasXform == false` and compiling clean while
-// `LayerPropsProvider` keeps exposing transform channels for an item that
-// has none (item.pos/rot/scl/pivot writes would silently mutate a
-// transform nothing ever reads).
+// Task 0616 Stage 2, Bend #2: the companion proof for `isSceneItem` — a kind
+// that draws in the viewport must also be listed in the scene list, else the
+// user can see something they have no row to select it from. Same shape as
+// the `hasMesh` proof above; kept as a SEPARATE `static foreach` (rather than
+// folded into one assert) so a future row that violates only one of the two
+// gets a message naming the one it actually broke.
 //
-// This `static foreach` is the forcing function, in the same style as the
-// `drawsGeometry`/`hasMesh` proof above: it holds today only because every
-// row happens to agree, and turns "a future row disagrees" into a build
-// failure AT THE ROW BEING EDITED rather than a silent gap. When that
-// happens: gate `source/layer_params.d`'s `LayerPropsProvider.params()` (and
-// its get/set path) on `kindInfo(kind).hasXform` — the P4 primary-transform
-// interlock (`transformGuard_`, same file) is the existing precedent for a
-// per-row param disable — then relax this assertion to match (mirroring
-// `!row.drawsGeometry || row.hasMesh` once there is a real gate to couple
-// it to).
+// Deliberate break, performed and reverted while writing this stage (T2):
+// temporarily setting `isSceneItem` false on the `mesh` row (which is
+// `drawsGeometry == true`) makes this line fail to compile with exactly this
+// message; restoring the row makes the build green again.
 static foreach (row; kItemKindTable)
-    static assert(row.hasXform,
-        "ItemKindInfo(\"" ~ row.token ~ "\"): hasXform == false has no "
-        ~ "consumer yet — gate source/layer_params.d's LayerPropsProvider "
-        ~ "(transform-component params) on this capability before adding a "
-        ~ "kind like this, then relax this assertion");
+    static assert(!row.drawsGeometry || row.isSceneItem,
+        "ItemKindInfo(\"" ~ row.token ~ "\"): drawsGeometry requires isSceneItem");
+
+// Task 0616 Stage 2 — the forcing function above this comment (`hasXform`
+// unconditionally required true) has now done its job and is RETIRED.
+//
+// It read, until this stage:
+//
+//     static foreach (row; kItemKindTable)
+//         static assert(row.hasXform, "... hasXform == false has no "
+//             ~ "consumer yet — gate source/layer_params.d's LayerPropsProvider "
+//             ~ "(transform-component params) on this capability before "
+//             ~ "adding a kind like this, then relax this assertion");
+//
+// Adding the `image` row above (`hasXform: false`, on the evidence that the
+// measured reference item has no transform channels at all —
+// doc/tasks/0612-evidence) tripped it immediately, at the row being edited,
+// exactly as designed: a year of drift since task 0615 did not erase the
+// cost, and the failure named its own fix. That fix is now applied:
+// `source/layer_params.d`'s `LayerPropsProvider.params()` gates the 12
+// transform-component params on `kindInfo(layer_.kind).hasXform` (an
+// image-kind layer's provider now exposes only `name`/`visible`), and
+// `ui/panels.d`'s item-snap-frame loop (which calls `editor_app.d`'s
+// `buildItemFrame`) skips a layer with no transform to snap by, so a
+// pivot nothing ever authors is never offered as a snap target either.
+//
+// Review round 4 (SHOULD-FIX 1): the paragraph that used to sit here claimed
+// there was no cross-field invariant left to check from the table. Grepping
+// the consumers contradicts that — three call sites already dereference
+// `.xform` unconditionally, each sitting under a SIBLING capability gate
+// that this diff either relies on or (one of them) itself introduced. Two
+// narrower assertions replace the retired blanket one:
+//   * `hasMesh` implies `hasXform` — `ui/panels.d`'s background-snap-source
+//     loop gates on `hasMesh` and then reads `lyr.xform.modelSpace()`
+//     unconditionally. Chained through the `drawsGeometry implies hasMesh`
+//     proof above, this ALSO covers the draw loop's `lyr.xform
+//     .composedMatrix()` read a few lines above that gate — so both of that
+//     loop's `xform` reads stay proven, transitively, by one new line.
+//   * `canBePrimary` implies `hasXform` — `app.d`'s
+//     `primaryModelSpaceResolver`, `toolpipe/stages/actcenter.d`'s
+//     `Mode.Pivot`/`Mode.Parent` centers, and `toolpipe/stages/axis.d`'s
+//     `Mode.Pivot` basis all resolve `document.primary.xform
+//     .composedMatrix()` (or a parent's) with NO capability check at the
+//     call site — they lean entirely on the Document invariant that
+//     `primary` is always `canBePrimary` (§Q2, `assert(kindInfo(d.primary
+//     .kind).canBePrimary, ...)` below). Without this row-level guarantee, a
+//     future `canBePrimary` kind with `hasXform == false` would make
+//     primary-selection an unchecked path to a meaningless identity
+//     transform at three call sites that have no gate of their own to add.
+//
+// This diff itself created the second half of the `hasMesh`/`hasXform`
+// coupling: `ui/panels.d`'s item-snap-frame loop (Bend #1) now DENIES a snap
+// frame to a layer with no transform, while the draw loop two guards above
+// it would still draw one that `drawsGeometry` — chaining `drawsGeometry`
+// implies `hasMesh` implies `hasXform` is what keeps those two loops
+// agreeing on which layers have a real pivot instead of drifting apart the
+// next time either gate changes alone.
+//
+// Forward-looking reason this still matters: the reference-image item draws
+// in the viewport while owning no mesh, so `drawsGeometry implies hasMesh`
+// is the assertion that will have to be RELAXED next. At that point
+// `hasXform` becomes the ONLY thing still coupling "drawn" to "positionable"
+// — retiring it now, before that relaxation, would have removed the guard
+// just before it became load-bearing.
+static foreach (row; kItemKindTable)
+    static assert(!row.hasMesh || row.hasXform,
+        "ItemKindInfo(\"" ~ row.token ~ "\"): hasMesh requires hasXform");
+static foreach (row; kItemKindTable)
+    static assert(!row.canBePrimary || row.hasXform,
+        "ItemKindInfo(\"" ~ row.token ~ "\"): canBePrimary requires hasXform");
 
 /// The capability row for `k`.
 ref immutable(ItemKindInfo) kindInfo(ItemKind k) pure nothrow @nogc @safe {
@@ -353,6 +425,45 @@ bool kindFromToken(string token, ref ItemKind kind) pure nothrow @nogc @safe {
 /// safeonly` keeps bounds checks only in `@safe` code), unlike the sibling
 /// lookup at `kindInfo` itself.
 string tokenOf(ItemKind k) pure nothrow @nogc @safe { return kindInfo(k).token; }
+
+/// An image item's payload (task 0616). A CLASS reference — unlike `Mesh`
+/// (a value struct `MeshSnapshot` moves) — because the natural operation on
+/// two layers sharing one image is SHARE, not copy: `LayerDuplicate` points
+/// a clone's `image_` at the exact same `ImageData` object as its source
+/// (`Layer.imageRef()` below), the same way twenty consumers of one loaded
+/// image share one entry in the pixel cache a later stage adds on top of
+/// this. `Layer.parent` is the existing precedent for a shared class
+/// reference on `Layer` — and the cautionary one: `parent` has no refcount,
+/// which is exactly the un-refcounted-alias shape a cache must not repeat
+/// (the refcount bump on a shared clone is Stage 5's job, not this one's).
+///
+/// Stage 2 (this stage) ships only the one field that already has a
+/// consumer: `storedPath`, so a duplicated image row has something
+/// non-default to compare against its source. Later stages extend this
+/// class rather than replace it: Stage 4 adds the derived
+/// `resolvedPath` / `width` / `height` / `missing` / `format` fields (the
+/// path model), Stage 5 adds the pixel-cache handle. Bend #4 (the plan)
+/// notes the limit this shape has, in advance: a faithful one-slot-per-kind
+/// payload for kind #2 and #3, a tagged union by kind #6 — not paid for now.
+///
+/// A hazard for Stage 5 specifically, flagged here in advance because this
+/// is the class the pixel-cache handle lands on: `io.image_decode
+/// .DecodedImage` (task 0616's decoder, `bbfe3a48`) is manual-release, not
+/// automatic — copying is `@disable`d and `free()` returns its C-heap buffer
+/// to the decoder's allocator, but there is no `~this()`. Parking one
+/// directly inside this GC-managed class and expecting GC finalisation to
+/// call `free()` for you will leak the C-heap buffer (a GC collection does
+/// not run struct destructors it never had, and even if it did, D class
+/// finalization order at collection time is not something to lean on for a
+/// non-GC resource). Stage 5's refcount must land BEFORE the first
+/// `.free()` call site exists — the same ordering the `Layer.parent`
+/// cautionary note above makes for the alias itself: ship the count, then
+/// the thing that needs it, not the other way around.
+final class ImageData {
+    string storedPath;   ///< the authored path, as it will be serialised
+                          ///< (Stage 4 owns the store-relative / resolve-
+                          ///< absolute rules; this stage only holds the field)
+}
 
 /// A single document layer. Deliberately a CLASS, for two reasons:
 ///   (a) the interior `Mesh` sits at a stable heap address no matter how
@@ -419,6 +530,46 @@ final class Layer {
     ref inout(Mesh) meshRef() inout {
         debug assert(hasMesh, "meshRef() called on a non-mesh item");
         return mesh_;
+    }
+
+    // Task 0616 Stage 2: the image-payload trio, mirroring the mesh trio
+    // above exactly (same three shapes, same reasoning) — `private` field +
+    // `hasImage()` / `imageOrNull()` / `imageRef()`. Unlike `mesh_` (a value
+    // struct, always present, gated only by whether it is ADDRESSABLE),
+    // `image_` is a class reference that is genuinely null until something
+    // constructs an `ImageData` for this layer — today, only
+    // `LayerDuplicate`'s payload-sharing clone (`commands/layer/commands.d`)
+    // and this module's own unit tests do that; the command that constructs
+    // one for a freshly loaded image is a later stage.
+    private ImageData image_;   ///< the layer's image payload, null unless
+                                 ///< `hasImage` (stable heap address: a class
+                                 ///< reference, not moved by anything)
+
+    /// True iff this item owns an image-pixel payload — a CAPABILITY read
+    /// off `kind`, never `kind == ItemKind.Image` directly (mirrors
+    /// `hasMesh`). Note this is independent of whether `image_` has been
+    /// constructed yet: like `hasMesh`, it answers "can this kind have one",
+    /// not "does this instance have one right now".
+    bool hasImage() const { return kindInfo(kind).hasImage; }
+
+    /// The image payload, or `null` for a non-image item OR an image item
+    /// whose payload has not been constructed yet. `inout` for the same
+    /// const-consumer reason as `meshOrNull()`. Unlike `meshOrNull()` this
+    /// returns the class reference directly rather than a pointer-to-it —
+    /// `ImageData` already has a native null state, so there is nothing a
+    /// pointer indirection would add.
+    inout(ImageData) imageOrNull() inout { return hasImage ? image_ : null; }
+
+    /// Reference to the image-payload FIELD itself (not merely its current
+    /// value) — this is what lets a caller REBIND which `ImageData` object
+    /// the layer points at, e.g. `LayerDuplicate`'s payload-sharing clone
+    /// (`l2.imageRef() = src.imageOrNull();`), the class-reference analogue
+    /// of `meshRef()` letting `MeshSnapshot.restore()` overwrite the mesh
+    /// value in place. The `debug`-only assert mirrors `meshRef()`'s: a
+    /// dev-only backstop, not production enforcement (see its comment above).
+    ref inout(ImageData) imageRef() inout {
+        debug assert(hasImage, "imageRef() called on a non-image item");
+        return image_;
     }
 }
 
@@ -1249,6 +1400,57 @@ unittest {  // a non-mesh item reports no mesh through the capability accessors.
     l.kind = ItemKind.Empty;
     assert(!l.hasMesh, "Empty has no mesh capability");
     assert(l.meshOrNull is null, "meshOrNull is null for a non-mesh item");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0616 Stage 2, T2 (capability-row half): `kindInfo(ItemKind.Image)`
+// field by field, and the image-payload accessor trio (mirrors the mesh
+// trio tests just above).
+// ---------------------------------------------------------------------------
+
+unittest {  // the Image row's five pre-existing capabilities are all false,
+            // matching the measured reference item (no mesh, no transform,
+            // never the mesh edit target, nothing drawn in the viewport, and
+            // — Bend #2 — not listed in the scene list either).
+    auto info = kindInfo(ItemKind.Image);
+    assert(info.token == "image", "Image row's wire token");
+    assert(!info.hasMesh,       "Image: hasMesh == false");
+    assert(!info.hasXform,      "Image: hasXform == false (Bend #1 — the forcing assert row)");
+    assert(!info.canBePrimary,  "Image: canBePrimary == false");
+    assert(!info.drawsGeometry, "Image: drawsGeometry == false");
+    assert(!info.isSceneItem,   "Image: isSceneItem == false (Bend #2)");
+    // The one capability that IS true for this kind — the payload it owns.
+    assert(info.hasImage, "Image: hasImage == true (it is the kind this bit exists for)");
+
+    // Mesh and Empty must NOT have picked up the two new bits by accident —
+    // both are real document items (visible in the layer panel), and
+    // neither owns pixel data.
+    assert(kindInfo(ItemKind.Mesh).isSceneItem,  "Mesh: isSceneItem == true");
+    assert(kindInfo(ItemKind.Empty).isSceneItem, "Empty: isSceneItem == true");
+    assert(!kindInfo(ItemKind.Mesh).hasImage,  "Mesh: hasImage == false");
+    assert(!kindInfo(ItemKind.Empty).hasImage, "Empty: hasImage == false");
+}
+
+unittest {  // hasImage()/imageOrNull()/imageRef() mirror the mesh trio: a
+            // non-image item reports no image through the capability
+            // accessors, and an image item's imageRef() aliases the same
+            // field imageOrNull() reads.
+    auto mesh = new Layer;
+    assert(!mesh.hasImage, "a default (mesh-kind) Layer has no image capability");
+    assert(mesh.imageOrNull is null, "imageOrNull is null for a non-image item");
+
+    auto img = new Layer;
+    img.kind = ItemKind.Image;
+    assert(img.hasImage, "an Image-kind layer has the image capability");
+    // Freshly kind-flipped, no payload constructed yet — capability true,
+    // instance payload still null (mirrors "hasMesh answers CAN, not DOES").
+    assert(img.imageOrNull is null, "imageOrNull is null until something constructs an ImageData");
+
+    img.imageRef() = new ImageData();
+    img.imageRef().storedPath = "logo.png";
+    assert(img.imageOrNull !is null, "imageOrNull is non-null once imageRef() is assigned");
+    assert(img.imageOrNull.storedPath == "logo.png", "imageOrNull aliases the same object imageRef() wrote");
+    assert(&img.imageRef() is &img.image_, "imageRef() aliases the same image_ field");
 }
 
 // ---------------------------------------------------------------------------

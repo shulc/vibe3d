@@ -1,8 +1,8 @@
 module layer_params;
 
 import params   : Param, ParamProvider;
-import document : Layer, ItemXform, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
-                  sanitizeItemXform;
+import document : Layer, kindInfo, ItemXform, MIN_ITEM_SCALE_MAG,
+                  MAX_ITEM_SCALE_MAG, sanitizeItemXform;
 import seltype  : SelType;
 
 // ---------------------------------------------------------------------------
@@ -89,19 +89,48 @@ final class LayerPropsProvider : ParamProvider {
     // ParamProvider
     // -----------------------------------------------------------------------
 
-    /// The 14 layer params: 12 transform-component Floats + name + visible.
+    /// The layer params: `name` + `visible`, plus — for a kind that
+    /// `hasXform` (task 0616 Stage 2) — the 12 transform-component Floats.
     /// Pointers alias the live `Layer` fields, so a write through a param's
     /// pointer mutates the layer (and vice-versa).
+    ///
+    /// The transform bundle is gated on `kindInfo(layer_.kind).hasXform`
+    /// (task 0616 Stage 2, resolving the forcing `static assert` at
+    /// `document.d`'s `kItemKindTable`): an item with no transform
+    /// capability — the measured image item has none — must not expose
+    /// `pos.*`/`rot.*`/`scl.*`/`pivot.*` params it has no field backing that
+    /// is ever meaningfully read. This is also what makes `layer.attr <img>
+    /// pos.x 5` fail as an UNKNOWN attribute rather than silently succeed:
+    /// `LayerAttr` resolves attr names against exactly this list
+    /// (`commands/layer/commands.d`), so omitting the params here is both
+    /// the "get" and the "set" gate the forcing assert asked for — there is
+    /// no separate write path to close.
+    ///
+    /// This is a per-kind BUNDLE gate, not the full per-kind channel split —
+    /// the image kind's own attributes (its path and colour handling) arrive
+    /// in a later stage; see the plan for the list. For now an image-kind
+    /// layer's provider exposes only `name`/`visible`.
     Param[] params() {
-        return [
+        // NIT (review round 4): appending two array LITERALS (`result ~=
+        // [...]` twice) allocates the literal itself, then again on the
+        // append — up to four allocations a frame for what the module intro
+        // (line 16-ish, "one declaration") calls a per-frame snapshot.
+        // `reserve()` once up front, then append each `Param` individually
+        // (`~=` under a held capacity is amortized in-place, no further
+        // allocation) — one allocation total, matching every other
+        // steady-state-allocation-free path in this codebase.
+        immutable bool hasXform = kindInfo(layer_.kind).hasXform;
+        Param[] result;
+        result.reserve(hasXform ? 14 : 2);
+        if (hasXform) {
             // Position (world translation).
-            Param.float_("pos.x",   "Pos X",   &layer_.xform.pos.x,   0.0f),
-            Param.float_("pos.y",   "Pos Y",   &layer_.xform.pos.y,   0.0f),
-            Param.float_("pos.z",   "Pos Z",   &layer_.xform.pos.z,   0.0f),
+            result ~= Param.float_("pos.x",   "Pos X",   &layer_.xform.pos.x,   0.0f);
+            result ~= Param.float_("pos.y",   "Pos Y",   &layer_.xform.pos.y,   0.0f);
+            result ~= Param.float_("pos.z",   "Pos Z",   &layer_.xform.pos.z,   0.0f);
             // Rotation (euler degrees, ZYX) — angle hint for coarser drag step.
-            Param.float_("rot.x",   "Rot X",   &layer_.xform.rot.x,   0.0f).angle(),
-            Param.float_("rot.y",   "Rot Y",   &layer_.xform.rot.y,   0.0f).angle(),
-            Param.float_("rot.z",   "Rot Z",   &layer_.xform.rot.z,   0.0f).angle(),
+            result ~= Param.float_("rot.x",   "Rot X",   &layer_.xform.rot.x,   0.0f).angle();
+            result ~= Param.float_("rot.y",   "Rot Y",   &layer_.xform.rot.y,   0.0f).angle();
+            result ~= Param.float_("rot.z",   "Rot Z",   &layer_.xform.rot.z,   0.0f).angle();
             // Scale (per-axis; default 1).
             //
             // R7, layer two — the magnitude CEILING, declared as an enforced
@@ -113,40 +142,41 @@ final class LayerPropsProvider : ParamProvider {
             // zero, which is not a min/max pair) and neither is the NaN rejection
             // (`enforceBounds` compares with `<`/`>`, and every comparison against
             // NaN is false) — both live in `sanitizeXform` below.
-            Param.float_("scl.x",   "Scale X", &layer_.xform.scl.x,   1.0f)
-                 .min(-MAX_ITEM_SCALE_MAG).max(MAX_ITEM_SCALE_MAG).enforceBounds(),
-            Param.float_("scl.y",   "Scale Y", &layer_.xform.scl.y,   1.0f)
-                 .min(-MAX_ITEM_SCALE_MAG).max(MAX_ITEM_SCALE_MAG).enforceBounds(),
-            Param.float_("scl.z",   "Scale Z", &layer_.xform.scl.z,   1.0f)
-                 .min(-MAX_ITEM_SCALE_MAG).max(MAX_ITEM_SCALE_MAG).enforceBounds(),
+            result ~= Param.float_("scl.x",   "Scale X", &layer_.xform.scl.x,   1.0f)
+                           .min(-MAX_ITEM_SCALE_MAG).max(MAX_ITEM_SCALE_MAG).enforceBounds();
+            result ~= Param.float_("scl.y",   "Scale Y", &layer_.xform.scl.y,   1.0f)
+                           .min(-MAX_ITEM_SCALE_MAG).max(MAX_ITEM_SCALE_MAG).enforceBounds();
+            result ~= Param.float_("scl.z",   "Scale Z", &layer_.xform.scl.z,   1.0f)
+                           .min(-MAX_ITEM_SCALE_MAG).max(MAX_ITEM_SCALE_MAG).enforceBounds();
             // Pivot (rotation/scale center).
-            Param.float_("pivot.x", "Pivot X", &layer_.xform.pivot.x, 0.0f),
-            Param.float_("pivot.y", "Pivot Y", &layer_.xform.pivot.y, 0.0f),
-            Param.float_("pivot.z", "Pivot Z", &layer_.xform.pivot.z, 0.0f),
-            // Bespoke layer props.
-            //
-            // `name` rides the GENERIC registry end-to-end: it is a plain String
-            // param here, a form text row, and writable via `layer.attr 0 name
-            // <new>` (UI-undoable + coalescing) — the "one declaration" proof
-            // (Phase 5). `layer.rename` is kept as the explicit rename path, but
-            // `name` ALSO participates in the same forms/undo/serialize machinery
-            // as every transform component. (It always round-tripped through the
-            // `.v3d` layer envelope; see io/native.d + test_v3d_layers.d.)
-            Param.string_("name",    "Name",    &layer_.name,    ""),
-            // `visible` is EXPOSED as a readable Bool param (so the panel can show
-            // it / a `?` query can read it back), but is DELIBERATELY NOT driven
-            // through the generic `layer.attr` write path. Hiding a layer carries
-            // an invariant side-effect — hiding the PRIMARY must promote another
-            // selected+visible layer to primary — so the write must go through the
-            // dedicated `layer.setVisible` command, which owns that promotion hook.
-            // The layer-props form's visibility toggle therefore dispatches
-            // `layer.setVisible`, never `layer.attr` (see config/forms/layer_props
-            // .yaml). Writing `visible` via `layer.attr` would bypass the promotion
-            // and could strand a hidden primary — so it is intentionally excluded
-            // from the form's writable rows. This is the single principled
-            // exception to "every layer property rides the generic param path."
-            Param.bool_  ("visible", "Visible", &layer_.visible, true),
-        ];
+            result ~= Param.float_("pivot.x", "Pivot X", &layer_.xform.pivot.x, 0.0f);
+            result ~= Param.float_("pivot.y", "Pivot Y", &layer_.xform.pivot.y, 0.0f);
+            result ~= Param.float_("pivot.z", "Pivot Z", &layer_.xform.pivot.z, 0.0f);
+        }
+        // Bespoke layer props.
+        //
+        // `name` rides the GENERIC registry end-to-end: it is a plain String
+        // param here, a form text row, and writable via `layer.attr 0 name
+        // <new>` (UI-undoable + coalescing) — the "one declaration" proof
+        // (Phase 5). `layer.rename` is kept as the explicit rename path, but
+        // `name` ALSO participates in the same forms/undo/serialize machinery
+        // as every transform component. (It always round-tripped through the
+        // `.v3d` layer envelope; see io/native.d + test_v3d_layers.d.)
+        result ~= Param.string_("name",    "Name",    &layer_.name,    "");
+        // `visible` is EXPOSED as a readable Bool param (so the panel can show
+        // it / a `?` query can read it back), but is DELIBERATELY NOT driven
+        // through the generic `layer.attr` write path. Hiding a layer carries
+        // an invariant side-effect — hiding the PRIMARY must promote another
+        // selected+visible layer to primary — so the write must go through the
+        // dedicated `layer.setVisible` command, which owns that promotion hook.
+        // The layer-props form's visibility toggle therefore dispatches
+        // `layer.setVisible`, never `layer.attr` (see config/forms/layer_props
+        // .yaml). Writing `visible` via `layer.attr` would bypass the promotion
+        // and could strand a hidden primary — so it is intentionally excluded
+        // from the form's writable rows. This is the single principled
+        // exception to "every layer property rides the generic param path."
+        result ~= Param.bool_  ("visible", "Visible", &layer_.visible, true);
+        return result;
     }
 
     /// R7, layer two — repair the wrapped layer's `ItemXform` after a generic
@@ -542,4 +572,66 @@ unittest {
                "the repaired xform composes to an INVERTIBLE matrix — the whole "
                ~ "point of the floor");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Task 0616 Stage 2, T2 (per-kind channels half): the IMAGE kind's param
+// NAME SET must differ from the MESH kind's — SET equality, not count, and
+// specifically `pos.x` must be ABSENT, not merely present-and-disabled. An
+// implementation that kept the 12 transform params and returned
+// `paramEnabled == false` for an image-kind layer would read DIFFERENT from
+// this assertion (both the length AND the presence of "pos.x" in the name
+// set would differ), so this is the fixture that catches that specific
+// wrong shape, not merely "some kind of gating exists".
+// ---------------------------------------------------------------------------
+unittest {
+    import document : ItemKind;
+
+    auto mesh = new Layer;
+    mesh.name = "Mesh";
+    auto meshProv = new LayerPropsProvider(mesh);
+    auto meshParams = meshProv.params();
+
+    auto img = new Layer;
+    img.name = "Image";
+    img.kind = ItemKind.Image;
+    auto imgProv = new LayerPropsProvider(img);
+    auto imgParams = imgProv.params();
+
+    assert(meshParams.length == 14, "mesh-kind layer still exposes all 14 params");
+    assert(imgParams.length == 2, "image-kind layer exposes only name + visible");
+
+    bool[string] meshSet, imgSet;
+    foreach (p; meshParams) meshSet[p.name] = true;
+    foreach (p; imgParams)  imgSet[p.name]  = true;
+
+    assert(("pos.x"   in meshSet) !is null, "fixture: pos.x IS a mesh-kind param");
+    assert(("pos.x"   in imgSet)  is  null, "pos.x must be ABSENT from the image-kind set, not merely disabled");
+    assert(("rot.y"   in imgSet)  is  null, "rot.y must be ABSENT from the image-kind set");
+    assert(("pivot.z" in imgSet)  is  null, "pivot.z must be ABSENT from the image-kind set");
+    assert(("name"    in imgSet)  !is null, "name survives on every kind");
+    assert(("visible" in imgSet)  !is null, "visible survives on every kind");
+
+    // NIT (review round 4): the two assertions above alone don't separate
+    // "gated on the `hasXform` CAPABILITY" from "gated on `kind ==
+    // ItemKind.Mesh`" — every fixture so far is Mesh on one side and
+    // non-Mesh on the other, so a kind-equality check would pass them
+    // identically. `Empty` is the discriminator: it `hasXform == true` but
+    // `hasMesh == false` (`document.d`'s `kItemKindTable`) — it is neither
+    // Mesh nor Image. A `kind == ItemKind.Mesh` implementation would give it
+    // only `name`/`visible` (2 params, `pos.x` absent); the real
+    // capability-read implementation must give it the full 14, `pos.x`
+    // included, because the capability it actually has is true.
+    auto placeholder = new Layer;
+    placeholder.name = "Placeholder";
+    placeholder.kind = ItemKind.Empty;
+    auto placeholderProv = new LayerPropsProvider(placeholder);
+    auto placeholderParams = placeholderProv.params();
+    assert(placeholderParams.length == 14,
+        "Empty (hasXform==true, hasMesh==false) must still get the full 14-param set — "
+        ~ "a kind==Mesh check would wrongly give it 2");
+    bool[string] placeholderSet;
+    foreach (p; placeholderParams) placeholderSet[p.name] = true;
+    assert(("pos.x" in placeholderSet) !is null,
+        "pos.x must be PRESENT for Empty — a kind==Mesh check would wrongly omit it");
 }

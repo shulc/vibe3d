@@ -884,7 +884,9 @@ void drawViewportPropsPanel(EditorApp app) {
 // Layers panel (layers Stage 4)
 // -------------------------------------------------------------------------
 //
-// Interactive layer manager. One row per `document.layers`:
+// Interactive layer manager. One row per `document.layers` that
+// `kindInfo(kind).isSceneItem` (task 0616 Stage 2) — a document RESOURCE
+// kind (e.g. an image) is skipped here; it lives only in its own panel:
 //   - a primary/selected indicator + name selectable → `layer.select`
 //     (plain click mode:set, ctrl-click mode:toggle)
 //   - the layer name (double-click to rename in place → `layer.rename`)
@@ -954,6 +956,17 @@ void drawLayerListPanel(EditorApp app) {
         // ---- One row per layer ----
         foreach (i; 0 .. document.layers.length) {
             auto l = document.layers[i];
+            // Task 0616 Stage 2 (SHOULD-FIX 2, review round 4): `isSceneItem`
+            // is the capability that says "belongs in this list" — a
+            // document RESOURCE kind (e.g. an image) has no transform and
+            // nothing to see in the viewport, so it lives only in its own
+            // panel (a later stage), never this one. Skip BEFORE `PushID` /
+            // any row chrome, mirroring the `drawsGeometry` gates elsewhere
+            // in this file that skip before their own per-row work starts.
+            // `document.layers`' indices stay untouched (a hidden row is
+            // skipped, not removed), so every `idx`-keyed command dispatch
+            // below still targets the right layer.
+            if (!kindInfo(l.kind).isSceneItem) continue;
             int idx = cast(int)i;
             ImGui.PushID(idx);
 
@@ -2407,9 +2420,18 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     // Install item snap frames (Stage 3).
     {
         import snap : setItemSnapFrames, ItemSnapFrame;
+        import document : kindInfo;
         ItemSnapFrame[] itemFrames;
         foreach (lyr; document.layers) {
             if (!lyr.visible) continue;
+            // Task 0616 Stage 2 (Bend #1): a kind with no transform
+            // capability (e.g. an image — a document RESOURCE, not a thing
+            // positioned in space) has no pivot to snap to. Without this
+            // gate `buildItemFrame` would read `Layer.xform`'s inert default
+            // identity and offer (0,0,0) as a snap target for every such
+            // item — meaningless, since nothing ever authors that field for
+            // a kind `layer_params.d` does not expose it on.
+            if (!kindInfo(lyr.kind).hasXform) continue;
             itemFrames ~= buildItemFrame(lyr);
         }
         setItemSnapFrames(itemFrames);

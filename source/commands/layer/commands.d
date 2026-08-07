@@ -218,6 +218,18 @@ final class LayerDuplicate : LayerCommandBase {
         l2.kind = src.kind;
         if (src.hasMesh)
             MeshSnapshot.capture(src.meshRef()).restore(l2.meshRef());
+        // Task 0616 Stage 2 (§O1): the same defect class as the `kind` fix
+        // just above, one field over — a payload that is a class REFERENCE
+        // does not follow `l2.kind = src.kind` for free. Unlike the mesh
+        // (deep-copied above), the clone SHARES the source's image payload
+        // by object identity: two layers pointing at the same loaded image
+        // is the whole point (one decode, N consumers), not a bug to avoid.
+        // The refcount bump this sharing implies is Stage 5's job (once the
+        // pixel cache exists) — pinned there by T11b; this stage only wires
+        // the pointer so a duplicated image row is a LIVE image row, not a
+        // payload-null one (T11a).
+        if (src.hasImage)
+            l2.imageRef() = src.imageOrNull();
         l2.name    = src.name ~ " copy";
         l2.visible = true;
         l2.xform   = src.xform;    // ItemXform is a value struct → value copy
@@ -1254,6 +1266,89 @@ unittest {
     assert(dup.revert(), "revert must succeed");
     assert(doc.layers.length == 2, "revert: back to 2 layers");
     assert(doc.primary is meshA, "revert: meshA is still primary");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0616 Stage 2, T11a: duplicating an IMAGE-kind layer must yield a LIVE
+// image row, not a payload-null one. This is the exact defect class the
+// unittest above already fixed once for `ItemKind.Empty` (review round 3:
+// `l2.kind = src.kind` alone was not enough once a non-mesh kind carries a
+// FIELD, not just a capability flag) — kind #2 brings a field (`image_`)
+// that `Empty` never had to carry, so the earlier fix's `if (src.hasMesh)
+// ...` guard does not by itself cover it; the sibling `if (src.hasImage)
+// ...` guard added at `apply()` above is what this test pins.
+//
+// Reached through the command exactly as a caller can reach it today
+// (`resolveIndex`, `:72-77`, clamps the index but never checks kind or
+// `canBePrimary`) — not by calling `Layer` accessors directly.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import view : View;
+    import document : ImageData;
+
+    auto doc = Document.bootstrap(makeCube());        // "Layer 1" == meshA
+    auto meshA = doc.layers[0];
+    auto img = new Layer;
+    img.name = "logo";
+    img.kind = ItemKind.Image;
+    img.imageRef() = new ImageData();
+    img.imageRef().storedPath = "logo.png";
+    doc.layers ~= img;                                 // [meshA(primary), img]
+    assert(doc.primary is meshA, "fixture: meshA starts as primary");
+    assert(img.hasImage, "fixture: img has the image capability");
+    assert(img.imageOrNull !is null, "fixture: img has a constructed payload");
+
+    auto v   = new View(0, 0, 800, 600);
+    auto dup = new LayerDuplicate(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
+    dup.indexArg = 1;                                  // target the image layer
+
+    assert(dup.apply(), "apply must succeed on an image source");
+    assert(doc.layers.length == 3, "apply: layer count == 3");
+    assert(dup.added.kind == ItemKind.Image, "clone of an image source keeps its kind");
+    assert(doc.primary is meshA, "apply: an image clone never becomes primary (not canBePrimary)");
+
+    // (a) the clone must be a LIVE image row, not a payload-null one — the
+    // "ships an image-kind layer with no payload" bug reads null here while
+    // passing every kind-only assertion above.
+    assert(dup.added.hasImage, "clone: hasImage capability follows kind");
+    assert(dup.added.imageOrNull() !is null,
+        "clone: imageOrNull() must be non-null — a payload-null image row is exactly the bug this test exists for");
+
+    // (b) the clone's storedPath equals the source's — a clone that
+    // allocated a FRESH, empty ImageData (instead of sharing the source's)
+    // would read "" here, which is ALSO non-null, so (a) alone would miss it.
+    assert(dup.added.imageOrNull().storedPath == "logo.png",
+        "clone: storedPath must match the source's, not a fresh default");
+
+    // Stronger than (b) alone, and covers what a cache-backed "residentBytes
+    // unchanged" check (T11b, Stage 5 — no cache exists yet in this stage)
+    // would otherwise be the only thing to catch: this stage's contract is
+    // SHARE, not copy. Assert IDENTITY, so a "copy the fields into a fresh
+    // ImageData" implementation — which would also pass the storedPath
+    // check above — is caught here instead of silently waiting for a later
+    // stage's test to notice.
+    assert(dup.added.imageOrNull() is img.imageOrNull(),
+        "clone: the image payload is the SAME object as the source's (shared, not copied)");
+
+    assert(dup.revert(), "revert must succeed");
+    assert(doc.layers.length == 2, "revert: back to 2 layers");
+    assert(doc.primary is meshA, "revert: meshA is still primary");
+
+    // NIT (review round 4): revert removes the CLONE, so the SOURCE'S own
+    // payload must survive untouched — free today (nothing releases
+    // anything yet), but this is the assertion a later stage needs once
+    // `revert` decrements a share count: an implementation that released the
+    // payload on revert (mistaking "the clone is gone" for "the clone's
+    // reference to a still-shared object should be torn down") would null
+    // or corrupt `img.imageOrNull()` here while every assertion above (all
+    // scoped to `dup.added`, the clone) stays green.
+    assert(img.imageOrNull() !is null,
+        "revert: the SOURCE's image payload must survive — an over-release "
+        ~ "on revert would null it here while leaving every clone-side "
+        ~ "assertion above unaffected");
+    assert(img.imageOrNull().storedPath == "logo.png",
+        "revert: the SOURCE's payload content is unchanged");
 }
 
 // ---------------------------------------------------------------------------
