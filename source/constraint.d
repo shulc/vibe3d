@@ -2,7 +2,7 @@ module constraint;
 
 import std.math : sqrt;
 
-import math : Vec3, Viewport, dot, cross, normalize,
+import math : Vec3, Viewport, ModelSpace, dot, cross, normalize,
               projectToWindowFull, closestOnSegment2D;
 import mesh : Mesh, edgeKey;
 import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
@@ -84,12 +84,46 @@ Vec3 closestPointOnTriangle(Vec3 p, Vec3 a, Vec3 b, Vec3 c)
 }
 
 // ---------------------------------------------------------------------------
+// BackgroundSource — a background mesh paired with the ModelSpace of the
+// layer it came from (task 0617 Stage 4 review fix). Every function below
+// that walks MULTIPLE background sources (closestPointOnMeshes,
+// projectAlongDirection) needs each source's OWN transform: a background
+// layer's `mesh.vertices[]` are LOCAL, but `p`/`pos`/`dir` below are WORLD
+// (the moving vertex's live position, or a world camera-ray seed), so a
+// metric search (nearest-point, ray-triangle) run against raw local
+// vertices silently drags the result onto the layer's IDENTITY pose — see
+// doc/picking_item_transform_plan.md §3 and the CONS stage's
+// `bgSurfaceRayHit` for the sibling fix. `layerIndex` is opaque to both
+// functions (they never read it) — it exists so a caller that also needs
+// the Document-layer index (the CONS stage's `hit.layer` fill) can take
+// ONE combined snapshot instead of a separate lock+allocation per field;
+// -1 means "not supplied" (mirrors snap.backgroundSourceLayerIndices()'s
+// existing "caller falls back to the source-array index" contract).
+//
+// Defined here, not in snap.d, so this module keeps its documented shape —
+// "no toolpipe state, no global reads" — snap.d imports this TYPE (a plain
+// data shape, not a global or a behavior) rather than the other way round.
+struct BackgroundSource {
+    const(Mesh)* mesh;
+    ModelSpace   space;
+    int          layerIndex = -1;
+}
+
+// ---------------------------------------------------------------------------
 // closestPointOnMeshes
 //
 // Walk every triangulated face of every source mesh; return the globally
-// nearest foot. Fan-triangulates polygons (vertex 0 as the fan pivot).
-// `dblSided` is reserved for the capture-gated back-face rule — for now
-// all faces are considered regardless.
+// nearest foot, in WORLD space. Fan-triangulates polygons (vertex 0 as the
+// fan pivot). `dblSided` is reserved for the capture-gated back-face rule —
+// for now all faces are considered regardless.
+//
+// Each source's vertices are folded through ITS OWN `space` before the
+// metric search (`toWorld`, identity-gated so the common single-layer case
+// pays a bool check, not a matmul) — a global nearest-point election across
+// sources with DIFFERENT transforms is only meaningful in one common space,
+// and a minimum-distance election is not affine-invariant under a
+// non-uniform scale (so searching in each source's own local space and
+// comparing the raw distances across sources would elect the wrong point).
 //
 // `srcIndex`/`face` (topology-pen P2, doc/topopen_p2_plan.md) identify the
 // WINNING source (index into `sources`) and its winning face (index into
@@ -104,7 +138,7 @@ Vec3 closestPointOnTriangle(Vec3 p, Vec3 a, Vec3 b, Vec3 c)
 // movingPos unchanged).
 // ---------------------------------------------------------------------------
 bool closestPointOnMeshes(Vec3 p,
-                          const(Mesh)*[] sources,
+                          const(BackgroundSource)[] sources,
                           bool dblSided,
                           out Vec3 hit,
                           out Vec3 hitNormal,
@@ -119,26 +153,33 @@ bool closestPointOnMeshes(Vec3 p,
     int   bestSrcIndex = -1;
     int   bestFace     = -1;
 
-    foreach (si, src; sources) {
-        if (src is null) continue;
+    foreach (si, bg; sources) {
+        if (bg.mesh is null) continue;
+        const src   = bg.mesh;
         const verts = src.vertices;
+        const bool ident = bg.space.isIdentity;
+        Vec3 toWorld(Vec3 vLocal) { return ident ? vLocal : bg.space.toWorldPoint(vLocal); }
         // `poly` (REV-2 rename, doc/topopen_p2_plan.md): the polygon's own
         // vertex-index array — renamed from the original `face` so it does
         // not shadow this function's new `face`-INDEX out-param above.
         foreach (fi, poly; src.faces.range) {
             if (poly.length < 3) continue;
             // Fan triangulation: (0,i,i+1) for i in [1, n-2]
-            Vec3 a = verts[poly[0]];
+            Vec3 a = toWorld(verts[poly[0]]);
             for (size_t i = 1; i + 1 < poly.length; ++i) {
-                Vec3 b = verts[poly[i]];
-                Vec3 cc = verts[poly[i + 1]];
+                Vec3 b = toWorld(verts[poly[i]]);
+                Vec3 cc = toWorld(verts[poly[i + 1]]);
                 Vec3 cpt = closestPointOnTriangle(p, a, b, cc);
                 Vec3 d = cpt - p;
                 float d2 = dot(d, d);
                 if (d2 < bestD2) {
                     bestD2 = d2;
                     bestPt = cpt;
-                    // Face normal (unnormalised is fine for the direction)
+                    // Face normal (unnormalised is fine for the direction) —
+                    // cross-product of WORLD edge vectors of an already-WORLD
+                    // triangle, so this is the true world normal directly (no
+                    // inverse-transpose normal rule needed, unlike
+                    // transforming an ALREADY-LOCAL normal into world space).
                     Vec3 n = cross(b - a, cc - a);
                     float nlen = sqrt(dot(n, n));
                     bestN = (nlen > 1e-12f) ? n * (1.0f / nlen) : Vec3(0, 1, 0);
@@ -167,13 +208,15 @@ bool closestPointOnMeshes(Vec3 p,
 // projectAlongDirection
 //
 // Möller-Trumbore ray-triangle intersection along `dir` (world space).
-// Finds the nearest forward hit across all source faces. Backs the
+// Finds the nearest forward hit across all source faces, each folded
+// through its OWN ModelSpace first (same reasoning as closestPointOnMeshes
+// above — `pos`/`dir` are world, `src.vertices[]` are local). Backs the
 // `vector` and `screen` modes in constrainPoint. Returns false when no
 // forward hit is found (caller keeps movingPos unchanged).
 // ---------------------------------------------------------------------------
 bool projectAlongDirection(Vec3 pos,
                            Vec3 dir,
-                           const(Mesh)*[] sources,
+                           const(BackgroundSource)[] sources,
                            bool dblSided,
                            out Vec3 hit,
                            out Vec3 hitNormal)
@@ -184,15 +227,18 @@ bool projectAlongDirection(Vec3 pos,
     Vec3  bestN  = Vec3(0, 1, 0);
     bool  found  = false;
 
-    foreach (src; sources) {
-        if (src is null) continue;
+    foreach (bg; sources) {
+        if (bg.mesh is null) continue;
+        const src   = bg.mesh;
         const verts = src.vertices;
+        const bool ident = bg.space.isIdentity;
+        Vec3 toWorld(Vec3 vLocal) { return ident ? vLocal : bg.space.toWorldPoint(vLocal); }
         foreach (face; src.faces.range) {
             if (face.length < 3) continue;
-            Vec3 a = verts[face[0]];
+            Vec3 a = toWorld(verts[face[0]]);
             for (size_t i = 1; i + 1 < face.length; ++i) {
-                Vec3 b = verts[face[i]];
-                Vec3 cc = verts[face[i + 1]];
+                Vec3 b = toWorld(verts[face[i]]);
+                Vec3 cc = toWorld(verts[face[i + 1]]);
                 // Möller-Trumbore
                 Vec3 e1 = b - a;
                 Vec3 e2 = cc - a;
@@ -270,40 +316,49 @@ private Vec3 closestPointOnSegment3D(Vec3 p, Vec3 a, Vec3 b)
     return a + ab * t;
 }
 
-/// Nearest vertex of `face` (an index into `m.faces`) to world point `p` —
-/// argmin |p - vert|. Pure, best-effort: returns -1 when `face` is out of
-/// range or empty (never throws / asserts — a raycast hit against a face
-/// that has since been mutated out from under the caller degrades to "no
-/// nearest element" rather than crashing).
-int nearestFaceVertex(const ref Mesh m, int face, Vec3 p)
+/// Nearest vertex of `face` (an index into `m.faces`) to WORLD point `p` —
+/// argmin |p - toWorld(vert)|, where `ms` is the mesh's own layer ModelSpace
+/// (`m.vertices[]` are LOCAL; `p` is world — a background layer with a
+/// non-identity transform needs each candidate folded into world before the
+/// distance compare, or the election silently drags onto the layer's
+/// IDENTITY pose instead of where it is actually drawn). Pure, best-effort:
+/// returns -1 when `face` is out of range or empty (never throws / asserts
+/// — a raycast hit against a face that has since been mutated out from
+/// under the caller degrades to "no nearest element" rather than
+/// crashing).
+int nearestFaceVertex(const ref Mesh m, ModelSpace ms, int face, Vec3 p)
     pure nothrow @safe
 {
     if (face < 0 || face >= cast(int)m.faces.length) return -1;
     const f = m.faces[face];
+    const bool ident = ms.isIdentity;
     int best = -1;
     float bestD2 = float.infinity;
     foreach (vi; f) {
         if (vi >= m.vertices.length) continue;
-        Vec3 d = m.vertices[vi] - p;
+        Vec3 wv = ident ? m.vertices[vi] : ms.toWorldPoint(m.vertices[vi]);
+        Vec3 d = wv - p;
         float d2 = dot(d, d);
         if (d2 < bestD2) { bestD2 = d2; best = cast(int)vi; }
     }
     return best;
 }
 
-/// Nearest edge of `face` (an index into `m.faces`) to world point `p` —
-/// argmin point-to-segment distance over the face's boundary edges,
-/// resolved to a `m.edges` index via `edgeKey`/`edgeIndexMap`. Best-effort:
-/// returns -1 when `face` is out of range, has fewer than 2 vertices, or
-/// `m.edgeIndexMap` is not currently valid/built (P0 accepts -1 here
-/// rather than forcing a rebuild from a `const` reference — see
+/// Nearest edge of `face` (an index into `m.faces`) to WORLD point `p` —
+/// argmin point-to-segment distance over the face's boundary edges (each
+/// endpoint folded through `ms`, same reasoning as `nearestFaceVertex`
+/// above), resolved to a `m.edges` index via `edgeKey`/`edgeIndexMap`.
+/// Best-effort: returns -1 when `face` is out of range, has fewer than 2
+/// vertices, or `m.edgeIndexMap` is not currently valid/built (P0 accepts
+/// -1 here rather than forcing a rebuild from a `const` reference — see
 /// doc/topopen_p0_plan.md risk R6). NOT `pure` — `Mesh.edgeMapUsable()`
 /// isn't itself annotated pure.
-int nearestFaceEdge(const ref Mesh m, int face, Vec3 p) {
+int nearestFaceEdge(const ref Mesh m, ModelSpace ms, int face, Vec3 p) {
     if (face < 0 || face >= cast(int)m.faces.length) return -1;
     if (!m.edgeMapUsable()) return -1;
     const f = m.faces[face];
     if (f.length < 2) return -1;
+    const bool ident = ms.isIdentity;
 
     int best = -1;
     float bestD2 = float.infinity;
@@ -311,7 +366,9 @@ int nearestFaceEdge(const ref Mesh m, int face, Vec3 p) {
         uint a = f[i];
         uint b = f[(i + 1) % f.length];
         if (a >= m.vertices.length || b >= m.vertices.length) continue;
-        Vec3 cp = closestPointOnSegment3D(p, m.vertices[a], m.vertices[b]);
+        Vec3 wa = ident ? m.vertices[a] : ms.toWorldPoint(m.vertices[a]);
+        Vec3 wb = ident ? m.vertices[b] : ms.toWorldPoint(m.vertices[b]);
+        Vec3 cp = closestPointOnSegment3D(p, wa, wb);
         Vec3 d  = cp - p;
         float d2 = dot(d, d);
         if (d2 >= bestD2) continue;
@@ -743,13 +800,14 @@ HoverTarget resolveHoverTarget(const ref ConstrainHitPacket h,
 //                 `vector` mode as the projection direction; unused by `point`.
 //   vp          — active viewport; consumed by `screen` mode to extract the
 //                 camera-forward axis; unused by `point`.
-//   sources     — background-mesh source list from snap.backgroundSourcesSnapshot().
+//   sources     — background-mesh sources (mesh + that layer's ModelSpace)
+//                 from snap.backgroundSourcesFull().
 //   cfg         — live ConstrainPacket published by ConstrainStage.
 // ---------------------------------------------------------------------------
 Vec3 constrainPoint(Vec3 movingPos,
                     Vec3 motionDelta,
                     Viewport vp,
-                    const(Mesh)*[] sources,
+                    const(BackgroundSource)[] sources,
                     const ref ConstrainPacket cfg)
 {
     if (!cfg.enabled) return movingPos;
@@ -850,7 +908,7 @@ unittest { // closestPointOnMeshes — vert projects onto unit quad at y=0
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.faces    = [[0u,1u,2u], [0u,2u,3u]];
-    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    const(BackgroundSource)[] srcs = [BackgroundSource(cast(const(Mesh)*)m, ModelSpace.world())];
     Vec3 p = Vec3(0.5f, 3.0f, 0.5f);  // above centre of quad
     Vec3 hit, hitN;
     int si, fc;
@@ -873,7 +931,7 @@ unittest { // closestPointOnMeshes — P2 (doc/topopen_p2_plan.md): srcIndex/fac
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.faces    = [[0u,1u,2u], [0u,2u,3u]];
-    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    const(BackgroundSource)[] srcs = [BackgroundSource(cast(const(Mesh)*)m, ModelSpace.world())];
     import std.math : fabs;
 
     // Seed over face 0's interior (x > z).
@@ -900,7 +958,7 @@ unittest { // closestPointOnMeshes — P2 (doc/topopen_p2_plan.md): srcIndex/fac
 }
 
 unittest { // closestPointOnMeshes — P2: not-found leaves srcIndex/face at -1
-    const(Mesh)*[] srcs = [];
+    const(BackgroundSource)[] srcs = [];
     Vec3 hit, hitN;
     int si, fc;
     float d2;
@@ -909,12 +967,102 @@ unittest { // closestPointOnMeshes — P2: not-found leaves srcIndex/face at -1
     assert(si == -1 && fc == -1, "not-found must leave srcIndex/face at -1");
 }
 
+unittest { // closestPointOnMeshes / nearestFaceVertex / nearestFaceEdge —
+           // task 0617 Stage 4 review BLOCKER 1: a background source's
+           // ModelSpace must be folded in BEFORE the metric search runs,
+           // not ignored. Same quad this file's identity tests use, but
+           // now the mesh's LOCAL vertices sit 3 world units away from
+           // where the review's own repro names — "a background layer at
+           // position x=3" — and the query points are WORLD (as
+           // `bgSurfaceRayHit`'s seed and the CONS stage's candidate
+           // fields genuinely are).
+           //
+           // Without the fix (searching `m.vertices[]` raw, ignoring
+           // `bg.space`), every query below misses the translated quad
+           // entirely — `closestPointOnMeshes` still finds SOME foot on
+           // the identity-pose quad (it never returns `false` for a
+           // non-empty source), but at the WRONG position, exactly the
+           // review's point: "drags the point onto the identity-pose
+           // surface and turns the reported distance into the layer's
+           // translation magnitude". `nearestFaceVertex`/`nearestFaceEdge`
+           // likewise elect against the untransformed local vertices, so
+           // for a query near a TRANSLATED corner they resolve to
+           // whichever corner happens to be nearest in the wrong
+           // (identity) frame — for this fixture's translation that is a
+           // WRONG vertex index, not merely a wrong position, which is
+           // what the assertions below pin.
+    import mesh : Mesh;
+    import math : translationMatrix;
+    import std.math : fabs;
+
+    immutable Vec3 T = Vec3(3, 0, 0);   // the review's own repro: x=3
+    ModelSpace ms;
+    ms.m    = translationMatrix(T);
+    ms.mInv = translationMatrix(Vec3(-T.x, -T.y, -T.z));
+    ms.isIdentity = false;
+
+    auto m = new Mesh();
+    // The IDENTICAL local quad the identity tests use — this fixture's
+    // whole point is that the SAME local geometry now sits somewhere else
+    // in world space (`ms.toWorldPoint` maps these to
+    // (3,0,0)/(4,0,0)/(4,0,1)/(3,0,1), i.e. the identity quad shifted by
+    // +T — "a background layer at position x=3").
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+    m.addFace([0u, 1u, 2u, 3u]);   // ONE quad face — addFace builds edges + edgeIndexMap
+    m.buildLoops();
+
+    const(BackgroundSource)[] srcs = [BackgroundSource(cast(const(Mesh)*)m, ms)];
+
+    // --- closestPointOnMeshes: world query above the TRANSLATED quad -------
+    Vec3 p = Vec3(0.5f, 3.0f, 0.5f) + T;   // world: (3.5, 3.0, 0.5)
+    Vec3 hit, hitN;
+    int si, fc;
+    float d2;
+    bool ok = closestPointOnMeshes(p, srcs, false, hit, hitN, si, fc, d2);
+    assert(ok, "closestPointOnMeshes should find a hit on the translated quad");
+    assert(fabs(hit.x - (0.5f + T.x)) < 1e-4f
+        && fabs(hit.y - 0.0f) < 1e-4f
+        && fabs(hit.z - 0.5f) < 1e-4f,
+        "the foot must land on the quad WHERE IT IS DRAWN (world), not at "
+      ~ "the identity pose the raw local vertices sit at");
+
+    // --- nearestFaceVertex: a query near the TRANSLATED corner 0 -----------
+    // Deliberately the LOCAL-x=0 corner, not a LOCAL-x=1 one: a broken
+    // (un-transformed) search always favours whichever LOCAL vertex has the
+    // LARGEST local x here, because the world query sits near local-x + T
+    // and T dominates every candidate's distance the same way — so a query
+    // near a local-x=1 corner would (mis)elect the SAME corner whether or
+    // not the fix is applied, proving nothing. Querying near the local-x=0
+    // corner forces the broken path to disagree.
+    Vec3 nearCorner0 = Vec3(-0.1f, 0.05f, -0.1f) + T;
+    assert(nearestFaceVertex(*m, ms, 0, nearCorner0) == 0,
+        "nearestFaceVertex must elect the WORLD-nearest corner — reverting "
+      ~ "the fix elects against the mesh's raw LOCAL vertices (which all "
+      ~ "sit 3 world units nearer +x than this query, so the search always "
+      ~ "prefers the local-x=1 corners) and picks corner 1 instead of 0");
+
+    // --- nearestFaceEdge: a query near the TRANSLATED edge (3,0)'s midpoint
+    // Same reasoning as the vertex case above: edge (3,0) is the LOCAL-x=0
+    // edge, so it is the one a broken (un-transformed) search systematically
+    // avoids in favour of edge (1,2) (LOCAL-x=1), independent of where the
+    // query world point actually is.
+    import mesh : edgeKey;
+    Vec3 nearEdge30 = Vec3(-0.05f, 0.05f, 0.5f) + T;
+    int gotEdge = nearestFaceEdge(*m, ms, 0, nearEdge30);
+    auto expEdgePtr = edgeKey(3, 0) in m.edgeIndexMap;
+    assert(expEdgePtr !is null, "fixture: edge (3,0) must be in the map");
+    assert(gotEdge == cast(int)*expEdgePtr,
+        "nearestFaceEdge must elect the WORLD-nearest edge — reverting the "
+      ~ "fix elects against the raw LOCAL vertices and picks edge (1,2) "
+      ~ "instead of (3,0)");
+}
+
 unittest { // constrainPoint — point mode projects onto plane
     import mesh : Mesh;
     auto m = new Mesh();
     m.vertices = [Vec3(-5,0,-5), Vec3(5,0,-5), Vec3(5,0,5), Vec3(-5,0,5)];
     m.faces    = [[0u,1u,2u], [0u,2u,3u]];
-    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    const(BackgroundSource)[] srcs = [BackgroundSource(cast(const(Mesh)*)m, ModelSpace.world())];
     ConstrainPacket cfg;
     cfg.enabled = true;
     cfg.geom    = ConstrainGeom.Point;
@@ -933,7 +1081,7 @@ unittest { // constrainPoint — disabled → identity
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,0,1)];
     m.faces    = [[0u,1u,2u]];
-    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    const(BackgroundSource)[] srcs = [BackgroundSource(cast(const(Mesh)*)m, ModelSpace.world())];
     ConstrainPacket cfg;
     cfg.enabled = false;
     cfg.geom    = ConstrainGeom.Point;
@@ -949,7 +1097,7 @@ unittest { // constrainPoint — off mode → identity even when enabled
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,0,1)];
     m.faces    = [[0u,1u,2u]];
-    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    const(BackgroundSource)[] srcs = [BackgroundSource(cast(const(Mesh)*)m, ModelSpace.world())];
     ConstrainPacket cfg;
     cfg.enabled = true;
     cfg.geom    = ConstrainGeom.Off;
@@ -961,7 +1109,7 @@ unittest { // constrainPoint — off mode → identity even when enabled
 }
 
 unittest { // constrainPoint — empty sources → identity
-    const(Mesh)*[] srcs = [];
+    const(BackgroundSource)[] srcs = [];
     ConstrainPacket cfg;
     cfg.enabled = true;
     cfg.geom    = ConstrainGeom.Point;
@@ -984,7 +1132,7 @@ unittest { // constrainPoint — vector mode: downward delta hits +Y plane at Y=
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.faces    = [[0u,2u,1u], [0u,3u,2u]];
-    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    const(BackgroundSource)[] srcs = [BackgroundSource(cast(const(Mesh)*)m, ModelSpace.world())];
     ConstrainPacket cfg;
     cfg.enabled  = true;
     cfg.geom     = ConstrainGeom.Vector;
@@ -1005,7 +1153,7 @@ unittest { // constrainPoint — vector mode: upward delta misses +Y plane → i
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.faces    = [[0u,2u,1u], [0u,3u,2u]];
-    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    const(BackgroundSource)[] srcs = [BackgroundSource(cast(const(Mesh)*)m, ModelSpace.world())];
     ConstrainPacket cfg;
     cfg.enabled  = true;
     cfg.geom     = ConstrainGeom.Vector;
@@ -1024,7 +1172,7 @@ unittest { // constrainPoint — vector mode: zero delta → identity
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,0,1)];
     m.faces    = [[0u,1u,2u]];
-    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    const(BackgroundSource)[] srcs = [BackgroundSource(cast(const(Mesh)*)m, ModelSpace.world())];
     ConstrainPacket cfg;
     cfg.enabled = true;
     cfg.geom    = ConstrainGeom.Vector;
@@ -1041,7 +1189,7 @@ unittest { // constrainPoint — screen mode: top-down view hits +Y plane at Y=0
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.faces    = [[0u,2u,1u], [0u,3u,2u]];
-    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    const(BackgroundSource)[] srcs = [BackgroundSource(cast(const(Mesh)*)m, ModelSpace.world())];
     ConstrainPacket cfg;
     cfg.enabled  = true;
     cfg.geom     = ConstrainGeom.Screen;
@@ -1072,7 +1220,7 @@ unittest { // constrainPoint — screen mode: zero-width viewport → identity
     auto m = new Mesh();
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,0,1)];
     m.faces    = [[0u,1u,2u]];
-    const(Mesh)*[] srcs = [cast(const(Mesh)*)m];
+    const(BackgroundSource)[] srcs = [BackgroundSource(cast(const(Mesh)*)m, ModelSpace.world())];
     ConstrainPacket cfg;
     cfg.enabled = true;
     cfg.geom    = ConstrainGeom.Screen;
@@ -1095,10 +1243,10 @@ unittest { // nearestFaceVertex — 4 corners of a unit quad each resolve exactl
 
     // A point offset slightly toward each corner resolves to that corner's
     // vertex index — clearly closer than any other corner.
-    assert(nearestFaceVertex(*m, 0, Vec3(-0.1f, 0.05f, -0.1f)) == 0, "corner 0");
-    assert(nearestFaceVertex(*m, 0, Vec3( 1.1f, 0.05f, -0.1f)) == 1, "corner 1");
-    assert(nearestFaceVertex(*m, 0, Vec3( 1.1f, 0.05f,  1.1f)) == 2, "corner 2");
-    assert(nearestFaceVertex(*m, 0, Vec3(-0.1f, 0.05f,  1.1f)) == 3, "corner 3");
+    assert(nearestFaceVertex(*m, ModelSpace.world(), 0, Vec3(-0.1f, 0.05f, -0.1f)) == 0, "corner 0");
+    assert(nearestFaceVertex(*m, ModelSpace.world(), 0, Vec3( 1.1f, 0.05f, -0.1f)) == 1, "corner 1");
+    assert(nearestFaceVertex(*m, ModelSpace.world(), 0, Vec3( 1.1f, 0.05f,  1.1f)) == 2, "corner 2");
+    assert(nearestFaceVertex(*m, ModelSpace.world(), 0, Vec3(-0.1f, 0.05f,  1.1f)) == 3, "corner 3");
 }
 
 unittest { // nearestFaceVertex — out-of-range face -> -1 (best-effort, never throws)
@@ -1107,8 +1255,8 @@ unittest { // nearestFaceVertex — out-of-range face -> -1 (best-effort, never 
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap
     m.buildLoops();
-    assert(nearestFaceVertex(*m, 7, Vec3(0,0,0)) == -1, "face index too high");
-    assert(nearestFaceVertex(*m, -1, Vec3(0,0,0)) == -1, "negative face index");
+    assert(nearestFaceVertex(*m, ModelSpace.world(), 7, Vec3(0,0,0)) == -1, "face index too high");
+    assert(nearestFaceVertex(*m, ModelSpace.world(), -1, Vec3(0,0,0)) == -1, "negative face index");
 }
 
 unittest { // nearestFaceEdge — 4 edge midpoints of a unit quad each resolve to
@@ -1129,7 +1277,7 @@ unittest { // nearestFaceEdge — 4 edge midpoints of a unit quad each resolve t
         Vec3(-0.05f,0.05f,  0.5f),   // near edge (3,0) midpoint (0,0,0.5)
     ];
     foreach (i; 0 .. 4) {
-        int got = nearestFaceEdge(*m, 0, mids[i]);
+        int got = nearestFaceEdge(*m, ModelSpace.world(), 0, mids[i]);
         auto expPtr = edgeKey(pairs[i][0], pairs[i][1]) in m.edgeIndexMap;
         assert(expPtr !is null, "edgeIndexMap missing pair " ~ i.to!string);
         assert(got == cast(int)*expPtr,
@@ -1145,12 +1293,12 @@ unittest { // nearestFaceEdge — miss cases: out-of-range face, and a mesh whos
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap
     m.buildLoops();
-    assert(nearestFaceEdge(*m, 9, Vec3(0.5f, 0, 0)) == -1, "out-of-range face");
+    assert(nearestFaceEdge(*m, ModelSpace.world(), 9, Vec3(0.5f, 0, 0)) == -1, "out-of-range face");
 
     auto m2 = new Mesh();   // never buildLoops()'d — edgeIndexMap stale/empty
     m2.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m2.faces    = [[0u,1u,2u,3u]];
-    assert(nearestFaceEdge(*m2, 0, Vec3(0.5f, 0, 0)) == -1,
+    assert(nearestFaceEdge(*m2, ModelSpace.world(), 0, Vec3(0.5f, 0, 0)) == -1,
         "edgeIndexMap not built -> best-effort -1");
 }
 
@@ -1162,7 +1310,7 @@ unittest { // nearestFaceEdge — grazing case: a point at a shared CORNER is
     m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
     m.addFace([0u,1u,2u,3u]);   // addFace incrementally builds edges + edgeIndexMap
     m.buildLoops();
-    int got = nearestFaceEdge(*m, 0, Vec3(1.0f, 0.05f, 0.0f));  // corner (1,0,0)
+    int got = nearestFaceEdge(*m, ModelSpace.world(), 0, Vec3(1.0f, 0.05f, 0.0f));  // corner (1,0,0)
     assert(got >= 0 && got < cast(int)m.edges.length,
         "grazing corner case should still resolve to a valid edge index");
 }

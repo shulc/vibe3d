@@ -4604,47 +4604,59 @@ void main(string[] args) {
             }
             if (rmbPath.length >= 3) {
                 // ---------------------------------------------------------
-                // ⚠ SPLIT-BRAIN ON A TRANSFORMED PRIMARY — Stage 3 of
-                // doc/picking_item_transform_plan.md (task 0617) is a HARD
-                // PREREQUISITE before any release build ships past this
-                // point, NOT a follow-up.
-                //
-                // Stage 1 (already landed) made the ID-buffer occlusion
-                // probes below (`elementVisibility`, `endpointVisibleEdgeFbo`)
-                // render at the layer's DRAWN pose (they take `ModelSpace`
-                // and compose it internally). This block's OWN geometry
-                // test — every `projectToWindow(mesh.vertices[...], vp2, …)`
-                // / `projectToWindow(pv.vertices[...], vp2, …)` below — still
-                // projects RAW LOCAL vertices against the world `vp2`, i.e.
-                // the layer's IDENTITY pose. That split is Stage 3's to fix
-                // (§ Stage 3 of the plan); this block does not touch it.
-                //
-                // On a primary with a non-identity `ItemXform` this is not
-                // neutral, it is a REGRESSION this staging introduced:
-                //   - lasso the DRAWN (visible) geometry → the occlusion
-                //     probe agrees, but the geometry test projects the
-                //     UNMOVED local vertices, which land outside the lasso
-                //     polygon → miss.
-                //   - lasso the IDENTITY-pose footprint (nothing drawn
-                //     there) → the geometry test agrees, but the occlusion
-                //     probe looks up FBO pixels at the drawn location, where
-                //     the lasso never went → miss.
-                //   Net result: edge/vertex/face lasso selects NOTHING on a
-                //   transformed primary, in every one of the six branches
-                //   below.
-                //
-                // At IDENTITY (`ms.isIdentity`) both projections agree
-                // exactly, so this satisfies Stage 2's neutrality contract
-                // and every existing lasso test stays green. Do not read
-                // that as "safe to ship" — it is neutral ONLY at identity.
+                // Task 0617 Stage 3 (doc/picking_item_transform_plan.md):
+                // this block used to project RAW LOCAL vertices while Stage 1
+                // made the GPU occlusion probes below (`elementVisibility`,
+                // `endpointVisibleEdgeFbo`) render at the layer's DRAWN pose
+                // — a split-brain that made edge/vertex/face lasso select
+                // NOTHING on a primary with a non-identity `ItemXform` (the
+                // two tests agreed only at identity). Fixed by composing the
+                // item transform into exactly ONE local-space viewport
+                // (`vpLocal`, below) and routing every geometry test in this
+                // block through it. The occlusion probes and the
+                // `symmetricSelect*` calls keep seeing the WORLD viewport
+                // (`vpWorld`) unmodified: they compose `ms` internally, or
+                // anchor on local mesh coordinates themselves, so handing
+                // them `vpLocal` would apply the item transform twice (R10).
                 // ---------------------------------------------------------
                 SDL_Keymod mods = SDL_GetModState();
                 bool shift = (mods & KMOD_SHIFT) != 0;
                 bool ctrl  = (mods & KMOD_CTRL)  != 0;
-                Viewport vp2 = vpm.originSnapshot();
+                const ModelSpace ms      = primaryModelSpace();
+                Viewport         vpWorld = vpm.originSnapshot();
+                const Viewport   vpLocal = projectionSpace(vpWorld, ms);
                 float[] pxs = new float[](rmbPath.length);
                 float[] pys = new float[](rmbPath.length);
                 foreach (i, p; rmbPath) { pxs[i] = p.x; pys[i] = p.y; }
+                // The only two projectors and the only front-facing test
+                // permitted in this block — every local-space geometry test
+                // below must go through one of these three, never a bare
+                // `projectToWindow`/`dot(...)` against vpLocal directly.
+                bool insideLasso(Vec3 vLocal) {
+                    float sx, sy, ndcZ;
+                    if (!projectToWindow(vLocal, vpLocal, sx, sy, ndcZ)) return false;
+                    return pointInPolygon2D(sx, sy, pxs, pys);
+                }
+                bool projLocal(Vec3 vLocal, out float sx, out float sy) {
+                    float ndcZ;
+                    return projectToWindow(vLocal, vpLocal, sx, sy, ndcZ);
+                }
+                bool frontFacing(Vec3 nLocal, Vec3 p0Local) {
+                    // Same SHAPE as the snap.d/mesh.d siblings (review NIT):
+                    // compute `backFacing` via `>= 0`, XOR the mirror flip,
+                    // THEN negate for this function's positive framing —
+                    // not `dot < 0` inverted at the comparison itself. The
+                    // two forms agree for every finite dot product, but
+                    // `>= 0` and `< 0` disagree on a NaN dot (both are
+                    // false for NaN under IEEE comparison rules), so only
+                    // this shape reproduces the siblings' NaN behaviour
+                    // byte-for-byte — unreachable with finite geometry, but
+                    // this was the one place identity was not literally
+                    // byte-identical to them.
+                    bool backFacing = dot(nLocal, p0Local - vpLocal.eye) >= 0;
+                    if (ms.mirrored) backFacing = !backFacing; // §3.7/§3.8 mirror flip
+                    return !backFacing;
+                }
                 // GPU-pick-buffer-driven visibility for the lasso.
                 // doc/lasso_gpu_pick_buffer_fix.md — replaces the old
                 // CPU `Mesh.visibleVertices` occlusion test that was
@@ -4667,13 +4679,9 @@ void main(string[] args) {
                     case EditMode.Polygons: vbMode = SelectMode.Face;   break;
                 }
                 ensureDisplayCurrent(); // mid-batch pull-guard: FBO readback below renders from the VBO
-                // Task 0617: vp2 here is the WORLD viewport (`vpm.originSnapshot()`
-                // below) — gpuSelect composes `ms` internally, so this must stay
-                // world (R10: handing it an already-composed viewport would apply
-                // the item transform twice). The lasso body's own local-space
-                // projections are Stage 3 territory, not touched by this slice.
+                // vpWorld + ms — gpuSelect composes `ms` internally (R10).
                 bool[] gpuVisible = gpuSelect.elementVisibility(
-                    vbMode, mesh, gpu, vp2, primaryModelSpace());
+                    vbMode, mesh, gpu, vpWorld, ms);
 
                 bool preview = subpatchPreview.active;
                 // Phase 3c — preview.mesh.vertices may be stale after
@@ -4703,7 +4711,7 @@ void main(string[] args) {
                             auto face = pv.faces[fi];
                             if (face.length < 3) { cageAllInside[cage] = false; continue; }
                             Vec3 fn = pv.faceNormal(cast(uint)fi);
-                            if (dot(fn, pv.vertices[face[0]] - vp2.eye) >= 0) continue;
+                            if (!frontFacing(fn, pv.vertices[face[0]])) continue;
                             // GPU visibility per PREVIEW face index.
                             // faceIdVbo writes preview-face indices,
                             // so `gpuVisible[fi]` is the right key.
@@ -4712,9 +4720,7 @@ void main(string[] args) {
                                 && !gpuVisible[fi]) continue;
                             cageVisited[cage] = true;
                             foreach (vi; face) {
-                                float sx, sy, ndcZ;
-                                if (!projectToWindow(pv.vertices[vi], vp2, sx, sy, ndcZ) ||
-                                    !pointInPolygon2D(sx, sy, pxs, pys)) {
+                                if (!insideLasso(pv.vertices[vi])) {
                                     cageAllInside[cage] = false;
                                     break;
                                 }
@@ -4722,7 +4728,7 @@ void main(string[] args) {
                         }
                         foreach (fi; 0 .. mesh.faces.length) {
                             if (!cageVisited[fi] || !cageAllInside[fi]) continue;
-                            symmetricSelectFace(&mesh(), vp2, editMode,
+                            symmetricSelectFace(&mesh(), vpWorld, editMode,
                                                 cast(int)fi, /*deselect=*/ctrl);
                         }
                     } else {
@@ -4733,21 +4739,19 @@ void main(string[] args) {
                             uint[] face = mesh.faces[fi];
                             if (face.length < 3) continue;
                             Vec3 fn = mesh.faceNormal(cast(uint)fi);
-                            if (dot(fn, mesh.vertices[face[0]] - vp2.eye) >= 0) continue;
+                            if (!frontFacing(fn, mesh.vertices[face[0]])) continue;
                             if (gpuVisible !is null
                                 && fi < gpuVisible.length
                                 && !gpuVisible[fi]) continue;
                             bool allInside = true;
                             foreach (vi; face) {
-                                float sx, sy, ndcZ;
-                                if (!projectToWindow(mesh.vertices[vi], vp2, sx, sy, ndcZ) ||
-                                    !pointInPolygon2D(sx, sy, pxs, pys)) {
+                                if (!insideLasso(mesh.vertices[vi])) {
                                     allInside = false;
                                     break;
                                 }
                             }
                             if (allInside) {
-                                symmetricSelectFace(&mesh(), vp2, editMode,
+                                symmetricSelectFace(&mesh(), vpWorld, editMode,
                                                     cast(int)fi, /*deselect=*/ctrl);
                             }
                         }
@@ -4769,10 +4773,8 @@ void main(string[] args) {
                             if (gpuVisible !is null
                                 && k < gpuVisible.length
                                 && !gpuVisible[k]) continue;
-                            float sx, sy, ndcZ;
-                            if (!projectToWindow(pv.vertices[pi], vp2, sx, sy, ndcZ)) continue;
-                            if (pointInPolygon2D(sx, sy, pxs, pys)) {
-                                symmetricSelectVertex(&mesh(), vp2, editMode,
+                            if (insideLasso(pv.vertices[pi])) {
+                                symmetricSelectVertex(&mesh(), vpWorld, editMode,
                                                       cast(int)cage, /*deselect=*/ctrl);
                             }
                         }
@@ -4781,10 +4783,8 @@ void main(string[] args) {
                             if (gpuVisible !is null
                                 && vi < gpuVisible.length
                                 && !gpuVisible[vi]) continue;
-                            float sx, sy, ndcZ;
-                            if (!projectToWindow(mesh.vertices[vi], vp2, sx, sy, ndcZ)) continue;
-                            if (pointInPolygon2D(sx, sy, pxs, pys)) {
-                                symmetricSelectVertex(&mesh(), vp2, editMode,
+                            if (insideLasso(mesh.vertices[vi])) {
+                                symmetricSelectVertex(&mesh(), vpWorld, editMode,
                                                       cast(int)vi, /*deselect=*/ctrl);
                             }
                         }
@@ -4811,9 +4811,9 @@ void main(string[] args) {
                                 && !gpuVisible[k]) continue;
                             uint a = pv.edges[pei][0], b = pv.edges[pei][1];
                             cageVisited[cage] = true;
-                            float sxa, sya, ndcZa, sxb, syb, ndcZb;
-                            if (!projectToWindow(pv.vertices[a], vp2, sxa, sya, ndcZa) ||
-                                !projectToWindow(pv.vertices[b], vp2, sxb, syb, ndcZb) ||
+                            float sxa, sya, sxb, syb;
+                            if (!projLocal(pv.vertices[a], sxa, sya) ||
+                                !projLocal(pv.vertices[b], sxb, syb) ||
                                 !pointInPolygon2D(sxa, sya, pxs, pys) ||
                                 !pointInPolygon2D(sxb, syb, pxs, pys)) {
                                 cageAllInside[cage] = false;
@@ -4824,21 +4824,20 @@ void main(string[] args) {
                                 // vertex mapping is needed (we are asking "any
                                 // surviving edge pixel near this window point").
                                 import std.math : lround;
-                                // Task 0617: vp2 is WORLD (R10 — gpuSelect composes
-                                // `ms` internally; see the elementVisibility call above).
+                                // vpWorld + ms — see the elementVisibility call above (R10).
                                 if (!gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxa), cast(int)lround(sya),
-                                        gpu, vp2, primaryModelSpace()) ||
+                                        gpu, vpWorld, ms) ||
                                     !gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxb), cast(int)lround(syb),
-                                        gpu, vp2, primaryModelSpace())) {
+                                        gpu, vpWorld, ms)) {
                                     cageAllInside[cage] = false;
                                 }
                             }
                         }
                         foreach (ei; 0 .. mesh.edges.length) {
                             if (!cageVisited[ei] || !cageAllInside[ei]) continue;
-                            symmetricSelectEdge(&mesh(), vp2, editMode,
+                            symmetricSelectEdge(&mesh(), vpWorld, editMode,
                                                 cast(int)ei, /*deselect=*/ctrl);
                         }
                     } else {
@@ -4847,9 +4846,9 @@ void main(string[] args) {
                                 && ei < gpuVisible.length
                                 && !gpuVisible[ei]) continue;
                             uint a = mesh.edges[ei][0], b = mesh.edges[ei][1];
-                            float sxa, sya, ndcZa, sxb, syb, ndcZb;
-                            if (!projectToWindow(mesh.vertices[a], vp2, sxa, sya, ndcZa)) continue;
-                            if (!projectToWindow(mesh.vertices[b], vp2, sxb, syb, ndcZb)) continue;
+                            float sxa, sya, sxb, syb;
+                            if (!projLocal(mesh.vertices[a], sxa, sya)) continue;
+                            if (!projLocal(mesh.vertices[b], sxb, syb)) continue;
                             if (pointInPolygon2D(sxa, sya, pxs, pys) &&
                                 pointInPolygon2D(sxb, syb, pxs, pys)) {
                                 // STRICT: both endpoints must be un-occluded in the
@@ -4859,15 +4858,14 @@ void main(string[] args) {
                                 // This is intentionally stricter than click (which
                                 // only requires a surviving pixel near the cursor).
                                 import std.math : lround;
-                                // Task 0617: vp2 is WORLD — see the elementVisibility
-                                // call above (R10).
+                                // vpWorld + ms — see the elementVisibility call above (R10).
                                 if (!gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxa), cast(int)lround(sya),
-                                        gpu, vp2, primaryModelSpace())) continue;
+                                        gpu, vpWorld, ms)) continue;
                                 if (!gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxb), cast(int)lround(syb),
-                                        gpu, vp2, primaryModelSpace())) continue;
-                                symmetricSelectEdge(&mesh(), vp2, editMode,
+                                        gpu, vpWorld, ms)) continue;
+                                symmetricSelectEdge(&mesh(), vpWorld, editMode,
                                                     cast(int)ei, /*deselect=*/ctrl);
                             }
                         }

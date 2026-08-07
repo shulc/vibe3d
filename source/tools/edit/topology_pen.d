@@ -21,7 +21,7 @@ import toolpipe.guide       : SnapGuide, GuideDrawState, kGuidePrioritySeed;
 import constraint           : resolveHoverTarget, topoPenPressPickPx,
                               topoPenSnapAcceptPx, topoPenSnapGatherPx,
                               kTopoPenSnapAuto, closestPointOnMeshes;
-import snap                  : backgroundSourcesSnapshot, SnapAdmit;
+import snap                  : backgroundSourcesFull, SnapAdmit;
 import tools.edit.smooth_relax : RelaxVec3, RelaxTopology, deriveBoundary, relaxPasses;
 import viewcache            : VertexCache, EdgeCache, FaceBoundsCache;
 import bvh_pick              : BvhPick;
@@ -5461,7 +5461,7 @@ public:
     // background source exists, or none has a usable face.
     private bool resnapToBackground(Vec3 orig, int px, int py,
                                     const ref Viewport vp, out Vec3 outPoint) {
-        auto sources = backgroundSourcesSnapshot();
+        auto sources = backgroundSourcesFull();
         if (sources.length == 0) return false;
 
         Vec3 query = shiftedWorldPoint(orig, px, py, vp);
@@ -6406,7 +6406,7 @@ public:
         if (passCount < 1) passCount = 1;
         if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
 
-        auto sources = backgroundSourcesSnapshot();   // point-in-time, fetched ONCE per commit
+        auto sources = backgroundSourcesFull();   // point-in-time, fetched ONCE per commit
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         immutable size_t nV = m.vertices.length;
@@ -6533,7 +6533,7 @@ public:
         if (passCount < 1) passCount = 1;
         if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
 
-        auto sources = backgroundSourcesSnapshot();   // point-in-time, fetched ONCE per commit
+        auto sources = backgroundSourcesFull();   // point-in-time, fetched ONCE per commit
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         foreach (pass; 0 .. passCount) {
@@ -10669,7 +10669,7 @@ unittest {
     // clear it rather than assume no earlier `dub test` unittest left it
     // populated, so this test's "no background source" premise holds
     // regardless of run order.
-    setBackgroundSnapSources(null);
+    setBackgroundSnapSources(null, null);
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -10719,8 +10719,9 @@ unittest {
     bg.vertices = [Vec3(-10, -10, -5), Vec3(10, -10, -5), Vec3(10, 10, -5), Vec3(-10, 10, -5)];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    setBackgroundSnapSources(srcs);
-    scope(exit) setBackgroundSnapSources(null);   // don't leak into later dub-test unittests
+    import math : ModelSpace;
+    setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
+    scope(exit) setBackgroundSnapSources(null, null);   // don't leak into later dub-test unittests
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -10771,7 +10772,7 @@ unittest {
     import editmode : EditMode;
     import snap : setBackgroundSnapSources;
 
-    setBackgroundSnapSources(null);   // no background — isolate pure relaxation
+    setBackgroundSnapSources(null, null);   // no background — isolate pure relaxation
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -12189,8 +12190,9 @@ unittest {
     bg.rebuildEdges();
     bg.buildLoops();
     const(Mesh)*[] sources = [cast(const(Mesh)*)&bg];
-    setBackgroundSnapSources(sources);
-    scope(exit) setBackgroundSnapSources(null);
+    import math : ModelSpace;
+    setBackgroundSnapSources(sources, new ModelSpace[](sources.length));
+    scope(exit) setBackgroundSnapSources(null, null);
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -12676,7 +12678,7 @@ unittest {
     auto t    = new TopologyPenTool();
     auto view = new View(0, 0, 200, 200);
     Viewport vp = view.viewport();
-    scope(exit) setBackgroundSnapSources(null);
+    scope(exit) setBackgroundSnapSources(null, null);
 
     // Camera basis straight off the view matrix (column-major m[row+col*4]),
     // so the rig is stated in SCREEN terms exactly like the capture's was.
@@ -12711,7 +12713,8 @@ unittest {
                        bgPt + inU * H + inW * H, bgPt - inU * H + inW * H];
         bg.faces    = [[0u, 1u, 2u, 3u]];
         const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-        setBackgroundSnapSources(srcs);
+        import math : ModelSpace;
+        setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
 
         Vec3 got0, got1;
         assert(t.resnapToBackground(v0, cast(int)p0.x, cast(int)p0.y, vp, got0),
@@ -12742,7 +12745,7 @@ unittest {
     // No background at all -> must report a miss cleanly, and the callers'
     // keep-the-original policy then leaves the gesture a rigid translate
     // (cell A2-NOBG: the duplicate is still created and moved rigidly).
-    setBackgroundSnapSources(null);
+    setBackgroundSnapSources(null, null);
     Vec3 gotNone;
     assert(!t.resnapToBackground(v0, cast(int)p0.x, cast(int)p0.y, vp, gotNone),
         "resnapToBackground must return false with no background source at all");
@@ -12768,7 +12771,7 @@ unittest {
     auto t    = new TopologyPenTool();
     auto view = new View(0, 0, 200, 200);
     Viewport vp = view.viewport();
-    scope(exit) setBackgroundSnapSources(null);
+    scope(exit) setBackgroundSnapSources(null, null);
 
     Vec3 camRight = Vec3( vp.view[0],  vp.view[4],  vp.view[8]);
     Vec3 camUp    = Vec3( vp.view[1],  vp.view[5],  vp.view[9]);
@@ -12786,7 +12789,8 @@ unittest {
                    bgPt + camRight * H + camUp * H, bgPt - camRight * H + camUp * H];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    setBackgroundSnapSources(srcs);
+    import math : ModelSpace;
+    setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
 
     ImVec2 p0, p1;
     assert(TopologyPenTool.projectPt(v0, vp, p0)
@@ -12837,7 +12841,7 @@ unittest {
     auto t    = new TopologyPenTool();
     auto view = new View(0, 0, 200, 200);
     Viewport vp = view.viewport();
-    scope(exit) setBackgroundSnapSources(null);
+    scope(exit) setBackgroundSnapSources(null, null);
 
     Vec3 camRight = Vec3( vp.view[0],  vp.view[4],  vp.view[8]);
     Vec3 camUp    = Vec3( vp.view[1],  vp.view[5],  vp.view[9]);
@@ -12860,7 +12864,8 @@ unittest {
                    bgPt + camRight * half + camUp * half, bgPt - camRight * half + camUp * half];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    setBackgroundSnapSources(srcs);
+    import math : ModelSpace;
+    setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
 
     auto targets = t.perVertexTargets([0u, 1u], 0, 0, vp);
     assert(targets.length == 2);
@@ -12882,7 +12887,7 @@ unittest {
                half, dot(targets[1] - bgPt, camRight)));
 
     // With NO background at all, both keep their exact original positions.
-    setBackgroundSnapSources(null);
+    setBackgroundSnapSources(null, null);
     auto none = t.perVertexTargets([0u, 1u], 0, 0, vp);
     assert((none[0] - vA).length < 1e-6f && (none[1] - vB).length < 1e-6f,
         "with no background source the keep-the-original branch must still hold");
@@ -13076,8 +13081,9 @@ unittest {
                    Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    setBackgroundSnapSources(srcs);
-    scope(exit) setBackgroundSnapSources(null);
+    import math : ModelSpace;
+    setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
+    scope(exit) setBackgroundSnapSources(null, null);
 
     SubjectPacket subj;
     subj.mesh     = &m;
@@ -14065,8 +14071,9 @@ unittest {
                    Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    setBackgroundSnapSources(srcs);
-    scope(exit) setBackgroundSnapSources(null);
+    import math : ModelSpace;
+    setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
+    scope(exit) setBackgroundSnapSources(null, null);
 
     SubjectPacket subj;
     subj.mesh     = &m;
@@ -14258,8 +14265,9 @@ unittest { // applySmoothLoopPasses — interior relax + nearest-foot re-snap,
                    Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    setBackgroundSnapSources(srcs);
-    scope(exit) setBackgroundSnapSources(null);
+    import math : ModelSpace;
+    setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
+    scope(exit) setBackgroundSnapSources(null, null);
 
     uint seed = m.edgeIndex(3, 4);
     assert(seed != uint.max);
@@ -14332,7 +14340,7 @@ unittest { // applySmoothLoopPasses — a gesture that nets to ZERO movement
     import mesh : makeGridPlane;
     import snap : setBackgroundSnapSources;
 
-    setBackgroundSnapSources(null);   // test-isolation, not a production call site
+    setBackgroundSnapSources(null, null);   // test-isolation, not a production call site
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -14421,7 +14429,7 @@ unittest {
     import mesh : makeGridPlane;
     import snap : setBackgroundSnapSources;
 
-    setBackgroundSnapSources(null);   // test-isolation: force the deterministic no-bg no-op path
+    setBackgroundSnapSources(null, null);   // test-isolation: force the deterministic no-bg no-op path
 
     auto t       = new TopologyPenTool();
     auto view    = new View(0, 0, 100, 100);
@@ -14561,8 +14569,9 @@ unittest {
                    Vec3(20, planeY, 20),   Vec3(-20, planeY, 20)];
     bg.faces    = [[0u, 1u, 2u, 3u]];
     const(Mesh)*[] srcs = [cast(const(Mesh)*) bg];
-    setBackgroundSnapSources(srcs);
-    scope(exit) setBackgroundSnapSources(null);
+    import math : ModelSpace;
+    setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
+    scope(exit) setBackgroundSnapSources(null, null);
 
     SubjectPacket subj;
     subj.mesh     = &m;

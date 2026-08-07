@@ -253,6 +253,11 @@ class SnapStage : Stage, Operator {
                                   backgroundSourceLayerIndices;
         import math             : Vec3, projectToWindowFull;
         import std.math         : sqrt;
+        // Task 0617 Stage 4: `subj.mesh` is the active/primary layer's mesh
+        // (the toolpipe addresses the foreground mesh transparently, per
+        // CLAUDE.md), so its ModelSpace is the SAME resolver every other
+        // cross-module picking call site uses.
+        import document         : primaryModelSpace;
 
         auto subj = vts.get!SubjectPacket();
         if (subj is null || !subj.cursorValid) return;
@@ -279,7 +284,7 @@ class SnapStage : Stage, Operator {
         // differently — so migrating them is part of registering the first
         // guide, not a follow-up.
         SnapResult sr = snapCursor(Vec3(0, 0, 0), subj.cursorX, subj.cursorY,
-                                   subj.viewport, *subj.mesh, cfg,
+                                   subj.viewport, *subj.mesh, primaryModelSpace(), cfg,
                                    null, null, _guides);
 
         SnapHitPacket hit;   // every field at its documented default
@@ -807,7 +812,7 @@ unittest { // ONE set of snap defaults — the packet's must equal the stage's
 // packet is decided by one candidate walk with no grid / workplane traffic.
 // ---------------------------------------------------------------------------
 unittest {
-    import math             : Vec3, Viewport, lookAt, perspectiveMatrix,
+    import math             : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix,
                               projectToWindowFull;
     import mesh             : Mesh;
     import toolpipe.packets : SubjectPacket;
@@ -955,7 +960,7 @@ unittest {
     // seed, the assertions below would see it.
     invalidateSnapGrids();
     immutable Vec3 probeSeed = Vec3(7.5f, -3.25f, 1.125f);
-    SnapResult ref_ = snapCursor(probeSeed, ax, ay, vp, m, cfg);
+    SnapResult ref_ = snapCursor(probeSeed, ax, ay, vp, m, ModelSpace.world(), cfg);
     assert(ref_.snapped && ref_.targetIndex == 0 && ref_.targetType == SnapType.Vertex,
         "fixture: the reference query must snap to vertex 0, else the "
         ~ "equivalence below is vacuous");

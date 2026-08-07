@@ -7,8 +7,7 @@ import operator         : Operator, Task, VectorStack, PacketKind;
 import popup_state      : setStatePath;
 import params           : Param, IntEnumEntry, wireTagForValue;
 import bvh_pick         : BvhPick, SurfaceHit;
-import mesh             : Mesh;
-import math              : ModelSpace;
+import constraint        : BackgroundSource;
 
 // Single-sourced geometry-mode token<->value table (task 0184 / audit-2 C2):
 // fullParams()'s IntEnum Param, the parse leg (via the base Stage.setAttr ->
@@ -142,26 +141,34 @@ public:
     }
 
     // Shared BVH raycast — cast a ray from the current cursor pixel through
-    // every background layer's mesh (snap.backgroundSourcesSnapshot(),
-    // world-space, PINNED identity transform for P0 — R4), keep the
-    // globally nearest hit. Reuses BvhPick/pickSurface (source/bvh_pick.d)
-    // — no new raycast machinery, per the topology-pen P0 layering rule.
-    // Shared by BOTH mode branches below: Screen mode
-    // (`screenRaycastBackground`) publishes this hit directly as the
-    // placement; Point mode (`pointNearestFootBackground`) uses it as the
-    // placement SEED — see that function's doc comment for why a live
-    // cross-engine differential against the reference editor proved Point
-    // mode's placement IS this same camera-ray hit, not a work-plane-cursor
-    // nearest-foot.
+    // every background layer's mesh, each folded through ITS OWN ModelSpace
+    // (task 0617 Stage 4), keep the globally nearest hit (world-space).
+    // Reuses BvhPick/pickSurface (source/bvh_pick.d) — no new raycast
+    // machinery, per the topology-pen P0 layering rule. Shared by BOTH mode
+    // branches below: Screen mode (`screenRaycastBackground`) publishes
+    // this hit directly as the placement; Point mode
+    // (`pointNearestFootBackground`) uses it as the placement SEED — see
+    // that function's doc comment for why a live cross-engine differential
+    // against the reference editor proved Point mode's placement IS this
+    // same camera-ray hit, not a work-plane-cursor nearest-foot.
+    //
+    // `bgFull` is the caller's OWN combined snapshot
+    // (`snap.backgroundSourcesFull()`) — this function used to take a
+    // second, independent lock+allocation here (review fix, task 0617
+    // Stage 4: `backgroundSourcesModelSpaces()` on top of the caller's
+    // existing `backgroundSourcesSnapshot()`); it now reads the space
+    // straight off the same entry the caller already resolved the mesh
+    // from, so the two can never drift apart and there is nothing extra to
+    // allocate.
     //
     // `_bgBvh` cache entries are pruned here (once per call) so a
     // removed/hidden background layer's BVH is freed regardless of which
     // mode is driving the prune.
-    private bool bgSurfaceRayHit(ref SubjectPacket subj, const(Mesh)*[] bgSrc,
+    private bool bgSurfaceRayHit(ref SubjectPacket subj, const(BackgroundSource)[] bgFull,
                                  out SurfaceHit outHit, out size_t outSrcIdx) {
         bool[size_t] live;
-        foreach (src; bgSrc)
-            if (src !is null) live[cast(size_t)src] = true;
+        foreach (bg; bgFull)
+            if (bg.mesh !is null) live[cast(size_t)bg.mesh] = true;
         size_t[] stale;
         foreach (addr, bp; _bgBvh)
             if ((addr in live) is null) stale ~= addr;
@@ -169,9 +176,9 @@ public:
 
         float bestT = float.infinity;
         bool  found = false;
-        foreach (i, src; bgSrc) {
-            if (src is null) continue;
-            size_t addr = cast(size_t)src;
+        foreach (i, bg; bgFull) {
+            if (bg.mesh is null) continue;
+            size_t addr = cast(size_t)bg.mesh;
             auto pp = addr in _bgBvh;
             BvhPick bp;
             if (pp is null) {
@@ -181,12 +188,8 @@ public:
                 bp = *pp;
             }
             SurfaceHit sh;
-            // Task 0617: background layers get their real per-layer
-            // ModelSpace in Stage 4 (out of scope for this slice) —
-            // `ModelSpace.world()` keeps this call neutral (byte-identical
-            // to pre-0617 behaviour) until that lands.
-            if (!bp.pickSurface(subj.cursorX, subj.cursorY, subj.viewport, *src,
-                                ModelSpace.world(), sh))
+            if (!bp.pickSurface(subj.cursorX, subj.cursorY, subj.viewport, *bg.mesh,
+                                bg.space, sh))
                 continue;
             if (sh.t >= bestT) continue;
             bestT     = sh.t;
@@ -213,7 +216,14 @@ public:
     // srcIndex/face/normal out-params (so the SAME candidate-fill block
     // Screen mode already runs stays one piece of shared code, feeding
     // P1's hover/snap resolution unchanged) but is a NO-OP refinement, not
-    // an independent search.
+    // an independent search — a genuine no-op ONLY now that `bgFull`
+    // carries each source's own ModelSpace into the refinement (task 0617
+    // Stage 4 review fix): before this fix, `seedHit.point` was WORLD
+    // (folded through `bg.space` inside `bgSurfaceRayHit`) while
+    // `closestPointOnMeshes` searched raw LOCAL triangles, so on a
+    // transformed background layer the "no-op" silently dragged the seed
+    // onto the layer's IDENTITY pose and turned the reported distance into
+    // the layer's translation magnitude.
     //
     // The ray missing every background surface (`bgSurfaceRayHit` returns
     // false — no background source at all, or the cursor is over empty
@@ -221,20 +231,25 @@ public:
     // stays deferred to a later phase (P3), unlike P2's magnet, which
     // never missed as long as any bg source existed.
     private void pointNearestFootBackground(ref SubjectPacket subj, ref VectorStack vts) {
-        import snap        : backgroundSourcesSnapshot, backgroundSourceLayerIndices;
+        import snap        : backgroundSourcesFull;
         import constraint  : closestPointOnMeshes, nearestFaceVertex, nearestFaceEdge,
                              consistentCandidateIndex, applyOffset;
         import math        : Vec3;
         import std.math     : sqrt;
 
-        auto bgSrc      = backgroundSourcesSnapshot();
-        auto bgSrcLayer = backgroundSourceLayerIndices();
+        // ONE combined snapshot (task 0617 Stage 4 review fix) — mesh,
+        // ModelSpace and Document-layer index together, under one lock, in
+        // place of the separate backgroundSourcesSnapshot() +
+        // backgroundSourceLayerIndices() calls this used to make (a second
+        // lock and allocation, and the two-snapshot desync those functions'
+        // own doc comments had to caveat around).
+        auto bgFull = backgroundSourcesFull();
 
         ConstrainHitPacket hit;   // hit.hit == false by default
 
         SurfaceHit seedHit;
         size_t     seedSrcIdx;
-        if (!bgSurfaceRayHit(subj, bgSrc, seedHit, seedSrcIdx)) {
+        if (!bgSurfaceRayHit(subj, bgFull, seedHit, seedSrcIdx)) {
             _hitPkt = hit;   // ray missed every bg surface — no placement seed
             vts.put(&_hitPkt);
             return;
@@ -243,7 +258,7 @@ public:
         Vec3 fpt, fn;
         int  srcIdx, face;
         float d2;
-        if (!closestPointOnMeshes(seedHit.point, bgSrc, dblSided, fpt, fn, srcIdx, face, d2)) {
+        if (!closestPointOnMeshes(seedHit.point, bgFull, dblSided, fpt, fn, srcIdx, face, d2)) {
             _hitPkt = hit;   // unreachable in practice — a ray hit implies >=1 bg source
             vts.put(&_hitPkt);
             return;
@@ -252,8 +267,8 @@ public:
         hit.hit    = true;
         hit.point  = applyOffset(fpt, fn, offset);
         hit.normal = fn;
-        hit.layer  = (srcIdx < cast(int)bgSrcLayer.length)
-                     ? bgSrcLayer[srcIdx] : srcIdx;
+        hit.layer  = (srcIdx < cast(int)bgFull.length && bgFull[srcIdx].layerIndex >= 0)
+                     ? bgFull[srcIdx].layerIndex : srcIdx;
         hit.face   = face;
         hit.t      = sqrt(d2);
 
@@ -264,23 +279,28 @@ public:
         // return, which per its own doc comment guarantees srcIdx is a
         // valid (non-negative) index — the `>= 0` half of the old guard
         // was always true.
-        if (srcIdx < cast(int)bgSrc.length && bgSrc[srcIdx] !is null) {
-            auto src = bgSrc[srcIdx];
-            hit.nearestVert = nearestFaceVertex(*src, face, fpt);
-            hit.nearestEdge = nearestFaceEdge(*src, face, fpt);
+        if (srcIdx < cast(int)bgFull.length && bgFull[srcIdx].mesh !is null) {
+            auto src = bgFull[srcIdx].mesh;
+            auto ms  = bgFull[srcIdx].space;
+            hit.nearestVert = nearestFaceVertex(*src, ms, face, fpt);
+            hit.nearestEdge = nearestFaceEdge(*src, ms, face, fpt);
 
             hit.nearestVert = consistentCandidateIndex(
                 hit.nearestVert, (*src).vertices.length);
             if (hit.nearestVert >= 0)
-                hit.nearestVertPos = (*src).vertices[hit.nearestVert];
+                hit.nearestVertPos = ms.isIdentity
+                    ? (*src).vertices[hit.nearestVert]
+                    : ms.toWorldPoint((*src).vertices[hit.nearestVert]);
 
             hit.nearestEdge = consistentCandidateIndex(
                 hit.nearestEdge, (*src).edges.length);
             if (hit.nearestEdge >= 0) {
                 auto e = (*src).edges[hit.nearestEdge];
                 if (e[0] < (*src).vertices.length && e[1] < (*src).vertices.length) {
-                    hit.nearestEdgeA = (*src).vertices[e[0]];
-                    hit.nearestEdgeB = (*src).vertices[e[1]];
+                    hit.nearestEdgeA = ms.isIdentity
+                        ? (*src).vertices[e[0]] : ms.toWorldPoint((*src).vertices[e[0]]);
+                    hit.nearestEdgeB = ms.isIdentity
+                        ? (*src).vertices[e[1]] : ms.toWorldPoint((*src).vertices[e[1]]);
                 } else {
                     hit.nearestEdge = -1;  // e[0]/e[1] stale relative to *src
                 }
@@ -299,35 +319,33 @@ public:
     // BVH-scan loop itself moved into `bgSurfaceRayHit`, above, so Point
     // mode can share it).
     private void screenRaycastBackground(ref SubjectPacket subj, ref VectorStack vts) {
-        import snap       : backgroundSourcesSnapshot, backgroundSourceLayerIndices;
+        import snap       : backgroundSourcesFull;
         import constraint : nearestFaceVertex, nearestFaceEdge, consistentCandidateIndex;
 
-        auto bgSrc      = backgroundSourcesSnapshot();
-        // Parallel Document-layer-index array (NIT-3) — index i is the
-        // Document-layer index bgSrc[i] came from. Stays Document-free here
-        // (both are plain snapshots from snap.d); a length mismatch (an
-        // installer that didn't supply indices) falls back to the bgSrc
-        // slot itself below, so this never indexes out of bounds.
-        auto bgSrcLayer = backgroundSourceLayerIndices();
+        // ONE combined snapshot (task 0617 Stage 4 review fix) — see
+        // pointNearestFootBackground's doc comment above for why.
+        auto bgFull = backgroundSourcesFull();
 
         ConstrainHitPacket hit;
         SurfaceHit sh;
         size_t     srcI;
-        if (!bgSurfaceRayHit(subj, bgSrc, sh, srcI)) {
+        if (!bgSurfaceRayHit(subj, bgFull, sh, srcI)) {
             _hitPkt = hit;
             vts.put(&_hitPkt);
             return;
         }
 
-        auto src = bgSrc[srcI];
+        auto src = bgFull[srcI].mesh;
+        auto ms  = bgFull[srcI].space;
         hit.hit         = true;
         hit.point       = sh.point;
         hit.normal      = sh.normal;
-        hit.layer       = (srcI < bgSrcLayer.length) ? bgSrcLayer[srcI] : cast(int)srcI;
+        hit.layer       = (srcI < bgFull.length && bgFull[srcI].layerIndex >= 0)
+                          ? bgFull[srcI].layerIndex : cast(int)srcI;
         hit.face        = sh.face;
         hit.t           = sh.t;
-        hit.nearestVert = nearestFaceVertex(*src, sh.face, sh.point);
-        hit.nearestEdge = nearestFaceEdge(*src, sh.face, sh.point);
+        hit.nearestVert = nearestFaceVertex(*src, ms, sh.face, sh.point);
+        hit.nearestEdge = nearestFaceEdge(*src, ms, sh.face, sh.point);
 
         // topology-pen P1 (doc/topopen_p1_plan.md): candidate world
         // positions, so resolveHoverTarget (constraint.d) stays a pure
@@ -345,18 +363,28 @@ public:
         // go inconsistent (a `>=0` index left paired with the struct's
         // default `Vec3(0,0,0)` position — a phantom vertex/edge at the
         // world origin that resolveHoverTarget would otherwise trust).
+        //
+        // Task 0617 Stage 4 review fix: the fill is folded through `ms` —
+        // `src.vertices[]` is LOCAL, and every position this stage
+        // publishes elsewhere (`hit.point`, `sh.normal`) is WORLD, so a raw
+        // local read here silently published a local position as a world
+        // candidate for any transformed background layer.
         hit.nearestVert = consistentCandidateIndex(
             hit.nearestVert, (*src).vertices.length);
         if (hit.nearestVert >= 0)
-            hit.nearestVertPos = (*src).vertices[hit.nearestVert];
+            hit.nearestVertPos = ms.isIdentity
+                ? (*src).vertices[hit.nearestVert]
+                : ms.toWorldPoint((*src).vertices[hit.nearestVert]);
 
         hit.nearestEdge = consistentCandidateIndex(
             hit.nearestEdge, (*src).edges.length);
         if (hit.nearestEdge >= 0) {
             auto e = (*src).edges[hit.nearestEdge];
             if (e[0] < (*src).vertices.length && e[1] < (*src).vertices.length) {
-                hit.nearestEdgeA = (*src).vertices[e[0]];
-                hit.nearestEdgeB = (*src).vertices[e[1]];
+                hit.nearestEdgeA = ms.isIdentity
+                    ? (*src).vertices[e[0]] : ms.toWorldPoint((*src).vertices[e[0]]);
+                hit.nearestEdgeB = ms.isIdentity
+                    ? (*src).vertices[e[1]] : ms.toWorldPoint((*src).vertices[e[1]]);
             } else {
                 hit.nearestEdge = -1;  // e[0]/e[1] stale relative to *src
             }

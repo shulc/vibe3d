@@ -1352,7 +1352,10 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             // has already run. Deleting it also makes this probe answer from
             // the SAME frames an interactive tool sees mid-drag, which the
             // just-in-time rebuild specifically did not.
-            SnapResult sr = snapCursor(cursor, sx, sy, vp, mesh, cfg, exclude);
+            // primaryModelSpace() — the SAME resolver the pick providers use
+            // (task 0617 Stage 4), so a transformed primary snaps where it's
+            // actually drawn.
+            SnapResult sr = snapCursor(cursor, sx, sy, vp, mesh, primaryModelSpace(), cfg, exclude);
 
             buf.put(format(
                 `{"snapped":%s,"highlighted":%s,"targetType":%d,`
@@ -1408,7 +1411,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             import std.conv        : to;
             import toolpipe.pipeline   : g_pipeCtx;
             import toolpipe.packets    : ConstrainPacket, SubjectPacket;
-            import snap                : backgroundSourcesSnapshot;
+            import snap                : backgroundSourcesFull;
             import constraint          : constrainPoint;
             import math                : Vec3;
 
@@ -1457,7 +1460,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 if (auto cp = vts.get!ConstrainPacket()) cfg = *cp;
             }
 
-            auto bgSrc = backgroundSourcesSnapshot();
+            auto bgSrc = backgroundSourcesFull();
             Vec3 result = constrainPoint(pos, delta, vp, bgSrc, cfg);
             // `projected` reflects whether constrainPoint actually moved
             // the position. Identity cases (disabled / geometry=off /

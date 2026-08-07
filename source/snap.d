@@ -3,7 +3,8 @@ module snap;
 import std.math : sqrt, round, floor, isNaN;
 import core.sync.mutex : Mutex;
 
-import math : Vec3, Viewport, projectToWindowFull, screenRay, screenPointToRay,
+import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
+              screenRay, screenPointToRay,
               rayPlaneIntersect, pointInPolygon2D,
               closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot,
               closestPointOnLineToRay, isOrtho, viewPixelScale,
@@ -13,6 +14,7 @@ import mesh : Mesh;
 import toolpipe.packets : SnapPacket, SnapType, SnapMode;
 import toolpipe.guide   : SnapGuide, kGuidePrioritySeed;
 import perf_probe : g_perf, Cat;
+import constraint : BackgroundSource;
 
 // ---------------------------------------------------------------------------
 // Snap math — Phase 7.3 of doc/phase7_plan.md / doc/snap_plan.md.
@@ -94,6 +96,15 @@ bool snapPacketsEqual(const ref SnapPacket a, const ref SnapPacket b)
 // the same g_vgridMutex that guards the grids guards the source list.
 private __gshared const(Mesh)*[] g_snapSources;
 
+// Parallel array (task 0617 Stage 4): g_snapSourceSpaces[i] is the
+// `ModelSpace` of the layer `g_snapSources[i]` came from. Filled by the SAME
+// call that installs g_snapSources, so the two can never drift apart. A
+// background layer's own item transform is otherwise invisible to the walk
+// (`m.vertices[]` are local, `vp` is the world camera) — without this, a
+// moved/rotated/mirrored background layer would snap where it WAS, not where
+// it is drawn, same defect §1 of the plan fixes for the primary.
+private __gshared ModelSpace[] g_snapSourceSpaces;
+
 // Parallel array (topology-pen P0 NIT-3): g_snapSourceLayers[i] is the
 // Document-layer index (document.layers[N]) that g_snapSources[i] came
 // from. Filled by the SAME call that installs g_snapSources — snap.d stays
@@ -108,6 +119,11 @@ private __gshared int[] g_snapSourceLayers;
 /// the single-layer common case. Copies into an owned buffer so the caller's
 /// slice need not outlive the frame.
 ///
+/// `spaces` must be the SAME LENGTH as `sources` — `spaces[i]` is
+/// `sources[i]`'s layer's `ModelSpace` (`ItemXform.modelSpace()`). Required,
+/// not defaulted (§3.2's lesson): a caller that forgets it is a build error,
+/// not a background layer that silently snaps at its identity pose.
+///
 /// `layerIndices`, when non-empty, must be the same length as `sources` —
 /// `layerIndices[i]` is the Document-layer index `sources[i]` was read from
 /// (app.d/panels.d fill this in document-layer index order, skipping
@@ -115,10 +131,15 @@ private __gshared int[] g_snapSourceLayers;
 /// that don't track indices (or don't need the mapping) may omit it; the
 /// mapping then reads back empty and consumers fall back to the bgSrc-order
 /// index (see `backgroundSourceLayerIndices()`).
-void setBackgroundSnapSources(const(Mesh)*[] sources, const(int)[] layerIndices = null) {
+void setBackgroundSnapSources(const(Mesh)*[] sources, const(ModelSpace)[] spaces,
+                              const(int)[] layerIndices = null) {
+    assert(spaces.length == sources.length,
+        "setBackgroundSnapSources: spaces/sources length mismatch");
     synchronized (g_vgridMutex) {
         g_snapSources.length = sources.length;
         foreach (i, s; sources) g_snapSources[i] = s;
+        g_snapSourceSpaces.length = spaces.length;
+        foreach (i, sp; spaces) g_snapSourceSpaces[i] = sp;
         g_snapSourceLayers.length = layerIndices.length;
         foreach (i, li; layerIndices) g_snapSourceLayers[i] = li;
     }
@@ -398,16 +419,66 @@ const(Mesh)*[] backgroundSourcesSnapshot() {
     }
 }
 
+/// Point-in-time copy of the `ModelSpace` parallel to
+/// `backgroundSourcesSnapshot()` (task 0617 Stage 4) — index i of this array
+/// is `backgroundSourcesSnapshot()[i]`'s layer's transform. A caller that
+/// needs the mesh AND its transform together should use
+/// `backgroundSourcesFull()` below instead of pairing this with
+/// `backgroundSourcesSnapshot()` — that is a SECOND lock and a SECOND
+/// allocation on top of the first snapshot (review fix, task 0617 Stage 4:
+/// the original design reasoned "a combined struct is for a caller nobody
+/// has yet" — the CONS stage's background raycast turned out to be exactly
+/// that caller). This accessor stays for a caller that genuinely wants only
+/// the spaces.
+const(ModelSpace)[] backgroundSourcesModelSpaces() {
+    synchronized (g_vgridMutex) {
+        if (g_snapSourceSpaces.length == 0) return null;
+        return g_snapSourceSpaces.dup;
+    }
+}
+
 /// Point-in-time copy of the Document-layer index parallel to
 /// `backgroundSourcesSnapshot()` (topology-pen P0 NIT-3) — index i of this
 /// array is the Document-layer index `backgroundSourcesSnapshot()[i]` was
 /// installed from. May be SHORTER than (or empty relative to) the sources
 /// snapshot when the installer didn't supply indices; callers must
-/// bounds-check and fall back to the bgSrc-order index on a miss.
+/// bounds-check and fall back to the bgSrc-order index on a miss. See
+/// `backgroundSourcesFull()` below for a caller that needs this together
+/// with the mesh and/or the space.
 const(int)[] backgroundSourceLayerIndices() {
     synchronized (g_vgridMutex) {
         if (g_snapSourceLayers.length == 0) return null;
         return g_snapSourceLayers.dup;
+    }
+}
+
+/// Point-in-time copy of EVERY background source's mesh pointer, ModelSpace,
+/// AND Document-layer index together, under ONE lock (task 0617 Stage 4
+/// review fix). Equivalent to zipping `backgroundSourcesSnapshot()`,
+/// `backgroundSourcesModelSpaces()`, and `backgroundSourceLayerIndices()`
+/// together, except it is ONE lock acquisition and ONE allocation instead of
+/// up to three of each — the shape a caller that needs more than one field
+/// (the CONS stage's background-surface raycast; `snapCursor`'s own
+/// background walk, below) should use instead of composing the three
+/// single-field accessors itself. `BackgroundSource.layerIndex` is -1 when
+/// the installer didn't supply an index for that slot (mirrors
+/// `backgroundSourceLayerIndices()`'s existing "caller falls back to the
+/// source-array index" contract). A caller that needs only ONE field should
+/// keep using that field's own accessor above — this one is for a caller
+/// that needs several, so the several reads can never drift apart the way
+/// two separately-locked snapshots theoretically could.
+const(BackgroundSource)[] backgroundSourcesFull() {
+    synchronized (g_vgridMutex) {
+        if (g_snapSources.length == 0) return null;
+        auto r = new BackgroundSource[](g_snapSources.length);
+        foreach (i, s; g_snapSources) {
+            r[i].mesh  = s;
+            r[i].space = i < g_snapSourceSpaces.length
+                       ? g_snapSourceSpaces[i] : ModelSpace.world();
+            r[i].layerIndex = i < g_snapSourceLayers.length
+                             ? g_snapSourceLayers[i] : -1;
+        }
+        return r;
     }
 }
 
@@ -463,9 +534,16 @@ alias SnapAdmit = bool delegate(SnapType type, int idx, int slot) nothrow;
 /// about the classes that TIE at the top priority — a guide that outranks a
 /// class removes it from the cascade rather than being overruled by it. With
 /// an empty registry every class ties at 0 and nothing is removed.
+// `ms` (task 0617 Stage 4) is the ACTIVE mesh's `ModelSpace` — snap.d has no
+// `Document` of its own (same boundary as `gpu_select.d`/`bvh_pick.d`), so the
+// caller resolves it (`primaryModelSpace()` at the one external call site) and
+// hands it in, required, no default — the §3.2 lesson applied here too.
+// Background sources get their OWN `ModelSpace` from `g_snapSourceSpaces`
+// (installed alongside `g_snapSources`), not this one.
 SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                       const ref Viewport vp,
                       const ref Mesh mesh,
+                      const ModelSpace ms,
                       const ref SnapPacket cfg,
                       const(uint)[] excludeVerts = null,
                       scope SnapAdmit admit = null,
@@ -553,26 +631,44 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // then read without it. Hoisted above the walk (it used to be taken just
     // before the background loop) because the CENTRE refinement and the vertex
     // veto both run AFTER the walk and both need to resolve a winner's source
-    // slot back to the mesh it came from — see `sourceMesh`.
+    // slot back to the mesh (and its ModelSpace) it came from — see
+    // `sourceMesh`/`sourceModelSpace`.
     //
     // Snapshot-then-walk, not walk-under-lock: queryCandidateGrid re-acquires
     // g_vgridMutex (non-recursive), so holding it across the walk deadlocks.
     // Empty in the single-layer common case ⇒ no extra work and no allocation.
-    const(Mesh)*[] bgSources;
-    synchronized (g_vgridMutex) {
-        if (g_snapSources.length > 0)
-            bgSources = g_snapSources.dup;
-    }
+    //
+    // ONE combined snapshot (task 0617 Stage 4 review fix), not a separate
+    // `bgSources`+`bgSpaces` pair: `backgroundSourcesFull()` takes the lock
+    // once and allocates once, where the mesh-only and mesh+space snapshots
+    // taken separately used to cost two locks and two allocations for
+    // exactly the same information.
+    const(BackgroundSource)[] bgFull = backgroundSourcesFull();
 
     /// Resolve a candidate's source slot to the mesh it was enumerated from:
     /// slot 0 is the `mesh` argument (the active layer), 1..N index
-    /// `bgSources`. Returns null for a slot with no mesh — a candidate whose
+    /// `bgFull`. Returns null for a slot with no mesh — a candidate whose
     /// source vanished cannot be refined, and the caller leaves it alone
     /// rather than guessing.
     const(Mesh)* sourceMesh(int slot) {
         if (slot == 0) return &mesh;
         immutable size_t i = cast(size_t)(slot - 1);
-        return i < bgSources.length ? bgSources[i] : null;
+        return i < bgFull.length ? bgFull[i].mesh : null;
+    }
+
+    /// Resolve a candidate's source slot to ITS OWN ModelSpace — the
+    /// primary's `ms` for slot 0, the owning background layer's for slots
+    /// 1..N (task 0617 Stage 4: `legCenterPoint` below used to read
+    /// `sourceMesh(slot)`'s vertices raw, which is LOCAL for a background
+    /// layer, while every OTHER point this function hands to `consider` is
+    /// WORLD — see `walkSource`'s own `toWorld`). Falls back to identity on
+    /// a bounds miss (source list shrank between snapshot and use — cannot
+    /// happen today, `bgFull` is `.dup`'d once and read without the lock
+    /// afterward, but is fail-soft anyway).
+    ModelSpace sourceModelSpace(int slot) {
+        if (slot == 0) return ms;
+        immutable size_t i = cast(size_t)(slot - 1);
+        return i < bgFull.length ? bgFull[i].space : ModelSpace.world();
     }
 
     /// Screen distance in pixels from the cursor to a world point, or -1 when
@@ -587,25 +683,40 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         return sqrt(dx * dx + dy * dy);
     }
 
-    /// The CENTRE point of an elected leg: an edge's midpoint (parameter 0.5
-    /// exactly, which is what the reference evaluates) or a face's centroid.
-    /// False when the leg cannot be resolved (missing source, stale index,
-    /// empty face) — the caller then leaves the elected point alone.
+    /// The CENTRE point of an elected leg, in WORLD space: an edge's
+    /// midpoint (parameter 0.5 exactly, which is what the reference
+    /// evaluates) or a face's centroid. False when the leg cannot be
+    /// resolved (missing source, stale index, empty face) — the caller then
+    /// leaves the elected point alone.
+    ///
+    /// Task 0617 Stage 4 review fix: folds the result through the slot's OWN
+    /// ModelSpace before returning. Both this function's callers
+    /// (`refineElectedLeg`, which publishes the result as the snap
+    /// result's world position, and `vertexSlotVetoed`, which projects it
+    /// with the WORLD viewport) treat the return value as world — an edge
+    /// midpoint / face centroid is an AFFINE COMBINATION of the source's
+    /// vertices, and an affine map preserves affine combinations regardless
+    /// of scale/rotation/mirror, so transforming the already-computed local
+    /// centre is exactly equal to averaging already-world vertices; no
+    /// per-vertex fold is needed here the way `walkSource`'s fine phase
+    /// needs one for a NON-affine metric (nearest-point, triangle rank).
     bool legCenterPoint(int cls, int idx, int slot, out Vec3 p) {
         if (idx < 0) return false;
         const(Mesh)* m = sourceMesh(slot);
         if (m is null) return false;
+        const ModelSpace lms = sourceModelSpace(slot);
+        Vec3 toWorld(Vec3 vLocal) { return lms.isIdentity ? vLocal : lms.toWorldPoint(vLocal); }
         if (cls == kCascadeEdge) {
             if (cast(size_t)idx >= m.edges.length) return false;
             auto e = m.edges[idx];
             if (e[0] >= m.vertices.length || e[1] >= m.vertices.length) return false;
-            p = (m.vertices[e[0]] + m.vertices[e[1]]) * 0.5f;
+            p = toWorld((m.vertices[e[0]] + m.vertices[e[1]]) * 0.5f);
             return true;
         }
         if (cls != kCascadePolygon) return false;
         if (cast(size_t)idx >= m.faces.length) return false;
         if (m.faces[idx].length == 0) return false;
-        p = m.faceCentroid(cast(uint)idx);
+        p = toWorld(m.faceCentroid(cast(uint)idx));
         return true;
     }
 
@@ -1058,7 +1169,24 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // is the dragged-vertex set (active source only — a background layer is
     // never being dragged, so it passes an empty exclude). The body is the
     // pre-Stage-5 walk verbatim, parameterised on the mesh + grid slot.
-    void walkSource(const ref Mesh m, int slot, const(uint)[] exclude) {
+    // `ms` (task 0617 Stage 4) is THIS SOURCE's `ModelSpace` — the primary's
+    // for slot 0, the owning background layer's for slots 1..N. `vpLocal`
+    // folds it into the viewport ONCE, for the broad-phase candidate-grid
+    // projection ONLY (§3.3: forward projection composes exactly). The fine
+    // phase below stays in WORLD space instead: `m.vertices[]`/`m.edges[]`
+    // read as LOCAL and are transformed point-by-point via `ms.toWorldPoint`
+    // where a metric (closest-point, triangle-rank) computation needs them,
+    // so those computations run on the same coordinates as the world ray/eye
+    // they are compared against — a minimum-distance election is NOT affine
+    // invariant under a non-uniform scale the way a ray/plane intersection
+    // parameter `t` is (see visibleVertices's doc comment), so local-space
+    // math would elect the wrong point under such a transform. The one
+    // exception is the front-facing SIGN test in `faceVisible`, which stays
+    // local + a `vpLocal.eye` + `ms.mirrored` XOR, mirroring the identical
+    // cull in `Mesh.visibleVertices` (§3.7/§3.8).
+    void walkSource(const ref Mesh m, int slot, const(uint)[] exclude,
+                    const ModelSpace ms) {
+        const Viewport vpLocal = projectionSpace(vp, ms);
         // Visibility array for occlusion/front-face gating. Built when any
         // geometric type is enabled (faces present + at least one geo type active).
         bool[] vis;
@@ -1066,7 +1194,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             && (cfg.enabledTypes & (SnapType.Vertex | SnapType.Edge
                   | SnapType.EdgeCenter | SnapType.Polygon | SnapType.PolyCenter
                   | SnapType.Intersection));
-        if (needVis) vis = m.visibleVertices(vp.eye, vp);
+        if (needVis) vis = m.visibleVertices(vp.eye, vp, ms);
 
         bool vertVisible(uint vi) {
             return vis.length == 0 || (vi < vis.length && vis[vi]);
@@ -1080,18 +1208,26 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             if (face.length < 3) return false;
             Vec3 fn = cross(m.vertices[face[1]] - m.vertices[face[0]],
                             m.vertices[face[2]] - m.vertices[face[0]]);
-            if (dot(fn, m.vertices[face[0]] - vp.eye) >= 0) return false;
+            bool backFacing = dot(fn, m.vertices[face[0]] - vpLocal.eye) >= 0;
+            if (ms.mirrored) backFacing = !backFacing; // §3.7/§3.8 mirror flip
+            if (backFacing) return false;
             foreach (v; face) if (v >= vis.length || !vis[v]) return false;
             return true;
+        }
+        // Local -> world, only where the fine-phase math below needs a real
+        // world point to compare against the world ray/eye. Identity-gated
+        // so the common single-layer case pays a bool check, not a matmul.
+        Vec3 toWorld(Vec3 vLocal) {
+            return ms.isIdentity ? vLocal : ms.toWorldPoint(vLocal);
         }
 
         if ((cfg.enabledTypes & SnapType.Vertex)
                 && typeEligible(SnapType.Vertex, cfg.snapScope)) {
-            auto cands = queryCandidateGrid(Kind.Vertex, slot, m, vp, sx, sy,
+            auto cands = queryCandidateGrid(Kind.Vertex, slot, m, vpLocal, sx, sy,
                                             cfg.outerRangePx, exclude);
             foreach (vi; cands)
                 if (vertVisible(vi))
-                    consider(m.vertices[vi], cast(int)vi, SnapType.Vertex, slot);
+                    consider(toWorld(m.vertices[vi]), cast(int)vi, SnapType.Vertex, slot);
         }
 
         // ------------------------------------------------------------------
@@ -1180,16 +1316,22 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         if (edgeTypeOn || edgeCtrOn) {
             immutable SnapType legType = edgeTypeOn ? SnapType.Edge
                                                     : SnapType.EdgeCenter;
-            auto cands = queryCandidateGrid(Kind.Edge, slot, m, vp, sx, sy,
+            auto cands = queryCandidateGrid(Kind.Edge, slot, m, vpLocal, sx, sy,
                                             cfg.outerRangePx, exclude);
-            // The cursor's eye ray — one per call, not one per edge.
+            // The cursor's eye ray — one per call, not one per edge. Built
+            // from the WORLD `vp`, never `vpLocal` (§3.3 — screenPointToRay
+            // treats the view's upper-3x3 as its own inverse, which a
+            // composed scale/shear breaks silently).
             Vec3 rayOrig, rayDir;
             screenPointToRay(cast(float)sx, cast(float)sy, vp, rayOrig, rayDir);
             foreach (ei; cands) {
                 auto edge = m.edges[ei];
                 if (!edgeVisible(edge[0], edge[1])) continue;
-                Vec3 a = m.vertices[edge[0]];
-                Vec3 b = m.vertices[edge[1]];
+                // WORLD, so the closest-approach election below (a metric
+                // computation, NOT affine-invariant under non-uniform scale)
+                // runs against the ray in the same space it was cast in.
+                Vec3 a = toWorld(m.vertices[edge[0]]);
+                Vec3 b = toWorld(m.vertices[edge[1]]);
                 // STAGE 1, and the only thing left of it for a straight edge:
                 // an edge with an endpoint behind the camera is not elected.
                 // The candidate grid already drops those (`projectElementCells`
@@ -1227,7 +1369,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         if (polyTypeOn || polyCtrOn) {
             immutable SnapType legType = polyTypeOn ? SnapType.Polygon
                                                     : SnapType.PolyCenter;
-            auto cands = queryCandidateGrid(Kind.Polygon, slot, m, vp, sx, sy,
+            auto cands = queryCandidateGrid(Kind.Polygon, slot, m, vpLocal, sx, sy,
                                             cfg.outerRangePx, exclude);
             // THE GATHER AND THE RANK ARE NOW DIFFERENT METRICS HERE, and the
             // seam is ours, not the reference's. `queryCandidateGrid` gathers
@@ -1248,7 +1390,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 if (!faceVisible(face)) continue;
                 Vec3  hit;
                 float rankPx;
-                if (closestOnPolygonSurface(face, m, sx, sy, vp, hit, rankPx))
+                if (closestOnPolygonSurface(face, m, sx, sy, vp, ms, hit, rankPx))
                     consider(hit, cast(int)fi, legType, slot, rankPx);
             }
         }
@@ -1261,14 +1403,14 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         // iteration + consider()'s strict-< distance accumulator.
         if ((cfg.enabledTypes & SnapType.Intersection)
                 && typeEligible(SnapType.Intersection, cfg.snapScope)) {
-            auto cands = queryCandidateGrid(Kind.Edge, slot, m, vp, sx, sy,
+            auto cands = queryCandidateGrid(Kind.Edge, slot, m, vpLocal, sx, sy,
                                             cfg.outerRangePx, exclude);
             for (size_t ia = 0; ia < cands.length; ++ia) {
                 int eiA = cands[ia];
                 auto edgeA = m.edges[eiA];
                 if (!edgeVisible(edgeA[0], edgeA[1])) continue;
                 float pxA0, pyA0, ndcA0, pxA1, pyA1, ndcA1;
-                Vec3 a0 = m.vertices[edgeA[0]], a1 = m.vertices[edgeA[1]];
+                Vec3 a0 = toWorld(m.vertices[edgeA[0]]), a1 = toWorld(m.vertices[edgeA[1]]);
                 if (!projectToWindowFull(a0, vp, pxA0, pyA0, ndcA0)) continue;
                 if (!projectToWindowFull(a1, vp, pxA1, pyA1, ndcA1)) continue;
 
@@ -1280,7 +1422,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                         edgeB[1] == edgeA[0] || edgeB[1] == edgeA[1]) continue;
                     if (!edgeVisible(edgeB[0], edgeB[1])) continue;
                     float pxB0, pyB0, ndcB0, pxB1, pyB1, ndcB1;
-                    Vec3 b0 = m.vertices[edgeB[0]], b1 = m.vertices[edgeB[1]];
+                    Vec3 b0 = toWorld(m.vertices[edgeB[0]]), b1 = toWorld(m.vertices[edgeB[1]]);
                     if (!projectToWindowFull(b0, vp, pxB0, pyB0, ndcB0)) continue;
                     if (!projectToWindowFull(b1, vp, pxB1, pyB1, ndcB1)) continue;
 
@@ -1307,16 +1449,18 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // Source 0 = the active layer (with the dragged-vertex exclusion).
     // Single-layer / no-visible-background documents stop here, byte-identical
     // to pre-Stage-5.
-    walkSource(mesh, 0, excludeVerts);
+    walkSource(mesh, 0, excludeVerts, ms);
 
     // Sources 1..N = the visible background layers (layers Stage 5). A
     // background layer is never being dragged, so it carries no exclusion; its
-    // grids live in slots 1.. so they never alias the active grid. `bgSources`
-    // is the snapshot taken at the top of the function (it has to be taken
-    // before the walk now, because the post-walk refinement reads it too).
-    foreach (i, src; bgSources)
-        if (src !is null)
-            walkSource(*src, cast(int)(i + 1), null);
+    // grids live in slots 1.. so they never alias the active grid. `bgFull`
+    // is the combined snapshot taken at the top of the function (it has to
+    // be taken before the walk now, because the post-walk refinement reads
+    // it too) — each entry's OWN `.space` (task 0617 Stage 4) goes straight
+    // to `walkSource`, no separate bounds-guarded array lookup needed.
+    foreach (i, e; bgFull)
+        if (e.mesh !is null)
+            walkSource(*e.mesh, cast(int)(i + 1), null, e.space);
 
     // Grid candidate (7.3c). Scope-independent.
     if (cfg.enabledTypes & SnapType.Grid) {
@@ -1586,6 +1730,7 @@ private bool closestOnPolygonSurface(const(uint)[] face,
                                      const ref Mesh mesh,
                                      int sx, int sy,
                                      const ref Viewport vp,
+                                     const ModelSpace ms,
                                      out Vec3 worldHit,
                                      out float rankPx)
 {
@@ -1603,8 +1748,17 @@ private bool closestOnPolygonSurface(const(uint)[] face,
     Vec3 fu, fv;
     if (!perpendicularFrame(rayDir, fu, fv)) return false;
 
+    // Task 0617 Stage 4: `pts` already existed (no new allocation) — folding
+    // `ms` into its fill is the whole fix. Both the ray/triangle intersection
+    // below and the closest-point-on-triangle miss arm need `pts` in the SAME
+    // space as `rayOrig`/`rayDir` (WORLD): the intersection's `t` alone would
+    // survive local space (an affine invariant, per `visibleVertices`'s doc
+    // comment), but the miss arm's `d2`/`rank` is a perpendicular DISTANCE —
+    // not affine-invariant under non-uniform scale — so the whole function
+    // has to run in one consistent (world) space, not a mix of the two.
     auto pts = new Vec3[](face.length);
-    foreach (i, vi; face) pts[i] = mesh.vertices[vi];
+    foreach (i, vi; face)
+        pts[i] = ms.isIdentity ? mesh.vertices[vi] : ms.toWorldPoint(mesh.vertices[vi]);
 
     auto tris = triangulatePolygonEarClip(pts);
     if (tris.length == 0) return false;
@@ -1663,10 +1817,11 @@ private bool closestOnPolygonSurface(const(uint)[] face,
                                      const ref Mesh mesh,
                                      int sx, int sy,
                                      const ref Viewport vp,
+                                     const ModelSpace ms,
                                      out Vec3 worldHit)
 {
     float rankPx;
-    return closestOnPolygonSurface(face, mesh, sx, sy, vp, worldHit, rankPx);
+    return closestOnPolygonSurface(face, mesh, sx, sy, vp, ms, worldHit, rankPx);
 }
 
 // ---------------------------------------------------------------------------
@@ -2401,7 +2556,7 @@ unittest {
     }
 
     // --- baseline: no predicate at all, i.e. every existing call site --------
-    SnapResult bare = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    SnapResult bare = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg);
     assert(bare.snapped,        "baseline: vertex 0 sits under the cursor");
     assert(bare.targetType  == SnapType.Vertex);
     assert(bare.targetIndex == 0);
@@ -2412,7 +2567,7 @@ unittest {
     // The predicate doubles as an observation channel: it sees exactly what
     // the enumeration offered, which is how the count below is known.
     int offered;
-    SnapResult permissive = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+    SnapResult permissive = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null,
         (SnapType t, int i, int s) { ++offered; return true; });
     assert(sameResult(bare, permissive),
         "S1 neutrality: a predicate that admits everything must reproduce the "
@@ -2422,11 +2577,11 @@ unittest {
         ~ "actually offered the runner-ups");
 
     // --- 2. REJECTION: admitting nothing == snapping switched off -----------
-    SnapResult admitNone = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+    SnapResult admitNone = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null,
         (SnapType t, int i, int s) => false);
     SnapPacket offCfg = cfg;
     offCfg.enabled = false;
-    SnapResult disabled = snapCursor(cursorWorld, sx, sy, vp, m, offCfg);
+    SnapResult disabled = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), offCfg);
     assert(sameResult(admitNone, disabled),
         "S1 rejection: a predicate that admits nothing must be the same clean "
         ~ "pass-through as `cfg.enabled == false`");
@@ -2436,7 +2591,7 @@ unittest {
     assert(admitNone.targetType == SnapType.None);
 
     // --- 3. ORDER: rejecting the winner promotes the runner-up --------------
-    SnapResult noV0 = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+    SnapResult noV0 = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null,
         (SnapType t, int i, int s) => !(t == SnapType.Vertex && i == 0 && s == 0));
     assert(noV0.snapped,
         "S1 order: rejecting the nearest candidate must hand the snap to the "
@@ -2448,7 +2603,7 @@ unittest {
     // ...and rejecting BOTH accepted candidates leaves the third, which is
     // inside the gather range and outside acceptance: highlight, no snap. The
     // accumulator was genuinely re-ranked, not merely filtered at the end.
-    SnapResult noV01 = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+    SnapResult noV01 = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null,
         (SnapType t, int i, int s) =>
             !(t == SnapType.Vertex && (i == 0 || i == 1)));
     assert(!noV01.snapped && noV01.highlighted);
@@ -2481,16 +2636,16 @@ unittest {
     assert(pixDist(tie.vertices[0]) < cfg.innerRangePx,
         "fixture: the tied pair must be close enough to snap");
 
-    SnapResult tieBare = snapCursor(cursorWorld, sx, sy, vp, tie, cfg);
+    SnapResult tieBare = snapCursor(cursorWorld, sx, sy, vp, tie, ModelSpace.world(), cfg);
     assert(tieBare.snapped && tieBare.targetIndex == 0,
         "the tie goes to the lower index");
-    SnapResult tiePermissive = snapCursor(cursorWorld, sx, sy, vp, tie, cfg, null,
+    SnapResult tiePermissive = snapCursor(cursorWorld, sx, sy, vp, tie, ModelSpace.world(), cfg, null,
         (SnapType t, int i, int s) => true);
     assert(sameResult(tieBare, tiePermissive),
         "S1 neutrality: a tie must break the same way with a permissive "
         ~ "predicate as with none");
 
-    SnapResult tieNoV0 = snapCursor(cursorWorld, sx, sy, vp, tie, cfg, null,
+    SnapResult tieNoV0 = snapCursor(cursorWorld, sx, sy, vp, tie, ModelSpace.world(), cfg, null,
         (SnapType t, int i, int s) => !(t == SnapType.Vertex && i == 0));
     assert(tieNoV0.snapped && tieNoV0.targetIndex == 1,
         "rejecting the side of the tie that won hands it to the other side");
@@ -2509,18 +2664,18 @@ unittest {
     SnapPacket ccfg = cfg;
     ccfg.enabledTypes = SnapType.WorldAxis;   // constraint tier only
 
-    SnapResult cBare = snapCursor(cursorWorld, ax, ay, vp, m, ccfg);
+    SnapResult cBare = snapCursor(cursorWorld, ax, ay, vp, m, ModelSpace.world(), ccfg);
     assert(cBare.snapped && cBare.constraintType == SnapType.WorldAxis,
         "fixture: a world-axis constraint must fire at this pixel, otherwise "
         ~ "the constraint-tier assertions below are vacuous");
 
-    SnapResult cPermissive = snapCursor(cursorWorld, ax, ay, vp, m, ccfg, null,
+    SnapResult cPermissive = snapCursor(cursorWorld, ax, ay, vp, m, ModelSpace.world(), ccfg, null,
         (SnapType t, int i, int s) => true);
     assert(sameResult(cBare, cPermissive),
         "S1 neutrality holds in the constraint tier too");
 
     int constraintOffered;
-    SnapResult cNone = snapCursor(cursorWorld, ax, ay, vp, m, ccfg, null,
+    SnapResult cNone = snapCursor(cursorWorld, ax, ay, vp, m, ModelSpace.world(), ccfg, null,
         (SnapType t, int i, int s) {
             ++constraintOffered;
             assert(i == -1 && s == 0,
@@ -2729,7 +2884,7 @@ unittest {
     }
 
     // --- baseline: no guide at all, i.e. every call site in the tree ---------
-    SnapResult bare = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    SnapResult bare = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg);
     assert(bare.snapped && bare.targetIndex == 0
         && bare.targetType == SnapType.Vertex && bare.targetSource == 0,
         "baseline: vertex 0 sits under the cursor");
@@ -2738,7 +2893,7 @@ unittest {
     // --- 1. EQUIVALENCE: the mirror guide changes nothing --------------------
     invalidateSnapGrids();
     auto mirror = new MirrorGuide(vp, sx, sy);
-    SnapResult guided = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+    SnapResult guided = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null, null,
                                    [mirror]);
     assert(sameResult(bare, guided),
         "S4 equivalence: a guide that mirrors the service's own distance rule "
@@ -2754,7 +2909,7 @@ unittest {
     invalidateSnapGrids();
     long[256] admitSeen;
     size_t    admitCount;
-    SnapResult admitted = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+    SnapResult admitted = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null,
         (SnapType t, int i, int s) {
             if (admitCount < admitSeen.length)
                 admitSeen[admitCount++] = MirrorGuide.key(t, i, s);
@@ -2776,7 +2931,7 @@ unittest {
     auto inverted = new MirrorGuide(vp, sx, sy);
     inverted.invert     = true;
     inverted.invertBase = invertBase;
-    SnapResult flipped = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+    SnapResult flipped = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null, null,
                                     [inverted]);
     assert(flipped.snapped && flipped.targetIndex == 2,
         "S4 re-rank: a guide that inverts the distance order must hand the "
@@ -2790,11 +2945,11 @@ unittest {
     invalidateSnapGrids();
     auto refuses = new MirrorGuide(vp, sx, sy);
     refuses.admitAll = false;
-    SnapResult none = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+    SnapResult none = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null, null,
                                  [refuses]);
     SnapPacket offCfg = cfg;
     offCfg.enabled = false;
-    SnapResult disabled = snapCursor(cursorWorld, sx, sy, vp, m, offCfg);
+    SnapResult disabled = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), offCfg);
     assert(sameResult(none, disabled),
         "S4: a guide that admits nothing must be the same clean pass-through "
         ~ "as `cfg.enabled == false` — a rejected candidate must be as if it "
@@ -2814,7 +2969,7 @@ unittest {
     auto elevator = new MirrorGuide(vp, sx, sy);
     elevator.elevateIdx  = 2;
     elevator.elevatePrio = 1;
-    SnapResult elevated = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+    SnapResult elevated = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null,
                                      null, [elevator]);
     assert(elevated.snapped && elevated.targetIndex == 2,
         "S4 ranking: a candidate at a higher priority beats a nearer one at a "
@@ -2827,7 +2982,7 @@ unittest {
     invalidateSnapGrids();
     auto elevateNear = new MirrorGuide(vp, sx, sy);
     elevateNear.elevateIdx = 0;
-    SnapResult elevatedNear = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+    SnapResult elevatedNear = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null,
                                          null, [elevateNear]);
     assert(sameResult(bare, elevatedNear),
         "promoting the candidate that already won on distance is a no-op — "
@@ -2844,7 +2999,7 @@ unittest {
     high.invert     = true;
     high.invertBase = invertBase;
     high.answerPrio = 1;
-    SnapResult arb = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+    SnapResult arb = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null, null,
                                 [low, high]);
     assert(arb.snapped && arb.targetIndex == 2,
         "S4 arbitration: the higher-priority guide decides, even though the "
@@ -2857,7 +3012,7 @@ unittest {
     high2.invert     = true;
     high2.invertBase = invertBase;
     high2.answerPrio = 1;
-    SnapResult arbSwapped = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+    SnapResult arbSwapped = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null,
                                        null, [high2, low2]);
     assert(sameResult(arb, arbSwapped),
         "S4 arbitration: priority decides, so registration order must not — "
@@ -2873,7 +3028,7 @@ unittest {
     secondFlip.invertBase = invertBase;
     assert(firstMirror.answerPrio == secondFlip.answerPrio,
         "fixture: this block is about EQUAL priorities");
-    SnapResult tiedPrio = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null,
+    SnapResult tiedPrio = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null,
                                      null, [firstMirror, secondFlip]);
     assert(tiedPrio.snapped && tiedPrio.targetIndex == 0,
         "S4 arbitration: at equal priority the first-registered guide is "
@@ -2884,7 +3039,7 @@ unittest {
     firstFlip.invert     = true;
     firstFlip.invertBase = invertBase;
     auto secondMirror = new MirrorGuide(vp, sx, sy);
-    SnapResult tiedPrioSwapped = snapCursor(cursorWorld, sx, sy, vp, m, cfg,
+    SnapResult tiedPrioSwapped = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg,
                                             null, null,
                                             [firstFlip, secondMirror]);
     assert(tiedPrioSwapped.snapped && tiedPrioSwapped.targetIndex == 2,
@@ -2910,7 +3065,7 @@ unittest {
     saysNothing.invertBase = invertBase;
     assert(kGuidePrioritySeed > saysZero.answerPrio,
         "fixture: the seed must outrank an explicit zero, or this proves nothing");
-    SnapResult seeded = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+    SnapResult seeded = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null, null,
                                    [saysZero, saysNothing]);
     assert(seeded.snapped && seeded.targetIndex == 2,
         "S4: the priority slot is PRE-SEEDED, so a guide that ignores it is heard at the "
@@ -2930,12 +3085,12 @@ unittest {
     assert(pixDist(tie.vertices[0]) < cfg.innerRangePx,
         "fixture: the tied pair must be close enough to snap");
 
-    SnapResult tieBare = snapCursor(cursorWorld, sx, sy, vp, tie, cfg);
+    SnapResult tieBare = snapCursor(cursorWorld, sx, sy, vp, tie, ModelSpace.world(), cfg);
     assert(tieBare.snapped && tieBare.targetIndex == 0,
         "the tie goes to the lower index");
     invalidateSnapGrids();
     auto tieMirror = new MirrorGuide(vp, sx, sy);
-    SnapResult tieGuided = snapCursor(cursorWorld, sx, sy, vp, tie, cfg, null,
+    SnapResult tieGuided = snapCursor(cursorWorld, sx, sy, vp, tie, ModelSpace.world(), cfg, null,
                                       null, [tieMirror]);
     assert(sameResult(tieBare, tieGuided),
         "S4 equivalence: the tie-break is part of the result, so it is part "
@@ -2953,14 +3108,14 @@ unittest {
     SnapPacket ccfg = cfg;
     ccfg.enabledTypes = SnapType.WorldAxis;   // constraint tier only
 
-    SnapResult cBare = snapCursor(cursorWorld, cx, cy, vp, m, ccfg);
+    SnapResult cBare = snapCursor(cursorWorld, cx, cy, vp, m, ModelSpace.world(), ccfg);
     assert(cBare.snapped && cBare.constraintType == SnapType.WorldAxis,
         "fixture: a world-axis constraint must fire at this pixel, otherwise "
         ~ "the constraint-tier assertions below are vacuous");
 
     invalidateSnapGrids();
     auto cMirror = new MirrorGuide(vp, cx, cy);
-    SnapResult cGuided = snapCursor(cursorWorld, cx, cy, vp, m, ccfg, null,
+    SnapResult cGuided = snapCursor(cursorWorld, cx, cy, vp, m, ModelSpace.world(), ccfg, null,
                                     null, [cMirror]);
     assert(sameResult(cBare, cGuided),
         "S4 equivalence holds in the constraint tier too");
@@ -2968,7 +3123,7 @@ unittest {
     invalidateSnapGrids();
     auto cRefuses = new MirrorGuide(vp, cx, cy);
     cRefuses.admitAll = false;
-    SnapResult cNone = snapCursor(cursorWorld, cx, cy, vp, m, ccfg, null, null,
+    SnapResult cNone = snapCursor(cursorWorld, cx, cy, vp, m, ModelSpace.world(), ccfg, null, null,
                                   [cRefuses]);
     assert(cRefuses.seenCount >= 1,
         "fixture: the axis lines must be offered to the guide");
@@ -3074,7 +3229,7 @@ unittest {
         auto pc = pixelOf(c01);
 
         invalidateSnapGrids();
-        SnapResult ctl = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg);
+        SnapResult ctl = snapCursor(cursorWorld, pc[0], pc[1], vp, m, ModelSpace.world(), cfg);
         assert(ctl.snapped && ctl.targetType == SnapType.EdgeCenter
             && ctl.targetIndex == 0,
             "positive control: with NOTHING excluded the cursor sits on edge "
@@ -3088,7 +3243,7 @@ unittest {
             ~ "point and the centre only refines it afterwards");
 
         invalidateSnapGrids();
-        SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
+        SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, m, ModelSpace.world(), cfg, dragged);
         assert(!r.snapped,
             "an edge with ONE dragged endpoint moves with the drag: its centre "
             ~ "is recomputed from the moving coordinate every frame and trails "
@@ -3103,7 +3258,7 @@ unittest {
         auto pv = pixelOf(m.vertices[0]);   // the cursor is ON the dragged vert
 
         invalidateSnapGrids();
-        SnapResult ectl = snapCursor(cursorWorld, pv[0], pv[1], vp, m, cfg);
+        SnapResult ectl = snapCursor(cursorWorld, pv[0], pv[1], vp, m, ModelSpace.world(), cfg);
         assert(ectl.snapped && ectl.targetType == SnapType.Edge
             && ectl.targetIndex == 0
             && ectl.worldPos.x == m.vertices[0].x
@@ -3115,7 +3270,7 @@ unittest {
             ~ "delta becomes zero and the drag freezes");
 
         invalidateSnapGrids();
-        SnapResult er = snapCursor(cursorWorld, pv[0], pv[1], vp, m, cfg, dragged);
+        SnapResult er = snapCursor(cursorWorld, pv[0], pv[1], vp, m, ModelSpace.world(), cfg, dragged);
         assert(!er.snapped,
             "the freeze is what the exclusion is FOR: an edge incident to the "
             ~ "dragged vertex must not be able to hand the drag its own anchor "
@@ -3151,14 +3306,14 @@ unittest {
         cfg.enabledTypes = SnapType.PolyCenter;
 
         invalidateSnapGrids();
-        SnapResult ctl = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg);
+        SnapResult ctl = snapCursor(cursorWorld, pc[0], pc[1], vp, m, ModelSpace.world(), cfg);
         assert(ctl.snapped && ctl.targetType == SnapType.PolyCenter
             && ctl.targetIndex == 0,
             "positive control: the face is front-facing and unoccluded, so its "
             ~ "centre is a live candidate with nothing excluded");
 
         invalidateSnapGrids();
-        SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
+        SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, m, ModelSpace.world(), cfg, dragged);
         assert(!r.snapped,
             "a face with one dragged corner has a centroid that follows the "
             ~ "drag at 1/n of its speed, and the gizmo is pulled after its own "
@@ -3168,13 +3323,13 @@ unittest {
         cfg.enabledTypes = SnapType.Polygon;
 
         invalidateSnapGrids();
-        SnapResult pctl = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg);
+        SnapResult pctl = snapCursor(cursorWorld, pc[0], pc[1], vp, m, ModelSpace.world(), cfg);
         assert(pctl.snapped && pctl.targetType == SnapType.Polygon
             && pctl.targetIndex == 0,
             "positive control: the cursor is over the face's interior");
 
         invalidateSnapGrids();
-        SnapResult pr = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
+        SnapResult pr = snapCursor(cursorWorld, pc[0], pc[1], vp, m, ModelSpace.world(), cfg, dragged);
         assert(!pr.snapped,
             "the surface of a face being deformed by the drag is the drag's "
             ~ "own geometry too — the rule is about MOVING, not about which "
@@ -3204,7 +3359,7 @@ unittest {
         auto pc = pixelOf(Vec3(0.1f, 0, 0));   // edge 0's centre: excluded
 
         invalidateSnapGrids();
-        SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
+        SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, m, ModelSpace.world(), cfg, dragged);
         assert(r.snapped && r.targetType == SnapType.EdgeCenter
             && r.targetIndex == 1,
             "edge 1 shares no vertex with the drag, so it does not move with "
@@ -3214,7 +3369,7 @@ unittest {
         // And a lone vertex that is not dragged is still a vertex candidate.
         cfg.enabledTypes = SnapType.Vertex;
         invalidateSnapGrids();
-        SnapResult v = snapCursor(cursorWorld, pc[0], pc[1], vp, m, cfg, dragged);
+        SnapResult v = snapCursor(cursorWorld, pc[0], pc[1], vp, m, ModelSpace.world(), cfg, dragged);
         assert(v.snapped && v.targetType == SnapType.Vertex && v.targetIndex == 1,
             "the Vertex type is the one the old rule already protected, and it "
             ~ "must keep behaving exactly as it did: vertex 0 excluded, vertex "
@@ -3309,7 +3464,7 @@ unittest {
 
     // 1. THE DEFAULT. Vertex wins despite being the FURTHER candidate,
     //    because the nearer one is a type nobody turned on.
-    SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null);
+    SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null);
     assert(r.snapped && r.targetType == SnapType.Vertex && r.targetIndex == 0,
         "under the shipped default a drag near a vertex must stick to that "
         ~ "vertex — a nearer grid point must not be able to steal it, because "
@@ -3320,7 +3475,7 @@ unittest {
     SnapPacket withGrid = cfg;
     withGrid.enabledTypes = SnapType.Vertex | SnapType.Grid;
     invalidateSnapGrids();
-    SnapResult g = snapCursor(cursorWorld, sx, sy, vp, m, withGrid, null);
+    SnapResult g = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), withGrid, null);
     assert(g.snapped && g.targetType == SnapType.Grid,
         "enabling Grid explicitly must restore the old outcome — the nearer "
         ~ "lattice point wins. `enabledTypes` is a SET and every bit stays "
@@ -3500,7 +3655,7 @@ unittest {
         "fixture: the tolerance base is min(acceptance, hit size), and this "
         ~ "case assumes the hit size is the smaller");
 
-    SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg);
     assert(r.snapped, "something must snap here — both candidates are in range");
     assert(r.targetType == SnapType.Vertex && r.targetIndex == 0,
         "a vertex inside its tolerance must beat the edge that runs through "
@@ -3520,7 +3675,7 @@ unittest {
     SnapPacket edgeOnly = cfg;
     edgeOnly.enabledTypes = SnapType.Edge;
     invalidateSnapGrids();
-    SnapResult e = snapCursor(cursorWorld, sx, sy, vp, m, edgeOnly);
+    SnapResult e = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), edgeOnly);
     assert(e.snapped && e.targetType == SnapType.Edge && e.targetIndex == 0,
         "with only one cascade class enabled the merge must be exactly what "
         ~ "it always was");
@@ -3653,7 +3808,7 @@ unittest {
         // guide's mere presence rather than its priority.
         invalidateSnapGrids();
         auto flat = new TypePriorityGuide(vp, sx, sy);
-        SnapResult f = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+        SnapResult f = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null, null,
                                   [flat]);
         assert(f.snapped && f.targetType == SnapType.Vertex,
             "control: at a flat priority the cascade decides, and it says "
@@ -3662,7 +3817,7 @@ unittest {
         invalidateSnapGrids();
         auto edgeUp = new TypePriorityGuide(vp, sx, sy);
         edgeUp.elevateType = SnapType.Edge;
-        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null, null,
                                   [edgeUp]);
         assert(r.snapped && r.targetType == SnapType.Edge && r.targetIndex == 0,
             "a guide that outranks the vertex class must WIN, even though the "
@@ -3690,7 +3845,7 @@ unittest {
 
         invalidateSnapGrids();
         auto flat = new TypePriorityGuide(vp, sx, sy);
-        SnapResult f = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+        SnapResult f = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null, null,
                                   [flat]);
         assert(f.snapped && f.targetType == SnapType.Edge,
             "control: at a flat priority the cascade decides, and at this "
@@ -3699,7 +3854,7 @@ unittest {
         invalidateSnapGrids();
         auto vertUp = new TypePriorityGuide(vp, sx, sy);
         vertUp.elevateType = SnapType.Vertex;
-        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg, null, null,
+        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg, null, null,
                                   [vertUp]);
         assert(r.snapped && r.targetType == SnapType.Vertex
             && r.targetIndex == 0,
@@ -3804,7 +3959,7 @@ unittest {
             ~ "cascade elects");
 
         invalidateSnapGrids();
-        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg);
         assert(r.snapped && r.targetType == SnapType.EdgeCenter,
             "positive control: EdgeCenter is the only type on and it must "
             ~ "still be able to answer");
@@ -3844,7 +3999,7 @@ unittest {
             ~ "a centre ranked on its own distance could not even highlight");
 
         invalidateSnapGrids();
-        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg);
         assert(r.snapped && r.targetType == SnapType.EdgeCenter
             && r.targetIndex == 0,
             "with the element type off the centre replaces the elected point "
@@ -3874,7 +4029,7 @@ unittest {
         // the midpoint, so the two distances are EQUAL and the tie rule is the
         // only thing that can decide.
         invalidateSnapGrids();
-        SnapResult tie = snapCursor(cursorWorld, 400, 400, vp, m, cfg);
+        SnapResult tie = snapCursor(cursorWorld, 400, 400, vp, m, ModelSpace.world(), cfg);
         assert(tie.snapped && near(tie.worldPos, Vec3(0, 0, 0)),
             "positive control: both types on, and the edge answers at zero "
             ~ "distance either way");
@@ -3887,7 +4042,7 @@ unittest {
 
         // …and off the midpoint the element is strictly nearer and keeps it.
         invalidateSnapGrids();
-        SnapResult off = snapCursor(cursorWorld, 460, 400, vp, m, cfg);
+        SnapResult off = snapCursor(cursorWorld, 460, 400, vp, m, ModelSpace.world(), cfg);
         assert(off.snapped && off.targetType == SnapType.Edge
             && near(off.worldPos, Vec3(0.75f, 0, 0)),
             "and where the on-edge point is STRICTLY nearer it keeps the "
@@ -3920,7 +4075,7 @@ unittest {
             ~ "centroid ranked on its own distance could not produce it");
 
         invalidateSnapGrids();
-        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+        SnapResult r = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg);
         assert(r.snapped && r.targetType == SnapType.PolyCenter
             && r.targetIndex == 0,
             "positive control: the face is front-facing, unoccluded and under "
@@ -4034,7 +4189,7 @@ unittest {
     cfg.innerRangePx = 400.0f;
     cfg.outerRangePx = 400.0f;
     invalidateSnapGrids();
-    SnapResult wide = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    SnapResult wide = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg);
     assert(wide.snapped && wide.targetType == SnapType.Edge,
         "positive control: with a 400 px range the single edge must answer");
 
@@ -4056,7 +4211,7 @@ unittest {
 
     cfg.enabledTypes = SnapType.Edge;
     invalidateSnapGrids();
-    SnapResult e10 = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    SnapResult e10 = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg);
     assert(!e10.snapped && !e10.highlighted,
         "control on the element: 10 px does not reach the elected on-edge "
         ~ "point, and that is the EDGE type's own pre-existing arithmetic — it "
@@ -4065,7 +4220,7 @@ unittest {
 
     cfg.enabledTypes = SnapType.EdgeCenter;
     invalidateSnapGrids();
-    SnapResult c10 = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    SnapResult c10 = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg);
     assert(!c10.snapped && !c10.highlighted
         && c10.targetType == SnapType.None && c10.targetIndex == -1,
         "a centre is reachable exactly when its element is: the midpoint sits "
@@ -4083,7 +4238,7 @@ unittest {
     cfg.outerRangePx = 30.0f;
     cfg.enabledTypes = SnapType.EdgeCenter;
     invalidateSnapGrids();
-    SnapResult c20 = snapCursor(cursorWorld, sx, sy, vp, m, cfg);
+    SnapResult c20 = snapCursor(cursorWorld, sx, sy, vp, m, ModelSpace.world(), cfg);
     assert(c20.snapped && c20.targetType == SnapType.EdgeCenter
         && c20.targetIndex == 0
         && abs(c20.worldPos.x - mid.x) < 1e-3f
@@ -4212,7 +4367,7 @@ unittest {
 
     // --- 1. the veto fires, with EdgeCenter OFF ----------------------------
     invalidateSnapGrids();
-    SnapResult r = snapCursor(cursorWorld, sx, sy, vp, vetoed, cfg);
+    SnapResult r = snapCursor(cursorWorld, sx, sy, vp, vetoed, ModelSpace.world(), cfg);
     assert(r.snapped && r.targetType == SnapType.Edge && r.targetIndex == 0
         && near(r.worldPos, onEdge),
         "the vertex slot is CLEARED when the cursor is nearer the winning "
@@ -4223,7 +4378,7 @@ unittest {
 
     // --- 2. …and it is the MIDPOINT that decides, not the edge -------------
     invalidateSnapGrids();
-    SnapResult s = snapCursor(cursorWorld, sx, sy, vp, spared, cfg);
+    SnapResult s = snapCursor(cursorWorld, sx, sy, vp, spared, ModelSpace.world(), cfg);
     assert(s.snapped && s.targetType == SnapType.Vertex && s.targetIndex == 0
         && near(s.worldPos, theVertex),
         "with the SAME vertex distance and the SAME edge distance, moving "
@@ -4236,13 +4391,13 @@ unittest {
     // --- 3. turning the centre type ON changes nothing about the veto ------
     cfg.enabledTypes = SnapType.Vertex | SnapType.Edge | SnapType.EdgeCenter;
     invalidateSnapGrids();
-    SnapResult rc = snapCursor(cursorWorld, sx, sy, vp, vetoed, cfg);
+    SnapResult rc = snapCursor(cursorWorld, sx, sy, vp, vetoed, ModelSpace.world(), cfg);
     assert(rc.snapped && rc.targetIndex == 0 && near(rc.worldPos, onEdge),
         "the two mechanisms are independent in both directions: with the "
         ~ "centre type ON the veto still fires the same way, and the centre "
         ~ "contest still hands the point to the strictly-nearer on-edge point");
     invalidateSnapGrids();
-    SnapResult sc = snapCursor(cursorWorld, sx, sy, vp, spared, cfg);
+    SnapResult sc = snapCursor(cursorWorld, sx, sy, vp, spared, ModelSpace.world(), cfg);
     assert(sc.snapped && sc.targetType == SnapType.Vertex,
         "and turning the centre type on does not manufacture a veto either");
 
@@ -4296,7 +4451,7 @@ unittest {
             ~ "this block");
 
         invalidateSnapGrids();
-        SnapResult h = snapCursor(cursorWorld, rx, ry, vp, m, rcfg);
+        SnapResult h = snapCursor(cursorWorld, rx, ry, vp, m, ModelSpace.world(), rcfg);
         assert(!h.snapped && h.highlighted && h.targetType == SnapType.Vertex
             && h.targetIndex == 0,
             "the veto also asks whether the midpoint is inside the caller's "
@@ -4306,6 +4461,175 @@ unittest {
     }
 
     invalidateSnapGrids();
+}
+
+// ---------------------------------------------------------------------------
+// task 0617 Stage 4 review BLOCKER 2 — `legCenterPoint`'s two consumers
+// (`refineElectedLeg`, which publishes an edge-centre leg's midpoint as the
+// snap result's WORLD position, and `vertexSlotVetoed` above, which compares
+// that midpoint's screen distance against the WORLD viewport) both treat
+// `legCenterPoint`'s return value as world. Before the fix, `legCenterPoint`
+// averaged `m.vertices[]` raw — LOCAL for a background source — so a
+// background layer carrying any transform published a midpoint three world
+// units from where it was actually drawn (a translated layer's `EdgeCenter`
+// snap would land in empty space) and silently stopped vetoing the vertex
+// slot (a "midpoint nearer than the vertex" test run against the wrong
+// point degrades to always-false).
+//
+// Both tests below install their geometry as a BACKGROUND source (slot 1,
+// via setBackgroundSnapSources) with a non-identity ModelSpace, reusing this
+// file's own identity fixtures' WORLD coordinates verbatim — only the
+// SOURCE of that geometry changes (a translated background layer instead of
+// the untransformed primary), so a reversion of the fix is visible as the
+// exact same divergence the review's repro describes: the published point
+// lands at the translation vector's distance from where the geometry is
+// actually drawn.
+// ---------------------------------------------------------------------------
+unittest { // legCenterPoint via refineElectedLeg — EdgeCenter published position
+    import math     : lookAt, perspectiveMatrix, translationMatrix;
+    import std.math : PI, abs;
+
+    invalidateSnapGrids();
+    scope(exit) { setBackgroundSnapSources(null, null); invalidateSnapGrids(); }
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    immutable Vec3 cursorWorld = Vec3(7.5f, -3.25f, 1.125f);
+
+    // The edge's WORLD endpoints and midpoint — identical numbers to this
+    // file's identity EdgeCenter fixture above, so a correct fix reproduces
+    // that fixture's result through an extra (background-layer) indirection.
+    immutable Vec3 worldA = Vec3(0.0f, 0, 0);
+    immutable Vec3 worldB = Vec3(1.0f, 0, 0);
+    immutable Vec3 worldMid = Vec3(0.5f, 0, 0);
+    immutable Vec3 T = Vec3(3, 0, 0);   // "a background layer at position x=3"
+
+    ModelSpace ms;
+    ms.m    = translationMatrix(T);
+    ms.mInv = translationMatrix(Vec3(-T.x, -T.y, -T.z));
+    ms.isIdentity = false;
+
+    // LOCAL geometry: the world edge shifted by -T, so `ms.toWorldPoint`
+    // reconstructs worldA/worldB exactly.
+    Mesh bg;
+    bg.vertices = [worldA - T, worldB - T];
+    bg.edges    = [[0u, 1u]];
+    const(Mesh)*[] bgSrc = [&bg];
+    setBackgroundSnapSources(bgSrc, [ms]);
+
+    Mesh empty;   // primary layer contributes nothing — every candidate is slot 1
+
+    int[2] pixelOf(Vec3 w) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: the probe point must project on-screen");
+        return [cast(int)round(qx), cast(int)round(qy)];
+    }
+    auto pc = pixelOf(worldMid);
+
+    SnapPacket cfg;
+    cfg.enabled      = true;
+    cfg.snapScope    = SnapMode.Global;
+    cfg.enabledTypes = SnapType.EdgeCenter;
+    cfg.innerRangePx = 40.0f;
+    cfg.outerRangePx = 40.0f;
+
+    invalidateSnapGrids();
+    SnapResult r = snapCursor(cursorWorld, pc[0], pc[1], vp, empty, ModelSpace.world(), cfg);
+    assert(r.snapped && r.targetType == SnapType.EdgeCenter && r.targetIndex == 0
+        && r.targetSource == 1,
+        "fixture: the background edge's centre must win — otherwise the "
+      ~ "position assertion below would pass for the wrong reason");
+    assert(abs(r.worldPos.x - worldMid.x) < 1e-3f
+        && abs(r.worldPos.y - worldMid.y) < 1e-3f
+        && abs(r.worldPos.z - worldMid.z) < 1e-3f,
+        "the published EdgeCenter position must be the midpoint WHERE THE "
+      ~ "BACKGROUND LAYER IS DRAWN (world) — reverting the fix averages the "
+      ~ "raw LOCAL vertices instead, publishing a point 3 world units away "
+      ~ "at the layer's untransformed (identity) position");
+}
+
+unittest { // legCenterPoint via vertexSlotVetoed — the veto's own consumer,
+           // on a translated background source. Same shape as this file's
+           // identity vertex-veto fixture above (block 1: "the veto fires"),
+           // ported one indirection deeper.
+    import math     : lookAt, perspectiveMatrix, translationMatrix;
+    import std.math : PI, abs;
+
+    invalidateSnapGrids();
+    scope(exit) { setBackgroundSnapSources(null, null); invalidateSnapGrids(); }
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    immutable Vec3 cursorWorld = Vec3(7.5f, -3.25f, 1.125f);
+    immutable int  sx = 410, sy = 390;
+
+    float distPxAt(Vec3 w, int px, int py) {
+        float qx, qy, qz;
+        assert(projectToWindowFull(w, vp, qx, qy, qz),
+            "fixture: every fixture point must project on-screen");
+        return sqrt((qx - px) * (qx - px) + (qy - py) * (qy - py));
+    }
+    float distPx(Vec3 w) { return distPxAt(w, sx, sy); }
+    bool near(Vec3 a, Vec3 b) {
+        return abs(a.x - b.x) < 1e-3f && abs(a.y - b.y) < 1e-3f
+            && abs(a.z - b.z) < 1e-3f;
+    }
+
+    SnapPacket cfg;
+    cfg.enabled      = true;
+    cfg.snapScope    = SnapMode.Global;
+    cfg.enabledTypes = SnapType.Vertex | SnapType.Edge;   // EdgeCenter is OFF
+    cfg.innerRangePx = 24.0f;
+    cfg.outerRangePx = 40.0f;
+
+    // Identical WORLD geometry to the identity vertex-veto fixture's block 1
+    // ("the veto fires") above.
+    immutable Vec3 theVertex = Vec3(0, 0.3125f, 0);    // px (400, 375)
+    immutable Vec3 onEdge    = Vec3(0.125f, 0, 0);     // px (410, 400)
+
+    immutable float dVert = distPx(theVertex);
+    immutable float dEdge = distPx(onEdge);
+    immutable float dMidV = distPx(Vec3(0.0f, 0, 0));   // this mesh's edge midpoint
+    assert(dEdge < dVert && dVert <= cfg.innerRangePx && dMidV < dVert
+        && dMidV < cfg.innerRangePx,
+        "fixture: reuses the identity vertex-veto test's own preconditions "
+      ~ "verbatim — see that test for why each one matters");
+
+    immutable Vec3 T = Vec3(3, 0, 0);   // "a background layer at position x=3"
+    ModelSpace ms;
+    ms.m    = translationMatrix(T);
+    ms.mInv = translationMatrix(Vec3(-T.x, -T.y, -T.z));
+    ms.isIdentity = false;
+
+    Mesh bg;
+    bg.vertices = [theVertex - T, Vec3(-0.5f, 0, 0) - T, Vec3(0.5f, 0, 0) - T];
+    bg.edges    = [[1u, 2u]];
+    const(Mesh)*[] bgSrc = [&bg];
+    setBackgroundSnapSources(bgSrc, [ms]);
+
+    Mesh empty;
+
+    invalidateSnapGrids();
+    SnapResult r = snapCursor(cursorWorld, sx, sy, vp, empty, ModelSpace.world(), cfg);
+    assert(r.snapped && r.targetType == SnapType.Edge && r.targetIndex == 0
+        && r.targetSource == 1 && near(r.worldPos, onEdge),
+        "the vertex slot must be CLEARED by the veto exactly as it is for "
+      ~ "the identity fixture — reverting the fix compares the cursor "
+      ~ "against the background edge's raw LOCAL midpoint (3 world units "
+      ~ "from where it is drawn), which never satisfies the veto's "
+      ~ "'nearer than the vertex' precondition, so the vertex wins instead "
+      ~ "of the edge");
 }
 
 // ---------------------------------------------------------------------------
@@ -4394,7 +4718,7 @@ unittest {
         cfg.outerRangePx = 60.0f;
 
         invalidateSnapGrids();
-        SnapResult r = snapCursor(Vec3(0, 0, 0), cx, cy, vp, m, cfg);
+        SnapResult r = snapCursor(Vec3(0, 0, 0), cx, cy, vp, m, ModelSpace.world(), cfg);
         assert(r.snapped && r.targetType == SnapType.Edge && r.targetIndex == 0,
             "an edge whose 3D-closest point is under the cursor must SNAP; a "
             ~ "projected-t election ranks the same edge 25 px out and misses "
@@ -4458,7 +4782,7 @@ unittest {
         cfg.outerRangePx = 60.0f;
 
         invalidateSnapGrids();
-        SnapResult r = snapCursor(Vec3(0, 0, 0), cx, cy, vp, m, cfg);
+        SnapResult r = snapCursor(Vec3(0, 0, 0), cx, cy, vp, m, ModelSpace.world(), cfg);
         assert(r.snapped && r.targetType == SnapType.Edge && r.targetIndex == 0,
             "the edge must still be elected and accepted at 21.5 px");
         assert(dist3(r.worldPos, pE1) < 1e-4f,
@@ -4568,7 +4892,7 @@ unittest {
             ~ "tolerance can blur them together");
 
         Vec3 hit;
-        assert(closestOnPolygonSurface(tri[], m, cx, cy, vp, hit),
+        assert(closestOnPolygonSurface(tri[], m, cx, cy, vp, ModelSpace.world(), hit),
             "a well-formed polygon with the cursor beside it must elect a point");
         assert(dist3(hit, pRay) < 1e-3f,
             "the elected point must be the boundary ring's closest approach to "
@@ -4603,7 +4927,7 @@ unittest {
             ~ "property being documented");
 
         Vec3 hit;
-        assert(closestOnPolygonSurface(tri[], m, cx, cy, vp, hit),
+        assert(closestOnPolygonSurface(tri[], m, cx, cy, vp, ModelSpace.world(), hit),
             "the fronto-parallel polygon must still elect a point");
         assert(dist3(hit, pRay) < 1e-3f,
             "and at equal depth it agrees with BOTH laws, which is exactly why "
@@ -4692,7 +5016,7 @@ unittest {
     // --- the law -----------------------------------------------------------
     Vec3  hit;
     float rankPx;
-    assert(closestOnPolygonSurface(quad[], m, cx, cy, vp, hit, rankPx),
+    assert(closestOnPolygonSurface(quad[], m, cx, cy, vp, ModelSpace.world(), hit, rankPx),
         "a well-formed quad under the cursor must elect a point");
     assert(rankPx == 0.0f,
         "the cursor is OVER the polygon, so the eye ray hits a triangle and the "
@@ -4784,7 +5108,7 @@ unittest {
     // --- the law -----------------------------------------------------------
     Vec3  hit;
     float rankPx;
-    assert(closestOnPolygonSurface(ell[], m, cx, cy, vp, hit, rankPx),
+    assert(closestOnPolygonSurface(ell[], m, cx, cy, vp, ModelSpace.world(), hit, rankPx),
         "the L must elect a point for a cursor beside it");
     assert(rankPx > 1.0f,
         "the cursor is in the NOTCH, so no triangle may be hit and the rank "
@@ -4859,8 +5183,8 @@ unittest {
 
     Vec3  hD, hN;
     float rD, rN;
-    assert(closestOnPolygonSurface(probe.faces[0], probe, cx, cy, vp, hD, rD));
-    assert(closestOnPolygonSurface(probe.faces[1], probe, cx, cy, vp, hN, rN));
+    assert(closestOnPolygonSurface(probe.faces[0], probe, cx, cy, vp, ModelSpace.world(), hD, rD));
+    assert(closestOnPolygonSurface(probe.faces[1], probe, cx, cy, vp, ModelSpace.world(), hN, rN));
     assert(abs(screenDist(hD) - 7.0f) < 0.05f && abs(screenDist(hN) - 18.0f) < 0.05f,
         "fixture: ON SCREEN the deep face is much the nearer of the two — that "
         ~ "is what the law being replaced ranked by, and it would elect it");
@@ -4887,7 +5211,7 @@ unittest {
         m.addFace([0u, 1u, 2u, 3u]);       // 0 = deep
         m.addFace([4u, 5u, 6u, 7u]);       // 1 = near
         invalidateSnapGrids();
-        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, cfg);
+        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, ModelSpace.world(), cfg);
         assert(r.snapped && r.targetType == SnapType.Polygon,
             "both faces are in range under both metrics; one must win");
         assert(r.targetIndex == 1,
@@ -4902,7 +5226,7 @@ unittest {
         m.addFace([4u, 5u, 6u, 7u]);       // 0 = near
         m.addFace([0u, 1u, 2u, 3u]);       // 1 = deep
         invalidateSnapGrids();
-        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, cfg);
+        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, ModelSpace.world(), cfg);
         assert(r.snapped && r.targetIndex == 0,
             "the near face still wins when it is enumerated first, so this "
             ~ "block measures the RANK and not the iteration order");
@@ -4965,8 +5289,8 @@ unittest {
         m.addFace([4u, 5u, 6u, 7u]);
         Vec3  h0, h1;
         float r0, r1;
-        assert(closestOnPolygonSurface(m.faces[0], m, cx, cy, vp, h0, r0));
-        assert(closestOnPolygonSurface(m.faces[1], m, cx, cy, vp, h1, r1));
+        assert(closestOnPolygonSurface(m.faces[0], m, cx, cy, vp, ModelSpace.world(), h0, r0));
+        assert(closestOnPolygonSurface(m.faces[1], m, cx, cy, vp, ModelSpace.world(), h1, r1));
         assert(r0 == 0.0f && r1 == 0.0f,
             "an interior hit ranks at the reference's literal zero — not at a "
             ~ "small number, which is what a re-projection would give");
@@ -4992,7 +5316,7 @@ unittest {
         m.addFace([0u, 1u, 2u, 3u]);       // 0 = near
         m.addFace([4u, 5u, 6u, 7u]);       // 1 = far
         invalidateSnapGrids();
-        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, cfg);
+        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, ModelSpace.world(), cfg);
         assert(r.snapped && r.targetIndex == 0 && abs(r.worldPos.z - 15.0f) < 1e-4f,
             "declared first, the near face keeps the tie");
     }
@@ -5002,7 +5326,7 @@ unittest {
         m.addFace([4u, 5u, 6u, 7u]);       // 0 = far
         m.addFace([0u, 1u, 2u, 3u]);       // 1 = near
         invalidateSnapGrids();
-        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, cfg);
+        SnapResult r = snapCursor(Vec3(99, 99, 99), cx, cy, vp, m, ModelSpace.world(), cfg);
         assert(r.snapped && r.targetIndex == 0 && abs(r.worldPos.z + 20.0f) < 1e-4f,
             "declared first, the FAR face keeps it instead — 35 units behind "
             ~ "the other one and directly occluded by it in every ordinary "
@@ -5048,7 +5372,7 @@ unittest {
 
     Vec3  hit;
     float rankPx;
-    assert(closestOnPolygonSurface(quad[], m, cx, cy, vp, hit, rankPx),
+    assert(closestOnPolygonSurface(quad[], m, cx, cy, vp, ModelSpace.world(), hit, rankPx),
         "the control quad must elect a point");
 
     // The election: the nearest point of the quad to the eye ray is the middle
@@ -5072,4 +5396,86 @@ unittest {
     assert(abs(rankPx - 0.25f / viewPixelScale(vp)) < 1e-3f,
         "...and it is still computed the ported way: a world distance over the "
         ~ "view's own scale");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0617 Stage 4: a source's ModelSpace must be honoured by the vertex
+// leg — a click at the DRAWN (world) pixel snaps; the same pixel the vertex
+// would have projected to at its pre-transform LOCAL pose does not. This is
+// `walkSource`'s `toWorld()` wiring end to end, through the public
+// `snapCursor` entry point (the same one every tool/create/create-common
+// call site drives), not a white-box test of the closure itself.
+// ---------------------------------------------------------------------------
+unittest {
+    import math             : lookAt, perspectiveMatrix, translationMatrix, ModelSpace;
+    import toolpipe.packets : SnapPacket, SnapType, SnapMode;
+    import std.math         : PI, round, sqrt;
+
+    invalidateSnapGrids();
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 400;
+    vp.height = 400;
+
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0)];   // the ONLY vertex, at the LOCAL origin
+
+    // Translate +X by 2 — no rotation/scale, so mInv is exact and trivial.
+    ModelSpace ms;
+    ms.m          = translationMatrix(Vec3(2, 0, 0));
+    ms.mInv       = translationMatrix(Vec3(-2, 0, 0));
+    ms.isIdentity = false;
+    ms.invertible = true;
+    ms.mirrored   = false;
+
+    SnapPacket cfg;
+    cfg.enabled      = true;
+    cfg.enabledTypes = SnapType.Vertex;
+    cfg.snapScope    = SnapMode.Global;
+    cfg.innerRangePx = 20.0f;
+    cfg.outerRangePx = 200.0f;
+
+    // Two candidate pixels: where the vertex is actually DRAWN (world =
+    // ms.m * local), and where it would project if `ms` were never applied
+    // (the pre-0617 bug's answer).
+    float dwx, dwy, dwz;
+    assert(projectToWindowFull(Vec3(2, 0, 0), vp, dwx, dwy, dwz),
+        "fixture: the drawn (world) position must project on-screen");
+    immutable int drawnX = cast(int)round(dwx), drawnY = cast(int)round(dwy);
+
+    float lwx, lwy, lwz;
+    assert(projectToWindowFull(Vec3(0, 0, 0), vp, lwx, lwy, lwz),
+        "fixture: the identity-pose (local) position must project on-screen too");
+    immutable int localX = cast(int)round(lwx), localY = cast(int)round(lwy);
+
+    // Anti-vacuity guard (0614 lesson): the two pixels must differ enough
+    // that a miss at one and a hit at the other cannot be noise.
+    immutable float sep = sqrt(cast(float)((drawnX - localX) * (drawnX - localX)
+                                          + (drawnY - localY) * (drawnY - localY)));
+    assert(sep > 20.0f,
+        "fixture: the drawn and identity-pose pixels must differ meaningfully, "
+        ~ "or neither assertion below can discriminate the fix from the bug");
+
+    invalidateSnapGrids();
+    SnapResult drawn = snapCursor(Vec3(0, 0, 0), drawnX, drawnY, vp, m, ms, cfg);
+    assert(drawn.snapped && drawn.targetIndex == 0,
+        "a click at the vertex's DRAWN (world) pixel must snap to it — the "
+        ~ "whole point of routing the vertex leg's `consider()` call through "
+        ~ "ms.toWorldPoint()");
+
+    invalidateSnapGrids();
+    SnapResult identity = snapCursor(Vec3(0, 0, 0), localX, localY, vp, m, ms, cfg);
+    assert(!identity.snapped,
+        "a click at the vertex's PRE-TRANSFORM local pixel must NOT snap — "
+        ~ "this is exactly the regression the fix closes: offering the "
+        ~ "candidate at m.vertices[vi] unmodified would snap HERE instead of "
+        ~ "at the drawn position");
+
+    // Review NIT: leave the grid cache invalidated on exit, matching the
+    // convention every other unittest in this file follows (this one
+    // installs no background sources, so there is nothing else to restore).
+    invalidateSnapGrids();
 }

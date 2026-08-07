@@ -6869,12 +6869,30 @@ struct Mesh {
     /// done in screen space (using already-projected face corners), avoiding
     /// the per-iteration 3D-to-2D dominant-axis projection of the original
     /// implementation.
-    bool[] visibleVertices(Vec3 eye, const ref Viewport vp) const {
-        import math : pointInPolygon2D, projectToWindowFull;
+    // Task 0617 Stage 4: `ms` is the caller's `ModelSpace` for THIS mesh
+    // (identity for a plain call). `vertices[]` stays local/unchanged
+    // throughout — cheaper than transforming every vertex to world, and
+    // correct because every quantity this function actually COMPARES is
+    // either a pure forward projection (exact under composition, §3.3) or
+    // a ray/plane intersection PARAMETER `t` along a single eye->candidate
+    // ray, which an invertible affine map preserves exactly (the same
+    // reason `bvh_pick` leaves a ray's `t` alone, §3.4 of the plan) — so
+    // running pass 2's occlusion depth-gate entirely in LOCAL space (local
+    // eye, local vertices, local plane normals) reaches the same cull
+    // decisions as running it in world space would. The ONE quantity that
+    // is NOT a ratio is pass 1's front-facing SIGN test at the cull below
+    // — a mirrored `M` flips a local cross-product's sign relative to the
+    // drawn orientation, so that one test alone gets the `ms.mirrored` XOR
+    // (§3.7/§3.8 of doc/picking_item_transform_plan.md).
+    bool[] visibleVertices(Vec3 eye, const ref Viewport vp, const ModelSpace ms) const {
+        import math : pointInPolygon2D, projectToWindowFull, projectionSpace, ModelSpace;
         import std.math : abs, sqrt;
 
         bool[] vis = new bool[](vertices.length);
         if (vertices.length == 0 || faces.length == 0) return vis;
+
+        const Viewport vpLocal = projectionSpace(vp, ms);
+        const Vec3 localEye = ms.isIdentity ? eye : ms.toLocalPoint(eye);
 
         // Project every vertex once. Behind-camera verts get vsValid=false
         // and skip both candidate selection and occluder polygon membership.
@@ -6884,7 +6902,7 @@ struct Mesh {
         auto vsValid = new bool [](vertices.length);
         foreach (vi, q; vertices) {
             float sx, sy, ndcZ;
-            if (projectToWindowFull(q, vp, sx, sy, ndcZ)) {
+            if (projectToWindowFull(q, vpLocal, sx, sy, ndcZ)) {
                 vsx[vi] = sx; vsy[vi] = sy; vsZ[vi] = ndcZ;
                 vsValid[vi] = true;
             }
@@ -6924,8 +6942,11 @@ struct Mesh {
                                        vertices[face[2]]);
             {
                 Vec3 p0 = vertices[face[0]];
-                if (dotD(fn, cast(double)p0.x - eye.x, cast(double)p0.y - eye.y,
-                             cast(double)p0.z - eye.z) >= 0) continue;
+                bool backFacing = dotD(fn, cast(double)p0.x - localEye.x,
+                                           cast(double)p0.y - localEye.y,
+                                           cast(double)p0.z - localEye.z) >= 0;
+                if (ms.mirrored) backFacing = !backFacing; // §3.7/§3.8 mirror flip
+                if (backFacing) continue;
             }
             foreach (vi; face) vis[vi] = true;
 
@@ -7006,7 +7027,7 @@ struct Mesh {
             float vsxi = vsx[vi], vsyi = vsy[vi];
             Vec3  vpos = vertices[vi];
             const double cx = vpos.x, cy = vpos.y, cz = vpos.z;
-            const double dirX = cx - eye.x, dirY = cy - eye.y, dirZ = cz - eye.z;
+            const double dirX = cx - localEye.x, dirY = cy - localEye.y, dirZ = cz - localEye.z;
             const double lenDir = sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
 
             // tol(C) = max(maxabs(C) / 3_360_000, 1e-10) — relative to the
@@ -7032,9 +7053,9 @@ struct Mesh {
                 const double denom = dotD(ff.n, dirX, dirY, dirZ);
                 if (abs(denom) < 1e-9) continue;   // ray parallel to the plane
                 Vec3 p0 = vertices[face[0]];
-                const double t = dotD(ff.n, cast(double)p0.x - eye.x,
-                                            cast(double)p0.y - eye.y,
-                                            cast(double)p0.z - eye.z) / denom;
+                const double t = dotD(ff.n, cast(double)p0.x - localEye.x,
+                                            cast(double)p0.y - localEye.y,
+                                            cast(double)p0.z - localEye.z) / denom;
                 if (t <= 0.0) continue;            // no hit in front of the eye
 
                 // t - 1, formed as dot(n, p0 - C)/denom rather than by
@@ -9970,6 +9991,62 @@ struct Mesh {
         return rebuildFacesWithChordSplits(splitFaceMask, isCutVert);
     }
 
+}
+
+// ---------------------------------------------------------------------------
+// visibleVertices: the §3.7/§3.8 mirror flip (task 0617 Stage 4).
+//
+// A single-face mesh whose LOCAL front-facing cull says "front-facing" (the
+// pre-0617 answer, and the WRONG one once a mirrored ModelSpace is in
+// play). `ms` mirrors the mesh across X with no rotation/translation, so the
+// DRAWN (world) face normal flips sign relative to the local one — the face
+// is actually drawn BACK-facing, and only the `ms.mirrored` XOR makes the
+// cull agree with that. Without the XOR this mesh's single vertex reads
+// back visible; with it, hidden.
+// ---------------------------------------------------------------------------
+unittest {
+    import math : lookAt, perspectiveMatrix, ModelSpace;
+    import std.math : PI;
+
+    Mesh m;
+    // A quad in the z=0 plane, wound so its LOCAL normal (cross(v1-v0,v2-v0))
+    // points toward +Z — i.e. toward an eye sitting on the +Z axis, which is
+    // the pre-0617 "front-facing" answer at identity.
+    m.vertices = [
+        Vec3(-0.5f, -0.5f, 0),
+        Vec3( 0.5f, -0.5f, 0),
+        Vec3( 0.5f,  0.5f, 0),
+        Vec3(-0.5f,  0.5f, 0),
+    ];
+    m.faces = [[0u, 1u, 2u, 3u]];
+
+    Viewport vp;
+    vp.eye  = Vec3(0, 0, 5);
+    vp.view = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width = 400; vp.height = 400;
+
+    // Fixture premise, stated rather than assumed: at IDENTITY this face
+    // must read visible — otherwise the mirrored case below proves nothing
+    // about the FLIP specifically (it would just be "always false").
+    bool[] visIdentity = m.visibleVertices(vp.eye, vp, ModelSpace.world());
+    assert(visIdentity == [true, true, true, true],
+        "fixture: at identity every vertex of a front-facing quad must be visible");
+
+    // Mirror across X: m = diag(-1,1,1), self-inverse. det(m) = -1 < 0.
+    ModelSpace ms;
+    ms.m          = [-1,0,0,0,  0,1,0,0,  0,0,1,0,  0,0,0,1];
+    ms.mInv       = ms.m;               // diag(-1,1,1) is its own inverse
+    ms.isIdentity = false;
+    ms.invertible = true;
+    ms.mirrored   = true;
+
+    bool[] visMirrored = m.visibleVertices(vp.eye, vp, ms);
+    assert(visMirrored == [false, false, false, false],
+        "a mirrored ModelSpace must flip the front-facing cull: this quad, "
+        ~ "drawn under the mirror, faces AWAY from the eye and must read "
+        ~ "invisible — a cull that forgot the ms.mirrored XOR would keep it "
+        ~ "visible instead (the local cross-product's sign never changes)");
 }
 
 // ---------------------------------------------------------------------------

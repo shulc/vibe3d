@@ -13,6 +13,10 @@ import mesh : Mesh;
 import editmode : EditMode;
 import snap : SnapResult, snapCursor;
 import snap_render : publishLastSnap, clearLastSnap;
+// Task 0617 Stage 4: Create-tools always build into the active/primary
+// layer's mesh (the `mesh` argument below), so its ModelSpace is the same
+// resolver every other cross-module picking/snap call site uses.
+import document : primaryModelSpace;
 
 // ---------------------------------------------------------------------------
 // Helpers shared by interactive Create-tools (BoxTool and the upcoming
@@ -416,7 +420,7 @@ SnapResult snapLocalHit(ref Vec3 hitLocal,
     localPkt.enabledTypes &= ~excludeTypes;
 
     Vec3 hitWorld = transformPoint(frame.toWorld, hitLocal);
-    sr = snapCursor(hitWorld, sx, sy, vp, mesh, localPkt, excludeVerts);
+    sr = snapCursor(hitWorld, sx, sy, vp, mesh, primaryModelSpace(), localPkt, excludeVerts);
     if (sr.snapped)
         hitLocal = transformPoint(frame.toLocal, sr.worldPos);
     return sr;

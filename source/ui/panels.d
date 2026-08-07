@@ -2223,6 +2223,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         import snap : setBackgroundSnapSources;
         import document : Document;
         const(Mesh)*[] snapSrc;
+        ModelSpace[]   snapSrcSpaces;
         int[] snapSrcLayerIdx;
         if (document.layers.length > 1) {
             foreach (i, lyr; document.layers) {
@@ -2230,11 +2231,21 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 // snap source.
                 if (Document.background(lyr) && lyr.hasMesh) {
                     snapSrc ~= cast(const(Mesh)*)&lyr.meshRef();
+                    // Task 0617 Stage 4: same source as `bgModel` in the draw
+                    // loop above (`lyr.xform.composedMatrix()`) — a background
+                    // layer now snaps where it is DRAWN, not at its identity
+                    // pose.
+                    //
+                    // The three arrays are appended together under ONE guard so
+                    // they stay index-aligned: a layer that is not a snap source
+                    // contributes to none of them. Splitting the guard is how
+                    // they would silently drift apart.
+                    snapSrcSpaces ~= lyr.xform.modelSpace();
                     snapSrcLayerIdx ~= cast(int)i;
                 }
             }
         }
-        setBackgroundSnapSources(snapSrc, snapSrcLayerIdx);
+        setBackgroundSnapSources(snapSrc, snapSrcSpaces, snapSrcLayerIdx);
     }
     // Install item snap frames (Stage 3).
     {

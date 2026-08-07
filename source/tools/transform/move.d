@@ -20,6 +20,11 @@ import drag;
 import coord_rounding : coordRounding, coordRoundingFixedIncrement;
 import snap : snapCursor, SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
+// Task 0617 Stage 4: XfrmTransformTool drags the active/primary mesh only
+// (CLAUDE.md: "Single-primary EDITING... tools hit the primary only"), so
+// its ModelSpace is the same resolver every other picking/snap call site
+// uses.
+import document : primaryModelSpace;
 
 // ---------------------------------------------------------------------------
 // MoveTool : TransformTool — shows MoveHandler at selection/mesh center
@@ -905,7 +910,7 @@ public:
 
         Vec3 desired = gizmoCenter + worldDelta;
         SnapResult sr = snapCursor(desired, sx, sy, cachedVp,
-                                   *mesh, *snapPkt, exclude);
+                                   *mesh, primaryModelSpace(), *snapPkt, exclude);
         lastSnap = sr;
         publishLastSnap(sr);
         if (sr.snapped)

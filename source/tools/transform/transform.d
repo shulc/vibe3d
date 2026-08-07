@@ -15,6 +15,10 @@ import toolpipe.stages.symmetry : SymmetryStage;
 import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror;
 import pipe_gizmo_host : PipeGizmoHost;
+// Task 0617 Stage 4: transform tools drag the active/primary mesh only, so
+// its ModelSpace is the same resolver every other picking/snap call site
+// uses.
+import document : primaryModelSpace;
 
 // Factory: builds a fresh MeshVertexEdit (the tools share a registry-driven
 // constructor that wires gpu+caches; the tool just calls this delegate
@@ -1295,7 +1299,7 @@ protected:
         SnapResult sr;
         auto snapPkt = vts.get!SnapPacket();
         if (snapPkt is null || !snapPkt.enabled) return sr;
-        return snapCursor(rawHit, sx, sy, cachedVp, *mesh, *snapPkt, []);
+        return snapCursor(rawHit, sx, sy, cachedVp, *mesh, primaryModelSpace(), *snapPkt, []);
     }
 
     // Mirror a SnapResult onto both the tool's local lastSnap and the
@@ -1429,7 +1433,7 @@ protected:
 //      nothing extra; and a genuinely static vertex must still be a candidate.
 // ---------------------------------------------------------------------------
 unittest {
-    import math             : lookAt, perspectiveMatrix, projectToWindowFull;
+    import math             : lookAt, perspectiveMatrix, projectToWindowFull, ModelSpace;
     import snap             : snapCursor, SnapResult, invalidateSnapGrids;
     import toolpipe.packets : SnapPacket, SnapType, SnapMode;
     import std.math         : PI, round;
@@ -1533,14 +1537,14 @@ unittest {
         uint[] shortList;
         foreach (vi; processed) shortList ~= cast(uint)vi;
         invalidateSnapGrids();
-        SnapResult bad = snapCursor(Vec3(9, 9, 9), sx, sy, vp, m, cfg, shortList);
+        SnapResult bad = snapCursor(Vec3(9, 9, 9), sx, sy, vp, m, ModelSpace.world(), cfg, shortList);
         assert(bad.snapped && bad.targetIndex == 1,
             "premise: excluding only the processed vert leaves the mirror "
             ~ "partner the nearest candidate, so the drag snaps to its own "
             ~ "reflection");
 
         invalidateSnapGrids();
-        SnapResult good = snapCursor(Vec3(9, 9, 9), sx, sy, vp, m, cfg,
+        SnapResult good = snapCursor(Vec3(9, 9, 9), sx, sy, vp, m, ModelSpace.world(), cfg,
                                      movingVertexIndices(processed, sym,
                                                          m.vertices.length));
         assert(good.targetIndex != 1 && good.targetIndex != 0,

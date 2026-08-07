@@ -3828,11 +3828,11 @@ noBankConsumed:
         {
             import toolpipe.packets : ConstrainPacket;
             import toolpipe.packets : ConstrainGeom;
-            import snap : backgroundSourcesSnapshot;
+            import snap : backgroundSourcesFull;
             import constraint : constrainPoint;
             if (auto consPkt = vts.get!ConstrainPacket()) {
                 if (consPkt.enabled && consPkt.geom != ConstrainGeom.Off) {
-                    auto bgSrc = backgroundSourcesSnapshot();
+                    auto bgSrc = backgroundSourcesFull();
                     if (bgSrc.length > 0) {
                         foreach (vid; vertexIndicesToProcess) {
                             if (vid < 0 || vid >= cast(int)mesh.vertices.length)

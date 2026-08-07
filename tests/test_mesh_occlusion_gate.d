@@ -29,7 +29,7 @@
 import std.format : format;
 import std.math : PI, sqrt, fabs;
 
-import math : Vec3, Viewport, lookAt, perspectiveMatrix;
+import math : Vec3, Viewport, ModelSpace, lookAt, perspectiveMatrix;
 import mesh : Mesh;
 
 void main() {}
@@ -107,13 +107,13 @@ unittest {
     auto vp = testViewport();
 
     auto inFront = twoQuads(-0.5f);           // z = +0.5, between eye and plane
-    auto visFront = inFront.visibleVertices(vp.eye, vp);
+    auto visFront = inFront.visibleVertices(vp.eye, vp, ModelSpace.world());
     foreach (vi; 0 .. 8)
         assert(visFront[vi],
             "nothing may be culled when the probe is in front" ~ report(inFront, visFront));
 
     auto behind = twoQuads(0.5f);             // z = -0.5, behind the plane
-    auto visBehind = behind.visibleVertices(vp.eye, vp);
+    auto visBehind = behind.visibleVertices(vp.eye, vp, ModelSpace.world());
     foreach (vi; 4 .. 8)
         assert(!visBehind[vi],
             "a probe half a unit behind the occluder must be culled"
@@ -131,7 +131,7 @@ unittest {
     // coordinates (~2.8e-7), so the exemption does not rescue them either.
     auto vp = testViewport();
     auto m = twoQuads(1e-4f);
-    auto vis = m.visibleVertices(vp.eye, vp);
+    auto vis = m.visibleVertices(vp.eye, vp, ModelSpace.world());
 
     foreach (vi; 4 .. 8) {
         double d, tol;
@@ -155,7 +155,7 @@ unittest {
 
     // delta = 1e-7  ->  |H-C| ~ 1.01e-7, about 2.7x INSIDE the tolerance.
     auto near = twoQuads(1e-7f);
-    auto visNear = near.visibleVertices(vp.eye, vp);
+    auto visNear = near.visibleVertices(vp.eye, vp, ModelSpace.world());
     foreach (vi; 4 .. 8) {
         double d, tol;
         probeQuantities(near, vi, d, tol);
@@ -172,7 +172,7 @@ unittest {
     // inside the epsilon the old compare carried, so this rung is what
     // separates "no epsilon + an exemption" from "a relative epsilon".
     auto far = twoQuads(1e-6f);
-    auto visFar = far.visibleVertices(vp.eye, vp);
+    auto visFar = far.visibleVertices(vp.eye, vp, ModelSpace.world());
     foreach (vi; 4 .. 8) {
         double d, tol;
         probeQuantities(far, vi, d, tol);
@@ -198,7 +198,7 @@ unittest {
     // fires first. See the gate's own comment in source/mesh.d.
     auto vp = testViewport();
     auto m = twoQuads(0.0f);
-    auto vis = m.visibleVertices(vp.eye, vp);
+    auto vis = m.visibleVertices(vp.eye, vp, ModelSpace.world());
     foreach (vi; 0 .. 8)
         assert(vis[vi],
             "a candidate exactly on the occluder's plane must survive"
