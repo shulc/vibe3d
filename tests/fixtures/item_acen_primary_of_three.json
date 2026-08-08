@@ -1,7 +1,7 @@
 {
   "name": "item_acen_primary_of_three",
-  "description": "Frozen reference behaviour: with three items selected, the shared action centre follows the DISTINGUISHED (primary) item — not the first one selected, not the mean of the set, not the set's bounding-box centre, and not the extreme along any axis. The rig places the distinguished item BETWEEN the other two on X so that 'primary' is separable from 'last in scene order' and from 'the extreme one', which an earlier rig could not do.",
-  "source": "Frozen reference capture (headless, scripted). Rig rebuilt so the five candidate laws predict five distinct points.",
+  "description": "Frozen reference behaviour: with three items selected, the shared action centre follows the DISTINGUISHED (primary) item — not the first one selected, not the last one in scene order, not the mean of the set, not the set's bounding-box centre, and not the extreme along any axis. The rig places the distinguished item BETWEEN the other two on X *and* in the MIDDLE of the scene order, so 'primary' is separable from every one of those readings at once.",
+  "source": "Frozen reference capture (headless, scripted). Rig rebuilt so the candidate laws predict distinct points.",
   "provenance": {
     "schema": 1,
     "source": "live-capture",
@@ -10,19 +10,20 @@
     "captured_utc": "2026-08-08",
     "harness": "private headless capture harness (scripts + per-case result JSON live in the private tree)",
     "task": "0614 Ph0c",
-    "notes": "Seven consecutive evaluated frames, all identical, under two different transform configurations. Selection order is load-bearing: set on the first item, then ADD the second, then ADD the third, so the distinguished item is the LAST one added while sitting geometrically in the middle."
+    "notes": "Seven consecutive evaluated frames, all identical, under two different transform configurations. Selection order is load-bearing: set on one outer item, then ADD the other outer item, then ADD the middle one, so the distinguished item is the LAST one added while sitting geometrically in the middle AND in the middle of the scene order.",
+    "post_capture_rig_change": "The captured scene created the three items in the order 0, 6, 2 (distinguished LAST). That made the distinguished item indistinguishable from 'the last item in the scene list', so an implementation reading the last layer passed unchanged — verified, not suspected. The scene order was therefore permuted to 0, 2, 6 and the ADD order to 0, 2, 1. The three item POSITIONS and the distinguished item's identity (the one at x = 2) are unchanged, so the measured centre (2, 0, 0) is unchanged; only which list slot holds which item moved, and the captured law reads the item, not the slot. Recorded here rather than silently: the permutation is a rig edit made AFTER the capture and re-derives nothing from the reference."
   },
   "tolerance": 1e-6,
 
   "rig": {
-    "comment": "Three items, each carrying a unit cube so that every rejected candidate is genuinely computable from real geometry rather than degenerating to the origin.",
+    "comment": "Three items, each carrying a unit cube so that every rejected candidate is genuinely computable from real geometry rather than degenerating to the origin. The distinguished item is index 1 — neither first nor last in the list — and is ADDED last, so 'the distinguished one' is separable from the first selected, from the last item in scene order, and from both X extremes.",
     "items": [
-      { "label": "first_selected",  "pos": [0.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] },
-      { "label": "max_x",           "pos": [6.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] },
-      { "label": "primary",         "pos": [2.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] }
+      { "label": "first_selected",           "pos": [0.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] },
+      { "label": "primary",                  "pos": [2.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] },
+      { "label": "max_x_and_last_in_order",  "pos": [6.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] }
     ],
-    "selection_order": ["set item 0", "add item 1", "add item 2"],
-    "primary_is": 2,
+    "selection_order": ["set 0", "add 2", "add 1"],
+    "primary_is": 1,
     "vertices": [
       [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
       [-0.5, -0.5,  0.5], [0.5, -0.5,  0.5], [0.5, 0.5,  0.5], [-0.5, 0.5,  0.5]
@@ -41,16 +42,19 @@
   },
 
   "rejected": [
-    { "candidate": "first selected item",          "value": [0.0,               0.0, 0.0] },
-    { "candidate": "mean of the selected set",     "value": [2.6666666666666665, 0.0, 0.0] },
-    { "candidate": "bounding-box centre of the set", "value": [3.0,             0.0, 0.0] },
-    { "candidate": "the maximum-X item",           "value": [6.0,               0.0, 0.0] }
+    { "candidate": "first selected item",            "value": [0.0,               0.0, 0.0] },
+    { "candidate": "last item in scene order",       "value": [6.0,               0.0, 0.0] },
+    { "candidate": "mean of the selected set",       "value": [2.6666666666666665, 0.0, 0.0] },
+    { "candidate": "bounding-box centre of the set", "value": [3.0,               0.0, 0.0] },
+    { "candidate": "the maximum-X item",             "value": [6.0,               0.0, 0.0] }
   ],
 
-  "why_this_matters": "The primary sits at X=2, between 0 and 6. 'Midpoint of the set' would ALSO be a plausible reading of a centre that lands between the extremes — it is not, it is 3. Recording the four rejected numbers here is what stops a future reader re-deriving 'midpoint' from the single value 2.",
+  "rejected_candidates_that_share_a_number": "'last item in scene order' and 'the maximum-X item' both predict (6,0,0) on this rig, and 'first selected item' shares (0,0,0) with 'the minimum-X item'. Three collinear items cannot give the list-order reading and the extreme-along-X reading separate numbers — the middle slot is the only one that is neither list end, and it is also the only one that is neither X extreme. They are listed as two candidates anyway because they are two different WRONG IMPLEMENTATIONS (one reads the layer list, one reads geometry); the rig refutes both, with one number.",
+
+  "why_this_matters": "The primary sits at X=2, between 0 and 6, and at list index 1, between the other two. 'Midpoint of the set' would ALSO be a plausible reading of a centre that lands between the extremes — it is not, it is 3. And an implementation that simply read the last layer in the document would have produced 2 under the ORIGINAL rig, where the distinguished item was also the last one created; that is the defect this rig was rebuilt to close. Recording the five rejected numbers here is what stops a future reader re-deriving any of those laws from the single value 2.",
 
   "classification": {
     "verdict": "match",
-    "detail": "vibe3d's item-mode action centre reads the primary layer's world pivot and produces (2,0,0) on this rig — identical to the reference, and different from all four rejected candidates. This fixture is a LIVE test that must pass."
+    "detail": "vibe3d's item-mode action centre reads the primary layer's world pivot and produces (2,0,0) on this rig — identical to the reference, and different from all five rejected candidates. This fixture is a LIVE test that must pass."
   }
 }

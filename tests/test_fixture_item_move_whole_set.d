@@ -8,14 +8,20 @@
 //   * "only the distinguished item moves" — the companion fixture proves the
 //     shared CENTRE follows the primary alone, and binding the motion to the
 //     same single item is the obvious way to get that wrong. That
-//     implementation leaves items 0 and 1 at y = 0 and reads
-//     [[0,0,0], [6,0,0], [2,-1.2,0]].
+//     implementation leaves items 0 and 2 at y = 0 and reads
+//     [[0,0,0], [2,-1.2,0], [6,0,0]].
 //   * "the set collapses onto the shared centre" — an implementation that
 //     rebases each item onto the frozen centre instead of translating it
 //     reads [[2,-1.2,0], [2,-1.2,0], [2,-1.2,0]], i.e. X is destroyed.
 // The X column is therefore asserted UNCHANGED as hard as the Y column is
 // asserted moved; only the pair separates the correct law from the second
 // wrong one.
+//
+// The rig is the companion fixture's rig, shared for real: one builder
+// (tests/item_rig_helpers.d) driven from a `rig` block this test checks is
+// identical to item_acen_primary_of_three's. The two fixtures only mean
+// "the centre follows one item but the motion moves them all" if the state
+// they measure really is one state.
 
 import std.net.curl;
 import std.json;
@@ -23,23 +29,18 @@ import std.conv   : to;
 import std.math   : fabs;
 import std.format : format;
 
-import fixture_helpers : requireProvenance, asDouble;
+import fixture_helpers  : requireProvenance, asDouble;
+import item_rig_helpers : buildThreeItemRig, assertItemRigPremises, assertRigsIdentical,
+                          itemPositions;
 
 void main() {}
 
 immutable baseUrl = "http://localhost:8080";
 
-JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
-
 JSONValue cmd(string argstring) {
     auto j = parseJSON(cast(string) post(baseUrl ~ "/api/command", argstring));
     assert(j["status"].str == "ok", "cmd `" ~ argstring ~ "` failed: " ~ j.toString);
     return j;
-}
-
-void postOk(string path, string body_) {
-    auto j = parseJSON(cast(string) post(baseUrl ~ path, body_));
-    assert(j["status"].str == "ok", path ~ " failed: " ~ j.toString);
 }
 
 double[3] vec3(JSONValue arr) {
@@ -53,14 +54,6 @@ bool near(double[3] a, double[3] b, double tol) {
 }
 
 string s3(double[3] v) { return format("(%.9g, %.9g, %.9g)", v[0], v[1], v[2]); }
-
-/// Every item's authored position, in layer-index order.
-double[3][] itemPositions() {
-    double[3][] out_;
-    foreach (l; getJson("/api/layers")["layers"].array)
-        out_ ~= vec3(l["xform"]["pos"]);
-    return out_;
-}
 
 string sList(double[3][] vs) {
     string s = "[";
@@ -77,44 +70,31 @@ unittest {
     auto rig = fx["rig"];
     auto exp = fx["expected"];
 
-    // ---- rig: three items, geometry each, selection order set/add/add -------
-    postOk("/api/reset", "");
-    cmd(`{"id":"history.clear"}`);
+    // ---- the shared-rig claim, asserted -------------------------------------
     {
-        JSONValue mesh = JSONValue(["vertices": rig["vertices"], "faces": rig["faces"]]);
-        postOk("/api/load-mesh", mesh.toString);
-        foreach (_; 0 .. 2) {
-            cmd(`{"id":"layer.add"}`);
-            postOk("/api/load-mesh", mesh.toString);
-        }
+        enum string companionJson = import("fixtures/item_acen_primary_of_three.json");
+        assertRigsIdentical(rig, "item_move_whole_set",
+                            parseJSON(companionJson)["rig"], "item_acen_primary_of_three");
     }
 
-    double[3][] before;
-    foreach (v; exp["before"].array) before ~= vec3(v);
-    foreach (i, p; before) {
-        cmd(format("layer.attr %d pos.x %.17g", i, p[0]));
-        cmd(format("layer.attr %d pos.y %.17g", i, p[1]));
-        cmd(format("layer.attr %d pos.z %.17g", i, p[2]));
-    }
-    cmd("layer.select index:0 mode:set");
-    cmd("layer.select index:1 mode:add");
-    cmd("layer.select index:2 mode:add");
+    // ---- rig: three items, geometry each, the fixture's selection order -----
+    buildThreeItemRig(rig);
+    assertItemRigPremises(rig);
 
     // ---- rig premises, asserted --------------------------------------------
+    // The start positions are the rig's authored ones; `expected.before` is
+    // the same data seen from the measurement side, so the two must agree
+    // before either is used.
+    double[3][] before;
+    foreach (v; exp["before"].array) before ~= vec3(v);
     {
-        auto layers = getJson("/api/layers")["layers"].array;
-        assert(layers.length == 3, "rig has three items");
-        size_t nSel = 0;
-        long   prim = -1;
-        foreach (l; layers) {
-            if (l["selected"].type == JSONType.true_) ++nSel;
-            if (l["primary"].type  == JSONType.true_) prim = l["index"].integer;
-        }
-        assert(nSel == 3, format("all three selected, got %d", nSel));
-        assert(prim == rig["primary_is"].integer,
-               "the distinguished item is the one the fixture names");
-        assert(getJson("/api/selection")["selType"].str == "item",
-               "the rig must leave the Item selection type current");
+        assert(before.length == rig["items"].array.length,
+               "expected.before must have one row per rig item");
+        foreach (i, it; rig["items"].array)
+            assert(near(before[i], vec3(it["pos"]), tol),
+                   format("fixture disagrees with itself at item %d: rig authors %s, "
+                          ~ "expected.before says %s",
+                          i, s3(vec3(it["pos"])), s3(before[i])));
 
         auto got = itemPositions();
         assert(got.length == before.length, "position readback arity");

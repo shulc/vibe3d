@@ -14,14 +14,34 @@
 // or constant read reports:
 //   * The CONTROL row (step 2) selects a different MESH and requires the edit
 //     target to move. A constant read fails there.
-//   * At steps 3 and 5 the item-selection FOCUS is required to have moved ONTO
-//     the non-mesh item. Without this, "the edit target did not move" could
-//     simply mean the select did nothing at all.
+//   * On EVERY step the item-selection FOCUS is required to have landed on the
+//     last item the row names. Without this, "the edit target did not move"
+//     could simply mean the select did nothing at all.
 // Steps 3 and 5 latch onto DIFFERENT meshes, so the answer also cannot be a
 // value pinned to one particular layer.
+//
+// WHY STEP 6 IS NOT A REPEAT OF STEPS 1/2/4
+// -----------------------------------------
+// Step 6's edit-target column cannot fail on its own: it opens with
+// `set mesh A`, which already forces the edit target to mesh A, so an `add`
+// that does nothing would read the right answer. It is the only row that
+// issues an `add` at all — steps 1, 2 and 4 are exclusive `set`s on a mesh,
+// steps 3 and 5 exclusive `set`s on the non-mesh item — so the FOCUS and SET
+// columns asserted here are the only place a wrong `add` arm is visible:
+//   * an `add` of a non-mesh item that is a no-op (its kind cannot be the edit
+//     target, so "it cannot join the selection either" is the tempting wrong
+//     reading) leaves the focus on mesh A;
+//   * an `add` that behaves exclusively evicts mesh A from the set;
+//   * an `add` that lets the non-mesh item take the edit target is caught by
+//     the edit-target column, which IS live on this row.
+// The SET is asserted only on the rows whose `set_asserted` is true — steps 3
+// and 5 are the two where vibe3d's ≥1-primary-eligible invariant makes its set
+// legitimately differ from the reference's (see the fixture's
+// `secondary_difference_not_asserted`).
 
 import std.net.curl;
 import std.json;
+import std.algorithm : sort;
 import std.conv   : to;
 import std.format : format;
 import std.file   : mkdirRecurse, write;
@@ -162,15 +182,37 @@ unittest {
                       st.id, row["item_selection"].toString, got.primary, wantTarget,
                       iNonMesh));
 
-        // The selection really landed: at the two latching steps the FOCUS must
-        // be on the non-mesh item, otherwise "the edit target did not move" is
-        // consistent with the select having done nothing.
-        if (st.id == 3 || st.id == 5)
-            assert(got.focused == iNonMesh,
-                   format("step %d: the item-selection focus must have moved onto the "
-                          ~ "non-mesh item (%d), got %d — without that this row cannot "
-                          ~ "tell 'latched' from 'the select was a no-op'",
-                          st.id, iNonMesh, got.focused));
+        // The selection really landed. The focus is the NEWEST touch, so it
+        // must be on the last item the row names — on every row, not just the
+        // two latching ones. Step 6 is the row this is load-bearing for: it
+        // opens with a `set` that already puts the edit target where the row
+        // wants it, so without this the row's `add` could do nothing at all
+        // and still read the right edit target.
+        immutable long wantFocus =
+            indexOfLabel(rig, row["item_selection"].array[$ - 1].str);
+        assert(got.focused == wantFocus,
+               format("step %d (%s): the item-selection focus must land on the last item "
+                      ~ "the row names (%d), got %d — without that this row cannot tell "
+                      ~ "'the edit target stayed put' from 'the select was a no-op'",
+                      st.id, row["item_selection"].toString, wantFocus, got.focused));
+
+        // The selected SET, on the rows where the reference's set and ours
+        // agree. Step 6 is the only multi-item one: it is what says the `add`
+        // EXTENDED the selection instead of replacing it.
+        if (row["set_asserted"].type == JSONType.true_) {
+            long[] wantSel;
+            foreach (lbl; row["item_selection"].array) wantSel ~= indexOfLabel(rig, lbl.str);
+            wantSel.sort();
+            assert(got.selected == wantSel,
+                   format("step %d (%s): selected set is %s, want %s — this row's `add` "
+                          ~ "must EXTEND the selection, not replace it",
+                          st.id, row["item_selection"].toString,
+                          got.selected.to!string, wantSel.to!string));
+        } else {
+            assert("set_not_asserted_why" in row,
+                   format("step %d opts out of the set assertion, so the fixture must say "
+                          ~ "why", st.id));
+        }
     }
 
     // ---- the control row is what makes the rest mean anything ---------------

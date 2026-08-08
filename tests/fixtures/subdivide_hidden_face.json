@@ -112,7 +112,7 @@
       "undo":               { "polygons_before_undo": 24, "polygons_after_undo": 6, "hidden_after_undo": 1, "entries_consumed": 1, "agrees_with_reference": "law yes, counts follow the diverging bake" }
     },
     "why_all_selected_matches": "Hiding a face clears its selected bit, so selecting everything yields five here too — exactly as in the reference — and the five-face selection then drives the selective branch, giving 21 with one hidden face at index 20. The agreement is real but it is REACHED by the selection mask, not by an exclusion rule; it disappears the moment nothing is selected.",
-    "why_one_visible_face_index_is_not_asserted": "Both engines end with 9 polygons and exactly 1 hidden; only the surviving face's INDEX differs (4 here, 5 there). That is output ordering, not semantics, so the index is recorded but not asserted.",
+    "why_one_visible_face_index_is_pinned_to_ours": "Both engines end with 9 polygons and exactly 1 hidden; only the surviving face's INDEX differs (4 here, 5 there). That is output ordering, not semantics, so the REFERENCE's index is not a parity requirement — but OURS is still pinned, at 4, as an ordering-regression guard. Two different claims that an earlier wording ran together by saying the index was 'not asserted': the row's `hidden_index_after` (5) is not asserted, `vibe3d_measured.one_visible_face_selected.hidden_index_after` (4) is.",
     "unrepresentable_here": "'Only the hidden face selected' cannot be expressed: a hidden face cannot be selected, so the attempt yields an empty selection and degenerates into the nothing-selected branch.",
     "expected_divergence": true,
     "divergence_owner": "0632",

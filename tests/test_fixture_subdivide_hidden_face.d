@@ -20,9 +20,10 @@
 //     children reads 4. The fixture freezes all three numbers because a test
 //     asserting only "hiding did not get lost" passes under two of them.
 //   * one-visible-face row: same three-way split at a different polygon
-//     count (9). The surviving face's INDEX is deliberately not asserted —
-//     it is 4 here and 5 in the reference, which is output ordering, not
-//     semantics.
+//     count (9). The surviving face's index is 4 here and 5 in the
+//     reference — output ordering, not semantics — so the REFERENCE's index
+//     is not a parity requirement, but OURS is pinned at 4 as an
+//     ordering-regression guard.
 //   * nothing-selected row: an implementation that excludes hidden faces
 //     from the operand — i.e. the 0632 fix — reads 21 polygons / 1 hidden
 //     where today's reads 24 / 4.
@@ -174,8 +175,10 @@ unittest {
         assert(s.hidden.length == cast(size_t) row["hidden_after"].integer,
                format("one-visible-face bake: %d hidden, want %d",
                       s.hidden.length, row["hidden_after"].integer));
-        // Index intentionally not asserted — see the fixture's
-        // why_one_visible_face_index_is_not_asserted.
+        // The REFERENCE's index (row["hidden_index_after"], 5) is not asserted
+        // — it is output ordering, not semantics. OURS is, so an ordering
+        // change shows up as a change rather than sliding through. See the
+        // fixture's why_one_visible_face_index_is_pinned_to_ours.
         assert(s.hidden == [cast(int) ours["one_visible_face_selected"]["hidden_index_after"].integer],
                format("one-visible-face bake: vibe3d's surviving hidden index is frozen as "
                       ~ "%d (the reference's is %d — ordering, not semantics); got %s",

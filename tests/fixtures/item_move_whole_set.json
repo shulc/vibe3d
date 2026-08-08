@@ -10,14 +10,20 @@
     "captured_utc": "2026-08-08",
     "harness": "private headless capture harness (scripts + per-case result JSON live in the private tree)",
     "task": "0614 Ph0c",
-    "notes": "Driven as a numeric attribute + apply rather than a viewport drag, so the amount is exact rather than pixel-derived. The X column is asserted UNCHANGED as well as the Y column moved: a implementation that moved the set along the wrong axis, or that rebased every item onto the shared centre, would disturb X."
+    "notes": "Driven as a numeric attribute + apply rather than a viewport drag, so the amount is exact rather than pixel-derived. The X column is asserted UNCHANGED as well as the Y column moved: an implementation that moved the set along the wrong axis, or that rebased every item onto the shared centre, would disturb X.",
+    "post_capture_rig_change": "The scene ORDER of the three items was permuted (0, 6, 2 -> 0, 2, 6) and the ADD order with it, to close a defect in the companion fixture item_acen_primary_of_three: there the distinguished item was also the last item created, so an implementation reading the last layer passed by construction. The permutation reorders the rows of `expected.before` / `expected.after` / `rejected[].after` and changes nothing else — the same three items get the same delta, and the frozen law ('every selected item translates by the same world delta') is order-blind. Recorded rather than silently applied: this is a rig edit made AFTER the capture."
   },
   "tolerance": 1e-6,
 
   "rig": {
-    "comment": "Identical rig to item_acen_primary_of_three — same three items, same selection order, so the two fixtures pin the centre and the moving set on ONE state.",
-    "selection_order": ["set item 0", "add item 1", "add item 2"],
-    "primary_is": 2,
+    "comment": "Shared for real with item_acen_primary_of_three — one builder (tests/item_rig_helpers.d) and this identical `rig` block, which both tests check against the other fixture's copy. The two fixtures pin the centre and the moving set on ONE state, so the rigs must not drift apart.",
+    "items": [
+      { "label": "first_selected",           "pos": [0.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] },
+      { "label": "primary",                  "pos": [2.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] },
+      { "label": "max_x_and_last_in_order",  "pos": [6.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] }
+    ],
+    "selection_order": ["set 0", "add 2", "add 1"],
+    "primary_is": 1,
     "vertices": [
       [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
       [-0.5, -0.5,  0.5], [0.5, -0.5,  0.5], [0.5, 0.5,  0.5], [-0.5, 0.5,  0.5]
@@ -31,14 +37,14 @@
   "gesture": { "axis": "y", "amount": -1.2 },
 
   "expected": {
-    "before": [[0.0, 0.0, 0.0], [6.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
-    "after":  [[0.0, -1.2, 0.0], [6.0, -1.2, 0.0], [2.0, -1.2, 0.0]],
+    "before": [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [6.0, 0.0, 0.0]],
+    "after":  [[0.0, -1.2, 0.0], [2.0, -1.2, 0.0], [6.0, -1.2, 0.0]],
     "per_item_delta": [0.0, -1.2, 0.0],
     "law": "every selected item translates by the same world delta; the distinguished item is not privileged in the motion"
   },
 
   "rejected": [
-    { "candidate": "only the distinguished item moves", "after": [[0.0, 0.0, 0.0], [6.0, 0.0, 0.0], [2.0, -1.2, 0.0]] },
+    { "candidate": "only the distinguished item moves", "after": [[0.0, 0.0, 0.0], [2.0, -1.2, 0.0], [6.0, 0.0, 0.0]] },
     { "candidate": "the set collapses onto the shared centre", "after": [[2.0, -1.2, 0.0], [2.0, -1.2, 0.0], [2.0, -1.2, 0.0]] }
   ],
 

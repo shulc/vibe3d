@@ -20,15 +20,17 @@
   },
 
   "rows": [
-    { "step": 1, "item_selection": ["mesh A"],                  "edit_target": "mesh A", "role": "" },
-    { "step": 2, "item_selection": ["mesh B"],                  "edit_target": "mesh B", "role": "CONTROL — the edit target DID move when a different mesh was selected, so the read is live. Without this row every later 'it did not move' is worthless: an inert read predicts the same thing." },
-    { "step": 3, "item_selection": ["non-mesh item"],           "edit_target": "mesh B", "role": "latched — selecting a non-mesh item leaves the edit target where the last mesh selection put it" },
-    { "step": 4, "item_selection": ["mesh A"],                  "edit_target": "mesh A", "role": "re-arm, so step 5 latches onto a DIFFERENT mesh than step 3 did" },
-    { "step": 5, "item_selection": ["non-mesh item"],           "edit_target": "mesh A", "role": "latched again, and to the other mesh — so the value follows the last mesh selection rather than being pinned to one particular layer" },
-    { "step": 6, "item_selection": ["mesh A", "non-mesh item"], "edit_target": "mesh A", "role": "a mixed selection resolves to the mesh" }
+    { "step": 1, "item_selection": ["mesh A"],                  "edit_target": "mesh A", "set_asserted": true,  "role": "" },
+    { "step": 2, "item_selection": ["mesh B"],                  "edit_target": "mesh B", "set_asserted": true,  "role": "CONTROL — the edit target DID move when a different mesh was selected, so the read is live. Without this row every later 'it did not move' is worthless: an inert read predicts the same thing." },
+    { "step": 3, "item_selection": ["non-mesh item"],           "edit_target": "mesh B", "set_asserted": false, "set_not_asserted_why": "vibe3d cannot hold this set — see classification.secondary_difference_not_asserted. Its invariant keeps the previously selected mesh in the set alongside the non-mesh item.", "role": "latched — selecting a non-mesh item leaves the edit target where the last mesh selection put it" },
+    { "step": 4, "item_selection": ["mesh A"],                  "edit_target": "mesh A", "set_asserted": true,  "role": "re-arm, so step 5 latches onto a DIFFERENT mesh than step 3 did" },
+    { "step": 5, "item_selection": ["non-mesh item"],           "edit_target": "mesh A", "set_asserted": false, "set_not_asserted_why": "same as step 3.", "role": "latched again, and to the other mesh — so the value follows the last mesh selection rather than being pinned to one particular layer" },
+    { "step": 6, "item_selection": ["mesh A", "non-mesh item"], "edit_target": "mesh A", "set_asserted": true,  "role": "a mixed selection resolves to the mesh. The ONLY row that exercises an ADD (every other row is an exclusive set), and the only one whose selected SET the reference and vibe3d agree on — so it is where an `add` that no-ops on a non-mesh item, or that evicts the mesh already in the set, is caught." }
   ],
 
   "control_row_is_load_bearing": "Step 2 is why this fixture asserts anything. Every other row reports that the edit target did NOT follow the selection; a broken or constant read reports that too. Step 2 is the only row where the two predictions differ.",
+
+  "step_6_is_not_a_repeat": "Step 6's edit-target column alone cannot fail: it opens with `set mesh A`, which already forces the edit target to mesh A, so an `add` that does nothing reads the right answer. What makes the row discriminating is the pair of columns beside it — the item-selection FOCUS must have moved onto the added non-mesh item, and the selected SET must be exactly the two items named. Steps 1, 2 and 4 cannot substitute: they never issue an `add` at all, and steps 3 and 5 reach the non-mesh item through an exclusive `set`, a different path.",
 
   "corroboration": {
     "what": "auto-fit on the non-mesh item, with only that item selected",
@@ -45,6 +47,6 @@
   "classification": {
     "verdict": "match",
     "detail": "vibe3d already implements the latched law. The edit target is the document's primary layer, and only a layer whose kind can be primary is eligible; selecting an item that cannot be primary moves the item-selection FOCUS but leaves the primary where the last mesh selection put it. Driving the six steps above against vibe3d reproduces the edit-target column row for row, control included. This fixture is a LIVE test that must pass.",
-    "secondary_difference_not_asserted": "The item-selection SET differs on steps 3 and 5. The reference can hold a selection consisting of the non-mesh item ALONE; vibe3d cannot — its invariant keeps at least one primary-eligible layer selected, so the previously selected mesh stays in the set alongside the non-mesh item. The edit-target column — the thing this fixture is about — is unaffected, so the set is recorded here and left out of the assertions."
+    "secondary_difference_not_asserted": "The item-selection SET differs on steps 3 and 5. The reference can hold a selection consisting of the non-mesh item ALONE; vibe3d cannot — its invariant keeps at least one primary-eligible layer selected, so the previously selected mesh stays in the set alongside the non-mesh item. The edit-target column — the thing this fixture is about — is unaffected, so the set is recorded here and left out of the assertions ON THOSE TWO ROWS ONLY: each row carries `set_asserted`, and the four rows where the two engines DO agree on the set (1, 2, 4, 6) assert it."
   }
 }

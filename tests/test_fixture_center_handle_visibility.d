@@ -20,8 +20,25 @@
 //     centre handle disappear. That implementation reads visible = false for
 //     the axis ARM parts 0/1/2 and the plane parts 4/5/6 as well, where the
 //     correct one keeps all six visible.
-// Neither is caught by looking at part 3 alone, which is why both halves are
-// asserted on the same read.
+//   * "a sticky setter" — one that hides the handle on entering the item
+//     branch and never restores it on the way back. Visiting each subject
+//     ONCE, in one order, cannot see this: the readings are 1 then 0, which
+//     is what both the correct and the sticky implementation produce. This
+//     is why the subjects are visited in an ALTERNATING sequence below,
+//     crossing the boundary in BOTH directions twice.
+// None is caught by looking at part 3 in one branch, which is why all three
+// halves — the centre handle, the axis banks, and the round trip — are
+// asserted on the same sequence of reads.
+//
+// The fixture declares the reference's own order-independence protocol
+// (`attribute.order_independent`, evidence "1, 0, 1" and "0, 1, 0"): a
+// configuration RESETS attributes it does not itself list, so the item-move
+// configuration's 0 is a real override and not a leftover. vibe3d's analogue
+// of that protocol is that the observable must be a function of the CURRENT
+// subject alone and not of the order in which subjects were visited — which
+// is exactly what the alternating sequence tests. A driver that ran one
+// direction only would leave the fixture declaring a protocol nothing
+// enforced.
 //
 // The fixture also records, on purpose, a DRAG probe that could not answer
 // grabbability (this tool free-moves on any viewport drag, so both
@@ -89,6 +106,31 @@ void assertAxisBanksIntact(bool[int] vis, string ctx) {
                format("%s: plane part %d must stay present and visible", ctx, p));
 }
 
+/// Put the app on `subject` ("component" or "item"), arm the move tool, read
+/// the gizmo part list, drop the tool again. Returns the visibility map.
+bool[int] readOnSubject(string subject, string ctx) {
+    if (subject == "component") {
+        postOk("/api/select", `{"mode":"vertices","indices":[0,1]}`);
+        assert(getJson("/api/selection")["selType"].str == "vertex",
+               ctx ~ ": component subject must be current");
+    } else {
+        cmd("layer.select index:0 mode:set");
+        assert(getJson("/api/selection")["selType"].str == "item",
+               ctx ~ ": item subject must be current");
+    }
+
+    cmd("tool.set move on");
+
+    auto st = getJson("/api/tool/state");
+    assert("subject" in st && st["subject"].str == subject,
+           format("%s: the tool must actually be on its %s branch: %s",
+                  ctx, subject, st.toString));
+
+    auto vis = handleVisibility(ctx);
+    cmd("tool.set move off");
+    return vis;
+}
+
 unittest {
     enum string fixtureJson = import("fixtures/center_handle_visibility.json");
     auto fx = parseJSON(fixtureJson);
@@ -101,51 +143,52 @@ unittest {
            ~ "configuration turns it OFF — the whole test is that pair");
     assert(fx["does_not_disturb"]["axis_frame_identical"].type == JSONType.true_,
            "fixture premise: the reference measured the axis banks undisturbed");
+    assert(fx["attribute"]["order_independent"].type == JSONType.true_,
+           "fixture premise: the reference measured this ORDER-INDEPENDENT — the "
+           ~ "alternating sequence below is what carries that claim over here; if the "
+           ~ "fixture ever stops declaring it, drop the sequence rather than leaving a "
+           ~ "protocol nothing enforces");
 
     postOk("/api/reset", "");
     cmd(`{"id":"history.clear"}`);
 
-    // ---- default: the component subject, centre handle ON -------------------
-    {
-        postOk("/api/select", `{"mode":"vertices","indices":[0,1]}`);
-        assert(getJson("/api/selection")["selType"].str == "vertex",
-               "component subject must be current");
-        cmd("tool.set move on");
-        auto vis = handleVisibility("component subject");
+    // Both directions, twice each. `component` must read the handle VISIBLE
+    // every time it comes round and `item` INVISIBLE every time — a value that
+    // latched on the first crossing would be caught on the third read.
+    static struct Visit { string subject; bool centerVisible; }
+    immutable Visit[] sequence = [
+        Visit("component", true),
+        Visit("item",      false),
+        Visit("component", true),   // <- the return leg: a sticky hide dies here
+        Visit("item",      false),
+        Visit("component", true),
+    ];
+
+    foreach (i, v; sequence) {
+        immutable string ctx = format("visit %d (%s subject)", i + 1, v.subject);
+        auto vis = readOnSubject(v.subject, ctx);
+
         assert(PART_CENTER in vis,
-               "the centre handle must be a registered gizmo part in the component branch");
-        assert(vis[PART_CENTER],
-               format("component subject: the centre handle (part %d) must be VISIBLE — "
-                      ~ "the reference default is on", PART_CENTER));
-        assertAxisBanksIntact(vis, "component subject");
-        cmd("tool.set move off");
-    }
+               format("%s: the centre handle (part %d) must be a registered gizmo part in "
+                      ~ "BOTH branches — in the item branch it is turned off, not removed",
+                      ctx, PART_CENTER));
 
-    // ---- the item subject: centre handle OFF --------------------------------
-    {
-        cmd("layer.select index:0 mode:set");
-        assert(getJson("/api/selection")["selType"].str == "item",
-               "item subject must be current");
-        cmd("tool.set move on");
-
-        auto st = getJson("/api/tool/state");
-        assert("subject" in st && st["subject"].str == "item",
-               "the tool must actually be on its item branch: " ~ st.toString);
-
-        auto vis = handleVisibility("item subject");
-        assert(PART_CENTER in vis,
-               format("the centre handle (part %d) must still be a registered part in the "
-                      ~ "item branch — it is turned off, not removed", PART_CENTER));
-        assert(!vis[PART_CENTER],
-               format("item subject: the centre handle (part %d) must be INVISIBLE. Reading "
-                      ~ "visible=true here is the 'no subject gate' implementation — the "
-                      ~ "reference's item-move configuration carries the flag off",
-                      PART_CENTER));
+        if (v.centerVisible)
+            assert(vis[PART_CENTER],
+                   format("%s: the centre handle (part %d) must be VISIBLE — the reference "
+                          ~ "default is on. Reading false on a RETURN to this subject is a "
+                          ~ "setter that hid the handle and never restored it; reading "
+                          ~ "false on the first visit is a wrong default",
+                          ctx, PART_CENTER));
+        else
+            assert(!vis[PART_CENTER],
+                   format("%s: the centre handle (part %d) must be INVISIBLE. Reading "
+                          ~ "visible=true here is the 'no subject gate' implementation — "
+                          ~ "the reference's item-move configuration carries the flag off",
+                          ctx, PART_CENTER));
 
         // The other half of the same read: turning the centre handle off must
-        // not take the axis banks with it.
-        assertAxisBanksIntact(vis, "item subject");
-
-        cmd("tool.set move off");
+        // not take the axis banks with it, in either branch.
+        assertAxisBanksIntact(vis, ctx);
     }
 }
