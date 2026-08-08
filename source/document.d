@@ -576,7 +576,15 @@ final class ImageData {
 //      wrong (e.g. re-establishing two links onto two different objects).
 //   3. "Deleted" is strictly more information than "never set", and a panel
 //      that wants to offer "this consumer's image was deleted — re-point it?"
-//      cannot ask a link that was cleared.
+//      cannot ask a link that was cleared. QUALIFIED (task 0616 Ph6): this
+//      reason holds IN MEMORY only. Across a save it does not — the wire
+//      encoding is the target's INDEX and a non-member target has none, so a
+//      `Dangling` slot is DROPPED on write and reads `Unset` on load. That is
+//      deliberate (no sentinel index, no tombstone entry, both of which would
+//      be the second identity scheme the encoding depends on not existing);
+//      `io/native.d`'s v8 schema header, decision 4, is where it is stated
+//      and argued, and this line is not a second copy of it. Reasons 1 and 2
+//      are untouched by the round trip and carry the decision on their own.
 //
 // The choice is also the reversible one: a later policy of clearing on delete
 // layers cleanly ON TOP of checked resolution (`Document.referrersOf` below is
@@ -609,11 +617,13 @@ struct ItemLink {
 
     /// A link to `l`. `null` yields the `Unset` link — a link is a value, so
     /// `ItemLink.init` is already the well-formed "points at nothing".
-    static ItemLink to(Layer l) { ItemLink r; r.target_ = l; return r; }
+    static ItemLink to(Layer l) pure nothrow @nogc @safe {
+        ItemLink r; r.target_ = l; return r;
+    }
 
     /// True iff a target was set. Says nothing about whether it resolves —
     /// that needs a document (`state`).
-    bool isSet() const { return target_ !is null; }
+    bool isSet() const pure nothrow @nogc @safe { return target_ !is null; }
 
     /// How this link resolves against `doc`. `isMember` (not `!is null`) is
     /// the membership test, for the reason its own doc comment gives: a
@@ -636,7 +646,7 @@ struct ItemLink {
     /// links for identity, and encoding one for serialisation
     /// (`Document.indexOf`). NOT for reaching a target to use it: a value
     /// from here may name an item that no longer exists.
-    inout(Layer) targetUnchecked() inout { return target_; }
+    inout(Layer) targetUnchecked() inout pure nothrow @nogc @safe { return target_; }
 }
 
 /// One named link slot on a consumer item. The name is a slot on the
@@ -774,9 +784,16 @@ final class Layer {
     /// slot. Never `null`-returning and never throwing: an absent slot and an
     /// unset one are the same state to a consumer, and the difference has no
     /// representation to leak.
-    ItemLink link(string name) {
+    /// `inout` rather than plain mutable (review NIT 1): `linkSlots()` is
+    /// `const`, so without this a `const(Layer)` could enumerate every slot
+    /// but not ask for one BY NAME — the read-only consumers (a `const ref
+    /// Document` writer, an HTTP reporter) would have had to hand-scan the
+    /// slot array to do what this function already does. Plain `const` would
+    /// have forced `const(ItemLink)` on the mutable callers too; `inout`
+    /// gives each caller back what it put in.
+    inout(ItemLink) link(string name) inout {
         foreach (ref s; links_) if (s.name == name) return s.link;
-        return ItemLink.init;
+        return typeof(return).init;
     }
 
     /// Point slot `name` at `target`, replacing whatever it held. A `null`
@@ -814,7 +831,7 @@ final class Layer {
     /// is "does this item still point at that object", which stays meaningful
     /// (and is the only useful question) precisely when the object is no
     /// longer a document member. `Document.referrersOf` is built on it.
-    bool linksTo(const(Layer) t) const {
+    bool linksTo(const(Layer) t) const pure nothrow @nogc @safe {
         if (t is null) return false;
         foreach (ref s; links_) if (s.link.targetUnchecked() is t) return true;
         return false;
@@ -1843,6 +1860,18 @@ unittest {  // Ph3 core: many→one, per-slot independence, canonical slot order
         "an absent slot is Unset, not Dangling and not a crash");
     assert(f.consumerX.link("noSuchSlot").resolve(f.doc) is null);
     assert(f.meshLayer.linkSlots().length == 0, "an item with no links has no slots");
+
+    // A READ-ONLY handle can ask for one slot by name, not merely enumerate
+    // them (review NIT 1). This is a compile-time claim as much as a runtime
+    // one: `link()` was mutable-only, so this line did not compile at all and
+    // a `const(Layer)` consumer had to hand-scan `linkSlots()`.
+    {
+        const(Layer) ro = f.consumerX;
+        assert(ro.link("backdropImage").targetUnchecked() is f.clipB,
+            "a const(Layer) resolves one named slot");
+        assert(ro.link("noSuchSlot").isSet() == false,
+            "and gets the Unset link for an absent one, same as a mutable one");
+    }
 
     // Canonical order, and the exact slot set — inserted mask-then-backdrop.
     auto slots = f.consumerX.linkSlots();

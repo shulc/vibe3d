@@ -2477,16 +2477,28 @@ void main(string[] args) {
                 activeToolId = "";
             }
         }
+        // Task 0616 Ph5 review (S3): a command that knows WHY it declined gets
+        // to say so. `Command.refusalReason()` is "" for everything that has
+        // not opted in, in which case the thrown text is byte-identical to
+        // what it always was; a command that refuses for several different
+        // reasons (a bad index vs. an unreadable path vs. a row of the wrong
+        // kind) can name the one it hit, and the caller — a script, an HTTP
+        // client, the panel that surfaced the error — reads it instead of
+        // "did not apply".
+        string failMsg() {
+            auto why = cmd.refusalReason();
+            return why.length > 0 ? throwMsg ~ ": " ~ why : throwMsg;
+        }
         if (history.refireActive) {
             if (!history.fire(cmd) && throwMsg !is null)
-                throw new Exception(throwMsg);
+                throw new Exception(failMsg());
         } else if (cmd.apply()) {
             final switch (mode) {
                 case RecordMode.Record:     history.record(cmd);           break;
                 case RecordMode.Coalescing: history.recordCoalescing(cmd); break;
             }
         } else if (throwMsg !is null) {
-            throw new Exception(throwMsg);
+            throw new Exception(failMsg());
         }
     }
 
