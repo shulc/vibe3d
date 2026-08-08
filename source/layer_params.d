@@ -1,7 +1,8 @@
 module layer_params;
 
 import params   : Param, ParamProvider;
-import document : Layer;
+import document : Layer, ItemXform, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
+import seltype  : SelType;
 
 // ---------------------------------------------------------------------------
 // LayerPropsProvider — exposes a layer's editable properties as registered
@@ -43,6 +44,16 @@ final class LayerPropsProvider : ParamProvider {
     // the panel greys those rows. This is a MID-GESTURE interlock, NOT a permanent
     // lock: the rows RE-ENABLE the instant the transform tool drops, and any value
     // authored while no tool is active PERSISTS. `name`/`visible` stay enabled.
+    //
+    // Task 0614 Phase 5 — NARROWED to the geometry subject. The interlock's whole
+    // premise ("the gizmo edits VERTICES in the layer's local frame, so the item
+    // transform is a second, invisible writer") is FALSE when the current
+    // selection type is Item: there the gizmo's only write target IS
+    // `Layer.xform`, i.e. these exact 12 params. Greying them then would hide the
+    // numbers the gizmo is authoring and make the numeric panel unusable for the
+    // whole time the item tool is up — the opposite of "gizmo and panel show the
+    // same thing". So the guard is armed only for a NON-item subject; see
+    // `setTransformGuard`.
     private bool transformGuard_;
 
     this(Layer l) { layer_ = l; }
@@ -57,11 +68,21 @@ final class LayerPropsProvider : ParamProvider {
     /// so a rebind is allocation-free and keeps the provider correct.
     void setLayer(Layer l) { layer_ = l; }
 
-    /// P4: set the primary-transform interlock (see `transformGuard_`). The app's
-    /// panel hook computes "an active tool is a transform tool" each frame and
-    /// sets this before `draw`, so the transform rows grey out only while a
-    /// transform gesture could be desynced — and re-enable when the tool drops.
-    void setTransformGuard(bool on) { transformGuard_ = on; }
+    /// P4 + task 0614 Phase 5: set the primary-transform interlock (see
+    /// `transformGuard_`). The app's panel hook computes "an active tool is a
+    /// transform tool" each frame and passes it together with the CURRENT
+    /// selection type, so the transform rows grey out only while a transform
+    /// gesture could be desynced — and re-enable when the tool drops.
+    ///
+    /// `current` is the live authority (`currentSelType`), not a cached copy:
+    /// under `SelType.Item` the transform tool writes these very params, so the
+    /// interlock must NOT arm. Taking the type rather than a pre-reduced bool
+    /// keeps the reason for the exemption at the place that states it, and makes
+    /// the narrowing itself unit-testable (there is no headless surface that
+    /// reports a panel row's greyed-ness).
+    void setTransformGuard(bool toolActive, SelType current) {
+        transformGuard_ = toolActive && current != SelType.Item;
+    }
 
     // -----------------------------------------------------------------------
     // ParamProvider
@@ -81,9 +102,22 @@ final class LayerPropsProvider : ParamProvider {
             Param.float_("rot.y",   "Rot Y",   &layer_.xform.rot.y,   0.0f).angle(),
             Param.float_("rot.z",   "Rot Z",   &layer_.xform.rot.z,   0.0f).angle(),
             // Scale (per-axis; default 1).
-            Param.float_("scl.x",   "Scale X", &layer_.xform.scl.x,   1.0f),
-            Param.float_("scl.y",   "Scale Y", &layer_.xform.scl.y,   1.0f),
-            Param.float_("scl.z",   "Scale Z", &layer_.xform.scl.z,   1.0f),
+            //
+            // R7, layer two — the magnitude CEILING, declared as an enforced
+            // bound so the generic `injectParamsInto` clamp applies it on every
+            // JSON/argstring/HTTP write without this provider being in the loop.
+            // The symmetric range is deliberate: a NEGATIVE scale is a legitimate
+            // mirror, so the bound may only cap the magnitude, never the sign.
+            // The FLOOR is not expressible here (it excludes an interval AROUND
+            // zero, which is not a min/max pair) and neither is the NaN rejection
+            // (`enforceBounds` compares with `<`/`>`, and every comparison against
+            // NaN is false) — both live in `sanitizeXform` below.
+            Param.float_("scl.x",   "Scale X", &layer_.xform.scl.x,   1.0f)
+                 .min(-MAX_ITEM_SCALE_MAG).max(MAX_ITEM_SCALE_MAG).enforceBounds(),
+            Param.float_("scl.y",   "Scale Y", &layer_.xform.scl.y,   1.0f)
+                 .min(-MAX_ITEM_SCALE_MAG).max(MAX_ITEM_SCALE_MAG).enforceBounds(),
+            Param.float_("scl.z",   "Scale Z", &layer_.xform.scl.z,   1.0f)
+                 .min(-MAX_ITEM_SCALE_MAG).max(MAX_ITEM_SCALE_MAG).enforceBounds(),
             // Pivot (rotation/scale center).
             Param.float_("pivot.x", "Pivot X", &layer_.xform.pivot.x, 0.0f),
             Param.float_("pivot.y", "Pivot Y", &layer_.xform.pivot.y, 0.0f),
@@ -112,6 +146,85 @@ final class LayerPropsProvider : ParamProvider {
             // exception to "every layer property rides the generic param path."
             Param.bool_  ("visible", "Visible", &layer_.visible, true),
         ];
+    }
+
+    /// R7, layer two — repair the wrapped layer's `ItemXform` after a generic
+    /// param write, and report whether anything had to be repaired.
+    ///
+    /// `injectParamsInto` writes the raw JSON value through the typed pointer,
+    /// applying only the declared `.min`/`.max` clamp. Two hazards survive that:
+    ///
+    ///  * **Non-finite, on any of the 12.** `enforceBounds` compares the incoming
+    ///    value with `<` and `>`, and BOTH comparisons are false for NaN, so a
+    ///    NaN sails through every declared bound. A NaN anywhere in the xform
+    ///    makes `composedMatrix()` all-NaN, which then propagates into the action
+    ///    centre, the axis basis, every snap frame and the exported file.
+    ///    Policy: **reject** — restore the component's pre-write value, exactly
+    ///    like a command that declines an out-of-domain argument. Rejecting
+    ///    rather than coercing matters because there is no "nearest legal value"
+    ///    for a NaN: any number we invented would be an edit the caller never
+    ///    asked for. If the pre-write value is ITSELF non-finite (a document
+    ///    loaded from a file written before this guard existed), fall back to the
+    ///    channel's identity element so the repair always terminates in a
+    ///    composable xform.
+    ///  * **A `scl` component inside the degenerate band around zero.** That is
+    ///    an interval EXCLUSION, which a min/max pair cannot express, so the
+    ///    declared bounds only cap the magnitude from above. Policy: **clamp** —
+    ///    push `|scl|` out to `MIN_ITEM_SCALE_MAG` with the sign preserved. Here
+    ///    clamping is right where rejection was right above: `scl.x 0` is a
+    ///    perfectly ordinary thing to type on the way to `0.5`, and the nearest
+    ///    legal value is well defined.
+    ///
+    /// Called by the single authored-write point (`layer.attr`, which owns the
+    /// undo snapshot and the change-bus publication) with the xform it captured
+    /// BEFORE the injection. The gesture path does not come through here — it is
+    /// guarded at its own layer by the kernel's `clampedScaleComponent`, and both
+    /// layers read the bounds from the one declaration in `document.d`.
+    bool sanitizeXform(ref const ItemXform before) {
+        import std.math : isFinite, fabs;
+
+        bool repaired = false;
+
+        // Reject a non-finite write: restore `prior`, or the identity element if
+        // the prior value was itself unusable.
+        void finite(ref float v, float prior, float identity) {
+            if (isFinite(v)) return;
+            v = isFinite(prior) ? prior : identity;
+            repaired = true;
+        }
+        finite(layer_.xform.pos.x,   before.pos.x,   0.0f);
+        finite(layer_.xform.pos.y,   before.pos.y,   0.0f);
+        finite(layer_.xform.pos.z,   before.pos.z,   0.0f);
+        finite(layer_.xform.rot.x,   before.rot.x,   0.0f);
+        finite(layer_.xform.rot.y,   before.rot.y,   0.0f);
+        finite(layer_.xform.rot.z,   before.rot.z,   0.0f);
+        finite(layer_.xform.scl.x,   before.scl.x,   1.0f);
+        finite(layer_.xform.scl.y,   before.scl.y,   1.0f);
+        finite(layer_.xform.scl.z,   before.scl.z,   1.0f);
+        finite(layer_.xform.pivot.x, before.pivot.x, 0.0f);
+        finite(layer_.xform.pivot.y, before.pivot.y, 0.0f);
+        finite(layer_.xform.pivot.z, before.pivot.z, 0.0f);
+
+        // Clamp |scl| into the legal band, sign preserved (a negative scale is a
+        // mirror, not an error). The ceiling is re-applied here as well as by
+        // `enforceBounds` so this method is a complete statement of the policy on
+        // its own — a caller that reached the field some other way still lands in
+        // the same band.
+        void band(ref float v) {
+            immutable float m = fabs(v);
+            if (m < MIN_ITEM_SCALE_MAG) {
+                v = v < 0 ? -MIN_ITEM_SCALE_MAG : MIN_ITEM_SCALE_MAG;
+                repaired = true;
+            } else if (m > MAX_ITEM_SCALE_MAG) {
+                v = v < 0 ? -MAX_ITEM_SCALE_MAG : MAX_ITEM_SCALE_MAG;
+                repaired = true;
+            }
+        }
+        band(layer_.xform.scl.x);
+        band(layer_.xform.scl.y);
+        band(layer_.xform.scl.z);
+
+        return repaired;
     }
 
     /// P4: the 12 transform-component params (pos.*/rot.*/scl.*/pivot.*) are
@@ -230,4 +343,235 @@ unittest {
     assert(isClose(l.xform.scl.y, 1.0f,  1e-6f));   // unchanged default 1
     assert(l.name == "Layer 1", "name round-tripped");
     assert(l.visible == true,   "visible round-tripped");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0614 Phase 5 — the transform interlock is narrowed to a GEOMETRY
+// subject.
+//
+// This is the ONLY place the narrowing can be observed: `paramEnabled` feeds
+// the forms renderer's greyed-row decision and nothing else, so there is no
+// HTTP surface (a `layer.attr` write is a command and lands whether or not the
+// row is greyed — that is what makes an end-to-end test of this property
+// impossible, not merely inconvenient).
+//
+// BOTH directions are asserted on purpose. Asserting only the Item case would
+// be satisfied by deleting the interlock outright — which is a different, worse
+// change that this test must not wave through.
+// ---------------------------------------------------------------------------
+
+unittest {
+    auto l = new Layer;
+    auto prov = new LayerPropsProvider(l);
+
+    static immutable string[] transformRows = [
+        "pos.x", "pos.y", "pos.z", "rot.x", "rot.y", "rot.z",
+        "scl.x", "scl.y", "scl.z", "pivot.x", "pivot.y", "pivot.z",
+    ];
+
+    // No tool at all: everything is editable, whatever the selection type is.
+    foreach (t; [SelType.Vertex, SelType.Edge, SelType.Polygon, SelType.Item]) {
+        prov.setTransformGuard(false, t);
+        foreach (n; transformRows)
+            assert(prov.paramEnabled(n),
+                   "with no transform tool active every transform row stays "
+                   ~ "editable, regardless of selection type (" ~ n ~ ")");
+    }
+
+    // Transform tool + a GEOMETRY subject: the interlock arms. The gizmo is
+    // moving VERTICES in the layer's local frame; the item transform is a
+    // second, invisible writer and authoring it mid-gesture desyncs the two.
+    foreach (t; [SelType.Vertex, SelType.Edge, SelType.Polygon]) {
+        prov.setTransformGuard(true, t);
+        foreach (n; transformRows)
+            assert(!prov.paramEnabled(n),
+                   "a transform tool over a GEOMETRY selection must still grey "
+                   ~ "the transform rows (" ~ n ~ ", selType " ~ t.stringof ~ ")");
+        assert(prov.paramEnabled("name") && prov.paramEnabled("visible"),
+               "name/visible are never part of the interlock");
+    }
+
+    // Transform tool + an ITEM subject: the interlock must NOT arm. Here the
+    // gizmo's only write target IS `Layer.xform`, so there is no second writer
+    // to desync from — and greying the rows would hide the very numbers the
+    // gizmo is authoring for as long as the tool is up.
+    prov.setTransformGuard(true, SelType.Item);
+    foreach (n; transformRows)
+        assert(prov.paramEnabled(n),
+               "under SelType.Item the transform tool IS the item editor — the "
+               ~ "row must stay live (" ~ n ~ ")");
+    assert(prov.paramEnabled("name") && prov.paramEnabled("visible"));
+}
+
+// ---------------------------------------------------------------------------
+// Task 0614 Phase 5 — R7 layer two: `sanitizeXform`.
+//
+// The rig is deliberately displaced and rotated OFF EVERY AXIS with a
+// non-uniform, non-unit scale. A rig at the origin with identity rotation and
+// unit scale cannot tell "restored the pre-write value" from "reset to the
+// channel's identity", which is precisely the wrong implementation this test
+// exists to catch.
+//
+// NOTE ON REACHABILITY, stated here so nobody later "promotes" this to an HTTP
+// test and gets a green that means nothing: a NaN cannot be delivered over the
+// wire. The argstring number scanner (argstring.d) accepts only
+// `-?digits(.digits)?` — `NaN` lexes as a BAREWORD, and `params._jsonFloat`
+// answers 0.0f for any non-numeric JSON — while JSON itself has no NaN literal.
+// So the non-finite arm is reachable from in-process callers (the forms panel's
+// float scratch, a `.v3d` load, any future writer) and is pinned HERE. The
+// magnitude band, by contrast, IS reachable over the wire and is pinned end to
+// end in tests/test_item_panel_gizmo_sync.d.
+// ---------------------------------------------------------------------------
+
+unittest {
+    import std.math : isClose, isNaN, isFinite;
+    import math     : Vec3;
+
+    static ItemXform rig() {
+        ItemXform x;
+        x.pos   = Vec3( 1.3f,  0.7f, -0.9f);
+        x.rot   = Vec3(20.0f, 35.0f, -50.0f);
+        x.scl   = Vec3( 1.4f,  0.8f,  1.9f);
+        x.pivot = Vec3(0.25f, -0.4f,  0.6f);
+        return x;
+    }
+
+    immutable float nan = float.nan;
+    immutable float inf = float.infinity;
+
+    // ---- non-finite on a POSITION component: rejected, prior value restored --
+    {
+        auto l = new Layer;
+        l.xform = rig();
+        auto before = l.xform;
+        auto prov = new LayerPropsProvider(l);
+
+        l.xform.pos.y = nan;                    // what injectParamsInto would leave
+        assert(prov.sanitizeXform(before), "a NaN write must be reported repaired");
+        assert(isClose(l.xform.pos.y, 0.7f, 1e-6f),
+               "a rejected write restores the PRE-WRITE value (0.7), not the "
+               ~ "channel identity (0.0) — the rig is off-origin precisely so "
+               ~ "those two are distinguishable");
+        // Nothing else moved.
+        assert(l.xform.pos.x == before.pos.x && l.xform.pos.z == before.pos.z);
+        assert(l.xform.rot == before.rot && l.xform.scl == before.scl
+               && l.xform.pivot == before.pivot,
+               "the repair touches only the component that went non-finite");
+    }
+
+    // ---- non-finite on a SCALE component: rejected, prior value restored -----
+    {
+        auto l = new Layer;
+        l.xform = rig();
+        auto before = l.xform;
+        auto prov = new LayerPropsProvider(l);
+
+        l.xform.scl.z = inf;
+        assert(prov.sanitizeXform(before));
+        assert(isClose(l.xform.scl.z, 1.9f, 1e-6f),
+               "an infinite scale restores the PRE-WRITE 1.9, not the identity "
+               ~ "1.0 and not the floor 1e-4");
+    }
+
+    // ---- non-finite prior as well: falls back to the channel identity -------
+    // A document loaded from a file written before this guard existed can carry
+    // a poisoned value; the repair must still terminate somewhere composable.
+    {
+        auto l = new Layer;
+        l.xform = rig();
+        auto before = l.xform;
+        before.rot.x = nan;                     // the PRIOR value is unusable too
+        auto prov = new LayerPropsProvider(l);
+
+        l.xform.rot.x = nan;
+        assert(prov.sanitizeXform(before));
+        assert(l.xform.rot.x == 0.0f,
+               "with no usable prior, a rotation falls back to its identity (0)");
+
+        before.scl.y = nan;
+        l.xform.scl.y = nan;
+        assert(prov.sanitizeXform(before));
+        assert(l.xform.scl.y == 1.0f,
+               "with no usable prior, a scale falls back to its identity (1) — "
+               ~ "NOT 0, which would be singular");
+    }
+
+    // ---- the degenerate band around zero: clamped, SIGN PRESERVED -----------
+    // Sign preservation is the load-bearing half: a negative scale is a legal
+    // mirror, so an implementation that clamped to a positive floor would read
+    // +1e-4 where this reads -1e-4.
+    {
+        auto l = new Layer;
+        l.xform = rig();
+        auto before = l.xform;
+        auto prov = new LayerPropsProvider(l);
+
+        l.xform.scl.x =  0.0f;
+        l.xform.scl.y = -1e-9f;
+        l.xform.scl.z =  1e-9f;
+        assert(prov.sanitizeXform(before));
+        assert(l.xform.scl.x ==  MIN_ITEM_SCALE_MAG);
+        assert(l.xform.scl.y == -MIN_ITEM_SCALE_MAG,
+               "a NEGATIVE near-zero scale floors to the NEGATIVE floor — a "
+               ~ "mirror must survive the guard that keeps the matrix invertible");
+        assert(l.xform.scl.z ==  MIN_ITEM_SCALE_MAG);
+    }
+
+    // ---- the magnitude ceiling, both signs ----------------------------------
+    {
+        auto l = new Layer;
+        l.xform = rig();
+        auto before = l.xform;
+        auto prov = new LayerPropsProvider(l);
+
+        l.xform.scl.x =  1e30f;
+        l.xform.scl.y = -1e30f;
+        assert(prov.sanitizeXform(before));
+        assert(l.xform.scl.x ==  MAX_ITEM_SCALE_MAG,
+               "a finite-but-absurd scale is capped at the ceiling, not passed "
+               ~ "through — 1e30 squares to +inf at the first matrix product");
+        assert(l.xform.scl.y == -MAX_ITEM_SCALE_MAG,
+               "the ceiling preserves the sign, like the floor");
+    }
+
+    // ---- a legal xform is left BYTE-IDENTICAL and reports "not repaired" ----
+    // Without this, an implementation that unconditionally rewrote every
+    // component (rounding, renormalising, clamping to a narrower band) would
+    // pass every assertion above.
+    {
+        auto l = new Layer;
+        l.xform = rig();
+        auto before = l.xform;
+        auto prov = new LayerPropsProvider(l);
+
+        assert(!prov.sanitizeXform(before),
+               "a legal xform must report NOTHING repaired");
+        assert(l.xform.pos   == before.pos   && l.xform.rot   == before.rot
+            && l.xform.scl   == before.scl   && l.xform.pivot == before.pivot,
+               "a legal xform must come through byte-identical");
+    }
+
+    // ---- the composed matrix is finite and non-singular after a repair ------
+    // The property R7 actually cares about, asserted directly rather than
+    // inferred from the components.
+    {
+        auto l = new Layer;
+        l.xform = rig();
+        auto before = l.xform;
+        auto prov = new LayerPropsProvider(l);
+
+        l.xform.scl.x = 0.0f;
+        l.xform.scl.y = nan;
+        prov.sanitizeXform(before);
+        auto m = l.xform.composedMatrix();
+        foreach (v; m) assert(isFinite(v), "no NaN/Inf survives into the matrix");
+        // det of the upper-left 3x3 — non-zero ⇒ invertible.
+        immutable float det =
+              m[0] * (m[5]*m[10] - m[6]*m[9])
+            - m[4] * (m[1]*m[10] - m[2]*m[9])
+            + m[8] * (m[1]*m[6]  - m[2]*m[5]);
+        assert(det != 0.0f && isFinite(det),
+               "the repaired xform composes to an INVERTIBLE matrix — the whole "
+               ~ "point of the floor");
+    }
 }

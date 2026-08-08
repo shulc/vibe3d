@@ -2088,7 +2088,60 @@ noBankConsumed:
                 return true;
             }
         }
-        if (routeResolvedHandlePart(e, vts, hitPart))
+        // Task 0614 Phase 5 (R3) — the off-gizmo mis-click guard for Item mode.
+        //
+        // MEASURED, not assumed. R3 as written in the plan predicted that an
+        // off-gizmo click would run the geometry pick and `promoteGeometryType`
+        // the current type away from Item. It does not: `app.d`'s pick arm is
+        // gated on `dragMode` being a Select mode, and `dragMode` is only ever
+        // assigned a Select mode when NO tool is active — so with a transform
+        // tool up the click never reaches the pick at all, and the interactive
+        // pick does not call the promote hook in any case (only the selection
+        // COMMANDS do). The damage the click actually does is a different one,
+        // and worse: every bank treats an off-gizmo press in a relocate-
+        // PERMITTED action-centre mode (Auto/None/Screen — the default) as a
+        // RELOCATE, which pushes a `userPlaced` pin through
+        // `notifyAcenUserPlaced`. That pin takes precedence over the item
+        // redirect in `ActionCenterStage.computeCenter`, so the gizmo LEAVES the
+        // item it is transforming and parks wherever the click ray met the work
+        // plane — after which every subsequent rotate/scale of the item happens
+        // about a point with no relation to it. Measured on a fixture with
+        // `pos+pivot = (1, 0.7, -0.4)`: one click in empty space moved the
+        // published centre to `(-1.7905, 1.0466, 0)`, for all three of
+        // move/rotate/scale.
+        //
+        // The fix is the one the plan prescribes, and it cures the real defect
+        // as well as the predicted one: while the subject is an item, the tool
+        // CONSUMES a plain off-gizmo left-down itself and returns true. The
+        // banks never see it, so nothing relocates and nothing arms an
+        // off-gizmo drag; the existing off-gizmo run-boundary block at the
+        // bottom of this method still runs, so the press still SPLITS the undo
+        // run exactly as it does for a geometry subject.
+        //
+        // Gating, and why each term:
+        //  - `hitPart < 0` — every interactive part of all three banks is
+        //    registered into `toolHandles` (`registerGizmoHandles`), including
+        //    the rotate VIEW ring, so a negative part genuinely means "no gizmo
+        //    under the cursor". A handle grab is untouched by this guard.
+        //  - LEFT + no ALT/CTRL/SHIFT — the identical `plain2` filter the
+        //    boundary block below uses, so the set of downs we consume is
+        //    exactly the set it already recognises as a boundary. Excluding ALT
+        //    is load-bearing: `app.d` offers the camera chords (Alt+LMB orbit,
+        //    Alt+Shift pan, Ctrl+Alt zoom) to the tool FIRST, and consuming one
+        //    would kill camera navigation in Item mode.
+        //
+        // What this deliberately gives up, in Item mode only: the off-gizmo
+        // screen-plane move drag, the off-ring arcball rotate and the off-handle
+        // plane scale. All three are reachable only through the same press that
+        // relocates, and all three would drag the item about the just-relocated
+        // (i.e. wrong) centre. Grab a handle to transform an item.
+        immutable bool itemOffGizmoDown =
+            itemSubjectActive()
+            && e.button == SDL_BUTTON_LEFT
+            && hitPart < 0
+            && (SDL_GetModState() & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0;
+
+        if (!itemOffGizmoDown && routeResolvedHandlePart(e, vts, hitPart))
             return true;
 
         // Click landed OFF every gizmo handler bank. If we just
@@ -2263,7 +2316,12 @@ noBankConsumed:
                 resetRun();   // + P-F: this boundary freezes a NEW run-frame
             }
         }
-        return false;
+        // Task 0614 Phase 5 (R3): an item-mode off-gizmo down is CONSUMED here.
+        // The boundary work above already ran (it shares `plain2` with the guard
+        // above), so the press keeps its run-splitting meaning; returning true is
+        // what stops it from reaching any bank, and stops `app.d` from offering
+        // it to the selection path afterwards.
+        return itemOffGizmoDown;
     }
 
     private void resetGestureAttrs() {

@@ -27,7 +27,7 @@ import mesh;
 import view;
 import editmode;
 import params : Param, paramToJson, injectParamsInto;
-import document : Document, Layer, ItemKind, kindInfo;
+import document : Document, Layer, ItemKind, ItemXform, kindInfo;
 import layer_params : LayerPropsProvider;
 import seltype : SelMode, selModeFromToken;
 import change_bus : MeshChangeAll, noteLayerChange, LayerChange,
@@ -953,9 +953,22 @@ final class LayerAttr : LayerCommandBase {
         // Write: snapshot the prior value for revert(), then inject the new one
         // through the param's typed pointer (which aliases the live Layer field).
         priorValue_ = paramToJson(*found);
+        // Task 0614 Phase 5 (R7, layer two): the WHOLE pre-write xform, not just
+        // the one attr, because `sanitizeXform` rejects a non-finite write by
+        // restoring the component it came in on — and this is the only point that
+        // still has that value. Captured unconditionally (a plain 4x Vec3 copy)
+        // rather than only for the 12 transform attrs: a `name`/`visible` write
+        // leaves the xform untouched, so the sanitiser is a no-op there and the
+        // branch would buy nothing but a way to get the condition wrong.
+        immutable ItemXform beforeXform = layer.xform;
         JSONValue pj = JSONValue(cast(JSONValue[string]) null);
         pj[attrName_] = attrValue_;
         injectParamsInto(ps, pj);
+        // Repair anything the declared bounds could not catch (non-finite on any
+        // of the 12; a `scl` component inside the degenerate band around zero) —
+        // see LayerPropsProvider.sanitizeXform. Runs BEFORE the change-bus
+        // publication so no consumer ever observes the unrepaired state.
+        prov.sanitizeXform(beforeXform);
         applied_ = true;
 
         // Pure document-state change: publish the generic property-changed kind,

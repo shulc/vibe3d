@@ -24,19 +24,29 @@ import math : Vec3, matMul4, matrixFromEulerZYX, eulerZYXFromMatrix,
               applyAffine, scaleAlongBasis, identityMatrix;
 import document : Layer, ItemXform;
 
-/// Degenerate-scale floor (two-layer guard, R7 — the kernel half; the Param
-/// half lands in Phase 5). A hard cap so a headless caller cannot author a
-/// singular `ItemXform` through this kernel. Sign is preserved deliberately —
-/// a negative scale is a legitimate mirror (`XfrmTransformTool.negScale`),
-/// not a value to clamp to a positive floor.
-enum float MIN_ITEM_SCALE_MAG = 1e-4f;
+/// Degenerate-scale floor + ceiling (two-layer guard, R7 — this module is the
+/// KERNEL half; the authored-Param half is `layer_params.d`). A hard cap so a
+/// headless caller cannot author a singular `ItemXform` through this kernel.
+/// Sign is preserved deliberately — a negative scale is a legitimate mirror
+/// (`XfrmTransformTool.negScale`), not a value to clamp to a positive floor.
+///
+/// Both bounds are DECLARED in `document.d` (next to `ItemXform` itself) and
+/// re-exported here so the two enforcement layers cannot drift apart; see the
+/// rationale on the declaration. The re-export keeps every existing reader of
+/// `tools.transform.item_xform_kernels.MIN_ITEM_SCALE_MAG` resolving.
+public import document : MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
 
 /// `base * factor`, guarded: a non-finite FACTOR is rejected outright (the
 /// baseline component is returned untouched — never propagate a NaN/Inf
-/// gesture into the item), then the RESULT's magnitude is floored at
-/// `MIN_ITEM_SCALE_MAG`, sign preserved. `Param.enforceBounds()` has a known
-/// NaN hole (doc/param_bounds_plan.md) — this finite check is explicit here,
-/// not implied by a min/max pair.
+/// gesture into the item), then the RESULT's magnitude is clamped into
+/// `[MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG]`, sign preserved.
+/// `Param.enforceBounds()` has a known NaN hole (doc/param_bounds_plan.md) —
+/// this finite check is explicit here, not implied by a min/max pair.
+///
+/// The two ends are enforced together on purpose: a headless
+/// `tool.attr scale SX 1e30; tool.doApply` is as reachable as a gesture, and a
+/// finite-but-absurd scale overflows to infinity at the first matrix product,
+/// which is the same non-finite state the floor exists to keep out.
 private float clampedScaleComponent(float baseVal, float factor) pure nothrow @nogc @safe {
     import std.math : isFinite, fabs;
     if (!isFinite(factor)) return baseVal;
@@ -44,6 +54,8 @@ private float clampedScaleComponent(float baseVal, float factor) pure nothrow @n
     if (!isFinite(v)) return baseVal;
     if (fabs(v) < MIN_ITEM_SCALE_MAG)
         return v < 0 ? -MIN_ITEM_SCALE_MAG : MIN_ITEM_SCALE_MAG;
+    if (fabs(v) > MAX_ITEM_SCALE_MAG)
+        return v < 0 ? -MAX_ITEM_SCALE_MAG : MAX_ITEM_SCALE_MAG;
     return v;
 }
 

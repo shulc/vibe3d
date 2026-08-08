@@ -1185,8 +1185,18 @@ void drawLayerListPanel(EditorApp app) {
                     // guard is mid-gesture only — it clears when the tool
                     // drops; tool-free edits persist. (Same TransformTool
                     // cast the deferred-drag draw site uses.)
+                    //
+                    // Task 0614 Phase 5: the CURRENT selection type goes with
+                    // it. Under `SelType.Item` the transform tool's only write
+                    // target is `Layer.xform` — these very rows — so there is
+                    // no second writer to desync from and the interlock must
+                    // not arm. Read live from the authority rather than cached
+                    // (seltype.d: `currentSelType` is THE answer to "what kind
+                    // of thing is selected"), so a mode flip is reflected on
+                    // the next frame with no invalidation step.
                     layerProv.setTransformGuard(
-                        (cast(TransformTool)activeTool) !is null);
+                        (cast(TransformTool)activeTool) !is null,
+                        currentSelType(selTypeOrder));
                     formsPanel.draw(*layerForm, layerProv,
                                     commandHandlerDelegate,
                                     formsInteractiveDispatch,

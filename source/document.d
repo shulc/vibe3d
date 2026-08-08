@@ -36,6 +36,29 @@ import math    : Vec3, identityMatrix, translationMatrix, matrixFromEulerZYX,
 // index follows the primary OBJECT by identity, so reorder/delete renumbering
 // can never drift it.
 
+/// Degenerate-scale floor for `ItemXform.scl` (task 0614, R7). A `scl`
+/// component whose MAGNITUDE falls below this makes `composedMatrix()`
+/// singular, which poisons every consumer that inverts or normalises it
+/// (action-centre, axis basis, snap frames, export). The sign is NOT part of
+/// the floor — a negative scale is a legitimate mirror, so the guard clamps
+/// `|scl|` and preserves the sign.
+///
+/// This constant lives HERE, next to `ItemXform`, rather than in either of the
+/// two places that enforce it, because R7 is a TWO-LAYER guard and the two
+/// layers must agree by construction: the gesture kernel
+/// (`tools/transform/item_xform_kernels.d`, which re-exports this symbol) and
+/// the authored-param write path (`layer_params.d`). Two independently
+/// declared floors would be a latent divergence, not a redundancy.
+enum float MIN_ITEM_SCALE_MAG = 1e-4f;
+
+/// Magnitude ceiling for `ItemXform.scl` (task 0614, R7 — the other end of the
+/// same guard). A finite but absurd scale (`1e30`) does not make the matrix
+/// singular, but it overflows to infinity the moment it is composed with
+/// anything else, which reintroduces the non-finite state the floor exists to
+/// prevent. `1e6` is far beyond any modelling use and still leaves ~30 bits of
+/// float headroom for a matrix product.
+enum float MAX_ITEM_SCALE_MAG = 1e6f;
+
 /// A per-layer (item) transform: position / euler-rotation-in-degrees / scale,
 /// about a pivot. Authored as four separate `Vec3` channels (the source of
 /// truth); the world matrix is a DERIVED runtime value composed on demand by
