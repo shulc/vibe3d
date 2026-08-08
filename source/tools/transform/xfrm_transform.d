@@ -819,6 +819,44 @@ public:
     override void update(ref VectorStack vts) {
         if (!active) return;
 
+        // Task 0614 Phase 3 — refresh the cached subject type HERE, the
+        // frame's FIRST tick of this tool, not only in `draw()` further
+        // down.
+        //
+        // Why it cannot stay draw-only. `update()` and `draw()` are two
+        // different phases of one frame: app.d ticks the tool right after the
+        // event drain, then builds the whole ImGui panel section, and only
+        // then runs the N-cell FBO loop that calls `draw()`. The gizmo pose
+        // (`setSharedGizmoPose(queryActionCenter(vts), ...)`, the bottom of
+        // this method) was already written in the FIRST phase while
+        // `cachedSubjType_` was still written in the SECOND — so for the
+        // whole ImGui section the tool's two resident records of "what am I
+        // targeting" disagreed: the gizmo sat on the item's world pivot while
+        // `cachedSubjType_` still held the constructor default `Vertex`
+        // (every `tool.set` builds a FRESH tool — setActiveTool destroys the
+        // old one — so the default is what a newly-armed tool starts from).
+        //
+        // That is observable, and it was measured: GET /api/tool/state is a
+        // DIRECT read of these fields on the HTTP thread (http_providers.d's
+        // setToolStateDataProvider — no main-thread marshalling, by design,
+        // "because it reads resident per-tool fields"), so a read landing in
+        // that window answers `pivot` = the item pivot and `subject` =
+        // "component" in ONE response — a self-contradicting snapshot. That
+        // is a CI-only failure of tests/test_item_panel_gizmo_sync.d's case 2
+        // on a loaded host, reproduced 15/15 by widening the update→draw gap.
+        //
+        // The packet is the same one `draw()` reads (app.d's `buildToolVts`
+        // publishes `currentSelType(selTypeOrder)`), and panels.d guarantees
+        // `update()` has already run once this frame before ANY cell's
+        // `draw()` — so this refresh is never later than the draw-site one,
+        // only earlier. The draw-site refresh below stays: it is `!visualOnly`
+        // gated for the multi-cell replica rule and is what keeps the cache
+        // honest if a future caller draws without ticking.
+        {
+            import toolpipe.packets : SubjectPacket;
+            if (auto sp = vts.get!SubjectPacket()) cachedSubjType_ = sp.selType;
+        }
+
         // Wrapper-owned selection/mutation-change guard. Closes any
         // pending edit when the user picks a different selection or
         // mesh topology changed under the open edit — same boundary
@@ -4090,8 +4128,10 @@ noBankConsumed:
         // returns ALL vertices on an empty selection, so reaching the vertex
         // path in item mode would translate the whole layer's mesh). Reads
         // `subj.selType` FRESH from THIS call's own `buildLocalVts` above —
-        // not the instance-cached `cachedSubjType_` (which only `syncInput-
-        // Viewport`'s mouse-handler call sites refresh) — so a headless/
+        // not the instance-cached `cachedSubjType_` (refreshed only at this
+        // tool's three per-frame/per-event entry points — `update()`,
+        // `draw()` and `syncInputViewport` — so it is one frame phase behind
+        // for anyone who arrives by another route) — so a headless/
         // panel-replay `applyTRS` call with no preceding mouse event still
         // resolves the LIVE subject correctly.
         //

@@ -66,6 +66,16 @@ tools/perf/history/
 # folded stacks, mirrors the retired tools/perf_subpatch/out/.
 tools/perf/flame/out/
 
+# The retired one-off profiling scratch dirs the line above refers to. They were
+# named but never ignored, so a `git add -A` sweeps in a 177 MB perf.data and the
+# push is rejected by the file-size limit — which is how this entry came to be.
+tools/perf_subpatch/out/
+tools/perf_mesh_faces/run
+
+# Ad-hoc test binaries built beside the tracked ones. `vibe3d-test-modeling`
+# above does not cover a suffixed variant.
+vibe3d-test-modeling-*
+
 # dyaml 0.10.0 unittests (compiled into -unittest test binaries via
 # test_forms_loader) write a scratch example.yaml into cwd (loader.d:248)
 /example.yaml

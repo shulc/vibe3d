@@ -142,8 +142,14 @@ bool toolIsArmed() {
 // re-evaluated action centre. Asserts the tool is armed first, so "the tool was
 // dropped" fails HERE with that diagnosis instead of surfacing later as a
 // missing-key exception.
-Vec3 gizmoCentre(string ctx) {
-    auto st = toolState();
+Vec3 gizmoCentre(string ctx) { return gizmoCentreFrom(toolState(), ctx); }
+
+// Same read, but off a snapshot the CALLER already fetched — so a case that
+// also wants `subject` can take both from ONE response instead of two GETs.
+// The tool's resident fields are written across a frame (see case 2's
+// preamble), so two GETs can straddle a phase boundary and report a
+// self-contradicting pair; one GET cannot.
+Vec3 gizmoCentreFrom(JSONValue st, string ctx) {
     assert(st.type == JSONType.object && ("pivot" in st) !is null,
         ctx ~ ": no tool is armed — /api/tool/state answered " ~ st.toString
       ~ ". Any assertion about the gizmo below would be about nothing.");
@@ -384,14 +390,49 @@ unittest {
     buildRig();
     script("tool.set move");
 
-    Vec3 before = gizmoCentre("precondition");
+    // SETTLE, then read BOTH preconditions off ONE snapshot. Neither half is
+    // decoration; both were MEASURED, by widening the two windows of the frame
+    // that separate `tool.set` from the tool's resident state being current
+    // (app.d: event drain → activeTool.update() → the whole ImGui section →
+    // the FBO loop's activeTool.draw()). /api/tool/state is a DIRECT read of
+    // those fields on the HTTP thread, so a reply can land inside either gap:
+    //
+    //   * arming .. update()  — the tool is armed but has never been ticked,
+    //     so `pivot` is the fresh tool's un-posed (0,0,0). That is what the
+    //     bounded poll below absorbs; it is the SAME hazard, and the same
+    //     remedy, that `gizmoCentreSettled`'s own doc comment states — this
+    //     read was simply the one post-`tool.set` read in this file that
+    //     still read once and hoped.
+    //   * update() .. draw()  — `pivot` is already on the item while
+    //     `subject` still reads the freshly-constructed tool's default.
+    //     THAT was the CI-only failure of this very assertion (run
+    //     31246967466): the gizmo precondition passed and the subject
+    //     precondition failed, on the line below it. Fixed in the PRODUCT
+    //     (xfrm_transform.d's update() now refreshes the cached subject type
+    //     alongside the gizmo pose, so the two can no longer disagree); the
+    //     single-snapshot read here is what makes this case stop DEPENDING on
+    //     that, because two separate GETs re-open the seam by construction.
+    //
+    // Nothing is weakened: the poll hands back the last value it saw and the
+    // asserts below are the original ones, on the original numbers, with the
+    // original messages — a genuinely wrong subject still fails, on the real
+    // value, after at most a second.
+    Vec3 wantPivot = Vec3(cast(float)RIG_PIVOT_X, cast(float)RIG_PIVOT_Y,
+                          cast(float)RIG_PIVOT_Z);
+    gizmoCentreSettled("precondition", wantPivot);
+    auto st0 = toolState();
+    Vec3 before = gizmoCentreFrom(st0, "precondition");
     assert(approx(before.x, RIG_PIVOT_X) && approx(before.y, RIG_PIVOT_Y)
         && approx(before.z, RIG_PIVOT_Z),
         "precondition: the tool's own gizmo starts on the item pivot "
         ~ "(1.55, 0.30, -0.30), got " ~ show(before));
-    assert(toolState()["subject"].str == "item",
+    assert(st0["subject"].str == "item",
         "precondition: the tool's apply path is targeting the ITEM — without "
-        ~ "this the case is about a vertex tool that happens to sit nearby");
+        ~ "this the case is about a vertex tool that happens to sit nearby. "
+        ~ "Read from the SAME /api/tool/state snapshot as the gizmo centre "
+        ~ "above, which is on the item — a disagreement between the two is "
+        ~ "the tool's cached subject type going stale against its own gizmo "
+        ~ "pose. /api/tool/state answered " ~ st0.toString);
 
     // 4.25 is chosen so pos.x + pivot.x = 4.50 differs from EVERY other number
     // in the rig — a gizmo that silently kept reading some other channel
