@@ -65,9 +65,27 @@ class Subdivide : Command, Operator {
             // selection — i.e. in Polygons mode. In Vertices / Edges mode
             // we ignore any stale `mesh.selectedFaces` from a prior
             // polygon session and refine the whole cage.
+            //
+            // Hide (task 0632): the fallback is `visibleFaceMask()`, NOT a
+            // null "refine everything" mask — hidden faces are excluded from
+            // the OPERAND, so a hidden cage face is carried through whole
+            // instead of being refined into four hidden children. Same
+            // mode-gated shape as the four face commands listed in
+            // `visibleFaceMask`'s doc comment (task 0613, S5): the gate stays
+            // the mode, only the whole-mesh meaning narrows to "visible".
+            // `operandFaceMask()` would ALSO make Vertices/Edges mode start
+            // honouring a stale face selection, which is a behaviour change
+            // this task does not want.
+            //
+            // The subtraction lives HERE and not inside `catmullClarkOsd`
+            // deliberately: that kernel also builds the subpatch PREVIEW, and
+            // subpatch_osd.d's §S3 stamp comment pins the invariant that the
+            // limit surface is bit-identical whether or not anything is
+            // hidden. Teaching the kernel to skip hidden faces would move the
+            // preview's geometry the moment a face is hidden.
             bool polygonMode = editMode == EditMode.Polygons;
             bool[] mask = (polygonMode && mesh.hasAnySelectedFaces())
-                          ? mesh.selectedFaces : null;
+                          ? mesh.selectedFaces : mesh.visibleFaceMask();
             // `mask` is a slice into mesh.selectedFaces and dies with the
             // swap, so snapshot the selection before calling.
             auto prevSelectedFaces = polygonMode
