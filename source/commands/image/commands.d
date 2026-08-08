@@ -55,10 +55,13 @@ module commands.image.commands;
 //   decision ("a document with 50 images shows 50 resolutions having decoded
 //   nothing") AND the ordering `document.d`'s `ImageData` doc comment
 //   demands: the share count must exist BEFORE the first `.free()` call site
-//   does, because `LayerDuplicate` already shares one `ImageData` between two
-//   layers, so "this layer is going away" is not the same question as "these
-//   pixels are unreachable". Shipping a release here, ahead of that count,
-//   would be the one ordering the comment names as a mistake.
+//   does, because two image ITEMS may legitimately carry the same
+//   `storedPath` (`LayerDuplicate` produces exactly that pair — its clone
+//   gets its own `ImageData` holding the source's path), so "this item is
+//   going away" is not the same question as "these pixels are unreachable".
+//   The count therefore belongs on the path-keyed CACHE ENTRY, not on the
+//   payload. Shipping a release here, ahead of that count, would be the one
+//   ordering the comment names as a mistake.
 //
 //   When the pixel cache lands, its acquire/release pair belongs behind the
 //   same `refreshImageMeta` seam, so the release has one call site per
@@ -88,6 +91,12 @@ import commands.layer.commands : LayerDelete;
 
 private abstract class ImageCommandBase : Command {
     protected Document* doc;
+    // Why the last `apply()` said no, in one clause (Ph5 review, S3). Surfaced
+    // to an HTTP / script caller by the dispatch funnel, which appends it to
+    // its generic "command 'x' did not apply". Every refusal in this module
+    // sets it, because every refusal here is about ONE of two arguments and
+    // "did not apply" alone cannot say which.
+    protected string refusal_;
     // Active-layer-switch hook (installed by registration.d). Forwarded to the
     // inner `LayerDelete` by `ImageRemove`; unused by the others, which never
     // move the edit target.
@@ -124,21 +133,35 @@ private abstract class ImageCommandBase : Command {
     /// R15).
     protected Layer resolveImage(int raw) {
         if (raw < 0) {
-            logWarn("image", "command needs an explicit `index` (no active-layer default)");
+            refuse("needs an explicit `index` (no active-layer default)");
             return null;
         }
         immutable size_t i = cast(size_t) raw;
         if (i >= doc.layers.length) {
-            logWarn("image", "index out of range");
+            refuse("index out of range");
             return null;
         }
         auto l = doc.layers[i];
         if (!l.hasImage || l.imageOrNull() is null) {
-            logWarn("image", "layer is not a loaded image item");
+            refuse("layer is not a loaded image item");
             return null;
         }
         return l;
     }
+
+    /// Record + log one refusal. One call site per reason, so the text the
+    /// caller is handed and the text the log carries cannot drift apart.
+    protected void refuse(string why) {
+        refusal_ = why;
+        logWarn("image", name() ~ " refused: " ~ why);
+    }
+
+    /// The dispatch funnel reads this after a false `apply()` (see
+    /// `Command.refusalReason`). Cleared at the top of every `apply()` so it
+    /// always describes the LATEST call — a stale reason on a command object
+    /// that is applied more than once (redo, re-dispatch) would be worse than
+    /// none.
+    override string refusalReason() const { return refusal_; }
 }
 
 /// The one file-picker used by BOTH `image.load` and `image.replace`, so the
@@ -256,9 +279,45 @@ final class ImageLoad : ImageCommandBase {
         // It also means redo does NOT re-read the file: redo restores the
         // document to what it was, it does not re-observe the disk. Observing
         // the disk is `image.reload`'s single job.
+        //
+        // DECIDED, not overlooked (review NIT 5). Undo, delete the file on
+        // disk, redo: the restored row reports `missing == false` and the
+        // width it had — a number whose file is now gone. That is the SAME
+        // staleness every image row already carries, not a new class of it:
+        // any file can vanish a millisecond after a plain successful load, and
+        // the row keeps its numbers until something re-observes. The derived
+        // half means "what the disk answered when last asked", and a redo
+        // re-asserts an answer THIS session genuinely measured for THIS path.
+        // That is what separates it from persisting the numbers to `.v3d`,
+        // which `ImageData`'s comment condemns for the different reason that
+        // there the numbers come back in a process that never opened the file
+        // at all.
+        //
+        // Re-reading on the redo branch was the alternative and is worse: it
+        // gives `apply()` two behaviours, because the first apply REFUSES an
+        // unreadable file while a redo must not (a redo that returns false
+        // desyncs the history stack against a document it already changed).
+        // The only tolerable re-read would therefore be "read, and succeed
+        // whatever it says" — a THIRD failure policy on top of the two this
+        // module documents below, bought for a staleness the design accepts
+        // everywhere else. `image.reload` is the recovery, and it is one
+        // click.
+        refusal_ = "";
+        // A redo must not be able to re-append an item the document already
+        // holds (review NIT 4). Not reachable through the history stack, which
+        // never redoes an entry it has not first undone — but `apply()` is a
+        // public method on a live object, and the guard is what makes the redo
+        // branch TOTAL rather than correct-by-caller-discipline. Refusing (not
+        // silently skipping the append) is the honest answer: the caller asked
+        // for something already true.
+        if (created_ !is null && doc.isMember(created_)) {
+            refuse("already applied — the item is in the document");
+            return false;
+        }
+
         if (created_ is null) {
             const path = pathOrDialog(pathArg, "load");
-            if (path.length == 0) return false;
+            if (path.length == 0) { refuse("no path given"); return false; }
 
             auto img = new ImageData();
             img.storedPath = path;
@@ -266,7 +325,7 @@ final class ImageLoad : ImageCommandBase {
             // module-level note below on why this differs from a file that
             // goes missing later.
             if (!refreshImageMeta(img)) {
-                logWarn("image", "load refused: cannot read '" ~ path ~ "'");
+                refuse("cannot read '" ~ path ~ "'");
                 return false;
             }
 
@@ -351,10 +410,28 @@ final class ImageReplace : ImageCommandBase {
     }
 
     override bool apply() {
+        refusal_ = "";
         auto target = resolveImage(indexArg);
         if (target is null) return false;
         const path = pathOrDialog(pathArg, "replace");
-        if (path.length == 0) return false;
+        if (path.length == 0) { refuse("no path given"); return false; }
+
+        // READ FIRST, COMMIT SECOND (Ph5 review, S2). The new file is refreshed
+        // into a SCRATCH payload, and the live item is written only once that
+        // has succeeded. A replace that cannot read its new file must leave a
+        // working reference working, not trade it for a broken one — and here
+        // that holds because the live item was never written, not because a
+        // rollback branch put five fields back. The rollback version was
+        // correct by discipline: any throw between the write and the restore
+        // (and `refreshImageMeta` reads a file) left the item holding the bad
+        // path, and no `scope(failure)` guarded it. This version has no
+        // failure window to guard.
+        auto probe = new ImageData();
+        probe.storedPath = path;
+        if (!refreshImageMeta(probe)) {
+            refuse("cannot read '" ~ path ~ "'");
+            return false;
+        }
 
         auto img = target.imageOrNull();
         // Snapshot BOTH halves — the authored path and the derived answer —
@@ -372,21 +449,19 @@ final class ImageReplace : ImageCommandBase {
         // touched — every link still names this same item and therefore sees
         // the new file on its next read. An implementation that instead built
         // a new item and re-pointed the consumers would have to find them
-        // all, and would silently miss the second one.
-        img.storedPath = path;
-        if (!refreshImageMeta(img)) {
-            // Restore EXACTLY, including the derived half: a replace that
-            // cannot read its new file must leave a working reference
-            // working, not trade it for a broken one. (Contrast `reload`,
-            // where the missing file IS the answer.)
-            img.storedPath = prevPath_;
-            img.width      = prevW_;
-            img.height     = prevH_;
-            img.channels   = prevC_;
-            img.missing    = prevMissing_;
-            logWarn("image", "replace refused: cannot read '" ~ path ~ "'");
-            return false;
-        }
+        // all, and would silently miss the second one. (Which is also why the
+        // scratch payload above is DISCARDED rather than installed: installing
+        // it would swap the object every consumer's read goes through.)
+        //
+        // The two authored channels the probe never carried — `colorspace`
+        // and `useAlpha` — are deliberately not copied across: they are the
+        // ITEM's settings, not the file's, and a replace re-points the item at
+        // another file rather than re-authoring it.
+        img.storedPath = probe.storedPath;
+        img.width      = probe.width;
+        img.height     = probe.height;
+        img.channels   = probe.channels;
+        img.missing    = probe.missing;
 
         payload_ = img;
         applied  = true;
@@ -429,6 +504,7 @@ final class ImageReload : ImageCommandBase {
     }
 
     override bool apply() {
+        refusal_ = "";
         auto target = resolveImage(indexArg);
         if (target is null) return false;   // a bad index IS a failure
 
@@ -482,12 +558,22 @@ final class ImageRemove : ImageCommandBase {
     }
 
     /// The items that still linked to the removed image at apply time. Empty
-    /// before apply, and after an apply that found none. The panel reads
-    /// `imageRemoveWarning` BEFORE dispatching (to confirm with the user);
-    /// this is the same list as it was actually acted on.
+    /// before apply, after an apply that found none, and after an apply that
+    /// was REFUSED. The panel reads `imageRemoveWarning` BEFORE dispatching
+    /// (to confirm with the user); this is the same list as it was actually
+    /// acted on — so a removal that did not happen must report nothing, or the
+    /// panel is reading the referrers of an item that is still there.
     const(Layer)[] referrers() const { return referrers_; }
 
     override bool apply() {
+        // Cleared FIRST, and re-published only on the success path below
+        // (Ph5 review, S4). Both halves are load-bearing: the clear is what
+        // keeps a re-dispatched command object from reporting the PREVIOUS
+        // call's referrers after a refusal, and the late publish is what keeps
+        // a removal that `LayerDelete` declined from reporting any.
+        referrers_ = null;
+        refusal_   = "";
+
         auto target = resolveImage(indexArg);
         if (target is null) return false;
 
@@ -496,7 +582,6 @@ final class ImageRemove : ImageCommandBase {
         // Ph3 made well-defined (it resolves to Dangling, never to a
         // neighbour), so there is nothing here that a refusal would protect.
         auto w = imageRemoveWarning(doc, target);
-        referrers_ = w.referrers;
         if (w.inUse) {
             import std.conv : to;
             string names;
@@ -510,8 +595,12 @@ final class ImageRemove : ImageCommandBase {
 
         auto del = new LayerDelete(mesh, view, editMode, doc, onSwitch);
         del.setIndex(cast(int) doc.indexOf(target));
-        if (!del.apply()) return false;    // e.g. the document's last layer
-        inner_ = del;
+        if (!del.apply()) {                // e.g. the document's last layer
+            refuse("the document declined to delete that item");
+            return false;
+        }
+        inner_     = del;
+        referrers_ = w.referrers;
         return true;
     }
 
@@ -735,6 +824,17 @@ unittest {
         ~ "— a redo that minted a fresh Layer leaves this permanently dangling");
     assert(loaded.imageOrNull() is payload,
         "and the SAME payload object, so nothing re-decoded either");
+
+    // …and a SECOND apply without an intervening revert is refused rather
+    // than appending the same object twice (review NIT 4). The history stack
+    // never asks for this, but `apply()` is a public method and the guard is
+    // what makes the redo branch total: without it the document holds one
+    // `Layer` object at two indices, and every index-keyed thing downstream
+    // (`indexOf`, Ph6's link encoding) then has two answers for one item.
+    assert(!c.apply(), "a redo of an already-applied load is refused");
+    assert(f.doc.layers.length == before + 1,
+        "and appends nothing — without the guard this reads one more row, the "
+        ~ "SAME object listed twice");
 }
 
 // ---------------------------------------------------------------------------
@@ -808,10 +908,25 @@ unittest {
     // The warning does not become a refusal.
     auto c = new ImageRemove(f.doc.activeMesh(), f.view, EditMode.Vertices,
                              &f.doc, null);
+    assert(c.referrers().length == 0, "nothing is reported before an apply");
     c.indexArg = cast(int) f.doc.indexOf(f.clipB);
     assert(c.apply(), "a still-used image is removed anyway — warn, not refuse");
     assert(c.referrers().length == 2,
         "and the command reports what it acted over");
+
+    // A REFUSED apply reports NOTHING (review round 3, S4). The list is a
+    // report of a removal that happened; the panel that reads it is deciding
+    // what to tell the user about an item that is now gone, and reading last
+    // call's two referrers for an item still sitting in the list is the wrong
+    // answer twice over. Re-aiming the same command object is how a caller
+    // reaches this (the panel holds one command per row and re-dispatches it);
+    // an implementation that publishes `referrers_` BEFORE the delete — and
+    // never clears it — reads 2 here.
+    c.indexArg = 0;                            // the mesh row: kind-refused
+    assert(!c.apply(), "the re-aimed remove is refused");
+    assert(c.referrers().length == 0,
+        "and reports no referrers — the previous call's list must not survive "
+        ~ "a refusal");
 }
 
 // ---------------------------------------------------------------------------
@@ -822,16 +937,59 @@ unittest {
 // command uses — CLAMPS an out-of-range index to the last layer. Inheriting
 // that here would make `image.remove index:99` delete consumerY. Both
 // assertions read the layer count AND the identity of what survived.
+//
+// A SECOND MESH is added first, and it is what makes the kind assertion mean
+// anything (review round 3, blocker 1). `canDeleteLayer` refuses to delete the
+// last `canBePrimary` layer, and the shared fixture has exactly one — so on
+// that fixture `image.remove index:0` fails WITH the kind guard and fails
+// WITHOUT it, and the assertion reads the same either way. The failure the
+// guard exists to prevent is a remove landing on a MESH the document would
+// otherwise have deleted, so the document has to be one where the delete
+// would in fact go through. The `layer.delete` control below is the proof
+// that it would: same index, same instant, and it succeeds.
 // ---------------------------------------------------------------------------
 unittest {
+    import commands.layer.commands : LayerDelete, canDeleteLayer;
+
     auto f = makeImgFixture("remove_guard");
+
+    // Two meshes, so deleting the first is permitted by the document.
+    auto meshB = new Layer;
+    meshB.kind = ItemKind.Mesh;
+    meshB.name = "meshB";
+    f.doc.layers ~= meshB;
+    assert(canDeleteLayer(&f.doc, f.meshA),
+        "fixture: with a second mesh present the document PERMITS deleting "
+        ~ "meshA — without this the assertion below passes on the "
+        ~ "last-canBePrimary refusal and never sees the kind guard at all");
 
     auto onMesh = new ImageRemove(f.doc.activeMesh(), f.view, EditMode.Vertices,
                                   &f.doc, null);
     onMesh.indexArg = 0;                      // the mesh primary
     assert(!onMesh.apply(), "a mesh row is not an image item");
-    assert(f.doc.layers.length == 6 && f.doc.primary is f.meshA,
+    assert(f.doc.layers.length == 7 && f.doc.primary is f.meshA,
         "and nothing was removed");
+    assert(f.doc.layers[0] is f.meshA,
+        "the mesh is still there BY IDENTITY — a count-only check passes an "
+        ~ "implementation that removed it and put something else in its place");
+
+    // THE CONTROL, at the same index and against the same document:
+    // `layer.delete 0` DOES apply. So the refusal above is this command's kind
+    // guard and nothing else. Reverted immediately so the rest of the test
+    // runs against the document it expects.
+    {
+        auto ctl = new LayerDelete(f.doc.activeMesh(), f.view, EditMode.Vertices,
+                                   &f.doc, null);
+        ctl.setIndex(0);
+        assert(ctl.apply(),
+            "control: `layer.delete 0` succeeds where `image.remove 0` was "
+            ~ "refused — the two commands differ by the kind guard, and this "
+            ~ "is the row it saved");
+        assert(f.doc.indexOf(f.meshA) == f.doc.layers.length,
+            "control: it really did remove the mesh");
+        assert(ctl.revert() && f.doc.layers[0] is f.meshA,
+            "control: and the same object goes back where it was");
+    }
 
     // The clamp only BITES when the row it clamps onto is itself an image —
     // otherwise the kind guard would refuse anyway and the assertion below
@@ -844,15 +1002,29 @@ unittest {
                                &f.doc, null);
     oob.indexArg = 99;
     assert(!oob.apply(), "an out-of-range index is refused, not clamped");
-    assert(f.doc.layers.length == 7 && f.doc.layers[$ - 1] is clipD,
+    assert(f.doc.layers.length == 8 && f.doc.layers[$ - 1] is clipD,
         "the LAST row — what a clamp would have hit — is untouched");
+
+    // The no-default rule. `doc.activeIndex` is not the only plausible wrong
+    // default and is the INERT one to test against (it names a mesh, which the
+    // kind guard refuses anyway); the reachable wrong default is
+    // `doc.focusedItem`, which is what the Layers panel's own delete button
+    // targets (`layerDeleteButtonState`) and which CAN be an image. So focus
+    // an image row first: an implementation that defaulted to the focus would
+    // remove clipD here, and every assertion is a read of clipD.
+    f.doc.selectItem(clipD, SelMode.Add);
+    assert(f.doc.focusedItem is clipD && f.doc.primary is f.meshA,
+        "fixture: an IMAGE is the item-selection focus while the mesh stays "
+        ~ "the edit target");
 
     auto noIdx = new ImageRemove(f.doc.activeMesh(), f.view, EditMode.Vertices,
                                  &f.doc, null);
     assert(!noIdx.apply(),
-        "a missing index does NOT fall back to the active layer (which is a "
-        ~ "mesh, the worst possible default here)");
-    assert(f.doc.layers.length == 7, "and removed nothing");
+        "a missing index does NOT fall back to a default — neither to the "
+        ~ "active layer (a mesh) nor to the focused item (an image, which "
+        ~ "would go through)");
+    assert(f.doc.layers.length == 8 && f.doc.indexOf(clipD) == 7,
+        "and removed nothing — a focus default reads 7 layers with clipD gone");
 }
 
 // ---------------------------------------------------------------------------
@@ -919,6 +1091,77 @@ unittest {
         ~ "does not re-observe the disk");
     assert(f.consumerY.link("backdropImage").resolve(f.doc).imageOrNull().storedPath
         == f.pathB, "and both consumers follow the undo too");
+}
+
+// ---------------------------------------------------------------------------
+// REPLACE THE COPY of a duplicated image row — the SOURCE does not follow.
+//
+// Reachable end to end through registered commands: `image.load` (in the
+// fixture) → `layer.duplicate` that row → `image.replace` the COPY. That is
+// what made this live rather than latent: `LayerDuplicate` handed its clone
+// the source's payload OBJECT, which was inert until Ph5 shipped the first
+// command that writes one.
+//
+// Discriminating: the SOURCE's path and BOTH dimensions are read after the
+// copy is re-pointed at a 5x7 file. Through a shared payload the source reads
+// the new path and 5x7, and the undo of that replace writes through both rows
+// as well — so the last assertion here is a second, independent read of the
+// same defect.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.json : parseJSON;
+    import std.conv  : to;
+    import params    : injectParamsInto;
+    import commands.layer.commands : LayerDuplicate;
+
+    auto f = makeImgFixture("dup_replace");
+    auto srcPayload = f.clipB.imageOrNull();
+    auto newPath    = buildPath(f.dir, "foxtrot.bmp");
+    writeTestBmp(newPath, 5, 7);
+
+    // Duplicate clipB through the command, driven by the generic param
+    // injection (its `indexArg` is private to its own module).
+    auto dup = new LayerDuplicate(f.doc.activeMesh(), f.view, EditMode.Vertices,
+                                  &f.doc, null);
+    auto dj = parseJSON(`{"index":` ~ f.doc.indexOf(f.clipB).to!string ~ `}`);
+    injectParamsInto(dup.params(), dj);
+    assert(dup.apply(), "layer.duplicate applies to an image row");
+
+    auto copy = f.doc.layers[$ - 1];
+    assert(copy !is f.clipB && copy.kind == ItemKind.Image,
+        "fixture: the clone is a NEW image item at the tail");
+    assert(copy.imageOrNull() !is null
+        && copy.imageOrNull().storedPath == f.pathB,
+        "fixture: the clone starts on the source's file");
+
+    auto c = new ImageReplace(f.doc.activeMesh(), f.view, EditMode.Vertices,
+                              &f.doc, null);
+    c.indexArg = cast(int)(f.doc.layers.length - 1);   // the COPY
+    c.pathArg  = newPath;
+    assert(c.apply(), "replace applies to the copy");
+
+    assert(copy.imageOrNull().storedPath == newPath
+        && copy.imageOrNull().width == 5 && copy.imageOrNull().height == 7,
+        "the COPY is re-pointed, which is what was asked for");
+    assert(f.clipB.imageOrNull() is srcPayload,
+        "the source still holds its own payload OBJECT");
+    assert(f.clipB.imageOrNull().storedPath == f.pathB,
+        "and it still names the OLD file — through a shared payload this "
+        ~ "reads the replacement's path");
+    assert(f.clipB.imageOrNull().width == 3 && f.clipB.imageOrNull().height == 2,
+        "with the OLD dimensions — 3x2, not the replacement's 5x7");
+    assert(f.consumerX.link("backdropImage").resolve(f.doc).imageOrNull()
+            .storedPath == f.pathB,
+        "so a consumer of the SOURCE saw nothing happen at all");
+
+    // The undo is the second read of the same defect: through a shared payload
+    // it restores the pre-replace path into BOTH rows, which is only visible
+    // if the copy is checked afterwards.
+    assert(c.revert(), "undo of the replace");
+    assert(copy.imageOrNull().storedPath == f.pathB, "the copy is back");
+    assert(f.clipB.imageOrNull().storedPath == f.pathB
+        && f.clipB.imageOrNull().width == 3,
+        "and the source was never part of any of it");
 }
 
 // ---------------------------------------------------------------------------

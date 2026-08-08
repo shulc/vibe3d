@@ -26,9 +26,10 @@
 
 import std.net.curl;
 import std.json;
-import std.conv  : to;
-import std.file  : write, remove, exists, mkdirRecurse, rmdirRecurse, tempDir;
-import std.path  : buildPath;
+import std.conv   : to;
+import std.file   : write, remove, exists, mkdirRecurse, rmdirRecurse, tempDir;
+import std.path   : buildPath;
+import std.string : indexOf;
 
 void main() {}
 
@@ -162,17 +163,28 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// LOAD of an unreadable path: an error, AND no row.
+// LOAD of an unreadable path: an error THAT NAMES THE PATH, and no row.
 //
-// Discriminating: `layerCount()` after the failure. "The command reported an
-// error" alone passes an implementation that appended a broken row first.
+// Discriminating on both halves. `layerCount()` after the failure catches an
+// implementation that appended a broken row first. The message check is what
+// makes the FAILURE assertion mean anything (review round 3, S3): "status !=
+// ok" on its own is equally satisfied by a load that never received the `path`
+// attribute at all — an unknown attr name is accepted silently (task 0633), so
+// the command would run on its default (empty) path and decline for a
+// completely unrelated reason. Naming the path back is unreachable unless the
+// argument landed AND the command got as far as opening it.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
     immutable before = layerCount();
 
-    auto r = loadImage(buildPath(scratch, "definitely_not_here.bmp"));
+    auto missing = buildPath(scratch, "definitely_not_here.bmp");
+    auto r = loadImage(missing);
     assert(r["status"].str != "ok", "an unreadable path is an error");
+    assert("message" in r && r["message"].str.indexOf(missing) >= 0,
+        "and the error names the path it was handed — an implementation that "
+        ~ "never saw the `path` argument declines with a message that cannot "
+        ~ "contain it. Observed: " ~ r.toString);
     assert(layerCount() == before,
         "and leaves NO row behind — a failed command that half-committed is "
         ~ "the failure that matters");
@@ -256,14 +268,26 @@ unittest {
 // REMOVE: the kind guard, the removal, and the undo.
 //
 // Discriminating: `image.remove` aimed at the MESH row must error and change
-// nothing — `layer.delete` at the same index would happily take it, and a
-// panel row index is an index into a list that contains no meshes at all.
+// nothing, WHILE `layer.delete` at the same index goes through — a panel row
+// index is an index into a list that contains no meshes at all. The
+// `layer.add` at the top is what makes that pair sayable (review round 3,
+// blocker 1): with a single mesh in the document the delete is refused anyway
+// (never the last item that can be the edit target), so `image.remove index:0`
+// would fail with the kind guard and fail without it, and the assertion would
+// read the same either way. The mesh row is renamed first so "the mesh is
+// still there" is a read of THAT row rather than of whatever now sits at 0.
+//
 // Then removal of the image row drops exactly it, and undo restores the row
 // WITH its kind and name (a restore that forgot the payload would read a row
 // whose `filename` query fails).
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
+    cmd(`{"id":"layer.rename","index":0,"name":"MeshOne"}`);
+    cmd(`{"id":"layer.add"}`);                  // a SECOND mesh
+    assert(layerCount() == 2, "fixture: two mesh rows");
+    assert(layerAt(0)["name"].str == "MeshOne", "fixture: row 0 is the named one");
+
     immutable idx = layerCount();
     auto path = bmpAt("lima.bmp", 3, 2);
     assert(loadImage(path)["status"].str == "ok");
@@ -272,7 +296,20 @@ unittest {
     auto onMesh = cmdRaw(`{"id":"image.remove","index":0}`);
     assert(onMesh["status"].str != "ok", "the mesh row is not an image item");
     assert(layerCount() == after, "and nothing was removed");
-    assert(layerAt(0)["type"].str == "mesh", "the mesh row is still there");
+    assert(layerAt(0)["type"].str == "mesh" && layerAt(0)["name"].str == "MeshOne",
+        "the SAME mesh row is still at index 0 — a count-only check passes an "
+        ~ "implementation that removed it and let another row shift up");
+
+    // THE CONTROL, at the same index and against the same document: the
+    // generic delete DOES take row 0. So the refusal above is the kind guard,
+    // not the document declining to lose its last edit target.
+    cmd(`{"id":"layer.delete","index":0}`);
+    assert(layerCount() == after - 1 && layerAt(0)["name"].str != "MeshOne",
+        "control: `layer.delete index:0` succeeds where `image.remove index:0` "
+        ~ "was refused, and it is MeshOne that goes");
+    undoOk("control delete");
+    assert(layerCount() == after && layerAt(0)["name"].str == "MeshOne",
+        "control: undone, so the rest of this case runs on the same document");
 
     cmd(`{"id":"image.remove","index":` ~ idx.to!string ~ `}`);
     assert(layerCount() == after - 1, "the image row is gone");

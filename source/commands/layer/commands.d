@@ -28,7 +28,7 @@ import view;
 import editmode;
 import params : Param, paramToJson, injectParamsInto;
 import document : Document, Layer, ItemKind, ItemXform, kindInfo, LinkState,
-                  MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
+                  ImageData, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
 import layer_params : LayerPropsProvider;
 import seltype : SelMode, selModeFromToken;
 import change_bus : MeshChangeAll, noteLayerChange, LayerChange,
@@ -220,16 +220,43 @@ final class LayerDuplicate : LayerCommandBase {
             MeshSnapshot.capture(src.meshRef()).restore(l2.meshRef());
         // Task 0616 Stage 2 (§O1): the same defect class as the `kind` fix
         // just above, one field over — a payload that is a class REFERENCE
-        // does not follow `l2.kind = src.kind` for free. Unlike the mesh
-        // (deep-copied above), the clone SHARES the source's image payload
-        // by object identity: two layers pointing at the same loaded image
-        // is the whole point (one decode, N consumers), not a bug to avoid.
-        // The refcount bump this sharing implies is Stage 5's job (once the
-        // pixel cache exists) — pinned there by T11b; this stage only wires
-        // the pointer so a duplicated image row is a LIVE image row, not a
-        // payload-null one (T11a).
-        if (src.hasImage)
-            l2.imageRef() = src.imageOrNull();
+        // does not follow `l2.kind = src.kind` for free.
+        //
+        // Ph5 review (B2): the clone gets its OWN `ImageData`, field for
+        // field. Stage 2 aliased the source's object ("one decode, N
+        // consumers"), which was inert while nothing wrote a payload — and
+        // Ph5's `image.replace` is the first writer. With the alias,
+        // `image.load A` → `layer.duplicate` → `image.replace` THE COPY with
+        // B leaves BOTH rows reporting B, and the undo of that replace writes
+        // through both. Two image ITEMS are two independent authored things:
+        // each carries its own path, its own colorspace, its own alpha flag,
+        // and each is separately re-pointable.
+        //
+        // That is not a retreat from the sharing the pixel cache needs — it
+        // is the plan's own cache model (§ "one cache entry keyed by path"):
+        // two items on the same file share a CACHE ENTRY, keyed by path and
+        // owned by the cache, never one payload object shared by reference.
+        // Many CONSUMERS of one item is what an `ItemLink` is for, and that
+        // is the case Ph3 built.
+        //
+        // The DERIVED half is copied, not re-read: a duplicate restores no
+        // disk observation of its own, it copies the one the source already
+        // made — the same rule `ImageLoad`'s redo branch follows, and for the
+        // same reason (a duplicate must not be able to fail, or report a row
+        // as missing, because the file moved between the load and the copy).
+        // `image.reload` is the single act of re-observation.
+        if (src.hasImage && src.imageOrNull() !is null) {
+            auto s    = src.imageOrNull();
+            auto copy = new ImageData();
+            copy.storedPath = s.storedPath;   // authored
+            copy.colorspace = s.colorspace;   // authored
+            copy.useAlpha   = s.useAlpha;     // authored
+            copy.width      = s.width;        // derived
+            copy.height     = s.height;       // derived
+            copy.channels   = s.channels;     // derived
+            copy.missing    = s.missing;      // derived
+            l2.imageRef()   = copy;
+        }
         l2.name    = src.name ~ " copy";
         l2.visible = true;
         l2.xform   = src.xform;    // ItemXform is a value struct → value copy
@@ -1331,6 +1358,14 @@ unittest {
     img.kind = ItemKind.Image;
     img.imageRef() = new ImageData();
     img.imageRef().storedPath = "logo.png";
+    // The other two AUTHORED fields, set away from their defaults on purpose:
+    // a clone that copies only `storedPath` reads "(default)"/true here, and
+    // the assertions below say so.
+    img.imageRef().colorspace = "linear";
+    img.imageRef().useAlpha   = false;
+    img.imageRef().width      = 64;      // derived; stands in for a read that
+    img.imageRef().height     = 32;      // already happened on the source
+    img.imageRef().missing    = false;
     doc.layers ~= img;                                 // [meshA(primary), img]
     assert(doc.primary is meshA, "fixture: meshA starts as primary");
     assert(img.hasImage, "fixture: img has the image capability");
@@ -1358,15 +1393,35 @@ unittest {
     assert(dup.added.imageOrNull().storedPath == "logo.png",
         "clone: storedPath must match the source's, not a fresh default");
 
-    // Stronger than (b) alone, and covers what a cache-backed "residentBytes
-    // unchanged" check (T11b, Stage 5 — no cache exists yet in this stage)
-    // would otherwise be the only thing to catch: this stage's contract is
-    // SHARE, not copy. Assert IDENTITY, so a "copy the fields into a fresh
-    // ImageData" implementation — which would also pass the storedPath
-    // check above — is caught here instead of silently waiting for a later
-    // stage's test to notice.
-    assert(dup.added.imageOrNull() is img.imageOrNull(),
-        "clone: the image payload is the SAME object as the source's (shared, not copied)");
+    // (c) the OTHER two authored fields come across too — a clone that copies
+    // `storedPath` and forgets the rest reads "(default)"/true here.
+    assert(dup.added.imageOrNull().colorspace == "linear"
+        && dup.added.imageOrNull().useAlpha == false,
+        "clone: colorspace and useAlpha are authored fields and follow the copy");
+    // (d) …and so does the DERIVED half, copied rather than re-read: the
+    // clone reports the observation the source already made, so a duplicate
+    // can neither fail nor report `missing` because the file moved since.
+    assert(dup.added.imageOrNull().width == 64
+        && dup.added.imageOrNull().height == 32
+        && !dup.added.imageOrNull().missing,
+        "clone: the derived half is copied from the source, not re-read (a "
+        ~ "clone that re-read \"logo.png\" — which does not exist — would "
+        ~ "read 0x0 and missing==true here)");
+
+    // (e) THE PAYLOAD IS THE CLONE'S OWN OBJECT (Ph5 review, blocker 2).
+    // Stage 2 shared it by reference and called that the point; nothing wrote
+    // a payload then, so the alias was inert. `image.replace` writes one, and
+    // through a shared object a replace of the COPY silently re-points the
+    // SOURCE as well (and its undo writes through both). Identity here is the
+    // assertion; the write below is what makes it mean something.
+    assert(dup.added.imageOrNull() !is img.imageOrNull(),
+        "clone: the image payload is the clone's OWN object — two image ITEMS "
+        ~ "are two independently authored things");
+    dup.added.imageOrNull().storedPath = "other.png";
+    assert(img.imageOrNull().storedPath == "logo.png",
+        "clone: writing the CLONE's path leaves the SOURCE's alone — through a "
+        ~ "shared payload this reads \"other.png\"");
+    dup.added.imageOrNull().storedPath = "logo.png";   // restore for (f) below
 
     assert(dup.revert(), "revert must succeed");
     assert(doc.layers.length == 2, "revert: back to 2 layers");
@@ -1375,11 +1430,11 @@ unittest {
     // NIT (review round 4): revert removes the CLONE, so the SOURCE'S own
     // payload must survive untouched — free today (nothing releases
     // anything yet), but this is the assertion a later stage needs once
-    // `revert` decrements a share count: an implementation that released the
-    // payload on revert (mistaking "the clone is gone" for "the clone's
-    // reference to a still-shared object should be torn down") would null
-    // or corrupt `img.imageOrNull()` here while every assertion above (all
-    // scoped to `dup.added`, the clone) stays green.
+    // `revert` releases the clone's hold on the path-keyed cache entry: an
+    // implementation that released the ENTRY (mistaking "this clone is gone"
+    // for "nothing wants this file any more" — the two rows carry the same
+    // path) would null or corrupt `img.imageOrNull()` here while every
+    // assertion above (all scoped to `dup.added`, the clone) stays green.
     assert(img.imageOrNull() !is null,
         "revert: the SOURCE's image payload must survive — an over-release "
         ~ "on revert would null it here while leaving every clone-side "

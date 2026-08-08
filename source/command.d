@@ -128,6 +128,22 @@ class Command {
     // Mutating commands override and return true on success.
     bool revert() { return false; }
 
+    // WHY the last apply() returned false, in one clause — or "" when the
+    // command has nothing to add beyond "it declined". The dispatch funnel
+    // (app.d's applyOrRefire) appends it to the generic
+    // "command 'x' did not apply" it throws, so a script / HTTP / panel caller
+    // is told WHICH argument it got wrong instead of only that something was.
+    //
+    // Empty by default, and the appended message is byte-identical to the old
+    // one for every command that does not override this — opting in is per
+    // command, and worth it exactly where a command refuses for several
+    // different reasons (a bad index vs. an unreadable path vs. a row of the
+    // wrong kind all read the same otherwise). A command that overrides it
+    // owes the reason a reset at the top of apply(): the value must describe
+    // the LATEST call, since a command object can be applied more than once
+    // (redo, re-dispatch).
+    string refusalReason() const { return ""; }
+
     // Classify the command. BASE default is CmdFlags.Model — most
     // commands alter scene state and are therefore undoable. Read-only /
     // view-only / transient commands override this to drop Model (and
