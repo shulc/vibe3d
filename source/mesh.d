@@ -4610,11 +4610,33 @@ struct Mesh {
     }
 
     // --- Hide writers (Marks.Hide, task 0613) — authoritative plane only ---
-    // Single-index face write, same shape as setSubpatch above, EXCEPT it
-    // does NOT bump topologyVersion: unlike Subpatch, Hide never changes the
-    // subdivision preview's output topology (doc/hide_geometry_plan.md R5 —
-    // Hide is stamped onto the OSD OUTPUT marks, never fed to its input), so
-    // a plain Marks-class commit is the whole story here.
+    //
+    // THE topologyVersion BUMP, and why all three writers below carry it (S3).
+    // Hide is a Marks-class flip, so `commitChange(Marks)` alone would leave
+    // topologyVersion alone. That is wrong for the same reason it is wrong for
+    // Subpatch (setSubpatch / clearSubpatch above keep an explicit bump), and
+    // the reason is NOT the limit surface — R5 still holds, the OSD *input* is
+    // untouched and the subdivided positions do not move. It is that
+    // topologyVersion is what two consumers use as the preview + GPU LAYOUT
+    // key, and a hide changes the layout:
+    //
+    //   * SubpatchPreview.rebuildIfStale (mesh.d) takes its position-only fast
+    //     path whenever `sourceTopologyVersion == source.topologyVersion`. That
+    //     path re-evaluates positions and NEVER re-runs buildPreview, so the
+    //     preview mesh's Hide marks (stamped from the cage in subpatch_osd.d)
+    //     would stay at their pre-hide values for as long as the preview lives.
+    //   * app.d's upload block picks refreshPositions over a full gpu.upload on
+    //     `gpuUploadedPreviewTopVersion == subpatchPreview.sourceTopologyVersion`.
+    //     refreshPositions cannot change a buffer's SIZE — only a full upload
+    //     re-derives faceTriCount / edgeVertCount / vertCount under the new
+    //     skip predicate.
+    //
+    // So without the bump, hiding a face while the subpatch preview is live is
+    // a no-op on screen. With it, both consumers rebuild exactly as they do for
+    // a Tab toggle. Guarded on an actual bit flip in every writer, so a
+    // no-op hide still costs nothing.
+    //
+    // Single-index face write, same shape as setSubpatch above.
     void setFaceHidden(size_t idx, bool on) {
         if (idx >= faceMarks.length) return;
         bool cur = (faceMarks[idx] & Marks.Hide) != 0;
@@ -4635,7 +4657,8 @@ struct Mesh {
             } else {
                 faceMarks[idx] &= ~Marks.Hide;
             }
-            commitChange(MeshEditScope.Marks);
+            commitChange(MeshEditScope.Marks | MeshEditScope.Visibility);
+            ++topologyVersion;   // preview + GPU layout key — see the header above
             // S5 (code review) — a Marks-class commit does not reach
             // refreshHiddenDerived (commitChange only calls it for a
             // Geometry-class commit, above), so the derived vertex/edge
@@ -4702,7 +4725,10 @@ struct Mesh {
         foreach (ref m; faceMarks)   m &= ~Marks.Hide;
         foreach (ref m; vertexMarks) m &= ~Marks.Hide;
         foreach (ref m; edgeMarks)   m &= ~Marks.Hide;
-        commitChange(MeshEditScope.Marks);
+        commitChange(MeshEditScope.Marks | MeshEditScope.Visibility);
+        ++topologyVersion;   // preview + GPU layout key — see the header above
+                             // setFaceHidden. Reached only past the early-out,
+                             // i.e. only when something really was hidden.
         // S5 (code review) — same reasoning as setFaceHidden above: a
         // Marks-only commit never reaches refreshHiddenDerived, so an unhide
         // must call it directly or the derived vertex/edge planes stay
@@ -5085,6 +5111,28 @@ struct Mesh {
         else      faceMarks[fi] &= ~Marks.Subpatch;
     }
 
+    // Single-index HIDE write in the same raw shape as setFaceSubpatch above:
+    // bounds-guarded, no commitChange, no version bump, NO refreshHiddenDerived
+    // — deliberately, because it exists for one caller shape, the bulk
+    // face-plane stamps in subpatch_osd.d (task 0613 S3), which write every
+    // face of a freshly built preview and then call refreshHiddenDerived()
+    // ONCE. Routing those through the user-facing `setFaceHidden` instead would
+    // pay a commitChange + a full O(V+E+F) derivation PER FACE, i.e. O(F²) on a
+    // 400 K-face preview.
+    //
+    // Both branches are written, never a bare `|=`: the preview mesh is a
+    // long-lived reused struct whose faceMarks survive a rebuild, so a
+    // set-only stamp would leave a previously-hidden face hidden forever.
+    //
+    // NOT a general-purpose hide writer. Anything user-facing wants
+    // setFaceHidden / setFaceHiddenFrom, which own the Select ∧ Hide = ∅
+    // invariant, the change publish and the layout-key bump.
+    void setFaceHiddenBit(size_t fi, bool flag) {
+        if (fi >= faceMarks.length) return;
+        if (flag) faceMarks[fi] |=  Marks.Hide;
+        else      faceMarks[fi] &= ~Marks.Hide;
+    }
+
     // --- Whole-array selection/subpatch replace (resize-then-copy) ---------
     // Each setter touches ONLY its own concept (Select bit for vertices /
     // edges / faces, or the Subpatch flag) so the two face concepts stay
@@ -5195,8 +5243,11 @@ struct Mesh {
         // commitChange — the caller does that, same as setFaceMarksFrom),
         // but a Select-domain change is still noted here if one happens, so
         // it is never silently lost regardless of what the caller does next.
-        bool selChanged = false;
+        bool selChanged  = false;
+        bool hideChanged = false;
         foreach (i, s; src) {
+            immutable bool cur = (faceMarks[i] & Marks.Hide) != 0;
+            if (cur != s) hideChanged = true;
             if (s) {
                 faceMarks[i] |= Marks.Hide;
                 if (faceMarks[i] & Marks.Select) {
@@ -5209,6 +5260,27 @@ struct Mesh {
             }
         }
         if (selChanged) noteSelectionChange(SelDomain.Face);
+        // Two obligations of a Hide-plane write, both parked HERE in the
+        // writer rather than in the four hide commands — a raw
+        // topologyVersion bump and a bare noteChange are both orthogonal to
+        // commitChange (mesh_edit_delta.d does the same), so keeping them with
+        // the plane's writer means a fifth command cannot forget one and ship
+        // a hide that does nothing on screen:
+        //
+        //   * ++topologyVersion — the preview + GPU LAYOUT key. See the header
+        //     above setFaceHidden.
+        //   * noteChange(Visibility) — the DISPLAY-REFRESH class. The caller's
+        //     commitChange(Marks) ORs into the same pending set, and Marks is
+        //     deliberately NOT in display_sync.DisplayRefreshMask (it would
+        //     re-upload on every selection click), so a hide published as
+        //     Marks alone never reaches app.d's bus-driven cage upload and
+        //     never reaches the screen. MEASURED, not reasoned: with the
+        //     Marks-only publish, hiding a cube face left /api/gpu/face-vbo's
+        //     faceVertCount at 36.
+        if (hideChanged) {
+            noteChange(MeshEditScope.Visibility);
+            ++topologyVersion;
+        }
     }
 
     // --- The derivation (doc/hide_geometry_plan.md §1.2) --------------------
@@ -12563,6 +12635,16 @@ struct SubpatchPreview {
         }
         foreach (fi; 0 .. source.faces.length)
             h = hashOf(source.isFaceSubpatch(fi), h);
+        // Hide (task 0613, R4). This is the Tab-toggle REUSE key: preview off,
+        // preview on again, and if the key matches we resurrect the cached
+        // preview mesh WITHOUT re-running buildPreview. That cached mesh
+        // carries the Hide marks stamped from the cage at build time
+        // (subpatch_osd.d), so a hide performed while the preview was off must
+        // land in this key or the resurrected preview draws the pre-hide set.
+        // Folded as its own per-face term rather than OR-ed into the Subpatch
+        // one, so "face i subpatch" and "face i hidden" cannot cancel.
+        foreach (fi; 0 .. source.faces.length)
+            h = hashOf(source.isFaceHidden(fi), h);
         return h == 0 ? 1 : h;
     }
 

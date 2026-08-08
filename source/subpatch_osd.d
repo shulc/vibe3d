@@ -308,8 +308,14 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
         foreach (k; 0 .. limitF) {
             int parent = faceOriginsRaw[k];
             int cageFi = markedFaceIndices[parent];
-            if (cageFi >= 0)
+            if (cageFi >= 0) {
                 result.setFaceSubpatch(k, cage.isFaceSubpatch(cageFi));
+                // Hide (task 0613 S3): a refined face inherits its parent's
+                // hidden state, exactly like Subpatch. This is the OSD OUTPUT
+                // — the input above never saw a Hide bit (R5), so the limit
+                // surface is bit-identical whether or not anything is hidden.
+                result.setFaceHiddenBit(k, cage.isFaceHidden(cageFi));
+            }
             if (cageFi >= 0 && cageFi < cast(int)cage.faceMaterial.length)
                 result.faceMaterial[k] = cage.faceMaterial[cageFi];
         }
@@ -374,8 +380,12 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
             result.faces[k] = verts;
             int parent = faceOriginsRaw[k];
             int cageFi = markedFaceIndices[parent];
-            if (cageFi >= 0)
+            if (cageFi >= 0) {
                 result.setFaceSubpatch(k, cage.isFaceSubpatch(cageFi));
+                // Hide (task 0613 S3) — same inheritance as Subpatch, stamped
+                // on the OSD OUTPUT only (R5).
+                result.setFaceHiddenBit(k, cage.isFaceHidden(cageFi));
+            }
             // Material Groups (MG3): refined faces from the OSD subset
             // inherit their source cage face's surface index.
             if (cageFi >= 0 && cageFi < cast(int)cage.faceMaterial.length)
@@ -414,6 +424,12 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
             immutable bool sub = (fi < cage.faceMarks.length)
                 && (cage.faceMarks[fi] & Mesh.Marks.Subpatch) != 0;
             result.setFaceSubpatch(result.faces.length - 1, sub);
+            // Hide (task 0613 S3): an un-marked cage face is carried across
+            // whole (only widened at T-junctions), so it carries its hidden
+            // state with it — this is the ONE stamp site where the preview
+            // face IS a cage face, not a refined child of one.
+            result.setFaceHiddenBit(result.faces.length - 1,
+                                     cage.isFaceHidden(fi));
             // Material Groups (MG3): widened-but-unmarked cage faces
             // keep their original surface assignment.
             result.faceMaterial ~= (fi < cage.faceMaterial.length)
@@ -446,6 +462,15 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
     result.resizeVertexSelection();
     result.resizeEdgeSelection();
     result.resizeFaceSelection();
+    // Hide (task 0613 S3): the face plane was stamped from the cage above;
+    // the vertex + edge planes are DERIVED (plan §1.2), and the derivation runs
+    // on the OUTPUT topology — a preview vertex is hidden iff every incident
+    // preview face is, which agrees with the cage's answer on the verts that
+    // have a cage origin and is the only defined answer for the ones that do
+    // not (edge points, face centroids). Must come AFTER the three resizes:
+    // refreshHiddenDerived writes vertexMarks/edgeMarks in place and they are
+    // sized here. Early-outs to three word-OR scans when nothing is hidden.
+    result.refreshHiddenDerived();
     // Material Groups (MG3): per-mesh surface table travels through
     // subdivision unchanged — only `faceMaterial` indices change shape.
     // Surfaces dup so a later mutation of either side doesn't alias.
@@ -1241,11 +1266,24 @@ struct OsdAccel {
             bool parentMarked = (o >= 0) && cage.isFaceSubpatch(o);
             outTrace.subpatch [i] = parentMarked;
             outMesh.setFaceSubpatch(i, parentMarked);
+            // Hide (task 0613 S3): the preview face inherits its cage parent's
+            // hidden state. THIS is the stamp the viewport actually reads —
+            // SubpatchPreview.rebuild drives buildPreview, and GpuMesh.upload
+            // then reads the Hide plane off whichever mesh it was handed
+            // (cage or preview) with no new parameter. `outMesh` is a
+            // long-lived reused struct, so both branches are written (a face
+            // that stops being hidden must stop carrying the bit).
+            outMesh.setFaceHiddenBit(i, (o >= 0) && cage.isFaceHidden(o));
         }
 
         outMesh.resizeVertexSelection();
         outMesh.resizeEdgeSelection();
         outMesh.resizeFaceSelection();
+        // Derived vertex + edge planes, on the preview's OWN topology — see
+        // the twin call at the end of catmullClarkOsd for why that is the
+        // right space. AFTER the resizes: this writes vertexMarks/edgeMarks
+        // in place.
+        outMesh.refreshHiddenDerived();
 
         // ---- Phase 3b: fan-out infrastructure -----------------------
         // Built only when the GL eval is alive (Phase 3a's glEval).

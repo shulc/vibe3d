@@ -196,7 +196,24 @@ private mixin template HideRevertCommon() {
         mesh.noteSelectionChange(SelDomain.Vertex);
         mesh.noteSelectionChange(SelDomain.Edge);
         mesh.noteSelectionChange(SelDomain.Face);
-        mesh.commitChange(MeshEditScope.Marks);
+        // Visibility + the topologyVersion bump, for the same reasons the
+        // FORWARD path carries them (Mesh.setFaceHiddenFrom / setFaceHidden,
+        // S3): hidden geometry is filtered out of the GPU buffers at UPLOAD
+        // time, so putting it back has to re-upload, and the marks-class
+        // `Marks` alone is deliberately not a display-refresh trigger.
+        //
+        // Named HERE rather than inherited from a writer because this revert
+        // restores all three marks arrays WHOLESALE — `mesh.faceMarks =
+        // orig.dup` — and so goes through no Hide writer at all. That is the
+        // same shape as MeshSnapshot.restore (which reaches the same place via
+        // MeshChangeAll), and the same reason plan R13 says the Hide feature
+        // may own no bookkeeping outside the three marks arrays.
+        //
+        // MEASURED: without this, hiding a cube face dropped the face VBO from
+        // 36 to 30 verts and Ctrl+Z left it at 30 — the geometry came back in
+        // the model and stayed invisible on screen.
+        mesh.commitChange(MeshEditScope.Marks | MeshEditScope.Visibility);
+        ++mesh.topologyVersion;
         return true;
     }
 

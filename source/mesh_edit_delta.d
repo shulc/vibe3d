@@ -81,6 +81,20 @@ enum MeshEditScope : uint {
     Polygons = 1 << 2,  // faces added / removed / reshaped
     Marks    = 1 << 3,  // selection + subpatch bits, order arrays, counters
     Material = 1 << 4,  // faceMaterial[] / surfaces[]
+    // The per-element Hide bit (task 0613). A Marks-class change in every
+    // other respect — but `Marks` is dominated by SELECTION, which fires on
+    // every click and must never rebuild a GPU buffer, so a Hide cannot be
+    // signalled through it alone: hidden geometry leaves the vertex / edge /
+    // face buffers at UPLOAD time, so a hide is one of the few marks edits
+    // that DOES require the buffers to be rebuilt.
+    //
+    // Its own class, for the same reason `Material` has one: a per-face
+    // display attribute whose change needs a re-upload without a topology
+    // edit. Publishers OR it alongside `Marks` (never instead of), so
+    // consumers that key on Marks — the subpatch-preview gate, the marks
+    // caches — are unaffected, and only the ones that opt in (see
+    // display_sync.DisplayRefreshMask) act on it.
+    Visibility = 1 << 5,
     Geometry = Points | Polygons,
 }
 

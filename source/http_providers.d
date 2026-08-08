@@ -498,8 +498,49 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 mb.put("]");
                 modelStr = mb.data;
             }
+            // Task 0613 S3 — the EDGE and VERTEX VBOs, read back the same way.
+            // Until this task the only VBO readback in the whole HTTP surface
+            // was the face one, so "did hiding actually remove this vertex
+            // from the buffer, and did the drag refresh keep the same layout"
+            // (plan T-S3b / T-R11 / T-S3d) had no observable at all and the
+            // tests could not be written. Tight-packed triples, one buffer
+            // each, plus the two counts and `edgeOriginLen` — the last is the
+            // R11/R12 sentinel itself (`edgeOriginGpu.length`), whose being 0
+            // when nothing is hidden is exactly what keeps the draw path
+            // byte-identical.
+            string tailStr;
+            {
+                auto tb = appender!string();
+                tb.put(`,"vertCount":`);
+                tb.put(format("%d", gpu.vertCount));
+                tb.put(`,"edgeVertCount":`);
+                tb.put(format("%d", gpu.edgeVertCount));
+                tb.put(`,"edgeOriginLen":`);
+                tb.put(format("%d", gpu.edgeOriginGpu.length));
+                static void putTriples(A)(ref A sink, string key,
+                                          uint vbo, int count) {
+                    sink.put(`,"` ~ key ~ `":[`);
+                    if (count > 0 && vbo != 0) {
+                        float[] d = new float[](count * 3);
+                        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+                        glGetBufferSubData(GL_ARRAY_BUFFER, 0,
+                            cast(GLsizeiptr)(d.length * float.sizeof), d.ptr);
+                        glBindBuffer(GL_ARRAY_BUFFER, 0);
+                        foreach (i; 0 .. count) {
+                            if (i > 0) sink.put(",");
+                            sink.put(format("[%.6f,%.6f,%.6f]",
+                                d[i*3 + 0], d[i*3 + 1], d[i*3 + 2]));
+                        }
+                    }
+                    sink.put("]");
+                }
+                putTriples(tb, "vertPositions", gpu.vertVbo,     gpu.vertCount);
+                putTriples(tb, "edgePositions", gpu.edgeVbo,     gpu.edgeVertCount);
+                tailStr = tb.data;
+            }
             if (vertCount <= 0)
-                return `{"faceVertCount":0,"positions":[],"model":` ~ modelStr ~ `}`;
+                return `{"faceVertCount":0,"positions":[],"model":` ~ modelStr
+                     ~ tailStr ~ `}`;
             float[] data = new float[](vertCount * 6);
             glBindBuffer(GL_ARRAY_BUFFER, gpu.faceVbo);
             glGetBufferSubData(GL_ARRAY_BUFFER, 0,
@@ -517,6 +558,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             }
             buf.put(`],"model":`);
             buf.put(modelStr);
+            buf.put(tailStr);
             buf.put("}");
             return buf.data;
         });

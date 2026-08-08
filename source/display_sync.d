@@ -17,11 +17,19 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 ///     the VBO; the subpatch-preview Tab gate keys on Marks separately.
 /// Includes Material even though it is not geometry: per-face material ids
 /// ARE baked into the VBO (GpuMesh.upload reads faceMaterial into matIdVbo).
+/// Includes Visibility for exactly the same reason (task 0613 S3): the Hide
+/// bit is consumed at UPLOAD time — hidden verts / edges leave the buffers
+/// and hidden faces drop to zero triangles — so unlike its Marks siblings it
+/// cannot be honoured by a per-frame draw-time read. Note this is why
+/// Visibility is a class of its own and not merely part of Marks: adding
+/// Marks to this mask would re-upload the whole mesh on every selection
+/// click.
 enum uint DisplayRefreshMask =
       MeshEditScope.Position
     | MeshEditScope.Points
     | MeshEditScope.Polygons
-    | MeshEditScope.Material;
+    | MeshEditScope.Material
+    | MeshEditScope.Visibility;
 
 // The display-refresh gate (seam 2b) — since task 0427 a TOOL-side seam.
 //

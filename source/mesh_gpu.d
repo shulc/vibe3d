@@ -19,6 +19,43 @@ import change_bus : MeshEditScope;  // Position class for the preview-refresh pu
 import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
 
 // ---------------------------------------------------------------------------
+// The HIDE skip predicate (task 0613 S3, doc/hide_geometry_plan.md)
+// ---------------------------------------------------------------------------
+//
+// Hidden geometry leaves the GPU buffers ONCE, at BUILD time. Everything
+// downstream is then free: the viewport draw calls submit prebuilt buffers,
+// and gpu_select.renderMode renders the very same VBOs — so one filter here
+// takes hidden geometry out of the picture, out of the ID buffer AND out of
+// the ID buffer's depth pre-pass (which is what stops the hidden front of a
+// model occluding the back of it).
+//
+// Three named predicates rather than three inline `mesh.isXHidden(i)` calls,
+// because the SAME predicate has to hold in FOUR builders — `upload`,
+// `refreshPositions`, `refreshNonFacePositions` and `uploadSelectedVertices`
+// — and any pair of them disagreeing corrupts a live VBO mid-drag (R2). A
+// name is greppable; an inlined condition is a thing the fifth builder
+// forgets.
+//
+// `mesh` is whichever mesh this GpuMesh was handed — the cage, or the subpatch
+// preview, whose Hide planes subpatch_osd.d stamps from the cage at build
+// time. So there is no new parameter and no new call-site obligation across
+// upload's 81 call sites.
+//
+// Faces do NOT use `continue`: a hidden face KEEPS its VBO slot with
+// faceTriCount == 0 (R3), exactly like the degenerate-face branch, because
+// faceTriStart.length == mesh.faces.length is the invariant the picker's
+// `maxId` and faceOriginGpu both rest on.
+private bool hideSkipFace(ref const Mesh mesh, size_t fi) {
+    return mesh.isFaceHidden(fi);
+}
+private bool hideSkipEdge(ref const Mesh mesh, size_t ei) {
+    return mesh.isEdgeHidden(ei);
+}
+private bool hideSkipVertex(ref const Mesh mesh, size_t vi) {
+    return mesh.isVertexHidden(vi);
+}
+
+// ---------------------------------------------------------------------------
 // BaseWire — how `GpuMesh.drawEdges` should render its BASE line pass
 // ---------------------------------------------------------------------------
 
@@ -130,6 +167,14 @@ struct GpuMesh {
     // the full subdivided face surface. `faceOrigin` does not filter (every
     // preview face is rendered) but when supplied is cached in
     // `faceOriginGpu` so selection/hover can translate cage indices.
+    //
+    // A SECOND filter, independent of those parameters, runs on every path:
+    // elements carrying `Mesh.Marks.Hide` are dropped (task 0613 S3 — see the
+    // hideSkip* predicates at the top of this module). It reads the Hide plane
+    // off whichever mesh it was handed, so a cage upload filters by the cage's
+    // marks and a preview upload by the preview's, which subpatch_osd.d
+    // stamped from the cage. Hidden edges/verts leave the buffer entirely;
+    // hidden FACES keep their slot with `faceTriCount == 0`.
     void upload(ref const Mesh mesh,
                 const uint[] edgeOrigin = null,
                 const uint[] vertOrigin = null,
@@ -167,16 +212,29 @@ struct GpuMesh {
         // scratch buffers so the fill phase can index-write instead
         // of `~=`.
         size_t totalFaceCorners = 0;
-        foreach (face; mesh.faces)
-            if (face.length >= 3) totalFaceCorners += (face.length - 2) * 3;
+        foreach (fi, face; mesh.faces)
+            if (face.length >= 3 && !hideSkipFace(mesh, fi))
+                totalFaceCorners += (face.length - 2) * 3;
         size_t totalEdgeKeep = 0;
+        // "The edge VBO is no longer 1:1 with the mesh's edges." Drives the
+        // CONDITIONAL edgeOriginGpu population below — see the long comment
+        // there for why this must NOT become unconditional.
+        bool anyEdgeSkipped = false;
         foreach (ei; 0 .. mesh.edges.length) {
-            if (edgeOrigin.length > 0 && edgeOrigin[ei] == uint.max) continue;
+            if (edgeOrigin.length > 0 && edgeOrigin[ei] == uint.max) {
+                anyEdgeSkipped = true;
+                continue;
+            }
+            if (hideSkipEdge(mesh, ei)) {
+                anyEdgeSkipped = true;
+                continue;
+            }
             ++totalEdgeKeep;
         }
         size_t totalVertKeep = 0;
         foreach (vi; 0 .. mesh.vertices.length) {
             if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max) continue;
+            if (hideSkipVertex(mesh, vi)) continue;
             ++totalVertKeep;
         }
 
@@ -208,7 +266,10 @@ struct GpuMesh {
             size_t fw = 0;
             foreach (fi, face; mesh.faces) {
                 faceTriStart[fi] = cast(int)fw;
-                if (face.length < 3) {
+                // Degenerate OR hidden: keep the slot, contribute no
+                // triangles. Same branch, deliberately (R3) — a hidden face
+                // must stay addressable by its cage index for the ID picker.
+                if (face.length < 3 || hideSkipFace(mesh, fi)) {
                     faceTriCount[fi] = 0;
                     continue;
                 }
@@ -321,15 +382,36 @@ struct GpuMesh {
         immutable size_t needEdgeFloats = totalEdgeKeep * 6;
         if (scratchEdgeData.length < needEdgeFloats)
             scratchEdgeData.length = needEdgeFloats;
-        edgeOriginGpu  .length = (edgeOrigin.length > 0)
+        // `edgeOriginGpu.length > 0` IS THE SENTINEL FOR "this edge VBO is not
+        // 1:1 with the mesh's edges" (task 0613 R11/R12). Three places read it
+        // with exactly that meaning: `drawEdges`' `bool preview = …`, the
+        // id-translation branch in gpu_select.d, and the cage-identity comment
+        // in `uploadSelectedVertices` below.
+        //
+        // So it is populated when — and only when — that sentence becomes
+        // true: the subpatch preview filtered edges (edgeOrigin non-empty), or
+        // WE just filtered some out for being hidden. Populating it
+        // unconditionally "because a lookup table is always nice" would
+        // redefine the sentinel for every mesh in the program and permanently
+        // stand down `drawEdges`' allEdgesSelected shortcut, which is gated on
+        // `!preview` — a select-all-edges frame would trade one early-aborting
+        // scan for two full ones, on every mesh, forever, in exchange for
+        // nothing. With the condition: nothing hidden ⇒ length 0 ⇒
+        // byte-identical to before this task.
+        edgeOriginGpu  .length = (edgeOrigin.length > 0 || anyEdgeSkipped)
                                   ? totalEdgeKeep : 0;
         {
             size_t ew = 0;
             size_t oc = 0;
             foreach (ei, edge; mesh.edges) {
                 if (edgeOrigin.length > 0 && edgeOrigin[ei] == uint.max) continue;
-                if (edgeOrigin.length > 0)
-                    edgeOriginGpu[oc++] = edgeOrigin[ei];
+                if (hideSkipEdge(mesh, ei)) continue;
+                // Preview path: the trace's cage origin. Cage path: the
+                // identity, exactly the shape vertOriginGpu already uses below.
+                if (edgeOriginGpu.length > 0)
+                    edgeOriginGpu[oc++] = (edgeOrigin.length > 0)
+                                           ? edgeOrigin[ei]
+                                           : cast(uint)ei;
                 Vec3 a = mesh.vertices[edge[0]];
                 Vec3 b = mesh.vertices[edge[1]];
                 scratchEdgeData[ew + 0] = a.x;
@@ -361,6 +443,7 @@ struct GpuMesh {
             size_t oc = 0;
             foreach (vi, v; mesh.vertices) {
                 if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max) continue;
+                if (hideSkipVertex(mesh, vi)) continue;
                 scratchVertData[vw + 0] = v.x;
                 scratchVertData[vw + 1] = v.y;
                 scratchVertData[vw + 2] = v.z;
@@ -436,7 +519,12 @@ struct GpuMesh {
                 GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (fp) {
                 foreach (fi, face; mesh.faces) {
-                    if (face.length < 3) continue;
+                    // Hidden faces are skipped for the same reason degenerate
+                    // ones are, and it is not merely an optimisation: their
+                    // faceTriCount is 0, so faceTriStart[fi] already points at
+                    // the NEXT kept face's first triangle. Writing them here
+                    // would overwrite that face's data.
+                    if (face.length < 3 || hideSkipFace(mesh, fi)) continue;
                     immutable uint i0 = face[0];
                     Vec3 v0 = mesh.vertices[i0];
                     Vec3 v1 = mesh.vertices[face[1]];
@@ -489,6 +577,10 @@ struct GpuMesh {
                 foreach (ei, edge; mesh.edges) {
                     if (edgeOrigin.length > 0 && edgeOrigin[ei] == uint.max)
                         continue;
+                    // Same skip as `upload`'s kept-edge walk, or this refresh
+                    // shifts every segment after the first hidden edge (R2).
+                    if (hideSkipEdge(mesh, ei)) continue;
+                    if (seg * 2 >= edgeVertCount) break;
                     Vec3 a = mesh.vertices[edge[0]];
                     Vec3 b = mesh.vertices[edge[1]];
                     int k = seg * 6;
@@ -514,6 +606,9 @@ struct GpuMesh {
                 foreach (vi, v; mesh.vertices) {
                     if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max)
                         continue;
+                    // Same skip as `upload`'s kept-vert walk (R2).
+                    if (hideSkipVertex(mesh, vi)) continue;
+                    if (seg >= vertCount) break;
                     int k = seg * 3;
                     vp[k] = v.x; vp[k+1] = v.y; vp[k+2] = v.z;
                     seg++;
@@ -548,6 +643,10 @@ struct GpuMesh {
                 foreach (ei, edge; mesh.edges) {
                     if (edgeOrigin.length > 0 && edgeOrigin[ei] == uint.max)
                         continue;
+                    // Same skip as `upload`'s kept-edge walk, or this refresh
+                    // shifts every segment after the first hidden edge (R2).
+                    if (hideSkipEdge(mesh, ei)) continue;
+                    if (seg * 2 >= edgeVertCount) break;
                     Vec3 a = mesh.vertices[edge[0]];
                     Vec3 b = mesh.vertices[edge[1]];
                     int k = seg * 6;
@@ -569,6 +668,9 @@ struct GpuMesh {
                 foreach (vi, v; mesh.vertices) {
                     if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max)
                         continue;
+                    // Same skip as `upload`'s kept-vert walk (R2).
+                    if (hideSkipVertex(mesh, vi)) continue;
+                    if (seg >= vertCount) break;
                     int k = seg * 3;
                     vp[k] = v.x; vp[k+1] = v.y; vp[k+2] = v.z;
                     seg++;
@@ -618,7 +720,11 @@ struct GpuMesh {
                 GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (fp) {
                 foreach (fi, face; mesh.faces) {
-                    if (face.length < 3) continue;
+                    // Hidden: skipped exactly as in `upload` and
+                    // `refreshPositions`. faceTriCount is 0 for these and
+                    // faceTriStart[fi] aliases the next kept face's first
+                    // triangle, so writing here would corrupt that face (R2).
+                    if (face.length < 3 || hideSkipFace(mesh, fi)) continue;
                     immutable uint i0 = face[0];
                     Vec3 v0 = mesh.vertices[i0];
                     Vec3 v1 = mesh.vertices[face[1]];
@@ -649,10 +755,20 @@ struct GpuMesh {
             }
         }
 
-        // Edge VBO — VBO segment index == cage edge index in cage mode
-        // (subpatch upload would have populated edgeOriginGpu and gone
-        // through the suppressCageUpload early-return above, so we're
-        // guaranteed unfiltered here).
+        // Edge VBO — this path is CAGE-ONLY: a preview upload would have gone
+        // through the suppressCageUpload early-return above, so `edgeOrigin`
+        // filtering never applies here.
+        //
+        // It is NOT unfiltered, though, and has not been since task 0613 S3:
+        // hidden edges are skipped, in the same order and by the same
+        // predicate as `upload`'s kept-edge walk. THE INVARIANT IS "VBO
+        // segment k is the k-th NON-HIDDEN cage edge", not "segment k is cage
+        // edge k" — those coincide only while nothing is hidden. Leaving this
+        // walk unfiltered while `upload` filtered would desynchronise the two
+        // fills, so the first drag after a hide would shift every segment past
+        // the first hidden edge onto the wrong geometry (R2, on the edge
+        // buffer). `edgeOriginGpu` carries the segment→cage map whenever the
+        // two stop coinciding.
         if (edgeVertCount > 0) {
             glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
             float* ep = cast(float*)glMapBufferRange(
@@ -662,6 +778,8 @@ struct GpuMesh {
             if (ep) {
                 int k = 0;
                 foreach (ei, edge; mesh.edges) {
+                    if (hideSkipEdge(mesh, ei)) continue;
+                    if (k + 6 > edgeVertCount * 3) break;
                     Vec3 a = mesh.vertices[edge[0]], b = mesh.vertices[edge[1]];
                     ep[k++] = a.x; ep[k++] = a.y; ep[k++] = a.z;
                     ep[k++] = b.x; ep[k++] = b.y; ep[k++] = b.z;
@@ -670,7 +788,10 @@ struct GpuMesh {
             }
         }
 
-        // Vertex VBO — same invariant: cage upload places vi at vbo slot vi.
+        // Vertex VBO — same invariant, same reason: slot k is the k-th
+        // non-hidden cage vertex. The old cage-index scatter (`k = vi * 3`)
+        // was correct only while the two coincided; a sequential walk that
+        // shares `upload`'s skip is correct in both cases.
         if (vertCount > 0) {
             glBindBuffer(GL_ARRAY_BUFFER, vertVbo);
             float* vp = cast(float*)glMapBufferRange(
@@ -678,9 +799,13 @@ struct GpuMesh {
                 cast(GLsizeiptr)(vertCount * 3 * float.sizeof),
                 GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (vp) {
+                int seg = 0;
                 foreach (vi, v; mesh.vertices) {
-                    int k = cast(int)vi * 3;
+                    if (hideSkipVertex(mesh, vi)) continue;
+                    if (seg >= vertCount) break;
+                    int k = seg * 3;
                     vp[k] = v.x; vp[k+1] = v.y; vp[k+2] = v.z;
+                    seg++;
                 }
                 glUnmapBuffer(GL_ARRAY_BUFFER);
             }
@@ -848,10 +973,14 @@ struct GpuMesh {
     }
 
     // Draw edges with optional hover/selection highlights.
-    // `selectedEdges` and `hoveredEdge` are indexed by CAGE edges. When a
-    // subpatch preview is uploaded, `edgeOriginGpu` maps each VBO segment
+    // `selectedEdges` and `hoveredEdge` are indexed by CAGE edges. When the VBO
+    // is not 1:1 with the cage's edges, `edgeOriginGpu` maps each VBO segment
     // back to its cage edge so highlights propagate across every segment of
-    // the corresponding original edge.
+    // the corresponding original edge. Two things make it non-1:1: a subpatch
+    // preview upload (many segments per cage edge), and a cage upload that
+    // dropped hidden edges (task 0613 S3). The local flag below is named
+    // `preview` for the first and reads correctly for both — what it actually
+    // asks is "must I translate?".
     //
     // `hoveredEdges` is an OPTIONAL cage-indexed hover SET (default empty).
     // A segment is hovered when its cage edge equals `hoveredEdge` OR its cage
@@ -888,7 +1017,11 @@ struct GpuMesh {
             foreach (h; hoveredEdges) if (h) { anyHover = true; break; }
 
         // "All selected" shortcut is only safe when VBO segments are 1:1 with
-        // cage edges (cage mode). Skip it in preview mode.
+        // cage edges. Skipped whenever they are not — a subpatch preview, or a
+        // cage upload with hidden edges dropped. Preserving that "is not"
+        // meaning is the whole reason `edgeOriginGpu` is populated
+        // CONDITIONALLY in `upload` (task 0613 R12): populate it always and
+        // this shortcut can never fire again, on any mesh.
         bool allEdgesSelected = !preview
             && selectedEdges.length >= edgeCount
             && !anyHover;

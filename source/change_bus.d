@@ -31,13 +31,15 @@ import seltype : SelType;
 // every cache must invalidate. This is NOT a member of MeshEditScope — that
 // enum is the change tracker's vocabulary and stays minimal; All is a bus-level
 // convenience OR of the concrete classes. (Geometry already folds Points|
-// Polygons, so this expands to Position|Points|Polygons|Marks|Material.)
+// Polygons, so this expands to
+// Position|Points|Polygons|Marks|Material|Visibility.)
 enum uint MeshChangeAll =
       MeshEditScope.Position
     | MeshEditScope.Points
     | MeshEditScope.Polygons
     | MeshEditScope.Marks
-    | MeshEditScope.Material;
+    | MeshEditScope.Material
+    | MeshEditScope.Visibility;
 
 // Selection-domain bitfield. Mirrors MeshOpEntry.SelDomain's three members
 // (Vertex / Edge / Face) but as power-of-two flags so one flush can OR several

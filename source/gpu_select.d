@@ -260,6 +260,14 @@ public:
         // verts (vertOriginGpu[k] == k) and empty edge/face maps (we
         // pass-through). Subpatch uploads populate the maps.
         //
+        // …and so does a cage upload with something HIDDEN (task 0613 S3):
+        // `edgeOriginGpu.length > 0` means "the edge VBO is not 1:1 with the
+        // mesh's edges", which the subpatch preview is the usual — but no
+        // longer the only — way to become. `mesh_gpu.upload` populates it with
+        // the identity on the cage path in that case, so the map branch below
+        // is taken and stays correct. Faces need nothing: a hidden face keeps
+        // its slot with faceTriCount == 0, so face ids remain cage-valued.
+        //
         // Final bounds check against the current `mesh` is the safety
         // net for stale-VBO picks: this code path can fire from a
         // mid-event-batch pickFaces (handleMouseMotion → doSelectPickAt)
