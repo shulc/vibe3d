@@ -3,38 +3,73 @@
 // leaves exactly the contradicted entries stale.
 // Fixture: tests/fixtures/hide_invert_vertex_mark.json.
 //
-// THIS IS A KNOWN DIVERGENCE. vibe3d's invert is a plain polygon flip that
-// ignores the selection type, and its vertex plane is re-derived TOTALLY
-// after every mutation — so it has no stale window at all. Task 0628 owns
-// the gap.
+// THE SEQUENCE IS PART OF THE MEASUREMENT. The fixture's prefix is three
+// steps, not two: hide two polygons WITH THE SELECTION TYPE SET TO POLYGONS,
+// then SWITCH THE SELECTION TYPE TO VERTICES, then invert. The reference's
+// invert is component-typed, so the middle step is what selects the law being
+// frozen — an invert issued in polygon mode is a different measurement.
+//
+// This test therefore takes both types from the fixture
+// (`prefix.selection_type_before_hide` / `..._before_invert`), drives them,
+// and READS THEM BACK off /api/selection before continuing. That is not
+// belt-and-braces: on the pre-0628 engine the invert ignores the selection
+// type, so the polygon set and the probe value are BYTE-IDENTICAL in both
+// modes. Measured on this branch, hidden polygons after the invert are
+// [1..8] and the probe reads 0 whether the invert runs in polygon mode or in
+// vertex mode. No numeric assertion in this file can tell the two apart —
+// only the type read-back can, which is why it is an assertion of its own and
+// why every assertion below reports the observed type in its message.
+//
+// TWO DIVERGENCES, SEPARATE STATUSES (fixture: `classification.divergences`).
+//   * `invert_face_set` — status "open", owner 0628. The reference hides the
+//     nine grid polygons; we hide eight. A GAP, being closed.
+//   * `vertex_plane_derivation` — status "permanent". We derive the vertex
+//     plane totally after every mutation; the reference derives it
+//     incrementally and leaves stale entries. A DELIBERATE decision, never to
+//     be closed. Its two frozen numbers happen to agree today (both 0) for
+//     unrelated reasons; they will disagree the moment the first divergence
+//     closes.
+// They are separate because they move in opposite directions. A single
+// expected/not-expected flag over both would, on the day the gap closes,
+// either retire the permanent one with it or refuse to retire either.
 //
 // HOW A DIVERGENCE IS MARKED HERE. This project's marker for a documented
 // gap is the reference-diff suites' `expected_fail`, whose contract is: a
 // disagreement is tolerated (XFAIL), and an AGREEMENT is a real failure
 // (XPASS — "the gap is closed and the marker should be removed"). This test
-// ports that contract into the ordinary gate lane rather than skipping:
+// ports that contract into the ordinary gate lane rather than skipping, for
+// the face-set divergence only:
 //   * it pins what vibe3d does TODAY, so a regression is red;
 //   * it asserts the result still DIFFERS from the reference's frozen set,
-//     so the day 0628 lands the test goes red saying the gap CLOSED and this
-//     fixture must be converted to a live parity assertion.
-// Flipping `classification.expected_divergence` to false in the fixture
-// switches this test over to demanding parity — retiring the marker is a
-// one-line edit, and nothing here has to be rewritten to notice.
+//     so the day 0628 lands the test goes red saying the gap CLOSED.
+// The permanent divergence gets no such branch: the probe is only ever
+// compared against vibe3d's own frozen value, never against the reference's.
+//
+// RETIRING IS A TWO-LINE EDIT, AND THE TEST ENFORCES BOTH. Setting
+// `invert_face_set.status` to "closed" also requires re-freezing
+// `vertex_plane_derivation.vibe3d_probe_after_invert` to 1 — because our probe
+// reads 0 today only while polygon 0 is left visible. The fixture-consistency
+// check below derives the probe the frozen face set implies under our OWN
+// total-derivation law and fails if the two rows contradict each other, so a
+// half-done retirement cannot freeze a contradiction.
 //
 // WHAT WRONG IMPLEMENTATION THIS DISCRIMINATES AGAINST
 // ----------------------------------------------------
+//   * A DRIVER THAT SKIPS THE TYPE SWITCH — the defect this file was written
+//     to close. Deleting the `select.typeFrom` call leaves every number in
+//     this test unchanged; the type read-back is the only thing that goes red,
+//     and it goes red naming `polygon` where the fixture demands `vertex`.
 //   * The two agreement rows (prefix, and clear-then-re-hide) discriminate
 //     against a broken hide/read path outright: an engine that dropped the
 //     mark reads an empty hidden set where they demand [0,9] and [0]. They
 //     are here so "everything differs" cannot be why the divergence
 //     assertions pass — the channel is shown able to AGREE.
-//   * The divergence assertion discriminates against a component-typed
-//     invert, which reads the nine grid polygons [0..8] where the flat
-//     polygon flip reads eight [1..8].
+//   * The face-set marker discriminates against a component-typed invert,
+//     which reads the nine grid polygons [0..8] where the flat polygon flip
+//     reads eight [1..8].
 //   * The total-derivation assertion discriminates against a stored vertex
-//     bit: after the invert, a stored plane would leave the probe vertex
-//     reading 1 (its value from before the invert) where a derived plane
-//     reads 0.
+//     bit: a stored plane would leave some vertex reading its pre-invert
+//     value where the derived plane re-reads it from its incident polygons.
 
 import std.net.curl;
 import std.json;
@@ -83,6 +118,12 @@ bool[] vertexHidden() {
 
 int probeVertexHidden(int probe) { return vertexHidden()[probe] ? 1 : 0; }
 
+// The CURRENT selection type as the singular token the fixture speaks
+// (vertex / edge / polygon / item). This is the channel — and on this branch
+// the ONLY channel — that separates an invert issued in vertex mode from one
+// issued in polygon mode.
+string selType() { return getJson("/api/selection")["selType"].str; }
+
 string sIdx(int[] v) {
     string s = "[";
     foreach (i, x; v) { if (i) s ~= ","; s ~= x.to!string; }
@@ -103,7 +144,16 @@ unittest {
     auto rig  = fx["rig"];
     auto cls  = fx["classification"];
     auto ours = cls["vibe3d_measured"];
+    auto div  = cls["divergences"];
+    auto dFace = div["invert_face_set"];            // the gap 0628 closes
+    auto dVert = div["vertex_plane_derivation"];    // the permanent decision
     immutable int probe = cast(int) rig["probe_vertex"].integer;
+
+    // The two types the prefix names, read as DATA rather than parsed out of
+    // its prose, so the driver below cannot describe one sequence and perform
+    // another.
+    immutable string typeAtHide   = fx["prefix"]["selection_type_before_hide"].str;
+    immutable string typeAtInvert = fx["prefix"]["selection_type_before_invert"].str;
 
     // ---- fixture self-consistency: the non-discriminating row is not evidence
     {
@@ -119,6 +169,44 @@ unittest {
                        ~ "evidence rows, not among them");
     }
 
+    // ---- fixture self-consistency: the prefix's type switch is a real switch
+    // If the two types were equal the middle step would be a no-op, the
+    // read-back below would pass without it having been performed, and this
+    // fixture would be unable to say which law it froze — exactly the state
+    // this file was rewritten to make impossible.
+    assert(typeAtInvert != typeAtHide,
+           format("the prefix's step 2 must actually CHANGE the selection type, but it "
+                  ~ "names %s before the hide and %s before the invert. With those equal "
+                  ~ "the step is vacuous and nothing here distinguishes a typed invert "
+                  ~ "from an untyped one.", typeAtHide, typeAtInvert));
+
+    // ---- fixture self-consistency: the two divergences carry usable statuses
+    immutable string faceStatus = dFace["status"].str;
+    assert(faceStatus == "open" || faceStatus == "closed",
+           format("invert_face_set.status must be exactly \"open\" or \"closed\", got "
+                  ~ "\"%s\" — a typo must not silently select the parity branch",
+                  faceStatus));
+    immutable bool faceGapOpen = faceStatus == "open";
+    assert(dVert["status"].str == "permanent",
+           format("vertex_plane_derivation.status reads \"%s\". That divergence is a "
+                  ~ "deliberate design decision and has NO retirement branch here by "
+                  ~ "construction: vibe3d's vertex plane is derived totally and the "
+                  ~ "reference's incrementally, and we do not intend to acquire its "
+                  ~ "stale window. Changing this status does not make the test demand "
+                  ~ "parity — it just breaks the guard that says so.",
+                  dVert["status"].str));
+
+    // ---- fixture self-consistency: the divergence rows and the narrative rows
+    // record the SAME measurement (two copies exist; they must not drift)
+    assert(jIntArray(dFace["reference_after_invert"])
+           == jIntArray(fx["prefix"]["after_invert"]["hidden_polygons"]),
+           "invert_face_set.reference_after_invert must be the same measurement the "
+           ~ "prefix's after_invert row records");
+    assert(cast(int) dVert["reference_probe_after_invert"].integer
+           == cast(int) fx["prefix"]["after_invert"]["probe_vertex_hidden"].integer,
+           "vertex_plane_derivation.reference_probe_after_invert must be the same "
+           ~ "measurement the prefix's after_invert row records");
+
     // ---- build the rig ------------------------------------------------------
     postOk("/api/reset", "");
     cmd(`{"id":"history.clear"}`);
@@ -131,6 +219,7 @@ unittest {
     // A probe vertex with more than one incident polygon still has a visible
     // polygon and is hidden under NEITHER reading, which would make the whole
     // fixture vacuous.
+    int probeFace = -1;      // the probe's ONE incident polygon
     {
         auto model = getJson("/api/model");
         auto faces = model["faces"].array;
@@ -139,8 +228,13 @@ unittest {
         assert(faces.length == rig["faces"].array.length, "rig face count");
 
         int valence = 0;
-        foreach (f; faces)
-            foreach (vi; f.array) if (cast(int) vi.integer == probe) { ++valence; break; }
+        foreach (fi, f; faces)
+            foreach (vi; f.array)
+                if (cast(int) vi.integer == probe) {
+                    ++valence;
+                    if (probeFace < 0) probeFace = cast(int) fi;
+                    break;
+                }
         assert(valence == cast(int) rig["probe_vertex_valence"].integer,
                format("probe vertex %d must have valence %d, got %d — %s",
                       probe, rig["probe_vertex_valence"].integer, valence,
@@ -150,6 +244,35 @@ unittest {
                "the probe vertex's polygon must be the one the fixture names");
     }
 
+    // ---- fixture self-consistency: the two frozen divergence rows agree with
+    // each other under vibe3d's OWN law -------------------------------------
+    // The probe's only polygon is `probeFace`, so under total derivation the
+    // probe reads 1 exactly when that polygon is in our post-invert hidden set.
+    // This is what makes retiring the face-set marker a TWO-line edit: flip
+    // `invert_face_set.status` and the operative frozen face set becomes the
+    // reference's, which contains polygon 0 — and the frozen probe of 0 stops
+    // being derivable. Leaving it at 0 freezes a contradiction, and fails here.
+    {
+        auto oursFrozenFaces = faceGapOpen ? jIntArray(dFace["vibe3d_after_invert"])
+                                           : jIntArray(dFace["reference_after_invert"]);
+        immutable int frozenProbe  = cast(int) dVert["vibe3d_probe_after_invert"].integer;
+        immutable int impliedProbe = oursFrozenFaces.canFind(probeFace) ? 1 : 0;
+        assert(frozenProbe == impliedProbe,
+               format("the fixture's two frozen rows contradict each other under vibe3d's "
+                      ~ "own total-derivation law: with invert_face_set \"%s\" our "
+                      ~ "post-invert hidden set is %s, which %s the probe's only polygon "
+                      ~ "%d, so the probe must be frozen as %d — but "
+                      ~ "vertex_plane_derivation.vibe3d_probe_after_invert reads %d. If "
+                      ~ "you have just retired the face-set marker, this is the second "
+                      ~ "half of that edit: re-freeze the probe to %d and LEAVE the "
+                      ~ "status \"permanent\" — the reference still reads %d there and "
+                      ~ "always will.",
+                      faceStatus, sIdx(oursFrozenFaces),
+                      impliedProbe ? "contains" : "does not contain",
+                      probeFace, impliedProbe, frozenProbe, impliedProbe,
+                      cast(int) dVert["reference_probe_after_invert"].integer));
+    }
+
     // ---- AGREEMENT ROW 1: the prefix's hide ---------------------------------
     // Both engines agree here. This is what stops the divergence assertions
     // below from passing merely because the channel is broken.
@@ -157,6 +280,15 @@ unittest {
         selectPolys([0, 9]);
         assert(jIntArray(getJson("/api/selection")["selectedFaces"]).sort.array == [0, 9],
                "both polygons must actually be selected before the hide");
+
+        // Prefix step 1 names the type the hide is issued under. /api/select
+        // promotes it as a side effect, so this asserts that side effect landed
+        // where the fixture says rather than assuming it.
+        assert(selType() == typeAtHide,
+               format("prefix step 1 issues the hide with the selection type set to %s, "
+                      ~ "but /api/selection reads %s. The polygon select was supposed to "
+                      ~ "promote the type; it did not.", typeAtHide, selType()));
+
         cmd(`{"id":"mesh.hide"}`);
 
         auto wantF = jIntArray(fx["prefix"]["after_hide"]["hidden_polygons"]);
@@ -175,43 +307,74 @@ unittest {
                "fixture premise: this row is recorded as an agreement row");
     }
 
-    // ---- the invert ---------------------------------------------------------
+    // ---- PREFIX STEP 2: switch the selection type ---------------------------
+    // The step the first driver of this fixture omitted. It changes no
+    // geometry and no number in this file — on this branch the invert ignores
+    // the selection type entirely — so it is asserted by READING THE TYPE
+    // BACK. That read is the whole discriminator: without it, an invert issued
+    // in polygon mode is indistinguishable from the vertex-mode invert the
+    // fixture froze, and this test would once again be green about a
+    // measurement it never took.
+    cmd("select.typeFrom " ~ typeAtInvert);
+    immutable string typeBeforeInvert = selType();
+    assert(typeBeforeInvert == typeAtInvert,
+           format("prefix step 2 switches the selection type to %s before the invert, but "
+                  ~ "/api/selection reads %s. The reference's invert is COMPONENT-TYPED: "
+                  ~ "an invert issued in %s mode freezes a different law from the one this "
+                  ~ "fixture measured, and every number below would be attributed to the "
+                  ~ "wrong mode.",
+                  typeAtInvert, typeBeforeInvert, typeBeforeInvert));
+
+    // ---- PREFIX STEP 3: the invert ------------------------------------------
     cmd(`{"id":"mesh.hideInvert"}`);
 
-    immutable bool expectDivergence = cls["expected_divergence"].type == JSONType.true_;
-    auto refAfterInvert  = jIntArray(fx["prefix"]["after_invert"]["hidden_polygons"]);
-    auto oursAfterInvert = jIntArray(ours["after_invert"]["hidden_polygons"]);
+    // The invert READS the selection type; it must not write it. If it did,
+    // the mode this fixture's numbers are attributed to would be one the
+    // engine had silently left behind.
+    assert(selType() == typeAtInvert,
+           format("the invert ran with the selection type %s and left it %s — the invert "
+                  ~ "must not change the selection type", typeAtInvert, selType()));
+
+    auto refAfterInvert  = jIntArray(dFace["reference_after_invert"]);
+    auto oursAfterInvert = jIntArray(dFace["vibe3d_after_invert"]);
     auto gotAfterInvert  = hiddenFaces();
 
-    if (expectDivergence) {
+    if (faceGapOpen) {
         // (a) the marker itself, checked FIRST — red when the gap CLOSES, so a
         // convergence reports as a convergence rather than as a regression.
         assert(gotAfterInvert != refAfterInvert,
-               format("DIVERGENCE CLOSED: post-invert hidden polygons %s now equal the "
-                      ~ "reference's frozen %s. This is not a breakage — task %s has "
-                      ~ "landed. %s",
-                      sIdx(gotAfterInvert), sIdx(refAfterInvert),
-                      cls["divergence_owner"].str, cls["retire_when"].str));
+               format("DIVERGENCE CLOSED: with the selection type %s at the invert, "
+                      ~ "post-invert hidden polygons %s now equal the reference's frozen "
+                      ~ "%s. This is not a breakage — task %s has landed. %s",
+                      typeAtInvert, sIdx(gotAfterInvert), sIdx(refAfterInvert),
+                      dFace["owner"].str, dFace["retire_by"].str));
 
         // (b) pin what we do today — any OTHER deviation is a regression.
         assert(gotAfterInvert == oursAfterInvert,
-               format("post-invert hidden polygons %s, want vibe3d's frozen %s. The invert "
-                      ~ "here is a flat polygon flip: the two originally-hidden polygons "
-                      ~ "become visible and the other eight become hidden.",
-                      sIdx(gotAfterInvert), sIdx(oursAfterInvert)));
+               format("post-invert hidden polygons %s, want vibe3d's frozen %s (selection "
+                      ~ "type at the invert: %s). The invert here is a flat polygon flip "
+                      ~ "that ignores that type: the two originally-hidden polygons become "
+                      ~ "visible and the other eight become hidden.",
+                      sIdx(gotAfterInvert), sIdx(oursAfterInvert), typeAtInvert));
     } else {
-        // The marker was retired: demand parity outright.
+        // The face-set marker was retired: demand parity outright. Note this
+        // says nothing about the probe — that divergence is permanent and is
+        // checked against vibe3d's own frozen value below, never against the
+        // reference's.
         assert(gotAfterInvert == refAfterInvert,
-               format("post-invert hidden polygons %s, want the reference's %s "
-                      ~ "(expected_divergence is false, so parity is required)",
-                      sIdx(gotAfterInvert), sIdx(refAfterInvert)));
+               format("post-invert hidden polygons %s, want the reference's %s (selection "
+                      ~ "type at the invert: %s; invert_face_set.status is \"closed\", so "
+                      ~ "parity is required)",
+                      sIdx(gotAfterInvert), sIdx(refAfterInvert), typeAtInvert));
     }
 
     // ---- our positive statement: the vertex plane is TOTALLY derived --------
     // The reference leaves stale entries; we never do. Asserting the derived
     // predicate over every vertex that has an incident face states our law
-    // directly instead of only noting the absence of theirs. A stored vertex
-    // bit would leave the probe vertex reading 1 here (its pre-invert value).
+    // directly instead of only noting the absence of theirs. This is also what
+    // makes the permanent divergence self-enforcing: once the face-set gap
+    // closes and the probe's polygon is hidden, this loop alone forces the
+    // probe to 1 while the reference stays 0.
     {
         auto model  = getJson("/api/model");
         auto faces  = model["faces"].array;
@@ -232,16 +395,29 @@ unittest {
         foreach (v; 0 .. vHid.length) {
             if (!hasFace[v]) continue;   // a loose point keeps its own bit
             assert(vHid[v] == allHid[v],
-                   format("vertex %d reads %s but every-incident-polygon-hidden is %s — "
-                          ~ "vibe3d's vertex plane is derived TOTALLY after every mutation, "
-                          ~ "so it must never be stale. A stale entry here would mean we "
-                          ~ "had acquired the reference's incremental behaviour by accident "
-                          ~ "rather than by task %s.",
-                          v, vHid[v], allHid[v], cls["divergence_owner"].str));
+                   format("vertex %d reads %s but every-incident-polygon-hidden is %s "
+                          ~ "(selection type at the invert: %s) — vibe3d's vertex plane is "
+                          ~ "derived TOTALLY after every mutation, so it must never be "
+                          ~ "stale. A stale entry here would mean we had acquired the "
+                          ~ "reference's incremental behaviour by accident rather than "
+                          ~ "keeping the derivation task %s left in place.",
+                          v, vHid[v], allHid[v], typeAtInvert, dFace["owner"].str));
         }
-        assert(probeVertexHidden(probe)
-               == cast(int) ours["after_invert"]["probe_vertex_hidden"].integer,
-               "post-invert probe vertex must read what vibe3d's frozen row says");
+
+        immutable int gotProbe    = probeVertexHidden(probe);
+        immutable int frozenProbe = cast(int) dVert["vibe3d_probe_after_invert"].integer;
+        assert(gotProbe == frozenProbe,
+               format("post-invert probe vertex reads %d, fixture freezes %d (selection "
+                      ~ "type at the invert: %s). If task %s has landed, this is the "
+                      ~ "PERMANENT divergence surfacing rather than a regression: our "
+                      ~ "totally-derived plane now reads 1 under a hidden polygon %d while "
+                      ~ "the reference stays %d on a stale entry. Re-freeze "
+                      ~ "vertex_plane_derivation.vibe3d_probe_after_invert to what we read "
+                      ~ "and leave its status \"permanent\" — do NOT change the derivation "
+                      ~ "to chase the reference's %d.",
+                      gotProbe, frozenProbe, typeAtInvert, dFace["owner"].str, probeFace,
+                      cast(int) dVert["reference_probe_after_invert"].integer,
+                      cast(int) dVert["reference_probe_after_invert"].integer));
     }
 
     // ---- AGREEMENT ROW 2: clear, then re-hide the probe's polygon -----------
@@ -251,6 +427,15 @@ unittest {
         assert(hiddenFaces().length == 0, "unhide-all must clear the hidden set");
 
         selectPolys([0]);
+        // "the ordinary way" in the fixture's row means the polygon-mode
+        // re-hide, and the prefix has left the type on the invert's type — so
+        // the select must promote it back. Asserted, because if it stopped
+        // promoting, this row would silently become a vertex-mode hide of a
+        // polygon selection.
+        assert(selType() == typeAtHide,
+               format("clear-then-re-hide is the ordinary polygon-mode hide, so the "
+                      ~ "selection type must read %s here; the prefix left it %s and "
+                      ~ "/api/selection now reads %s", typeAtHide, typeAtInvert, selType()));
         cmd(`{"id":"mesh.hide"}`);
 
         auto wantF = jIntArray(ours["clear_then_rehide"]["hidden_polygons"]);
