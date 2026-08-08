@@ -516,6 +516,33 @@ struct ModelSpace {
             mInv[8]*nLocal.x + mInv[9]*nLocal.y + mInv[10]*nLocal.z,
         );
     }
+    /// World-space NORMAL -> local-space normal: `M^T` applied to `nWorld`
+    /// — the exact dual of `toWorldNormal` above, expressed as the transpose
+    /// of `m`'s linear 3x3 (as `toWorldNormal` is the transpose of `mInv`'s).
+    /// Linear part only, no translation; the result is NOT renormalized.
+    ///
+    /// Why it exists (task 0619, doc/tool_aiming_item_transform_plan.md §2.1):
+    /// a cursor ray tested against a plane ANCHORED ON MESH GEOMETRY has to
+    /// be evaluated in the layer's local space, because the consumer writes
+    /// local vertex coordinates. Moving that test into local space needs the
+    /// ray direction through `toLocalDir` (`M^-1`) and the plane's world
+    /// normal through THIS (`M^T`), because
+    /// `dot(M^T n, M^-1 d) == n^T M M^-1 d == dot(n, d)` EXACTLY, for any
+    /// invertible `M`, mirrored or not — so the plane equation's sign and
+    /// magnitude survive the move unchanged.
+    ///
+    /// Do NOT reach for `toLocalDir` to carry a normal: `M^T` and `M^-1` are
+    /// EQUAL for a pure rotation, so the two agree exactly on a
+    /// rotation-only fixture and diverge under any non-uniform scale or
+    /// shear. That is the classic wrong normal transform, and a
+    /// rotation-only test cannot see it.
+    Vec3 toLocalNormal(Vec3 nWorld) const @safe pure nothrow @nogc {
+        return Vec3(
+            m[0]*nWorld.x + m[1]*nWorld.y + m[ 2]*nWorld.z,
+            m[4]*nWorld.x + m[5]*nWorld.y + m[ 6]*nWorld.z,
+            m[8]*nWorld.x + m[9]*nWorld.y + m[10]*nWorld.z,
+        );
+    }
 }
 
 unittest { // ModelSpace.world() is the identity: m/mInv == identityMatrix, flags all default.
@@ -565,6 +592,75 @@ unittest { // toLocalDir preserves a ray's `t`: mInv*(org + t*dir) == toLocalPoi
         && isClose(localHit.y, predicted.y, 1e-4f, 1e-4f)
         && isClose(localHit.z, predicted.z, 1e-4f, 1e-4f),
         "toLocalDir must stay un-normalized for `t` to keep meaning a world distance");
+}
+
+// Rotation + NON-UNIFORM scale, with its exact analytic inverse. The two
+// `toLocalNormal` unittests below both need it: under a pure rotation
+// `M^T == M^-1`, so `toLocalNormal` and `toLocalDir` return the SAME vector
+// and no rotation-only fixture can tell a correct implementation from the
+// wrong one. `scl = (1.7, 1, 0.6)` is what makes them diverge.
+version (unittest) private void rotNonUniformSpace(out ModelSpace ms) {
+    Vec3 axis = normalize(Vec3(0.3f, 1.0f, -0.2f));
+    auto R    = pivotRotationMatrix(Vec3(0,0,0), axis,  0.7f);
+    auto Rinv = pivotRotationMatrix(Vec3(0,0,0), axis, -0.7f);
+    auto S    = pivotScaleMatrix(Vec3(0,0,0), 1.7f, 1.0f, 0.6f);
+    auto Sinv = pivotScaleMatrix(Vec3(0,0,0), 1.0f/1.7f, 1.0f, 1.0f/0.6f);
+    ms.m    = matMul4(R, S);        // M    = R*S
+    ms.mInv = matMul4(Sinv, Rinv);  // M^-1 = S^-1 * R^-1
+    ms.isIdentity = false;
+}
+
+unittest { // toLocalNormal is the exact dual of toLocalDir:
+    // `dot(M^T*n, M^-1*d) == dot(n, d)` for ANY invertible M (task 0619 §2.1).
+    // This is the identity a RayPlane site relies on to move a plane test
+    // anchored on mesh geometry into the layer's local space without
+    // changing the number the test reads.
+    ModelSpace ms;
+    rotNonUniformSpace(ms);
+
+    Vec3 nWorld = Vec3( 0.40f, -0.90f, 0.25f); // a world plane normal
+    Vec3 dWorld = Vec3(-0.60f,  0.20f, 0.75f); // a world ray direction
+
+    float truth = dot(nWorld, dWorld);
+    float moved = dot(ms.toLocalNormal(nWorld), ms.toLocalDir(dWorld));
+    assert(isClose(moved, truth, 1e-4f, 1e-4f),
+        "dot(toLocalNormal(n), toLocalDir(d)) must equal dot(n, d) exactly");
+
+    // ANTI-VACUITY. The plausible wrong implementation is "carry the normal
+    // with toLocalDir as well" (the classic wrong normal transform). It must
+    // read a DIFFERENT number on this same fixture, or the assertion above
+    // would hold for both laws and would be measuring nothing.
+    float wrong = dot(ms.toLocalDir(nWorld), ms.toLocalDir(dWorld));
+    assert(!isClose(wrong, truth, 1e-2f, 1e-2f),
+        "fixture is vacuous: the M^-1-on-the-normal law reads the same number here");
+}
+
+unittest { // toLocalNormal != toLocalDir under non-uniform scale (the negative
+    // control), and they COINCIDE under a pure rotation — the second half is
+    // why the fixture above is required to carry a non-uniform scale.
+    ModelSpace ms;
+    rotNonUniformSpace(ms);
+
+    Vec3 n = Vec3(0.4f, -0.9f, 0.25f);
+    Vec3 a = ms.toLocalNormal(n);
+    Vec3 b = ms.toLocalDir(n);
+    Vec3 d = a - b;
+    assert(d.length > 1e-2f,
+        "toLocalNormal must differ from toLocalDir under a non-uniform scale");
+
+    // Pure rotation: M^T == M^-1, so the two are the same map. A test built
+    // on a rotation-only ModelSpace would pass for either implementation.
+    ModelSpace rot;
+    Vec3 axis = normalize(Vec3(0.3f, 1.0f, -0.2f));
+    rot.m    = pivotRotationMatrix(Vec3(0,0,0), axis,  0.7f);
+    rot.mInv = pivotRotationMatrix(Vec3(0,0,0), axis, -0.7f);
+    rot.isIdentity = false;
+    Vec3 ra = rot.toLocalNormal(n);
+    Vec3 rb = rot.toLocalDir(n);
+    Vec3 rd = ra - rb;
+    assert(rd.length < 1e-5f,
+        "under a pure rotation toLocalNormal and toLocalDir must coincide — "
+        ~ "this is why the discriminating fixture needs a non-uniform scale");
 }
 
 unittest { // The LOCAL front-facing test agrees DIRECTLY (no XOR, no
@@ -1285,6 +1381,115 @@ unittest { // projectionSpace: forward projection agrees with pre-transforming t
     assert(isClose(px1, px2, 1e-3f, 1e-3f) && isClose(py1, py2, 1e-3f, 1e-3f)
         && isClose(z1, z2, 1e-3f, 1e-3f),
         "projectionSpace(vp,ms) projection must match projecting the pre-transformed world point");
+}
+
+// ---------------------------------------------------------------------------
+// AimViewport — a NOMINAL type for "the aiming space" (task 0619 §2.0).
+//
+// `projectionSpace` returns a plain `Viewport`, so nothing stops a call site
+// from projecting a LAYER-LOCAL mesh coordinate through the WORLD viewport —
+// which is precisely the defect this family of tasks exists to remove, and
+// which a naming convention (`vpAim*`) policed by a grep cannot prevent.
+// `AimViewport` turns that into a compile error instead: it wraps a Viewport
+// that has ALREADY had a `ModelSpace` composed into it, and it cannot be
+// produced without supplying one, because
+//
+//   * its default constructor is `@disable`d, so `AimViewport v;` is illegal;
+//   * its only constructor is module-private, so outside `math.d` the only
+//     way to obtain one is `aimSpace(vp, ms)`;
+//   * it does not implicitly convert from `Viewport`, so a world viewport
+//     cannot be passed where an aim space is expected (and vice versa).
+//
+// The intended shape of an aiming helper is therefore a pair:
+//   `f(Vec3 pLocal, const ref AimViewport vpAim, ...)`  — local geometry
+//   `g(Vec3 pWorld, const ref Viewport    vp,    ...)`  — already-world value
+// so an "this value is already in world space" site keeps a typed home and
+// nobody has to fabricate an aim space to express it.
+//
+// The one residue this type does NOT catch is `aimSpace(vp, ModelSpace.world())`
+// — a real aim space built from an identity transform. §2.3 of the plan bans
+// `ModelSpace.world()` outright in the files this task edits for that reason.
+//
+// Deliberately NOT accepted by `screenPointToRay`/`screenRay`: a composed
+// view matrix breaks their transpose-as-inverse assumption (see
+// `projectionSpace`'s doc comment above), so keeping those on the plain
+// `Viewport` makes the double-apply a type error too.
+// ---------------------------------------------------------------------------
+struct AimViewport {
+    @disable this();                 // no accessible default construction
+    private Viewport vp_;            // module-private: only math.d can fill it
+    private this(Viewport v) @safe pure nothrow @nogc { vp_ = v; }
+    /// The composed viewport, for handing to `projectToWindow*`.
+    @property ref const(Viewport) vp() const return @safe pure nothrow @nogc {
+        return vp_;
+    }
+}
+
+/// Build the aiming space for `ms`: `projectionSpace(vp, ms)` in an
+/// `AimViewport` wrapper. Adds a TYPE, not a behaviour — the composed
+/// viewport is field-identical to `projectionSpace`'s, identity fast path
+/// included. A stack copy plus (off the identity path) one `matMul4`: cheap
+/// once per query, unacceptable per vertex — hoist it out of O(V) loops.
+AimViewport aimSpace(const ref Viewport vp, const ModelSpace ms) @safe pure nothrow @nogc {
+    return AimViewport(projectionSpace(vp, ms));
+}
+
+unittest { // aimSpace adds a type, not a behaviour: field-identical to projectionSpace.
+    import std.math : PI;
+    Vec3 eye = Vec3(0, 0, 8);
+    Viewport vp;
+    vp.view = lookAt(eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj = perspectiveMatrix(45.0f * PI / 180.0f, 1.0f, 0.01f, 100.0f);
+    vp.width = 640; vp.height = 480; vp.x = 7; vp.y = 11;
+    vp.eye = eye; vp.focus = Vec3(0, 0, 0);
+
+    ModelSpace ms;
+    rotNonUniformSpace(ms);
+
+    Viewport ref_ = projectionSpace(vp, ms);
+    auto     aim  = aimSpace(vp, ms);
+    foreach (i; 0 .. 16) {
+        assert(aim.vp.view[i] == ref_.view[i]);
+        assert(aim.vp.proj[i] == ref_.proj[i]);
+    }
+    assert(aim.vp.width == ref_.width && aim.vp.height == ref_.height);
+    assert(aim.vp.x == ref_.x && aim.vp.y == ref_.y);
+    assert(aim.vp.eye.x == ref_.eye.x && aim.vp.eye.y == ref_.eye.y
+        && aim.vp.eye.z == ref_.eye.z);
+    assert(aim.vp.focus.x == ref_.focus.x && aim.vp.focus.y == ref_.focus.y
+        && aim.vp.focus.z == ref_.focus.z);
+
+    // Identity fast path: byte-identical to the world viewport handed in.
+    auto id = aimSpace(vp, ModelSpace.world());
+    foreach (i; 0 .. 16) {
+        assert(id.vp.view[i] == vp.view[i]);
+        assert(id.vp.proj[i] == vp.proj[i]);
+    }
+}
+
+unittest { // AimViewport is the compile GATE, not a naming convention.
+    // A wrong-but-plausible call site is "pass the world viewport where the
+    // aim space belongs". These static asserts are what make that impossible;
+    // if any of them ever starts compiling, the gate is gone and every
+    // converted site silently reverts to being policed by review alone.
+
+    // (1) No accessible default constructor — `AimViewport v;` must not compile.
+    static assert(!__traits(compiles, { AimViewport v; }),
+        "AimViewport must not be default-constructible");
+
+    // (2) NOT assertable HERE, deliberately: `private` in D is module-scoped,
+    //     so both `AimViewport(someViewport)` and `AimViewport a = someViewport;`
+    //     (D's one-argument-constructor initialiser form) DO compile inside
+    //     math.d. The "only `aimSpace` can produce one" half of the gate binds
+    //     every OTHER module, so it is asserted from a consumer module
+    //     instead — see the `version (unittest)` gate block at the bottom of
+    //     source/tools/edit/drag_weld.d. Writing that assert here would have
+    //     been the exact vacuous-test shape this task is held to.
+
+    // (3) A function that wants an aim space must reject a world viewport.
+    static void wantsAim(const ref AimViewport a) { cast(void)a.vp.width; }
+    static assert(!__traits(compiles, { Viewport w; wantsAim(w); }),
+        "a helper taking AimViewport must not accept a plain Viewport");
 }
 
 // 2D point-in-polygon test (ray casting, works for convex and concave polygons).

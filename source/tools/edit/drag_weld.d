@@ -37,9 +37,12 @@ private enum float PICK_RADIUS_PX = 12.0f;
 //               returns 0 (shared-face / faceless / guard), no-op (no undo
 //               entry). Otherwise record one snapshot-undo entry.
 //
-// Selection after weld: the survivor vertex is re-located by world position
-// (keepPos captured before the weld) because compactUnreferenced reindexes
-// all surviving vertices and the pre-weld index is stale.
+// Selection after weld: the survivor vertex is re-located by its LAYER-LOCAL
+// position (keepPos captured before the weld) because compactUnreferenced
+// reindexes all surviving vertices and the pre-weld index is stale. Local vs
+// local — `keepPos` and the rescan both read `mesh.vertices`, so the item
+// transform cancels and must NOT be applied here (task 0619: three comments
+// in this file used to say "world" of these local values).
 //
 // Gated to Vertices edit mode via supportedModes().
 // ---------------------------------------------------------------------------
@@ -57,7 +60,12 @@ private:
     CommandHistory    history_;
     VertexEditFactory factory_;
 
-    Viewport cachedVp_;
+    // The WORLD-space viewport `draw()` was handed. Named `vpWorld_` (task
+    // 0619) so a use that needs the AIMING space — layer-local geometry
+    // projected through the item transform — cannot pick this up by
+    // accident: it has to go through `aimSpace(vpWorld_, ms)`, whose
+    // `AimViewport` result is a distinct type (math.d §2.0).
+    Viewport vpWorld_;
 
     bool dragging_ = false;
     int  source_   = -1;   // vertex index picked on button-down
@@ -90,7 +98,7 @@ public:
     override void draw(const ref Shader shader, const ref Viewport vp,
                        ref VectorStack vts, bool visualOnly = false)
     {
-        cachedVp_ = vp;
+        vpWorld_ = vp;
     }
 
     override void drawProperties() {
@@ -141,7 +149,7 @@ public:
         int target = pickNearestVertex_(e.x, e.y, source_);
         if (target < 0 || target == source_) return true;   // no-op release
 
-        // Capture the survivor world position BEFORE the weld.
+        // Capture the survivor's LAYER-LOCAL position BEFORE the weld.
         // compactUnreferenced (called inside weldVertexPair → weldVerticesByMask)
         // reindexes surviving vertices, making the pre-weld index stale.
         // We re-locate the survivor by position afterwards.
@@ -152,7 +160,7 @@ public:
         size_t welded = mesh.weldVertexPair(cast(uint)target, cast(uint)source_);
         if (welded == 0) return true;  // shared-face / faceless / guard: no-op
 
-        // Re-locate the survivor by world position and select it.
+        // Re-locate the survivor by its layer-local position and select it.
         // resizeVertexSelection is already called inside compactUnreferenced
         // (mesh.d:1267) — do NOT call it again here.
         mesh.clearVertexSelection();
@@ -198,15 +206,30 @@ public:
 private:
     /// Pick the nearest vertex within PICK_RADIUS_PX of screen position (sx,sy).
     /// Skips vertex index `exclude` (-1 = no exclusion). Returns the vertex
-    /// index or -1 if none is close enough. Mirrors pen.d:825 screenDist pattern:
-    /// project each world vertex with projectToWindowFull and compare pixel dist.
+    /// index or -1 if none is close enough.
+    ///
+    /// AIMING KIND: **Pixel** (task 0619, §1.1 of
+    /// doc/tool_aiming_item_transform_plan.md). `mesh.vertices` holds
+    /// LAYER-LOCAL coordinates; the geometry is DRAWN through the primary
+    /// layer's item matrix `M`. The correct space for this kind is therefore
+    /// "keep the geometry local, compose the viewport": `aimSpace` folds `M`
+    /// into the view matrix, and `proj*(view*M)*v == proj*view*(M*v)` holds
+    /// exactly, so the pixel compared against the cursor here is the pixel
+    /// the vertex is drawn at. Projecting `v` through `vpWorld_` instead
+    /// aims at where the layer would sit at identity.
+    ///
+    /// The `AimViewport` is built ONCE, before the loop (§3): `aimSpace` is
+    /// a stack copy plus one `matMul4`, which is cheap per query and
+    /// unacceptable per vertex.
     int pickNearestVertex_(int sx, int sy, int exclude) {
+        import document : primaryModelSpace;
+        const AimViewport vpAim = aimSpace(vpWorld_, primaryModelSpace());
         float bestDist2 = PICK_RADIUS_PX * PICK_RADIUS_PX;
         int   bestIdx   = -1;
         foreach (i, v; mesh.vertices) {
             if (cast(int)i == exclude) continue;
             float px, py, ndcZ;
-            if (!projectToWindowFull(v, cachedVp_, px, py, ndcZ)) continue;
+            if (!projectToWindowFull(v, vpAim.vp, px, py, ndcZ)) continue;
             float dx = px - cast(float)sx;
             float dy = py - cast(float)sy;
             float d2 = dx*dx + dy*dy;
@@ -216,5 +239,34 @@ private:
             }
         }
         return bestIdx;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The AimViewport compile gate, asserted from a CONSUMER module (task 0619
+// §2.0). `private` in D is module-scoped, so math.d itself cannot prove that
+// `AimViewport`'s constructor is out of reach — inside math.d it is not. This
+// file is a real consumer of `aimSpace`, so the asserts below measure exactly
+// what the gate promises every call site in the tree: an `AimViewport` cannot
+// be conjured from a world `Viewport`; the only way to obtain one is to hand
+// `aimSpace` a `ModelSpace`.
+//
+// If any of these ever starts compiling, the type gate is gone and every
+// aiming site silently falls back to being policed by review alone.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    private void aimViewportGateChecks() {
+        static assert(!__traits(compiles, { AimViewport a; }),
+            "AimViewport must not be default-constructible outside math.d");
+        static assert(!__traits(compiles, { Viewport w; AimViewport a = AimViewport(w); }),
+            "AimViewport's constructor must be unreachable outside math.d");
+        static assert(!__traits(compiles, { Viewport w; AimViewport a = w; }),
+            "a world Viewport must not become an AimViewport outside math.d");
+        // The positive control: the ONE sanctioned producer does compile, so
+        // the three refusals above are about accessibility, not about the
+        // type being unusable.
+        static assert(__traits(compiles, {
+            Viewport w; ModelSpace ms; auto a = aimSpace(w, ms); cast(void)a.vp.width;
+        }), "aimSpace(vp, ms) must be the way an AimViewport is produced");
     }
 }
