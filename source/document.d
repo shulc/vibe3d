@@ -480,6 +480,33 @@ final class ImageData {
     string colorspace = "(default)"; ///< closed tag set: see kindParams' Enum
                                       ///< declaration in layer_params.d
     bool   useAlpha   = true;        ///< inert; round-tripped, nothing reads it
+
+    // -----------------------------------------------------------------------
+    // Task 0616 Ph5 — the DERIVED half. Recomputed from the file by
+    // `io.image_path.refreshImageMeta`; never authored, never a `Param`,
+    // never serialised. The split is the point: the three fields above are
+    // what the document SAYS, these four are what the disk ANSWERED, and the
+    // answer is allowed to change under the document without the document
+    // changing (that is exactly what `image.reload` exists to observe).
+    //
+    // Persisting any of these would create the second source of truth the
+    // plan's §Q2 forbids: it goes stale the moment the file changes on disk,
+    // and — worse — a stale `width` cannot be told apart from a fresh one, so
+    // a reader would report a confident wrong number for a file it never
+    // opened.
+    // -----------------------------------------------------------------------
+    int  width;      ///< pixels; 0 while `missing`
+    int  height;     ///< pixels; 0 while `missing`
+    int  channels;   ///< channel count present in the SOURCE file (1/2/3/4);
+                      ///< 0 while `missing`. The list's "format" column is a
+                      ///< rendering of this, not the file extension.
+    bool missing = true; ///< true until a read of `storedPath` has SUCCEEDED.
+                          ///< Defaults true rather than false because a payload
+                          ///< that was never refreshed has not resolved
+                          ///< anything — "unresolved" is the honest initial
+                          ///< answer, and claiming `missing == false` for a
+                          ///< path nobody has opened is the one wrong answer
+                          ///< a consumer cannot detect.
 }
 
 // ===========================================================================
