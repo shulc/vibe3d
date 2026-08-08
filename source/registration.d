@@ -958,6 +958,35 @@ void registerCommands(EditorApp app) {
         reg.commandFactories["layer.parent"] = () => cast(Command)
             new LayerParent(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged);
 
+        // image.* commands (task 0616 Ph5) — the document's image list. They
+        // sit in the layer block because an image IS a document item: they
+        // mutate the same `Document`, ride the same `/api/command` dispatch
+        // and the same undo stack, and `image.remove` composes `layer.delete`
+        // for the mutation itself. `onActiveLayerChanged` is forwarded for
+        // that composition; no image command moves the edit target itself
+        // (an image is never `canBePrimary`).
+        //
+        // Every one of them takes its path/index as a param, so the file
+        // dialog inside `image.load` / `image.replace` is a wrapper over the
+        // by-path route rather than a second code path — which is what makes
+        // the whole set driveable from a test with no UI.
+        {
+            import commands.image.commands : ImageLoad, ImageReplace,
+                                              ImageReload, ImageRemove;
+            reg.commandFactories["image.load"] = () => cast(Command)
+                new ImageLoad(&mesh(), cameraView, editMode, &document(),
+                              onActiveLayerChanged);
+            reg.commandFactories["image.replace"] = () => cast(Command)
+                new ImageReplace(&mesh(), cameraView, editMode, &document(),
+                                 onActiveLayerChanged);
+            reg.commandFactories["image.reload"] = () => cast(Command)
+                new ImageReload(&mesh(), cameraView, editMode, &document(),
+                                onActiveLayerChanged);
+            reg.commandFactories["image.remove"] = () => cast(Command)
+                new ImageRemove(&mesh(), cameraView, editMode, &document(),
+                                onActiveLayerChanged);
+        }
+
         // ai3d.importResult — editor-side landing command for the optional
         // external AI3D worker. It consumes a staged OBJ path, validates the
         // ImportedScene through the AI3D gate, then adds one undoable layer.

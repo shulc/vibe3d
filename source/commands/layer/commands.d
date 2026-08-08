@@ -537,6 +537,17 @@ final class LayerDelete : LayerCommandBase {
         return [ Param.int_("index", "Index", &indexArg, -1) ];
     }
 
+    /// Set the target index programmatically, for a command in ANOTHER module
+    /// that composes this one rather than reimplementing it (task 0616 Ph5:
+    /// `commands/image/commands.d`'s `image.remove` adds a kind guard and an
+    /// in-use warning on top of exactly this mutation + undo). Mirrors
+    /// `MeshSelect.setMode`/`setIndices`, the same shape
+    /// `commands/copilot/select_finding.d` uses to drive an inner command —
+    /// `private` fields are module-scoped in D, so a sibling module cannot
+    /// reach `indexArg` directly and must not be pushed into re-parsing JSON
+    /// to get at it.
+    void setIndex(int i) { indexArg = i; }
+
     override bool apply() {
         removedIndex    = resolveIndex(indexArg);
         prevActiveIndex = doc.activeIndex;
