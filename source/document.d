@@ -515,6 +515,47 @@ struct Document {
         return layers.filter!(l => l.hasMesh);
     }
 
+    /// The item-transform MOVING SET — every SELECTED item, in `layers`
+    /// order. Task 0614 Phase 6, law L2 (`doc/tasks/0614-evidence/
+    /// phase0_findings.md` case B): a transform gesture in Item mode moves
+    /// the WHOLE selected set, not only the primary. This is the one place
+    /// that answers "which items does the gizmo act on"; the transform tool
+    /// resolves all three of its target lists (run baseline, headless
+    /// one-shot baseline, undo session) through it so they cannot drift.
+    ///
+    /// Deliberately NOT `visible`-filtered. `foreground(l)` is
+    /// `visible && selected`, and a hidden-but-selected layer is a
+    /// representable state (`layer.setVisible` on a non-primary selected
+    /// layer). Dropping it from the moving set would silently desync the
+    /// undo payload from the selection the user sees in the layer list, and
+    /// re-showing the layer would reveal it stranded at a stale pose. The
+    /// primary is always visible (document invariant), so the shared action
+    /// centre is unaffected either way.
+    ///
+    /// Fills `outBuf` IN PLACE (its `length` is the count) rather than
+    /// returning a fresh array: the caller keeps long-lived buffers and
+    /// re-resolves once per run / per session, so an allocating accessor
+    /// would churn an array per gesture for nothing — and a `Document`-owned
+    /// scratch buffer could not be shared by two callers without aliasing.
+    ///
+    /// `layers` order is DETERMINISTIC and stable, which
+    /// `LayerXformEdit.mergeRunTail`'s first-touch union relies on for a
+    /// reproducible multi-target undo payload.
+    ///
+    /// `kindInfo(l.kind).hasXform` is deliberately NOT consulted: the
+    /// `static assert` over `kItemKindTable` (above) proves every declared
+    /// kind participates in the item transform, so a filter here would be a
+    /// branch that can never be false. This is a site to gate when a
+    /// `hasXform == false` kind first lands — alongside `layer_params.d`,
+    /// per that assertion's own message.
+    void selectedItemsInto(ref Layer[] outBuf) {
+        size_t n = 0;
+        foreach (l; layers) if (l !is null && l.selected) ++n;
+        if (outBuf.length != n) outBuf.length = n;
+        size_t i = 0;
+        foreach (l; layers) if (l !is null && l.selected) outBuf[i++] = l;
+    }
+
     /// Foreground / background DERIVATION (Stage 2b: the SOLE source of truth).
     ///
     /// `foreground(l) == l.visible &&  l.selected`,
@@ -1425,6 +1466,65 @@ unittest {  // Stage 3b: indexOf resolves by identity; absent ⇒ layers.length.
     assert(doc.indexOf(doc.layers[2]) == 2);
     auto stray = new Layer;
     assert(doc.indexOf(stray) == doc.layers.length, "absent layer ⇒ layers.length sentinel");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0614 Phase 6: `selectedItemsInto` is the SOLE answer to "which items
+// does an item-mode gesture act on". Four properties, each of which a
+// plausible alternative implementation gets wrong:
+//   * membership is `selected`, and NOTHING else — a non-mesh item that can
+//     never be primary is in the set (that is the whole point of Phase 6),
+//     and a HIDDEN selected item stays in it (see the accessor's own note on
+//     why `foreground()` is the wrong predicate here);
+//   * order is `layers` order, deterministically — the undo payload's
+//     first-touch union is built on it;
+//   * the buffer is reused, so a SHRINK must not leave a stale tail visible
+//     through `length` (an implementation that only ever grows the buffer
+//     reads three entries where two are selected);
+//   * a single-selection document yields exactly the primary.
+// ---------------------------------------------------------------------------
+
+unittest {  // selectedItemsInto — membership, order, and buffer reuse.
+    import std.conv : to;
+    auto doc = mixedDoc();                       // [MeshA(primary), Empty, MeshB]
+    Layer[] buf;
+
+    // Bootstrap: exactly the primary is selected.
+    doc.selectedItemsInto(buf);
+    assert(buf.length == 1 && buf[0] is doc.layers[0],
+        "a single-selection document yields exactly the primary — got length "
+        ~ buf.length.to!string);
+
+    // A non-mesh item joins the set even though it can never be primary —
+    // Phase 6 is the first thing that can transform one.
+    doc.selectItem(doc.layers[1], SelMode.Add);
+    doc.selectItem(doc.layers[2], SelMode.Add);
+    doc.selectedItemsInto(buf);
+    assert(buf.length == 3,
+        "every selected item is in the moving set — got length "
+        ~ buf.length.to!string);
+    assert(buf[0] is doc.layers[0] && buf[1] is doc.layers[1] && buf[2] is doc.layers[2],
+        "the moving set is emitted in `layers` order, deterministically");
+    assert(buf[1].kind == ItemKind.Empty && !doc.isPrimary(buf[1]),
+        "a non-primary, non-mesh item is a legitimate transform target");
+
+    // Hidden but selected stays in — the deliberate divergence from
+    // `foreground()`, pinned so a later `visible &&` cannot slip in unnoticed.
+    doc.layers[2].visible = false;
+    doc.selectedItemsInto(buf);
+    assert(buf.length == 3 && buf[2] is doc.layers[2],
+        "a HIDDEN but selected item stays in the moving set (`selected`, not "
+        ~ "`visible && selected`) — got length " ~ buf.length.to!string);
+    doc.layers[2].visible = true;
+
+    // SHRINK through the same buffer: no stale tail may remain readable.
+    doc.selectItem(doc.layers[1], SelMode.Remove);
+    doc.selectItem(doc.layers[2], SelMode.Remove);
+    doc.selectedItemsInto(buf);
+    assert(buf.length == 1 && buf[0] is doc.layers[0],
+        "the reused buffer must SHRINK to the new count — a stale tail would "
+        ~ "make a de-selected item keep receiving the gesture. got length "
+        ~ buf.length.to!string);
 }
 
 // ---------------------------------------------------------------------------

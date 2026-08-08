@@ -302,7 +302,10 @@ void registerTools(EditorApp app) {
         import tools.transform.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
                                         () => currentSelType(selTypeOrder),
-                                        () => document().primary);
+                                        // 0614 Ph6: the moving SET (L2), not
+                                        // the primary — see the field doc on
+                                        // XfrmTransformTool.itemTargetsSrc_.
+                                        (ref Layer[] buf) => document().selectedItemsInto(buf));
         t.flagT = true; t.flagR = false; t.flagS = false;
         t.handleFamily = 0;
         t.handlePresentation = "full";
@@ -317,7 +320,10 @@ void registerTools(EditorApp app) {
         import tools.transform.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
                                         () => currentSelType(selTypeOrder),
-                                        () => document().primary);
+                                        // 0614 Ph6: the moving SET (L2), not
+                                        // the primary — see the field doc on
+                                        // XfrmTransformTool.itemTargetsSrc_.
+                                        (ref Layer[] buf) => document().selectedItemsInto(buf));
         t.flagT = false; t.flagR = true; t.flagS = false;
         t.handleFamily = 1;
         t.handlePresentation = "full";
@@ -332,7 +338,10 @@ void registerTools(EditorApp app) {
         import tools.transform.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
                                         () => currentSelType(selTypeOrder),
-                                        () => document().primary);
+                                        // 0614 Ph6: the moving SET (L2), not
+                                        // the primary — see the field doc on
+                                        // XfrmTransformTool.itemTargetsSrc_.
+                                        (ref Layer[] buf) => document().selectedItemsInto(buf));
         t.flagT = false; t.flagR = false; t.flagS = true;
         t.handleFamily = 2;
         t.handlePresentation = "full";
@@ -347,7 +356,10 @@ void registerTools(EditorApp app) {
         import tools.transform.xfrm_transform : XfrmTransformTool;
         auto t = new XfrmTransformTool(() => &mesh(), &gpu(), &editMode(),
                                         () => currentSelType(selTypeOrder),
-                                        () => document().primary);
+                                        // 0614 Ph6: the moving SET (L2), not
+                                        // the primary — see the field doc on
+                                        // XfrmTransformTool.itemTargetsSrc_.
+                                        (ref Layer[] buf) => document().selectedItemsInto(buf));
         t.setUndoBindings(history, vxEditFactory);
         t.setItemUndoFactory(layerXformEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);

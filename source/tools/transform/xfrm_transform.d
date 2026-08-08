@@ -574,14 +574,38 @@ public:
     // baseline, so the rotation is needed only during the synchronous per-frame
     // applyTRS call — a transient parameter is sufficient.
 
-    // Task 0614 Phase 3 — the item-mode write target. Mirrors the
-    // `primarySrc_` pattern `ActionCenterStage`/`AxisStage` already use
-    // (actcenter.d:301, axis.d): a live delegate, never cached across calls,
-    // so a layer-select mid-session is picked up on the next apply. Null in
-    // tests / call sites that never engage item mode (edge_extend.d's
-    // embedded wrapper — its own apply path never reaches `applyTRS` here,
-    // same reasoning as `selTypeSrc_`'s doc comment on `TransformTool`).
-    private Layer delegate() primarySrc_;
+    // Task 0614 — the item-mode write target SET. Mirrors the `primarySrc_`
+    // pattern `ActionCenterStage`/`AxisStage` already use (actcenter.d:301,
+    // axis.d): a live delegate, never cached across calls, so a layer-select
+    // mid-session is picked up on the next apply. Null in tests / call sites
+    // that never engage item mode (edge_extend.d's embedded wrapper — its own
+    // apply path never reaches `applyTRS` here, same reasoning as
+    // `selTypeSrc_`'s doc comment on `TransformTool`).
+    //
+    // Phase 6 (law L2): this resolves the WHOLE SELECTED SET, not the
+    // primary. Fill-a-buffer rather than return-an-array so the two
+    // long-lived target lists below (`itemTargets`, `itemEditTargets_`) are
+    // refreshed without an allocation per gesture, and so neither can alias
+    // a buffer the other owns.
+    //
+    // NOTE the deliberate asymmetry with `ActionCenterStage`, which keeps its
+    // own `primarySrc_`: the moving SET is the whole selection, but the
+    // shared CENTRE follows the PRIMARY (L2, measured — not the set
+    // midpoint), so ACEN needs exactly the single-primary source it already
+    // has. Widening ACEN to the set would be a measured-behaviour change, not
+    // a Phase 6 consistency fix.
+    private void delegate(ref Layer[]) itemTargetsSrc_;
+
+    // Resolve the moving set into `buf`. THE single funnel: all three target
+    // lists (`beginRunGesture`'s run baseline, `restoreItemBaseline`'s
+    // headless one-shot fallback, `beginEdit`'s undo session) go through
+    // here, so a future change to what "the selected set" means cannot teach
+    // one of them and miss the others — the Phase 4 lesson (three session
+    // openers, only one taught) applied ahead of time rather than after.
+    private void resolveItemTargets(ref Layer[] buf) {
+        if (itemTargetsSrc_ is null) { buf.length = 0; return; }
+        itemTargetsSrc_(buf);
+    }
 
     // Cached subject type — refreshed once per input event in
     // `syncInputViewport` (the SAME point that caches `cachedVp`), from the
@@ -631,9 +655,9 @@ public:
 
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode,
          SelType delegate() selTypeSrc = null,
-         Layer delegate() primarySrc = null) {
+         void delegate(ref Layer[]) itemTargetsSrc = null) {
         super(meshSrc, gpu, editMode, selTypeSrc);
-        this.primarySrc_ = primarySrc;
+        this.itemTargetsSrc_ = itemTargetsSrc;
         // Blocker 1 (0614 review): the sub-tools each have their OWN
         // buildLocalVts call sites (applyHeadless / property-panel replay —
         // scale.d:320,1217,1311, rotate.d:224,1226,1316), so the same live
@@ -2551,12 +2575,10 @@ noBankConsumed:
             // SAME predicate as `dragBaseline` above: a same-bank repeat
             // holds the run baseline (itemBaselineValid stays true, no
             // re-capture below); a fresh run OR a rotate cross-axis re-bake
-            // re-captures. Refreshed from `primarySrc_()` on every rebake so
-            // a fresh run after a mid-session layer-select picks up the new
-            // primary. Phase 3 ships 0 or 1 element (primary-only); Phase 6
-            // widens this to the whole selected set.
-            itemTargets = (primarySrc_ !is null && primarySrc_() !is null)
-                        ? [primarySrc_()] : [];
+            // re-captures. Re-resolved on every rebake so a fresh run after a
+            // mid-session layer-select picks up the new selection. Phase 6:
+            // the WHOLE selected set (law L2), not just the primary.
+            resolveItemTargets(itemTargets);
             itemDragBaseline.length = itemTargets.length;
             foreach (i, t; itemTargets) itemDragBaseline[i] = t.xform;
             itemBaselineValid = itemTargets.length > 0;
@@ -3937,21 +3959,16 @@ noBankConsumed:
     // equivalent "passed in fresh" seam (`applyGestureToItems` reads
     // `itemDragBaseline`, a FIELD, not a parameter), so when no drag session
     // is open (`itemBaselineValid` false) this captures a fresh one-shot
-    // baseline from the LIVE `primarySrc_()` state right here — mirroring
+    // baseline from the LIVE moving set right here — mirroring
     // `mesh.vertices.dup`'s freshness for the vertex path. Without this a
     // bare `tool.attr <bank> ... ; tool.doApply` in item mode with no
     // preceding drag silently no-ops (itemTargets stays empty).
     private void restoreItemBaseline() {
         if (!itemBaselineValid) {
-            // NIT (0614 review) — assign into the existing length-one slot
-            // instead of a fresh `[primarySrc_()]` literal; this runs once
-            // per RUN (not per frame), but the allocation is free to avoid.
-            if (primarySrc_ !is null && primarySrc_() !is null) {
-                if (itemTargets.length != 1) itemTargets.length = 1;
-                itemTargets[0] = primarySrc_();
-            } else {
-                itemTargets.length = 0;
-            }
+            // Re-resolved (not allocated fresh) into the existing buffer —
+            // this runs once per RUN, not per frame, but the allocation is
+            // free to avoid. Phase 6: the whole selected set (law L2).
+            resolveItemTargets(itemTargets);
             itemDragBaseline.length = itemTargets.length;
             foreach (i, t; itemTargets) itemDragBaseline[i] = t.xform;
             itemBaselineValid = itemTargets.length > 0;
@@ -4851,24 +4868,18 @@ noBankConsumed:
         // contract as the base.
         if (itemSubjectActive()) {
             if (itemEditCapturing_) return;
-            // Read `primarySrc_()` directly rather than the `itemTargets`
-            // field: `beginEdit()` runs BEFORE `beginRunGesture()` in every
-            // begin*DragSession (load-bearing for the vertex path's pin/attr
-            // baseline capture below, which this branch does not disturb),
-            // so `itemTargets` — populated only by beginRunGesture's rebake
-            // — is not yet valid at this point in a fresh run. Self-
-            // sufficient capture from the live state sidesteps the ordering
-            // entirely, mirroring restoreItemBaseline()'s headless fallback.
-            // NIT (0614 review) — assign into the existing length-one slot
-            // instead of a fresh `[primarySrc_()]` literal; this runs once
-            // per SESSION (not per frame), but the allocation is free to
-            // avoid.
-            if (primarySrc_ !is null && primarySrc_() !is null) {
-                if (itemEditTargets_.length != 1) itemEditTargets_.length = 1;
-                itemEditTargets_[0] = primarySrc_();
-            } else {
-                itemEditTargets_.length = 0;
-            }
+            // Re-resolve the moving set HERE rather than reading the
+            // `itemTargets` field: `beginEdit()` runs BEFORE
+            // `beginRunGesture()` in every begin*DragSession (load-bearing
+            // for the vertex path's pin/attr baseline capture below, which
+            // this branch does not disturb), so `itemTargets` — populated
+            // only by beginRunGesture's rebake — is not yet valid at this
+            // point in a fresh run. A self-sufficient resolve sidesteps the
+            // ordering entirely, mirroring restoreItemBaseline()'s headless
+            // fallback; both go through the same `resolveItemTargets` funnel,
+            // so the undo session and the fold baseline cover the same set by
+            // construction, not by two sites agreeing.
+            resolveItemTargets(itemEditTargets_);
             itemEditBefore_.length = itemEditTargets_.length;
             foreach (i, t; itemEditTargets_) itemEditBefore_[i] = t.xform;
             itemEditCapturing_ = true;
@@ -6686,9 +6697,12 @@ private:
     // in, exactly as the vertex path does. Cleared in `resetRun()` alongside
     // `runBaselineValid`/`runFrameValid` (R15 lifecycle parity).
     //
-    // Phase 3 ships primary-only: `itemTargets` is always a 0- or 1-element
-    // slice holding `primarySrc_()`. Phase 6 widens both arrays to the whole
-    // selected set — the kernel signature is already N-ready.
+    // Phase 6: `itemTargets` is the WHOLE SELECTED SET (law L2), resolved
+    // through `resolveItemTargets` — the primary is in it, but so is every
+    // other selected item, INCLUDING kinds that can never be primary (an
+    // `ItemKind.Empty` is transformable for the first time here). The
+    // per-target index is shared with `itemDragBaseline`, so the two arrays
+    // are always the same length or the fold declines.
     private Layer[]     itemTargets;
     private ItemXform[] itemDragBaseline;
     private bool        itemBaselineValid = false;
