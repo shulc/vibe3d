@@ -336,17 +336,34 @@ Save As.
 
 A `.v3d` round-trip **keeps**: vertex coordinates (unchanged, to the last bit),
 n-gon faces, per-face subpatch flags, material and part ids, surfaces, UV and
-weight maps, the layer list with each layer's name, visibility and selection,
-which layer is the edit target, and each layer's full item transform —
-position, rotation, scale and pivot, all four exactly as authored.
+weight maps, the item list — every item, of every kind, including ones that
+carry no mesh — with each item's name, visibility and selection, which item is
+the edit target and which holds the item-selection focus, item parenting, each
+item's full transform (position, rotation, scale and pivot, all four exactly as
+authored), the loaded image list with each image's file path and settings, and
+the references from an item to an image.
 
-It **does not keep**: item parenting (a parent link is dropped on save), and
-items that carry no mesh (a transform-only item is skipped with a warning, and
-its transform goes with it — the format has no representation for one yet; a
-save that skipped a layer leaves the document marked as modified). A scale
-component whose magnitude falls outside 0.0001 … 1000000 is clamped into that
-range when the file is read, keeping its sign, because a value beyond it makes
-the item's matrix unusable.
+It **does not keep**: a reference to an image that has already been deleted
+from the document. Such a reference survives in memory (so undoing the delete
+restores it) but has nothing to point at in the file, so it comes back unset
+rather than broken. An image's pixel dimensions and format are not stored
+either — they are re-read from the file each time the document is opened, so
+they can never be stale.
+
+**Image paths are stored relative to the document** when the image sits beside
+it or in the folder above; anything further away is stored as a full path. Move
+a document and its images together and it still finds them. If an image file is
+missing when the document is opened, the document still opens: the image keeps
+its path and is marked as missing, and Reload picks it up once the file is back.
+
+A scale component whose magnitude falls outside 0.0001 … 1000000 is clamped
+into that range when the file is read, keeping its sign, because a value beyond
+it makes the item's matrix unusable.
+
+**Documents saved by earlier versions of Vibe3D do not open.** The format was
+deliberately broken rather than carrying two readers; the editor says which
+version the file is and which version it reads, and that the file is not
+damaged.
 
 Interchange formats are available under File → Import / Export:
 

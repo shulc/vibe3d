@@ -8,7 +8,11 @@ import std.format    : format;
 import mesh;
 import math;
 import document : Document, Layer, ItemXform, sanitizeItemXform,
-                  MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
+                  MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
+                  ItemKind, ImageData, kindInfo, kindFromToken, tokenOf;
+import layer_params : LayerPropsProvider;
+import params   : Param, paramToJson, injectParamsInto;
+import io.image_path : storePathFor, resolveStoredPath, refreshImageMeta;
 import seltype  : SelMode;
 import log : logWarn, logInfo;
 
@@ -27,44 +31,128 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 // editor model: vertices, n-gon faces, per-face subpatch flags, the surface
 // registry and per-face material indices.
 //
-// v5 schema (current, the ONLY shape read or written). It wraps one or more
-// layers around the shared mesh sub-object. The layer envelope is unchanged
-// from v4 (selection-types Stage 3): the per-layer `selected` flag persists the
-// item-selection SET (a layer's background state derives — see below), and the
-// document's edit target is named by `primaryLayer` (replacing the old
-// `activeLayer`). v4 added an optional per-corner `uvMaps` block to the shared
-// mesh sub-object (UV-maps Stage 3 — see below). v5 adds an OPTIONAL per-layer
-// `xform` block (the item transform/pivot — per-item channels Phase 1); only
-// the version int otherwise changes in the envelope:
+// ===========================================================================
+// v8 schema — task 0616 Ph6. THE CHAIN'S SINGLE VERSION STEP.
+// ===========================================================================
+//
+// Owner decision (doc/tasks/work/0616-image-clip-list.md, 2026-08-08): ONE
+// version bump for the whole chain of tasks, not one per task. v8 is therefore
+// designed for EVERY item kind at once — mesh, empty, image, and the
+// reference-image item a later task adds — even though the last one's code
+// does not exist yet.
+//
+// **THE CHECK THAT THIS WAS DONE RIGHT, stated here because this is where the
+// next reader will look: after that later task lands, `kV3dFormatVersion` must
+// STILL BE 8.** It adds channels to its item's param provider and they
+// serialise with no codec change, because `channels` below is generic. If
+// anyone finds themselves bumping the version to store an item's channels,
+// something has gone wrong with THIS design, not with theirs.
+//
 //   {
-//     "formatVersion": 5,
-//     "primaryLayer": 0,
+//     "formatVersion": 8,
+//     "primaryLayer": 0,          // index into layers[] — the MESH EDIT TARGET
+//     "focusedItem":  2,          // index into layers[] — the item-selection FOCUS
 //     "layers": [
-//       { "name": "Layer 1", "visible": true, "selected": true,
-//         "xform": { "pos":[x,y,z], "rot":[x,y,z],
-//                    "scl":[x,y,z], "pivot":[x,y,z] },  // optional
-//         "mesh": { /* the mesh sub-object below */ } },
-//       ...
+//       { "type":     "mesh",     // wire token (tokenOf / kindFromToken)
+//         "selected": true,       // the item-selection SET
+//         "parent":   0,          // index into layers[]; omitted when none
+//         "links":    [ { "slot": "maskImage", "target": 3 } ],
+//         "channels": { "name": "Layer 1", "visible": true,
+//                       "pos.x": 0, ... "pivot.z": 0 },
+//         "mesh":     { /* the mesh sub-object below */ }   // iff hasMesh
+//       },
+//       { "type": "image", "selected": false,
+//         "channels": { "name": "logo", "visible": true,
+//                       "colorspace": "(default)", "useAlpha": true },
+//         "image":    { "filename": "../assets/logo.png" }  // iff hasImage
+//       }
 //     ]
 //   }
 //
-// There is NO `background` key — `background(l) == l.visible && !l.selected`
-// derives at runtime (Stage 2b), so the file persists `selected` alone. There
-// is NO `activeLayer` key — `primaryLayer` indexes the primary (edit-target)
-// layer, which the reader forces selected + visible.
+// SEVEN DECISIONS, each with the alternative it beat.
 //
-// `xform` (v5 addition, per-item channels Phase 1) carries the layer's item
-// transform as four fixed `Vec3` sub-arrays (`pos`/`rot`/`scl`/`pivot`) — the
-// authored channels, NOT a derived matrix. `rot` is euler degrees. The block is
-// OMITTED ENTIRELY when the transform is all-default (pos=0, rot=0, scl=1,
-// pivot=0), matching the optional-field convention so default-transform docs
-// stay byte-clean. A MISSING block ⇒ identity transform — this is the
-// within-v5 optional-field contract (forward-additive), NOT back-compat. The
-// reader is TOLERANT: a missing or malformed sub-array leaves that component at
-// its identity default and keeps loading (the file still opens), matching the
-// `uvMaps` tolerant-within-version stance. The grouped shape is hand-written
-// from the four `Layer.xform` `Vec3` fields directly (the param provider exposes
-// flat scalar params; this codec does NOT iterate `params()` generically).
+// 1. `channels` IS THE ITEM'S WHOLE AUTHORED PARAM SET, written in full and
+//    read back generically through `paramToJson` / `injectParamsInto`. There
+//    is NO key list anywhere in this codec. `name`, `visible` and the twelve
+//    transform components are IN there — they are already params
+//    (`layer_params.d`), and keeping them as top-level keys as well would be
+//    two sources of truth for the same value. v5's grouped `xform` block and
+//    its hand-written four-`Vec3` codec are GONE for the same reason.
+//    Cost, paid deliberately: every `.v3d` fixture in the test suite had to be
+//    rewritten. Benefit: a future item kind's channels serialise with zero
+//    lines of codec, which is the property the owner's one-bump rule needs.
+//
+// 2. A `readonly_` param is NOT authored through the generic path in EITHER
+//    direction — the writer skips it and the reader strips it before
+//    injecting. `injectParamsInto` is a generic typed-pointer writer that does
+//    not consult the flag itself, so a read-only channel left in the block
+//    would be written straight through on load, behind whatever command owns
+//    it. `LayerAttr` already refuses a readonly write for exactly this reason;
+//    this is the same rule at the file boundary.
+//    CONSEQUENCE, and the reason `"image"` exists as its own block: an image
+//    item's `filename` IS `.readonly()` (it may only be authored by
+//    `image.replace`, which owns the resolve + refresh), so it cannot ride
+//    `channels` — yet it is the single most important thing about the item.
+//    A readonly param that is ALSO persistent state needs a block of its own.
+//    That is the price of the flag, and `"image"` is it.
+//
+// 3. THE WRITER WRITES EVERY ITEM, UNFILTERED. v7 skipped non-mesh layers and
+//    renumbered `primaryLayer` against the filtered sequence; v8 does not, and
+//    `writeV3d` therefore always returns `true`. **This is a PRECONDITION, not
+//    a preference** — see decision 4.
+//
+// 4. `parent` AND `links` ARE STORED AS INDICES INTO `layers[]`, resolved back
+//    to objects after the whole file is parsed. That is a wire ENCODING of the
+//    identity those references already use (the `Layer` OBJECT — see
+//    `document.d`'s link header), not a second identity scheme, and it is
+//    injective ONLY BECAUSE decision 3 holds: if the writer ever filters the
+//    item list again, index ↔ object stops being a bijection and every stored
+//    reference past the hole silently names its NEIGHBOUR. At that point a
+//    per-item stable id becomes necessary. Until then it is not.
+//    **A DANGLING LINK CANNOT SURVIVE THE WIRE.** A target that is no longer a
+//    document member has no index, so the slot is dropped and the link reads
+//    `Unset` — not `Dangling` — after a round trip. This is an honest property
+//    of the index encoding and it is deliberately NOT papered over with a
+//    sentinel index or a tombstone entry (either would be the second identity
+//    scheme decision 4 depends on not existing). It does partially retract one
+//    of the three reasons the link design gives for keeping dangling links:
+//    "deleted carries strictly more information than never-set" is true in
+//    memory and false across a save.
+//
+// 5. `focusedItem` PERSISTS, and a `primaryLayer` naming an item that cannot be
+//    the edit target is CORRECTED, not obeyed and not rejected: the reader
+//    re-homes to the first `canBePrimary` item and leaves focus where the file
+//    put it. A file with NO `canBePrimary` item at all IS rejected — the
+//    `Document` invariants have no representable answer for it. v7 could not
+//    hit this because its reader only ever produced mesh-kind layers; the
+//    `"type"` token is what makes it reachable, so v8 is where it is closed.
+//
+// 6. CHANNEL INJECTION HAPPENS BEFORE THE ATOMIC SWAP, and the outer catch is
+//    `Exception`, not `JSONException`. `injectParamsInto` THROWS a plain
+//    `Exception` on an unknown enum tag, a non-string for a String param and a
+//    malformed Vec3. Without both halves, a bad channel value would either
+//    escape `readV3d` entirely or leave the caller's document half-committed —
+//    the codec's stated "a reject leaves your document untouched" guarantee
+//    holds only if nothing can throw after `document.layers = parsed`.
+//
+// 7. INJECT, THEN RUN THE MUTATOR PASS — the ORDER is load-bearing. `visible`
+//    is deliberately not writable through `layer.attr`, because hiding the
+//    primary has to promote a replacement; a generic `channels` injection
+//    bypasses that hook by construction. It is safe here ONLY because the
+//    post-parse mutator pass re-asserts the invariants and force-shows a
+//    hidden primary afterwards. Stated as a rule so it is not mistaken for an
+//    accident of where the code was pasted.
+//
+// There is NO `background` key — `background(l) == l.visible && !l.selected`
+// derives at runtime, so the file persists `selected` alone. There is NO
+// `activeLayer` key — `primaryLayer` indexes the primary (edit-target) layer,
+// which the reader forces selected + visible.
+//
+// `image` (v8) carries the image item's payload: `filename`, in the STORED
+// form — relative to the document when the file sits beside it or in its
+// parent, absolute otherwise (`io/image_path.d` owns the rule and both
+// directions of it). The codec never has to know that a channel is a path,
+// because the path is not a channel.
 //
 // The shared "mesh" sub-object:
 //   {
@@ -90,14 +178,22 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 // key is omitted entirely when no PolyVertex map exists.
 //
 // CLEAN BREAK (no external clients, per the project directive): the reader
-// accepts EXACTLY `formatVersion == kV3dFormatVersion`. Every earlier shape —
-// v1 (top-level `mesh`), v2 (`activeLayer` + per-layer `background`), v3
-// (no `uvMaps`), and v4 (no per-layer `xform`) — is no longer parsed; they are
-// rejected cleanly at the version gate, leaving the caller's document
-// untouched. There is NO migration code. The reader stays tolerant WITHIN the
-// current version: unknown fields are ignored and missing optional fields
-// default sensibly, so the format can keep growing (editor state, Shader Tree)
-// without another break.
+// accepts EXACTLY `formatVersion == kV3dFormatVersion`. Every earlier shape is
+// no longer parsed; they are rejected cleanly at the version gate, leaving the
+// caller's document untouched. There is NO migration code. The v7 → v8 break
+// is the widest one so far (`name` / `visible` / `xform` all moved into
+// `channels`), and it was taken knowingly: the owner accepted that every file
+// saved until now stops opening, in exchange for one read path instead of two.
+//
+// THE REJECTION MESSAGE IS PART OF THE CONTRACT. It must name the FILE's
+// version and the EDITOR's, and say the file is not damaged. "Could not open"
+// reads as corruption and sends the user hunting a problem that does not
+// exist — the file is fine, it is simply a different revision of a format
+// that does not convert.
+//
+// The reader stays tolerant WITHIN the current version: unknown fields are
+// ignored and missing optional fields default sensibly, so the format can keep
+// growing (editor state, Shader Tree) without another break.
 
 /// The schema version the writer emits and the ONLY version the reader accepts.
 /// Was 3 when item-selection persistence (`selected` + `primaryLayer`) landed;
@@ -105,9 +201,16 @@ private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); cat
 /// when the optional per-layer `xform` block was added (per-item channels Phase
 /// 1); bumped to 6 when the optional per-mesh `weightMaps` block was added
 /// (per-vertex named weight maps, dim=1 Point domain); bumped to 7 when the
-/// optional per-face `facePart` array was added (per-face numeric part id).
-/// v6 and earlier files are now rejected (deliberate clean break — no migration).
-enum int kV3dFormatVersion = 7;
+/// optional per-face `facePart` array was added (per-face numeric part id);
+/// bumped to 8 by task 0616 Ph6 — the item `"type"` token, the generic
+/// `channels` block (which absorbed `name` / `visible` / `xform`), the
+/// `"image"` payload, `parent`, `links` and `focusedItem`.
+///
+/// **8 IS MEANT TO STAY 8** across the rest of this chain — see the v8 schema
+/// note above. A later task filling in an item kind's channels must not need a
+/// bump; if it does, this design failed.
+/// v7 and earlier files are now rejected (deliberate clean break — no migration).
+enum int kV3dFormatVersion = 8;
 
 // ---------------------------------------------------------------------------
 // Write
@@ -247,104 +350,141 @@ void writeV3d(ref const Mesh mesh, string path)
     writeV3d(doc, path);
 }
 
-/// Serialize a layer's item transform to the optional grouped `xform` block:
-///   { "pos":[x,y,z], "rot":[x,y,z], "scl":[x,y,z], "pivot":[x,y,z] }
-/// Hand-written from the four `Vec3` fields directly (the param provider exposes
-/// flat scalar params; this codec is deliberately NOT a generic `params()` loop
-/// — the grouped shape is the persisted form). Returns `false` (leaving `out`
-/// untouched) when the transform is all-default (pos=0, rot=0, scl=1, pivot=0)
-/// so the writer omits the key entirely, keeping default-transform docs
-/// byte-clean.
-private bool xformToJson(ref const ItemXform x, out JSONValue xj)
+/// Serialize one item's AUTHORED channel set — the whole of
+/// `LayerPropsProvider.params()` minus the `readonly_` ones (decision 2).
+///
+/// There is deliberately no key list here: whatever the provider exposes for
+/// that kind is what the file carries, which is what lets a future kind's
+/// channels ride this codec unchanged (decision 1).
+///
+/// The const-cast is contained and read-only. The provider binds `Param`
+/// pointers to the layer's fields, which needs a MUTABLE `Layer`; every use
+/// below is `paramToJson`, which only reads through them. Dropping `const`
+/// from `writeV3d`'s signature instead would give up a guarantee its callers
+/// deserve — saving a document does not change it.
+private JSONValue channelsToJson(const(Layer) layer)
 {
-    // Default test: bit-exact against the identity authored channels. The
-    // round-trip is float-text deterministic, so exact equality is correct here
-    // (a layer that was never transformed compares equal and is omitted).
-    if (x.pos   == Vec3(0, 0, 0) &&
-        x.rot   == Vec3(0, 0, 0) &&
-        x.scl   == Vec3(1, 1, 1) &&
-        x.pivot == Vec3(0, 0, 0))
-        return false;
-
-    static JSONValue triple(ref const Vec3 v) {
-        return JSONValue([JSONValue(v.x), JSONValue(v.y), JSONValue(v.z)]);
+    auto prov = new LayerPropsProvider(cast(Layer) layer);
+    JSONValue cj = JSONValue(cast(JSONValue[string]) null);
+    foreach (ref p; prov.params()) {
+        if (p.readonly_) continue;
+        cj[p.name] = paramToJson(p);
     }
-    xj = JSONValue.init;
-    xj["pos"]   = triple(x.pos);
-    xj["rot"]   = triple(x.rot);
-    xj["scl"]   = triple(x.scl);
-    xj["pivot"] = triple(x.pivot);
-    return true;
+    return cj;
 }
 
-/// Serialize a whole `Document` (every layer + which layer is primary) to a
-/// `.v3d` document at `path` under `formatVersion: 7`. Each layer persists its
-/// `selected` flag (the item-selection SET); `primaryLayer` names the edit
-/// target. There is NO `background` key (it derives from `visible && !selected`)
-/// and NO `activeLayer` key (`primaryLayer` replaces it). Each layer also
-/// persists its item transform as an OPTIONAL grouped `xform` block (omitted
-/// when all-default — see `xformToJson`). Each layer's `mesh` sub-object goes
-/// through the shared `meshToJson` codec.
+/// Serialize an image item's payload block: the filename in its STORED form,
+/// derived against the document being written (`io/image_path.d`).
 ///
-/// Returns `true` when every layer in `document.layers` was written, `false`
-/// when at least one non-mesh layer was SKIPPED (task 0615 Stage 6/7 review
-/// round 2, should-fix 4). The file is still written successfully in the
-/// `false` case — with whatever layers v7 CAN represent — but the on-disk
-/// document no longer matches the in-memory one. A caller that tracks a
-/// dirty/clean flag (`commands/file/save.d`'s `FileSave`) must not treat a
-/// `false` return as "saved clean".
+/// A payload that was never constructed writes an empty filename rather than
+/// nothing at all, so the block's shape does not depend on how the item was
+/// created — the reader treats "" as "names no file" and marks it missing.
+private JSONValue imageToJson(const(ImageData) img, string docPath)
+{
+    JSONValue ij;
+    ij["filename"] = JSONValue(
+        img is null ? "" : storePathFor(img.storedPath, docPath));
+    return ij;
+}
+
+/// Serialize a whole `Document` — EVERY item, unfiltered — to a `.v3d`
+/// document at `path` under `formatVersion: 8`.
+///
+/// Per item: its kind `"type"` token, its `selected` flag (the item-selection
+/// SET), its `parent` and `links` as indices into `layers[]`, its whole
+/// authored `channels` set, and its payload block (`mesh` when `hasMesh`,
+/// `image` when `hasImage`). `primaryLayer` names the mesh edit target and
+/// `focusedItem` the item-selection focus. There is NO `background` key (it
+/// derives from `visible && !selected`) and NO `activeLayer` key.
+///
+/// **UNFILTERED IS A PRECONDITION, NOT A STYLE CHOICE.** `parent` and `links`
+/// encode their target as its INDEX in the array written here, so the mapping
+/// index ↔ object must be total and injective. v7 skipped the layers it could
+/// not represent and renumbered `primaryLayer` around them; if that ever comes
+/// back, every stored reference past a hole silently names its neighbour, and
+/// a per-item stable id becomes necessary before it does.
+///
+/// Returns `true`, always. The `bool` is KEPT rather than removed: its caller
+/// (`commands/file/save.d`'s `FileSave`) gates the dirty-flag rebaseline on
+/// it, and a future format-limited write path will want the channel back. The
+/// `assert` below is what stops the value drifting into a lie.
 bool writeV3d(ref const Document document, string path)
 {
     JSONValue doc;
     doc["formatVersion"] = JSONValue(kV3dFormatVersion);
 
-    // Task 0615 (Stage 7 finding): v7 has no representation for a non-mesh
-    // item — Stage 8/v8 (which would add a `"type"` token) is deferred to
-    // task 0616 by owner decision (doc/nonmesh_item_types_plan.md). A
-    // non-mesh layer only exists via this task's Stage 6/7 test-injection
-    // path in this slice (no UI/command surface can create one), but the
-    // WRITER must not crash if the live document holds one anyway —
-    // `layer.meshRef()`'s `debug` assert would fire, exactly the crash
-    // Stage 7's live mixed-document sweep hit. Skip the layer entirely
-    // rather than write a `"mesh"`-less entry: the READER's own guard
-    // (below, "mesh required") rejects the WHOLE file over one such entry,
-    // which is worse than simply omitting the layer. `primaryLayer` is
-    // written relative to THIS SAME filtered sequence, not the original
-    // layer indices — otherwise a non-mesh layer positioned before the
-    // primary would silently shift which layer loads back as primary.
-    size_t primaryIdxOut = 0;
-    bool skippedAny = false;
     JSONValue[] layers;
     layers.reserve(document.layers.length);
-    foreach (ref const layer; document.layers) {
-        if (!layer.hasMesh) {
-            v3dWarn("skipping non-mesh layer \"" ~ layer.name
-                ~ "\" — v7 cannot represent it (see task 0616)");
-            skippedAny = true;
-            continue;
-        }
-        if (layer is document.primary) primaryIdxOut = layers.length;
+    foreach (li, layer; document.layers) {
         JSONValue lj;
-        lj["name"]     = JSONValue(layer.name);
-        lj["visible"]  = JSONValue(layer.visible);
-        // Stage 3: persist the item-selection SET directly. `background` is
-        // NOT written — it derives (visible && !selected) on load.
+        lj["type"]     = JSONValue(tokenOf(layer.kind));
         lj["selected"] = JSONValue(layer.selected);
-        // v5: optional per-layer item transform. Hand-written from the four
-        // `Vec3` fields (NOT a generic `params()` loop); omitted when default.
-        JSONValue xj;
-        if (xformToJson(layer.xform, xj))
-            lj["xform"] = xj;
-        lj["mesh"]     = meshToJson(layer.meshRef());
+
+        // --- parent: an index, omitted when unset ---------------------------
+        if (layer.parent !is null) {
+            const pi = document.indexOf(layer.parent);
+            if (pi < document.layers.length)
+                lj["parent"] = JSONValue(cast(long) pi);
+            else
+                v3dWarn(format("layer %d (\"%s\"): parent is not an item of "
+                    ~ "this document — the link cannot be encoded and is "
+                    ~ "dropped", li, layer.name));
+        }
+
+        // --- links: an ARRAY, in `linkSlots()`'s canonical order -------------
+        // An array rather than a JSON object because a `JSONValue` object is a
+        // D associative array: its key order is a hash order, so the same
+        // document would not produce the same bytes twice and the canonical
+        // (name-sorted) order the link list maintains would be thrown away at
+        // the last step. `.v3d` is meant to be diffable in git.
+        //
+        // A DANGLING target has no index and is therefore DROPPED — after a
+        // round trip that link reads `Unset`, not `Dangling`. Deliberate; see
+        // decision 4. No sentinel, no tombstone.
+        JSONValue[] slots;
+        foreach (ref s; layer.linkSlots()) {
+            const ti = document.indexOf(s.link.targetUnchecked());
+            if (ti >= document.layers.length) {
+                v3dWarn(format("layer %d (\"%s\"): link slot \"%s\" points at "
+                    ~ "an item that is no longer in this document; the slot is "
+                    ~ "dropped (a dangling link cannot be encoded as an index)",
+                    li, layer.name, s.name));
+                continue;
+            }
+            JSONValue e;
+            e["slot"]   = JSONValue(s.name);
+            e["target"] = JSONValue(cast(long) ti);
+            slots ~= e;
+        }
+        if (slots.length > 0) lj["links"] = JSONValue(slots);
+
+        // --- channels: the whole authored param set, no key list ------------
+        lj["channels"] = channelsToJson(layer);
+
+        // --- payload blocks, one per payload capability ---------------------
+        if (layer.hasMesh)  lj["mesh"]  = meshToJson(layer.meshRef());
+        if (layer.hasImage) lj["image"] = imageToJson(layer.imageOrNull(), path);
+
         layers ~= lj;
     }
-    doc["primaryLayer"] = JSONValue(cast(long) primaryIdxOut);
+    assert(layers.length == document.layers.length,
+        "writeV3d must emit EVERY item: `parent` and `links` are encoded as "
+        ~ "indices into this array, so a filtered write silently re-points "
+        ~ "every reference past the hole");
+
+    doc["primaryLayer"] = JSONValue(cast(long) document.activeIndex);
+    // `focusedItem` is a document invariant (always a member), but a Document
+    // caught mid-assembly by a direct field write may not satisfy it yet, and
+    // writing `layers.length` as an index would be a reject on the way back in.
+    const fi = document.indexOf(document.focusedItem);
+    if (fi < document.layers.length)
+        doc["focusedItem"] = JSONValue(cast(long) fi);
     doc["layers"] = JSONValue(layers);
 
     // toPrettyString keeps the document human-readable + diff-able, matching
     // the format's design goal (source of truth, reviewable in git).
     write(path, doc.toPrettyString());
-    return !skippedAny;
+    return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -352,19 +492,25 @@ bool writeV3d(ref const Document document, string path)
 // ---------------------------------------------------------------------------
 
 /// Parse a `.v3d` document at `path` and rebuild a whole `Document`. Accepts
-/// ONLY `formatVersion == kV3dFormatVersion` (v7) — every earlier shape
-/// (v1/v2/v3/v4/v5/v6) is rejected at the version gate (clean break, no migration).
-/// A v7 file carries a `layers` array (each entry persisting its `selected` flag,
-/// plus an optional `xform` item-transform block and an optional `weightMaps`
-/// block per mesh) plus a `primaryLayer` index naming the edit target; the
-/// reader re-asserts the selection-set invariants via the Document mutators
-/// (`setActive` / `selectItem` / `setPrimary`), forcing the primary selected +
-/// visible if the file is inconsistent. Returns false (logging via the io
-/// subsystem, like importLWO) on a missing file, malformed JSON, a
-/// `formatVersion` other than v7, structurally wrong content, an empty `layers`
-/// array, or an out-of-range vertex index — and leaves the caller's `document`
-/// UNTOUCHED in every reject case (all layers are parsed into a temporary before
-/// the single atomic swap below).
+/// ONLY `formatVersion == kV3dFormatVersion` (v8) — every earlier shape is
+/// rejected at the version gate (clean break, no migration), with a message
+/// that names both versions and says the file is not damaged.
+///
+/// A v8 file carries a `layers` array (each entry: a `"type"` token, its
+/// `selected` flag, optional `parent` / `links` indices, its authored
+/// `channels`, and a payload block per capability) plus `primaryLayer` and
+/// `focusedItem` indices. The reader re-asserts the selection-set invariants
+/// via the Document mutators (`setActive` / `selectItem` / `setPrimary`),
+/// forcing the primary selected + visible if the file is inconsistent, and
+/// re-homing the primary when the file names an item that cannot be one.
+///
+/// Returns false (logging via the io subsystem, like importLWO) on a missing
+/// file, malformed JSON, an unsupported `formatVersion`, an unknown item type
+/// token, structurally wrong content, an empty `layers` array, a document with
+/// no possible edit target, an out-of-range vertex index, or a channel value
+/// the param codec refuses — and leaves the caller's `document` UNTOUCHED in
+/// every reject case (everything is parsed and injected into a temporary
+/// before the single atomic swap below).
 bool readV3d(string path, ref Document document)
 {
     v3dInfo(format("readV3d: path=%s", path));
@@ -393,22 +539,43 @@ bool readV3d(string path, ref Document document)
             return false;
         }
 
-        // Version gate (clean break). The reader accepts EXACTLY v7 — a newer
-        // file we can't parse, OR a legacy v1/v2/v3/v4/v5/v6 file, is rejected here
-        // (the document is untouched). A missing `formatVersion` (the implicit v1
-        // shape) is likewise rejected. Unknown fields WITHIN v7 are ignored.
-        int ver = 0;   // 0 = "no formatVersion key" → not v4 → reject
+        // Version gate (clean break). The reader accepts EXACTLY v8; anything
+        // else is rejected here and the caller's document is untouched.
+        //
+        // THE WORDING IS PART OF THE CONTRACT (task 0616 Ph6, owner). Each
+        // branch names the FILE's version AND this build's, and says the file
+        // is not damaged. A bare "could not open" would send the user looking
+        // for corruption that is not there — the commonest reason to land
+        // here is simply a document written before the v8 break, and there is
+        // no migration by design.
+        int ver = 0;   // 0 = "no formatVersion key" → not v8 → reject
         if (auto vp = "formatVersion" in doc) {
             if (vp.type == JSONType.integer)
                 ver = cast(int) vp.integer;
             else {
-                v3dWarn("reject: formatVersion is not an integer");
+                v3dWarn("reject: \"formatVersion\" is present but is not an "
+                    ~ "integer, so this file cannot be identified as a .v3d "
+                    ~ "document of any version");
                 return false;
             }
         }
         if (ver != kV3dFormatVersion) {
-            v3dWarn(format("reject: unsupported formatVersion %d "
-                            ~ "(this build reads only v%d)", ver, kV3dFormatVersion));
+            if (ver == 0)
+                v3dWarn(format("reject: no \"formatVersion\" key — this file "
+                    ~ "does not identify itself as a .v3d document. This build "
+                    ~ "reads .v3d format version %d.", kV3dFormatVersion));
+            else if (ver < kV3dFormatVersion)
+                v3dWarn(format("reject: this document is .v3d format version "
+                    ~ "%d, written by an EARLIER build of the editor; this "
+                    ~ "build reads version %d only and does not convert older "
+                    ~ "documents (deliberate clean break, no migration). The "
+                    ~ "file is not damaged.", ver, kV3dFormatVersion));
+            else
+                v3dWarn(format("reject: this document is .v3d format version "
+                    ~ "%d, written by a NEWER build of the editor; this build "
+                    ~ "reads version %d only. The file is not damaged — open "
+                    ~ "it with a build that reads version %d.",
+                    ver, kV3dFormatVersion, ver));
             return false;
         }
 
@@ -435,43 +602,176 @@ bool readV3d(string path, ref Document document)
                 v3dWarn(format("reject: layer %d is not an object", li));
                 return false;
             }
-            auto mp = "mesh" in lj;
-            if (mp is null || mp.type != JSONType.object) {
-                v3dWarn(format("reject: layer %d missing or non-object \"mesh\"", li));
-                return false;
+
+            // --- the item KIND ----------------------------------------------
+            // Optional, defaulting to "mesh" (the kind every pre-v8 document
+            // held and `Layer.kind`'s own default), but an UNKNOWN token is a
+            // REJECT: silently turning a kind we do not understand into a mesh
+            // would produce an item whose payload block we then fail to find,
+            // or — worse — one we misread as geometry. `kindFromToken` is the
+            // validated chokepoint and leaves `kind` untouched when it says no.
+            ItemKind kind = ItemKind.Mesh;
+            if (auto tp = "type" in lj) {
+                if (tp.type != JSONType.string || !kindFromToken(tp.str, kind)) {
+                    v3dWarn(format("reject: layer %d has an unknown item type "
+                        ~ "%s — this build does not know what that is, and "
+                        ~ "guessing would silently change the document",
+                        li, tp.toString()));
+                    return false;
+                }
             }
+
             auto layer = new Layer;
-            // v7 has no "type" key (Stage 8/v8 is out of scope for this task —
-            // cancelled, see task 0616); every layer this reader builds is
-            // mesh-kind (`Layer.kind` defaults to `ItemKind.Mesh`).
-            if (!meshFromJson(*mp, layer.meshRef()))
-                return false;
-            // Name + flags (all optional; sensible defaults preserved).
+            layer.kind = kind;
+
+            // --- payload blocks, BEFORE channels ----------------------------
+            // The channel injection binds param pointers into the payload
+            // (an image item's `colorspace` / `useAlpha` live on `ImageData`),
+            // so the payload has to exist first or the provider falls back to
+            // the base bundle and those channels are silently dropped.
+            if (kindInfo(kind).hasMesh) {
+                auto mp = "mesh" in lj;
+                if (mp is null || mp.type != JSONType.object) {
+                    v3dWarn(format("reject: layer %d is a \"%s\" item and must "
+                        ~ "carry a \"mesh\" object", li, tokenOf(kind)));
+                    return false;
+                }
+                if (!meshFromJson(*mp, layer.meshRef()))
+                    return false;
+            }
+            if (kindInfo(kind).hasImage) {
+                auto img = new ImageData();
+                layer.imageRef() = img;
+                string stored;
+                if (auto ip = "image" in lj) {
+                    if (ip.type == JSONType.object) {
+                        if (auto fp = "filename" in *ip)
+                            if (fp.type == JSONType.string) stored = fp.str;
+                    } else {
+                        v3dWarn(format("ignoring layer %d \"image\": not an object", li));
+                    }
+                }
+                // Resolve the STORED form against THIS document's location —
+                // which is what makes a document that moved to another folder
+                // still find the images that travelled with it.
+                img.storedPath = resolveStoredPath(stored, path);
+                // §Q4: a file that is not there is NOT a malformed document.
+                // The item keeps its path and reports itself missing; the load
+                // continues. `refreshImageMeta` already logged the reason and
+                // has left `missing` true.
+                if (img.storedPath.length > 0 && !refreshImageMeta(img))
+                    v3dWarn(format("layer %d: image \"%s\" could not be read; "
+                        ~ "the item keeps its path and is marked missing",
+                        li, img.storedPath));
+            }
+
+            // --- channels ---------------------------------------------------
+            // Defaults FIRST, so a channel the file omits keeps a sensible
+            // value rather than whatever the injector did not write.
             layer.name = format("Layer %d", li + 1);
-            if (auto np = "name" in lj)
-                if (np.type == JSONType.string && np.str.length > 0)
-                    layer.name = np.str;
-            layer.visible = true;
-            if (auto vbp = "visible" in lj)
-                layer.visible = (vbp.type == JSONType.true_);
-            // Stage 3: persist the item-selection SET. Default deselected; the
-            // mutator pass below re-asserts the ≥1-selected + primary invariants.
+            if (auto cp = "channels" in lj) {
+                if (cp.type == JSONType.object) {
+                    // Strip `readonly_` before injecting (decision 2):
+                    // `injectParamsInto` is a generic typed-pointer writer with
+                    // no policy of its own, so a read-only channel left in the
+                    // list would be authored here behind the command that owns
+                    // it. This is the same refusal `layer.attr` already makes.
+                    auto prov = new LayerPropsProvider(layer);
+                    Param[] writable;
+                    foreach (ref p; prov.params())
+                        if (!p.readonly_) writable ~= p;
+                    // MAY THROW (unknown enum tag, wrong JSON type for a String
+                    // or Vec3). Caught by the outer `catch (Exception)` — and
+                    // this runs BEFORE the atomic swap, which is what makes a
+                    // bad channel value a clean reject instead of a
+                    // half-committed document (decision 6).
+                    injectParamsInto(writable, *cp);
+                } else {
+                    v3dWarn(format("ignoring layer %d \"channels\": not an object", li));
+                }
+            }
+            // R7 (task 0614): the generic injector applies only the DECLARED
+            // `.min`/`.max`, which caps the scale magnitude from above but
+            // cannot express the exclusion band around zero and cannot reject a
+            // NaN (every comparison against NaN is false). `.v3d` is the
+            // native format and therefore the likeliest carrier of a poisoned
+            // value, so the band is enforced here exactly as the two command
+            // write paths enforce it. `ItemXform.init` is the "prior" because a
+            // fresh load has none.
+            if (kindInfo(kind).hasXform) {
+                ItemXform noPrior;
+                if (sanitizeItemXform(layer.xform, noPrior))
+                    v3dWarn(format("layer %d xform carried out-of-range values; "
+                        ~ "clamped scale to [%g, %g] (sign preserved) and "
+                        ~ "replaced any non-finite component with its identity",
+                        li, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG));
+            }
+
+            // Persist the item-selection SET. Default deselected; the mutator
+            // pass below re-asserts the ≥1-selected + primary invariants.
             bool sel = false;
             if (auto sp = "selected" in lj)
                 sel = (sp.type == JSONType.true_);
-            // v5: optional per-layer item transform. A missing block ⇒ identity
-            // (the layer's `xform` stays at its default). Parsed tolerantly:
-            // a malformed sub-array leaves that component at its identity
-            // default and keeps loading (see readXform).
-            if (auto xp = "xform" in lj)
-                readXform(*xp, li, layer.xform);
+
             parsed   ~= layer;
             selected ~= sel;
         }
 
-        // primaryLayer: optional; default 0; clamp into [0, layers-1]. The
-        // primary is forced selected + visible below (handles an inconsistent
-        // file that named a deselected/hidden layer as primary).
+        // --- second pass: resolve `parent` and `links` -----------------------
+        // Deliberately after EVERY layer exists: an index may name an item that
+        // appears later in the file, and that is the ordinary case (a consumer
+        // written before the image it points at). Both are validated against
+        // the parsed length and reported tolerantly — a bad reference is a
+        // dropped reference, not a rejected document, matching the `uvMaps`
+        // stance for the same reason (the rest of the file is still good).
+        foreach (li, lj; lp.array) {
+            if (auto pp = "parent" in lj) {
+                if (pp.type == JSONType.integer || pp.type == JSONType.uinteger) {
+                    const long a = (pp.type == JSONType.uinteger)
+                        ? cast(long) pp.uinteger : pp.integer;
+                    if (a < 0 || a >= cast(long) parsed.length)
+                        v3dWarn(format("ignoring layer %d \"parent\": index %d "
+                            ~ "is outside [0, %d)", li, a, parsed.length));
+                    else if (cast(size_t) a == li)
+                        v3dWarn(format("ignoring layer %d \"parent\": an item "
+                            ~ "cannot be its own parent", li));
+                    else
+                        parsed[li].parent = parsed[cast(size_t) a];
+                } else if (pp.type != JSONType.null_) {
+                    v3dWarn(format("ignoring layer %d \"parent\": not an index", li));
+                }
+            }
+            if (auto kp = "links" in lj) {
+                if (kp.type != JSONType.array) {
+                    v3dWarn(format("ignoring layer %d \"links\": not an array", li));
+                } else foreach (ei, e; kp.array) {
+                    if (e.type != JSONType.object) {
+                        v3dWarn(format("ignoring layer %d links[%d]: not an object", li, ei));
+                        continue;
+                    }
+                    string slot;
+                    if (auto sp2 = "slot" in e)
+                        if (sp2.type == JSONType.string) slot = sp2.str;
+                    if (slot.length == 0) {
+                        v3dWarn(format("ignoring layer %d links[%d]: missing/empty slot name", li, ei));
+                        continue;
+                    }
+                    long t = -1;
+                    if (auto tp2 = "target" in e) {
+                        if (tp2.type == JSONType.integer)       t = tp2.integer;
+                        else if (tp2.type == JSONType.uinteger) t = cast(long) tp2.uinteger;
+                    }
+                    if (t < 0 || t >= cast(long) parsed.length) {
+                        v3dWarn(format("ignoring layer %d link \"%s\": target %d "
+                            ~ "is outside [0, %d)", li, slot, t, parsed.length));
+                        continue;
+                    }
+                    parsed[li].setLink(slot, parsed[cast(size_t) t]);
+                }
+            }
+        }
+
+        // --- primaryLayer: clamped into range, then CORRECTED by kind -------
         size_t primaryIndex = 0;
         if (auto pp = "primaryLayer" in doc) {
             long a = 0;
@@ -481,25 +781,63 @@ bool readV3d(string path, ref Document document)
             if (a >= cast(long) parsed.length)  a = cast(long) parsed.length - 1;
             primaryIndex = cast(size_t) a;
         }
+        // Decision 5. v7's reader could only ever produce mesh-kind layers, so
+        // the raw write of `document.primary` that used to live below was
+        // harmless by construction; the `"type"` token is exactly what ends
+        // that, so v8 is where the exposure is closed. A malformed index is a
+        // REPAIRABLE inconsistency (re-home to the first item that can be the
+        // edit target) — but a document with NO such item is not repairable at
+        // all: `Document`'s invariants have no representable answer, and every
+        // consumer of `layers` would then be reasoning about a document the
+        // type system says cannot exist. Reject that one; the caller's
+        // document is untouched (nothing has been swapped yet).
+        if (!kindInfo(parsed[primaryIndex].kind).canBePrimary) {
+            size_t rehome = parsed.length;
+            foreach (i, l; parsed)
+                if (kindInfo(l.kind).canBePrimary) { rehome = i; break; }
+            if (rehome == parsed.length) {
+                v3dWarn("reject: no item in this document can be the mesh edit "
+                    ~ "target — a document must contain at least one item that "
+                    ~ "`canBePrimary`, and this one contains none");
+                return false;
+            }
+            v3dWarn(format("\"primaryLayer\" %d names a \"%s\" item, which "
+                ~ "cannot be the mesh edit target; re-homing the primary to "
+                ~ "layer %d and leaving the focus where the file put it",
+                primaryIndex, tokenOf(parsed[primaryIndex].kind), rehome));
+            primaryIndex = rehome;
+        }
 
-        // --- atomic swap: every layer parsed; commit into the document ---
-        document.layers  = parsed;
-        document.primary = parsed[primaryIndex];
+        // --- focusedItem: optional; defaults to the primary ------------------
+        size_t focusIndex = primaryIndex;
+        if (auto fp = "focusedItem" in doc) {
+            long a = -1;
+            if (fp.type == JSONType.integer)        a = fp.integer;
+            else if (fp.type == JSONType.uinteger)  a = cast(long) fp.uinteger;
+            if (a < 0 || a >= cast(long) parsed.length)
+                v3dWarn(format("ignoring \"focusedItem\" %d: outside [0, %d)",
+                    a, parsed.length));
+            else
+                focusIndex = cast(size_t) a;
+        }
 
-        // Re-assert the selection-set invariants via the Stage-0/2a mutators
-        // (never by writing raw fields). Start from a clean baseline: the
-        // primary is the edit target AND the single member of the set
-        // (setActive enforces primary selected+visible; task 0615 NIT,
-        // review round 2 — it no longer enforces exactly-one-selected in
-        // general: naming a non-mesh `primaryIndex` here leaves the selected
-        // set at exactly TWO, {that layer, the still-selected mesh primary}
-        // — see document.d's exclusiveSelect/§L2. `parsed[primaryIndex]`
-        // is still resolved to a mesh-kind layer by construction as of this
-        // stage, so that case does not fire here yet; it is the exposure
-        // L3/Stage 8 must close).
+        // --- atomic swap: everything parsed and injected; commit ------------
+        // Nothing above this line touched `document`, so every `return false`
+        // so far left the caller's document byte-identical. Nothing below can
+        // throw.
+        document.layers = parsed;
+
+        // Re-assert the selection-set invariants via the mutators, never by
+        // writing raw fields. `setActive` alone is enough to install the
+        // primary now that `primaryIndex` is guaranteed `canBePrimary` above —
+        // the raw `document.primary = parsed[primaryIndex]` that used to sit
+        // here (and that `document.d` flagged as the last remaining L3
+        // violation) is gone with it.
         document.setActive(primaryIndex);
         // Force the primary visible if the file marked it hidden (an
-        // inconsistent file can't leave the edit target invisible).
+        // inconsistent file can't leave the edit target invisible). Decision 7:
+        // this runs AFTER the channel injection, which is the only reason a
+        // generic `visible` write is safe here at all.
         if (!document.primary.visible)
             document.primary.visible = true;
         // Re-add every other layer the file marked selected (multi-select set);
@@ -512,14 +850,40 @@ bool readV3d(string path, ref Document document)
         }
         document.setPrimary(document.layers[primaryIndex]);
 
-        v3dInfo(format("document ready: %d layer(s), primary=%d",
-                        document.layers.length, document.activeIndex));
+        // Focus LAST: `setPrimary` above homed the focus onto the primary, so
+        // a file that named a different focus re-states it here — through the
+        // mutator, which also satisfies the `focusedItem.selected` invariant.
+        //
+        // A focus on a `canBePrimary` item that is NOT the primary is not a
+        // representable state (every mutator that focuses such an item also
+        // makes it the primary), so it is reported and dropped rather than
+        // obeyed — obeying it would move the edit target the file explicitly
+        // named somewhere else.
+        if (focusIndex != primaryIndex) {
+            auto f = parsed[focusIndex];
+            if (!kindInfo(f.kind).canBePrimary)
+                document.selectItem(f, SelMode.Add);
+            else
+                v3dWarn(format("ignoring \"focusedItem\" %d: it names a \"%s\" "
+                    ~ "item that is not the primary, which the selection model "
+                    ~ "cannot represent; the focus stays on the primary",
+                    focusIndex, tokenOf(f.kind)));
+        }
+
+        v3dInfo(format("document ready: %d item(s), primary=%d, focus=%d",
+                        document.layers.length, document.activeIndex,
+                        document.indexOf(document.focusedItem)));
         return true;
-    } catch (JSONException e) {
-        // Backstop for any typed std.json access not guarded above. The
-        // document is mutated only at the final swap (after all rejects), so a
-        // throw before then leaves the caller's document intact.
-        v3dWarn(format("reject: malformed JSON structure: %s", e.msg));
+    } catch (Exception e) {
+        // Backstop for any typed std.json access not guarded above AND for the
+        // param codec, which throws a plain `Exception` on a channel value it
+        // refuses (decision 6). `JSONException` alone would let that one escape
+        // `readV3d` entirely and past `FileLoad`, which only checks the `bool`.
+        //
+        // The guarantee this preserves: `document` is mutated only at the swap
+        // above, after every reject, so a throw before then leaves the caller's
+        // document intact.
+        v3dWarn(format("reject: %s", e.msg));
         return false;
     }
 }
@@ -874,60 +1238,6 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
 
 private:
 
-/// Parse a v5 per-layer `xform` block into `x`, TOLERANTLY (per the `uvMaps`
-/// idiom: per-element validate / `v3dWarn` / keep going — never throw). Each of
-/// the four fixed sub-arrays (`pos`/`rot`/`scl`/`pivot`) is independent: a
-/// missing or malformed (non-array, < 3 entries, non-object root) sub-array
-/// leaves that component at its identity default (`x` arrives default-
-/// constructed from the caller), and the rest of the block still loads. So a
-/// degenerate block degrades gracefully to identity-where-broken rather than
-/// failing the load. `li` is the layer index, for diagnostics.
-///
-/// The parsed block is then put through `document.sanitizeItemXform` (task 0614
-/// Phase 5 review, B3). Tolerating a MALFORMED sub-array is not the same as
-/// tolerating a well-formed but ILLEGAL value: `"scl":[0,1,1]` parses perfectly
-/// and loads a singular `ItemXform`, exactly the state the R7 guard exists to
-/// make impossible. `.v3d` is the NATIVE format, so it is the likeliest carrier
-/// of such a value — a file written by an older build, hand-edited, or produced
-/// by a tool that never saw the band. `ItemXform.init` is passed as the "prior"
-/// value because a fresh load has none: a non-finite component therefore falls
-/// back to its channel identity rather than to some other layer's number.
-void readXform(const JSONValue xv, size_t li, ref ItemXform x)
-{
-    if (xv.type != JSONType.object) {
-        v3dWarn(format("ignoring layer %d xform: not an object", li));
-        return;
-    }
-    // Pull one [x,y,z] sub-array into `dst`, leaving it untouched (identity
-    // default) on any malformed entry — warn + skip, never throw.
-    void readTriple(string key, ref Vec3 dst) {
-        auto p = key in xv;
-        if (p is null) return;   // missing ⇒ keep identity default (no warning)
-        if (p.type != JSONType.array || p.array.length < 3) {
-            v3dWarn(format("ignoring layer %d xform.%s: not an [x,y,z] triple",
-                            li, key));
-            return;
-        }
-        dst = Vec3(jsonFloat(p.array[0]),
-                   jsonFloat(p.array[1]),
-                   jsonFloat(p.array[2]));
-    }
-    readTriple("pos",   x.pos);
-    readTriple("rot",   x.rot);
-    readTriple("scl",   x.scl);
-    readTriple("pivot", x.pivot);
-
-    // Enforce the R7 value policy on the loaded block. Warn when it fires: a
-    // silent repair of a file the user wrote is a value change they should be
-    // told about, and a stream of these is how a bad exporter gets found.
-    ItemXform noPrior;                       // == ItemXform.init (identity)
-    if (sanitizeItemXform(x, noPrior))
-        v3dWarn(format("layer %d xform carried out-of-range values; clamped "
-                     ~ "scale to [%g, %g] (sign preserved) and replaced any "
-                     ~ "non-finite component with its identity",
-                       li, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG));
-}
-
 /// Read a JSON number as a float, accepting integer, unsigned and floating
 /// encodings (std.json stores 1.0 as JSONType.float but 1 as integer).
 float jsonFloat(const JSONValue v)
@@ -941,17 +1251,18 @@ float jsonFloat(const JSONValue v)
 }
 
 // ---------------------------------------------------------------------------
-// Task 0615 Stage 7 (finding): `writeV3d(ref const Document, string)` used to
-// call `layer.meshRef()` unconditionally for EVERY layer — v7 has no
-// `"type"` concept at all, so nothing gated that call. Once a non-mesh layer
-// became constructible (Stages 1-6), that was a live crash: `meshRef()`'s
-// `debug` assert fires on a non-mesh layer, and the Stage 7 mixed-document
-// sweep hit it via a plain File > Save. The fix skips non-mesh layers (with
-// a warning) and recomputes `primaryLayer` relative to the FILTERED
-// sequence actually written, not the original layer indices — this
-// in-module test pins both halves: no crash, and a non-mesh layer sitting
-// BEFORE the primary in `document.layers` must not shift which layer loads
-// back as primary.
+// Task 0616 Ph6 — THE WRITER WRITES EVERY ITEM, and `primaryLayer` is the RAW
+// index into that unfiltered array.
+//
+// This test is the v7 test above it inverted. v7 skipped the non-mesh layer and
+// renumbered `primaryLayer` against the filtered output; v8 must do neither,
+// because `parent` and `links` encode their targets as indices into exactly
+// this array (writer decision 4). The fixture is kept from v7 for the same
+// reason it was chosen there: the primary sits in the MIDDLE, so
+//   * a writer that still filters produces 2 layers and loads MeshA at index 0;
+//   * a writer that filters but keeps the RAW index 1 loads MeshB;
+//   * the correct writer produces 3 layers with primary at index 1.
+// Three implementations, three different reads.
 // ---------------------------------------------------------------------------
 unittest {
     import std.file   : tempDir, remove, exists;
@@ -959,53 +1270,50 @@ unittest {
     import std.format : format;
     import std.random : uniform;
     import mesh        : makeCube;
-    import document     : ItemKind;
 
     auto path = buildPath(tempDir(),
         format("vibe3d_native_ut_%d.v3d", uniform(0, int.max)));
     scope(exit) if (exists(path)) remove(path);
 
-    // [Empty(non-mesh), MeshA(primary), MeshB] — the primary sits BEFORE
-    // another mesh layer, not at the end of `document.layers` (task 0615
-    // Stage 6/7 review round 2, should-fix 3). With the primary LAST (the
-    // original fixture here), the READER's out-of-range clamp
-    // (`primaryIndex` clamped into `[0, parsed.length-1]`, above) happens to
-    // land on the right layer even under the UNFIXED writer — which wrote
-    // the raw, pre-filter `document.activeIndex` (2) — because clamping 2
-    // into the filtered 2-entry range also yields 1. That fixture could not
-    // tell the fixed writer from the buggy one. Here the buggy write (raw
-    // index 1, already in-range for a 2-entry output — no clamp kicks in)
-    // loads MeshB; the fixed write (index 0, relative to the FILTERED
-    // output) loads MeshA. RED before the fix, GREEN after.
     auto doc = Document.bootstrap(makeCube());     // "Layer 1" == MeshA
     auto meshA = doc.layers[0];
     auto empty = new Layer; empty.name = "Empty"; empty.kind = ItemKind.Empty;
+    empty.xform.pos = Vec3(4.5f, -3.5f, 2.5f);     // a transform-only item, dialled in
     auto meshB = new Layer; meshB.name = "MeshB"; meshB.meshRef() = makeCube();
     doc.layers = [empty, meshA, meshB];
     doc.setActive(1);                              // MeshA stays primary (index 1)
     assert(doc.primary is meshA);
+    assert(!empty.hasMesh, "fixture: the middle item really is non-mesh");
 
-    // Writing must not crash (the `debug` assert this used to trip). It must
-    // also report the skip via its return value (should-fix 4) — a caller
-    // that gates a dirty/clean flag on this return must see `false` here.
-    assert(!writeV3d(doc, path),
-        "writeV3d must report false: the Empty layer was skipped");
+    // v8 can represent every item, so the write is COMPLETE — the `false`
+    // return v7 used here has no remaining trigger.
+    assert(writeV3d(doc, path),
+        "a v8 write covers the whole document, non-mesh items included");
 
-    // Round-trip: the reader only ever produces mesh-kind layers (v7 has no
-    // `"type"`), so the loaded document has exactly the two MESH layers, in
-    // their relative order, and the primary is correctly MeshA — NOT
-    // shifted onto MeshB by the dropped Empty layer.
     Document loaded;
     assert(readV3d(path, loaded), "round-trip load must succeed");
-    assert(loaded.layers.length == 2,
-        "the non-mesh layer is dropped; only the 2 mesh layers survive");
-    assert(loaded.layers[0].name == "Layer 1", "MeshA kept its bootstrap name");
-    assert(loaded.layers[1].name == "MeshB");
-    assert(loaded.primary is loaded.layers[0],
-        "primaryLayer must be written relative to the FILTERED sequence — "
-        ~ "MeshA is output index 0, not its original index 1 (the unfixed "
-        ~ "writer would have emitted the raw index 1 and loaded MeshB instead)");
-    assert(loaded.primary.hasMesh);
+    assert(loaded.layers.length == 3,
+        "every item survives — a filtering writer reads 2 here, got "
+        ~ loaded.layers.length.to!string);
+    assert(loaded.layers[0].kind == ItemKind.Empty,
+        "the non-mesh item came back AS a non-mesh item, in its own slot");
+    assert(loaded.layers[0].name == "Empty");
+    assert(loaded.layers[1].name == "Layer 1" && loaded.layers[1].hasMesh);
+    assert(loaded.layers[2].name == "MeshB");
+    assert(loaded.primary is loaded.layers[1],
+        "`primaryLayer` is the RAW index into the unfiltered array: a writer "
+        ~ "that filtered and renumbered lands the primary on layer 0, one that "
+        ~ "filtered without renumbering lands it on MeshB");
+
+    // The Empty's transform is a channel like any other and travels with it —
+    // the v7 loss this phase closes.
+    assert(loaded.layers[0].xform.pos.x == 4.5f
+        && loaded.layers[0].xform.pos.y == -3.5f
+        && loaded.layers[0].xform.pos.z == 2.5f,
+        "a non-mesh item's item transform survives, got "
+        ~ loaded.layers[0].xform.pos.x.to!string ~ ","
+        ~ loaded.layers[0].xform.pos.y.to!string ~ ","
+        ~ loaded.layers[0].xform.pos.z.to!string);
 }
 
 // ---------------------------------------------------------------------------
@@ -1055,17 +1363,19 @@ unittest {
 
     assert(writeV3d(doc, path), "fixture write must succeed");
 
-    // Precondition: the degenerate numbers really are on disk.
+    // Precondition: the degenerate numbers really are on disk. v8 carries the
+    // transform as FLAT channel keys, not as a grouped `xform` block.
     {
         auto raw = parseJSON(readText(path));
-        auto s   = raw["layers"].array[0]["xform"]["scl"].array;
-        assert(jsonFloat(s[0]) == 0.0f,
+        auto ch  = raw["layers"].array[0]["channels"];
+        assert(jsonFloat(ch["scl.x"]) == 0.0f,
             "precondition: the file must literally carry scl.x == 0 — if the "
           ~ "WRITER has grown a band, this case is now loading a clean file "
           ~ "and pins nothing about the reader");
-        assert(jsonFloat(s[1]) < 0.0f && fabs(jsonFloat(s[1])) < MIN_ITEM_SCALE_MAG,
+        assert(jsonFloat(ch["scl.y"]) < 0.0f
+            && fabs(jsonFloat(ch["scl.y"])) < MIN_ITEM_SCALE_MAG,
             "precondition: scl.y is on disk as a negative under-floor value");
-        assert(jsonFloat(s[2]) > MAX_ITEM_SCALE_MAG,
+        assert(jsonFloat(ch["scl.z"]) > MAX_ITEM_SCALE_MAG,
             "precondition: scl.z is on disk as an over-ceiling value");
     }
 
@@ -1227,15 +1537,21 @@ unittest {
 
     doc.layers = [A, E, C];
     doc.setActive(0);
+    // Focus is deliberately moved OFF the primary and onto the non-mesh item —
+    // the only state in which focus and primary can differ at all, and
+    // therefore the only fixture in which "restored from the file" and
+    // "re-derived onto the primary" read differently.
+    doc.selectItem(E, SelMode.Add);
     assert(doc.primary is A,           "setup: A is the primary");
+    assert(doc.focusedItem is E,       "setup: the focus is on the NON-MESH item, "
+        ~ "which is what makes the focus assertion below non-vacuous");
     assert(C.parent is A,              "setup: C really is parented to A — "
-        ~ "without this the parent-drop assertion below is vacuous");
+        ~ "without this the parent assertion below is vacuous");
     assert(E.kind == ItemKind.Empty,   "setup: E really is a non-mesh item");
 
-    // v7 cannot represent a non-mesh item, so the write is INCOMPLETE by
-    // contract (this is the same `false` the FileSave dirty-flag gate reads).
-    assert(!writeV3d(doc, path),
-        "a document holding a non-mesh item cannot be written completely");
+    // v8 represents every item, so the write is COMPLETE.
+    assert(writeV3d(doc, path),
+        "a v8 write covers a document holding a non-mesh item");
 
     Document loaded;
     assert(readV3d(path, loaded), "round-trip load must succeed");
@@ -1265,36 +1581,612 @@ unittest {
     assert(loaded.layers[0].xform.composedMatrix() == src.composedMatrix(),
         "the composed world matrix must be identical after a round-trip");
 
-    // === WHAT DOES NOT SURVIVE #1: a non-mesh item, and its transform =======
-    assert(loaded.layers.length == 2,
-        "v7 has no representation for a non-mesh item: the Empty item is "
-      ~ "DROPPED, not written as an empty mesh — got "
-      ~ loaded.layers.length.to!string ~ " layers");
-    foreach (l; loaded.layers) {
-        assert(l.kind == ItemKind.Mesh,
-            "every layer a v7 file can produce is mesh-kind");
-        assert(l.name != "E",
-            "the Empty item must not come back under any kind — its item "
-          ~ "transform (9.5,-8.5,7.5) went with it. If this ever fails, the "
-          ~ "format grew a type token and USAGE.md's `.v3d` note must change");
+    // === Task 0616 Ph6: three v7 LOSSES, now GAINS =========================
+    // Each assertion below was its own inverted twin until this phase; they
+    // are kept in the same place so the diff reads as "the loss became a
+    // round trip" rather than as three unrelated new checks.
+
+    // GAIN #1 — the non-mesh item, and its own transform.
+    assert(loaded.layers.length == 3,
+        "every item survives a v8 round trip; the Empty is no longer dropped "
+      ~ "— got " ~ loaded.layers.length.to!string ~ " layers");
+    assert(loaded.layers[1].name == "E" && loaded.layers[1].kind == ItemKind.Empty,
+        "the Empty item comes back in its own slot, AS an Empty");
+    assert(loaded.layers[1].xform.pos.x == 9.5f
+        && loaded.layers[1].xform.pos.y == -8.5f
+        && loaded.layers[1].xform.pos.z == 7.5f,
+        "…carrying the transform it was dialled to, got "
+      ~ loaded.layers[1].xform.pos.x.to!string ~ ","
+      ~ loaded.layers[1].xform.pos.y.to!string ~ ","
+      ~ loaded.layers[1].xform.pos.z.to!string);
+    assert(!loaded.layers[1].hasMesh,
+        "and it is NOT written as an empty mesh — a codec that gave it a "
+      ~ "geometry payload to fit the old shape would read hasMesh true here");
+
+    // GAIN #2 — the item PARENT link, by OBJECT IDENTITY.
+    assert(loaded.layers[2].name == "C", "sanity: layer 2 is the parented item");
+    assert(loaded.layers[2].parent !is null,
+        "the parent link now persists — a v7 codec reads null here");
+    assert(loaded.layers[2].parent is loaded.layers[0],
+        "…and it resolves to the RIGHT item. The parent sits at index 0 while "
+      ~ "its child is at index 2 with a non-mesh item BETWEEN them, so an "
+      ~ "off-by-one or a filtered-index encoding lands on \"E\" — got \""
+      ~ loaded.layers[2].parent.name ~ "\"");
+    assert(loaded.layers[0].parent is null && loaded.layers[1].parent is null,
+        "and no OTHER item gained a parent it never had");
+
+    // GAIN #3 — the item-selection FOCUS, distinct from the primary.
+    assert(loaded.primary is loaded.layers[0],
+        "the primary is still A");
+    assert(loaded.focusedItem is loaded.layers[1],
+        "the focus is restored onto the NON-MESH item, not collapsed onto the "
+      ~ "primary. This is the ONLY document shape where the two can differ, "
+      ~ "which is why the fixture focuses E — got \""
+      ~ loaded.focusedItem.name ~ "\"");
+}
+
+// ===========================================================================
+// Task 0616 Ph6 — the v8 additions, enumerated. Each block names the wrong
+// implementation its fixture separates out.
+//
+// These are IN-MODULE rather than HTTP tests because the things v8 newly
+// carries — an item link, a parent, a focus that is not the primary — have no
+// HTTP surface at all in this slice. An HTTP test would have to assert the
+// empty set, which is an inert assertion.
+// ===========================================================================
+
+version (unittest) {
+    import std.file       : tempDir, mkdirRecurse, rmdirRecurse, readText;
+    import std.path       : buildPath, dirName, buildNormalizedPath;
+    import io.image_path  : writeTestBmp;
+    import document       : LinkState;
+
+    /// A wiped scratch directory for one `.v3d` codec test. Wiped, not merely
+    /// created: a file left behind by a previous run — including a DELIBERATE
+    /// BREAK run — is otherwise visible to the next one, and a test whose
+    /// result depends on that is not a test. (The same lesson `io/image_path`
+    /// records, learned there first.)
+    private string v3dTestDir(string tag) {
+        auto d = buildPath(tempDir(), "vibe3d_v3d8_" ~ tag);
+        if (exists(d)) rmdirRecurse(d);
+        mkdirRecurse(d);
+        return d;
     }
 
-    // === WHAT DOES NOT SURVIVE #2: the item PARENT link =====================
-    assert(loaded.layers[1].name == "C", "sanity: layer 1 is the parented item");
-    assert(loaded.layers[1].parent is null,
-        "v7 persists no parent key, so the link is dropped silently on save. "
-      ~ "This assertion documents a LOSS: if it fails, parenting became "
-      ~ "persistent and USAGE.md's `.v3d` note must change with it. Got parent="
-      ~ loaded.layers[1].parent.name);
+    /// An image item with a payload already pointed at `absPath`.
+    private Layer makeImageLayer(string name, string absPath) {
+        auto l = new Layer;
+        l.kind = ItemKind.Image;
+        l.name = name;
+        auto img = new ImageData();
+        img.storedPath = absPath;
+        refreshImageMeta(img);
+        l.imageRef() = img;
+        return l;
+    }
 
-    // === Deliberately NOT asserted here: the item-selection FOCUS ===========
-    // v7 persists no focus key, so focus is re-derived on load (`readV3d`
-    // ends with `setPrimary`, whose `focusedItem = l` homes it on the
-    // primary). That is a traced fact, not a testable loss: `Document`
-    // maintains `focusedItem is primary` for an ALL-MESH document, and an
-    // all-mesh document is the only thing a v7 file can hold — the two
-    // answers "restored from the file" and "re-derived onto the primary"
-    // coincide, so any assertion here would pass against either. Focus can
-    // only diverge from the primary while a NON-MESH item is focused, and
-    // that item does not survive the save at all (above).
+    private Layer makeEmptyLayer(string name) {
+        auto l = new Layer;
+        l.kind = ItemKind.Empty;
+        l.name = name;
+        return l;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// N1 — THE CLIP LIST ROUND-TRIPS, AND THE DOCUMENT CAN MOVE.
+//
+// The fixture carries TWO image items on ONE path. That is the case the link
+// design calls out: with two clips sharing a path, a path-keyed implementation
+// resolves to the WRONG clip rather than to nothing, which a one-clip fixture
+// reads as success. Their CHANNELS are pairwise different (a non-default enum
+// tag each, and opposite `useAlpha`), so a codec that wrote one item's channels
+// for both — or that reconstructed the provider from defaults and never
+// injected — reads a different value on at least one of them.
+//
+// The move is done by actually COPYING both files into another directory and
+// loading from there, with a DIFFERENT image (9x4 vs 3x2) waiting at the
+// destination: an implementation that stored the absolute path resolves to a
+// file that really does still exist, so only the dimensions separate the two.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+
+    auto root = v3dTestDir("clips");
+    auto dirA = buildPath(root, "A");
+    auto dirB = buildPath(root, "B");
+    auto docA = buildPath(dirA, "scene.v3d");
+    auto docB = buildPath(dirB, "scene.v3d");
+    writeTestBmp(buildPath(dirA, "img.bmp"), 3, 2);
+    writeTestBmp(buildPath(dirB, "img.bmp"), 9, 4);
+
+    auto doc = Document.bootstrap(makeCube());       // "Layer 1", the primary
+    auto clipA = makeImageLayer("alpha", buildPath(dirA, "img.bmp"));
+    auto clipB = makeImageLayer("bravo", buildPath(dirA, "img.bmp"));
+    clipA.imageOrNull().colorspace = "linear";       // non-default enum tag
+    clipA.imageOrNull().useAlpha   = false;          // non-default bool
+    clipB.imageOrNull().colorspace = "sRGB";         // a DIFFERENT non-default
+    doc.layers = [doc.layers[0], clipA, clipB];
+    doc.setActive(0);
+
+    assert(clipA.imageOrNull().storedPath == clipB.imageOrNull().storedPath,
+        "fixture: the two clips share ONE path — that is what makes a "
+      ~ "path-keyed identity bug resolve to the wrong clip instead of to none");
+    assert(clipA.imageOrNull().width == 3 && clipA.imageOrNull().height == 2,
+        "fixture: A's image resolved before the save");
+
+    assert(writeV3d(doc, docA), "write must succeed");
+
+    // --- what the FILE says ------------------------------------------------
+    {
+        auto raw = parseJSON(readText(docA));
+        auto l1  = raw["layers"].array[1];
+        assert(l1["type"].str == "image", "the item declares its kind");
+        assert(l1["image"]["filename"].str == "img.bmp",
+            "the path is stored RELATIVE to the document — with an absolute "
+          ~ "stored form the move below would prove nothing. Got "
+          ~ l1["image"]["filename"].str);
+        assert("filename" !in l1["channels"],
+            "`filename` is a READ-ONLY param and must not ride the generic "
+          ~ "channels block: injecting it there on load would author the path "
+          ~ "behind the command that owns the resolve");
+        assert(l1["channels"]["colorspace"].str == "linear",
+            "the authored enum channel is written by VALUE");
+        assert(l1["channels"]["useAlpha"].type == JSONType.false_);
+        assert("width" !in l1["channels"] && "height" !in l1["channels"]
+            && "missing" !in l1["channels"],
+            "the DERIVED fields are not channels and must never be persisted "
+          ~ "— a stored width goes stale the moment the file changes on disk");
+    }
+
+    // --- reading it back in place ------------------------------------------
+    {
+        Document back;
+        assert(readV3d(docA, back), "round-trip load must succeed");
+        assert(back.layers.length == 3, "both clips survive alongside the mesh");
+        auto a = back.layers[1], b = back.layers[2];
+        assert(a.name == "alpha" && b.name == "bravo", "names round-trip");
+        assert(a.kind == ItemKind.Image && b.kind == ItemKind.Image);
+        assert(a.imageOrNull() !is null && b.imageOrNull() !is null,
+            "an image item comes back with a CONSTRUCTED payload");
+        assert(a.imageOrNull() !is b.imageOrNull(),
+            "two items sharing a path are still two payloads — one shared "
+          ~ "object would make an edit to either reach both");
+        assert(a.imageOrNull().colorspace == "linear"
+            && b.imageOrNull().colorspace == "sRGB",
+            "each item's enum channel comes back with ITS OWN value, got \""
+          ~ a.imageOrNull().colorspace ~ "\" / \"" ~ b.imageOrNull().colorspace ~ "\"");
+        assert(a.imageOrNull().useAlpha == false && b.imageOrNull().useAlpha == true,
+            "and its own bool channel");
+        assert(a.imageOrNull().width == 3 && a.imageOrNull().height == 2
+            && !a.imageOrNull().missing,
+            "the DERIVED metadata is re-read from the file, not from the "
+          ~ "document, got " ~ a.imageOrNull().width.to!string ~ "x"
+          ~ a.imageOrNull().height.to!string);
+    }
+
+    // --- the document MOVES ------------------------------------------------
+    write(docB, readText(docA));
+    {
+        Document moved;
+        assert(readV3d(docB, moved), "the moved document must still load");
+        auto a = moved.layers[1].imageOrNull();
+        assert(a !is null && !a.missing, "and still find its image");
+        assert(a.width == 9 && a.height == 4,
+            "it finds the copy that travelled WITH it (9x4), not the one left "
+          ~ "behind in A (3x2) — which still exists, so \"resolves to "
+          ~ "something\" would pass either way. Got "
+          ~ a.width.to!string ~ "x" ~ a.height.to!string);
+        assert(dirName(a.storedPath) == buildNormalizedPath(dirB),
+            "…and says so in its resolved path: " ~ a.storedPath);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// N2 — THE LINKS ROUND-TRIP, BY IDENTITY.
+//
+// Discriminating in four ways, each aimed at a named wrong implementation:
+//   (a) THREE clips, and the surviving links point at the MIDDLE one — an
+//       off-by-one in the index encoding lands on a neighbour that exists, so
+//       "the link resolves" passes;
+//   (b) TWO consumers on the SAME clip — a "restore the first match and stop"
+//       bug is invisible with one, and `is`-identity is what proves many→one
+//       rather than two lookalike restorations;
+//   (c) clipA carries the SAME PATH as clipB — a path-keyed encoding resolves
+//       to clipA and `referrersOf(clipA)` reads 2 instead of 0;
+//   (d) the second consumer holds TWO slots whose names sort opposite to their
+//       insertion order, so the written order proves the canonical ordering is
+//       the list's and not the insertion history's.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+
+    auto root = v3dTestDir("links");
+    auto path = buildPath(root, "scene.v3d");
+    writeTestBmp(buildPath(root, "one.bmp"), 3, 2);
+    writeTestBmp(buildPath(root, "two.bmp"), 5, 7);
+
+    auto doc = Document.bootstrap(makeCube());
+    auto meshPrimary = doc.layers[0];
+    auto clipA = makeImageLayer("alpha", buildPath(root, "one.bmp"));
+    auto clipB = makeImageLayer("bravo", buildPath(root, "one.bmp"));  // SAME path
+    auto clipC = makeImageLayer("charlie", buildPath(root, "two.bmp"));
+    auto consX = makeEmptyLayer("consumerX");
+    auto consY = makeEmptyLayer("consumerY");
+    // Insert "maskImage" FIRST on consY, so the canonical (sorted) order below
+    // is the OPPOSITE of the insertion order.
+    consX.setLink("maskImage",  clipB);
+    consY.setLink("maskImage",  clipB);
+    consY.setLink("decalImage", clipC);
+
+    doc.layers = [clipA, clipB, clipC, meshPrimary, consX, consY];
+    doc.setActive(3);
+    assert(doc.primary is meshPrimary);
+    assert(doc.indexOf(clipB) == 1,
+        "fixture: the referenced clip is a MIDDLE row, so an off-by-one lands "
+      ~ "on a clip that exists");
+
+    assert(writeV3d(doc, path), "write must succeed");
+
+    // The canonical slot order reaches the FILE, not just the object.
+    {
+        auto raw = parseJSON(readText(path));
+        auto ly  = raw["layers"].array[5]["links"].array;
+        assert(ly.length == 2, "both slots written");
+        assert(ly[0]["slot"].str == "decalImage" && ly[1]["slot"].str == "maskImage",
+            "the links block is written straight out of the canonical "
+          ~ "(name-sorted) slot list, NOT in insertion order — got "
+          ~ ly[0]["slot"].str ~ " first");
+        assert(ly[1]["target"].integer == 1,
+            "the target is the index of the MIDDLE clip");
+    }
+
+    Document back;
+    assert(readV3d(path, back), "round-trip load must succeed");
+    assert(back.layers.length == 6, "every item survives");
+    auto bClipA = back.layers[0], bClipB = back.layers[1], bClipC = back.layers[2];
+    auto bX = back.layers[4], bY = back.layers[5];
+    assert(bClipB.name == "bravo" && bX.name == "consumerX" && bY.name == "consumerY",
+        "sanity: the round trip preserved the item ORDER");
+
+    assert(bX.link("maskImage").state(back) == LinkState.Live,
+        "the restored link resolves against the document that holds it");
+    assert(bX.link("maskImage").resolve(back) is bClipB,
+        "…to the MIDDLE clip. An off-by-one reads \"alpha\" or \"charlie\"; a "
+      ~ "path-keyed encoding reads \"alpha\" (same path as bravo)");
+    assert(bY.link("maskImage").resolve(back) is bX.link("maskImage").resolve(back),
+        "both consumers resolve to ONE AND THE SAME object — two lookalike "
+      ~ "items would pass a non-null check and fail this");
+    assert(bY.link("decalImage").resolve(back) is bClipC,
+        "the second slot on the same consumer points somewhere else entirely");
+    assert(bY.linkSlots().length == 2 && bX.linkSlots().length == 1,
+        "no slot was invented and none was lost");
+
+    Layer[] refs;
+    back.referrersOf(bClipB, refs);
+    assert(refs.length == 2 && refs[0] is bX && refs[1] is bY,
+        "the reverse sweep finds BOTH consumers — a restore that stopped at "
+      ~ "the first match reads 1, got " ~ refs.length.to!string);
+    back.referrersOf(bClipA, refs);
+    assert(refs.length == 0,
+        "and NONE for the clip that merely shares bravo's path — a path-keyed "
+      ~ "encoding reads 2 here, got " ~ refs.length.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// N3 — A DANGLING LINK DEGRADES TO Unset ACROSS THE WIRE, and does NOT
+// re-point at whatever now occupies the index.
+//
+// The wire encoding is the target's INDEX. A dangling target is by definition
+// not a member, so it HAS no index — the slot cannot be written and comes back
+// unset. That is an honest property of the encoding and is deliberately not
+// papered over with a sentinel or a tombstone (either would be the second
+// identity scheme the index encoding depends on not existing).
+//
+// It also partially retracts one of the three reasons the link design gives
+// for keeping dangling links: "deleted carries strictly more information than
+// never-set" holds in memory and NOT across a save.
+//
+// Discriminating: after the victim is removed, ANOTHER clip slides into its
+// index. So the wrong implementation — one that wrote the stale index anyway —
+// comes back `Live` and pointing at "charlie". The assertion is on the OBJECT,
+// not only on the state, because a sentinel-index implementation could also
+// read `Unset` while having silently re-pointed something else.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+
+    auto root = v3dTestDir("dangling");
+    auto path = buildPath(root, "scene.v3d");
+    writeTestBmp(buildPath(root, "one.bmp"), 3, 2);
+
+    auto doc = Document.bootstrap(makeCube());
+    auto meshPrimary = doc.layers[0];
+    auto clipB = makeImageLayer("bravo",   buildPath(root, "one.bmp"));
+    auto clipC = makeImageLayer("charlie", buildPath(root, "one.bmp"));
+    auto consX = makeEmptyLayer("consumerX");
+    consX.setLink("maskImage", clipB);
+
+    doc.layers = [clipB, clipC, meshPrimary, consX];
+    doc.setActive(2);
+    assert(consX.link("maskImage").state(doc) == LinkState.Live,
+        "fixture: the link starts Live");
+
+    // Remove the target from the document WITHOUT touching the link — exactly
+    // what `layer.delete` leaves behind (links are never swept).
+    doc.layers = [clipC, meshPrimary, consX];
+    doc.setActive(1);
+    assert(consX.link("maskImage").state(doc) == LinkState.Dangling,
+        "precondition: the link is genuinely DANGLING before the save — "
+      ~ "without this the assertion below would be about an Unset link and "
+      ~ "would prove nothing");
+    assert(doc.layers[0] is clipC,
+        "precondition: another clip has slid into the victim's old index, so a "
+      ~ "codec that wrote the stale index would come back pointing at it");
+
+    assert(writeV3d(doc, path), "write must succeed");
+    {
+        auto raw = parseJSON(readText(path));
+        assert("links" !in raw["layers"].array[2],
+            "an unencodable slot is DROPPED, not written with a sentinel");
+    }
+
+    Document back;
+    assert(readV3d(path, back), "load must succeed — a dangling link is not a "
+      ~ "malformed document");
+    auto bX = back.layers[2];
+    assert(bX.name == "consumerX", "sanity: the consumer is where we left it");
+    assert(bX.link("maskImage").state(back) == LinkState.Unset,
+        "a dangling link cannot be encoded as an index, so it comes back "
+      ~ "UNSET — this is the documented cost of the index encoding");
+    assert(bX.link("maskImage").targetUnchecked() is null,
+        "…and it points at NOTHING, not at whatever took over the index. A "
+      ~ "codec that wrote the stale index reads \"charlie\" here");
+    assert(bX.linkSlots().length == 0,
+        "the slot itself is gone, not left behind empty");
+}
+
+// ---------------------------------------------------------------------------
+// N4 — A `primaryLayer` NAMING AN ITEM THAT CANNOT BE THE EDIT TARGET IS
+// CORRECTED, NOT OBEYED AND NOT REJECTED.
+//
+// This input became reachable only in v8: the `"type"` token is what lets a
+// file name a non-mesh item as the primary, which is why the reader's own
+// comment called it "the exposure Stage 8 must close".
+//
+// Four wrong answers read four different ways:
+//   (a) a raw pointer write leaves the primary on the image — asserted BOTH by
+//       identity and by the capability, because an implementation that
+//       repaired the flag without moving the pointer passes one and fails the
+//       other;
+//   (b) collapsing the focus onto the repaired primary reads layers[1];
+//   (c) DROPPING the offending item to make the index valid reads 2 layers;
+//   (d) rejecting outright reads false.
+// ---------------------------------------------------------------------------
+unittest {
+    auto root = v3dTestDir("primary_fix");
+    auto path = buildPath(root, "scene.v3d");
+    writeTestBmp(buildPath(root, "one.bmp"), 3, 2);
+
+    enum string tri = `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}`;
+    write(path,
+        `{"formatVersion":8,"primaryLayer":0,"focusedItem":0,"layers":[`
+        ~ `{"type":"image","selected":true,"channels":{"name":"clip"},`
+        ~ `"image":{"filename":"one.bmp"}},`
+        ~ `{"type":"mesh","selected":false,"channels":{"name":"M1"},` ~ tri ~ `},`
+        ~ `{"type":"mesh","selected":false,"channels":{"name":"M2"},` ~ tri ~ `}`
+        ~ `]}`);
+
+    // THE FIXTURE DETAIL THAT MAKES (a) NON-VACUOUS, found by the break check:
+    // ONLY the image is marked selected. With a mesh ALSO marked selected, the
+    // post-swap `selectItem(mesh, Add)` pass promotes it to primary anyway and
+    // the raw-write implementation reaches the same final state — the
+    // assertions below would then hold against the very code they exist to
+    // reject. Deselecting both meshes removes that rescue, so a raw
+    // `document.primary = parsed[primaryLayer]` write leaves the primary on the
+    // image and (a) reads it.
+
+    Document back;
+    assert(readV3d(path, back),
+        "(d) a malformed index is a REPAIRABLE inconsistency, not a malformed "
+      ~ "document — the load must succeed");
+    assert(back.layers.length == 3,
+        "(c) nothing is dropped to make the index valid, got "
+      ~ back.layers.length.to!string);
+    assert(back.layers[0].kind == ItemKind.Image && back.layers[0].name == "clip");
+    assert(back.primary is back.layers[1],
+        "(a) the primary re-homes to the first item that CAN be one, got \""
+      ~ back.primary.name ~ "\"");
+    assert(kindInfo(back.primary.kind).canBePrimary,
+        "(a) …and the capability agrees — an implementation that repaired the "
+      ~ "flag without moving the pointer passes the identity check and fails "
+      ~ "this one");
+    assert(back.focusedItem is back.layers[0],
+        "(b) the focus stays where the FILE put it. Collapsing it onto the "
+      ~ "repaired primary is the exclusive-select collapse the split exists to "
+      ~ "prevent — got \"" ~ back.focusedItem.name ~ "\"");
+    assert(back.focusedItem.selected, "and the focus invariant still holds");
+}
+
+// ---------------------------------------------------------------------------
+// N4b — the SIBLING case: a document with NO item that can be the edit target
+// is REJECTED, and the caller's document is untouched.
+//
+// There is no representable repair: `Document`'s invariants require a primary
+// that `canBePrimary`, so every layer-list consumer would otherwise be
+// reasoning about a document the type system says cannot exist.
+// ---------------------------------------------------------------------------
+unittest {
+    auto root = v3dTestDir("no_primary");
+    auto path = buildPath(root, "scene.v3d");
+    writeTestBmp(buildPath(root, "one.bmp"), 3, 2);
+
+    write(path,
+        `{"formatVersion":8,"primaryLayer":0,"layers":[`
+        ~ `{"type":"image","selected":true,"channels":{"name":"clip"},`
+        ~ `"image":{"filename":"one.bmp"}},`
+        ~ `{"type":"empty","selected":false,"channels":{"name":"E"}}`
+        ~ `]}`);
+
+    import mesh : makeCube;
+    auto live = Document.bootstrap(makeCube());
+    live.layers[0].name = "keepme";
+    auto priorPrimary = live.primary;
+
+    assert(!readV3d(path, live),
+        "a document with no possible edit target is rejected, not repaired");
+    assert(live.layers.length == 1 && live.layers[0].name == "keepme",
+        "and the caller's document is untouched, got "
+      ~ live.layers.length.to!string ~ " layer(s)");
+    assert(live.primary is priorPrimary,
+        "…including its primary POINTER, which a half-committed swap would "
+      ~ "have left stale");
+}
+
+// ---------------------------------------------------------------------------
+// N5 — A CHANNEL VALUE THE PARAM CODEC REFUSES CANNOT HALF-COMMIT THE
+// DOCUMENT.
+//
+// `injectParamsInto` THROWS a plain `Exception` — not a `JSONException` — on an
+// unknown enum tag and on a wrong JSON type for a String param. The assertion
+// is NOT "it does not crash": it is that the CALLER'S DOCUMENT IS UNCHANGED.
+// Three wrong implementations read differently:
+//   * an uncaught throw kills the test outright;
+//   * a load that returns true leaves a half-parsed document;
+//   * a load that returns false AFTER the atomic swap reads 2 layers with a
+//     stale primary pointer — which is the one the inject-before-swap ordering
+//     is really about.
+//
+// Two fixtures, because they reach different `throw` sites in the same
+// function.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+
+    auto root = v3dTestDir("bad_channel");
+    writeTestBmp(buildPath(root, "one.bmp"), 3, 2);
+    enum string tri = `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}`;
+
+    string[2] fixtures = [
+        // (1) an unknown ENUM tag on the image item's `colorspace`.
+        `{"formatVersion":8,"primaryLayer":1,"layers":[`
+        ~ `{"type":"image","selected":false,"channels":{"name":"clip",`
+        ~ `"colorspace":"not-a-real-tag"},"image":{"filename":"one.bmp"}},`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":"M"},` ~ tri ~ `}`
+        ~ `]}`,
+        // (2) a non-string value for the String param `name`.
+        `{"formatVersion":8,"primaryLayer":0,"layers":[`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":42},` ~ tri ~ `}`
+        ~ `]}`,
+    ];
+
+    foreach (fi, body_; fixtures) {
+        auto path = buildPath(root, format("bad%d.v3d", fi));
+        write(path, body_);
+
+        // A known-good two-item document is the thing that must survive.
+        auto live = Document.bootstrap(makeCube());
+        live.layers[0].name = "keepme";
+        auto second = new Layer; second.name = "alsokeepme"; second.meshRef() = makeCube();
+        live.layers ~= second;
+        live.setActive(0);
+        auto priorPrimary = live.primary;
+
+        assert(!readV3d(path, live),
+            format("fixture %d: a refused channel value must reject the load", fi));
+        assert(live.layers.length == 2,
+            format("fixture %d: the caller's document keeps its LENGTH — a "
+                ~ "reject after the atomic swap reads %d", fi, live.layers.length));
+        assert(live.layers[0].name == "keepme" && live.layers[1].name == "alsokeepme",
+            format("fixture %d: …and its contents", fi));
+        assert(live.primary is priorPrimary,
+            format("fixture %d: …and its primary POINTER, which a post-swap "
+                ~ "reject leaves stale", fi));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// N6 — THE UNSUPPORTED-VERSION MESSAGE NAMES BOTH VERSIONS AND SAYS THE FILE
+// IS NOT DAMAGED.
+//
+// The wording is a contract, not a nicety (owner, task 0616 Ph6): "could not
+// open" reads as corruption and sends the user hunting a problem that does not
+// exist. Asserting it is possible because the log service keeps every entry
+// and can be listened to — so this is the message the USER sees, not a
+// paraphrase of it.
+//
+// Discriminating: the file's version AND the editor's must BOTH appear. A
+// message naming only one of them is the most likely wrong implementation
+// (`"unsupported formatVersion 7"` tells the user nothing about what this
+// build wants), and it reads differently here.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import log  : addLogListener, removeLogListener, LogEntry, LogLevel;
+    import std.algorithm : canFind;
+
+    auto root = v3dTestDir("version_gate");
+    enum string tri = `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}`;
+
+    // WARNINGS ONLY, and the needles below are whole PHRASES. Both details
+    // were forced by the break check: collecting every level swept in the
+    // reader's own `readV3d: path=…/vibe3d_v3d8_…` info line, whose directory
+    // name contains an "8" — so a bare "8" needle passed against a message
+    // that never mentioned the editor's version at all.
+    string[] caught;
+    void sink(ref const(LogEntry) e) {
+        if (e.level == LogLevel.Warn) caught ~= e.msg;
+    }
+    auto listener = &sink;
+    addLogListener(listener);
+    scope(exit) removeLogListener(listener);
+
+    // Three ways to be the wrong version: older, newer, and unlabelled.
+    struct Case { int ver; string[] mustMention; }
+    auto cases = [
+        Case(7,  ["format version 7",  "version 8", "not damaged", "EARLIER"]),
+        Case(99, ["format version 99", "version 8", "not damaged", "NEWER"]),
+    ];
+
+    foreach (ci, c; cases) {
+        auto path = buildPath(root, format("v%d.v3d", c.ver));
+        write(path, format(
+            `{"formatVersion":%d,"primaryLayer":0,"layers":[`
+            ~ `{"type":"mesh","selected":true,"channels":{"name":"M"},%s}]}`,
+            c.ver, tri));
+
+        auto live = Document.bootstrap(makeCube());
+        live.layers[0].name = "keepme";
+        caught = null;
+        assert(!readV3d(path, live),
+            format("case %d: a v%d file must be rejected", ci, c.ver));
+        assert(live.layers.length == 1 && live.layers[0].name == "keepme",
+            format("case %d: …with the caller's document untouched", ci));
+
+        string joined;
+        foreach (m; caught) joined ~= m ~ "\n";
+        foreach (needle; c.mustMention)
+            assert(joined.canFind(needle),
+                format("case %d: the rejection message must mention \"%s\" — "
+                    ~ "naming only one of the two versions, or saying merely "
+                    ~ "\"could not open\", sends the user looking for "
+                    ~ "corruption that is not there. Got:\n%s",
+                    ci, needle, joined));
+    }
+
+    // A file with no version key at all is a separate branch: there is no
+    // file version to name, so the message must still name the EDITOR's.
+    {
+        auto path = buildPath(root, "noversion.v3d");
+        write(path, format(`{"primaryLayer":0,"layers":[`
+            ~ `{"type":"mesh","selected":true,"channels":{"name":"M"},%s}]}`, tri));
+        auto live = Document.bootstrap(makeCube());
+        caught = null;
+        assert(!readV3d(path, live), "an unlabelled file is rejected");
+        string joined;
+        foreach (m; caught) joined ~= m ~ "\n";
+        assert(joined.canFind("formatVersion") && joined.canFind("version 8"),
+            "the unlabelled-file message names the key it wanted and the "
+          ~ "version this build reads. Got:\n" ~ joined);
+    }
 }

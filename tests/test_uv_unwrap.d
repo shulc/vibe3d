@@ -263,11 +263,11 @@ unittest {
     // The command will create the UV map via planar projection (u=x, v=y),
     // placing v4's UV at (1.3, 1.0), then relax toward the harmonic minimum.
     enum string v3d = `{
-  "formatVersion": 7,
+  "formatVersion": 8,
   "layers": [{
-    "name": "UV Unwrap Test",
-    "visible": true,
+    "type": "mesh",
     "selected": true,
+    "channels": { "name": "UV Unwrap Test", "visible": true },
     "mesh": {
       "vertices": [
         [0,0,0],[1,0,0],[2,0,0],
@@ -418,11 +418,11 @@ unittest {
 
     // Same fixture as test_uv_relax.d HTTP test (centre UV perturbed to 1.3).
     enum string v3d = `{
-  "formatVersion": 7,
+  "formatVersion": 8,
   "layers": [{
-    "name": "Relax Regression",
-    "visible": true,
+    "type": "mesh",
     "selected": true,
+    "channels": { "name": "Relax Regression", "visible": true },
     "mesh": {
       "vertices": [
         [0,0,0],[1,0,0],[2,0,0],

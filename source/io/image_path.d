@@ -1,17 +1,19 @@
 module io.image_path;
 
 // ---------------------------------------------------------------------------
-// Task 0616 Ph5 — the seam between an image item's AUTHORED path and the
-// DERIVED metadata the disk answers with.
+// Task 0616 Ph5/Ph6 — the seam between an image item's AUTHORED path and the
+// DERIVED metadata the disk answers with, plus (Ph6) the document-relative
+// anchor rules that decide what the `.v3d` file actually carries.
 //
-// Two functions, deliberately separated:
+// Three functions, deliberately separated:
 //
-//   * `resolveStoredPath` — stored form -> the path we actually open. TODAY
-//     that is the identity function, and it is a function anyway so that Ph6
-//     (which owns the document-relative anchor rules: beside the document,
-//     its parent, absolute otherwise) has EXACTLY ONE place to grow them.
-//     Every caller in this phase already goes through it, so Ph6 changes one
-//     body instead of hunting four call sites.
+//   * `resolveStoredPath` — the STORED form (what a `.v3d` carries) -> the
+//     absolute path this process opens. Ph6 gave it the anchor chain; the
+//     one-argument overload every Ph5 caller uses is unchanged in meaning
+//     (an in-memory path is already absolute, see the storage rule below).
+//
+//   * `storePathFor` — the inverse: an absolute path -> the form written into
+//     a document at `docPath`.
 //
 //   * `refreshImageMeta` — re-read the header and refresh the four derived
 //     fields on `ImageData`. This is the ONLY writer of those fields, and it
@@ -21,12 +23,43 @@ module io.image_path;
 //     format must not have to import a command to find out how big an image
 //     is.
 //
+// THE STORAGE RULE (Ph6), and why it is where it is
+// -------------------------------------------------
+// `ImageData.storedPath` is ABSOLUTE in memory. Relativity exists only at the
+// file boundary: `writeV3d` relativises on the way out, `readV3d` resolves on
+// the way in, and both already receive the document's own path as an
+// argument, so the anchor is a PARAMETER and never global state.
+//
+// The alternative — keeping the relative form in memory and rebasing every
+// image's `storedPath` inside File > Save As — was rejected: it makes a SAVE
+// mutate authored document content as a side effect (undo? dirty flag? a
+// failed write that already rewrote the paths?), and it makes the meaning of
+// `storedPath` depend on a global "current document" that a headless
+// `writeV3d(doc, path)` does not have. With the conversion at the boundary,
+// Save As to another folder is correct by construction and costs nothing.
+//
+// The anchor chain, in order (evidence: doc/tasks/0616-evidence/
+// clip_panel_shape.md): the document's own directory, then its parent, then
+// absolute. The reference has a third anchor, a project root; vibe3d has no
+// project concept, so that anchor is declared missing rather than invented.
+//
+// DOES THE STORAGE RULE MATCH THE DISPLAY RULE? Yes — deliberately, and by
+// SHARING `storePathFor` rather than by two rules that agree today. A user
+// who reads `../assets/logo.png` in the panel and then greps the `.v3d` must
+// find that same string; if the two ever disagreed, every bug report about a
+// path would be ambiguous about which of the two was wrong. The panel (Ph4)
+// therefore calls `storePathFor(img.storedPath, currentDocPath())` for its
+// row text and shows `img.storedPath` itself in the tooltip — which is the
+// reference's rule too (relative in the row, absolute in the tooltip).
+//
 // Header-only, ALWAYS: this calls `imageInfo`, never `imageDecode`. No pixel
 // buffer is ever materialised on this path, so no `DecodedImage.free()` is
 // ever owed by it — see the lifetime note in `commands/image/commands.d`.
 // ---------------------------------------------------------------------------
 
-import std.file : read;
+import std.file : read, exists, getSize;
+import std.path : isAbsolute, absolutePath, buildNormalizedPath, dirName,
+                  relativePath, isDirSeparator;
 
 import document       : ImageData;
 import io.image_decode : ImageInfo, imageInfo, MAX_IMAGE_BYTES;
@@ -42,18 +75,129 @@ import log            : logWarn;
 /// could use, so one constant governs both ends.
 enum size_t MAX_IMAGE_FILE_BYTES = MAX_IMAGE_BYTES;
 
-/// The stored path resolved to a path this process can open.
+/// How many bytes of a file a header query actually READS.
 ///
-/// Ph5: identity — the stored form IS the path. `image.load` stores whatever
-/// absolute path the dialog (or the test) handed it, so there is nothing to
-/// anchor against yet.
+/// `MAX_IMAGE_FILE_BYTES` above is a REJECTION threshold, not a read size, and
+/// conflating the two is what this constant fixes: the first cut of this
+/// function read `maxFileBytes + 1` bytes — up to 256 MiB — merely to answer
+/// "how big is this image", which broke `imageInfo`'s own promise that no
+/// allocation proportional to the image size happens on this path. The `.v3d`
+/// reader calls this ONCE PER IMAGE ITEM at load, so a document with a dozen
+/// large photographs turned a File > Open into gigabytes of transient reads
+/// for data nothing was going to look at.
 ///
-/// Ph6 replaces this body with the anchor chain (as-is when absolute; against
-/// the document's directory; against its parent; first hit wins) WITHOUT
-/// touching a single caller — that is the entire reason this is a function
-/// today rather than an inlined field read.
-string resolveStoredPath(string stored) {
-    return stored;
+/// 256 KiB rather than the ~64 bytes a bare header needs: a JPEG's SOF marker
+/// sits AFTER its application segments, and each of those may be just under
+/// 64 KiB (EXIF, XMP, an embedded ICC profile), so a few-hundred-KiB window is
+/// what keeps a real-world photograph inside the fast path. A header that
+/// still does not fit falls back to a single full-file read (below) — bounded
+/// by `maxFileBytes` exactly as before — so the window is a performance
+/// decision and can never make a decodable file unreadable.
+enum size_t IMAGE_HEADER_WINDOW = 256 * 1024;
+
+/// Separator normalisation for the ON-DISK form. A `.v3d` written on Windows
+/// must open on Linux, so the stored form always uses `/`; the resolve side
+/// accepts either, because `buildNormalizedPath` does.
+private string toPortableSeparators(string p) {
+    version (Windows) {
+        import std.array : replace;
+        return p.replace("\\", "/");
+    } else {
+        return p;
+    }
+}
+
+/// True iff `abs` lies inside `dir` (at any depth), and if so `rel` is the
+/// path from `dir` to `abs`.
+///
+/// Implemented on top of `relativePath` and then VALIDATED, rather than by a
+/// string prefix compare: a prefix compare says `/a/bc` is under `/a/b`, and
+/// on Windows `relativePath` across two drives cannot produce a relative form
+/// at all — both cases show up here as "not under", which is the answer that
+/// makes the caller fall through to storing an absolute path.
+private bool relativeUnder(string abs, string dir, ref string rel) {
+    if (dir.length == 0) return false;
+    string r;
+    try {
+        r = relativePath(abs, dir);
+    } catch (Exception) {
+        return false;
+    }
+    if (r.length == 0 || isAbsolute(r)) return false;
+    if (r == "." || r == "..") return false;
+    if (r.length >= 3 && r[0 .. 2] == ".." && isDirSeparator(r[2])) return false;
+    rel = r;
+    return true;
+}
+
+/// Absolutise + normalise, so every comparison below happens between two
+/// paths of the same shape.
+private string normAbs(string p) {
+    if (p.length == 0) return p;
+    return buildNormalizedPath(isAbsolute(p) ? p : absolutePath(p));
+}
+
+/// The form an image path is STORED in, for a document that lives at
+/// `docPath`. The inverse of `resolveStoredPath`.
+///
+/// Anchors, in order: the document's own directory (`logo.png`,
+/// `assets/logo.png`), then its parent (`../logo.png`), then absolute. An
+/// UNTITLED document (`docPath` empty) has no anchor at all, so everything
+/// stores absolute and re-anchors on its first save — which is exactly what
+/// makes Save As correct with no document mutation.
+///
+/// `absolute` that is not in fact absolute is absolutised against the process
+/// CWD first. That case is reachable (`image.load path:relative/x.png` from a
+/// script), and silently anchoring a CWD-relative path at the DOCUMENT would
+/// be the one wrong answer here: it would name a different file.
+string storePathFor(string absolute, string docPath) {
+    if (absolute.length == 0) return absolute;
+    const abs = normAbs(absolute);
+    if (docPath.length == 0) return toPortableSeparators(abs);
+
+    const dir = dirName(normAbs(docPath));
+    string rel;
+    if (relativeUnder(abs, dir, rel))
+        return toPortableSeparators(rel);
+
+    const parent = dirName(dir);
+    if (parent != dir && relativeUnder(abs, parent, rel))
+        return "../" ~ toPortableSeparators(rel);
+
+    return toPortableSeparators(abs);
+}
+
+/// The stored path resolved to a path this process can open, anchored at the
+/// document that carried it.
+///
+/// An ABSOLUTE stored form answers itself (normalised). A RELATIVE one is
+/// tried against the document's directory and then its parent, FIRST EXISTING
+/// HIT WINS — and when neither exists the document's own directory is still
+/// the answer. That last clause is the §Q4 rule in one line: a file that is
+/// not there must still yield a definite path, so the item can keep saying
+/// what it points at (and re-save the same bytes) instead of degrading to
+/// "nothing". `missing` is what reports the failure; an empty path would
+/// destroy the statement the document made.
+///
+/// The one-argument overload is what every Ph5 caller uses and keeps its Ph5
+/// meaning: an in-memory `storedPath` is already absolute (see the storage
+/// rule at the top of this module), so with no anchor there is nothing to
+/// resolve.
+string resolveStoredPath(string stored, string docPath = null) {
+    if (stored.length == 0) return stored;
+    if (isAbsolute(stored)) return buildNormalizedPath(stored);
+    if (docPath.length == 0) return stored;      // no anchor: CWD-relative, as Ph5
+
+    const dir = dirName(normAbs(docPath));
+    const here = buildNormalizedPath(dir, stored);
+    if (exists(here)) return here;
+
+    const parent = dirName(dir);
+    if (parent != dir) {
+        const above = buildNormalizedPath(parent, stored);
+        if (exists(above)) return above;
+    }
+    return here;   // best effort: definite, and `missing` will say it is gone
 }
 
 /// Re-read the header of the file `img` names and refresh its four derived
@@ -89,29 +233,52 @@ bool refreshImageMeta(ImageData img, size_t maxFileBytes = MAX_IMAGE_FILE_BYTES)
         return false;
     }
 
-    ubyte[] bytes;
+    // The oversize REJECTION is made against the file's REAL size, not against
+    // however much of it we chose to read — otherwise the bound would silently
+    // become `min(bound, window)` and a file over the bound would be accepted
+    // whenever the bound sits above the window.
+    ulong size;
     try {
-        // Read at most maxFileBytes + 1: the extra byte is what lets the
-        // check below tell "exactly at the bound" from "over it" without
-        // trusting a separate `getSize` call that could disagree with what
-        // the read actually returns (a file can grow between the two).
-        bytes = cast(ubyte[]) read(path, maxFileBytes + 1);
+        size = getSize(path);
     } catch (Exception e) {
-        logWarn("io", "image: cannot read '" ~ path ~ "': " ~ e.msg);
+        logWarn("io", "image: cannot stat '" ~ path ~ "': " ~ e.msg);
         return false;
     }
-    if (bytes.length > maxFileBytes) {
+    if (size > maxFileBytes) {
         import std.conv : to;
-        logWarn("io", "image: rejected '" ~ path ~ "': larger than the "
-            ~ maxFileBytes.to!string ~ "-byte read bound");
+        logWarn("io", "image: rejected '" ~ path ~ "': " ~ size.to!string
+            ~ " bytes, larger than the " ~ maxFileBytes.to!string
+            ~ "-byte bound");
+        return false;
+    }
+
+    // Read only the header WINDOW. `size` is already bounded, so both reads
+    // below are bounded; the second one runs only for the rare file whose
+    // header genuinely does not fit the window.
+    immutable size_t want =
+        size < IMAGE_HEADER_WINDOW ? cast(size_t) size : IMAGE_HEADER_WINDOW;
+    ubyte[] bytes;
+    try {
+        bytes = cast(ubyte[]) read(path, want);
+    } catch (Exception e) {
+        logWarn("io", "image: cannot read '" ~ path ~ "': " ~ e.msg);
         return false;
     }
 
     ImageInfo info;
     if (!imageInfo(bytes, info)) {
-        // imageInfo already logged the reason (bad header, or the dimension
-        // bound) — do not double-report it.
-        return false;
+        // Only a TRUNCATED read can be the reason here; a file that fitted the
+        // window has already given its final answer. Retry once against the
+        // whole (already size-checked) file so the window can never turn a
+        // decodable image into a missing one.
+        if (size <= want) return false;   // imageInfo already logged the reason
+        try {
+            bytes = cast(ubyte[]) read(path, cast(size_t) size);
+        } catch (Exception e) {
+            logWarn("io", "image: cannot read '" ~ path ~ "': " ~ e.msg);
+            return false;
+        }
+        if (!imageInfo(bytes, info)) return false;
     }
 
     img.width    = info.width;
@@ -126,8 +293,9 @@ bool refreshImageMeta(ImageData img, size_t maxFileBytes = MAX_IMAGE_FILE_BYTES)
 // ---------------------------------------------------------------------------
 
 version (unittest) {
-    import std.file : write, remove, exists, tempDir, mkdirRecurse, rmdirRecurse;
+    import std.file : write, remove, tempDir, mkdirRecurse, rmdirRecurse;
     import std.path : buildPath;
+    import std.conv : to;
 
     /// A minimal uncompressed 24-bit BMP — 14-byte file header, 40-byte
     /// BITMAPINFOHEADER, bottom-up BGR rows padded to 4 bytes.
@@ -197,6 +365,13 @@ version (unittest) {
     /// the renamed file behind, and the NEXT run went red on an unrelated
     /// assertion in a different test. A test whose result depends on what an
     /// earlier run left on disk is not a test.
+    /// Test-only view of the private `relativeUnder` predicate, so a fixture
+    /// can PROVE its placement is outside an anchor instead of assuming it.
+    bool relativeUnderProbe(string abs, string dir) {
+        string rel;
+        return relativeUnder(abs, dir, rel);
+    }
+
     string imageTestDir(string tag) {
         auto d = buildPath(tempDir(), "vibe3d_img_" ~ tag);
         if (exists(d)) rmdirRecurse(d);
@@ -319,4 +494,237 @@ unittest {
         ~ "the parse");
     assert(img.missing && img.width == 0 && img.height == 0,
         "and the refusal leaves the unresolved state, not the previous answer");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0616 Ph6 — the header WINDOW. Two properties, and neither one alone
+// says anything useful about the other.
+//
+// (a) A file LARGER than the window still parses. The `.v3d` reader calls this
+//     once per image item, so the window exists to stop a File > Open reading
+//     hundreds of megabytes it will not look at — but a window that quietly
+//     turned every large photograph into a missing file would be a far worse
+//     bug than the read it saves.
+//
+// (b) The oversize rejection fires on the file's REAL size, not on the number
+//     of bytes the window happened to read. The discriminating bound is one
+//     that sits BETWEEN the window and the file size: at 265000 against a
+//     270054-byte file with a 262144-byte window, the correct implementation
+//     refuses (270054 > 265000) and one that tests only what it read accepts
+//     (262144 <= 265000) and reports real dimensions. A bound below the window
+//     — the case the test above uses — reads the same either way, which is why
+//     that test cannot cover this and this one exists.
+// ---------------------------------------------------------------------------
+unittest {
+    auto dir  = imageTestDir("refresh_window");
+    auto file = buildPath(dir, "big.bmp");
+    writeTestBmp(file, 300, 300);          // 54 + 300*900 == 270054 bytes
+    scope (exit) { if (exists(file)) remove(file); }
+
+    immutable ulong sz = getSize(file);
+    assert(sz > IMAGE_HEADER_WINDOW,
+        "fixture: the file must be LARGER than the header window or neither "
+        ~ "half of this test means anything — got " ~ sz.to!string
+        ~ " against a window of " ~ IMAGE_HEADER_WINDOW.to!string);
+
+    auto img = new ImageData();
+    img.storedPath = file;
+    assert(refreshImageMeta(img),
+        "(a) a file larger than the header window still parses from its "
+        ~ "prefix");
+    assert(img.width == 300 && img.height == 300 && !img.missing,
+        "…with its real dimensions, got "
+        ~ img.width.to!string ~ "x" ~ img.height.to!string);
+
+    // (b) a bound strictly between the window and the file size.
+    immutable size_t between = 265_000;
+    assert(between > IMAGE_HEADER_WINDOW && between < sz,
+        "fixture: the bound must sit BETWEEN the window and the file size, "
+        ~ "else it cannot separate the two implementations");
+    assert(!refreshImageMeta(img, between),
+        "(b) the oversize bound is measured against the FILE, not against the "
+        ~ "window — a bound above the window must still refuse a file above "
+        ~ "the bound");
+    assert(img.missing && img.width == 0,
+        "and that refusal leaves the unresolved state");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0616 Ph6 — the STORAGE rule.
+//
+// FOUR placements, FOUR DIFFERENT strings. The count is the test: a
+// one-placement fixture cannot tell "always relative" from the real rule, and
+// a two-placement one cannot tell "parent only" from "parent AND anything
+// above it". The fourth (an untitled document) is the anchor-less case that a
+// three-placement fixture would leave to a comment.
+//
+// The four expected strings are also asserted PAIRWISE DISTINCT, so a rule
+// that collapsed two anchors onto one answer cannot pass by agreeing with
+// itself.
+// ---------------------------------------------------------------------------
+unittest {
+    auto root = imageTestDir("store_rule");
+    auto docDir  = buildPath(root, "a", "b");
+    auto doc     = buildPath(docDir, "scene.v3d");
+
+    const beside = buildPath(docDir, "x.png");             // beside the document
+    const nested = buildPath(docDir, "tex", "n.png");      // BELOW the document
+    const above1 = buildPath(root, "a", "y.png");          // in the doc's parent
+    const above2 = buildPath(root, "z.png");               // two directories up
+
+    assert(storePathFor(beside, doc) == "x.png",
+        "a file beside the document stores as a bare name, got "
+        ~ storePathFor(beside, doc));
+    assert(storePathFor(nested, doc) == "tex/n.png",
+        "a file BELOW the document stores relative at depth (not just at "
+        ~ "depth 1), got " ~ storePathFor(nested, doc));
+    assert(storePathFor(above1, doc) == "../y.png",
+        "a file in the document's PARENT stores with one `..`, got "
+        ~ storePathFor(above1, doc));
+    assert(storePathFor(above2, doc) == buildNormalizedPath(above2),
+        "two directories up is past the last anchor and stores ABSOLUTE — "
+        ~ "this is the placement that separates the real rule from "
+        ~ "\"relativise against anything\", got " ~ storePathFor(above2, doc));
+    assert(storePathFor(beside, "") == buildNormalizedPath(beside),
+        "an UNTITLED document has no anchor at all, so even a file that "
+        ~ "would otherwise be relative stores absolute, got "
+        ~ storePathFor(beside, ""));
+
+    // The four answers must be pairwise different, else the assertions above
+    // could all hold under a rule that answers the same thing everywhere.
+    string[5] got = [storePathFor(beside, doc), storePathFor(nested, doc),
+                     storePathFor(above1, doc), storePathFor(above2, doc),
+                     storePathFor(beside, "")];
+    foreach (i; 0 .. 5)
+        foreach (j; i + 1 .. 5)
+            assert(got[i] != got[j],
+                "fixture: placements " ~ i.to!string ~ "/" ~ j.to!string
+                ~ " produce the same stored string, so this table cannot "
+                ~ "discriminate between the rules it exists to separate");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0616 Ph6 — the RESOLVE rule, and specifically the anchor ORDER.
+//
+// The fixture puts a file with the SAME NAME beside the document AND in its
+// parent. The document's own directory must win: an implementation that
+// searched the parent first (or that searched only the parent) resolves to the
+// other file, and the two files are distinguishable by their DIMENSIONS
+// (3x2 vs 5x7), so the wrong answer is a different number and not merely a
+// different string.
+// ---------------------------------------------------------------------------
+unittest {
+    auto root   = imageTestDir("resolve_order");
+    auto docDir = buildPath(root, "proj");
+    auto doc    = buildPath(docDir, "scene.v3d");
+    writeTestBmp(buildPath(docDir, "same.bmp"), 3, 2);   // beside the document
+    writeTestBmp(buildPath(root,   "same.bmp"), 5, 7);   // in its parent
+
+    auto img = new ImageData();
+    img.storedPath = resolveStoredPath("same.bmp", doc);
+    assert(refreshImageMeta(img), "the resolved path must be readable");
+    assert(img.width == 3 && img.height == 2,
+        "the document's OWN directory is the first anchor — resolving to the "
+        ~ "parent's copy would read 5x7, got "
+        ~ img.width.to!string ~ "x" ~ img.height.to!string);
+
+    // Remove the near one: the SAME stored string must now find the parent's
+    // copy. Without this half, "first hit wins" is indistinguishable from
+    // "only ever look beside the document".
+    remove(buildPath(docDir, "same.bmp"));
+    auto img2 = new ImageData();
+    img2.storedPath = resolveStoredPath("same.bmp", doc);
+    assert(refreshImageMeta(img2), "the parent anchor must still resolve");
+    assert(img2.width == 5 && img2.height == 7,
+        "with the near copy gone the parent anchor answers, got "
+        ~ img2.width.to!string ~ "x" ~ img2.height.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// Task 0616 Ph6 — THE DOCUMENT MOVES. This is the whole reason a stored path
+// is relative, so it is tested by actually MOVING the files, not by munging
+// strings.
+//
+// A/scene.v3d referencing A/img.bmp stores "img.bmp". Copy BOTH to B/ and
+// resolve the same stored string against B/scene.v3d: it must land on
+// B/img.bmp.
+//
+// Discriminating in the way the task names: A/img.bmp still EXISTS, so an
+// implementation that had stored the absolute path resolves to a file that is
+// really there and every "resolves to something" assertion passes. The
+// assertion is therefore on the DIRECTORY, and the two copies additionally
+// carry different dimensions (3x2 vs 9x4) so the wrong answer reads a
+// different number too.
+// ---------------------------------------------------------------------------
+unittest {
+    auto root = imageTestDir("doc_moved");
+    auto dirA = buildPath(root, "A");
+    auto dirB = buildPath(root, "B");
+    auto docA = buildPath(dirA, "scene.v3d");
+    auto docB = buildPath(dirB, "scene.v3d");
+    writeTestBmp(buildPath(dirA, "img.bmp"), 3, 2);
+    writeTestBmp(buildPath(dirB, "img.bmp"), 9, 4);
+
+    const stored = storePathFor(buildPath(dirA, "img.bmp"), docA);
+    assert(stored == "img.bmp",
+        "precondition: the document stored the RELATIVE form — with an "
+        ~ "absolute stored form this test would prove nothing, got " ~ stored);
+
+    const resolvedInB = resolveStoredPath(stored, docB);
+    assert(dirName(resolvedInB) == buildNormalizedPath(dirB),
+        "the moved document must find the image BESIDE ITSELF, not the copy "
+        ~ "left behind in A (which still exists), got " ~ resolvedInB);
+
+    auto img = new ImageData();
+    img.storedPath = resolvedInB;
+    assert(refreshImageMeta(img));
+    assert(img.width == 9 && img.height == 4,
+        "and it is B's copy by its CONTENT too, not only by its path text — "
+        ~ "got " ~ img.width.to!string ~ "x" ~ img.height.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// Task 0616 Ph6 — a stored path whose file is GONE still resolves to a
+// definite absolute path, and that path re-stores to the SAME string.
+//
+// The round-trip property is what keeps a missing file from decaying: a
+// resolve that answered "" would make the next save write "" and the document
+// would have silently forgotten what it pointed at. Checked for all three
+// anchor shapes, because each takes a different branch.
+// ---------------------------------------------------------------------------
+unittest {
+    auto root   = imageTestDir("missing_stable");
+    auto docDir = buildPath(root, "proj");
+    mkdirRecurse(docDir);
+    auto doc    = buildPath(docDir, "scene.v3d");
+
+    // The third entry must sit OUTSIDE both anchors, or it is not the
+    // absolute case at all: a path under `root` (the document's parent) would
+    // legitimately re-store as `../…` and the assertion would be testing the
+    // parent branch twice. That mistake was made here first and caught by the
+    // re-store assertion below, which is the reason it is written this way.
+    const outsideBothAnchors =
+        buildNormalizedPath(tempDir(), "vibe3d_img_missing_stable_elsewhere", "gone.bmp");
+    assert(!relativeUnderProbe(outsideBothAnchors, root),
+        "fixture: the absolute case must not be reachable from either anchor");
+
+    foreach (stored; ["gone.bmp", "../gone.bmp", outsideBothAnchors]) {
+        const abs = resolveStoredPath(stored, doc);
+        assert(abs.length > 0 && isAbsolute(abs),
+            "a missing file still resolves to a DEFINITE absolute path (the "
+            ~ "item keeps its statement), got '" ~ abs ~ "' for " ~ stored);
+        assert(!exists(abs), "fixture: the file really is absent");
+
+        auto img = new ImageData();
+        img.storedPath = abs;
+        assert(!refreshImageMeta(img), "and the refresh reports the failure");
+        assert(img.missing && img.storedPath == abs,
+            "…without erasing the path");
+
+        assert(storePathFor(abs, doc) == stored,
+            "re-storing a missing file must reproduce the SAME string — else "
+            ~ "every save of a document with an unavailable asset would "
+            ~ "rewrite the path. Expected '" ~ stored ~ "', got '"
+            ~ storePathFor(abs, doc) ~ "'");
+    }
 }
