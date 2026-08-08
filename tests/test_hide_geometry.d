@@ -133,6 +133,107 @@ bool[] boolMask(size_t n, int[] setBits) {
     return m;
 }
 
+// The hidden FACE indices, as a sorted list — reads by identity, so a wrong
+// rule hiding the right COUNT from the wrong set still fails.
+int[] hiddenFaceList() {
+    int[] r;
+    foreach (i, b; faceHidden()) if (b) r ~= cast(int)i;
+    return r;
+}
+
+int[] hiddenVertexList() {
+    int[] r;
+    foreach (i, b; vertexHidden()) if (b) r ~= cast(int)i;
+    return r;
+}
+
+void loadMesh(string meshJson) {
+    auto r = postJson("/api/load-mesh", meshJson);
+    assert("error" !in r, "/api/load-mesh failed: " ~ r.toString);
+}
+
+void selectType(string tok) {
+    auto t = postJson("/api/command", "select.typeFrom " ~ tok);
+    assert(t["status"].str == "ok", "select.typeFrom " ~ tok ~ " failed: " ~ t.toString);
+}
+
+string currentSelTypeToken() { return getJson("/api/selection")["selType"].str; }
+
+// ---------------------------------------------------------------------------
+// The 0628 rig — a 3x3 quad grid PLUS a DISCONNECTED spare quad parked on +X.
+// ---------------------------------------------------------------------------
+// This is the rig the reference invert was measured on (frozen as
+// tests/fixtures/hide_invert_vertex_mark.json), reproduced here so the numbers
+// asserted below are directly the measured ones.
+//
+// Two properties carry the whole experiment and BOTH are asserted by
+// `loadInvertRig()` rather than assumed:
+//
+//   * vertex 0 has valence ONE (only polygon 0 uses it). A vertex sharing a
+//     still-visible polygon is hidden under NEITHER the vertex law nor the
+//     face law, so a rig without a valence-1 vertex cannot separate them and
+//     every assertion below would be vacuous.
+//   * the spare quad shares NO vertex with the grid. It is what makes
+//     "replace" and "union" read different numbers: under the vertex law the
+//     spare's four vertices leave the hidden set, so a REPLACE brings the
+//     spare back visible while a UNION leaves it hidden.
+enum string INVERT_RIG_JSON = `{"vertices":[
+  [0,0,0],[1,0,0],[2,0,0],[3,0,0],
+  [0,0,1],[1,0,1],[2,0,1],[3,0,1],
+  [0,0,2],[1,0,2],[2,0,2],[3,0,2],
+  [0,0,3],[1,0,3],[2,0,3],[3,0,3],
+  [10,0,0],[11,0,0],[11,0,1],[10,0,1]],
+ "faces":[[0,1,5,4],[1,2,6,5],[2,3,7,6],
+          [4,5,9,8],[5,6,10,9],[6,7,11,10],
+          [8,9,13,12],[9,10,14,13],[10,11,15,14],
+          [16,17,18,19]]}`;
+
+void loadInvertRig() {
+    resetCube();
+    loadMesh(INVERT_RIG_JSON);
+    // scene.loadMesh is a MODEL-class entry, and the undo cursor is
+    // class-aware: it carries UI entries inert and steps to the nearest Model
+    // one. Left on the stack it would swallow the `apiUndo()` rows below and
+    // revert the RIG instead of the invert (measured: they read [] — the
+    // cube's empty hidden set — rather than the pre-invert {0,9}).
+    clearHistory();
+    auto fcs = faces();
+    assert(fcs.length == 10, "rig must have 10 faces, got " ~ fcs.length.to!string);
+    assert(model()["vertices"].array.length == 20, "rig must have 20 vertices");
+    assert(facesTouchingVertex(fcs, 0) == [0],
+        "rig premise: vertex 0 must have valence ONE — a vertex that also "
+        ~ "touches a still-visible polygon is hidden under neither the vertex "
+        ~ "law nor the face law, which would make every assertion here "
+        ~ "vacuous. got incident faces " ~ facesTouchingVertex(fcs, 0).to!string);
+    foreach (v; [16, 17, 18, 19])
+        assert(facesTouchingVertex(fcs, v) == [9],
+            "rig premise: the spare quad must be DISCONNECTED (vertex "
+            ~ v.to!string ~ " may belong to polygon 9 only) — a shared vertex "
+            ~ "would stop the spare from separating replace from union");
+}
+
+// The rig's common prefix: hide grid polygon 0 and the spare polygon 9 from a
+// POLYGON selection, then make the given geometry type current. Returns with
+// hidden faces {0,9} and the derived vertex plane {0, 16..19}.
+void invertRigPrefix(string typeTok) {
+    loadInvertRig();
+    selectMode("polygons", [0, 9]);
+    runCmd("mesh.hide");
+    assert(hiddenFaceList() == [0, 9],
+        "prefix: the hide must land on exactly {0,9}, got "
+        ~ hiddenFaceList().to!string);
+    assert(hiddenVertexList() == [0, 16, 17, 18, 19],
+        "prefix: the DERIVED vertex plane must hold vertex 0 (valence 1, its "
+        ~ "only polygon hidden) and the spare's four — and nothing else, "
+        ~ "because 1/4/5 still touch visible polygons. got "
+        ~ hiddenVertexList().to!string);
+    selectType(typeTok);
+    assert(currentSelTypeToken() == typeTok,
+        "prefix: " ~ typeTok ~ " must be the CURRENT selection type before "
+        ~ "the invert — this is the whole operand choice under test. got "
+        ~ currentSelTypeToken());
+}
+
 // ---------------------------------------------------------------------------
 // Keyboard-shortcut playback helpers (mirrors tests/test_subpatch_tab_toggle.d)
 // ---------------------------------------------------------------------------
@@ -381,13 +482,14 @@ unittest { // mesh.hideInvert in POLYGONS mode is a plain flip of every face's
            // visible) instead of flipping it too.
            //
            // Scope note: this fixture stays in POLYGONS mode throughout, and
-           // that is the only mode the implementation is correct in. The
-           // capture found the reference's invert to be COMPONENT-TYPED —
-           // Vertices/Edges mode flips the vertex plane and propagates up,
-           // Item mode touches nothing (M3/M3C/M3E_*) — a known divergence
-           // recorded in commands/mesh/hide.d and deliberately not covered
-           // here, because a test written against the current face-only flip
-           // would have to be rewritten by the fix rather than driving it.
+           // since task 0628 that is one of THREE branches — the invert is
+           // COMPONENT-TYPED, flipping the plane the current selection type
+           // names. This row is now also the CONTROL for that typing: it
+           // fails any implementation that routed every mode through the
+           // vertex branch (which on a cube would hide all 6 faces here,
+           // because every vertex of a cube with 2 faces hidden is still
+           // visible and the flip therefore hides all 8). The Vertices /
+           // Edges / Item branches are the four rows below.
     resetCube();
     selectMode("polygons", [0, 2]);
     runCmd("mesh.hide");
@@ -397,12 +499,185 @@ unittest { // mesh.hideInvert in POLYGONS mode is a plain flip of every face's
     runCmd("mesh.hideInvert");
 
     assert(faceHidden() == [false, true, false, true, true, true],
-        "hideInvert must flip EVERY face's bit, ignoring the current selection");
+        "hideInvert must flip EVERY face's bit, ignoring the current "
+        ~ "selection. Routing Polygons mode through the VERTEX branch reads "
+        ~ "all six hidden instead (no cube vertex is hidden with only two "
+        ~ "faces down, so the flip hides all eight and every face follows). "
+        ~ "got " ~ faceHidden().to!string);
 
     auto u = apiUndo();
     assert(u["status"].str == "ok", "undo of mesh.hideInvert failed: " ~ u.toString);
     assert(faceHidden() == [true, false, true, false, false, false],
         "undo of hideInvert must restore the PRE-invert hidden set exactly");
+}
+
+// ---------------------------------------------------------------------------
+// mesh.hideInvert is COMPONENT-TYPED (task 0628)
+// ---------------------------------------------------------------------------
+// It flips the plane the CURRENT SELECTION TYPE names. The three rows below
+// drive the same rig through the same prefix and change only the type, so the
+// operand choice is the ONLY variable.
+//
+// VERIFIED BY MUTATION. Each wrong implementation below was applied to the
+// green tree, built, and run; the OBSERVED value is quoted, not predicted.
+//   (a) the pre-0628 flat face flip (ignore the type entirely) — vertex row
+//       read [1,2,3,4,5,6,7,8]: grid polygon 0 comes back VISIBLE because it
+//       was hidden before, and the spare STAYS hidden. Two faces wrong, in
+//       opposite directions.
+//   (b) propagate with an ALL rule instead of ANY — vertex row read
+//       [1,2,3,4,5,6,7,8]: polygon 0 has one vertex (v0) outside the flipped
+//       set, so an ALL rule leaves it visible.
+//   (c) UNION the propagation onto the standing hidden set instead of
+//       REPLACING it — vertex row read [0,1,2,3,4,5,6,7,8,9]: the spare stays
+//       hidden, 10 faces instead of 9.
+//   (d) route Edges through the polygon branch (a plausible reading of "edges
+//       are their own plane") — edge row read [1,2,3,4,5,6,7,8].
+//   (e) treat Item as a geometry type and fall back to the retained
+//       `editMode` — item row read [1,2,3,4,5,6,7,8] where {0,9} must stand,
+//       and the command reported status:ok instead of rejecting.
+//   (f) flip only the face-bound half of the vertex plane (skip loose points)
+//       — loose row read hidden vertices [] instead of [4].
+//   (g) route EVERY mode through the vertex branch — the Polygons row above
+//       read [true,true,true,true,true,true] instead of
+//       [false,true,false,true,true,true].
+
+unittest { // VERTICES mode: the invert flips the VERTEX plane and propagates
+           // UP onto faces. Measured (M3/M3C/M3E_vertex) and frozen in
+           // tests/fixtures/hide_invert_vertex_mark.json.
+    invertRigPrefix("vertex");
+    runCmd("mesh.hideInvert");
+
+    assert(hiddenFaceList() == [0, 1, 2, 3, 4, 5, 6, 7, 8],
+        "a Vertices-mode invert flips the vertex plane {0,16,17,18,19} to "
+        ~ "{1..15} and hides every face touching ANY of those — all nine grid "
+        ~ "polygons, INCLUDING polygon 0 (whose vertices 1/4/5 are in the "
+        ~ "flipped set even though its vertex 0 is not) and EXCLUDING the "
+        ~ "spare (all four of its vertices left the set). A flat face flip "
+        ~ "reads [1..8]; an ALL-rule propagation also reads [1..8]; a union "
+        ~ "reads [0..9]. got " ~ hiddenFaceList().to!string);
+
+    // Our vertex plane is derived TOTALLY, so it re-derives from the faces the
+    // propagation just wrote: every grid vertex now has all of its incident
+    // polygons hidden. The reference, which derives INCREMENTALLY, reads
+    // vertex 0 as NOT hidden here — its own flipped write, left stale because
+    // nothing has touched that vertex since. That one entry is the deliberate,
+    // documented divergence (see MeshHideInvert's doc comment); asserting our
+    // side of it here means a future switch to an incremental derivation
+    // cannot happen silently.
+    assert(hiddenVertexList() == [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+        "the vertex plane is re-derived from the faces the invert wrote, so "
+        ~ "all 16 grid vertices read hidden and the spare's four read visible. "
+        ~ "(The reference reads 15 of 16 here — it leaves vertex 0 stale. "
+        ~ "Deliberate divergence.) got " ~ hiddenVertexList().to!string);
+
+    auto u = apiUndo();
+    assert(u["status"].str == "ok", "undo of a Vertices-mode invert failed: " ~ u.toString);
+    assert(hiddenFaceList() == [0, 9],
+        "undo must restore the PRE-invert hidden set exactly — the typed "
+        ~ "branch writes only the face plane, so the ordinary marks capture "
+        ~ "still covers it. got " ~ hiddenFaceList().to!string);
+    assert(hiddenVertexList() == [0, 16, 17, 18, 19],
+        "undo must restore the derived vertex plane too, got "
+        ~ hiddenVertexList().to!string);
+}
+
+unittest { // EDGES mode lands on the VERTEX plane, exactly as Vertices does
+           // (M3E_edge measured identical to M3E_vertex) — NOT on the edge
+           // plane, and NOT on the face plane.
+    invertRigPrefix("edge");
+    runCmd("mesh.hideInvert");
+
+    assert(hiddenFaceList() == [0, 1, 2, 3, 4, 5, 6, 7, 8],
+        "an Edges-mode invert must read the SAME set as a Vertices-mode one. "
+        ~ "Routing Edges through the polygon branch reads [1..8]. got "
+        ~ hiddenFaceList().to!string);
+
+    // And the derived edge plane follows the vertex plane, not the reverse:
+    // every edge of the grid has both endpoints hidden, every edge of the
+    // spare has neither.
+    auto eh = edgeHidden();
+    size_t hiddenEdges = 0;
+    foreach (b; eh) if (b) ++hiddenEdges;
+    assert(hiddenEdges == eh.length - 4,
+        "every grid edge must derive hidden and the spare's four must not — "
+        ~ eh.length.to!string ~ " edges, " ~ hiddenEdges.to!string ~ " hidden");
+}
+
+unittest { // ITEM mode: the invert touches NO component marks (M3E_item) and
+           // records no undo entry. The stale-selection trap of task 0621
+           // applies here too — `editMode` still reads polygons under Item, so
+           // an implementation reading it would take the polygon branch and
+           // flip every face.
+    invertRigPrefix("polygon");
+    runCmd("layer.select index:0");
+    assert(currentSelTypeToken() == "item",
+        "fixture: layer.select must make Item current, got " ~ currentSelTypeToken());
+    assert(getJson("/api/selection")["mode"].str == "polygons",
+        "fixture: editMode must RETAIN polygons under Item — that retention is "
+        ~ "what an implementation reading editMode would trip over");
+
+    auto before = hiddenFaceList();
+    auto undosBefore = countUndo("mesh.hideInvert");
+
+    // A no-op Operator returns false, which the generic dispatcher surfaces as
+    // status:error ("did not apply") — the project's existing convention for
+    // every no-op command (see the mesh.unhideAll row below), not a failure.
+    auto r = postJson("/api/command", "mesh.hideInvert");
+    // The VALUE first, the channel second: what matters is that no mark moved.
+    assert(hiddenFaceList() == before,
+        "an Item-mode invert must leave the hidden set untouched: an "
+        ~ "implementation reading the retained editMode would flip every face "
+        ~ "and read [1..8] here. got " ~ hiddenFaceList().to!string
+        ~ ", want " ~ before.to!string);
+    assert(r["status"].str == "error",
+        "an Item-mode invert must REJECT rather than apply, got " ~ r.toString);
+    assert(countUndo("mesh.hideInvert") == undosBefore,
+        "a rejected invert must record NO undo entry");
+}
+
+unittest { // A LOOSE point (no incident face) is on the vertex plane too, so a
+           // Vertices-mode invert flips it — and its flipped bit SURVIVES,
+           // because the derivation deliberately steps over loose points and
+           // there is no face for it to propagate to.
+           //
+           // WRONG IMPLEMENTATION this row rejects: flipping only the
+           // face-bound half of the vertex plane (the half a face write can
+           // express). That leaves the loose point visible — hidden vertices
+           // [] instead of [4].
+    resetCube();
+    // One quad plus a loose point parked away from it.
+    loadMesh(`{"vertices":[[0,0,0],[1,0,0],[1,0,1],[0,0,1],[5,0,5]],
+               "faces":[[0,1,2,3]]}`);
+    clearHistory();   // see loadInvertRig() — the Model-class load would
+                      // swallow the undo row at the end of this test
+    assert(model()["vertices"].array.length == 5, "rig must have 5 vertices");
+    assert(facesTouchingVertex(faces(), 4).length == 0,
+        "rig premise: vertex 4 must be LOOSE — with an incident face it would "
+        ~ "be on the derived half and this row would test nothing new");
+
+    selectMode("polygons", [0]);
+    runCmd("mesh.hide");
+    assert(hiddenVertexList() == [0, 1, 2, 3],
+        "prefix: the quad's four vertices derive hidden, the loose one does "
+        ~ "not. got " ~ hiddenVertexList().to!string);
+
+    selectType("vertex");
+    runCmd("mesh.hideInvert");
+
+    assert(hiddenVertexList() == [4],
+        "the flip empties the face-bound half (the quad becomes visible again "
+        ~ "because none of its vertices is in the flipped set) and SETS the "
+        ~ "loose point, whose own bit is the whole answer. Flipping only the "
+        ~ "face-bound half reads []. got " ~ hiddenVertexList().to!string);
+    assert(hiddenFaceList().length == 0,
+        "no face touches the loose point, so the face plane comes out empty. "
+        ~ "got " ~ hiddenFaceList().to!string);
+
+    auto u = apiUndo();
+    assert(u["status"].str == "ok", "undo failed: " ~ u.toString);
+    assert(hiddenVertexList() == [0, 1, 2, 3],
+        "undo must restore the loose point's own bit alongside the derived "
+        ~ "half, got " ~ hiddenVertexList().to!string);
 }
 
 unittest { // mesh.unhideAll: (a) is a no-op (no undo entry) when nothing is

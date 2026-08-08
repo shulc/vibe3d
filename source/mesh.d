@@ -4784,8 +4784,29 @@ struct Mesh {
         if (hasIncidentFace(idx)) return false;
         bool cur = (vertexMarks[idx] & Marks.Hide) != 0;
         if (cur != on) {
-            if (on) vertexMarks[idx] |=  Marks.Hide;
-            else    vertexMarks[idx] &= ~Marks.Hide;
+            if (on) {
+                vertexMarks[idx] |=  Marks.Hide;
+                // §3.1 Select ∧ Hide = ∅ — owed by EVERY writer of the Hide
+                // plane, this one included (task 0628). It was missing here
+                // and inert while nothing in production ever set a loose
+                // point's bit: refreshHiddenDerived() upholds the invariant
+                // for face-bound vertices, but it steps OVER loose points by
+                // design, so this writer is the only place that can uphold it
+                // for them. mesh.hideInvert in Vertices/Edges mode is the
+                // first production caller that sets the bit — a selected
+                // loose point that the invert hides would otherwise end up
+                // both selected and hidden, with no derivation anywhere able
+                // to heal it. Same shape as setFaceHidden above: cleared in
+                // the SAME word write, order stamp zeroed alongside, bus note
+                // only if it actually flipped.
+                if (vertexMarks[idx] & Marks.Select) {
+                    vertexMarks[idx] &= ~Marks.Select;
+                    if (idx < vertexSelectionOrder.length) vertexSelectionOrder[idx] = 0;
+                    noteSelectionChange(SelDomain.Vertex);
+                }
+            } else {
+                vertexMarks[idx] &= ~Marks.Hide;
+            }
             commitChange(MeshEditScope.Marks);
         }
         return true;
@@ -5581,6 +5602,40 @@ struct Mesh {
             assert(m.isVertexHidden(loose), "a loose vertex's own bit is directly settable");
             m.refreshHiddenDerived();   // must NOT clear the own bit — hasFace[loose] is false
             assert(m.isVertexHidden(loose), "refreshHiddenDerived must not touch a loose vertex's own bit");
+        }
+        // (iii) §3.1 Select ∧ Hide = ∅ on the LOOSE half (task 0628).
+        // refreshHiddenDerived upholds the invariant for face-bound vertices
+        // and steps OVER loose points by design, so `setVertexHidden` is the
+        // only place that can uphold it for them. mesh.hideInvert in
+        // Vertices/Edges mode is the first production caller that sets a
+        // loose point's bit, and a selected loose point it hides would
+        // otherwise stay both selected and hidden with nothing able to heal
+        // it. The order STAMP is asserted alongside the Select bit: a fix
+        // that dropped Select but left the stamp leaves "selected with order
+        // 0" state that every order-consuming command silently ignores.
+        {
+            auto m = makeCube();
+            const uint loose = m.addVertex(Vec3(10, 10, 10));
+            m.syncSelection();
+            m.selectVertex(cast(int)loose);
+            assert(m.isVertexSelected(loose), "premise: the loose point is selected");
+            assert(m.vertexSelectionOrder[loose] != 0,
+                   "premise: a selected element carries a nonzero order stamp");
+            m.setVertexHidden(loose, true);
+            assert(m.isVertexHidden(loose), "the loose point's own bit is settable");
+            assert(!m.isVertexSelected(loose),
+                   "Select ∧ Hide = ∅: a loose point that just became hidden "
+                   ~ "cannot stay selected — refreshHiddenDerived steps over "
+                   ~ "loose points, so nothing downstream would ever fix it");
+            assert(m.vertexSelectionOrder[loose] == 0,
+                   "the order stamp must be zeroed in the same write as the "
+                   ~ "Select bit; a live stamp on a non-selected element is "
+                   ~ "exactly the corruption the stamps exist to prevent");
+            // The reverse direction must NOT invent a selection: un-hiding
+            // restores visibility only.
+            m.setVertexHidden(loose, false);
+            assert(!m.isVertexHidden(loose) && !m.isVertexSelected(loose),
+                   "un-hiding a loose point restores visibility, not selection");
         }
     }
     unittest { // S4 — the three hidden popcounts the "N hidden" readout reads

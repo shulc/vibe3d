@@ -95,6 +95,48 @@ private bool[] hideSelectedTargets(Mesh* mesh, SelType type) {
     return fmask;
 }
 
+// --- mesh.hideInvert's two operands (task 0628) -----------------------------
+//
+// The invert is COMPONENT-TYPED: it flips the plane the CURRENT SELECTION TYPE
+// names. Polygons mode flips the face plane directly (below, in the command).
+// Vertices/Edges mode flips the VERTEX plane and propagates UP — these two
+// helpers are that half.
+
+// The vertex plane, FLIPPED. Read through `isVertexHidden`, which for a
+// face-bound vertex is the value `Mesh.refreshHiddenDerived()` last derived
+// (every incident face hidden) and for a loose point is its own stored bit.
+// Both are the vertex plane, so both flip.
+private bool[] invertedVertexPlane(Mesh* mesh) {
+    auto vhid = new bool[](mesh.vertices.length);
+    foreach (vi; 0 .. mesh.vertices.length) vhid[vi] = !mesh.isVertexHidden(vi);
+    return vhid;
+}
+
+// Propagate a vertex-plane state UP onto faces: a face is hidden iff ANY of
+// its vertices is hidden. Same ANY rule `hideSelectedTargets` uses for a
+// Vertices/Edges-mode hide, and MEASURED for the invert specifically: from a
+// 3x3 grid with the corner polygon hidden, the vertex plane holds exactly that
+// corner's valence-1 vertex, so the flip holds the other 15 of 16 — and every
+// one of the 9 polygons touches at least one of those 15, which is why the
+// reference reads EVERY polygon hidden. Under an ALL rule the corner polygon
+// (one of its four vertices is the un-flipped one) would read VISIBLE, and the
+// measured set says hidden. The frozen fixture pins the same discriminator:
+// tests/fixtures/hide_invert_vertex_mark.json's post-invert set contains the
+// probe vertex's own polygon while the probe vertex itself is not in the
+// flipped set.
+//
+// REPLACE, not union — the propagation result IS the new face plane. Measured
+// by the same fixture: a polygon hidden BEFORE the invert whose vertices all
+// leave the flipped set (the disconnected spare) comes back VISIBLE. Together
+// with unhide, this is the only command that CLEARS Hide bits.
+private bool[] facesTouchingHiddenVertices(Mesh* mesh, const bool[] vhid) {
+    auto fmask = new bool[](mesh.faces.length);
+    foreach (fi, face; mesh.faces)
+        foreach (vi; face)
+            if (vi < vhid.length && vhid[vi]) { fmask[fi] = true; break; }
+    return fmask;
+}
+
 // mesh.hideUnselected's KEEP-VISIBLE set — the complement of the set above,
 // but NOT the face-by-face negation of the ANY rule (that reads the WRONG
 // count in Vertices/Edges mode — §1.2, T-S2b: selecting one face's 4
@@ -354,35 +396,69 @@ class MeshHideUnselected : Command, Operator {
     }
 }
 
-/// Invert Hidden — a plain flip of every face's Hide bit. No selection is
-/// involved: what is SELECTED never enters the rule (§5.1, and M3C flips
-/// identically with nothing selected at all).
+/// Invert Hidden — COMPONENT-TYPED (task 0628). It flips the plane the CURRENT
+/// SELECTION TYPE names, not always the polygon plane. What is SELECTED never
+/// enters the rule in any mode (§5.1, M3C: it flips identically with nothing
+/// selected at all) — only the selection TYPE does.
 ///
-/// MEASURED for Polygons mode, which is what this implements: M3B and
-/// M3E_polygon — from a clean 3x3 grid the invert hides all 9 polygons, and
-/// with one already hidden it leaves exactly that one visible and hides the
-/// other 8.
+///   * Polygons — flip every face's Hide bit (M3B, M3E_polygon: from a clean
+///     3x3 grid the invert hides all 9 polygons; with one already hidden it
+///     leaves exactly that one visible and hides the other 8).
+///   * Vertices / Edges — flip the VERTEX plane and propagate UP (M3, M3C,
+///     M3E_vertex, M3E_edge: with one corner polygon hidden the flipped vertex
+///     plane holds 15 of 16 vertices and EVERY polygon comes out hidden).
+///     The two modes share one branch because they measured identical: an edge
+///     mode invert lands on the vertex plane exactly as vertex mode does.
+///   * Item — nothing at all (M3E_item). A no-op rejection, so it lands no
+///     undo entry either; `subj.selType` is the authority (task 0621's rule on
+///     `Command.currentType()`), not the derived `editMode`, which under Item
+///     still reads the pre-switch geometry mode.
 ///
-/// KNOWN DIVERGENCE outside Polygons mode, deliberately left unfixed here.
-/// The reference's invert is COMPONENT-TYPED: it flips the plane the current
-/// selection TYPE names, not always the polygon plane.
-///   * Vertices/Edges mode flips the VERTEX plane and propagates upward
-///     (M3, M3C, M3E_vertex, M3E_edge): with one corner polygon hidden, the
-///     invert leaves 15 of 16 vertices hidden and EVERY polygon hidden,
-///     where this face-only flip reads 8 polygons hidden.
-///   * Item mode leaves component marks untouched entirely (M3E_item),
-///     where this flips all of them.
-/// Of the two things fixing it needs, task 0621 has now supplied the first:
-/// the current SELECTION TYPE is available here as `subj.selType` (and as
-/// `currentType()` on the Command base), so the branch this command is
-/// missing can now be WRITTEN — see THE RULE on Command.currentType(). The
-/// second is still open, which is why the divergence stands: a settled
-/// propagation law — the capture explicitly did NOT
-/// settle what a vertex's own Hide bit reads immediately after a vertex-
-/// plane invert (there it contradicts the derived-visibility rule the
-/// C-series pinned), so nothing may be built on vertex marks read in that
-/// state until a follow-up capture separates "stored bit" from "propagation
-/// evaluated at hide time".
+/// This is the ONLY command besides Unhide All that CLEARS Hide bits, in both
+/// geometry branches.
+///
+/// WHAT THIS DOES *NOT* REPRODUCE, and why it is not an oversight -----------
+/// The reference derives its vertex plane INCREMENTALLY, over the elements an
+/// operation touches, so its invert writes the vertex plane directly and
+/// leaves exactly the entries whose derived value it contradicts STALE: right
+/// after a Vertices-mode invert, a vertex whose only polygon just became hidden
+/// still reads NOT hidden, and stays that way until a hide touches that
+/// specific vertex. Measured and frozen (fixture
+/// tests/fixtures/hide_invert_vertex_mark.json — seven trigger rows; two of
+/// them flip that vertex while changing no polygon bit at all, and a real hide
+/// applied to an unrelated disconnected polygon leaves it stale).
+///
+/// Our vertex plane is derived TOTALLY: `Mesh.refreshHiddenDerived()` recomputes
+/// it from the face plane after every mutation, so we have no stale window.
+/// DECISION: keep it that way. The staleness is an artifact of how the
+/// reference derives, not a behaviour anyone designed, and a user meeting it
+/// would report it as a bug.
+///
+/// The consequences, stated so nobody has to rediscover them:
+///   * the FACE set matches the reference in every mode — the typed branch is
+///     what the face plane depends on, and it is expressible with no change to
+///     who owns the vertex plane (see below);
+///   * the VERTEX plane read immediately after a Vertices/Edges-mode invert
+///     differs by exactly the contradicted entries: we read 1 (derived from
+///     the now-hidden face) where the reference reads 0 (its own stale write);
+///   * consequently a Vertices/Edges-mode invert is NOT an involution here,
+///     while it is in the reference: pressing it twice does not return to the
+///     starting hidden set, because the first invert's total re-derivation
+///     loses the distinction its flipped vertex plane carried. Ctrl+Z is the
+///     path back — `HideRevertCommon` restores all three marks planes exactly —
+///     and Polygons mode, being a plain face flip, IS an involution.
+///
+/// EXPRESSIBILITY (the question this task was told to answer): the typed
+/// invert needs NO independently-writable vertex plane. The flipped plane is a
+/// LOCAL value — `invertedVertexPlane` reads it, `facesTouchingHiddenVertices`
+/// propagates it up, and only the FACE plane is written. `refreshHiddenDerived`
+/// then re-derives the vertex plane from those faces. So the model change Ph1
+/// anticipated (make the vertex plane authoritative, propagate upward) is not
+/// required to match the component typing; it would only be required to
+/// reproduce the stale window, which is the part we are deliberately not
+/// reproducing. The one exception is a LOOSE point, which has no face to
+/// propagate to and whose own bit is already independently writable
+/// (`Mesh.setVertexHidden`) — those are written directly.
 class MeshHideInvert : Command, Operator {
     mixin OperatorActrCommon;
     mixin HideRevertCommon;
@@ -396,14 +472,41 @@ class MeshHideInvert : Command, Operator {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
-        if (mesh.faces.length == 0) return false;   // no-op rejection
+
+        // Item mode: the invert touches no component marks (M3E_item). A no-op
+        // rejection rather than an empty apply, so it records no undo entry —
+        // the Operator contract's own "nothing happened" channel.
+        if (!isGeometryType(subj.selType)) return false;
+        const mode = geometryEditMode(subj.selType);
+
+        // No-op rejection, per operand: the polygon branch needs a face to
+        // flip, the vertex branch needs a vertex. They differ because the
+        // vertex branch is defined on a mesh with no faces at all (a cloud of
+        // loose points is a legal vertex plane, and flipping it is exactly
+        // what a Vertices-mode invert means there).
+        if (mode == EditMode.Polygons) { if (mesh.faces.length    == 0) return false; }
+        else                           { if (mesh.vertices.length == 0) return false; }
 
         mesh.syncSelection();
         captureMarks_();
 
-        auto target = new bool[](mesh.faces.length);
-        foreach (fi; 0 .. mesh.faces.length)
-            target[fi] = !mesh.isFaceHidden(fi);
+        bool[] target;
+        if (mode == EditMode.Polygons) {
+            target = new bool[](mesh.faces.length);
+            foreach (fi; 0 .. mesh.faces.length)
+                target[fi] = !mesh.isFaceHidden(fi);
+        } else {
+            auto vflip = invertedVertexPlane(mesh);
+            target = facesTouchingHiddenVertices(mesh, vflip);
+            // Loose points have no face to carry their half of the flip, so
+            // their own bit IS the result and is written directly.
+            // `setVertexHidden` refuses a vertex that has an incident face by
+            // contract (its Hide bit is derived), which is exactly the split
+            // wanted here — the returned bool says which half each vertex fell
+            // in, and the face-bound half is already accounted for by `target`.
+            foreach (vi; 0 .. vflip.length)
+                cast(void) mesh.setVertexHidden(vi, vflip[vi]);
+        }
 
         mesh.setFaceHiddenFrom(target);
         mesh.commitChange(MeshEditScope.Marks);
