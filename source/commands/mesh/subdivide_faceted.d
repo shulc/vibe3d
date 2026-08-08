@@ -28,7 +28,11 @@ package void runFacetedFamily(Mesh* mesh, EditMode editMode, bool smooth)
     foreach (fi; 0 .. mesh.faces.length)
         prevFaceVertCounts[fi] = mesh.faces[fi].length;
     // Mode-gated fallback — visibleFaceMask(), not operandFaceMask()
-    // (task 0613, S5; see the helper's doc comment in mesh.d).
+    // (task 0613, S5; see the helper's doc comment in mesh.d). This is the
+    // operand-exclusion half of task 0632: a hidden face is never in the
+    // operand, so it is carried through whole. The other half — carrying its
+    // Hide bit ACROSS the rebuild instead of dropping it — lives in
+    // `facetedSubdivide` itself.
     const bool[] mask = hadSelection
         ? mesh.selectedFaces
         : mesh.visibleFaceMask();

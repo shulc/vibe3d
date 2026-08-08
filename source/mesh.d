@@ -12660,6 +12660,12 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
     }
 
     uint[ulong] resultEdgeLookup;
+    // Hide (task 0632): the cage face every output face came from, recorded as
+    // the faces are emitted. `addFaceFast` appends EXACTLY one face per call
+    // (`faces ~= idx.dup`), so this array stays index-parallel with
+    // `result.faces` without a second walk.
+    uint[] outFaceOrigin;
+    outFaceOrigin.reserve(m.faces.length);
     foreach (fi, face; m.faces) {
         uint len = cast(uint)face.length;
         if (isSelected(fi)) {
@@ -12672,6 +12678,7 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
                 uint eBack = edgeLookup[edgeKey(vim1, vi0)];
                 result.addFaceFast(resultEdgeLookup,
                     [vi0, edgeMidIdx[eFwd], cIdx, edgeMidIdx[eBack]]);
+                outFaceOrigin ~= cast(uint)fi;
             }
         } else {
             // Keep shape but splice in midpoints of any edge that is shared
@@ -12686,11 +12693,95 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
                     widened ~= edgeMidIdx[ei];
             }
             result.addFaceFast(resultEdgeLookup, widened);
+            outFaceOrigin ~= cast(uint)fi;
         }
     }
 
     result.buildLoops();
+
+    // Hide (task 0632): the rebuild used to DROP the Hide bit outright — the
+    // result is a freshly constructed Mesh and nothing copied `faceMarks`
+    // across — so a hidden face came back visible. That is the "dropped"
+    // reading the measured law rules out; a hidden face must survive the
+    // operation as exactly one hidden face. Each output face inherits its cage
+    // face's bit, mirroring the same stamp in `catmullClarkOsd`
+    // (subpatch_osd.d): a split face hands it to every child, an un-split face
+    // carries its own across whole.
+    //
+    // Whether a hidden face is in the operand AT ALL is the caller's decision,
+    // not this kernel's — the command layer passes `visibleFaceMask()`, so the
+    // "hands it to every child" arm is unreachable from there. Keeping the
+    // stamp unconditional means a caller that DOES refine a hidden face still
+    // gets a defined answer instead of a silently cleared mark.
+    result.resizeVertexSelection();
+    result.resizeEdgeSelection();
+    result.resizeFaceSelection();
+    foreach (k, parentFi; outFaceOrigin)
+        result.setFaceHiddenBit(k, m.isFaceHidden(parentFi));
+    // Derived vertex/edge planes, computed on the OUTPUT topology. Must come
+    // AFTER the three resizes — refreshHiddenDerived writes vertexMarks /
+    // edgeMarks in place — and it early-outs to three word-OR scans when
+    // nothing is hidden, so the common path pays nothing.
+    result.refreshHiddenDerived();
     return result;
+}
+
+unittest { // facetedSubdivide: a hidden cage face comes through as exactly ONE
+           // hidden face — the mark is neither dropped nor split (task 0632).
+    import std.math : fabs;
+    import std.conv : to;
+
+    // Vacuity guard. With nothing hidden this same kernel is the wholesale
+    // 24-quad refine, so the 21 below is a measurement of the exclusion and
+    // not merely the number this kernel always produces.
+    {
+        Mesh all = makeCube();
+        bool[] allMask = new bool[](all.faces.length);
+        allMask[] = true;
+        assert(facetedSubdivide(all, allMask).faces.length == 24,
+            "vacuity: an unrestricted faceted subdivide of the cube is 24 faces");
+    }
+
+    Mesh m = makeCube();
+    m.syncSelection();   // makeCube() does not size the marks arrays itself
+    // Hide a MIDDLE face, never the last one. With the hidden face at f5 an
+    // operand mask that was one element SHORT would exclude it for entirely
+    // the wrong reason (an out-of-range read counts as unmarked), and the row
+    // could not tell that implementation from the intended one.
+    // makeCube's f2 = [0,4,7,3] is the x = -0.5 side.
+    m.setFaceHidden(2, true);
+    m.refreshHiddenDerived();
+
+    Mesh sub = facetedSubdivide(m, m.visibleFaceMask());
+
+    // 5 visible quads × 4 children + the hidden one carried through whole.
+    assert(sub.faces.length == 21,
+        "hidden face excluded from the operand: 5*4 + 1 = 21 faces");
+
+    size_t nHidden = 0, hi = size_t.max;
+    foreach (fi; 0 .. sub.faces.length)
+        if (sub.isFaceHidden(fi)) { ++nHidden; hi = fi; }
+    // Three readings, three different numbers: 0 = the rebuild dropped the
+    // mark, 4 = the hidden face was refined and every child inherited the bit,
+    // 1 = it was kept out of the operation. Only the last is the measured law,
+    // and a test that asserted merely "hiding was not lost" would pass on two
+    // of the three.
+    assert(nHidden == 1,
+        "exactly one hidden face must survive, got "
+        ~ nHidden.to!string ~ " (0 = the rebuild dropped the mark, "
+        ~ "4 = the hidden face was refined and every child inherited it)");
+
+    // ...and it must be THE face that was hidden, not merely SOME face. The
+    // survivor is the -X side carried across whole: eight corners (its four
+    // originals plus the four edge points its refined neighbours spliced in),
+    // every one of them at x = -0.5. Any other cube side spans x from -0.5 to
+    // +0.5, and a refined CHILD of the hidden face would have four corners.
+    assert(sub.faces[hi].length == 8,
+        "the survivor is the widened cage face, not a refined child of it — "
+        ~ "got " ~ sub.faces[hi].length.to!string ~ " corners, want 8");
+    foreach (vi; sub.faces[hi])
+        assert(fabs(sub.vertices[vi].x + 0.5f) < 1e-6f,
+            "the survivor must be the x = -0.5 side — the face that was hidden");
 }
 
 /// Smooth subdivide: faceted (linear) topology + one uniform-Laplacian relax

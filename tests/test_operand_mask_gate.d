@@ -177,7 +177,11 @@ shared static this() {
     // --- UNITTEST-FIXTURE entries: throwaway meshes with nothing hidden.
     //     Bumping these counts is fine and needs no justification beyond
     //     "a new fixture". ---
-    ALLOWED_COUNT["source/mesh.d"]                    = 14;
+    ALLOWED_COUNT["source/mesh.d"]                    = 15;
+    // ^ 14 → 15 (task 0632): facetedSubdivide's hide-carry unittest opens with
+    //   an all-true mask over a throwaway cube as its VACUITY guard — the
+    //   number the kernel produces when nothing is excluded, without which its
+    //   "21 faces" assertion could not be read as a measurement of exclusion.
     ALLOWED_COUNT["source/mesh_ops/extrude.d"]        = 6;
     ALLOWED_COUNT["source/remesh/remesh_job.d"]       = 1;
     ALLOWED_COUNT["source/tools/alignment/mirror.d"]  = 2;
