@@ -3,6 +3,7 @@ module command;
 import mesh;
 import view;
 import editmode;
+import seltype : SelType, geometrySelType;
 import math : Viewport;
 import params : Param, ParamHints;
 import mesh_edit_delta : MeshEditScope;
@@ -112,12 +113,12 @@ class Command {
             SubjectPacket subj;
             subj.mesh     = mesh;
             subj.editMode = editMode;
-            // subj.selType left at its default (Vertex): this generic base
-            // command carries only mesh/view/editMode (see the protected
-            // fields below), not the app's SelTypeOrder, so there is nothing
-            // to read here. Every mesh-Operator command reached through this
-            // path is inherently geometry-scoped, so Vertex is also the
-            // correct answer, not merely a safe fallback.
+            // The CURRENT selection type, from the app's live authority when
+            // one is wired (see `currentType()` and THE RULE above it). This
+            // is the command layer's half of the same answer app.d publishes
+            // into its own SubjectPacket via `buildToolVts`; the two layers
+            // now read one authority instead of two.
+            subj.selType  = currentType();
             vts.put(&subj);
             return op.evaluate(vts);
         }
@@ -279,6 +280,87 @@ class Command {
     final ref View viewRef() { return view; }
     final EditMode editModeVal() const { return editMode; }
 
+    // -----------------------------------------------------------------------
+    // THE RULE (task 0621) — which question a command asks about selection
+    // -----------------------------------------------------------------------
+    // A command that branches on "which kind of thing is the user selecting
+    // right now" asks `currentType()`. It NEVER reads `editMode` for that
+    // question.
+    //
+    // WHY the two are not interchangeable: `editMode` is a MATERIALIZED VIEW
+    // of the geometry part of the selection type (source/seltype.d). Under
+    // `SelType.Item` it deliberately RETAINS the most-recent geometry type
+    // rather than clearing, so geometry picking and drawing always have a
+    // defined mode. That is correct for picking and wrong for a command: with
+    // an item selected the user sees NO geometry selection on screen, while
+    // `editMode` still reads `Polygons` and the stale face selection from
+    // before the switch is still in the mesh. A command that branches on
+    // `editMode` therefore acts on geometry the user cannot see and did not
+    // choose. app.d's Tab handler already asks `currentSelType(selTypeOrder)`;
+    // before this rule the command layer asked the derivative, so the two
+    // layers answered the same question differently and every new command was
+    // a coin flip about which one it copied.
+    //
+    // The consequence that falls out, and the reason no command needs its own
+    // Item branch: under `SelType.Item` no geometry type is current, so THERE
+    // IS NO CURRENT GEOMETRY SELECTION — a geometry-scoped command sees the
+    // selection as EMPTY and takes whatever it already does for "nothing
+    // selected" (usually: operate on the whole mesh).
+    //
+    // THE ONE EXCEPTION, named so the next reader does not "fix" it: a
+    // command that is asking "which geometry PLANE do I read/write", not
+    // "what is the user selecting", legitimately keeps `editMode` — that is
+    // exactly what the view is for, and it must stay defined under Item. The
+    // commands that WRITE the mode through `editModePtr` (select.typeFrom,
+    // select.convert, select.fill, mesh.select, scene.reset, scene.loadMesh,
+    // mesh.selectionEdit) are all of this kind: they are establishing the
+    // geometry type, not reacting to it, and they route their write through
+    // app.d's geometry-type funnel which updates the order. Reading the
+    // REMEMBERED type on purpose is legitimate there and nowhere else so far;
+    // if you add such a command, say in a comment that you meant it.
+    //
+    // Mechanism: the app wires one live provider onto every registered
+    // command factory (registration.d), so this is the same authority the
+    // toolpipe's SubjectPacket carries. Operator commands can equivalently
+    // read `subj.selType` off the packet they already hold — `apply()` above
+    // stamps it from here.
+    //
+    // HAZARD, for whoever makes a WRAPPED command type-aware: the provider is
+    // setter-injected onto the instance the FACTORY returned, so a command
+    // that builds another command inside itself (CompositeCommand, the
+    // copilot cycle/select pair, the vertex-edit and layer-xform run merges,
+    // the layer-delete an image command delegates to) hands the inner
+    // instance mesh/view/editMode and NOT the provider — the inner one
+    // silently takes `currentType()`'s fallback. That is inert today because
+    // no wrapped command branches on the current type; the moment one does,
+    // forward the provider explicitly (`inner.setSelTypeProvider(...)`)
+    // rather than assuming construction carried it.
+
+    // Install the live selection-type authority. Called by the app's command
+    // registration for EVERY registered factory, never by a command itself —
+    // same injection shape as `setResolvedVpProvider`. `final` so no override
+    // can bypass `currentType()`.
+    final void setSelTypeProvider(SelType delegate() provider) {
+        selTypeSrc_ = provider;
+    }
+
+    // The CURRENT selection type — the sole accessor a command body should
+    // use to ask "what is the user selecting right now".
+    //
+    // Falls back to `geometrySelType(editMode)` when no provider is wired.
+    // That fallback is EXACTLY the pre-0621 behaviour (it re-derives the type
+    // from the captured mode), so an unwired command — a unittest that
+    // constructs the class directly, a standalone/headless caller — behaves
+    // bit-identically to before and the change's blast radius is confined to
+    // the wired path. It is a compatibility shim, not a second authority: the
+    // production path always has the provider, because registration.d wraps
+    // every factory rather than opting commands in one at a time (opting in
+    // per command is what let the two layers drift apart in the first place).
+    protected final SelType currentType() {
+        if (selTypeSrc_ !is null) return selTypeSrc_();
+        return geometrySelType(editMode);
+    }
+
     // Injection point for the follow-resolved viewport snapshot (viewport
     // camera single-source, doc/tasks/work/0181). Nullable delegate set by a
     // command factory right after construction (app.d), never by the command
@@ -318,6 +400,10 @@ protected:
     EditMode editMode;
 
 private:
+    // Live "current selection type" authority (task 0621). Null until the
+    // app's command registration injects it; read ONLY through
+    // `currentType()`, which owns the null fallback.
+    SelType delegate() selTypeSrc_;
     Viewport delegate() resolvedVpProvider;
 }
 

@@ -1708,6 +1708,45 @@ void registerCommands(EditorApp app) {
         new MacroRecord(&mesh(), cameraView, editMode, macroRecorder);
     reg.commandFactories["macro.saveRecorded"] = () => cast(Command)
         new MacroSaveRecorded(&mesh(), cameraView, editMode, macroRecorder);
+
+    // -----------------------------------------------------------------------
+    // Selection-type authority (task 0621) — wired onto EVERY command.
+    // -----------------------------------------------------------------------
+    // THE RULE lives on `Command.currentType()` (source/command.d): a command
+    // asks the CURRENT selection type, never the derived `editMode`, because
+    // under `SelType.Item` the latter retains the pre-switch geometry type and
+    // the command then acts on a selection the user cannot see.
+    //
+    // This wraps every registered factory rather than adding the provider to
+    // the ~200 construction sites above, and that is the point rather than a
+    // shortcut: the seam this task closes exists BECAUSE the app layer and the
+    // command layer read different authorities, and an opt-in-per-command
+    // wiring would let the next command be added without one. Wrapping the
+    // whole dictionary means a command cannot be registered without the
+    // authority, so `currentType()`'s null fallback is unreachable in
+    // production and only unit tests that construct a command directly ever
+    // take it.
+    //
+    // Placement: LAST in this function, after every `commandFactories[...]`
+    // assignment (including those in the nested `with`/scope blocks above), so
+    // the walk sees the complete dictionary. Any factory registered after this
+    // point would silently miss the provider — add new ones above.
+    //
+    // `reg.commandFactories.keys` snapshots the key set into a fresh array, so
+    // re-assigning existing keys during the walk neither rehashes nor
+    // invalidates the iteration. The wrapper is built by a named helper, not
+    // by a lambda written inline in the loop body, so each closure captures
+    // its OWN `inner` — the standard idiom in this file (cf. `makeFactory`).
+    {
+        auto selTypeSrc = () => currentSelType(selTypeOrder);
+        static Command delegate() withSelType(Command delegate() inner,
+                                              SelType delegate() src) {
+            return () { auto c = inner(); c.setSelTypeProvider(src); return c; };
+        }
+        foreach (id; reg.commandFactories.keys)
+            reg.commandFactories[id] = withSelType(reg.commandFactories[id],
+                                                   selTypeSrc);
+    }
     }
     }
     }

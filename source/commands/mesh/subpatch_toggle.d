@@ -5,6 +5,7 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
+import seltype : SelType;
 import change_bus : MeshEditScope;
 
 /// Mirror of the Tab-key handler in app.d: toggles isSubpatch on selected
@@ -38,15 +39,24 @@ class SubpatchToggle : Command, Operator {
         captured     = true;
 
         mesh.syncSelection();
-        // MODE-AWARE scope (parity): the persisted face selection is honored
-        // ONLY while the current selection type is Polygons. In edge/vertex
+        // TYPE-AWARE scope (parity): the persisted face selection is honored
+        // ONLY while the CURRENT selection type is Polygon. In edge/vertex
         // mode a stale face selection is ignored and the toggle applies to
         // the WHOLE model (matches the reference editor, which drops the
         // polygon selection's authority outside polygon mode). Whole-model
-        // also when nothing is face-selected in polygon mode. `editMode` is
-        // the geometry-type view captured at fire time, so it is Edges /
-        // Vertices in those modes and the guard falls through to whole-model.
-        bool scoped = editMode == EditMode.Polygons
+        // also when nothing is face-selected in polygon mode.
+        //
+        // Task 0621: this asks `subj.selType` — the CURRENT type — and no
+        // longer `editMode`. The two differ in exactly one state and it is a
+        // reachable one: under `SelType.Item` the derived `editMode` RETAINS
+        // the pre-switch geometry type, so with an item selected after a
+        // polygon selection the old `editMode == Polygons` read scoped the
+        // toggle to faces the user could no longer see selected. Reading the
+        // current type makes this line agree with app.d's Tab handler, which
+        // has always asked `currentSelType(selTypeOrder) == SelType.Polygon`
+        // — the two spellings of the same toggle now answer identically in
+        // every mode, item included.
+        bool scoped = subj.selType == SelType.Polygon
                       && mesh.hasAnySelectedFaces();
         // Materialize the views once (each access allocates).
         auto selView = mesh.selectedFaces;

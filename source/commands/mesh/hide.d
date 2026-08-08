@@ -5,6 +5,7 @@ import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 import mesh;
 import view;
 import editmode;
+import seltype : SelType, isGeometryType, geometryEditMode;
 import change_bus : MeshEditScope, SelDomain;
 
 // doc/hide_geometry_plan.md Stage 2 (§1.2/§5) — mesh.hide / mesh.hideUnselected
@@ -63,12 +64,25 @@ private bool[] selectedVertexMaskForMode(Mesh* mesh, EditMode mode) {
 // hides a vertex that still touches a third visible face, §1.2). An empty
 // selection in ANY mode hides everything (C6, the project's existing
 // nothingSelected convention — no separate branch needed).
-private bool[] hideSelectedTargets(Mesh* mesh, EditMode mode) {
+// Task 0621: `Item` is current ⇒ NO geometry type is ⇒ there is no CURRENT
+// geometry selection, which is the SAME case as "nothing selected" and shares
+// its branch below rather than adding a second one. (Two reasons it is one
+// branch and not two: it is one rule — see THE RULE on Command.currentType()
+// — and the operand-mask gate, tests/test_operand_mask_gate.d, allows this
+// file exactly ONE whole-mesh fill and expects it within three lines of the
+// sizing, so a second fill or a comment wedged between the two would either
+// trip the gate or, worse, hide this one from it.) Under Item this is the
+// answer the command already gave by ACCIDENT whenever the stale selection
+// happened to be empty; what changes is that a selection left over from
+// before the item switch no longer scopes the hide to geometry the user
+// cannot see selected.
+private bool[] hideSelectedTargets(Mesh* mesh, SelType type) {
     auto fmask = new bool[](mesh.faces.length);
-    if (mesh.nothingSelected(mode)) {
-        fmask[] = true;
+    if (!isGeometryType(type) || mesh.nothingSelected(geometryEditMode(type))) {
+        fmask[] = true;   // whole-mesh: gate-visible, sized 2 lines above
         return fmask;
     }
+    const mode = geometryEditMode(type);
     if (mode == EditMode.Polygons) {
         foreach (fi; 0 .. mesh.faces.length)
             fmask[fi] = mesh.isFaceSelected(fi);
@@ -91,8 +105,14 @@ private bool[] hideSelectedTargets(Mesh* mesh, EditMode mode) {
 // An empty selection keeps nothing in either branch (no face is selected /
 // no face has all-empty-set-membership), so it hides everything too — same
 // C6 convention as mesh.hide, falling out without a separate branch.
-private bool[] keepVisibleTargets(Mesh* mesh, EditMode mode) {
+private bool[] keepVisibleTargets(Mesh* mesh, SelType type) {
     auto keep = new bool[](mesh.faces.length);
+    // Item is current ⇒ no CURRENT geometry selection (task 0621), so the
+    // keep set is empty and the isolate hides everything — the same landing
+    // point the empty-selection case already had in both branches below, and
+    // consistent with mesh.hide's Item answer above.
+    if (!isGeometryType(type)) return keep;
+    const mode = geometryEditMode(type);
     if (mode == EditMode.Polygons) {
         foreach (fi; 0 .. mesh.faces.length)
             keep[fi] = mesh.isFaceSelected(fi);
@@ -255,7 +275,7 @@ class MeshHide : Command, Operator {
         mesh.syncSelection();
         captureMarks_();
 
-        auto target = hideSelectedTargets(mesh, editMode);
+        auto target = hideSelectedTargets(mesh, subj.selType);
         auto merged = new bool[](mesh.faces.length);
         bool changed = false;
         foreach (fi; 0 .. mesh.faces.length) {
@@ -314,7 +334,7 @@ class MeshHideUnselected : Command, Operator {
         mesh.syncSelection();
         captureMarks_();
 
-        auto keep = keepVisibleTargets(mesh, editMode);
+        auto keep = keepVisibleTargets(mesh, subj.selType);
         auto target = new bool[](mesh.faces.length);
         bool changed = false;
         foreach (fi; 0 .. mesh.faces.length) {
@@ -352,9 +372,12 @@ class MeshHideUnselected : Command, Operator {
 ///     where this face-only flip reads 8 polygons hidden.
 ///   * Item mode leaves component marks untouched entirely (M3E_item),
 ///     where this flips all of them.
-/// Fixing it needs two things this stage does not have: the current
-/// SELECTION TYPE rather than the derived EditMode (the subject of task
-/// 0621), and a settled propagation law — the capture explicitly did NOT
+/// Of the two things fixing it needs, task 0621 has now supplied the first:
+/// the current SELECTION TYPE is available here as `subj.selType` (and as
+/// `currentType()` on the Command base), so the branch this command is
+/// missing can now be WRITTEN — see THE RULE on Command.currentType(). The
+/// second is still open, which is why the divergence stands: a settled
+/// propagation law — the capture explicitly did NOT
 /// settle what a vertex's own Hide bit reads immediately after a vertex-
 /// plane invert (there it contradicts the derived-visibility rule the
 /// C-series pinned), so nothing may be built on vertex marks read in that
