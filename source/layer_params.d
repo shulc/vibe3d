@@ -131,7 +131,13 @@ final class LayerPropsProvider : ParamProvider {
         // without a payload); `params()` is a per-frame query, not the
         // place to construct one as a side effect, so it falls back to the
         // base bundle instead of dereferencing a null `ImageData`.
-        auto img = layer_.kind == ItemKind.Image ? layer_.imageOrNull() : null;
+        //
+        // No `kind == ItemKind.Image` prefix: `imageOrNull()` is ALREADY
+        // capability-gated (`hasImage ? image_ : null`, document.d), so the
+        // comparison would be dead code AND would spell the literal
+        // `kind == ItemKind.X` idiom document.d's capability-table comment
+        // bans. One null check covers both "wrong kind" and "no payload yet".
+        auto img = layer_.imageOrNull();
 
         // NIT (review round 4, still honoured): reserve the EXACT capacity
         // up front, then append each `Param` individually (`~=` under a
@@ -191,11 +197,13 @@ final class LayerPropsProvider : ParamProvider {
                     // resolve + decode + refcount hook a later stage's
                     // dedicated `image.replace` command owns to keep the
                     // payload in sync with the path — the exact `visible`
-                    // precedent below, one call site over. `injectParamsInto`
-                    // does not itself consult the `readonly()` flag yet (a
-                    // later stage's concern — see the plan's R14); this
-                    // stage adds no channel whose write-time consequences
-                    // matter without that command existing to reach it.
+                    // precedent below, one call site over. The flag is
+                    // ENFORCED, not decorative: `LayerAttr.apply`
+                    // (commands/layer/commands.d) rejects a write to a
+                    // readonly param after the name resolve — `?` read-back
+                    // still works. (`injectParamsInto` itself stays a generic
+                    // typed-pointer writer with no policy; the gate lives at
+                    // the write path, not in the injector.)
                     result ~= Param.string_("filename", "Filename",
                                              &img.storedPath, "").readonly();
                     // Enum over a CLOSED three-tag set (plan divergence 4) —
@@ -710,7 +718,10 @@ unittest {
 // removes the `enumValues` entries and makes the bogus-tag inject NOT
 // throw; deleting the `if (img !is null)` guard's outer condition (i.e.
 // always emitting the bundle) makes the null-payload case in the unittest
-// above dereference a null `ImageData` instead of reading length 2.
+// above dereference a null `ImageData` instead of reading length 2; and
+// binding either default to the LIVE field value instead of a literal
+// (`Param.enum_(..., &img.colorspace, tags, img.colorspace)`) makes the
+// non-default-snapshot default assertions read "sRGB"/false.
 // ---------------------------------------------------------------------------
 unittest {
     import std.json  : JSONValue;
@@ -768,9 +779,18 @@ unittest {
     assert(("sRGB"       in tags) !is null);
     assert(("linear"     in tags) !is null);
 
-    // ---- defaults match the measured reference values (plan §Q2) ------------
-    assert(colorspaceP.default_.s == "(default)", "colorspace default is '(default)'");
-    assert(useAlphaP.default_.b   == true,        "useAlpha default is true");
+    // ---- defaults: NOT asserted here, deliberately -------------------------
+    // The obvious place for `colorspaceP.default_.s == "(default)"` is right
+    // here — and it would be INERT. `ps` was captured off a fresh
+    // `new ImageData()`, whose field initialisers ARE "(default)"/true, so a
+    // wrong implementation that binds the default to the LIVE value
+    // (`Param.enum_(..., &img.colorspace, tags, img.colorspace)`) reads the
+    // identical value through the assertion and stays green. That bug is not
+    // cosmetic: `default_` is what `isUserSet` compares against (params.d), so
+    // a live-bound default makes `isUserSet` permanently false. The default
+    // assertions therefore live on the NON-DEFAULT snapshot further down
+    // (search "defaults are LITERALS"), where the two implementations read
+    // different values.
 
     // ---- pointers alias the live ImageData (both directions) ----------------
     img.imageRef().storedPath = "changed/path.png";
@@ -791,6 +811,25 @@ unittest {
     img.imageRef().colorspace = "sRGB";
     img.imageRef().useAlpha  = false;
     auto snap = prov.params();
+
+    // ---- defaults are LITERALS, not the live field value (plan §Q2) --------
+    // Asserted HERE, off a snapshot whose live values are "sRGB"/false, NOT
+    // off the fresh-`ImageData` snapshot above where the initialisers happen
+    // to equal the defaults. Discriminating: an implementation that binds the
+    // default to the live value reads "sRGB"/false here and goes RED; the
+    // correct one reads the declared literals. (Also pins the measured
+    // reference values themselves.)
+    assert(byName(snap, "colorspace").default_.s == "(default)",
+        "colorspace default is the LITERAL '(default)', not the live field value");
+    assert(byName(snap, "useAlpha").default_.b == true,
+        "useAlpha default is the LITERAL true, not the live field value");
+    // ...and the live values really are the non-default ones, so the two
+    // assertions above cannot have been read off a coincidence.
+    assert(*byName(snap, "colorspace").sptr == "sRGB",
+        "fixture precondition: colorspace's LIVE value differs from its default");
+    assert(*byName(snap, "useAlpha").bptr == false,
+        "fixture precondition: useAlpha's LIVE value differs from its default");
+
     JSONValue pj = JSONValue(cast(JSONValue[string]) null);
     foreach (ref p; snap) if (!p.readonly_) pj[p.name] = paramToJson(p);
 

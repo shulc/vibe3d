@@ -1464,6 +1464,21 @@ unittest {  // hasImage()/imageOrNull()/imageRef() mirror the mesh trio: a
     assert(img.imageOrNull is null, "imageOrNull is null until something constructs an ImageData");
 
     img.imageRef() = new ImageData();
+
+    // A fresh `ImageData`'s FIELD INITIALISERS, read before anything
+    // overwrites them. These are reference-measured contract values (see the
+    // `ImageData` declaration above), and until this assertion existed a typo
+    // in either initialiser was invisible to the whole suite: the param
+    // `default_` that layer_params.d declares is an INDEPENDENT literal in a
+    // different module, so `bool useAlpha = false;` here would have kept every
+    // param-side default assertion green while silently changing what a newly
+    // constructed image item means. `storedPath` needs no such line — it has
+    // no initialiser (empty is `string.init`) and is overwritten below.
+    assert(img.imageOrNull.colorspace == "(default)",
+        "a fresh ImageData initialises colorspace to '(default)'");
+    assert(img.imageOrNull.useAlpha == true,
+        "a fresh ImageData initialises useAlpha to true");
+
     img.imageRef().storedPath = "logo.png";
     assert(img.imageOrNull !is null, "imageOrNull is non-null once imageRef() is assigned");
     assert(img.imageOrNull.storedPath == "logo.png", "imageOrNull aliases the same object imageRef() wrote");

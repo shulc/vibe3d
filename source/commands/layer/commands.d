@@ -963,6 +963,23 @@ final class LayerAttr : LayerCommandBase {
             return true;
         }
 
+        // READ-ONLY gate. Placed AFTER the resolve (so an unknown name still
+        // reports "unknown", not "read-only") and AFTER the query
+        // short-circuit (a readonly param stays fully READABLE — that is the
+        // whole point of exposing it: the `visible` precedent, layer_params.d).
+        //
+        // `injectParamsInto` does not consult `readonly_` — it is a generic
+        // typed-pointer writer with no policy — so without this check the flag
+        // gates nothing on this path and `layer.attr <n> filename evil.png`
+        // silently mutates the payload's stored path behind the resolve +
+        // decode + refcount hook the dedicated replace command owns. The flag
+        // is declared at the param; the enforcement belongs at the write path
+        // that reaches it.
+        if (found.readonly_)
+            throw new Exception(
+                "layer.attr: attribute '" ~ attrName_ ~ "' is read-only "
+                ~ "(readable via '?', not writable through layer.attr)");
+
         // Write: snapshot the prior value for revert(), then inject the new one
         // through the param's typed pointer (which aliases the live Layer field).
         priorValue_ = paramToJson(*found);
@@ -1529,9 +1546,10 @@ unittest {
 unittest {
     import mesh : makeCube;
     import view : View;
-    import std.json : JSONValue, JSONType;
-    import std.math : isClose;
-    import std.conv : to;
+    import std.json   : JSONValue, JSONType;
+    import std.math   : isClose;
+    import std.conv   : to;
+    import std.string : indexOf;
 
     auto doc  = Document.bootstrap(makeCube());
     auto v    = new View(0, 0, 800, 600);
@@ -1658,6 +1676,71 @@ unittest {
                "an undo that repairs must keep the sign — clamping to +floor "
              ~ "un-mirrors the item. Got "
              ~ doc.layers[0].xform.scl.y.to!string);
+    }
+
+    // ---- a READONLY attr rejects the WRITE but still answers a `?` query ----
+    // `filename` (Image kind, payload-bearing — layer_params.d) is the only
+    // readonly Param reachable through layer.attr today.
+    //
+    // Discriminating: `injectParamsInto` is a generic typed-pointer writer
+    // that never consults `readonly_`, so BEFORE the gate in apply() this
+    // write SUCCEEDED and mutated storedPath. The assertion that pins the fix
+    // is therefore the UNCHANGED value, not the throw — a bare "it threw"
+    // would fire just as happily if the param had gone missing entirely
+    // (which is what the `?` read-back above rules out).
+    {
+        import document : ImageData;
+
+        auto imgLayer = new Layer;
+        imgLayer.name = "logo";
+        imgLayer.kind = ItemKind.Image;
+        imgLayer.imageRef() = new ImageData();
+        imgLayer.imageRef().storedPath = "assets/logo.png";
+        doc.layers ~= imgLayer;
+        immutable int imgIdx = cast(int)(doc.layers.length - 1);
+
+        // Readonly means UNWRITABLE, not invisible: the `?` read-back path is
+        // upstream of the gate and still boxes the live value.
+        auto q = mk();
+        q.setIndex(imgIdx);
+        q.setAttrName("filename");
+        q.setQuery(true);
+        assert(q.apply(), "a readonly attr is still READABLE via ?");
+        assert(q.queryResult().str == "assets/logo.png",
+               "the ? query boxes the live storedPath (the param exists)");
+
+        // The write is rejected...
+        auto w = mk();
+        w.setIndex(imgIdx);
+        w.setAttrName("filename");
+        w.setAttrValue(JSONValue("evil.png"));
+        bool threw = false;
+        try { w.apply(); } catch (Exception) { threw = true; }
+        assert(threw, "writing a readonly attr through layer.attr throws");
+        // ...and nothing moved — the half that actually discriminates.
+        assert(imgLayer.imageOrNull.storedPath == "assets/logo.png",
+               "a REJECTED readonly write leaves the field untouched");
+
+        // The gate is PER-PARAM, not "image layers are read-only": a writable
+        // channel on the very same layer still writes.
+        auto ok = mk();
+        ok.setIndex(imgIdx);
+        ok.setAttrName("colorspace");
+        ok.setAttrValue(JSONValue("sRGB"));
+        assert(ok.apply(), "a writable channel on the same layer still writes");
+        assert(imgLayer.imageOrNull.colorspace == "sRGB",
+               "the readonly gate is scoped to the param, not the layer");
+
+        // An UNKNOWN name on a readonly-bearing layer still reports "unknown",
+        // not "read-only" — the gate sits AFTER the resolve.
+        auto unk = mk();
+        unk.setIndex(imgIdx);
+        unk.setAttrName("filenam");     // typo, not a readonly param
+        unk.setAttrValue(JSONValue("x"));
+        string msg;
+        try { unk.apply(); } catch (Exception e) { msg = e.msg; }
+        assert(msg.length && msg.indexOf("unknown attribute") >= 0,
+               "an unknown name is still reported as unknown, not read-only");
     }
 }
 
