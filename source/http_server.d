@@ -2965,6 +2965,32 @@ string meshToJsonDetailed(ref const(Mesh) m) {
     }
     json ~= "], ";
 
+    // Per-element hide flags (task 0613 Stage 2) — the test observable for
+    // every later hide-geometry stage. faceHidden is the AUTHORITATIVE
+    // plane; vertexHidden/edgeHidden are DERIVED (§1.2 of
+    // doc/hide_geometry_plan.md) but exposed the same way so a test can read
+    // any of the three without knowing which plane is the source of truth.
+    // Same non-allocating, bounds-checked accessor + padding-rule shape as
+    // isSubpatch above.
+    json ~= "\"faceHidden\": [";
+    for (size_t i = 0; i < m.faces.length; ++i) {
+        if (i > 0) json ~= ", ";
+        json ~= m.isFaceHidden(i) ? "true" : "false";
+    }
+    json ~= "], ";
+    json ~= "\"vertexHidden\": [";
+    for (size_t i = 0; i < m.vertices.length; ++i) {
+        if (i > 0) json ~= ", ";
+        json ~= m.isVertexHidden(i) ? "true" : "false";
+    }
+    json ~= "], ";
+    json ~= "\"edgeHidden\": [";
+    for (size_t i = 0; i < m.edges.length; ++i) {
+        if (i > 0) json ~= ", ";
+        json ~= m.isEdgeHidden(i) ? "true" : "false";
+    }
+    json ~= "], ";
+
     // Material Groups (MG2): the per-mesh surface registry and per-face
     // material indices into it. Exposed so render_diff and the LWO
     // surface-loader tests can verify what the parser produced.

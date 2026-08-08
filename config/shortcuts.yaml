@@ -41,6 +41,10 @@ commands:
   mesh.delete:           Delete
   mesh.remove:           Backspace
   snap.toggle:           X
+  mesh.hide:             H                  # ref: h
+  mesh.hideUnselected:   "Shift+H"          # ref: shift-h
+  mesh.hideInvert:       "Ctrl+H"           # ref: ctrl-h
+  mesh.unhideAll:        U                  # ref: u
   file.new:              "Ctrl+N"
   file.open:             "Ctrl+O"
   file.save:             "Ctrl+S"

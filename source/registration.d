@@ -128,6 +128,7 @@ import commands.mesh.quadruple   : MeshQuadruple;
 import commands.mesh.detriangulate : MeshDetriangulate;
 import commands.mesh.merge         : MeshMergeFaces;
 import commands.mesh.subpatch_toggle;
+import commands.mesh.hide;
 import commands.mesh.set_material;
 import commands.mesh.set_part;
 import commands.tool.headless : ToolHeadlessCommand;
@@ -1375,6 +1376,14 @@ void registerCommands(EditorApp app) {
                            () => setActiveTool(null));
     reg.commandFactories["mesh.subpatch_toggle"] = () => cast(Command)
         new SubpatchToggle(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.hide"] = () => cast(Command)
+        new MeshHide(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.hideUnselected"] = () => cast(Command)
+        new MeshHideUnselected(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.hideInvert"] = () => cast(Command)
+        new MeshHideInvert(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.unhideAll"] = () => cast(Command)
+        new MeshUnhideAll(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.setMaterial"] = () => cast(Command)
         new MeshSetMaterial(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.setPart"] = () => cast(Command)

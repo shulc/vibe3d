@@ -2618,6 +2618,12 @@ void main(string[] args) {
         auto subView = mesh.isSubpatch;
         foreach (fi; 0 .. mesh.faces.length)
             subpatchJson ~= JSONValue(fi < subView.length && subView[fi]);
+        // Per-face hide flag, same mirrored shape as isSubpatch above (task
+        // 0613 Stage 2) — non-allocating scalar accessor, bounds-checked
+        // internally, so no defensive length guard is needed here.
+        JSONValue[] hiddenJson;
+        foreach (fi; 0 .. mesh.faces.length)
+            hiddenJson ~= JSONValue(mesh.isFaceHidden(fi));
         JSONValue meshJson = JSONValue.emptyObject;
         meshJson["vertexCount"] = JSONValue(mesh.vertices.length);
         meshJson["edgeCount"]   = JSONValue(mesh.edges.length);
@@ -2625,6 +2631,7 @@ void main(string[] args) {
         meshJson["vertices"]    = JSONValue(vertsJson);
         meshJson["faces"]       = JSONValue(facesJson);
         meshJson["isSubpatch"]  = JSONValue(subpatchJson);
+        meshJson["faceHidden"]  = JSONValue(hiddenJson);
 
         JSONValue entry = JSONValue.emptyObject;
         entry["seq"]       = JSONValue(stepTrace.nextSeq());

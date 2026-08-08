@@ -41,6 +41,18 @@ commands:
   mesh.delete:           Backspace
   mesh.remove:           "Cmd+Backspace"
   snap.toggle:           X
+  mesh.hide:             H                  # ref: h
+  mesh.hideUnselected:   "Shift+H"          # ref: shift-h
+  # NOT Cmd+H: SDL's Cocoa backend installs the default application menu,
+  # whose Hide item owns ⌘H — AppKit consumes the chord before SDL ever
+  # emits a keydown, so the binding would be silently unreachable. Kept on
+  # Ctrl+H, the same physical chord as every other platform, rather than
+  # moved to ⇧⌘H: one law across platforms keeps the docs, the test and the
+  # muscle memory identical, and ⌃H is claimed by AppKit only inside text
+  # editing (where the app gates on WantTextInput anyway), never in the
+  # viewport. This is the one Ctrl binding in this file, and deliberately so.
+  mesh.hideInvert:       "Ctrl+H"           # ref: ctrl-h
+  mesh.unhideAll:        U                  # ref: u
   file.new:              "Cmd+N"
   file.open:             "Cmd+O"
   file.save:             "Cmd+S"

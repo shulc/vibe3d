@@ -1,0 +1,433 @@
+module commands.mesh.hide;
+
+import command;
+import operator : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
+import mesh;
+import view;
+import editmode;
+import change_bus : MeshEditScope, SelDomain;
+
+// doc/hide_geometry_plan.md Stage 2 (§1.2/§5) — mesh.hide / mesh.hideUnselected
+// / mesh.hideInvert / mesh.unhideAll. Modeled on commands/mesh/subpatch_toggle.d.
+//
+// Two capture rounds back these commands, and the class citations below are
+// deliberately kept apart because they measure DIFFERENT things:
+//   * the C-series (C1/C2/C5/C6/C15/C16, §5.1) measured the PER-MODE target
+//     sets and the vertex/edge derivation, each row starting from a clean
+//     scene with nothing hidden;
+//   * the accumulation series (M1CTRL/M1/M1ALT/M2CTRL/M2P/M2V/M3*) measured
+//     what a hide does when something is ALREADY hidden — the one question a
+//     clean-start row can never answer, because union and replace are
+//     bit-identical there. Evidence lives in the task's private capture
+//     tree (driver + per-case JSON), one fresh process per case, each
+//     measurement paired with a clean-state control.
+// Every citation below names a case that actually measured the claim next to
+// it; a rule with no case is labelled DERIVED in so many words.
+// All four write ONLY the face plane (the authoritative one, §1.2) and then
+// call mesh.refreshHiddenDerived() — the derived vertex/edge planes and their
+// OWN half of the Select ∧ Hide = ∅ invariant (§3.1) are already handled by
+// Stage 0's refreshHiddenDerived()/setFaceHiddenFrom(); this stage owes only
+// the FACE-plane half of that invariant, and setFaceHiddenFrom already clears
+// it in the same word write (Stage 0, mesh.d ~5175-5197) — no extra code
+// needed here for that half either. What IS this stage's job: the per-mode
+// command semantics (measured, §1.2/§5.1) and undoing a hide + the selection
+// drop it causes as ONE entry (§1.5, C9).
+
+// --- shared target-set computation (§1.2/§5.1) ------------------------------
+
+// The vertex set a Vertices/Edges-mode selection resolves to, for the
+// face-touch tests below. Edges mode resolves each selected edge to its two
+// endpoints — measured equivalent to selecting both endpoints directly
+// (§5.1: hiding from an edge selection lands on the same faces as hiding
+// from that edge's two endpoints). Polygons mode never calls this — its face set
+// comes straight from the face selection, not through a vertex resolution.
+private bool[] selectedVertexMaskForMode(Mesh* mesh, EditMode mode) {
+    auto vmask = new bool[](mesh.vertices.length);
+    if (mode == EditMode.Vertices) {
+        foreach (vi; 0 .. mesh.vertices.length)
+            vmask[vi] = mesh.isVertexSelected(vi);
+    } else if (mode == EditMode.Edges) {
+        foreach (ei; 0 .. mesh.edges.length) {
+            if (!mesh.isEdgeSelected(ei)) continue;
+            const e = mesh.edges[ei];
+            if (e[0] < vmask.length) vmask[e[0]] = true;
+            if (e[1] < vmask.length) vmask[e[1]] = true;
+        }
+    }
+    return vmask;
+}
+
+// mesh.hide's per-face target set: Polygons mode = the selected faces;
+// Vertices/Edges mode = every face touching ANY vertex in the resolved
+// selection (propagation UP, never down — hiding two faces of a cube never
+// hides a vertex that still touches a third visible face, §1.2). An empty
+// selection in ANY mode hides everything (C6, the project's existing
+// nothingSelected convention — no separate branch needed).
+private bool[] hideSelectedTargets(Mesh* mesh, EditMode mode) {
+    auto fmask = new bool[](mesh.faces.length);
+    if (mesh.nothingSelected(mode)) {
+        fmask[] = true;
+        return fmask;
+    }
+    if (mode == EditMode.Polygons) {
+        foreach (fi; 0 .. mesh.faces.length)
+            fmask[fi] = mesh.isFaceSelected(fi);
+        return fmask;
+    }
+    auto vsel = selectedVertexMaskForMode(mesh, mode);
+    foreach (fi, face; mesh.faces)
+        foreach (vi; face)
+            if (vi < vsel.length && vsel[vi]) { fmask[fi] = true; break; }
+    return fmask;
+}
+
+// mesh.hideUnselected's KEEP-VISIBLE set — the complement of the set above,
+// but NOT the face-by-face negation of the ANY rule (that reads the WRONG
+// count in Vertices/Edges mode — §1.2, T-S2b: selecting one face's 4
+// vertices and negating ANY leaves 5 faces visible; the measured rule keeps
+// exactly 1, the face whose vertices are ALL selected). Polygons mode: keep
+// exactly the selected faces (the plain complement, C5). Vertices/Edges
+// mode: keep only faces whose vertices are ALL in the resolved selection.
+// An empty selection keeps nothing in either branch (no face is selected /
+// no face has all-empty-set-membership), so it hides everything too — same
+// C6 convention as mesh.hide, falling out without a separate branch.
+private bool[] keepVisibleTargets(Mesh* mesh, EditMode mode) {
+    auto keep = new bool[](mesh.faces.length);
+    if (mode == EditMode.Polygons) {
+        foreach (fi; 0 .. mesh.faces.length)
+            keep[fi] = mesh.isFaceSelected(fi);
+        return keep;
+    }
+    auto vsel = selectedVertexMaskForMode(mesh, mode);
+    foreach (fi, face; mesh.faces) {
+        bool all = face.length > 0;
+        foreach (vi; face)
+            if (!(vi < vsel.length && vsel[vi])) { all = false; break; }
+        keep[fi] = all;
+    }
+    return keep;
+}
+
+// --- shared capture/revert (§1.5, C9) ---------------------------------------
+// A hide and the selection drop it silently causes must undo as ONE Ctrl+Z,
+// not two. All three marks arrays are captured WHOLE (not just the Hide
+// bit), so revert() restores every bit a hide could have touched — Select on
+// any of the three planes included — in a single word-array swap. No second
+// command, no second undo entry: this command's own revert() is the whole
+// mechanism (matches the precedent Stage 0 already set inside
+// refreshHiddenDerived()/setFaceHiddenFrom(), which clear Select in the SAME
+// write that sets Hide, rather than depending on a second, separate pass).
+//
+// The three *SelectionOrder arrays ride along, and that is NOT belt-and-
+// braces (code review BLOCKER). The apply path zeroes an element's order
+// STAMP in the same word write that drops its Select bit (mesh.d,
+// setFaceHiddenFrom / refreshHiddenDerived). Restoring marks alone therefore
+// hands back elements that read "selected" with order 0 — selected, but
+// never picked — and every order-consuming command then silently does
+// nothing with them: select.between and select.more find no ordered pair to
+// extrapolate from, select.less finds no most-recent element to drop, and
+// mesh.makePolygon derives the new polygon's WINDING from
+// vertexSelectionOrder, so an undone hide would leave it building faces in
+// arbitrary vertex order. Same capture set as snapshot.d's
+// SelectionSnapshot, for exactly this reason.
+//
+// The three counters ride along too. Nothing on the hide path advances or
+// resets one, so within a single apply/revert pair they are invariant — but
+// this revert() is not guaranteed to run against the state it captured. A
+// hide is UI-undo class (cmdFlags below), and command_history's class-aware
+// stepping carries a UI entry INERT past a Model undo, so an intervening
+// Model command can run clearFaceSelection() — which resets the counter to
+// 0 — before this entry is ever reverted. Restoring the stamps but not the
+// counter would then leave counter=0 underneath live stamps of 1..N, and the
+// next selectFace() would hand out a stamp that COLLIDES with an existing
+// one: two elements claiming the same pick position, which is precisely the
+// ambiguity the stamps exist to resolve. Restoring the counter alongside the
+// stamps it belongs to keeps "counter >= every live stamp" true by
+// construction, in both directions.
+private mixin template HideRevertCommon() {
+    private uint[] origVertexMarks_;
+    private uint[] origEdgeMarks_;
+    private uint[] origFaceMarks_;
+    private int[]  origVertexOrder_;
+    private int[]  origEdgeOrder_;
+    private int[]  origFaceOrder_;
+    private int    origVertexOrderCounter_;
+    private int    origEdgeOrderCounter_;
+    private int    origFaceOrderCounter_;
+    private bool   captured_;
+
+    // Snapshot ONLY — this does not arm revert(). captured_ is set by
+    // commitCapture_() after the mutation has actually landed (code review
+    // NIT): an evaluate() that snapshots and then takes its no-op early-out
+    // changed nothing, and must not leave revert() willing to write a stale
+    // capture back over marks that a later command legitimately changed.
+    private void captureMarks_() {
+        origVertexMarks_ = mesh.vertexMarks.dup;
+        origEdgeMarks_   = mesh.edgeMarks.dup;
+        origFaceMarks_   = mesh.faceMarks.dup;
+        origVertexOrder_ = mesh.vertexSelectionOrder.dup;
+        origEdgeOrder_   = mesh.edgeSelectionOrder.dup;
+        origFaceOrder_   = mesh.faceSelectionOrder.dup;
+        origVertexOrderCounter_ = mesh.vertexSelectionOrderCounter;
+        origEdgeOrderCounter_   = mesh.edgeSelectionOrderCounter;
+        origFaceOrderCounter_   = mesh.faceSelectionOrderCounter;
+    }
+
+    // Arm revert(). Called as the last act of a successful evaluate().
+    private void commitCapture_() { captured_ = true; }
+
+    override bool revert() {
+        if (!captured_) return false;
+        mesh.vertexMarks = origVertexMarks_.dup;
+        mesh.edgeMarks   = origEdgeMarks_.dup;
+        mesh.faceMarks   = origFaceMarks_.dup;
+        mesh.vertexSelectionOrder = origVertexOrder_.dup;
+        mesh.edgeSelectionOrder   = origEdgeOrder_.dup;
+        mesh.faceSelectionOrder   = origFaceOrder_.dup;
+        mesh.vertexSelectionOrderCounter = origVertexOrderCounter_;
+        mesh.edgeSelectionOrderCounter   = origEdgeOrderCounter_;
+        mesh.faceSelectionOrderCounter   = origFaceOrderCounter_;
+        // Every plane was captured/restored WHOLE — Select included — so
+        // notify all three selection domains regardless of which one this
+        // particular command actually touched. Cheap (edit-path, not
+        // per-frame) and correct even for hideInvert's whole-mesh flip or
+        // a Vertices/Edges-mode hide that only ever wrote faceMarks
+        // directly but moved Select on the derived vertex/edge planes too.
+        mesh.noteSelectionChange(SelDomain.Vertex);
+        mesh.noteSelectionChange(SelDomain.Edge);
+        mesh.noteSelectionChange(SelDomain.Face);
+        mesh.commitChange(MeshEditScope.Marks);
+        return true;
+    }
+
+    // §1.5: Hide changes which part of the mesh the user is working
+    // through, not the mesh's content — same reading that puts
+    // layer.select in the UI-undo class. Lands on the stack, Ctrl+Z
+    // undoes it, but a plain geometry undo (Model class) steps past it.
+    override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
+}
+
+/// Hide Selected. Per-mode target sets (§1.2/§5.1, C1/C2/C6): Polygons mode
+/// hides the selected faces; Vertices/Edges mode hides every face touching
+/// any selected vertex; an empty selection hides everything.
+///
+/// ADDITIVE — the target set is UNIONed onto whatever was already hidden,
+/// never replacing it, so faces hidden by an earlier call stay hidden. This
+/// is MEASURED, not derived, and the C-series above cannot show it (every
+/// C row starts from a clean scene, where union and replace agree bit for
+/// bit). The accumulation cases: M2P hides one corner polygon and then a
+/// second in POLYGON mode and reads 2 hidden; M2V repeats it with the second
+/// hide driven from VERTEX mode and also reads 2; the clean-state control
+/// M2CTRL hides only the second corner and reads 1. A replace rule reads 1
+/// in all three, so the pair separates them, and the same law holds in both
+/// modes. Un-hiding is what Unhide All / Invert Hidden are for.
+class MeshHide : Command, Operator {
+    mixin OperatorActrCommon;
+    mixin HideRevertCommon;
+
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+
+    override string name()  const { return "mesh.hide"; }
+    override string label() const { return "Hide Selected"; }
+
+    bool evaluate(ref VectorStack vts) {
+        import toolpipe.packets : SubjectPacket;
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null) return false;
+
+        mesh.syncSelection();
+        captureMarks_();
+
+        auto target = hideSelectedTargets(mesh, editMode);
+        auto merged = new bool[](mesh.faces.length);
+        bool changed = false;
+        foreach (fi; 0 .. mesh.faces.length) {
+            bool was = mesh.isFaceHidden(fi);
+            merged[fi] = was || target[fi];
+            if (merged[fi] != was) changed = true;
+        }
+        if (!changed) return false;   // no-op rejection (Operator contract)
+
+        mesh.setFaceHiddenFrom(merged);
+        mesh.commitChange(MeshEditScope.Marks);
+        mesh.refreshHiddenDerived();
+        commitCapture_();
+        return true;
+    }
+}
+
+/// Hide Unselected — isolate. The KEEP-visible rule (§1.2/§5.1, C5) is
+/// keepVisibleTargets() above; the accumulation control M1CTRL re-measured
+/// it on a 3x3 grid from a clean scene — a 4-vertex selection isolates down
+/// to exactly the one polygon those vertices bound, which is the ALL-
+/// selected rule and not the negation of the ANY rule.
+///
+/// ADDITIVE, exactly like Hide Selected: the complement of the keep set is
+/// UNIONed onto the already-hidden set, and an isolate NEVER clears a bit
+/// that was already set — not even for a face that lands back in the keep
+/// set. MEASURED by two cases with OPPOSITE numeric signatures, so neither
+/// a stuck "always hide more" nor a stuck "always replace" can pass both:
+///   * M1    — hide the grid's centre polygon, then isolate it via a vertex
+///             selection whose keep set is exactly that centre. Replace
+///             predicts 1 visible, union predicts 0. Measured 0.
+///   * M1ALT — hide the centre, then isolate with EVERY vertex selected, so
+///             the keep set is every polygon and the only question left is
+///             whether the standing bit survives. Replace predicts 0 hidden,
+///             union predicts 1. Measured 1.
+///
+/// Consequence, and deliberately NOT guarded against: isolating onto a
+/// target that is already hidden blanks the mesh, because H ∪ ¬K then covers
+/// everything. That is the measured behaviour, not an accident of this
+/// implementation; the mitigation is a hidden-count readout in a later
+/// stage, not a special case here.
+class MeshHideUnselected : Command, Operator {
+    mixin OperatorActrCommon;
+    mixin HideRevertCommon;
+
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+
+    override string name()  const { return "mesh.hideUnselected"; }
+    override string label() const { return "Hide Unselected"; }
+
+    bool evaluate(ref VectorStack vts) {
+        import toolpipe.packets : SubjectPacket;
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null) return false;
+
+        mesh.syncSelection();
+        captureMarks_();
+
+        auto keep = keepVisibleTargets(mesh, editMode);
+        auto target = new bool[](mesh.faces.length);
+        bool changed = false;
+        foreach (fi; 0 .. mesh.faces.length) {
+            // UNION, not replace (M1/M1ALT) — `was ||` is the whole law: a
+            // face already hidden stays hidden even when keep[fi] is true.
+            bool was = mesh.isFaceHidden(fi);
+            target[fi] = was || !keep[fi];
+            if (target[fi] != was) changed = true;
+        }
+        if (!changed) return false;   // no-op rejection (Operator contract)
+
+        mesh.setFaceHiddenFrom(target);
+        mesh.commitChange(MeshEditScope.Marks);
+        mesh.refreshHiddenDerived();
+        commitCapture_();
+        return true;
+    }
+}
+
+/// Invert Hidden — a plain flip of every face's Hide bit. No selection is
+/// involved: what is SELECTED never enters the rule (§5.1, and M3C flips
+/// identically with nothing selected at all).
+///
+/// MEASURED for Polygons mode, which is what this implements: M3B and
+/// M3E_polygon — from a clean 3x3 grid the invert hides all 9 polygons, and
+/// with one already hidden it leaves exactly that one visible and hides the
+/// other 8.
+///
+/// KNOWN DIVERGENCE outside Polygons mode, deliberately left unfixed here.
+/// The reference's invert is COMPONENT-TYPED: it flips the plane the current
+/// selection TYPE names, not always the polygon plane.
+///   * Vertices/Edges mode flips the VERTEX plane and propagates upward
+///     (M3, M3C, M3E_vertex, M3E_edge): with one corner polygon hidden, the
+///     invert leaves 15 of 16 vertices hidden and EVERY polygon hidden,
+///     where this face-only flip reads 8 polygons hidden.
+///   * Item mode leaves component marks untouched entirely (M3E_item),
+///     where this flips all of them.
+/// Fixing it needs two things this stage does not have: the current
+/// SELECTION TYPE rather than the derived EditMode (the subject of task
+/// 0621), and a settled propagation law — the capture explicitly did NOT
+/// settle what a vertex's own Hide bit reads immediately after a vertex-
+/// plane invert (there it contradicts the derived-visibility rule the
+/// C-series pinned), so nothing may be built on vertex marks read in that
+/// state until a follow-up capture separates "stored bit" from "propagation
+/// evaluated at hide time".
+class MeshHideInvert : Command, Operator {
+    mixin OperatorActrCommon;
+    mixin HideRevertCommon;
+
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+
+    override string name()  const { return "mesh.hideInvert"; }
+    override string label() const { return "Invert Hidden"; }
+
+    bool evaluate(ref VectorStack vts) {
+        import toolpipe.packets : SubjectPacket;
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null) return false;
+        if (mesh.faces.length == 0) return false;   // no-op rejection
+
+        mesh.syncSelection();
+        captureMarks_();
+
+        auto target = new bool[](mesh.faces.length);
+        foreach (fi; 0 .. mesh.faces.length)
+            target[fi] = !mesh.isFaceHidden(fi);
+
+        mesh.setFaceHiddenFrom(target);
+        mesh.commitChange(MeshEditScope.Marks);
+        mesh.refreshHiddenDerived();
+        commitCapture_();
+        return true;
+    }
+}
+
+/// Unhide All — after this, NOTHING in the mesh is hidden, on any plane.
+///
+/// Stage 0 left exactly one question open for this command (mesh.d,
+/// clearHidden): a LOOSE vertex — one with no incident face — carries its
+/// own settable Hide bit that the derivation deliberately never touches, and
+/// clearHidden deferred the "does an unhide clear it?" call to here.
+/// DECISION: yes, it clears it, and the no-op guard counts it. Two reasons:
+///   (a) "Unhide All" is a total promise, and a bit this command skipped
+///       would be unreachable — setVertexHidden is that bit's only writer
+///       and refreshHiddenDerived steps over loose vertices by design, so
+///       hidden state on a loose point would be a one-way trap with no
+///       command anywhere able to undo it;
+///   (b) a guard that asks only about FACES makes the command refuse to run
+///       in precisely the state that needs it — a mesh whose only hidden
+///       thing is a loose point.
+/// The clearing itself lives in Mesh.clearHidden(), one masked pass per
+/// plane (`&= ~Marks.Hide`, never `= 0` — Select and Subpatch share those
+/// words), rather than being open-coded here reaching into another module's
+/// mark planes.
+///
+/// This is a DERIVED decision, and labelled as such: the capture pinned that
+/// a loose point survives a POLYGON hide (§5.1, C15) but never ran an unhide
+/// with a loose point hidden, so there is no measurement to cite either way.
+///
+/// ONE command, not two — the reference's `mode` argument (0="sel", 1="all")
+/// measured IDENTICAL across six rigs (§5, §9), so no distinction is
+/// invented here.
+class MeshUnhideAll : Command, Operator {
+    mixin OperatorActrCommon;
+    mixin HideRevertCommon;
+
+    this(Mesh* mesh, ref View view, EditMode editMode) { super(mesh, view, editMode); }
+
+    override string name()  const { return "mesh.unhideAll"; }
+    override string label() const { return "Unhide All"; }
+
+    bool evaluate(ref VectorStack vts) {
+        import toolpipe.packets : SubjectPacket;
+        auto subj = vts.get!SubjectPacket();
+        if (subj is null) return false;
+        // No-op rejection: nothing is hidden on ANY plane. Faces alone is
+        // not enough (see the DECISION above) — a hidden loose vertex leaves
+        // the face plane clean, and asking only about faces would refuse the
+        // one command able to clear it. The edge plane is in the guard for
+        // the same totality reason: it is derived, so a set edge bit with no
+        // hidden vertex behind it is stale, and this command is what heals
+        // it (clearHidden's own refresh recomputes the derived planes).
+        if (!mesh.hasAnyHiddenFaces() &&
+            !mesh.hasAnyHiddenVertices() &&
+            !mesh.hasAnyHiddenEdges()) return false;
+
+        mesh.syncSelection();
+        captureMarks_();
+        mesh.clearHidden();
+        commitCapture_();
+        return true;
+    }
+}

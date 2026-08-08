@@ -4678,27 +4678,42 @@ struct Mesh {
         }
         return true;
     }
-    // Masked clear, same shape as clearSubpatch — ONLY the face plane (the
-    // authoritative one). `&= ~Marks.Hide`, never `= 0` (Select/Subpatch
-    // share this word). Does not touch the derived vertex/edge planes or a
-    // loose vertex's own bit directly; a caller that needs those cleared too
-    // calls refreshHiddenDerived() / clears loose bits itself (Stage 2 —
-    // the `mesh.unhideAll` command — owns that decision).
+    // Masked clear, same shape as clearSubpatch: `&= ~Marks.Hide`, never
+    // `= 0` (Select and Subpatch share these words).
+    //
+    // Scope is EVERY plane, not just the authoritative face one. Stage 0
+    // left the loose-vertex half of this open — a vertex with no incident
+    // face has a settable Hide bit that refreshHiddenDerived deliberately
+    // steps over, so no derivation can ever clear it — and deferred the call
+    // to Stage 2. Stage 2 has now made it (see commands/mesh/hide.d,
+    // MeshUnhideAll): an unhide clears loose bits too, because this is the
+    // only writer that could, and a bit nothing can clear is a one-way trap.
+    // So this clears the face plane AND the vertex plane directly. The
+    // face-bound half of the vertex plane is redundant with the refresh
+    // below (no face hidden ⇒ no face-bound vertex hidden), which is fine:
+    // one masked pass is cheaper than deciding per vertex which half it is
+    // in, and the answer is the same either way.
     void clearHidden() {
-        bool any = false;
-        foreach (m; faceMarks) if (m & Marks.Hide) { any = true; break; }
-        foreach (ref m; faceMarks) m &= ~Marks.Hide;
-        if (any) {
-            commitChange(MeshEditScope.Marks);
-            // S5 (code review) — same reasoning as setFaceHidden above: a
-            // Marks-only commit never reaches refreshHiddenDerived, so an
-            // unhide must call it directly or the derived vertex/edge planes
-            // stay hidden until the next geometry-mutating commit. Clearing
-            // can only ever DROP Hide bits, never set one, so there is no new
-            // Select ∧ Hide collision to fix here — only the stale derived
-            // planes to recompute.
-            refreshHiddenDerived();
-        }
+        uint anyHide = 0;
+        foreach (w; faceMarks)   anyHide |= w;
+        foreach (w; vertexMarks) anyHide |= w;
+        foreach (w; edgeMarks)   anyHide |= w;
+        if (!(anyHide & Marks.Hide)) return;   // nothing hidden anywhere
+        foreach (ref m; faceMarks)   m &= ~Marks.Hide;
+        foreach (ref m; vertexMarks) m &= ~Marks.Hide;
+        foreach (ref m; edgeMarks)   m &= ~Marks.Hide;
+        commitChange(MeshEditScope.Marks);
+        // S5 (code review) — same reasoning as setFaceHidden above: a
+        // Marks-only commit never reaches refreshHiddenDerived, so an unhide
+        // must call it directly or the derived vertex/edge planes stay
+        // hidden until the next geometry-mutating commit. With all three
+        // planes masked above this call now early-outs by construction; it
+        // stays because it is the funnel that OWNS the derived planes — a
+        // plane added later is the refresh's job to recompute, not this
+        // function's job to remember to mask. Clearing can only ever DROP
+        // Hide bits, never set one, so there is no new Select ∧ Hide
+        // collision for it to fix either way.
+        refreshHiddenDerived();
     }
 
     // The clear* setters compare-before-set too: only publish if at least one
