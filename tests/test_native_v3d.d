@@ -7,10 +7,80 @@
 
 import std.net.curl;
 import std.json;
-import std.file : remove, exists, getSize, write;
+import std.file : remove, exists, getSize, write, readText;
 import std.conv : to;
+import std.format : format;
+import std.algorithm : canFind;
 
 void main() {}
+
+/// THIS BUILD's `.v3d` format version, read out of a document the running app
+/// just wrote.
+///
+/// The obvious alternative is `import io.native : kV3dFormatVersion`, which is
+/// what `tests/test_uv_pipeline.d` does. Not taken here for two reasons: this
+/// file is an HTTP driver, and importing a project module flips it onto
+/// `run_test.d`'s heavy source-backed compile line (it would be the only HTTP
+/// test to pay that); and a number read from a file the app PRODUCED is a
+/// better oracle for "what will this reader accept" than the constant the
+/// reader is compiled against. Either way the point is the same — the number
+/// is never written down here, so a format bump cannot silently re-inert the
+/// fixtures below.
+int currentFormatVersion() {
+    static int cached = 0;
+    if (cached != 0) return cached;
+    enum string probe = "/tmp/vibe3d-test-formatversion-probe.v3d";
+    resetCube();
+    runCmd("file.save", `{"path":"` ~ probe ~ `"}`);
+    scope(exit) if (exists(probe)) remove(probe);
+    auto j = parseJSON(readText(probe));
+    assert("formatVersion" in j,
+        "a document this build wrote must declare its version: " ~ j.toString);
+    cached = cast(int) j["formatVersion"].integer;
+    assert(cached > 0, "…and it must be a real version number");
+    return cached;
+}
+
+/// A well-formed v3d envelope at THIS BUILD's format version, wrapped around
+/// one `layers` entry.
+///
+/// NOT a hardcoded `8` (review, inert-assertion 8). The four malformed-mesh
+/// fixtures below each name a specific mesh-codec check, and each carried a
+/// stale literal version (`4`) — so every one of them was rejected at the
+/// VERSION GATE and never reached the codec it claims to exercise. Task 0616
+/// Ph6 re-pointed them at `8`, which fixed the symptom and left the mechanism
+/// in place: the next format bump silently re-inerts all four in exactly the
+/// same way. Deriving the envelope means a bump cannot do that again.
+string v3dEnvelope(string layerBody) {
+    return format(`{"formatVersion":%d,"primaryLayer":0,"layers":[%s]}`,
+                  currentFormatVersion(), layerBody);
+}
+
+/// A mesh layer entry carrying an arbitrary `mesh` sub-object.
+string meshLayer(string meshBody) {
+    return `{"type":"mesh","selected":true,"channels":{"name":"L","visible":true},`
+         ~ `"mesh":` ~ meshBody ~ `}`;
+}
+
+/// Assert a `file.load` was refused, and refused BY THE CHECK THE TEST NAMES.
+///
+/// `status == "error"` alone cannot tell a mesh-codec reject from a version
+/// -gate reject — which is precisely how the four fixtures below passed for
+/// years while never reaching their own subject. The reader's version-gate
+/// wording is a contract (task 0616 Ph6), so its phrases are a reliable
+/// negative needle: if any of them appears, the file was thrown out for its
+/// envelope and the codec never ran.
+void assertRejectedByCodec(string resp, string what) {
+    auto j = parseJSON(resp);
+    assert(j["status"].str == "error",
+        "expected error for " ~ what ~ ", got: " ~ resp);
+    immutable msg = ("message" in j) ? j["message"].str : "";
+    foreach (needle; ["format version", "formatVersion", "not damaged"])
+        assert(!msg.canFind(needle),
+            "the load was refused at the VERSION GATE, not by the " ~ what
+            ~ " check this test is about — the fixture's envelope is stale. "
+            ~ "Got: " ~ resp);
+}
 
 void resetCube() {
     post("http://localhost:8080/api/reset", "");
@@ -176,29 +246,86 @@ unittest { // a wrong/future formatVersion is rejected cleanly
         "mesh should be intact after bad-version load");
 }
 
+// ---------------------------------------------------------------------------
+// THE REFUSAL REACHES THE CALLER, WORD FOR WORD (review B1).
+//
+// The most ordinary thing a user of a pre-v8 build can do is open a document
+// they already have. The reader has always written a careful sentence for that
+// case — it names the file's version, this build's, and says the file is not
+// damaged, because "could not open" reads as corruption and sends people
+// hunting a problem that does not exist. But it wrote that sentence to the
+// LOG, whose only sink is a stderr echo, and `Command.refusalReason()` was not
+// overridden — so `/api/command` answered a bare `{"status":"error"}` and the
+// File menu did nothing visible at all.
+//
+// This is the assertion that the message travels. It reads the SAME string a
+// scripted caller gets and the modal notice shows, out of the live app over
+// HTTP — not out of a log listener that the application never installs, which
+// is what the in-module test used to do and why it could not have caught this.
+//
+// Discriminating: `status == "error"` was already true before the fix (the
+// load always failed); every needle below was absent. A `refusalReason` that
+// forwards a generic "could not open" reads none of them either.
+// ---------------------------------------------------------------------------
+unittest {
+    enum string path = "/tmp/vibe3d-test-oldver-message.v3d";
+    // One BELOW this build's version: a document written by an earlier build,
+    // which is the case the wording was written for. Derived, so the fixture
+    // stays "the previous version" forever.
+    immutable int cur = currentFormatVersion();
+    write(path, format(
+        `{"formatVersion":%d,"primaryLayer":0,"layers":[{"type":"mesh",`
+        ~ `"selected":true,"channels":{"name":"L","visible":true},`
+        ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}}]}`,
+        cur - 1));
+    scope(exit) if (exists(path)) remove(path);
+
+    resetCube();
+    auto j = parseJSON(runCmdAllowError("file.load", `{"path":"` ~ path ~ `"}`));
+    assert(j["status"].str == "error", "a pre-current document is refused");
+    assert("message" in j, "…and the refusal carries a message: " ~ j.toString);
+    immutable msg = j["message"].str;
+
+    assert(msg.canFind(format("format version %d", cur - 1)),
+        "the message names the FILE's version — without it the user cannot "
+        ~ "tell which of their documents this is. Got: " ~ msg);
+    assert(msg.canFind(format("version %d", cur)),
+        "…and THIS BUILD's, or they cannot tell what would open it. Got: "
+        ~ msg);
+    assert(msg.canFind("not damaged"),
+        "…and says the file is fine, which is the whole point of the wording. "
+        ~ "Got: " ~ msg);
+    assert(msg.canFind(path),
+        "…and names the file, because a modal dialog has no other context. "
+        ~ "Got: " ~ msg);
+
+    auto m = model();
+    assert(m["vertexCount"].integer == 8,
+        "control: the refusal left the open document alone");
+}
+
 unittest { // a face index >= 2^63 (parsed as uinteger by std.json) rejects cleanly
     // Critical durability case: such a literal must NOT throw an uncaught
     // JSONException when the reader pulls the index — it must degrade to a
     // clean error with the prior cube left untouched.
     //
-    // The envelope is the CURRENT version on purpose: these four malformed-mesh
-    // fixtures carried `formatVersion: 4` and were therefore rejected at the
-    // VERSION GATE, never reaching the mesh codec they claim to exercise — they
-    // had been passing for the wrong reason since v4 stopped being current.
-    // Task 0616 Ph6 re-pointed them at v8, which is what actually runs the
-    // check each one names.
+    // The envelope is `v3dEnvelope`, i.e. DERIVED from what this build writes,
+    // and the rejection is checked with `assertRejectedByCodec`. Both matter,
+    // and the history says why: these four malformed-mesh fixtures carried
+    // `formatVersion: 4`, so every one of them was rejected at the VERSION
+    // GATE and never reached the mesh codec it names. Ph6 re-pointed them at a
+    // literal `8` — which fixed the symptom and left the mechanism in place,
+    // ready to re-inert all four on the next bump. See the two helpers at the
+    // top of this file.
     enum string path = "/tmp/vibe3d-test-hugeindex.v3d";
-    write(path,
-        `{"formatVersion":8,"primaryLayer":0,"layers":[{"type":"mesh",`
-        ~ `"selected":true,"channels":{"name":"L","visible":true},"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],`
-        ~ `"faces":[[0,1,99999999999999999999]]}}]}`);
+    write(path, v3dEnvelope(meshLayer(
+        `{"vertices":[[0,0,0],[1,0,0],[0,1,0]],`
+        ~ `"faces":[[0,1,99999999999999999999]]}`)));
     scope(exit) if (exists(path)) remove(path);
 
     resetCube();
     auto resp = runCmdAllowError("file.load", `{"path":"` ~ path ~ `"}`);
-    auto j = parseJSON(resp);
-    assert(j["status"].str == "error",
-        "expected error for huge uinteger face index, got: " ~ resp);
+    assertRejectedByCodec(resp, "huge uinteger face index");
 
     auto m = model();
     assert(m["vertexCount"].integer == 8,
@@ -223,16 +350,12 @@ unittest { // a non-object root is rejected cleanly
 
 unittest { // a non-array "vertices" is rejected cleanly
     enum string path = "/tmp/vibe3d-test-nonarrayverts.v3d";
-    write(path,
-        `{"formatVersion":8,"primaryLayer":0,"layers":[{"type":"mesh",`
-        ~ `"selected":true,"channels":{"name":"L","visible":true},"mesh":{"vertices":42,"faces":[[0,1,2]]}}]}`);
+    write(path, v3dEnvelope(meshLayer(`{"vertices":42,"faces":[[0,1,2]]}`)));
     scope(exit) if (exists(path)) remove(path);
 
     resetCube();
     auto resp = runCmdAllowError("file.load", `{"path":"` ~ path ~ `"}`);
-    auto j = parseJSON(resp);
-    assert(j["status"].str == "error",
-        "expected error for non-array vertices, got: " ~ resp);
+    assertRejectedByCodec(resp, "non-array vertices");
 
     auto m = model();
     assert(m["vertexCount"].integer == 8,
@@ -241,17 +364,13 @@ unittest { // a non-array "vertices" is rejected cleanly
 
 unittest { // a non-array "faces" is rejected cleanly
     enum string path = "/tmp/vibe3d-test-nonarrayfaces.v3d";
-    write(path,
-        `{"formatVersion":8,"primaryLayer":0,"layers":[{"type":"mesh",`
-        ~ `"selected":true,"channels":{"name":"L","visible":true},"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],`
-        ~ `"faces":"nope"}}]}`);
+    write(path, v3dEnvelope(meshLayer(
+        `{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":"nope"}`)));
     scope(exit) if (exists(path)) remove(path);
 
     resetCube();
     auto resp = runCmdAllowError("file.load", `{"path":"` ~ path ~ `"}`);
-    auto j = parseJSON(resp);
-    assert(j["status"].str == "error",
-        "expected error for non-array faces, got: " ~ resp);
+    assertRejectedByCodec(resp, "non-array faces");
 
     auto m = model();
     assert(m["vertexCount"].integer == 8,
@@ -260,17 +379,13 @@ unittest { // a non-array "faces" is rejected cleanly
 
 unittest { // an in-range-typed but out-of-range vertex index rejects cleanly
     enum string path = "/tmp/vibe3d-test-oob-index.v3d";
-    write(path,
-        `{"formatVersion":8,"primaryLayer":0,"layers":[{"type":"mesh",`
-        ~ `"selected":true,"channels":{"name":"L","visible":true},"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],`
-        ~ `"faces":[[0,1,7]]}}]}`);
+    write(path, v3dEnvelope(meshLayer(
+        `{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,7]]}`)));
     scope(exit) if (exists(path)) remove(path);
 
     resetCube();
     auto resp = runCmdAllowError("file.load", `{"path":"` ~ path ~ `"}`);
-    auto j = parseJSON(resp);
-    assert(j["status"].str == "error",
-        "expected error for out-of-range vertex index, got: " ~ resp);
+    assertRejectedByCodec(resp, "out-of-range vertex index");
 
     auto m = model();
     assert(m["vertexCount"].integer == 8,

@@ -24,6 +24,43 @@ private void v3dWarn(string msg) nothrow { try logWarn("io", "V3D: " ~ msg); cat
 private void v3dInfo(string msg) nothrow { try logInfo("io", "V3D: " ~ msg); catch (Exception) {} }
 
 // ---------------------------------------------------------------------------
+// WHY THE REJECT REASON IS KEPT AND NOT MERELY LOGGED (review B1).
+//
+// `log.d` has exactly one sink — a stderr echo. There is no log panel and no
+// toast, and the only non-test `addLogListener` in the tree is a test's own.
+// So a reader that says WHY it refused and then only logs it has told nobody:
+// a user who opens a pre-v8 document from the File menu would watch the editor
+// do nothing at all, which is precisely the "hunting a corruption that isn't
+// there" the version-gate wording exists to prevent.
+//
+// The reason therefore has to survive the call and reach a caller that can put
+// it in front of someone. `FileLoad` picks it up here and answers it from
+// `Command.refusalReason()`, which `app.d`'s dispatch funnel turns into the
+// HTTP error text AND (through `runCommand`) a modal notice.
+//
+// THREAD-LOCAL, deliberately: a plain module variable in D is TLS, and every
+// read of it happens on the same thread and the same call stack that produced
+// it (`FileLoad.apply` → `readV3d` → back in `FileLoad.apply`). There is
+// nothing shared here, so there is nothing to lock and no cross-thread
+// interleaving to reason about.
+private string g_v3dRejectReason;
+
+/// WHY the last `readV3d` on THIS thread returned false, as one user-readable
+/// sentence — the same text the log carries, minus the `reject: ` tag. Empty
+/// after a load that succeeded (`readV3d` clears it on entry).
+///
+/// Read it immediately after a `false` return: the next `readV3d` overwrites
+/// it.
+string lastV3dRejectReason() { return g_v3dRejectReason; }
+
+// Refuse the load: remember the reason for the caller AND log it. Every
+// `return false` in `readV3d` (and in the mesh codec it calls) goes through
+// here, so "the reader refused without saying why" is not a reachable state.
+// The `reject: ` tag is added for the LOG only — it is grep bait, not a
+// sentence a user should be shown.
+private void v3dReject(string msg) nothrow { g_v3dRejectReason = msg; v3dWarn("reject: " ~ msg); }
+
+// ---------------------------------------------------------------------------
 // Native .v3d document format (JSON)
 // ---------------------------------------------------------------------------
 // `.v3d` is vibe3d's own document format — the source of truth. Unlike the
@@ -368,9 +405,86 @@ private JSONValue channelsToJson(const(Layer) layer)
     JSONValue cj = JSONValue(cast(JSONValue[string]) null);
     foreach (ref p; prov.params()) {
         if (p.readonly_) continue;
-        cj[p.name] = paramToJson(p);
+        cj[p.name] = channelToJson(p, layer);
     }
     return cj;
+}
+
+/// One channel's JSON value, GUARANTEED to be a value this codec's own reader
+/// will accept (review S2).
+///
+/// THE HOLE THIS CLOSES. `paramToJson` is a general-purpose value formatter,
+/// and for the two enum kinds it is deliberately lenient in a way that a FILE
+/// FORMAT cannot afford:
+///
+///   * `Kind.Enum` writes `*p.sptr` verbatim, with no check that the live
+///     string is one of the param's declared tags;
+///   * `Kind.IntEnum` has an explicit documented fallback — an unmatched live
+///     value is written as a RAW INTEGER.
+///
+/// `injectParamsInto` — the reader's only channel writer — THROWS on both, and
+/// that throw is caught by `readV3d`'s outer backstop, which rejects the WHOLE
+/// DOCUMENT. So a value that never went through a validating write path (a
+/// direct field assignment, a D enum member with no table entry) would produce
+/// a file that saves without complaint and then cannot be opened. Task 0616
+/// Ph6's own N5 fixture (1) is precisely such a file, hand-written; nothing
+/// makes one today, but the first `IntEnum` item channel would.
+///
+/// WHY THE WRITE SIDE AND NOT A TOLERANT READER. The reader's reject is a
+/// deliberate, tested contract (N5): a channel value this build does not
+/// understand must not be silently turned into one that it does — that is how
+/// a foreign or hand-edited document gets quietly rewritten. Loosening it
+/// would delete the only guard on the way in, to compensate for a defect on
+/// the way out. And `paramToJson` itself is NOT the place either: its leniency
+/// is load-bearing for `tool.attr ?` queries, which must report the live value
+/// as it is rather than a laundered one. The invariant being enforced —
+/// "everything this codec writes, this codec reads" — belongs to the codec.
+///
+/// The substitute is the param's DECLARED DEFAULT, which is by construction a
+/// value the reader accepts, and the substitution is logged with both values
+/// so the loss is visible rather than silent.
+private JSONValue channelToJson(ref const Param p, const(Layer) layer)
+{
+    // Both arms answer the same question the reader asks — "is this tag one of
+    // the declared ones" — and both fall back through the DECLARED DEFAULT to
+    // the FIRST declared entry, because a default that is itself undeclared
+    // would reproduce the bug one level down. A param with no declared values
+    // at all has nothing acceptable to write and is left to `paramToJson`.
+    if (p.kind == Param.Kind.Enum && p.enumValues.length > 0) {
+        bool has(string tag) {
+            foreach (ref e; p.enumValues) if (e[0] == tag) return true;
+            return false;
+        }
+        if (!has(*p.sptr)) {
+            immutable tag = has(p.default_.s) ? p.default_.s : p.enumValues[0][0];
+            v3dWarn(format("item \"%s\": channel \"%s\" holds \"%s\", which is "
+                ~ "not one of its declared values; writing \"%s\" instead — "
+                ~ "the file has to stay readable, and this reader rejects a "
+                ~ "whole document over one unknown channel tag",
+                layer.name, p.name, *p.sptr, tag));
+            return JSONValue(tag);
+        }
+    } else if (p.kind == Param.Kind.IntEnum && p.intEnumValues.length > 0) {
+        bool has(int v) {
+            foreach (ref e; p.intEnumValues) if (e.value == v) return true;
+            return false;
+        }
+        if (!has(*p.iePtr)) {
+            // Written by TAG, never as a raw integer: the raw-int form is
+            // exactly the shape the reader refuses when it matches no entry,
+            // so re-emitting a number would only move the problem.
+            string tag = p.intEnumValues[0].wireTag;
+            foreach (ref e; p.intEnumValues)
+                if (e.value == p.default_.i) { tag = e.wireTag; break; }
+            v3dWarn(format("item \"%s\": channel \"%s\" holds the undeclared "
+                ~ "value %d; writing \"%s\" instead — a raw integer matching "
+                ~ "no entry is rejected on load, and it takes the whole "
+                ~ "document with it",
+                layer.name, p.name, *p.iePtr, tag));
+            return JSONValue(tag);
+        }
+    }
+    return paramToJson(p);
 }
 
 /// Serialize an image item's payload block: the filename in its STORED form,
@@ -404,10 +518,17 @@ private JSONValue imageToJson(const(ImageData) img, string docPath)
 /// back, every stored reference past a hole silently names its neighbour, and
 /// a per-item stable id becomes necessary before it does.
 ///
-/// Returns `true`, always. The `bool` is KEPT rather than removed: its caller
-/// (`commands/file/save.d`'s `FileSave`) gates the dirty-flag rebaseline on
-/// it, and a future format-limited write path will want the channel back. The
-/// `assert` below is what stops the value drifting into a lie.
+/// Returns `false`, WITHOUT WRITING ANYTHING, if the emitted array would not
+/// be a position-for-position image of `document.layers` — see the enforced
+/// check in the loop below. Its caller (`commands/file/save.d`'s `FileSave`)
+/// gates the dirty-flag rebaseline on the result, so a refused write leaves
+/// the document dirty rather than pretending it was saved.
+///
+/// The check is an `if`, NOT an `assert`: every shipped binary is built
+/// `--build=release` (the two AppImage scripts, the macOS bundle script and
+/// both CI release jobs), and `-release` strips plain asserts entirely. An
+/// assert here would have been dev-only enforcement of the one precondition
+/// whose violation silently re-points every stored reference.
 bool writeV3d(ref const Document document, string path)
 {
     JSONValue doc;
@@ -416,6 +537,26 @@ bool writeV3d(ref const Document document, string path)
     JSONValue[] layers;
     layers.reserve(document.layers.length);
     foreach (li, layer; document.layers) {
+        // THE PRECONDITION, CHECKED WHERE IT IS ESTABLISHED. Every reference
+        // in this file (`parent`, `links`, `primaryLayer`, `focusedItem`) is
+        // encoded as `document.indexOf(target)` — an index into
+        // `document.layers` — while the reader resolves it against the array
+        // written HERE. Those two are the same numbering only while this loop
+        // emits item `li` at array position `li`. A comparison of the two
+        // LENGTHS at the end would accept a write that dropped one item and
+        // duplicated another; this compares the position of the item about to
+        // be appended against its own document index, which is what the
+        // encoding actually depends on.
+        if (layers.length != li) {
+            v3dWarn(format("refusing to write %s: item %d would land at "
+                ~ "position %d in the file. `parent`/`links`/`primaryLayer` "
+                ~ "are indices into this array, so a write that skips or "
+                ~ "reorders an item re-points every reference past the hole "
+                ~ "at its neighbour. Nothing was written.",
+                path, li, layers.length));
+            return false;
+        }
+
         JSONValue lj;
         lj["type"]     = JSONValue(tokenOf(layer.kind));
         lj["selected"] = JSONValue(layer.selected);
@@ -467,10 +608,17 @@ bool writeV3d(ref const Document document, string path)
 
         layers ~= lj;
     }
-    assert(layers.length == document.layers.length,
-        "writeV3d must emit EVERY item: `parent` and `links` are encoded as "
-        ~ "indices into this array, so a filtered write silently re-points "
-        ~ "every reference past the hole");
+    // The tail half of the same precondition: the per-item check above cannot
+    // see an item dropped AFTER the last emitted one (a `break`, or a loop
+    // that stopped one short), because there is no later iteration to catch
+    // the position drift.
+    if (layers.length != document.layers.length) {
+        v3dWarn(format("refusing to write %s: the document holds %d item(s) "
+            ~ "but only %d reached the file, so every stored index is now a "
+            ~ "reference to a different item. Nothing was written.",
+            path, document.layers.length, layers.length));
+        return false;
+    }
 
     doc["primaryLayer"] = JSONValue(cast(long) document.activeIndex);
     // `focusedItem` is a document invariant (always a member), but a Document
@@ -515,8 +663,12 @@ bool readV3d(string path, ref Document document)
 {
     v3dInfo(format("readV3d: path=%s", path));
 
+    // Clear FIRST: `lastV3dRejectReason()` describes THIS call, and a stale
+    // sentence left by a previous load would be read as this one's.
+    g_v3dRejectReason = "";
+
     if (!exists(path)) {
-        v3dWarn("file does not exist");
+        v3dReject(format("there is no file at %s", path));
         return false;
     }
 
@@ -530,12 +682,12 @@ bool readV3d(string path, ref Document document)
         try {
             doc = parseJSON(cast(string) read(path));
         } catch (JSONException e) {
-            v3dWarn(format("reject: malformed JSON: %s", e.msg));
+            v3dReject(format("malformed JSON: %s", e.msg));
             return false;
         }
 
         if (doc.type != JSONType.object) {
-            v3dWarn("reject: top-level value is not a JSON object");
+            v3dReject("top-level value is not a JSON object");
             return false;
         }
 
@@ -553,7 +705,7 @@ bool readV3d(string path, ref Document document)
             if (vp.type == JSONType.integer)
                 ver = cast(int) vp.integer;
             else {
-                v3dWarn("reject: \"formatVersion\" is present but is not an "
+                v3dReject("\"formatVersion\" is present but is not an "
                     ~ "integer, so this file cannot be identified as a .v3d "
                     ~ "document of any version");
                 return false;
@@ -561,17 +713,17 @@ bool readV3d(string path, ref Document document)
         }
         if (ver != kV3dFormatVersion) {
             if (ver == 0)
-                v3dWarn(format("reject: no \"formatVersion\" key — this file "
+                v3dReject(format("no \"formatVersion\" key — this file "
                     ~ "does not identify itself as a .v3d document. This build "
                     ~ "reads .v3d format version %d.", kV3dFormatVersion));
             else if (ver < kV3dFormatVersion)
-                v3dWarn(format("reject: this document is .v3d format version "
+                v3dReject(format("this document is .v3d format version "
                     ~ "%d, written by an EARLIER build of the editor; this "
                     ~ "build reads version %d only and does not convert older "
                     ~ "documents (deliberate clean break, no migration). The "
                     ~ "file is not damaged.", ver, kV3dFormatVersion));
             else
-                v3dWarn(format("reject: this document is .v3d format version "
+                v3dReject(format("this document is .v3d format version "
                     ~ "%d, written by a NEWER build of the editor; this build "
                     ~ "reads version %d only. The file is not damaged — open "
                     ~ "it with a build that reads version %d.",
@@ -590,16 +742,16 @@ bool readV3d(string path, ref Document document)
         // --- a `layers` array is required (no top-level-mesh fallback). ---
         auto lp = "layers" in doc;
         if (lp is null || lp.type != JSONType.array) {
-            v3dWarn("reject: missing or non-array \"layers\"");
+            v3dReject("missing or non-array \"layers\"");
             return false;
         }
         if (lp.array.length == 0) {
-            v3dWarn("reject: empty \"layers\" array");
+            v3dReject("empty \"layers\" array");
             return false;
         }
         foreach (li, lj; lp.array) {
             if (lj.type != JSONType.object) {
-                v3dWarn(format("reject: layer %d is not an object", li));
+                v3dReject(format("layer %d is not an object", li));
                 return false;
             }
 
@@ -613,7 +765,7 @@ bool readV3d(string path, ref Document document)
             ItemKind kind = ItemKind.Mesh;
             if (auto tp = "type" in lj) {
                 if (tp.type != JSONType.string || !kindFromToken(tp.str, kind)) {
-                    v3dWarn(format("reject: layer %d has an unknown item type "
+                    v3dReject(format("layer %d has an unknown item type "
                         ~ "%s — this build does not know what that is, and "
                         ~ "guessing would silently change the document",
                         li, tp.toString()));
@@ -632,7 +784,7 @@ bool readV3d(string path, ref Document document)
             if (kindInfo(kind).hasMesh) {
                 auto mp = "mesh" in lj;
                 if (mp is null || mp.type != JSONType.object) {
-                    v3dWarn(format("reject: layer %d is a \"%s\" item and must "
+                    v3dReject(format("layer %d is a \"%s\" item and must "
                         ~ "carry a \"mesh\" object", li, tokenOf(kind)));
                     return false;
                 }
@@ -796,7 +948,7 @@ bool readV3d(string path, ref Document document)
             foreach (i, l; parsed)
                 if (kindInfo(l.kind).canBePrimary) { rehome = i; break; }
             if (rehome == parsed.length) {
-                v3dWarn("reject: no item in this document can be the mesh edit "
+                v3dReject("no item in this document can be the mesh edit "
                     ~ "target — a document must contain at least one item that "
                     ~ "`canBePrimary`, and this one contains none");
                 return false;
@@ -883,7 +1035,7 @@ bool readV3d(string path, ref Document document)
         // The guarantee this preserves: `document` is mutated only at the swap
         // above, after every reject, so a throw before then leaves the caller's
         // document intact.
-        v3dWarn(format("reject: %s", e.msg));
+        v3dReject(e.msg);
         return false;
     }
 }
@@ -915,14 +1067,14 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
     // --- vertices (required) ---
     auto vp = "vertices" in m;
     if (vp is null || vp.type != JSONType.array) {
-        v3dWarn("reject: missing or non-array \"vertices\"");
+        v3dReject("missing or non-array \"vertices\"");
         return false;
     }
     Vec3[] verts;
     verts.reserve(vp.array.length);
     foreach (i, vj; vp.array) {
         if (vj.type != JSONType.array || vj.array.length < 3) {
-            v3dWarn(format("reject: vertex %d is not an [x,y,z] triple", i));
+            v3dReject(format("vertex %d is not an [x,y,z] triple", i));
             return false;
         }
         verts ~= Vec3(jsonFloat(vj.array[0]),
@@ -933,21 +1085,21 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
     // --- faces (required) ---
     auto fp = "faces" in m;
     if (fp is null || fp.type != JSONType.array) {
-        v3dWarn("reject: missing or non-array \"faces\"");
+        v3dReject("missing or non-array \"faces\"");
         return false;
     }
     uint[][] polys;
     polys.reserve(fp.array.length);
     foreach (i, fj; fp.array) {
         if (fj.type != JSONType.array) {
-            v3dWarn(format("reject: face %d is not an array", i));
+            v3dReject(format("face %d is not an array", i));
             return false;
         }
         uint[] face;
         face.reserve(fj.array.length);
         foreach (ij; fj.array) {
             if (ij.type != JSONType.integer && ij.type != JSONType.uinteger) {
-                v3dWarn(format("reject: face %d has a non-integer index", i));
+                v3dReject(format("face %d has a non-integer index", i));
                 return false;
             }
             // std.json parses integer literals >= 2^63 as uinteger; reading
@@ -965,11 +1117,11 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
     }
 
     if (verts.length == 0) {
-        v3dWarn("reject: no vertices");
+        v3dReject("no vertices");
         return false;
     }
     if (polys.length == 0) {
-        v3dWarn("reject: no polygons");
+        v3dReject("no polygons");
         return false;
     }
 
@@ -978,7 +1130,7 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
     foreach (fi, face; polys)
         foreach (idx; face)
             if (idx >= nv) {
-                v3dWarn(format("reject: face %d references vertex %d "
+                v3dReject(format("face %d references vertex %d "
                                 ~ "(only %d verts)", fi, idx, nv));
                 return false;
             }
@@ -2106,40 +2258,42 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// N6 — THE UNSUPPORTED-VERSION MESSAGE NAMES BOTH VERSIONS AND SAYS THE FILE
-// IS NOT DAMAGED.
+// N6 — THE UNSUPPORTED-VERSION MESSAGE NAMES BOTH VERSIONS, SAYS THE FILE IS
+// NOT DAMAGED, AND — THE PART THAT MAKES ANY OF THAT WORTH ASSERTING — LEAVES
+// THIS FUNCTION.
 //
 // The wording is a contract, not a nicety (owner, task 0616 Ph6): "could not
 // open" reads as corruption and sends the user hunting a problem that does not
-// exist. Asserting it is possible because the log service keeps every entry
-// and can be listened to — so this is the message the USER sees, not a
-// paraphrase of it.
+// exist.
 //
-// Discriminating: the file's version AND the editor's must BOTH appear. A
-// message naming only one of them is the most likely wrong implementation
-// (`"unsupported formatVersion 7"` tells the user nothing about what this
-// build wants), and it reads differently here.
+// WHAT CHANGED HERE AND WHY (review B1). The first version of this test read
+// the message off a `log.d` LISTENER. That proved the string was written; it
+// did not prove anyone receives it — and nobody did. `log.d` has one sink, a
+// stderr echo; there is no log panel, and the only non-test `addLogListener`
+// in the whole tree was this test's own. So the message was asserted through a
+// channel the application never opens, while File → Open of a pre-v8 document
+// visibly did nothing at all. That is the same inert shape this task has been
+// caught by at every stage, one level up: not an assertion that cannot fail,
+// but an assertion about a value nothing downstream reads.
+//
+// So the assertion is now on `lastV3dRejectReason()` — the value `FileLoad`
+// copies into `Command.refusalReason()`, which the dispatch funnel appends to
+// the HTTP error text and `runCommand` turns into the modal notice. Break the
+// delivery and this goes red; the listener version stayed green.
+//
+// Discriminating on content, unchanged and still needed: the file's version
+// AND the editor's must BOTH appear. A message naming only one of them
+// (`"unsupported formatVersion 7"`) tells the user nothing about what this
+// build wants, and reads differently here. Whole PHRASES, never a bare digit —
+// forced by an earlier break check, where a bare "8" needle passed against the
+// reader's own `readV3d: path=…/vibe3d_v3d8_…` info line.
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : makeCube;
-    import log  : addLogListener, removeLogListener, LogEntry, LogLevel;
     import std.algorithm : canFind;
 
     auto root = v3dTestDir("version_gate");
     enum string tri = `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}`;
-
-    // WARNINGS ONLY, and the needles below are whole PHRASES. Both details
-    // were forced by the break check: collecting every level swept in the
-    // reader's own `readV3d: path=…/vibe3d_v3d8_…` info line, whose directory
-    // name contains an "8" — so a bare "8" needle passed against a message
-    // that never mentioned the editor's version at all.
-    string[] caught;
-    void sink(ref const(LogEntry) e) {
-        if (e.level == LogLevel.Warn) caught ~= e.msg;
-    }
-    auto listener = &sink;
-    addLogListener(listener);
-    scope(exit) removeLogListener(listener);
 
     // Three ways to be the wrong version: older, newer, and unlabelled.
     struct Case { int ver; string[] mustMention; }
@@ -2157,21 +2311,25 @@ unittest {
 
         auto live = Document.bootstrap(makeCube());
         live.layers[0].name = "keepme";
-        caught = null;
         assert(!readV3d(path, live),
             format("case %d: a v%d file must be rejected", ci, c.ver));
         assert(live.layers.length == 1 && live.layers[0].name == "keepme",
             format("case %d: …with the caller's document untouched", ci));
 
-        string joined;
-        foreach (m; caught) joined ~= m ~ "\n";
+        auto reason = lastV3dRejectReason();
+        assert(reason.length > 0,
+            format("case %d: the reader must hand its reason OUT, not only "
+                ~ "log it — a caller with nothing to say shows nothing", ci));
         foreach (needle; c.mustMention)
-            assert(joined.canFind(needle),
+            assert(reason.canFind(needle),
                 format("case %d: the rejection message must mention \"%s\" — "
                     ~ "naming only one of the two versions, or saying merely "
                     ~ "\"could not open\", sends the user looking for "
                     ~ "corruption that is not there. Got:\n%s",
-                    ci, needle, joined));
+                    ci, needle, reason));
+        assert(!reason.canFind("reject:"),
+            format("case %d: the `reject:` tag is log grep-bait and must not "
+                ~ "reach a dialog. Got:\n%s", ci, reason));
     }
 
     // A file with no version key at all is a separate branch: there is no
@@ -2181,12 +2339,257 @@ unittest {
         write(path, format(`{"primaryLayer":0,"layers":[`
             ~ `{"type":"mesh","selected":true,"channels":{"name":"M"},%s}]}`, tri));
         auto live = Document.bootstrap(makeCube());
-        caught = null;
         assert(!readV3d(path, live), "an unlabelled file is rejected");
-        string joined;
-        foreach (m; caught) joined ~= m ~ "\n";
-        assert(joined.canFind("formatVersion") && joined.canFind("version 8"),
+        auto reason = lastV3dRejectReason();
+        assert(reason.canFind("formatVersion") && reason.canFind("version 8"),
             "the unlabelled-file message names the key it wanted and the "
-          ~ "version this build reads. Got:\n" ~ joined);
+          ~ "version this build reads. Got:\n" ~ reason);
     }
+
+    // A load that SUCCEEDS leaves no reason behind. Without this, a reader
+    // that never cleared the field would report the previous document's
+    // rejection against a file that opened perfectly — and `runCommand` would
+    // raise a dialog over a successful File → Open.
+    {
+        auto path = buildPath(root, "good.v3d");
+        write(path, format(
+            `{"formatVersion":%d,"primaryLayer":0,"layers":[`
+            ~ `{"type":"mesh","selected":true,"channels":{"name":"M"},%s}]}`,
+            kV3dFormatVersion, tri));
+        auto live = Document.bootstrap(makeCube());
+        assert(readV3d(path, live), "control: the current version loads");
+        assert(lastV3dRejectReason() == "",
+            "a successful load reports no reason; got \""
+          ~ lastV3dRejectReason() ~ "\" left over from the rejects above");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// N6b — THE REASON REACHES THE COMMAND, which is the only thing that can put
+// it in front of a user (review B1).
+//
+// `readV3d` handing out a sentence is half a chain. This asserts the other
+// half against the REAL `FileLoad` — the same object File → Open, the recent
+// files list and `/api/command file.load` all build — through
+// `Command.refusalReason()`, which `app.d`'s `applyOrRefire` appends to the
+// error it throws and `runCommand` feeds to `commandNoticeText`.
+//
+// Discriminating three ways:
+//   * a `FileLoad` that does not override `refusalReason` reads "" (the base
+//     class's default), which is what it did before this change;
+//   * one that overrides it but never captures the reader's sentence reads a
+//     generic string with no version in it;
+//   * one that captures it but never RESETS it reports the stale rejection
+//     after the successful load below — which would raise a dialog over a
+//     document that opened.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import std.algorithm : canFind;
+    import commands.file.load : FileLoad;
+    import view     : View;
+    import editmode : EditMode;
+
+    auto root = v3dTestDir("refusal_chain");
+    enum string tri = `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}`;
+    auto oldPath  = buildPath(root, "written-by-an-older-build.v3d");
+    auto goodPath = buildPath(root, "current.v3d");
+    write(oldPath, format(
+        `{"formatVersion":7,"primaryLayer":0,"layers":[`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":"M"},%s}]}`, tri));
+    write(goodPath, format(
+        `{"formatVersion":%d,"primaryLayer":0,"layers":[`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":"M"},%s}]}`,
+        kV3dFormatVersion, tri));
+
+    auto doc  = Document.bootstrap(makeCube());
+    auto view = new View(0, 0, 800, 600);
+    auto cmd  = new FileLoad(doc.activeMesh(), view, EditMode.Vertices, &doc);
+
+    cmd.setPath(oldPath);
+    assert(!cmd.apply(), "a pre-v8 document does not load");
+    auto why = cmd.refusalReason();
+    assert(why.canFind("format version 7") && why.canFind("version 8")
+        && why.canFind("not damaged"),
+        "the command carries the READER's sentence, not a generic 'could not "
+      ~ "open'. Got: " ~ why);
+    assert(why.canFind("written-by-an-older-build.v3d"),
+        "…and names WHICH file, because a modal dialog has no other context "
+      ~ "about what the user just double-clicked. Got: " ~ why);
+
+    // The same object, applied again on a file that loads: the reason must be
+    // gone. A command object is applied more than once (redo, re-dispatch).
+    cmd.setPath(goodPath);
+    assert(cmd.apply(), "control: the current version loads through the same "
+      ~ "command object");
+    assert(cmd.refusalReason() == "",
+        "a successful apply() clears the reason; a stale one raises a dialog "
+      ~ "over a document that opened fine. Got: " ~ cmd.refusalReason());
+}
+
+// ---------------------------------------------------------------------------
+// N7 — THE WRITER EMITS EVERY ITEM, AND ENFORCES IT IN A RELEASE BINARY
+// (review S1).
+//
+// The precondition itself is old: `parent` / `links` / `primaryLayer` /
+// `focusedItem` are indices into the array `writeV3d` emits, so a write that
+// skips an item re-points every reference past the hole at its neighbour. What
+// guarded it was a plain `assert` at the end of the emit loop, and every
+// shipped binary is built `--build=release` (`tools/release/*.sh`, both CI
+// release jobs), where `-release` strips plain asserts outright. So the one
+// precondition whose violation silently corrupts every reference in the file
+// was checked in development builds only. It is now an `if` + `return false`.
+//
+// Discriminating — the wrong implementation is the SHIPPED v7 one: skip the
+// items the format cannot represent (`if (!layer.hasMesh && !layer.hasImage)
+// continue;`). The fixture puts an item with NO payload in the MIDDLE, so that
+// implementation drops it, the surviving items shift down one, and:
+//
+//   * `writeV3d` returns false where the correct one returns true;
+//   * the written `links` target names a DIFFERENT item, which the reload
+//     assertion below reads by identity rather than by "not null".
+//
+// The middle placement matters: the per-item check fires on the iteration
+// AFTER a drop, so an item dropped last would only be caught by the tail
+// length check. Both halves are exercised — one fixture per half.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+
+    auto root = v3dTestDir("emit_every_item");
+    writeTestBmp(buildPath(root, "clip.bmp"), 3, 2);
+    auto path = buildPath(root, "scene.v3d");
+
+    // [0] mesh (primary)  [1] empty consumer, NO payload  [2] image
+    auto doc  = Document.bootstrap(makeCube());
+    doc.layers[0].name = "Base";
+    auto consumer = new Layer;
+    consumer.kind = ItemKind.Empty;
+    consumer.name = "consumer";
+    auto clip = makeImageLayer("clip", buildPath(root, "clip.bmp"));
+    doc.layers ~= consumer;
+    doc.layers ~= clip;
+    consumer.setLink("backdropImage", clip);
+    doc.setActive(0);
+
+    assert(!consumer.hasMesh && !consumer.hasImage,
+        "fixture precondition: the middle item carries NEITHER payload, which "
+      ~ "is exactly what a payload-filtered write would drop. Without this the "
+      ~ "test could not tell an unfiltered writer from a filtered one");
+    assert(doc.indexOf(clip) == 2, "fixture: the link target is the LAST item");
+
+    assert(writeV3d(doc, path),
+        "an item the format has no payload block for is still WRITTEN — it "
+      ~ "holds the link, and it owns index 1");
+
+    {
+        auto raw = parseJSON(readText(path));
+        assert(raw["layers"].array.length == 3,
+            "every item reached the file; got "
+          ~ raw["layers"].array.length.to!string);
+        assert(raw["layers"].array[1]["type"].str == "empty",
+            "…the payload-less one at ITS OWN index, not squeezed out");
+        assert(raw["layers"].array[1]["links"].array[0]["target"].integer == 2,
+            "…and its link still names index 2. A filtered write renumbers "
+          ~ "this to 1, which after the reload is the consumer itself");
+    }
+
+    Document back;
+    assert(readV3d(path, back), "the written document reloads");
+    assert(back.layers.length == 3);
+    assert(back.layers[1].link("backdropImage").resolve(back) is back.layers[2],
+        "the link comes back pointing at the IMAGE, read by identity — a "
+      ~ "renumbered write resolves to a real item too, just the wrong one");
+
+    // The tail half of the check: an item dropped AFTER the last emitted one
+    // leaves no later iteration to notice the position drift, so the length
+    // comparison is not redundant with the per-item one.
+    auto trailing = new Layer;
+    trailing.kind = ItemKind.Empty;
+    trailing.name = "trailing";
+    doc.layers ~= trailing;
+    auto path2 = buildPath(root, "scene2.v3d");
+    assert(writeV3d(doc, path2), "…and a payload-less item in LAST position");
+    assert(parseJSON(readText(path2))["layers"].array.length == 4,
+        "all four items written");
+}
+
+// ---------------------------------------------------------------------------
+// N8 — THE WRITER NEVER EMITS A CHANNEL VALUE ITS OWN READER REFUSES
+// (review S2).
+//
+// `paramToJson` is a general value formatter and is deliberately lenient for
+// the two enum kinds: `Kind.Enum` writes the live string verbatim, and
+// `Kind.IntEnum` has a documented raw-integer fallback. `injectParamsInto` —
+// the reader's only channel writer — THROWS on both, and `readV3d`'s outer
+// backstop turns that throw into a rejection of the WHOLE DOCUMENT. So a
+// value that never passed through a validating write path produces a file that
+// saves without complaint and then will not open: the worst failure this
+// format has, and one the user cannot act on because the save reported
+// success.
+//
+// N5's fixture (1) is literally such a file, hand-authored. It is reachable
+// for real as soon as an item channel is backed by a D enum with a member the
+// table does not list (task 0612's first channel is exactly that shape).
+//
+// Discriminating: `colorspace` is set to a tag outside its declared three by a
+// DIRECT FIELD WRITE — the one route with no validation on it — and the
+// assertion is that the document RELOADS. With the guard removed the file
+// carries "not-a-real-tag", `readV3d` rejects it, and `assert(readV3d(...))`
+// reads false. The second half pins WHAT was written instead: the declared
+// default, not a blank and not the bad tag.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+
+    auto root = v3dTestDir("bad_live_channel");
+    writeTestBmp(buildPath(root, "clip.bmp"), 3, 2);
+    auto path = buildPath(root, "scene.v3d");
+
+    auto doc  = Document.bootstrap(makeCube());
+    auto clip = makeImageLayer("clip", buildPath(root, "clip.bmp"));
+    doc.layers ~= clip;
+    doc.setActive(0);
+
+    // The only unvalidated route to the field. `layer.attr` rejects an
+    // undeclared tag and `injectParamsInto` throws on one, which is precisely
+    // why this state is not reachable through them.
+    clip.imageOrNull().colorspace = "not-a-real-tag";
+    {
+        auto prov = new LayerPropsProvider(clip);
+        bool declared = false;
+        foreach (ref p; prov.params())
+            if (p.name == "colorspace")
+                foreach (ref e; p.enumValues)
+                    if (e[0] == "not-a-real-tag") declared = true;
+        assert(!declared,
+            "fixture precondition: the value really is outside the declared "
+          ~ "tag set — if the set ever grows to include it this test goes "
+          ~ "quietly inert");
+    }
+
+    assert(writeV3d(doc, path), "the write still succeeds");
+    {
+        auto raw = parseJSON(readText(path));
+        auto ch  = raw["layers"].array[1]["channels"];
+        assert(ch["colorspace"].str != "not-a-real-tag",
+            "the undeclared tag must not reach the file — this is the byte "
+          ~ "that makes the document unopenable. Got \""
+          ~ ch["colorspace"].str ~ "\"");
+        assert(ch["colorspace"].str == "(default)",
+            "…and what is written in its place is the DECLARED DEFAULT, which "
+          ~ "the reader accepts by construction. Got \""
+          ~ ch["colorspace"].str ~ "\"");
+    }
+
+    Document back;
+    assert(readV3d(path, back),
+        "THE POINT: a document saved with an out-of-domain channel value still "
+      ~ "opens. Without the guard the reader refuses the whole file and the "
+      ~ "user's work is unreachable through a save that said it worked. "
+      ~ "Reason given: " ~ lastV3dRejectReason());
+    assert(back.layers.length == 2, "both items came back");
+    assert(back.layers[1].imageOrNull().colorspace == "(default)",
+        "…and the clip's channel reads the substituted default, got \""
+      ~ back.layers[1].imageOrNull().colorspace ~ "\"");
 }

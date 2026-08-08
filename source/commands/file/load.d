@@ -13,7 +13,7 @@ import document : Document, Layer;
 import io.lwo_import    : sceneFromLwo;
 import io.scene_import  : importViaAssimp;
 import io.scene_ir      : ImportedScene, flattenToMesh, toLayers;
-import io.native : readV3d;
+import io.native : readV3d, lastV3dRejectReason;
 import io.formats;
 import io.doc_state : setCurrentDocPath, requestDocRebaseline;
 import io.assimp_runtime : isAssimpAvailable;
@@ -41,6 +41,9 @@ class FileLoad : Command {
     private bool             multiLayer;     // true for a layered (multi-part) interchange import
     private FileLoadMode     mode = FileLoadMode.open;
     private string           singleExt;     // import-single target ext (e.g. ".obj")
+    // WHY the last apply() declined, in the reader's own words — see
+    // refusalReason() below. Reset at the top of every apply().
+    private string           refusal_;
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* document) {
         super(mesh, view, editMode);
@@ -90,7 +93,28 @@ class FileLoad : Command {
         return path;
     }
 
+    /// WHY the last apply() declined — the `.v3d` reader's own sentence, with
+    /// the file it was reading named in front of it.
+    ///
+    /// THIS IS THE ONLY ROUTE THE REASON HAS (review B1). `log.d`'s single
+    /// sink is a stderr echo; nothing in the UI listens to it. Without this
+    /// override the dispatch funnel appends nothing, `runCommand` shows
+    /// nothing, and File → Open of a pre-v8 document is indistinguishable from
+    /// a menu item that does not work — which is exactly the "went looking for
+    /// corruption that isn't there" the version-gate wording was written to
+    /// prevent.
+    ///
+    /// EMPTY ON A CANCELLED DIALOG, on purpose: closing the file chooser also
+    /// returns false, and a user who pressed Cancel must not be told anything.
+    /// That is why the reason is set only where the reader actually refused.
+    override string refusalReason() const { return refusal_; }
+
     override bool apply() {
+        // The value must describe the LATEST call: a command object is applied
+        // more than once (redo, re-dispatch), and a reason kept from a prior
+        // failure would be reported against a call that succeeded.
+        refusal_ = null;
+
         string path = explicitPath;
         const fromDialog = path is null;
         if (path is null) {
@@ -120,7 +144,15 @@ class FileLoad : Command {
             prevActiveIndex = document.activeIndex;
             docSnapped      = true;
             ok = readV3d(path, *document);
-            if (!ok) { docSnapped = false; prevLayers = null; return false; }
+            if (!ok) {
+                // Carry the reader's sentence out to whoever has to tell a
+                // user. `lastV3dRejectReason` is thread-local and describes
+                // the call we just made, so it is read HERE and nowhere later.
+                auto why = lastV3dRejectReason();
+                refusal_ = why.length ? (path ~ " — " ~ why)
+                                      : ("could not read " ~ path);
+                docSnapped = false; prevLayers = null; return false;
+            }
             // readV3d (Stage 3) already re-asserts the full selection-set
             // invariants via the Document mutators: the persisted multi-select
             // SET is restored, the primary is forced selected + visible, and

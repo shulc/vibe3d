@@ -957,6 +957,18 @@ struct EditorApp {
     bool* quitAfterSavePtr;
     @property ref bool quitAfterSave() { return *quitAfterSavePtr; }
 
+    // ---- command-failure notice (task 0616 review B1) ----
+    // The text a declining command asked to be shown, and the same
+    // pendingOpen → OpenPopup latch every other modal here uses. Empty text
+    // means no notice; see `ui/command_notice.d` for why a reasonless decline
+    // is deliberately silent.
+    string* noticeTextPtr;
+    @property ref string noticeText() { return *noticeTextPtr; }
+    bool* noticeOpenPtr;
+    @property ref bool noticeOpen() { return *noticeOpenPtr; }
+    bool* noticePendingPtr;
+    @property ref bool noticePending() { return *noticePendingPtr; }
+
     // ---- Command History panel ----
     char[256]* historyFilterPtr;
     @property ref char[256] historyFilter() { return *historyFilterPtr; }

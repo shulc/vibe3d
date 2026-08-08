@@ -85,6 +85,16 @@ struct ImageRow {
     Layer  layer;
 
     string name;         ///< line 1 of the name cell
+    /// What the inline rename editor STARTS with — the item's raw `name`
+    /// field, which is `""` for an unnamed item, NOT the `name` above.
+    ///
+    /// A separate field because the two are different strings for exactly the
+    /// case that matters (review S5). Seeding the editor with the DISPLAY form
+    /// means double-clicking an unnamed row prefills the literal "(unnamed)"
+    /// placeholder, and pressing Enter renames the layer to it — after which
+    /// the Layers panel, which reads the raw field, shows an item genuinely
+    /// called "(unnamed)" and the placeholder can never be recovered.
+    string renameSeed;
     string pathText;     ///< line 2 — the STORED form, i.e. what a `.v3d`
                           ///< written next to this document would carry
     string pathTooltip;  ///< the absolute path, shown on hover
@@ -158,25 +168,69 @@ string dimensionsText(int width, int height, bool missing) {
 ///
 /// Code points, not bytes: a path may hold non-ASCII, and cutting a UTF-8
 /// sequence in half produces a string ImGui cannot draw.
+///
+/// NEVER THROWS, and that is a requirement rather than a courtesy (review S3).
+/// `foreach (dchar c; s)` decodes, and decoding throws `UTFException` on
+/// invalid UTF-8 — which a POSIX path is perfectly entitled to be, since a
+/// Linux filename is a byte string with no encoding guarantee at all. This
+/// runs inside `drawImageListPanel`, between `ImGui.Begin` and `ImGui.End`, so
+/// a throw here does not merely lose one row: it unwinds past `End()` and the
+/// style pop, and the window/style stacks come apart. The failure then
+/// surfaces one frame LATER as an assertion deep inside ImGui, nowhere near
+/// this function.
+///
+/// A path we cannot decode is therefore elided BY BYTE, on a code-point
+/// boundary found by scanning back over UTF-8 continuation bytes
+/// (`0b10xxxxxx`). The result may be shorter than the budget and it may not be
+/// what the user would have typed, but it is a drawable, well-formed string
+/// and the row appears.
 string elideEnd(string s, size_t maxChars) {
     import std.array : appender;
 
     if (maxChars == 0) return "";
-    size_t n = 0;
-    foreach (dchar c; s) { ++n; if (n > maxChars) break; }
-    if (n <= maxChars) return s;          // fits whole — no ellipsis
+    // `Exception`, not `std.utf.UTFException`: the throw comes from druntime's
+    // own decoder (`core.internal.utf`), which raises
+    // `core.exception.UnicodeException` — a sibling class, not a subclass.
+    // MEASURED: catching `UTFException` alone left this function throwing.
+    // And the contract here is "never throws on the draw path", which is a
+    // statement about the whole class of failures, not about one of them.
+    try {
+        size_t n = 0;
+        foreach (dchar c; s) { ++n; if (n > maxChars) break; }
+        if (n <= maxChars) return s;          // fits whole — no ellipsis
 
-    // One code point of the budget goes to the ellipsis itself.
-    auto app = appender!string();
-    size_t kept = 0;
-    immutable size_t keep = maxChars - 1;
-    foreach (dchar c; s) {
-        if (kept == keep) break;
-        app.put(c);
-        ++kept;
+        // One code point of the budget goes to the ellipsis itself.
+        auto app = appender!string();
+        size_t kept = 0;
+        immutable size_t keep = maxChars - 1;
+        foreach (dchar c; s) {
+            if (kept == keep) break;
+            app.put(c);
+            ++kept;
+        }
+        app.put('…');
+        return app.data;
+    } catch (Exception) {
+        return elideUndecodable(s, maxChars);
     }
-    app.put('…');
-    return app.data;
+}
+
+/// The `elideEnd` fallback for a string that is not valid UTF-8: cut at most
+/// `maxChars` BYTES, then walk back off any UTF-8 continuation byte so the
+/// result never ends mid-sequence, and append the ellipsis.
+///
+/// Separate and `private` so the throwing path above stays readable, and so a
+/// test can aim at it directly.
+private string elideUndecodable(string s, size_t maxChars) {
+    if (maxChars == 0) return "";
+    // One code point of the budget goes to the marker, exactly as above.
+    size_t cut = maxChars - 1;
+    if (cut > s.length) cut = s.length;
+    // 0b10xxxxxx is a continuation byte: back up while the byte AT the cut is
+    // one, so the cut never lands inside a multi-byte sequence. (`cut ==
+    // s.length` is already a boundary — there is no byte there to inspect.)
+    while (cut > 0 && cut < s.length && (s[cut] & 0xC0) == 0x80) --cut;
+    return s[0 .. cut] ~ "�";
 }
 
 /// Fill `outBuf` with one `ImageRow` per image item, in `document.layers`
@@ -210,6 +264,7 @@ void imageRowsInto(Document* doc, string docPath, ref ImageRow[] outBuf) {
         r.index       = i;
         r.layer       = l;
         r.name        = l.name.length ? l.name : kUnnamedText;
+        r.renameSeed  = l.name;              // RAW — see the field's comment
         r.selected    = l.selected;
         r.focused     = doc.focusedItem is l;
         if (img is null) {
@@ -220,7 +275,24 @@ void imageRowsInto(Document* doc, string docPath, ref ImageRow[] outBuf) {
             r.pathTooltip = img.storedPath;
             r.pathText    = storePathFor(img.storedPath, docPath);
             r.dimensions  = dimensionsText(img.width, img.height, img.missing);
-            r.pixelFormat = pixelFormatText(img.missing ? 0 : img.channels);
+            // `img.channels` UNCONDITIONALLY — there is no `missing ? 0 :`
+            // guard here, and there was one (review, inert-assertion 2).
+            //
+            // It could not fire: `refreshImageMeta` zeroes width/height/
+            // channels BEFORE every one of its early returns, so `missing`
+            // implies `channels == 0` for every payload in the document —
+            // `image.replace` copies all five fields from a probe that went
+            // through that same function, and its revert restores all five
+            // together. A branch that cannot be taken is not a safety net; it
+            // is a second, untested statement of a rule that already has one
+            // owner, and it made "a missing file reports no format" pass here
+            // even if the clearing over there were removed.
+            //
+            // `dimensionsText` keeps its `missing` argument, and that is not
+            // an inconsistency: a 0x0 measurement would render as "0 x 0",
+            // which is a plausible-looking lie, whereas `pixelFormatText(0)`
+            // is already "" by its own vocabulary.
+            r.pixelFormat = pixelFormatText(img.channels);
             r.missing     = img.missing;
         }
         outBuf[k++] = r;
@@ -466,6 +538,29 @@ unittest {
     assert(rows[1].name == "bravo",   "line 1 is the display name");
     assert(rows[2].name == "charlie", "line 1 is the display name");
 
+    // The rename editor's seed is the RAW field, and on a NAMED item the two
+    // agree — which is why the unnamed case below is the only one that can
+    // discriminate, and why it has to exist (review S5).
+    foreach (i, r; rows)
+        assert(r.renameSeed == r.name,
+            "a named item seeds the editor with what it displays");
+
+    f.bravo.name = "";
+    imageRowsInto(&f.doc, f.docPath, rows);
+    assert(rows[1].name == kUnnamedText,
+        "an unnamed item DISPLAYS the placeholder; got '" ~ rows[1].name ~ "'");
+    assert(rows[1].renameSeed == "",
+        "…and seeds the rename editor with NOTHING. Seeding it with the "
+        ~ "displayed text means Enter renames the layer to the literal \""
+        ~ kUnnamedText ~ "\", which the Layers panel then shows as a real "
+        ~ "name and which cannot be undone back to 'no name'. Got '"
+        ~ rows[1].renameSeed ~ "'");
+    assert(rows[1].name != rows[1].renameSeed,
+        "vacuity guard: the display form and the seed really are different "
+        ~ "strings here — everywhere else they coincide and this assertion "
+        ~ "would be inert");
+    f.bravo.name = "bravo";     // restore for anything reading the fixture after
+
     assert(rows[0].pathText == "alpha.bmp",
         "beside the document -> bare name, got '" ~ rows[0].pathText ~ "'");
     assert(rows[1].pathText == "tex/bravo.bmp",
@@ -568,13 +663,25 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// R5 — the format column is the PIXEL FORMAT, never the file extension.
+// R5 — the format column is the PIXEL FORMAT of THAT row's file.
 //
-// Discriminating: every fixture file is a `.bmp`, so an extension-based
-// implementation reads the same token on all three rows AND a token containing
-// a dot; the correct one reads the channel layout the header declared. The
-// direct `pixelFormatText` cases pin the whole vocabulary, including that an
-// unmeasured channel count is EMPTY rather than a guess.
+// Discriminating in two steps, because one is not enough:
+//
+//   * the baseline pins the value read from a real header (24-bit BMP → three
+//     channels → "RGB"), which already excludes every extension-shaped answer
+//     — "bmp", ".bmp" and "BMP" are all != "RGB". An earlier revision followed
+//     it with an explicit `!= "bmp"` triple; that could not fail once the
+//     equality above had passed, and is replaced here rather than kept.
+//   * the replacement moves ONE row's channel count off the shared value. Now
+//     the rows do not agree, so an implementation reading a constant, or the
+//     extension, or the FIRST item's channels, reads the same token twice
+//     where the correct one reads two different tokens. The equality baseline
+//     alone could not separate any of those from each other.
+//
+// Poking `channels` directly is the right seam: turning a FILE into a channel
+// count is `refreshImageMeta`'s job and is pinned by its own tests (a 24-bit
+// BMP reads 3, a vanished file reads 0). This module's job is only the map
+// from that number to a token.
 // ---------------------------------------------------------------------------
 unittest {
     auto f = makeRowFixture("rows_format");
@@ -584,12 +691,20 @@ unittest {
     foreach (i, r; rows)
         assert(r.pixelFormat == "RGB",
             "a 24-bit BMP is three channels; got '" ~ r.pixelFormat ~ "'");
-    // The discriminator against "extension": the fixture's extension is "bmp",
-    // and nothing in the column may be it.
-    foreach (r; rows) {
-        assert(r.pixelFormat != "bmp" && r.pixelFormat != ".bmp" && r.pixelFormat != "BMP",
-            "the format column is the channel layout, not the file type");
-    }
+
+    // One row's measurement moves; the other two do not.
+    f.bravo.imageOrNull().channels = 4;
+    imageRowsInto(&f.doc, f.docPath, rows);
+    assert(rows[1].pixelFormat == "RGBA",
+        "the row reports ITS OWN item's channel count; got '"
+        ~ rows[1].pixelFormat ~ "'");
+    assert(rows[0].pixelFormat == "RGB" && rows[2].pixelFormat == "RGB",
+        "…and its neighbours are untouched — an implementation reading one "
+        ~ "item's channels for every row reads 'RGBA' here, and one reading "
+        ~ "the file extension reads the same token on all three");
+    assert(rows[0].pixelFormat != rows[1].pixelFormat,
+        "vacuity guard: the two rows really do disagree now, which is the "
+        ~ "whole basis of the assertions above");
 
     assert(pixelFormatText(1) == "Grey");
     assert(pixelFormatText(2) == "Grey+A");
@@ -598,8 +713,16 @@ unittest {
         "an unmeasured channel count reports nothing, not a default layout");
 
     // A missing item reports no format either — same rule as its dimensions.
+    // The MECHANISM is asserted first: the row is empty because the refresh
+    // cleared the count, not because the row model carries a second `missing`
+    // rule of its own (it deliberately does not — see `imageRowsInto`).
     remove(f.pathA);
     refreshImageMeta(f.alpha.imageOrNull());
+    assert(f.alpha.imageOrNull().channels == 0,
+        "precondition: a failed refresh clears the channel count. Without "
+        ~ "this the assertion below would pass on a row model that hard-coded "
+        ~ "an empty cell for `missing`, and would not notice a refresh that "
+        ~ "left the stale 3 behind");
     imageRowsInto(&f.doc, f.docPath, rows);
     assert(rows[0].missing && rows[0].pixelFormat == "",
         "a missing file has no format; got '" ~ rows[0].pixelFormat ~ "'");
@@ -625,21 +748,95 @@ unittest {
     assert(cut == "../assets…",
         "the HEAD survives and the ellipsis marks the cut; got '" ~ cut ~ "'");
 
+    // THE BUDGET, SWEPT. Reading `walkLength` off the literal spelled out one
+    // line above proves nothing — the literal already has ten code points, so
+    // the assertion is a restatement of the equality, not a second check
+    // (review, inert-assertion 4). Sweeping every budget that cuts is a real
+    // one: an off-by-one in the ellipsis accounting (`keep = maxChars` rather
+    // than `maxChars - 1`) reads 11 at the very first iteration, and no single
+    // hand-written expectation would have to be updated to see it.
     import std.range : walkLength;
-    assert(walkLength(cut) == 10,
-        "the result honours the budget in code points");
+    import std.conv  : to;
+    foreach (budget; 1 .. p.length) {          // 1 .. 26 — every budget that cuts
+        immutable got = elideEnd(p, budget);
+        assert(walkLength(got) == budget,
+            "budget " ~ budget.to!string ~ " must produce exactly that many "
+            ~ "code points, ellipsis included; got '" ~ got ~ "' ("
+            ~ walkLength(got).to!string ~ ")");
+    }
 
     assert(elideEnd(p, 1) == "…", "a one-point budget is all ellipsis");
     assert(elideEnd(p, 0) == "",       "a zero budget draws nothing");
 
-    // Multi-byte input must not be cut mid-sequence: four two-byte code
-    // points, budget three, so the result is two of them plus the ellipsis.
+    // Multi-byte input must not be cut mid-sequence. Four two-byte code
+    // points, so `length` (8) and code-point count (4) differ — which is what
+    // makes a byte-based implementation visible.
     immutable uni = "äöüß";
-    immutable ucut = elideEnd(uni, 3);
-    assert(ucut == "äö…",
-        "code points, not bytes; got '" ~ ucut ~ "'");
+    assert(uni.length == 8, "fixture: eight BYTES, four code points");
     import std.utf : validate;
+
+    immutable ucut = elideEnd(uni, 3);
+    assert(ucut == "äö…", "code points, not bytes; got '" ~ ucut ~ "'");
+
+    // BUDGET FOUR IS THE ONE THAT DISCRIMINATES, and budget three is not
+    // (review, inert-assertion 5). A byte-based implementation slices "äöüß"
+    // at byte 2 for budget 3 — exactly the end of "ä" — so the result is
+    // accidentally well-formed and `validate` cannot fire. At budget 4 the
+    // same implementation still thinks the string does not fit (8 bytes > 4)
+    // and cuts at byte 3, in the MIDDLE of "ö".
+    immutable ufit = elideEnd(uni, 4);
+    assert(ufit == uni,
+        "four code points fit a budget of four, untouched and with no "
+        ~ "ellipsis — a byte-based implementation measures 8 and cuts; got '"
+        ~ ufit ~ "'");
+    validate(ufit);     // …and what it cut to would be invalid UTF-8
     validate(ucut);
+}
+
+// ---------------------------------------------------------------------------
+// R6b — a path that is not valid UTF-8 is ELIDED, not thrown over (review S3).
+//
+// A POSIX filename is a byte string; nothing guarantees it decodes. `foreach
+// (dchar c; s)` throws `UTFException` on one that does not, and this function
+// runs between `ImGui.Begin` and `ImGui.End` — so the throw would not lose a
+// row, it would unwind past the window and style pops and leave ImGui's stacks
+// one deep, surfacing as an assertion inside ImGui on the NEXT frame.
+//
+// Discriminating: the input is a real lone-continuation byte (0x80, illegal as
+// a lead), the assertion is that the call RETURNS, and the returned text is
+// checked to be non-empty and short enough to draw. An implementation that
+// simply lets the decode throw does not reach the first assertion at all — the
+// unittest dies with a UTFException, which is a different and very loud red.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv  : to;
+    import std.range : walkLength;
+
+    // "bad/" + 0x80 + "name.png" — 0x80 is a UTF-8 CONTINUATION byte with no
+    // lead in front of it, which no decoder accepts.
+    immutable string bad = "bad/" ~ cast(string)[cast(char) 0x80] ~ "name.png";
+    {
+        import std.utf : validate;
+        bool threw = false;
+        try validate(bad); catch (Exception) threw = true;
+        assert(threw, "fixture: the input really is undecodable, or this test "
+            ~ "exercises the ordinary path and proves nothing");
+    }
+
+    immutable got = elideEnd(bad, 8);
+    assert(got.length > 0,
+        "an undecodable path still draws something; got an empty string");
+    assert(got.length <= bad.length,
+        "…and it is not longer than what it elided; got " ~ got.length.to!string);
+
+    // A short-enough undecodable path is returned as-is-ish rather than lost.
+    assert(elideEnd(bad, 400).length > 0,
+        "a generous budget over an undecodable path still yields text");
+
+    // And the ordinary path is untouched by the guard: a decodable string of
+    // the same shape still elides by CODE POINT.
+    assert(walkLength(elideEnd("bad/xname.png", 8)) == 8,
+        "the valid-UTF-8 path still honours the budget in code points");
 }
 
 // ---------------------------------------------------------------------------
@@ -735,10 +932,20 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// R10 — a document with no images has no rows, and its own empty text.
+// R10 — WHEN the panel is empty, and when it only looks like it should be.
 //
-// Discriminating: the mesh-only document has a layer, so an unfiltered
-// implementation reads 1 row rather than 0.
+// Discriminating, first half: the mesh-only document has a layer, so an
+// unfiltered implementation reads 1 row rather than 0.
+//
+// Second half: an image item whose PAYLOAD was never constructed still gets a
+// row. `isImageRow`'s doc comment states this, and nothing asserted it —
+// `assert(kNoImagesText.length > 0)` stood here instead, which is a claim
+// about a compile-time literal and could not fail (review, inert-assertion 3).
+// The consequence it protects is concrete: `isImageRow` is the exact
+// complement of the Layers panel's `isSceneItem` skip, so an implementation
+// that filtered a payload-null item out here would leave that item in NO panel
+// at all — invisible, unselectable, and undeletable — while this list confidently
+// printed its empty text over the top of it.
 // ---------------------------------------------------------------------------
 unittest {
     auto doc = Document.bootstrap(makeCube());
@@ -751,5 +958,27 @@ unittest {
     import std.conv : to;
     assert(rows.length == 0,
         "a mesh is not an image row; got " ~ to!string(rows.length));
-    assert(kNoImagesText.length > 0, "the empty state has its own text");
+
+    // …and now an image item with no payload joins it.
+    auto orphan = new Layer;
+    orphan.name = "no payload";
+    orphan.kind = ItemKind.Image;
+    doc.layers ~= orphan;
+    assert(orphan.imageOrNull() is null,
+        "fixture: the payload really is unconstructed — if it were not, this "
+        ~ "would be the ordinary row case and would prove nothing");
+
+    imageRowsInto(&doc, "", rows);
+    assert(rows.length == 1,
+        "a payload-null image item is LISTED, not skipped: skipping puts it "
+        ~ "in no panel at all. Got " ~ to!string(rows.length) ~ " row(s)");
+    assert(rows[0].layer is orphan, "…and it is that item");
+    assert(rows[0].name == "no payload", "…drawn under its own name");
+    assert(rows[0].missing,
+        "…reported as missing, which is the honest answer for an item that "
+        ~ "names no file");
+    assert(rows[0].pathText == "" && rows[0].pathTooltip == "",
+        "…with no path text of any kind, rather than a fabricated one");
+    assert(rows[0].dimensions == "" && rows[0].pixelFormat == "",
+        "…and no measurements");
 }
