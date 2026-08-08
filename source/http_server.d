@@ -153,8 +153,21 @@ class HttpServer {
     private alias ToolStateDataProvider = string delegate();
     private ToolStateDataProvider toolStateDataProvider;
     // /api/layers (GET) — JSON layer list. /api/model?layer=N — a layer-aware
-    // detailed provider (N=-1 → active layer). Both marshal onto the main
-    // thread via the existing model epoch handshake (tickModel).
+    // detailed provider (N=-1 → active layer).
+    //
+    // ~~Both marshal onto the main thread via the existing model epoch
+    // handshake (tickModel).~~ CORRECTED (task 0612 Stage 3): that was never
+    // true of `/api/layers`. `/api/model` is marshaled through `modelBridge`;
+    // `/api/layers`'s route served it straight from the HTTP thread and said
+    // so in a comment of its own, and the route was the one telling the
+    // truth. The claim is now made true rather than merely deleted — the
+    // route below marshals through `layersBridge`, because the provider gained
+    // a nested `indexOf` walk (a link's target index) INSIDE the loop already
+    // walking `layers`, while the main thread splices that same array at four
+    // sites. A splice between the two reads makes the response name the wrong
+    // layer, which is worse than an error because it looks like an answer.
+    // (Task 0611's quarry exactly: not a write, but two reads of state that
+    // can change between them.)
     private alias LayersDataProvider = string delegate();
     private LayersDataProvider layersDataProvider;
     private alias LayerModelProvider = string delegate(int layer);
@@ -460,6 +473,21 @@ class HttpServer {
         string delegate(int cell, string points, bool wantHash);
     private ViewportProbeProvider viewportProbeProvider;
 
+    // ----- /api/images provider (task 0612 Stage 1) ------------------------
+    // GET /api/images — the document's image-clip rows (stored + resolved
+    // path, the derived header fields, `missing`) plus the pixel cache's
+    // residency counters.
+    //
+    // MARSHALED, and the reason is 0611's exact shape rather than "writes are
+    // dangerous": forming one response reads the layer array, each row's
+    // payload, and the cache's counters — several pieces of state that must
+    // agree with each other, while the main thread is free to splice the
+    // layer array between two of the reads. A torn response here would name a
+    // row's path beside another row's dimensions, which is worse than an
+    // error because it looks like an answer.
+    private alias ImagesDataProvider = string delegate();
+    private ImagesDataProvider imagesDataProvider;
+
     // ----- /api/undo/status provider ---------------------------------------
     // Returns JSON {state, lockout, canUndo, canRedo}. Read-only snapshot of
     // the history service — runs on the HTTP thread like historyProvider.
@@ -585,6 +613,20 @@ class HttpServer {
     struct VpProbeReq  { int cell = -1; string points; bool wantHash; }
     struct VpProbeResp { string result; string error; }
     private MainThreadBridge!(VpProbeReq, VpProbeResp) vpProbeBridge;
+
+    // Task 0612 Stage 1 — /api/images. Its OWN bridge instance (never shared,
+    // the same hard rule as pathBridge / toolpipeBridge): two endpoints
+    // sharing one bridge interleave their epochs and one of them returns a
+    // torn or empty result.
+    struct ImagesReq  { }
+    struct ImagesResp { string result; string error; }
+    private MainThreadBridge!(ImagesReq, ImagesResp) imagesBridge;
+
+    // Task 0612 Stage 3 — /api/layers, marshaled. Its OWN bridge instance,
+    // same rule as every other one.
+    struct LayersReq  { }
+    struct LayersResp { string result; string error; }
+    private MainThreadBridge!(LayersReq, LayersResp) layersBridge;
 
     struct RefireReq  { string action; }
     struct RefireResp { string error; }
@@ -934,6 +976,34 @@ class HttpServer {
                 }
             });
 
+        imagesBridge = new MainThreadBridge!(ImagesReq, ImagesResp)(this,
+            (ref ImagesReq req, ref ImagesResp resp) {
+                if (imagesDataProvider is null) {
+                    resp.error = "images data provider not set";
+                } else {
+                    try {
+                        resp.result = imagesDataProvider();
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        layersBridge = new MainThreadBridge!(LayersReq, LayersResp)(this,
+            (ref LayersReq req, ref LayersResp resp) {
+                if (layersDataProvider is null) {
+                    resp.error = "Layers data provider not set";
+                } else {
+                    try {
+                        resp.result = layersDataProvider();
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
         refireBridge = new MainThreadBridge!(RefireReq, RefireResp)(this,
             (ref RefireReq req, ref RefireResp resp) {
                 if (refireHandler is null) {
@@ -1127,6 +1197,12 @@ class HttpServer {
     /// for the --test single-rendered-cell trap.
     public void setViewportProbeProvider(ViewportProbeProvider provider) {
         this.viewportProbeProvider = provider;
+    }
+
+    /// GET /api/images — image-clip rows + pixel-cache residency counters
+    /// (task 0612 Stage 1). Marshaled; see the provider alias for why.
+    public void setImagesDataProvider(ImagesDataProvider provider) {
+        this.imagesDataProvider = provider;
     }
 
     public void setTestMode(bool enabled) { testMode = enabled; }
@@ -1582,21 +1658,28 @@ class HttpServer {
                 }
             }
         } else if (request.path == "/api/layers" && request.method == "GET") {
-            // Layer list (layers Stage 2). Read-only; served straight from the
-            // HTTP thread like /api/selection — tests are quiescent when probing.
+            // Layer list. MARSHALED (task 0612 Stage 3) — it used to be served
+            // straight from the HTTP thread on the grounds that "tests are
+            // quiescent when probing", which stopped being enough once the
+            // response had to resolve a link's target index by walking the
+            // same array the main thread splices. See the provider alias.
             response.headers["Content-Type"] = "application/json";
-            if (layersDataProvider !is null) {
-                try {
-                    response.statusCode = 200;
-                    response.body = layersDataProvider();
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\": \"Failed to retrieve layers\", \"message\": \"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
-                }
-            } else {
+            if (layersDataProvider is null) {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Layers data provider not set\"}";
+            } else {
+                layersBridge.resp.result = "";
+                layersBridge.resp.error  = "";
+                if (!layersBridge.submitAndWait())
+                    layersBridge.resp.error = "timeout waiting for main thread";
+                if (layersBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = layersBridge.resp.result;
+                } else {
+                    response.statusCode = 500;
+                    response.body = "{\"error\": \"Failed to retrieve layers\", \"message\": \"" ~
+                                   layersBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                }
             }
         } else if (request.path == "/api/perf/reset" && request.method == "POST") {
             // Zero all perf counters before a measured run. No-op in the
@@ -1997,6 +2080,27 @@ class HttpServer {
                     response.statusCode = 500;
                     response.body = `{"error":"`
                                     ~ vpDisplayBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path.startsWith("/api/images") && request.method == "GET") {
+            // Task 0612 Stage 1 — the image-clip rows and the pixel cache's
+            // residency counters, gathered in one main-thread pass.
+            if (imagesDataProvider is null) {
+                response.statusCode = 500;
+                response.body = `{"error":"images data provider not set"}`;
+            } else {
+                imagesBridge.resp.result = "";
+                imagesBridge.resp.error  = "";
+                if (!imagesBridge.submitAndWait())
+                    imagesBridge.resp.error = "timeout waiting for main thread";
+                if (imagesBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = imagesBridge.resp.result;
+                } else {
+                    response.statusCode = 500;
+                    response.body = `{"error":"`
+                                    ~ imagesBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";

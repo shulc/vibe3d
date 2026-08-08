@@ -255,10 +255,14 @@ bool sanitizeItemXform(ref ItemXform x, ref const ItemXform before) {
 /// (task 0615) — a transform-only item with no mesh payload. `Image` (task
 /// 0616) is the first RESOURCE kind — it is neither geometry nor a thing
 /// positioned in space; consumers reference it, it does not sit in the
-/// scene. New kinds append here; the enum VALUE is never persisted (`.v3d` /
-/// HTTP carry the wire TOKEN from `ItemKindInfo.token`, resolved through
-/// `kindFromToken`), so appending never reshuffles a stored file.
-enum ItemKind : ubyte { Mesh = 0, Empty = 1, Image = 2 }
+/// scene. `ImagePlane` (task 0612) is the first kind that is DRAWN without
+/// owning geometry — a world-placed reference image, positioned by the
+/// ordinary item transform and reading its pixels through a link to an
+/// `Image` item rather than owning them. New kinds append here; the enum
+/// VALUE is never persisted (`.v3d` / HTTP carry the wire TOKEN from
+/// `ItemKindInfo.token`, resolved through `kindFromToken`), so appending
+/// never reshuffles a stored file.
+enum ItemKind : ubyte { Mesh = 0, Empty = 1, Image = 2, ImagePlane = 3 }
 
 /// The per-kind capability row. Every field is a CAPABILITY, never spelled
 /// `kind == ItemKind.Mesh` at a call site — that is what makes a future
@@ -286,14 +290,46 @@ struct ItemKindInfo {
                            ///< the viewport, so it lives only in its own
                            ///< panel — false here for that reason, not as a
                            ///< kind check wearing a hat (Bend #2).
+    // Task 0612 Stage 2 — the reference-image plane's axis.
+    bool   hasImagePlane; ///< owns an image-plane payload (`Layer.imagePlane_`)
+                           ///< and draws one textured world quad on ITS OWN
+                           ///< display axis. Deliberately NOT folded into
+                           ///< `drawsGeometry`: that bit gates the background/
+                           ///< foreground MESH pass, whose body dereferences
+                           ///< `meshRef()` unconditionally. `display_state.d`
+                           ///< already states the house rule this follows —
+                           ///< the grid, the workplane and the reference image
+                           ///< are each their OWN axis — so "is drawn" is
+                           ///< never one bit, and a drawable that owns no mesh
+                           ///< needs no relaxation of the proof below.
 }
 
 /// One row per `ItemKind`, indexed by the enum's numeric value — kept in
 /// enum declaration order so `kItemKindTable[k]` is a plain array index.
 private immutable ItemKindInfo[ItemKind.max + 1] kItemKindTable = [
-    ItemKindInfo("mesh",  true,  true,  true,  true,  false, true),   // ItemKind.Mesh
-    ItemKindInfo("empty", false, true,  false, false, false, true),   // ItemKind.Empty
-    ItemKindInfo("image", false, false, false, false, true,  false),  // ItemKind.Image
+    //             token         hasMesh hasXform canBePrimary drawsGeometry hasImage isSceneItem hasImagePlane
+    ItemKindInfo("mesh",       true,  true,  true,  true,  false, true,  false), // ItemKind.Mesh
+    ItemKindInfo("empty",      false, true,  false, false, false, true,  false), // ItemKind.Empty
+    ItemKindInfo("image",      false, false, false, false, true,  false, false), // ItemKind.Image
+    // Task 0612. Every column is load-bearing and none of them is "how many
+    // kinds agree today":
+    //   * `hasMesh` FALSE — and the `!hasImagePlane || !hasMesh` proof below
+    //     turns that into a compile-time fact, which is what makes every
+    //     mesh-shaped consumer skip this kind by construction rather than by
+    //     a guard somebody has to remember.
+    //   * `hasXform` TRUE — the whole premise is that it is placed with the
+    //     ordinary Move / Rotate / Scale tools in Item mode.
+    //   * `canBePrimary` FALSE — `primary` is the MESH edit target.
+    //   * `drawsGeometry` FALSE — see `hasImagePlane`'s comment above, and
+    //     the note under the `drawsGeometry implies hasMesh` proof below.
+    //   * `hasImage` FALSE — it LINKS to an image item, it does not own one,
+    //     so it is not an Images-panel row.
+    //   * `isSceneItem` TRUE — mandatory, not stylistic: the Layers panel
+    //     filters on it and the Images panel on `hasImage`, and the two are
+    //     documented as exact complements. False on both would put this item
+    //     in NO panel at all, and with no viewport item picking it would be
+    //     unselectable and undeletable.
+    ItemKindInfo("imagePlane", false, true,  false, false, false, true,  true),  // ItemKind.ImagePlane
 ];
 
 // `drawsGeometry` implies `hasMesh`, as a compile-time PROOF over the table
@@ -307,6 +343,15 @@ private immutable ItemKindInfo[ItemKind.max + 1] kItemKindTable = [
 // its `debug`-only assert, or worse in a release build) despite passing its
 // own gate. This `static foreach` makes that impossible to compile instead
 // of merely being true today.
+//
+// Task 0612: the prediction the block further down used to make — that the
+// reference-image item would force this proof to be RELAXED — is SUPERSEDED,
+// and the two comments now agree (see the note at the end of that block).
+// The image-plane row keeps `drawsGeometry` FALSE and draws on its own
+// display axis instead, so "drawn" never travels through the mesh pass and
+// this line stands unweakened. It is precisely the consequence this comment
+// states — an empty-mesh upload behind a passing gate — that made relaxing
+// it the wrong move.
 static foreach (row; kItemKindTable)
     static assert(!row.drawsGeometry || row.hasMesh,
         "ItemKindInfo(\"" ~ row.token ~ "\"): drawsGeometry requires hasMesh");
@@ -381,18 +426,66 @@ static foreach (row; kItemKindTable)
 // agreeing on which layers have a real pivot instead of drifting apart the
 // next time either gate changes alone.
 //
-// Forward-looking reason this still matters: the reference-image item draws
+// ~~Forward-looking reason this still matters: the reference-image item draws
 // in the viewport while owning no mesh, so `drawsGeometry implies hasMesh`
 // is the assertion that will have to be RELAXED next. At that point
 // `hasXform` becomes the ONLY thing still coupling "drawn" to "positionable"
 // — retiring it now, before that relaxation, would have removed the guard
-// just before it became load-bearing.
+// just before it became load-bearing.~~
+//
+// SUPERSEDED (task 0612 Stage 2), not wrong. The reference-image item has
+// landed — `ItemKind.ImagePlane` above — and it did NOT relax
+// `drawsGeometry implies hasMesh`. It got its own capability bit
+// (`hasImagePlane`) and its own draw pass instead, following the rule
+// `display_state.d` states for the display axes: the grid, the workplane and
+// the reference image are each their OWN axis, so "is drawn" was never one
+// bit to begin with. The paragraph above was written before that rule became
+// the house shape, and under it "drawn" never has to travel through the mesh
+// pass at all. A comment predicting a future task's shape is a hypothesis,
+// not a spec — this one is kept struck through rather than deleted so the
+// prediction and its outcome stay visible together, and the proof it
+// predicted would be relaxed carries a matching note at its own site above.
+//
+// What DOES survive from it, and is now the operative reason these two lines
+// exist: `hasXform` is what couples "positionable" to the payload-bearing
+// kinds, and the three `hasImagePlane` proofs below extend exactly that
+// coupling to the new drawable.
 static foreach (row; kItemKindTable)
     static assert(!row.hasMesh || row.hasXform,
         "ItemKindInfo(\"" ~ row.token ~ "\"): hasMesh requires hasXform");
 static foreach (row; kItemKindTable)
     static assert(!row.canBePrimary || row.hasXform,
         "ItemKindInfo(\"" ~ row.token ~ "\"): canBePrimary requires hasXform");
+
+// Task 0612 Stage 2 — the image plane's three proofs, in the same style as
+// the four above and beside them for the same reason.
+//
+//   * drawn implies positionable — a plane the item transform cannot reach
+//     would be stuck at the origin with no way to move it, and `resolve
+//     Placement` reads `xform` unconditionally.
+//   * drawn implies reachable in a panel — same argument as `drawsGeometry
+//     implies isSceneItem` one proof up, and it bites harder here: viewport
+//     item picking does not exist, so the panel row is the ONLY way to
+//     select or delete one.
+//   * the third is the whole non-participation audit in one line. An image
+//     plane owns no mesh AT COMPILE TIME, so every mesh-shaped consumer
+//     (picking, snapping, subdivision, export, bounds) skips it by
+//     construction rather than by a guard that has to be remembered and can
+//     be forgotten one call site at a time.
+//
+// Deliberate break, performed and reverted while writing this stage: setting
+// `hasMesh` true on the `imagePlane` row fails to compile at the third line
+// with exactly its message (and, chained through `hasMesh implies hasXform`,
+// nothing else) — restoring the row makes the build green again.
+static foreach (row; kItemKindTable)
+    static assert(!row.hasImagePlane || row.hasXform,
+        "ItemKindInfo(\"" ~ row.token ~ "\"): hasImagePlane requires hasXform");
+static foreach (row; kItemKindTable)
+    static assert(!row.hasImagePlane || row.isSceneItem,
+        "ItemKindInfo(\"" ~ row.token ~ "\"): hasImagePlane requires isSceneItem");
+static foreach (row; kItemKindTable)
+    static assert(!row.hasImagePlane || !row.hasMesh,
+        "ItemKindInfo(\"" ~ row.token ~ "\"): hasImagePlane forbids hasMesh");
 
 /// The capability row for `k`.
 ref immutable(ItemKindInfo) kindInfo(ItemKind k) pure nothrow @nogc @safe {
@@ -521,6 +614,72 @@ final class ImageData {
                           ///< answer, and claiming `missing == false` for a
                           ///< path nobody has opened is the one wrong answer
                           ///< a consumer cannot detect.
+}
+
+/// A reference-image plane's payload (task 0612). A class reference, for the
+/// same two reasons `ImageData` is one: a `Layer` can be repointed at another
+/// payload without the field moving, and the object has one identity to hang
+/// things off.
+///
+/// EVERY FIELD IS AN AUTHORED CHANNEL. There is deliberately nothing derived
+/// here and no path of its own:
+///
+///   * the image's PIXEL DIMENSIONS live on the linked clip's `ImageData`,
+///     where the disk answered them;
+///   * the resolved absolute PATH is computed on demand from that clip;
+///   * the TEXTURE lives in the path-keyed pixel cache (`image_cache.d`).
+///
+/// So there is no second source of truth to keep in sync, and none of the
+/// staleness `ImageData`'s own comment argues against. The plane's placement
+/// is a pure FUNCTION of these channels plus the item transform plus the
+/// clip's dimensions; nothing about it is stored.
+final class ImagePlaneData {
+    // ---- what the plane faces -------------------------------------------
+    /// Which axis-aligned view this plane is a reference FOR. A closed token
+    /// set rather than an int, for the reason `ItemKind`'s own comment gives:
+    /// the token is what `.v3d` carries, so a later value appended to the set
+    /// cannot reshuffle a stored file. The declaration that pins the set is
+    /// the `Param.enum_` in `layer_params.d`.
+    ///
+    /// No "camera" value: we have no camera item to project from.
+    string projection = "front";
+    /// Whether the plane is also drawn in a free-orbit (perspective) cell.
+    /// The measured channel is the NEGATIVE `hide in perspective`, default
+    /// "shown"; the positive spelling is the reference's own UI label and is
+    /// what this field carries, so the default reads `true` rather than
+    /// `false` meaning the same thing.
+    bool showInPerspective = true;
+
+    // ---- how big it is ---------------------------------------------------
+    /// World metres per image pixel — the channel that makes "a 1 m backdrop
+    /// makes a 1 m character" expressible at all, and the one the whole task
+    /// is for. A LIVE property, not an import-time constant: writing it after
+    /// the clip is linked resizes the plane (measured, 2026-08-09).
+    ///
+    /// Bounded at its `Param` declaration (`layer_params.d`) with an enforced
+    /// floor, so a zero or a NaN cannot reach the extent formula and produce
+    /// a degenerate or non-finite quad. It is not count-like — nothing
+    /// allocates or loops on it — so it owes no kernel `MAX_` cap.
+    float pixelSize = 0.01f;
+    /// Whether the image's proportion is locked. It selects between two
+    /// extent LAWS (measured): on, the base is `(W*p, H*p)` scaled by the
+    /// single factor `min(sx, sy)`; off, the base is the image's HEIGHT on
+    /// both axes and the scale applies per-axis. It is NOT a constraint on
+    /// the scale gesture — that reading was measured false — which is why it
+    /// lives here, on the item, and not in the transform tool.
+    bool keepAspect = true;
+
+    // ---- what it looks like ---------------------------------------------
+    // Three signed/unsigned fractions rather than the measured "percent"
+    // type: a fraction is what the shader multiplies by, and carrying 0..100
+    // here would put a unit conversion between the channel and its only
+    // consumer. Each is bounded with `enforceBounds` at its declaration.
+    float brightness   = 0.0f;   ///< -1 .. +1; 0 = unchanged
+    float contrast     = 0.0f;   ///< -1 .. +1; 0 = unchanged
+    float transparency = 0.0f;   ///<  0 .. 1;  0 = opaque, 1 = invisible
+    bool  invert       = false;  ///< invert RGB (a pencil drawing on white)
+    bool  flipHorizontal = false;///< mirror across the plane's vertical axis
+    bool  smooth       = false;  ///< filter neighbouring pixels (low-res scans)
 }
 
 // ===========================================================================
@@ -779,6 +938,33 @@ final class Layer {
         return image_;
     }
 
+    // Task 0612 Stage 2: the image-plane payload trio, mirroring the image
+    // trio above exactly — private field + `hasImagePlane()` /
+    // `imagePlaneOrNull()` / `imagePlaneRef()`, same three shapes, same
+    // reasoning. Like `image_` and unlike `mesh_`, it is a class reference
+    // that is genuinely null until something constructs one.
+    private ImagePlaneData imagePlane_;  ///< the plane's channels, null unless
+                                          ///< `hasImagePlane` and constructed
+
+    /// True iff this item owns an image-plane payload — a CAPABILITY read off
+    /// `kind`, never `kind == ItemKind.ImagePlane` directly. Answers "can this
+    /// kind have one", not "does this instance have one right now".
+    bool hasImagePlane() const { return kindInfo(kind).hasImagePlane; }
+
+    /// The plane payload, or `null` for another kind OR a plane whose payload
+    /// has not been constructed yet.
+    inout(ImagePlaneData) imagePlaneOrNull() inout {
+        return hasImagePlane ? imagePlane_ : null;
+    }
+
+    /// Reference to the plane-payload FIELD itself, so a caller can REBIND
+    /// which `ImagePlaneData` the layer points at (the clone path, and
+    /// whatever constructs one). Same `debug`-only backstop as `imageRef()`.
+    ref inout(ImagePlaneData) imagePlaneRef() inout {
+        debug assert(hasImagePlane, "imagePlaneRef() called on a non-plane item");
+        return imagePlane_;
+    }
+
     // Task 0616 Stage 6 (Ph3): this item's outgoing links, as named slots.
     //
     // Kept SORTED by `name`, with names unique. Sorted rather than an
@@ -983,18 +1169,35 @@ struct Document {
     /// `LayerXformEdit.mergeRunTail`'s first-touch union relies on for a
     /// reproducible multi-target undo payload.
     ///
-    /// `kindInfo(l.kind).hasXform` is deliberately NOT consulted: the
+    /// ~~`kindInfo(l.kind).hasXform` is deliberately NOT consulted: the
     /// `static assert` over `kItemKindTable` (above) proves every declared
     /// kind participates in the item transform, so a filter here would be a
     /// branch that can never be false. This is a site to gate when a
     /// `hasXform == false` kind first lands — alongside `layer_params.d`,
-    /// per that assertion's own message.
+    /// per that assertion's own message.~~
+    ///
+    /// GATED (task 0612 Stage 2). That premise stopped being true when
+    /// `ItemKind.Image` landed with `hasXform == false` — and image clips are
+    /// selectable, so until this line existed, selecting a clip row and
+    /// dragging wrote an `ItemXform` onto an item whose own kind declares it
+    /// has none. The blanket `hasXform` assertion the paragraph above cites
+    /// was RETIRED by that same task; this is the gate it told its successor
+    /// to add, arriving one kind late. `layer_params.d`'s provider was gated
+    /// at the time; this half was missed because nothing dragged an item yet.
+    ///
+    /// The gate is the CAPABILITY, never a kind check: the reference-image
+    /// plane is `hasXform == true` and is therefore fully in the moving set,
+    /// which is the entire point of the item being placed with the ordinary
+    /// transform tools.
     void selectedItemsInto(ref Layer[] outBuf) {
+        static bool moves(const(Layer) l) {
+            return l !is null && l.selected && kindInfo(l.kind).hasXform;
+        }
         size_t n = 0;
-        foreach (l; layers) if (l !is null && l.selected) ++n;
+        foreach (l; layers) if (moves(l)) ++n;
         if (outBuf.length != n) outBuf.length = n;
         size_t i = 0;
-        foreach (l; layers) if (l !is null && l.selected) outBuf[i++] = l;
+        foreach (l; layers) if (moves(l)) outBuf[i++] = l;
     }
 
     /// Foreground / background DERIVATION (Stage 2b: the SOLE source of truth).
@@ -2345,6 +2548,116 @@ unittest {  // selectedItemsInto — membership, order, and buffer reuse.
         "the reused buffer must SHRINK to the new count — a stale tail would "
         ~ "make a de-selected item keep receiving the gesture. got length "
         ~ buf.length.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// Task 0612 Stage 2 — the moving-set gate (plan §7.2, first half).
+//
+// The accessor's own comment used to say a `hasXform` filter "would be a
+// branch that can never be false". `ItemKind.Image` made that false, and
+// image clips are selectable, so a clip in the selection was silently
+// receiving an `ItemXform` its kind declares it does not have.
+//
+// The fixture is what makes this test able to fail in BOTH directions, which
+// is the point: it holds a mesh (`hasXform`), a clip (`!hasXform`) AND a
+// plane (`hasXform`), all three selected.
+//   * the ungated implementation reads 3 and puts the CLIP in the set;
+//   * a "non-mesh items never move" implementation reads 1 and drops the
+//     plane — which would defeat the entire task.
+// Only a capability gate reads 2 with the plane present. The clip is placed
+// in the MIDDLE so "dropped the last one" and "excluded the clip" are
+// different observations.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+    Document doc;
+    auto mesh = new Layer;  mesh.name  = "Mesh";
+    auto clip = new Layer;  clip.name  = "Clip";  clip.kind  = ItemKind.Image;
+    auto plane = new Layer; plane.name = "Plane"; plane.kind = ItemKind.ImagePlane;
+    doc.layers = [mesh, clip, plane];
+    doc.primary = mesh; doc.focusedItem = mesh; mesh.selected = true;
+    doc.selectItem(clip,  SelMode.Add);
+    doc.selectItem(plane, SelMode.Add);
+
+    Layer[] buf;
+    doc.selectedItemsInto(buf);
+    assert(buf.length == 2,
+        "the moving set is the SELECTED items that have a transform — the "
+        ~ "ungated version reads 3. got " ~ buf.length.to!string);
+    assert(buf[0] is mesh, "the mesh moves");
+    assert(buf[1] is plane,
+        "the reference-image PLANE moves — a kind-based 'only meshes' gate "
+        ~ "would drop it, and placing it with the ordinary transform tools is "
+        ~ "the whole premise of the item");
+    foreach (l; buf)
+        assert(l !is clip,
+            "the image CLIP does not move: its kind declares hasXform == false, "
+            ~ "so writing an ItemXform onto it is writing to a channel it does "
+            ~ "not have");
+
+    // The clip is still SELECTED — the gate narrows the transform target set,
+    // it does not touch the selection. Collapsing the two would make the
+    // Layers panel and the moving set disagree about what the user picked.
+    assert(clip.selected, "the clip stays selected; only the moving set narrows");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0612 Stage 2 — the image-plane capability row and its payload trio.
+//
+// Three of the row's columns are already proved AT COMPILE TIME by the
+// `static assert`s over `kItemKindTable` (`hasXform`, `isSceneItem`, and
+// `!hasMesh`), so asserting them again here would be theatre. What is NOT
+// compile-proved, and is genuinely wrong-implementable, is:
+//   * `hasImage` — setting it true to reuse the Images panel's machinery is
+//     the tempting shortcut, and it would put the plane in the clip list AND
+//     make it its own image source, defeating the link indirection;
+//   * `canBePrimary` — true here would make a plane a candidate mesh edit
+//     target, and `Document`'s invariant would then hand `activeMeshRef()` a
+//     layer with no mesh;
+//   * `drawsGeometry` — false is what keeps the plane out of the background
+//     MESH pass, whose body dereferences `meshRef()` unconditionally. (The
+//     static assert makes `true` uncompilable, so this row asserts the value
+//     we actually chose rather than the one the compiler forbids.)
+// ---------------------------------------------------------------------------
+unittest {
+    const info = kindInfo(ItemKind.ImagePlane);
+    assert(info.token == "imagePlane", "the wire token");
+    assert(info.hasImagePlane, "the plane's own capability bit");
+    assert(!info.hasImage,
+        "a plane LINKS to an image, it does not own one — true here would put "
+        ~ "it in the Images panel and give it a second, private image source");
+    assert(!info.canBePrimary,
+        "a plane is never the mesh edit target");
+    assert(!info.drawsGeometry,
+        "the plane draws on its OWN display axis; `drawsGeometry` gates the "
+        ~ "MESH pass and would upload an empty mesh for it");
+
+    // The trio answers by CAPABILITY, and the payload is null until something
+    // constructs one — the same two-step as the image payload.
+    auto plane = new Layer; plane.kind = ItemKind.ImagePlane;
+    auto mesh  = new Layer;
+    assert(plane.hasImagePlane, "capability follows kind");
+    assert(!mesh.hasImagePlane, "a mesh layer has no plane payload");
+    assert(mesh.imagePlaneOrNull() is null,
+        "and asking a mesh for one answers null rather than asserting");
+    assert(plane.imagePlaneOrNull() is null,
+        "a plane's payload is null until constructed — `hasImagePlane` says "
+        ~ "'this kind CAN have one', never 'it has one'");
+
+    plane.imagePlaneRef() = new ImagePlaneData();
+    auto p = plane.imagePlaneOrNull();
+    assert(p !is null, "and the rebind through imagePlaneRef() sticks");
+    // Defaults, asserted where they are declared rather than trusted: these
+    // are the measured reference defaults, and `pixelSize` in particular is
+    // the number the worked example in the help resolves against (512 px at
+    // 0.01 = 5.12 m).
+    assert(p.projection == "front", "default projection");
+    assert(p.showInPerspective, "shown in perspective by default");
+    assert(p.pixelSize == 0.01f, "default metres per pixel");
+    assert(p.keepAspect, "proportion locked by default");
+    assert(p.brightness == 0.0f && p.contrast == 0.0f && p.transparency == 0.0f,
+        "the look channels start neutral");
+    assert(!p.invert && !p.flipHorizontal && !p.smooth, "and the look flags off");
 }
 
 // ---------------------------------------------------------------------------

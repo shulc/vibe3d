@@ -5,6 +5,10 @@ import viewcache     : VertexCache, FaceBoundsCache, EdgeCache;
 import gpu_select    : GpuSelectBuffer;
 import math          : Viewport, Vec3, Orientation;
 import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim;
+// Task 0612 Stage 1 — teardown only. `shutdown()` below is the app's single
+// all-GL-objects reclaim site; the cache itself is never touched from here on
+// any other path, and nothing in this module reads a texture.
+import image_cache   : imagePixelCache;
 
 // ---------------------------------------------------------------------------
 // Phase 1 — global camera / ViewCache / picking → per-viewport data model.
@@ -675,6 +679,14 @@ final class ViewportManager {
 
     /// Release GL resources for ALL cells.  Safe to call multiple times
     /// (null-guards gpuSel), replacing the old `scope(exit) gpuSelect.destroy()`.
+    ///
+    /// Task 0612 Stage 1 — the image-plane pixel cache is torn down here too.
+    /// It is not per-cell, so this is not the obvious home; it is the right
+    /// one because this is the app's single all-GL-objects teardown site
+    /// (`app.d`'s `scope(exit) vpm.shutdown()`), and a GL owner with a
+    /// lifetime longer than a frame that is NOT reclaimed here would be the
+    /// only one. `ImagePixelCache.shutdown()` is idempotent and safe with no
+    /// GL context, exactly like `ViewportFbo.destroy()` beside it.
     void shutdown() {
         foreach (v; views[]) {
             if (v.gpuSel !is null) {
@@ -683,6 +695,7 @@ final class ViewportManager {
             }
             v.fbo.destroy();
         }
+        imagePixelCache().shutdown();
     }
 
     // ------------------------------------------------------------------

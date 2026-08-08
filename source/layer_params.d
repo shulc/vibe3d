@@ -144,15 +144,23 @@ final class LayerPropsProvider : ParamProvider {
         // `kind == ItemKind.X` idiom document.d's capability-table comment
         // bans. One null check covers both "wrong kind" and "no payload yet".
         auto img = layer_.imageOrNull();
+        // Task 0612 Stage 2 — same shape, same null-fallback reasoning: an
+        // image-plane layer whose payload has not been constructed yet has
+        // nothing for the bundle's pointers to bind to, and `params()` is a
+        // per-frame query, not the place to construct one as a side effect.
+        // `imagePlaneOrNull()` is already capability-gated, so this one null
+        // check covers both "wrong kind" and "no payload yet".
+        auto plane = layer_.imagePlaneOrNull();
 
         // NIT (review round 4, still honoured): reserve the EXACT capacity
         // up front, then append each `Param` individually (`~=` under a
         // held capacity is amortized in-place) — one allocation total for
         // what the module intro (line 16-ish, "one declaration") calls a
         // per-frame snapshot, never an array LITERAL append.
-        size_t cap = 2;              // name + visible, every kind
-        if (hasXform)     cap += 12; // pos/rot/scl/pivot
-        if (img !is null) cap += 3;  // filename, colorspace, useAlpha
+        size_t cap = 2;                // name + visible, every kind
+        if (hasXform)       cap += 12; // pos/rot/scl/pivot
+        if (img !is null)   cap += 3;  // filename, colorspace, useAlpha
+        if (plane !is null) cap += 10; // the image plane's authored channels
 
         Param[] result;
         result.reserve(cap);
@@ -225,6 +233,69 @@ final class LayerPropsProvider : ParamProvider {
                                            "(default)");
                     result ~= Param.bool_("useAlpha", "Use Alpha",
                                            &img.useAlpha, true);
+                }
+                break;
+            case ItemKind.ImagePlane:
+                // Task 0612 Stage 2 — ten authored channels. The ELEVENTH
+                // piece of the plane's v1 state, the link to its image clip,
+                // is deliberately absent: a link is not a `Param` (it names a
+                // `Layer` OBJECT, which no typed pointer can carry and no
+                // JSON scalar can encode), so it rides its own command rather
+                // than this generic form.
+                if (plane !is null) {
+                    // The projection's value set is CLOSED and matches what a
+                    // cell can actually be: the six axis-aligned presets. It
+                    // is an `enum_` over tokens rather than an int, so the
+                    // `.v3d` channel carries the token and appending a value
+                    // later cannot reshuffle a stored file.
+                    result ~= Param.enum_("projection", "Projection",
+                                           &plane.projection,
+                                           [["top",    "Top"],
+                                            ["bottom", "Bottom"],
+                                            ["front",  "Front"],
+                                            ["back",   "Back"],
+                                            ["right",  "Right"],
+                                            ["left",   "Left"]],
+                                           "front");
+                    result ~= Param.bool_("showInPerspective", "Show in Perspective",
+                                           &plane.showInPerspective, true);
+                    // R7-shaped guard: `pixelSize` is a LIVE, user-editable
+                    // runtime input to a size, so a zero or a negative would
+                    // reach the extent formula and produce a degenerate quad,
+                    // and `enforceBounds` is what applies the floor on every
+                    // JSON / argstring / HTTP write without this provider
+                    // being in the loop. The floor is a FLOOR, not a reject
+                    // sentinel — there is no "pixelSize < x means refuse"
+                    // contract anywhere — so declaring it here is the whole
+                    // guard. It is not count-like: nothing allocates or loops
+                    // on it, so no kernel `MAX_` cap is owed. (NaN still is
+                    // not caught by `enforceBounds`, whose comparisons are
+                    // both false against NaN — the placement function rejects
+                    // a non-finite extent input on its own side.)
+                    result ~= Param.float_("pixelSize", "Pixel Size",
+                                            &plane.pixelSize, 0.01f)
+                                   .min(1e-6f).max(1e3f).enforceBounds();
+                    result ~= Param.bool_("keepAspect", "Keep Aspect",
+                                           &plane.keepAspect, true);
+                    // The three look scalars are fractions, bounded for the
+                    // same reason: they multiply into a shader and a value
+                    // outside the range is not a stronger effect, it is a
+                    // clipped one that the user cannot tell from a bug.
+                    result ~= Param.float_("brightness", "Brightness",
+                                            &plane.brightness, 0.0f)
+                                   .min(-1.0f).max(1.0f).enforceBounds();
+                    result ~= Param.float_("contrast", "Contrast",
+                                            &plane.contrast, 0.0f)
+                                   .min(-1.0f).max(1.0f).enforceBounds();
+                    result ~= Param.float_("transparency", "Transparency",
+                                            &plane.transparency, 0.0f)
+                                   .min(0.0f).max(1.0f).enforceBounds();
+                    result ~= Param.bool_("invert", "Invert",
+                                           &plane.invert, false);
+                    result ~= Param.bool_("flipHorizontal", "Flip Horizontal",
+                                           &plane.flipHorizontal, false);
+                    result ~= Param.bool_("smooth", "Smooth",
+                                           &plane.smooth, false);
                 }
                 break;
         }
@@ -1022,4 +1093,104 @@ unittest {
     auto ps3 = prov.params();
     assert(paramToJson(*byName(ps3, "filename")).str == "changed/path.png",
         "filename remains READABLE through the generic param path");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0612 Stage 2 — the image plane's channel bundle.
+//
+// A plane is `hasXform == true`, so it gets the 12 transform components too:
+// 12 + 10 channels + name/visible = 24. That total is the discriminator for
+// the two shapes this could have been got wrong in — a bundle bolted onto the
+// wrong `final switch` arm reads 14 (the transform-only count), and a plane
+// wrongly declared `hasXform == false` reads 12.
+//
+// The bounds are asserted through `injectParamsInto` rather than by reading
+// the hint fields, because the hints are INERT without `.enforceBounds()` and
+// a test that read `p.hints.minF` would pass on a Param that clamps nothing.
+// That distinction is the whole content of the guard.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.json  : JSONValue, parseJSON;
+    import params    : paramToJson, injectParamsInto;
+    import document  : ImagePlaneData;
+
+    auto lyr = new Layer;
+    lyr.name = "front sheet";
+    lyr.kind = ItemKind.ImagePlane;
+    lyr.imagePlaneRef() = new ImagePlaneData();
+    auto plane = lyr.imagePlaneRef();
+
+    auto prov = new LayerPropsProvider(lyr);
+    auto ps = prov.params();
+    assert(ps.length == 24,
+        "12 transform + 10 plane channels + name + visible");
+
+    Param* byName(Param[] arr, string n) {
+        foreach (ref p; arr) if (p.name == n) return &p;
+        return null;
+    }
+    foreach (n; ["projection", "showInPerspective", "pixelSize", "keepAspect",
+                 "brightness", "contrast", "transparency", "invert",
+                 "flipHorizontal", "smooth"])
+        assert(byName(ps, n) !is null, "channel '" ~ n ~ "' is declared");
+    assert(byName(ps, "pos.x") !is null,
+        "a plane IS positionable — the transform bundle is present");
+    assert(byName(ps, "filename") is null,
+        "a plane owns no image and therefore no filename channel: its pixels "
+        ~ "come through a LINK, which is not a Param at all");
+    assert(byName(ps, "projection").kind == Param.Kind.Enum,
+        "projection is a closed token set, not a free string");
+
+    // pixelSize's FLOOR is enforced on the generic write path — the path a
+    // `.v3d` channel block, an argstring and an HTTP `layer.attr` all take.
+    // Zero is the value that matters: it collapses the plane's world extent
+    // to nothing, and the quad becomes degenerate rather than merely small.
+    { auto _j0 = parseJSON(`{"pixelSize": 0.0}`); injectParamsInto(ps, _j0); }
+    assert(plane.pixelSize == 1e-6f,
+        "a zero pixelSize is clamped to the declared floor — without "
+        ~ "`.enforceBounds()` it lands as 0 and the plane has no extent");
+    { auto _j1 = parseJSON(`{"pixelSize": -5.0}`); injectParamsInto(ps, _j1); }
+    assert(plane.pixelSize == 1e-6f, "and so is a negative one");
+    { auto _j2 = parseJSON(`{"pixelSize": 1e9}`); injectParamsInto(ps, _j2); }
+    assert(plane.pixelSize == 1e3f, "and the ceiling holds at the other end");
+    { auto _j3 = parseJSON(`{"pixelSize": 0.004}`); injectParamsInto(ps, _j3); }
+    assert(plane.pixelSize == 0.004f,
+        "a value INSIDE the range is written through untouched — a clamp that "
+        ~ "always fired would pass every assertion above");
+
+    // The three look scalars are bounded too, each at its own range: the
+    // signed pair at -1..1 and transparency at 0..1. Asserting all three with
+    // the SAME out-of-range input is what separates them — a copy-paste that
+    // gave transparency the signed range reads -1 for the third.
+    { auto _j4 = parseJSON(`{"brightness": -9.0, "contrast": -9.0, "transparency": -9.0}`); injectParamsInto(ps, _j4); }
+    assert(plane.brightness == -1.0f && plane.contrast == -1.0f,
+        "brightness and contrast floor at -1");
+    assert(plane.transparency == 0.0f,
+        "transparency floors at 0 — it is a fraction of invisibility, and a "
+        ~ "negative one has no meaning");
+
+    // The enum REJECTS an unknown tag rather than writing it. This is the one
+    // channel where a silent accept would be invisible: an unknown projection
+    // would resolve to no viewport at all and the plane would simply never
+    // appear, with nothing to read that says why.
+    bool threw = false;
+    try { auto _j5 = parseJSON(`{"projection": "diagonal"}`); injectParamsInto(ps, _j5); }
+    catch (Exception) threw = true;
+    assert(threw, "an unknown projection tag is refused");
+    assert(plane.projection == "front", "and the channel keeps its value");
+    { auto _j6 = parseJSON(`{"projection": "right"}`); injectParamsInto(ps, _j6); }
+    assert(plane.projection == "right", "a known tag is written");
+}
+
+// A plane layer whose payload has not been constructed yet falls back to the
+// base bundle instead of dereferencing a null. Same contract, same reason, as
+// the image kind's null-payload case: `params()` is a per-frame query and is
+// not the place to construct a payload as a side effect.
+unittest {
+    auto lyr = new Layer;
+    lyr.kind = ItemKind.ImagePlane;
+    auto ps = (new LayerPropsProvider(lyr)).params();
+    assert(ps.length == 14,
+        "12 transform + name + visible — the plane channels need a payload to "
+        ~ "point at, and there is none");
 }

@@ -28,7 +28,7 @@ import view;
 import editmode;
 import params : Param, paramToJson, injectParamsInto;
 import document : Document, Layer, ItemKind, ItemXform, kindInfo, LinkState,
-                  ImageData, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
+                  ImageData, ImagePlaneData, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
 import layer_params : LayerPropsProvider;
 import seltype : SelMode, selModeFromToken;
 import change_bus : MeshChangeAll, noteLayerChange, LayerChange,
@@ -256,6 +256,32 @@ final class LayerDuplicate : LayerCommandBase {
             copy.channels   = s.channels;     // derived
             copy.missing    = s.missing;      // derived
             l2.imageRef()   = copy;
+        }
+        // Task 0612 Stage 2 — the FOURTH instance of the same defect class as
+        // `kind`, `image_` and `links_`: a payload that is a class REFERENCE
+        // does not follow `l2.kind = src.kind` for free. Its own object, field
+        // for field, for the reason the image copy above spells out — two
+        // planes are two independently authored things, and an alias would
+        // make an edit to one silently rewrite the other.
+        //
+        // No derived half to worry about here: every field on
+        // `ImagePlaneData` is authored. The clip the plane points at is NOT
+        // copied here either — it rides `copyLinksFrom` below, shared by
+        // identity, because "two consumers, one target" is the model.
+        if (src.hasImagePlane && src.imagePlaneOrNull() !is null) {
+            auto s = src.imagePlaneOrNull();
+            auto copy = new ImagePlaneData();
+            copy.projection        = s.projection;
+            copy.showInPerspective = s.showInPerspective;
+            copy.pixelSize         = s.pixelSize;
+            copy.keepAspect        = s.keepAspect;
+            copy.brightness        = s.brightness;
+            copy.contrast          = s.contrast;
+            copy.transparency      = s.transparency;
+            copy.invert            = s.invert;
+            copy.flipHorizontal    = s.flipHorizontal;
+            copy.smooth            = s.smooth;
+            l2.imagePlaneRef()     = copy;
         }
         l2.name    = src.name ~ " copy";
         l2.visible = true;
@@ -1441,6 +1467,106 @@ unittest {
         ~ "assertion above unaffected");
     assert(img.imageOrNull().storedPath == "logo.png",
         "revert: the SOURCE's payload content is unchanged");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0612 Stage 2 — duplicating an IMAGE-PLANE layer. The FOURTH instance of
+// the defect class the two unittests above already fixed twice (`kind`, then
+// `image_`): a payload that is a class reference does not follow
+// `l2.kind = src.kind` for free, and the guard that carries it has to be
+// written per payload.
+//
+// The fixture sets every channel AWAY from its default, because a clone that
+// constructs a fresh `ImagePlaneData` is non-null and would pass any
+// existence check while reporting the defaults. The link is set too: it must
+// come across SHARED by identity (that is what `copyLinksFrom` is for and
+// what "two consumers, one target" means), which is the opposite requirement
+// from the payload, and a test that only checked one of the two would be
+// satisfied by an implementation that got the other backwards.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import view : View;
+    import document : ImageData, ImagePlaneData, LinkState;
+
+    auto doc = Document.bootstrap(makeCube());
+    auto meshA = doc.layers[0];
+
+    auto clip = new Layer;
+    clip.name = "sheet";
+    clip.kind = ItemKind.Image;
+    clip.imageRef() = new ImageData();
+    clip.imageRef().storedPath = "sheet.png";
+
+    auto plane = new Layer;
+    plane.name = "front sheet";
+    plane.kind = ItemKind.ImagePlane;
+    plane.imagePlaneRef() = new ImagePlaneData();
+    auto src = plane.imagePlaneRef();
+    src.projection        = "right";     // not the default "front"
+    src.showInPerspective = false;       // not the default true
+    src.pixelSize         = 0.004f;      // not the default 0.01
+    src.keepAspect        = false;       // not the default true
+    src.brightness        = 0.25f;
+    src.contrast          = -0.5f;
+    src.transparency      = 0.75f;
+    src.invert            = true;
+    src.flipHorizontal    = true;
+    src.smooth            = true;
+    plane.setLink("image", clip);
+
+    doc.layers ~= clip;                  // index 1
+    doc.layers ~= plane;                 // index 2
+
+    auto v   = new View(0, 0, 800, 600);
+    auto dup = new LayerDuplicate(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
+    dup.indexArg = 2;
+    assert(dup.apply(), "apply must succeed on an image-plane source");
+    assert(dup.added.kind == ItemKind.ImagePlane, "the clone keeps its kind");
+    assert(doc.primary is meshA, "a plane clone never becomes primary");
+
+    auto cl = dup.added.imagePlaneOrNull();
+    assert(cl !is null,
+        "clone: the payload must exist — a plane row with a null payload is "
+        ~ "exactly the bug this test exists for");
+    // Every channel, because a clone that copies a subset passes on the ones
+    // it copied. The values above are all non-default, so a FRESH payload
+    // reads "front"/true/0.01/true/0/0/0/false/false/false here.
+    assert(cl.projection == "right", "projection carried");
+    assert(cl.showInPerspective == false, "showInPerspective carried");
+    assert(cl.pixelSize == 0.004f, "pixelSize carried");
+    assert(cl.keepAspect == false, "keepAspect carried");
+    assert(cl.brightness == 0.25f && cl.contrast == -0.5f
+        && cl.transparency == 0.75f, "the look scalars carried");
+    assert(cl.invert && cl.flipHorizontal && cl.smooth, "the look flags carried");
+
+    // The payload is the CLONE's own object — the `image_` lesson, applied
+    // before it can cost anything. Identity alone can be satisfied by
+    // accident, so the write is what makes it mean something.
+    assert(cl !is src, "clone: the plane payload is the clone's OWN object");
+    cl.pixelSize = 0.5f;
+    assert(src.pixelSize == 0.004f,
+        "clone: writing the CLONE's pixelSize leaves the SOURCE's alone — "
+        ~ "through a shared payload this reads 0.5");
+
+    // The LINK, by contrast, is shared by identity: the clone points at the
+    // SAME clip. Copying the clip instead would silently double the document's
+    // image list every time a plane is duplicated.
+    assert(dup.added.link("image").state(doc) == LinkState.Live,
+        "clone: the image link resolves");
+    assert(dup.added.link("image").resolve(doc) is clip,
+        "clone: at the SAME clip object the source names, not a copy of it");
+
+    // Revert removes the clone; the SOURCE plane and the shared clip both
+    // survive. An implementation that treated the clone's disappearance as
+    // "nothing points at this clip any more" would clear the source's link
+    // here while every clone-side assertion above stayed green.
+    assert(dup.revert(), "revert must succeed");
+    assert(doc.layers.length == 3, "revert: back to mesh + clip + plane");
+    assert(plane.imagePlaneOrNull() is src,
+        "revert: the SOURCE's plane payload is untouched");
+    assert(plane.link("image").resolve(doc) is clip,
+        "revert: and its link still names the clip");
 }
 
 // ---------------------------------------------------------------------------

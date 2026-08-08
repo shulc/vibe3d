@@ -990,6 +990,20 @@ void registerCommands(EditorApp app) {
                                 onActiveLayerChanged);
         }
 
+        // imagePlane.* — the reference-image plane (task 0612). It sits in
+        // this block for the same reason the image commands do: a plane is a
+        // document item, it rides the same `/api/command` dispatch and the
+        // same undo stack, and it mutates the same `Document`.
+        //
+        // No `onActiveLayerChanged` forwarding: no plane command moves the
+        // MESH edit target (a plane is never `canBePrimary`), so there is no
+        // switch for the hook to observe.
+        {
+            import commands.image_plane.commands : ImagePlaneSetImage;
+            reg.commandFactories["imagePlane.setImage"] = () => cast(Command)
+                new ImagePlaneSetImage(&mesh(), cameraView, editMode, &document());
+        }
+
         // ai3d.importResult — editor-side landing command for the optional
         // external AI3D worker. It consumes a staged OBJ path, validates the
         // ImportedScene through the AI3D gate, then adds one undoable layer.

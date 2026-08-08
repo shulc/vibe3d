@@ -382,7 +382,8 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             import std.array  : appender;
             import std.format : format;
             import std.json   : JSONValue;
-            import document   : Document, tokenOf;   // Document.background (derived, 2b)
+            import document   : Document, tokenOf, LinkState;  // Document.background (derived, 2b)
+            import image_plane : imagePlaneSource, sourceToken;
             auto a = appender!string();
             a.put(format(`{"active":%d,"layers":[`, document.activeIndex));
             foreach (i, l; document.layers) {
@@ -431,11 +432,56 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                     fcJson = l.meshRef().faces.length.to!string;
                     mvJson = (cast(ulong) l.meshRef().mutationVersion).to!string;
                 }
+                // Task 0612 Stage 3 — the first HTTP view of the link model.
+                // `target` is the TARGET'S LAYER INDEX, resolved here and
+                // only here: a link identifies its target by OBJECT, and the
+                // index is a wire encoding of that identity, valid exactly as
+                // long as the array it indexes is the one this response
+                // describes. That is why this provider is marshaled — the
+                // nested `indexOf` walk below runs inside the loop already
+                // walking `layers`, and a splice between the two would make
+                // the response name the wrong layer. `parent` a few lines up
+                // has the same shape and was the precedent.
+                //
+                // `target` is -1 for a link that does not resolve, and
+                // `state` is what says WHY: "unset" and "dangling" are
+                // different facts (never set, versus the target was deleted)
+                // and a reader that only had the index could not tell them
+                // apart.
+                auto lb = appender!string();
+                lb.put("[");
+                foreach (si, ref slot; l.linkSlots()) {
+                    if (si > 0) lb.put(",");
+                    int tgt = -1;
+                    if (auto t = slot.link.resolve(document)) {
+                        foreach (ti, tl; document.layers)
+                            if (tl is t) { tgt = cast(int) ti; break; }
+                    }
+                    string stateTok;
+                    final switch (slot.link.state(document)) {
+                        case LinkState.Unset:    stateTok = "unset";    break;
+                        case LinkState.Live:     stateTok = "live";     break;
+                        case LinkState.Dangling: stateTok = "dangling"; break;
+                    }
+                    lb.put(format(`{"slot":%s,"target":%d,"state":%s}`,
+                        JSONValue(slot.name).toString(), tgt,
+                        JSONValue(stateTok).toString()));
+                }
+                lb.put("]");
+                // The plane's four-state source verdict, JSON `null` for
+                // every other kind — the `vertexCount` convention, and for
+                // the same reason: "not an image plane" and "an image plane
+                // with no image" must stay distinguishable to a caller that
+                // only has this response.
+                string srcJson = "null";
+                if (l.hasImagePlane)
+                    srcJson = JSONValue(sourceToken(imagePlaneSource(document, l))).toString();
                 a.put(format(
                     `{"index":%d,"name":%s,"type":%s,"visible":%s,"background":%s,` ~
                     `"active":%s,"selected":%s,"primary":%s,"focused":%s,` ~
                     `"vertexCount":%s,"faceCount":%s,` ~
-                    `"mutationVersion":%s,"xform":%s,"parent":%d}`,
+                    `"mutationVersion":%s,"xform":%s,"parent":%d,` ~
+                    `"links":%s,"imageSource":%s}`,
                     i, JSONValue(l.name).toString(),
                     JSONValue(tokenOf(l.kind)).toString(),
                     l.visible ? "true" : "false",
@@ -444,9 +490,60 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                     l.selected ? "true" : "false",
                     document.isPrimary(l) ? "true" : "false",
                     document.isFocused(l) ? "true" : "false",
-                    vcJson, fcJson, mvJson, xb.data, parentIdx));
+                    vcJson, fcJson, mvJson, xb.data, parentIdx,
+                    lb.data, srcJson));
             }
             a.put("]}");
+            return a.data;
+        });
+        // GET /api/images — the document's image-clip rows plus the pixel
+        // cache's residency counters (task 0612 Stage 1, plan §8).
+        //
+        // The two halves are here TOGETHER on purpose: "which files does the
+        // document name" and "which files are resident" is one question asked
+        // from two sides, and a test that reads them from two endpoints
+        // cannot know they were true at the same instant. This provider runs
+        // on the main thread (`imagesBridge`), so the pair is consistent.
+        //
+        // NOT YET DOING: plan §8 also asks this handler to run
+        // `cache.reconcile(...)` before reading the counters, so a test does
+        // not race the frame loop. That needs the live-path set, which is
+        // derived from plane→clip links — Stage 4's `collectLivePlanePaths`,
+        // and there is no plane kind yet. Until then nothing calls
+        // `reconcile` at all, so the counters are honestly zero rather than
+        // stale, and adding a reconcile against an empty set here would be a
+        // call that could only ever free things. The JIT recompute lands with
+        // the stage that has something to compute (T-C5).
+        httpServer.setImagesDataProvider(() {
+            import std.array  : appender;
+            import std.format : format;
+            import std.json   : JSONValue;
+            import io.image_path : resolveStoredPath;
+            import io.doc_state  : currentDocPath;
+            import image_cache   : imagePixelCache;
+
+            auto a = appender!string();
+            a.put(`{"images":[`);
+            bool first = true;
+            foreach (i, l; document.layers) {
+                auto img = l.imageOrNull();
+                if (img is null) continue;   // capability-gated: not an image item
+                if (!first) a.put(",");
+                first = false;
+                const abs = resolveStoredPath(img.storedPath, currentDocPath());
+                a.put(format(
+                    `{"index":%d,"name":%s,"storedPath":%s,"absPath":%s,` ~
+                    `"width":%d,"height":%d,"channels":%d,"missing":%s}`,
+                    i, JSONValue(l.name).toString(),
+                    JSONValue(img.storedPath).toString(),
+                    JSONValue(abs).toString(),
+                    img.width, img.height, img.channels,
+                    img.missing ? "true" : "false"));
+            }
+            a.put(format(`],"cache":{"residentEntries":%d,"residentBytes":%d,"decodes":%d}}`,
+                imagePixelCache().residentEntries(),
+                imagePixelCache().residentBytes(),
+                imagePixelCache().decodeCount()));
             return a.data;
         });
         httpServer.setCameraDataProvider((int vpIdx) {
@@ -2860,6 +2957,23 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 ? params["name"].str
                 : ("Layer " ~ to!string(document.layers.length + 1));
             l.visible = true;
+            // Task 0612 Stage 3: an injected image PLANE gets its payload
+            // constructed, so the injected item is well-formed — which is the
+            // stated contract of this route ("the resulting state is exactly
+            // what a real command sequence would produce"). Without it every
+            // plane channel would fall back to the base bundle and the item
+            // would be a shape no production path can ever produce.
+            //
+            // Only the plane kind: the IMAGE kind's payload carries an
+            // authored path that this route has no way to supply, and
+            // constructing an empty one would manufacture a row claiming to
+            // name a file it does not — `image.load` is that kind's route and
+            // it takes the path. That asymmetry is the difference between the
+            // two payloads, not an oversight.
+            if (l.hasImagePlane) {
+                import document : ImagePlaneData;
+                l.imagePlaneRef() = new ImagePlaneData();
+            }
             // Deliberately left deselected/unfocused/non-primary — see the
             // doc comment above.
 
