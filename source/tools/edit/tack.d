@@ -17,6 +17,7 @@ import snapshot : MeshSnapshot;
 import shader : Shader, LitShader, drawLitPreview;
 import hover_state : g_hoveredFace;
 import eventlog : queryMouse;
+import document : primaryModelSpace;
 
 version (unittest) import std.conv : to;
 
@@ -221,10 +222,20 @@ private:
     bool         previewActive_;
 
     int  hoveredTargetFace_ = -1;
+    // LAYER-LOCAL, both of them (task 0619). `targetNormal_` is
+    // `mesh.faceNormal`, a winding normal of LOCAL vertices; `clickedPoint_`
+    // is the cursor ray's hit against the plane those local values define,
+    // resolved in local space by `localAimRay` below. Both are handed
+    // straight to `rebuildTackPreview` / `computeTackTransform`, which write
+    // LOCAL vertex coordinates — so local is the space this pair must be in.
     Vec3 clickedPoint_;
     Vec3 targetNormal_;
 
-    Viewport cachedVp_;
+    // The WORLD-space viewport `draw()` was handed. Named `vpWorld_` (task
+    // 0619) so a use that needs an AIMING space cannot pick it up by
+    // accident. This tool's aiming kind is **RayPlane** (§1.2), which does
+    // NOT compose the viewport — see `localAimRay`.
+    Viewport vpWorld_;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, LitShader litShader) {
@@ -329,7 +340,7 @@ public:
     // ----- Live preview (hover) --------------------------------------------
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
-        if (!visualOnly) cachedVp_ = vp;
+        if (!visualOnly) vpWorld_ = vp;
 
         hoveredTargetFace_ = g_hoveredFace;
         previewActive_ = false;
@@ -337,13 +348,20 @@ public:
         if (sourceFace_ >= 0 && hoveredTargetFace_ >= 0
             && hoveredTargetFace_ < cast(int)mesh.faces.length)
         {
+            // AIMING KIND: **RayPlane** (task 0619 §1.2). Both the anchor and
+            // the normal are LAYER-LOCAL (`faceCentroid`/`faceNormal` read
+            // `mesh.vertices`), and a local plane maps under `M` exactly onto
+            // the plane of the DRAWN face — so the plane needs no carrying.
+            // Only the cursor ray does: it is born in world space and is
+            // moved into local by `screenPointToLocalRay`.
             Vec3 tgtCentroid = mesh.faceCentroid(cast(uint)hoveredTargetFace_);
             targetNormal_    = mesh.faceNormal(cast(uint)hoveredTargetFace_);
 
             int mx, my;
             queryMouse(mx, my);
             Vec3 origin, dir;
-            screenPointToRay(cast(float)mx, cast(float)my, cachedVp_, origin, dir);
+            screenPointToLocalRay(cast(float)mx, cast(float)my, vpWorld_,
+                                  primaryModelSpace(), origin, dir);
             Vec3 hit;
             if (rayPlaneIntersect(origin, dir, tgtCentroid, targetNormal_, hit)) {
                 clickedPoint_ = hit;
@@ -386,8 +404,22 @@ public:
 
         // Recompute the exact clicked point at the actual mouse-down pixel
         // (not the possibly one-frame-stale draw()-cached clickedPoint_).
+        //
+        // AIMING KIND: **RayPlane** (task 0619 §1.2). The whole plane test
+        // runs in the LAYER'S LOCAL space: the anchor and normal above are
+        // already local, and the cursor ray is carried in.
+        //
+        // ⚠ THE TRAP (§1.2, written here because this is the site it is
+        // instinctive at): the tempting alternative is "transform
+        // `tgtCentroid`/`tgtNormal` to WORLD and meet the world ray there".
+        // That compiles, and it aims correctly — but it yields a WORLD `hit`,
+        // and `applyTackTransform` two lines below writes `hit` into LOCAL
+        // vertex coordinates via `computeTackTransform`'s translation. The
+        // bug simply moves one call deeper and gets harder to see. Local is
+        // chosen BECAUSE the consumer is local.
         Vec3 origin, dir;
-        screenPointToRay(cast(float)e.x, cast(float)e.y, cachedVp_, origin, dir);
+        screenPointToLocalRay(cast(float)e.x, cast(float)e.y, vpWorld_,
+                              primaryModelSpace(), origin, dir);
         Vec3 hit;
         if (!rayPlaneIntersect(origin, dir, tgtCentroid, tgtNormal, hit))
             return true;   // ray parallel to target plane — consumed, no-op

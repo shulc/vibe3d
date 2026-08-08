@@ -24,6 +24,7 @@ import display_sync : refreshDisplay;
 import eventlog : queryMouse;
 import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment;
 import viewport_scheme : schemeColor, SchemeColor;
+import document : primaryModelSpace;
 
 // The interactive commit reuses the generic before/after snapshot edit command
 // (the same MeshSessionEdit the mirror / tack / Slice tools reuse for their
@@ -99,8 +100,8 @@ public:
     // grow, mesh.d:10445) plus a click `t`. The live edge is re-resolved each
     // bake via `Mesh.edgeIndexOf(v0, v1)`.
     //
-    // S2: `t`'s meaning differs by producer — `tFromClick` (interactive
-    // latch/scrub path) already returns `effectiveT(raw)`, so `t` here is the
+    // S2: `t`'s meaning differs by producer — `tFromLocalRailClick`
+    // (interactive latch/scrub path) already returns `effectiveT(raw)`, so `t` here is the
     // EFFECTIVE value; `pointsFromEdgesParam` (headless `edges`-param path)
     // stores the RAW panel value (`tA_`/`tB_`/0.5f interior) straight through,
     // unconverted. Both `bakeChainFrom` and `chainPointPos` re-apply
@@ -164,7 +165,21 @@ private:
     bool         built_;       // true once the last bake actually produced a cut
     int          dragPart_ = -1;
     MeshCacheKey armedKey_;    // mesh identity+version guard (scene reset / layer switch)
-    Viewport     cachedVp;
+    // The WORLD-space viewport `draw()` was handed (task 0619 rename). All
+    // five uses were re-read and classified:
+    //   * `tFromLocalRailClick` — the **Closest** aiming kind (§1.3), which
+    //     runs its election in WORLD space and therefore wants exactly this,
+    //     un-composed, with the rail lifted to meet it.
+    //   * `toolHandlesJson` / `toolHandles_.test` — the handle bank. Its
+    //     positions are written from `chainPointPos` (LOCAL) and DRAWN with
+    //     this same world viewport, so draw and hit-test agree with each
+    //     other; converting only one of them would break that. The handle
+    //     bank's own space is the tool-overlay question task 0619 lists as
+    //     out of scope.
+    //   * the `draw()` write itself.
+    // `drawHud` is the one use that needed the AIMING space instead; it now
+    // builds its own via `aimSpace` and does not read this field.
+    Viewport     vpWorld_;
 
     // Active-point index (task 0321, D2) — which `latchedPoints_[]` entry a
     // scrub/drag or a numeric `activePoint`/`pointT` panel edit targets. Set
@@ -233,7 +248,7 @@ public:
         ];
     }
 
-    // Pure `t` law shared by BOTH the interactive scrub (tFromClick) and the
+    // Pure `t` law shared by BOTH the interactive scrub (tFromLocalRailClick) and the
     // headless path (applyHeadless) so they never diverge: Split at Middle
     // forces 0.5 first, then Snap Value quantizes, then clamp to the closed
     // unit interval. task 0295 F1: the clamp is CLOSED ([0,1]) — t==0/1 is a
@@ -297,7 +312,7 @@ public:
     // Test-introspection (GET /api/tool/handles) — one part per latched point
     // plus the pending one (see draw()).
     override JSONValue toolHandlesJson() const {
-        return toolHandles_ is null ? JSONValue(null) : toolHandles_.toJson(cachedVp);
+        return toolHandles_ is null ? JSONValue(null) : toolHandles_.toJson(vpWorld_);
     }
 
     override void activate() {
@@ -480,7 +495,7 @@ public:
         // registers at part==latchedPoints_.length, so a click on the pending
         // handle still falls through to the normal latch/append path below.
         if (toolHandles_ !is null && latchedPoints_.length >= 1) {
-            int part = toolHandles_.test(cast(int)e.x, cast(int)e.y, cachedVp);
+            int part = toolHandles_.test(cast(int)e.x, cast(int)e.y, vpWorld_);
             if (part >= 0 && part < cast(int)latchedPoints_.length) {
                 activePoint_ = part;
                 syncProxy();
@@ -530,7 +545,7 @@ public:
         // armChain, or to a re-picked earlier point by onMouseButtonDown.
         if (activePoint_ < 0 || activePoint_ >= cast(int)latchedPoints_.length) return false;
         auto p = latchedPoints_[activePoint_];
-        latchedPoints_[activePoint_].t = tFromClick(
+        latchedPoints_[activePoint_].t = tFromLocalRailClick(
             mesh.vertices[p.v0], mesh.vertices[p.v1],
             cast(float)e.x, cast(float)e.y);
         syncProxy();
@@ -564,7 +579,7 @@ public:
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
-        if (!visualOnly) cachedVp = vp;
+        if (!visualOnly) vpWorld_ = vp;
         if (!active || latchedPoints_.length == 0) return;
 
         Vec3[] positions;
@@ -585,7 +600,7 @@ public:
                 Vec3 r1 = mesh.vertices[mesh.edges[h][1]];
                 int mx, my;
                 queryMouse(mx, my);
-                pendingT    = tFromClick(r0, r1, cast(float)mx, cast(float)my);
+                pendingT    = tFromLocalRailClick(r0, r1, cast(float)mx, cast(float)my);
                 pendingPos  = lerpVec3(r0, r1, pendingT);
                 havePending = true;
             }
@@ -635,7 +650,7 @@ private:
         ChainPoint p;
         p.v0 = mesh.edges[h][0];
         p.v1 = mesh.edges[h][1];
-        p.t  = tFromClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
+        p.t  = tFromLocalRailClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
         latchedPoints_ = [p];
         edgesParam_    = [cast(uint)h];
         phase_     = Phase.EdgeA;
@@ -661,7 +676,7 @@ private:
         ChainPoint p;
         p.v0 = mesh.edges[h][0];
         p.v1 = mesh.edges[h][1];
-        p.t  = tFromClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
+        p.t  = tFromLocalRailClick(mesh.vertices[p.v0], mesh.vertices[p.v1], sx, sy);
         latchedPoints_ ~= p;
         edgesParam_    ~= cast(uint)h;
         armed_     = true;
@@ -781,9 +796,35 @@ private:
     // does: screenPointToRay -> closestPointOnSegmentToRay -> reproject onto
     // the (unclamped) segment direction to recover the scalar t, then apply
     // the panel's effectiveT law (Split at Middle / Snap Value / clamp).
-    float tFromClick(Vec3 rail0, Vec3 rail1, float sx, float sy) const {
+    //
+    // AIMING KIND: **Closest** (task 0619,
+    // doc/tool_aiming_item_transform_plan.md §1.3). This is the ONE aiming
+    // kind whose correct space is **WORLD**, and it is deliberately the
+    // opposite of the tack/magnet/stroke RayPlane law two files over:
+    //
+    //   * The closest-approach election is NOT affine-invariant. Under a
+    //     non-uniform `M` the 3D-nearest point of the LOCAL segment to the
+    //     local ray maps to a DIFFERENT point than the 3D-nearest point of
+    //     the WORLD segment to the world ray. The user aims at the rail as
+    //     it is DRAWN, so world is the election the cursor means.
+    //   * Applying §1.2's "move it into local" law here compiles, and is
+    //     invisible at identity AND under uniform scale — it goes wrong only
+    //     under a non-uniform one. That is why the caller-facing parameter
+    //     names say `Local` and this comment says WORLD.
+    //   * The result converts back for FREE: what leaves here is a RATIO
+    //     along the rail, and an affine map preserves ratios along a line.
+    //     So the world-space `t` IS the local `t` `chainPointPos` /
+    //     `Mesh.edgeSliceEx` want. No back-transform, no new primitive.
+    //
+    // The rename from `tFromClick` (task 0619) is the compile gate: every
+    // call site had to be re-read to confirm it passes LOCAL endpoints
+    // (all four do — they are raw `mesh.vertices[]` reads).
+    float tFromLocalRailClick(Vec3 rail0Local, Vec3 rail1Local, float sx, float sy) const {
+        const ms = primaryModelSpace();
+        Vec3 rail0 = ms.toWorldPoint(rail0Local);
+        Vec3 rail1 = ms.toWorldPoint(rail1Local);
         Vec3 origin, dir;
-        screenPointToRay(sx, sy, cachedVp, origin, dir);
+        screenPointToRay(sx, sy, vpWorld_, origin, dir);
         Vec3 hit = closestPointOnSegmentToRay(rail0, rail1, origin, dir);
         Vec3 ab = rail1 - rail0;
         float denom = dot(ab, ab);
@@ -795,9 +836,17 @@ private:
         return lerpVec3(mesh.vertices[p.v0], mesh.vertices[p.v1], effectiveT(p.t));
     }
 
-    void drawHud(const ref Viewport vp, Vec3 anchor, float t) {
+    // AIMING KIND: **Pixel** (task 0619 §1.1) — `anchor` is a LOCAL point
+    // (`chainPointPos` / the pending point both lerp raw `mesh.vertices`), and
+    // the label has to land on the pixel that point is DRAWN at. The law for
+    // this kind is "keep the geometry local, compose the viewport":
+    // `proj*(view*M)*v == proj*view*(M*v)` exactly, and `aimSpace` is the
+    // only way to obtain the composed viewport (`AimViewport`, math.d §2.0).
+    // Once per call, not per vertex — there is no loop here.
+    void drawHud(const ref Viewport vp, Vec3 anchorLocal, float t) {
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
         float sx, sy, ndcZ;
-        if (!projectToWindowFull(anchor, vp, sx, sy, ndcZ)) return;
+        if (!projectToWindowFull(anchorLocal, vpAim.vp, sx, sy, ndcZ)) return;
         ImDrawList* dl = ImGui.GetForegroundDrawList();
         string label = edgeSliceHudLabel(t);
         dl.AddText(ImVec2(sx + 10.0f, sy - 8.0f), IM_COL32(255, 255, 255, 235), label);

@@ -18,6 +18,7 @@ import deform_magnet : applyMagnet;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect;
 import hover_state : g_hoveredVertex;
 import change_bus : MeshEditScope;
+import document : primaryModelSpace;
 
 import std.math : sqrt;
 
@@ -55,8 +56,14 @@ private:
     bool         dragging;
     bool         built;
     int          pickedVi  = -1;   // which vertex was grabbed
-    Vec3         center_;          // world position of anchor vertex at grab time
-    Vec3         target_;          // cursor projected onto camera-facing plane
+    // LAYER-LOCAL, both of them. `center_` is a raw `mesh.vertices[]` read
+    // (this comment used to say "world position" — task 0619; it was wrong,
+    // and it is the exact comment-lies-about-a-space shape that task hunts).
+    // `target_` must match it: both are handed to `applyMagnet` /
+    // `FalloffPacket.pickedCenter`, which compare and write LOCAL vertex
+    // coordinates.
+    Vec3         center_;          // anchor vertex position at grab time (LOCAL)
+    Vec3         target_;          // cursor on the camera-facing plane (LOCAL)
     float        strength_ = 0.0f;
     int          dragStartX, dragStartY;
 
@@ -64,7 +71,11 @@ private:
     float        dist_     = 1.0f;
 
     MeshSnapshot before;
-    Viewport     cachedVp;
+    // The WORLD-space viewport `draw()` was handed (task 0619 rename): this
+    // tool's aiming kind is **RayPlane** (§1.2), which builds its ray from
+    // the UN-composed viewport and then moves it into local space — it must
+    // never be handed a composed/aim viewport.
+    Viewport     vpWorld_;
 
     // Per-gesture undo payload (populated by applyMagnet via rebuildPreview).
     uint[] touchedIdx_;
@@ -206,10 +217,25 @@ public:
         if (!active || !dragging || pickedVi < 0) return false;
 
         // Project cursor onto the camera-facing plane through `center_`.
+        //
+        // AIMING KIND: **RayPlane** (task 0619 §1.2). The whole test runs in
+        // the LAYER'S LOCAL space, because `target_` is written into local
+        // vertex coordinates by `applyMagnet` (and `center_` is a raw
+        // `mesh.vertices[]` read, i.e. already local).
+        //
+        // The plane's ANCHOR is `center_`, already local. Its NORMAL is the
+        // camera forward, a genuinely WORLD direction — and a normal is
+        // carried into local space by `M^T` (`toLocalNormal`), NOT by `M^-1`
+        // (`toLocalDir`). The two are EQUAL for a pure rotation and diverge
+        // under any non-uniform scale, which is exactly the case where the
+        // wrong one silently tilts the drag plane.
+        //
         // View forward: col-major lookAt stores (-f.x,-f.y,-f.z) at indices 2,6,10.
-        Vec3 fwd = Vec3(-cachedVp.view[2], -cachedVp.view[6], -cachedVp.view[10]);
+        const ms = primaryModelSpace();
+        Vec3 fwdWorld = Vec3(-vpWorld_.view[2], -vpWorld_.view[6], -vpWorld_.view[10]);
+        Vec3 fwd = ms.toLocalNormal(fwdWorld);
         Vec3 magOrig, ray;
-        screenPointToRay(cast(float)e.x, cast(float)e.y, cachedVp, magOrig, ray);
+        screenPointToLocalRay(cast(float)e.x, cast(float)e.y, vpWorld_, ms, magOrig, ray);
         Vec3 hit;
         if (rayPlaneIntersect(magOrig, ray, center_, fwd, hit))
             target_ = hit;
@@ -226,7 +252,7 @@ public:
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
-        cachedVp = vp;
+        vpWorld_ = vp;
         // No gizmo in v1 — hover sphere drawing deferred to later.
     }
 

@@ -14,6 +14,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
+import document : primaryModelSpace;
 
 alias StrokeExtrudeEditFactory = MeshSessionEdit delegate();
 
@@ -98,10 +99,18 @@ private:
     bool         built_;
     MeshSnapshot before;
     bool[]       mask_;          // selected-face mask, captured at gesture start
-    Vec3[]       pathPoints_;    // committed path points (index 0 = anchor)
-    Vec3         liveTip_;       // in-progress, not-yet-committed tip
+    // LAYER-LOCAL, all of them (task 0619). Index 0 is `maskFaceCentroid`, a
+    // raw `mesh.faceCentroid` average; every later point is a cursor-ray hit
+    // resolved in the SAME local space (see onMouseMotion); and the whole
+    // array is handed to `Mesh.extrudeAlongPath`, which writes local vertex
+    // coordinates. A partially-converted version of this tool — ray fixed,
+    // anchor not — would leave the FIRST span wrong and the rest right.
+    Vec3[]       pathPoints_;    // committed path points, LOCAL (index 0 = anchor)
+    Vec3         liveTip_;       // in-progress, not-yet-committed tip (LOCAL)
     float        lastScreenX_ = 0.0f, lastScreenY_ = 0.0f;
-    Viewport     cachedVp;
+    // The WORLD-space viewport `draw()` was handed (task 0619 rename); the
+    // **RayPlane** law (§1.2) builds its ray from the un-composed viewport.
+    Viewport     vpWorld_;
 
     // DoS guard mirrors Mesh.extrudeAlongPath's own backstop (defense in
     // depth for the shared kernel — an unbounded drag must not explode
@@ -210,9 +219,20 @@ public:
 
         // Camera-facing plane anchored at the last COMMITTED path point —
         // documented default, see class doc comment (finding_2).
+        //
+        // AIMING KIND: **RayPlane** (task 0619 §1.2), resolved entirely in
+        // the LAYER'S LOCAL space because `pathPoints_` is consumed by
+        // `Mesh.extrudeAlongPath` against local vertices. The plane's anchor
+        // (`pathPoints_[$-1]`) is local already; its NORMAL is the camera
+        // forward, a WORLD direction, and a normal crosses into local space
+        // through `M^T` (`toLocalNormal`) — `toLocalDir` (`M^-1`) is the
+        // classic wrong normal transform and agrees with it only when `M`
+        // carries no non-uniform scale.
+        const ms = primaryModelSpace();
         Vec3 origin, dir;
-        screenPointToRay(cast(float)e.x, cast(float)e.y, cachedVp, origin, dir);
-        Vec3 camForward = Vec3(-cachedVp.view[2], -cachedVp.view[6], -cachedVp.view[10]);
+        screenPointToLocalRay(cast(float)e.x, cast(float)e.y, vpWorld_, ms, origin, dir);
+        Vec3 camForward = ms.toLocalNormal(
+            Vec3(-vpWorld_.view[2], -vpWorld_.view[6], -vpWorld_.view[10]));
         Vec3 hit;
         if (rayPlaneIntersect(origin, dir, pathPoints_[$ - 1], camForward, hit)) {
             liveTip_ = hit;
@@ -246,7 +266,7 @@ public:
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
-        cachedVp = vp;
+        vpWorld_ = vp;
         // The extruded bands ARE the live preview (mutated directly onto
         // the mesh by applyPath, same law RadialArrayTool uses) — no
         // separate overlay geometry needed.

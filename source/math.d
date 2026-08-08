@@ -1595,6 +1595,110 @@ void screenPointToRay(float sx, float sy, const ref Viewport vp,
     dir    = normalize(forward);
 }
 
+/// The cursor ray of screen pixel (sx, sy), expressed in `ms`'s LOCAL space.
+///
+/// This is the **RayPlane** aiming law (task 0619,
+/// doc/tool_aiming_item_transform_plan.md §1.2) as one call, so the three
+/// steps that must not be reordered or skipped cannot be got wrong per site:
+///
+///  1. **Build the ray from the UN-composed, WORLD viewport.** An
+///     `AimViewport` (a viewport with `M` folded into its view matrix) must
+///     NOT be used here — `screenRay` treats the view 3x3's transpose as its
+///     inverse, which is only valid for a rotation, and `M` generally carries
+///     a scale. That is why this takes a plain `Viewport` and there is no
+///     overload taking an `AimViewport`: the double-apply is a type error.
+///  2. `toLocalPoint` the origin, `toLocalDir` the direction.
+///  3. **Do NOT renormalize `dirLocal`.** `mInv*(o + t*d) == toLocalPoint(o)
+///     + t*toLocalDir(d)`, so an un-normalized local direction keeps the ray
+///     parameter `t` meaning a WORLD distance. Normalizing rescales `t` by
+///     the layer's scale along the ray.
+///
+/// A plane test written against the result is EXACT, not approximate,
+/// provided the plane is expressed in local space too — either because its
+/// normal was built from local geometry already (a `mesh.faceNormal`), or by
+/// carrying a world normal across with `ModelSpace.toLocalNormal` (`M^T`).
+/// In both cases `dot(n_local, dirLocal) == dot(n_world, dirWorld)` exactly,
+/// so `rayPlaneIntersect`'s parallel-ray guard fires on exactly the same
+/// configurations it would have in world space.
+///
+/// Local is the destination (rather than lifting the geometry to world)
+/// because the consumers of these hits WRITE LOCAL VERTEX COORDINATES.
+/// Producing a world hit and handing it to such a consumer is the same
+/// defect one call deeper.
+void screenPointToLocalRay(float sx, float sy, const ref Viewport vpWorld,
+                           const ModelSpace ms, out Vec3 orgLocal, out Vec3 dirLocal)
+{
+    Vec3 o, d;
+    screenPointToRay(sx, sy, vpWorld, o, d);
+    orgLocal = ms.toLocalPoint(o);
+    dirLocal = ms.toLocalDir(d);   // deliberately NOT renormalized — see above
+}
+
+unittest { // screenPointToLocalRay + a local plane reads the SAME hit as the
+    // world ray against the world plane — the identity every RayPlane site in
+    // task 0619 relies on. Fixture: rotation + NON-UNIFORM scale, because
+    // under a rotation alone every candidate law below collapses onto the
+    // correct one.
+    import std.math : PI, isClose;
+    Vec3 eye = Vec3(2.5f, 1.8f, 7.0f);
+    Viewport vp;
+    vp.view = lookAt(eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj = perspectiveMatrix(45.0f * PI / 180.0f, 4.0f / 3.0f, 0.001f, 100.0f);
+    vp.width = 800; vp.height = 600; vp.x = 0; vp.y = 0;
+    vp.eye = eye; vp.focus = Vec3(0, 0, 0);
+
+    ModelSpace ms;
+    rotNonUniformSpace(ms);
+
+    // A plane anchored on LOCAL geometry, with a LOCAL normal — the tack /
+    // face-plane shape.
+    Vec3 anchorL = Vec3(0.35f, -0.20f, 0.45f);
+    Vec3 nLocal  = normalize(Vec3(0.2f, 0.9f, -0.35f));
+
+    Vec3 oL, dL;
+    screenPointToLocalRay(430.0f, 260.0f, vp, ms, oL, dL);
+    Vec3 hitL;
+    assert(rayPlaneIntersect(oL, dL, anchorL, nLocal, hitL), "local ray must meet the plane");
+
+    // Ground truth, derived independently: the SAME plane in world space
+    // (anchor through `m`, normal through the inverse-transpose) met by the
+    // world ray, then carried back with `mInv`.
+    Vec3 oW, dW;
+    screenPointToRay(430.0f, 260.0f, vp, oW, dW);
+    Vec3 hitW;
+    assert(rayPlaneIntersect(oW, dW, ms.toWorldPoint(anchorL),
+                             ms.toWorldNormal(nLocal), hitW));
+    Vec3 truth = ms.toLocalPoint(hitW);
+    assert((hitL - truth).length < 1e-3f,
+        "the local-space ray/plane meet must be the world meet carried back");
+
+    // ANTI-VACUITY (1): the pre-0619 law — world ray against the LOCAL plane,
+    // i.e. no transform at all — must read a different point here, or this
+    // fixture proves nothing.
+    Vec3 hitWrong;
+    assert(rayPlaneIntersect(oW, dW, anchorL, nLocal, hitWrong));
+    assert((hitWrong - hitL).length > 1e-2f,
+        "fixture is vacuous: the untransformed ray reads the same hit");
+
+    // ANTI-VACUITY (2): renormalizing the local direction. The HIT point is
+    // unchanged by that (a ray is a set of points), but `t` is not — and `t`
+    // is a world distance every nearest-hit comparison ranks on. Pin the
+    // scale factor so a future `normalize()` here is caught by a number.
+    float tExact = dot(hitL - oL, dL) / dot(dL, dL);
+    float tWorld = dot(hitW - oW, dW);   // dW is unit, so this IS world distance
+    assert(tExact > 1e-4f && tWorld > 1e-4f);
+    assert(isClose(tExact, tWorld, 1e-3f, 1e-3f),
+        "the un-normalized local direction must keep `t` a WORLD distance");
+    // ...and that is not automatic: had the direction been normalized, `t`
+    // would read the LOCAL distance instead, a different number on this
+    // fixture. (Asserted second so a broken implementation trips the
+    // assertion above, which names the defect, rather than this one.)
+    Vec3  dUnit = normalize(dL);
+    float tUnit = dot(hitL - oL, dUnit);
+    assert(!isClose(tExact, tUnit, 1e-2f, 1e-2f),
+        "fixture is vacuous: normalizing the local direction leaves `t` unchanged");
+}
+
 // Intersect ray (origin + t*dir) with plane (point on plane + normal).
 // Returns false when ray is parallel to the plane.
 bool rayPlaneIntersect(Vec3 origin, Vec3 dir, Vec3 planePoint, Vec3 n,

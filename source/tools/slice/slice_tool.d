@@ -22,6 +22,7 @@ import display_sync : refreshDisplay;
 import eventlog : queryMouse;
 import handler : BoxHandler, FullCircleHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment, drawWorldQuad;
 import viewport_scheme : schemeColor, SchemeColor;
+import document : primaryModelSpace;
 import tools.create.create_common : currentWorkplaneFrame, pickWorkplaneFrame, WorkplaneFrame;
 // Reuse MoveTool's dominant-axis selector for the Ctrl axis-constraint (task
 // 0286): the SAME screen-direction → world-axis math the Move gizmo's Ctrl lock
@@ -322,7 +323,23 @@ Vec3[4] sliceOverlayQuad(Vec3 p, Vec3 dir, Vec3 perp,
 // larger: it unions the mesh, then guarantees a half-span of a full along-extent
 // on each side (⇒ cross span ≥ 2× along) plus a generous overhang, netting a
 // cross span ≥ 3× along > along. `p` is the plane through-point (= start).
-void sliceOverlayExtent(const ref Mesh m, Vec3 p, Vec3 dir, Vec3 perp,
+//
+// `ms` (task 0619, §1.2) is the LAYER TRANSFORM of the mesh being scanned.
+// `p`/`dir`/`perp`/`start`/`end` are WORLD constructs (the drawn line and the
+// workplane), but `m.vertices` are LAYER-LOCAL — so the union below has to be
+// taken over where those vertices are DRAWN, `M*v`, not over the raw array.
+// Rather than transform V vertices, carry the PLANE into local space, which
+// is one point and one direction: with `pL = M^-1 p` and `perpL = M^T perp`,
+//
+//     dot(v - pL, perpL) == dot(M*v - p, perp)     EXACTLY, any invertible M
+//
+// so the extent that comes out is still measured in WORLD units along the
+// WORLD `perp` — which is what `sliceOverlayQuad` needs, since it rebuilds
+// the quad from the world `p`/`dir`/`perp`. Note `toLocalNormal` (`M^T`) and
+// NOT `toLocalDir` (`M^-1`): the two agree only when `M` has no non-uniform
+// scale, and the identity above is false for the latter.
+void sliceOverlayExtent(const ref Mesh m, const ModelSpace ms,
+                        Vec3 p, Vec3 dir, Vec3 perp,
                         Vec3 start, Vec3 end,
                         out float aMin, out float aMax,
                         out float bMin, out float bMax)
@@ -335,8 +352,10 @@ void sliceOverlayExtent(const ref Mesh m, Vec3 p, Vec3 dir, Vec3 perp,
     // the plane spans the depth of the region being cut.
     float b0 = dot(start - p, perp), b1 = dot(end - p, perp);
     bMin = min(b0, b1); bMax = max(b0, b1);
+    const Vec3 pLocal    = ms.toLocalPoint(p);
+    const Vec3 perpLocal = ms.toLocalNormal(perp);
     foreach (v; m.vertices) {
-        float b = dot(v - p, perp);
+        float b = dot(v - pLocal, perpLocal);
         bMin = min(bMin, b); bMax = max(bMax, b);
     }
     float along = max(1e-3f, aMax - aMin);
@@ -396,15 +415,24 @@ bool sliceOverlayBasisLocked(Vec3 n, out Vec3 dir, out Vec3 perp, float eps = 1e
 // rectangle) and a ~10% overhang on every edge. Extents are measured
 // from `p` along `dir` / across `perp`. Unlike the unlocked extent the drawn
 // line does NOT bound the quad here (the line no longer lies in the plane).
-void sliceOverlayExtentLocked(const ref Mesh m, Vec3 p, Vec3 dir, Vec3 perp,
+// `ms` — the same task-0619 §1.2 carry as `sliceOverlayExtent` above, for the
+// same reason and with the same exactness: the union must be over the DRAWN
+// vertices, and moving the plane costs one point plus two directions instead
+// of transforming V vertices. This variant projects on BOTH axes, so `dir`
+// crosses over too.
+void sliceOverlayExtentLocked(const ref Mesh m, const ModelSpace ms,
+                              Vec3 p, Vec3 dir, Vec3 perp,
                               out float aMin, out float aMax,
                               out float bMin, out float bMax)
 {
     import std.algorithm : min, max;
     aMin = aMax = bMin = bMax = 0.0f;
     bool any = false;
+    const Vec3 pLocal    = ms.toLocalPoint(p);
+    const Vec3 dirLocal  = ms.toLocalNormal(dir);
+    const Vec3 perpLocal = ms.toLocalNormal(perp);
     foreach (v; m.vertices) {
-        float a = dot(v - p, dir), b = dot(v - p, perp);
+        float a = dot(v - pLocal, dirLocal), b = dot(v - pLocal, perpLocal);
         if (!any) { aMin = aMax = a; bMin = bMax = b; any = true; }
         else {
             aMin = min(aMin, a); aMax = max(aMax, a);
@@ -783,7 +811,15 @@ private:
     // valid across the whole session. Empty ⇒ whole-mesh cut.
     uint[]   restrictFaces_;
     MeshCacheKey armedKey_;      // mesh identity+version guard for the deferred commit
-    Viewport cachedVp;
+    // The WORLD-space viewport `draw()` was handed (task 0619 rename). Every
+    // one of its uses was re-read and every one is genuinely WORLD: the
+    // Ctrl-axis election, the workplane ray, the Start/End handle and line
+    // picks, and the rotate ring all address `start_`/`end_` and the
+    // workplane — constructs with no mesh read on the aim side (task 0619
+    // §Out of scope, "tool params placed by a camera-plane ray"). The one
+    // mesh-derived aim in this file is `sliceOverlayExtent`'s vertex scan,
+    // which takes no viewport at all — it takes a `ModelSpace`.
+    Viewport vpWorld_;
 
     // Line-body translate bookkeeping: the endpoints + the work-plane anchor at
     // the moment the drag began, so motion translates by (hit - anchor).
@@ -996,7 +1032,7 @@ public:
     // null before the first draw / when no handles exist.
     override JSONValue toolHandlesJson() const {
         if (toolHandles_ is null) return JSONValue(null);
-        return toolHandles_.toJson(cachedVp);
+        return toolHandles_.toJson(vpWorld_);
     }
 
     override void activate() {
@@ -1441,10 +1477,10 @@ public:
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         // Cache the viewport for the endpoint ray casts / handle picks in the
         // event handlers.
-        if (!visualOnly) cachedVp = vp;
+        if (!visualOnly) vpWorld_ = vp;
         if (!active) return;
         // Task 0286: NOTHING is shown at bare activation — no overlay, no line, no
-        // endpoint handles — until the FIRST LMB drag has laid a line. (cachedVp is
+        // endpoint handles — until the FIRST LMB drag has laid a line. (vpWorld_ is
         // cached ABOVE this gate so the event handlers still have a viewport for
         // their ray casts before the first draw.)
         if (!hasLine_) return;
@@ -1504,11 +1540,13 @@ public:
                 float aMin, aMax, bMin, bMax;
                 if (sliceOverlayBasis(start_, end_, nn, dir, perp)) {
                     haveBasis = true;
-                    sliceOverlayExtent(*mesh, pp, dir, perp, start_, end_,
+                    sliceOverlayExtent(*mesh, primaryModelSpace(),
+                                       pp, dir, perp, start_, end_,
                                        aMin, aMax, bMin, bMax);
                 } else if (sliceOverlayBasisLocked(nn, dir, perp)) {
                     haveBasis = true;
-                    sliceOverlayExtentLocked(*mesh, pp, dir, perp,
+                    sliceOverlayExtentLocked(*mesh, primaryModelSpace(),
+                                             pp, dir, perp,
                                              aMin, aMax, bMin, bMax);
                 } else {
                     haveBasis = false;
@@ -1652,15 +1690,15 @@ private:
     // the line midpoint for a translate; axis-end probes sit one unit along each
     // world axis from that center so their screen directions are well-defined.
     int resolveCtrlAxis(int tdx, int tdy) {
-        if (cachedVp.width <= 0) return -1;
-        Vec3 camBack = Vec3(cachedVp.view[2], cachedVp.view[6], cachedVp.view[10]);
+        if (vpWorld_.width <= 0) return -1;
+        Vec3 camBack = Vec3(vpWorld_.view[2], vpWorld_.view[6], vpWorld_.view[10]);
         Vec3 center  = drawGesture_ ? start_ : (start_ + end_) * 0.5f;
         Vec3 ex = center + Vec3(1, 0, 0);
         Vec3 ey = center + Vec3(0, 1, 0);
         Vec3 ez = center + Vec3(0, 0, 1);
         return chooseConstraintAxis(camBack,
             Vec3(1, 0, 0), Vec3(0, 1, 0), Vec3(0, 0, 1),
-            ex, ey, ez, center, cachedVp, tdx, tdy);
+            ex, ey, ez, center, vpWorld_, tdx, tdy);
     }
 
     // The world axis vector for a resolved Ctrl-lock index (0=X / 1=Y / 2=Z).
@@ -1728,7 +1766,7 @@ private:
     // pickWorkplaneFrame needs a viewport, so fall back to the pipe default
     // (currentWorkplaneFrame) when none was cached yet.
     Vec3 cachedWorkplaneNormal() {
-        if (cachedVp.width > 0) return pickWorkplaneFrame(cachedVp).normal;
+        if (vpWorld_.width > 0) return pickWorkplaneFrame(vpWorld_).normal;
         return currentWorkplaneFrame().normal;
     }
 
@@ -1796,7 +1834,7 @@ private:
     // The work-plane in-plane basis for the angle-snap projection (same frame
     // source as cachedWorkplaneNormal).
     void cachedWorkplaneAxes(out Vec3 a1, out Vec3 a2) {
-        WorkplaneFrame wf = cachedVp.width > 0 ? pickWorkplaneFrame(cachedVp)
+        WorkplaneFrame wf = vpWorld_.width > 0 ? pickWorkplaneFrame(vpWorld_)
                                                : currentWorkplaneFrame();
         a1 = wf.axis1;
         a2 = wf.axis2;
@@ -1835,22 +1873,22 @@ private:
     // endpoint slides on that plane so the whole line stays in the work plane
     // (which keeps the perpendicular cut plane well-defined).
     bool workplaneHit(float sx, float sy, out Vec3 hit) {
-        if (cachedVp.width <= 0) return false;
-        WorkplaneFrame wp = pickWorkplaneFrame(cachedVp);
+        if (vpWorld_.width <= 0) return false;
+        WorkplaneFrame wp = pickWorkplaneFrame(vpWorld_);
         Vec3 origin, dir;
-        screenPointToRay(sx, sy, cachedVp, origin, dir);
+        screenPointToRay(sx, sy, vpWorld_, origin, dir);
         return rayPlaneIntersect(origin, dir, wp.origin, wp.normal, hit);
     }
 
     // Return DragStart if the cursor is within HANDLE_PICK_PX of the Start
     // projection, DragEnd if within range of End (nearest wins), else -1.
     int pickHandle(float sx, float sy) {
-        if (cachedVp.width <= 0) return -1;
+        if (vpWorld_.width <= 0) return -1;
         float bestD2 = HANDLE_PICK_PX * HANDLE_PICK_PX;
         int best = -1;
         foreach (i, pt; [start_, end_]) {
             float px, py, z;
-            if (!projectToWindowFull(pt, cachedVp, px, py, z)) continue;
+            if (!projectToWindowFull(pt, vpWorld_, px, py, z)) continue;
             float d2 = (px - sx) * (px - sx) + (py - sy) * (py - sy);
             if (d2 <= bestD2) { bestD2 = d2; best = cast(int)i; }
         }
@@ -1861,10 +1899,10 @@ private:
     // projection (endpoints already handled by pickHandle, which is tried
     // first). A degenerate (zero-length) line has no body.
     bool pickLineBody(float sx, float sy) {
-        if (cachedVp.width <= 0) return false;
+        if (vpWorld_.width <= 0) return false;
         float ax, ay, az, bx, by, bz;
-        if (!projectToWindowFull(start_, cachedVp, ax, ay, az)) return false;
-        if (!projectToWindowFull(end_,   cachedVp, bx, by, bz)) return false;
+        if (!projectToWindowFull(start_, vpWorld_, ax, ay, az)) return false;
+        if (!projectToWindowFull(end_,   vpWorld_, bx, by, bz)) return false;
         float dx = bx - ax, dy = by - ay;
         if (dx * dx + dy * dy < 1.0f) return false;   // no visible body
         float t;
@@ -1886,9 +1924,9 @@ private:
     // rotate angle is measured from. False when no viewport is cached or the ray
     // runs parallel to the plane (edge-on ring).
     bool ringPlaneHit(float sx, float sy, Vec3 center, Vec3 axis, out Vec3 hit) {
-        if (cachedVp.width <= 0) return false;
+        if (vpWorld_.width <= 0) return false;
         Vec3 origin, dir;
-        screenPointToRay(sx, sy, cachedVp, origin, dir);
+        screenPointToRay(sx, sy, vpWorld_, origin, dir);
         return rayPlaneIntersect(origin, dir, center, axis, hit);
     }
 
@@ -1897,12 +1935,12 @@ private:
     // before the first draw — mirrors pickHandle / FullCircleHandler.aiScreenDistance.
     // Only meaningful for a Custom axis with a non-degenerate line.
     bool pickRotateRing(float sx, float sy) {
-        if (cachedVp.width <= 0 || axis_ != SliceAxis.Custom) return false;
+        if (vpWorld_.width <= 0 || axis_ != SliceAxis.Custom) return false;
         Vec3 seg = end_ - start_;
         if (seg.length < 1e-6f) return false;
         Vec3 axis   = normalize(seg);
         Vec3 center = (start_ + end_) * 0.5f;
-        float radius = ringRadiusWorld(center, cachedVp);
+        float radius = ringRadiusWorld(center, vpWorld_);
         if (radius <= 0.0f) return false;
         Vec3 right, up;
         sliceRingPlaneBasis(axis, right, up);
@@ -1913,7 +1951,7 @@ private:
             float a = cast(float)i * 2.0f * PI / SEGS;
             Vec3 w = center + right * (cos(a) * radius) + up * (sin(a) * radius);
             float wx, wy, wz;
-            bool ok = projectToWindowFull(w, cachedVp, wx, wy, wz);
+            bool ok = projectToWindowFull(w, vpWorld_, wx, wy, wz);
             if (prevValid && ok) {
                 float t;
                 float d = closestOnSegment2D(sx, sy, prevX, prevY, wx, wy, t);
@@ -2192,7 +2230,7 @@ unittest {
         // Size to a unit cube (the region being cut) + the segment.
         Mesh cube = makeCube();
         float aMin, aMax, bMin, bMax;
-        sliceOverlayExtent(cube, p, dir, perp, start, end, aMin, aMax, bMin, bMax);
+        sliceOverlayExtent(cube, ModelSpace.world(), p, dir, perp, start, end, aMin, aMax, bMin, bMax);
         Vec3[4] q = sliceOverlayQuad(p, dir, perp, aMin, aMax, bMin, bMax);
 
         // (1) every corner lies in the cut plane.
@@ -2228,7 +2266,7 @@ unittest {
         assert(sliceOverlayBasis(s, e, n, dir, perp));
         Mesh cube = makeCube();
         float aMin, aMax, bMin, bMax;
-        sliceOverlayExtent(cube, p, dir, perp, s, e, aMin, aMax, bMin, bMax);
+        sliceOverlayExtent(cube, ModelSpace.world(), p, dir, perp, s, e, aMin, aMax, bMin, bMax);
         // Along the line: exactly the segment [0, 1] (p == start, dir == +Z).
         assert(abs(aMin - 0.0f) < 1e-5f, "along-min flush with the Start handle");
         assert(abs(aMax - 1.0f) < 1e-5f, "along-max flush with the End handle (no overhang)");
@@ -2272,9 +2310,9 @@ unittest {
                              SLICE_AXIS_DRAG, Vec3(0,1,0), pS, nS));
         assert(sliceOverlayBasis(s, Vec3(0,0,0.5f), nS, dir, perp));
         float a0min, a0max, b0min, b0max;
-        sliceOverlayExtent(cube, pS, dir, perp, s, Vec3(0,0,0.5f), a0min, a0max, b0min, b0max);
+        sliceOverlayExtent(cube, ModelSpace.world(), pS, dir, perp, s, Vec3(0,0,0.5f), a0min, a0max, b0min, b0max);
         float a1min, a1max, b1min, b1max;
-        sliceOverlayExtent(cube, pS, dir, perp, s, Vec3(0,0,3.0f), a1min, a1max, b1min, b1max);
+        sliceOverlayExtent(cube, ModelSpace.world(), pS, dir, perp, s, Vec3(0,0,3.0f), a1min, a1max, b1min, b1max);
         assert(a1max > a0max + 1e-4f,
                "moving End further out must grow the overlay's along-extent");
     }
@@ -2315,7 +2353,7 @@ unittest {
         Mesh cube = makeCube();
         Vec3 p = start;   // planeForSlice always sets p = start
         float aMin, aMax, bMin, bMax;
-        sliceOverlayExtentLocked(cube, p, dir, perp, aMin, aMax, bMin, bMax);
+        sliceOverlayExtentLocked(cube, ModelSpace.world(), p, dir, perp, aMin, aMax, bMin, bMax);
         Vec3[4] q = sliceOverlayQuad(p, dir, perp, aMin, aMax, bMin, bMax);
 
         // (1) every corner lies in the cut plane.
@@ -2339,7 +2377,7 @@ unittest {
         assert(sliceOverlayBasis(s, e, n, dir, perp));
         Mesh cube = makeCube();
         float aMin, aMax, bMin, bMax;
-        sliceOverlayExtent(cube, p, dir, perp, s, e, aMin, aMax, bMin, bMax);
+        sliceOverlayExtent(cube, ModelSpace.world(), p, dir, perp, s, e, aMin, aMax, bMin, bMax);
         assert(abs(aMin - 0.0f) < 1e-5f && abs(aMax - 1.0f) < 1e-5f,
                "unlocked along-extent stays flush with the drawn segment");
     }
@@ -2569,7 +2607,7 @@ unittest {
     assert(sliceOverlayBasis(s, e, n, dir, perp));
     Mesh cube = makeCube();
     float aMin, aMax, bMin, bMax;
-    sliceOverlayExtent(cube, p, dir, perp, s, e, aMin, aMax, bMin, bMax);
+    sliceOverlayExtent(cube, ModelSpace.world(), p, dir, perp, s, e, aMin, aMax, bMin, bMax);
     float along = aMax - aMin, across = bMax - bMin;
     // ALONG-line = the drawn segment exactly ([0,1]) — handles at its ends.
     assert(abs(aMin - 0.0f) < 1e-5f && abs(aMax - 1.0f) < 1e-5f,
@@ -2580,6 +2618,103 @@ unittest {
            "perpendicular-to-line extent must be strictly greater than along-line");
     // ...and still spans the mesh depth (±0.5) with room to spare.
     assert(bMax >= 0.5f && bMin <= -0.5f, "cross extent still spans the mesh");
+}
+
+// ---------------------------------------------------------------------------
+// T8 (task 0619, doc/tool_aiming_item_transform_plan.md §1.2) — the overlay's
+// mesh union is taken over where the vertices are DRAWN.
+//
+// THE PAIR, and the two wrong-but-plausible implementations it separates:
+//
+//   correct   union over `M*v`, obtained by carrying the plane into local:
+//             `dot(v - M^-1 p, M^T perp)`
+//   wrong (1) union over the raw `v` — the pre-0619 code, no transform at all
+//   wrong (2) union over `dot(v - M^-1 p, M^-1 perp)` — `toLocalDir` used to
+//             carry a NORMAL. Identical to the correct law for any rotation,
+//             so a rotation-only fixture cannot see it.
+//
+// THE ORACLE, chosen so it re-derives nothing from the function under test:
+// scanning the ALREADY-DRAWN geometry with an IDENTITY transform must produce
+// byte-comparable extents to scanning the LOCAL geometry with `ms`. The
+// padding/min-band law is thereby held constant on both sides and only the
+// space question can move the numbers.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.math : abs;
+    import document : ItemXform;
+
+    // Non-uniform scale is MANDATORY here (wrong (2) collapses onto the
+    // correct law without it) and the rotation is deliberately not a multiple
+    // of 90 degrees (a quarter turn maps a cube's vertex set to itself).
+    ItemXform xf;
+    xf.pos = Vec3( 1.30f, -0.60f, 0.40f);
+    xf.rot = Vec3(11.0f,  40.0f, -7.0f);
+    xf.scl = Vec3( 1.70f,  1.00f, 0.60f);
+    const ModelSpace ms = xf.modelSpace();
+    assert(!ms.isIdentity && ms.invertible);
+    immutable float[16] M = xf.composedMatrix();
+
+    // Geometry asymmetric on every axis — a plain cube would still work under
+    // this M, but an asymmetric body removes any doubt that a coincidence of
+    // the fixture (rather than the law) is what the assertions read.
+    Mesh local = makeCube();
+    foreach (i, ref v; local.vertices) {
+        float k = cast(float)i;
+        v = v + Vec3(0.13f * k, -0.07f * k * k * 0.1f, 0.21f * k);
+    }
+    // The SAME body, pre-drawn: vertices already through M, so an identity
+    // ModelSpace scans exactly the drawn positions.
+    Mesh drawn = makeCube();
+    drawn.vertices = local.vertices.dup;
+    foreach (ref v; drawn.vertices) v = transformPoint(M, v);
+
+    // The drawn line runs mostly along Z and the work-plane normal is X, so
+    // `perp` comes out X-dominant (`perp == cross(n, dir)` lands on the
+    // component of the work-plane normal across the line). That matters: `M^T`
+    // and `M^-1` differ on X by the ratio 1.7 : 1/1.7, whereas on Y — where a
+    // Y-normal work plane would have put `perp` — `scl.y == 1` makes them
+    // nearly agree and the second anti-vacuity check below only just separates.
+    Vec3 s = Vec3(0.2f, 0.1f, -0.5f), e = Vec3(0.35f, -0.15f, 0.5f);
+    Vec3 p, n, dir, perp;
+    assert(planeForSlice(s, e, Vec3(1,0,0), SLICE_AXIS_DRAG, Vec3(1,0,0), p, n));
+    assert(sliceOverlayBasis(s, e, n, dir, perp));
+
+    float gaMin, gaMax, gbMin, gbMax;   // ground truth: drawn body, identity ms
+    sliceOverlayExtent(drawn, ModelSpace.world(), p, dir, perp, s, e,
+                       gaMin, gaMax, gbMin, gbMax);
+    float aMin, aMax, bMin, bMax;       // under test: local body + ms
+    sliceOverlayExtent(local, ms, p, dir, perp, s, e, aMin, aMax, bMin, bMax);
+
+    assert(abs(bMin - gbMin) < 1e-4f && abs(bMax - gbMax) < 1e-4f,
+        "the mesh union must be taken over the DRAWN vertices");
+    // The along-line extent is a pure world construct (start/end only) and
+    // must not have moved at all.
+    assert(abs(aMin - gaMin) < 1e-6f && abs(aMax - gaMax) < 1e-6f,
+        "the along-line extent is start/end only — the transform must not touch it");
+
+    // ANTI-VACUITY (1): wrong (1), the pre-0619 no-transform law, must read a
+    // materially different cross extent on this fixture.
+    float wMin, wMax, junk0, junk1;
+    sliceOverlayExtent(local, ModelSpace.world(), p, dir, perp, s, e,
+                       junk0, junk1, wMin, wMax);
+    assert(abs(wMax - gbMax) > 0.25f || abs(wMin - gbMin) > 0.25f,
+        "fixture is vacuous: the untransformed union reads the same extent");
+
+    // ANTI-VACUITY (2): wrong (2), `toLocalDir` on the plane normal. Computed
+    // here rather than injected, because there is no way to pass a bad carry
+    // through the API — which is the point of the API.
+    Vec3 pL   = ms.toLocalPoint(p);
+    Vec3 good = ms.toLocalNormal(perp);
+    Vec3 bad  = ms.toLocalDir(perp);
+    float gLo = float.infinity, gHi = -float.infinity;
+    float bLo = float.infinity, bHi = -float.infinity;
+    foreach (v; local.vertices) {
+        float g = dot(v - pL, good), b = dot(v - pL, bad);
+        if (g < gLo) gLo = g;  if (g > gHi) gHi = g;
+        if (b < bLo) bLo = b;  if (b > bHi) bHi = b;
+    }
+    assert(abs(bHi - gHi) > 0.25f || abs(bLo - gLo) > 0.25f,
+        "fixture is vacuous: carrying the normal with M^-1 reads the same union");
 }
 
 // ---------------------------------------------------------------------------

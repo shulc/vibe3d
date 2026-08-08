@@ -18,6 +18,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
+import document : primaryModelSpace;
 
 alias LoopSliceEditFactory = MeshSessionEdit delegate();
 
@@ -361,7 +362,11 @@ private:
     bool         scrubbing_;   // a MESH drag is currently repositioning it (subset of armed_)
     bool         built_;       // true once the last rebuildCut() materialised a cut
     uint[]       seeds_;       // latched seed set (was scalar seedEdge_ pre-0239)
-    Vec3         seedA_, seedB_;   // ORIGINAL (pre-cut) world-space endpoints of seeds_[0]'s ring, cached at arm
+    // ORIGINAL (pre-cut) endpoints of seeds_[0]'s ring, cached at arm.
+    // LAYER-LOCAL: `seedRail` fills them from raw `mesh.vertices[]`. This
+    // comment used to claim "world-space" (task 0619 — it was a comment
+    // lying about a space, and the drag law below read it at face value).
+    Vec3         seedA_, seedB_;
     MeshSnapshot before_;      // idle baseline: mesh == before_ whenever !armed_
     // Address + mutationVersion of the mesh exactly as WE last left it — see
     // the header comment. Stamped at the end of every successful rebuildCut()
@@ -370,7 +375,10 @@ private:
     // layer switch) touched the mesh since, and the preview is dropped rather
     // than committed/restored against the wrong target.
     MeshCacheKey armedKey_;
-    Viewport     cachedVp;
+    // The WORLD-space viewport `draw()` was handed (task 0619 rename). Its
+    // only reader is the **Closest** election in `onMouseMotion`, which runs
+    // in world space by law (§1.3) and must NOT be handed a composed one.
+    Viewport     vpWorld_;
     // The ORIGINAL selected-face set latched at arm time (before the standing
     // preview overwrote the selection). Slice-Selected reads its restriction
     // from THIS, so toggling `select` mid-arm still restricts to the faces the
@@ -1012,16 +1020,36 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || !scrubbing_) return false;
 
+        // AIMING KIND: **Closest** (task 0619,
+        // doc/tool_aiming_item_transform_plan.md §1.3) — the one kind whose
+        // correct space is **WORLD**, deliberately opposite to the RayPlane
+        // law used by tack / magnet / stroke extrude:
+        //
+        //   * closest-approach is NOT affine-invariant. Under a non-uniform
+        //     `M` the nearest point of the LOCAL rail to the local ray is a
+        //     different point from the nearest point of the WORLD rail to
+        //     the world ray. The user scrubs along the rail as it is DRAWN,
+        //     so the drawn rail is the one to elect on.
+        //   * moving the query into local space instead (§1.2's law) would
+        //     compile and would be invisible at identity AND under uniform
+        //     scale — it only goes wrong under a non-uniform one.
+        //   * the ratio comes back for FREE: `scrubPosition` wants a `t`
+        //     along the rail, and an affine map preserves ratios along a
+        //     line, so the world `t` IS the local `t`. No back-transform.
+        const ms = primaryModelSpace();
+        Vec3 railA = ms.toWorldPoint(seedA_);
+        Vec3 railB = ms.toWorldPoint(seedB_);
+
         Vec3 origin, dir;
-        screenPointToRay(cast(float)e.x, cast(float)e.y, cachedVp, origin, dir);
-        Vec3 hit = closestPointOnSegmentToRay(seedA_, seedB_, origin, dir);
+        screenPointToRay(cast(float)e.x, cast(float)e.y, vpWorld_, origin, dir);
+        Vec3 hit = closestPointOnSegmentToRay(railA, railB, origin, dir);
 
         // `hit` is a clamped POINT; recover the scalar t the kernel wants by
         // re-projecting it onto the (unclamped) segment direction.
-        Vec3  ab    = seedB_ - seedA_;
+        Vec3  ab    = railB - railA;
         float denom = dot(ab, ab);
         if (denom > 1e-12f) {
-            float t = dot(hit - seedA_, ab) / denom;
+            float t = dot(hit - railA, ab) / denom;
             scrubPosition(t);
         }
         return true;
@@ -1063,7 +1091,7 @@ public:
         // No gizmo/ghost overlay in the revised (mutate/revert) model — the
         // real mesh already shows the live cut. Only the viewport needs
         // caching, for the seed-edge ray cast in onMouseMotion.
-        cachedVp = vp;
+        vpWorld_ = vp;
     }
 
 private:
