@@ -10,7 +10,7 @@
 // asserts the per-corner UVs survive the whole journey within tolerance:
 //
 //     OBJ-with-UV  --importViaAssimp-->  Mesh (welded, "uv" map)     [import leg]
-//                  --writeV3d----------> .v3d  (formatVersion 7)     [.v3d save]
+//                  --writeV3d----------> .v3d  (formatVersion 8)     [.v3d save]
 //                  --readV3d-----------> Mesh                        [.v3d load]
 //                  --exportViaAssimp---> glTF                        [export leg]
 //                  --importViaAssimp---> Mesh                        [re-import]
@@ -98,13 +98,12 @@ private Mesh saveLoadV3d(const ref Mesh m, string name) {
     assert(exists(path), "writeV3d produced no file for " ~ name);
 
     // Confirm the on-disk file is the current UV-carrying format (the version
-    // the codec must emit once a PolyVertex map can exist; v5 added the
-    // per-layer item-transform block).
+    // the codec must emit once a PolyVertex map can exist).
     const j = parseJSON(readText(path));
     assert(j["formatVersion"].integer == kV3dFormatVersion,
         format(".v3d %s: formatVersion %d != %d",
                name, j["formatVersion"].integer, kV3dFormatVersion));
-    assert(kV3dFormatVersion == 7, "this milestone's .v3d format version is 7");
+    assert(kV3dFormatVersion == 8, "this milestone's .v3d format version is 8");
 
     Mesh loaded;
     assert(readV3d(path, loaded), "readV3d failed for " ~ name);

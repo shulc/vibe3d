@@ -1,27 +1,29 @@
-// Tests for the layered (formatVersion 7) `.v3d` document schema.
+// Tests for the layered (formatVersion 8) `.v3d` document schema.
 //
-// Selection-types Stage 3: the Document round-trips through `.v3d` with the
-// item-selection SET persisted. Files are written as v5 — a `layers` array
-// (each entry carrying a `selected` flag, plus an optional per-layer `xform`
-// item-transform block — per-item channels Phase 1) wrapping the shared mesh
-// sub-object, plus a `primaryLayer` index naming the edit target. There is NO
-// `background` key (background derives: visible && !selected) and NO
-// `activeLayer` key (primaryLayer replaces it). The legacy v1 (top-level
-// `mesh`), v2 (`activeLayer` + per-layer `background`), v3 (no `uvMaps`) and v4
-// (no per-layer `xform`) shapes are REJECTED — a deliberate clean break (no
-// external clients, no migration). The per-layer `xform` round-trip itself is
-// covered in test_layer_xform_io.d; here the bare envelope is asserted at v5.
+// The Document round-trips through `.v3d` with the item-selection SET
+// persisted. A v8 file is a `layers` array — each entry carrying a `"type"`
+// wire token, a `selected` flag, its whole authored `channels` object and a
+// payload block per capability — plus `primaryLayer` and `focusedItem` indices.
+// There is NO `background` key (background derives: visible && !selected) and
+// NO `activeLayer` key (primaryLayer replaces it).
+//
+// v8 (task 0616 Ph6) moved `name`, `visible` and the twelve item-transform
+// components OUT of the layer envelope and INTO `channels`, and deleted the
+// grouped `xform` block. Every earlier shape is REJECTED — a deliberate clean
+// break, no migration. The transform round-trip itself is covered in
+// test_layer_xform_io.d; here the bare envelope is asserted.
 //
 // Coverage:
-//   1. a save emits the v5 shape (formatVersion 5, primaryLayer, layers[0] with
-//      name/visible/selected — and NO background/activeLayer keys);
+//   1. a save emits the v8 shape (formatVersion 8, primaryLayer, layers[0] with
+//      type/selected/channels — and NO background/activeLayer/name/visible
+//      top-level keys);
 //   2. save -> load round-trip preserves geometry;
-//   3. a multi-layer v5 file round-trips the SELECTED SET + primary identity;
-//   4. a v4 fixture (and v3 / v2 / v1) is rejected cleanly and leaves the
+//   3. a multi-layer v8 file round-trips the SELECTED SET + primary identity;
+//   4. legacy fixtures (v7 / v3 / v2 / v1) are rejected cleanly and leave the
 //      document untouched.
 //
 // These drive the public HTTP surface only — geometry is asserted through
-// /api/model; raw v5 file content is read straight off disk (the writer is the
+// /api/model; raw file content is read straight off disk (the writer is the
 // thing under test).
 
 import std.net.curl;
@@ -55,7 +57,7 @@ JSONValue model() {
     return parseJSON(get("http://localhost:8080/api/model"));
 }
 
-unittest { // a save emits the v5 layered shape (formatVersion + primaryLayer + layers[0] flags)
+unittest { // a save emits the v8 layered shape (formatVersion + primaryLayer + layers[0] envelope)
     enum string path = "/tmp/vibe3d-test-v3-shape.v3d";
     if (exists(path)) remove(path);
     scope(exit) if (exists(path)) remove(path);
@@ -68,36 +70,52 @@ unittest { // a save emits the v5 layered shape (formatVersion + primaryLayer + 
     // Read the raw file: this is the writer under test, so we inspect bytes.
     auto doc = parseJSON(readText(path));
 
-    assert(doc["formatVersion"].integer == 7,
-        "writer must emit formatVersion 7, got "
+    assert(doc["formatVersion"].integer == 8,
+        "writer must emit formatVersion 8, got "
         ~ doc["formatVersion"].integer.to!string);
 
-    // v5 names the edit target via primaryLayer (NOT activeLayer).
-    assert("primaryLayer" in doc, "v5 doc must carry primaryLayer");
+    // v8 names the edit target via primaryLayer (NOT activeLayer), and the
+    // item-selection FOCUS separately.
+    assert("primaryLayer" in doc, "v8 doc must carry primaryLayer");
     assert(doc["primaryLayer"].integer == 0, "single-layer doc is primary=0");
-    assert("activeLayer" !in doc, "v5 doc must NOT carry the retired activeLayer key");
+    assert("focusedItem" in doc, "v8 doc must carry focusedItem");
+    assert(doc["focusedItem"].integer == 0,
+        "on an all-mesh document the focus coincides with the primary");
+    assert("activeLayer" !in doc, "v8 doc must NOT carry the retired activeLayer key");
 
-    assert("layers" in doc, "v5 doc must carry a layers array");
+    assert("layers" in doc, "v8 doc must carry a layers array");
     assert(doc["layers"].type == JSONType.array, "layers must be an array");
     assert(doc["layers"].array.length == 1,
         "single-layer runtime writes exactly one layer, got "
         ~ doc["layers"].array.length.to!string);
 
     auto l0 = doc["layers"].array[0];
-    assert("name" in l0 && l0["name"].str == "Layer 1",
-        "first layer is named 'Layer 1'");
-    assert("visible" in l0 && l0["visible"].type == JSONType.true_,
-        "first layer is visible");
-    // v5 persists `selected` (the item-selection SET); the lone layer is the
-    // primary, hence selected. The retired `background` key must be gone.
+    assert("type" in l0 && l0["type"].str == "mesh",
+        "every v8 item declares its kind by wire token");
+    // `name` and `visible` are CHANNELS in v8, not envelope keys. Asserting
+    // both halves (present in channels, absent at top level) is the point: one
+    // half alone would pass an implementation that wrote the value twice.
+    assert("channels" in l0, "v8 layer must carry a channels object");
+    auto ch = l0["channels"];
+    assert("name" in ch && ch["name"].str == "Layer 1",
+        "first layer is named 'Layer 1', through its channel");
+    assert("visible" in ch && ch["visible"].type == JSONType.true_,
+        "first layer is visible, through its channel");
+    assert("name" !in l0 && "visible" !in l0,
+        "…and NOT also at the top level — two representations of one value is "
+        ~ "what v8 removed");
+    // v8 persists `selected` (the item-selection SET) in the envelope, because
+    // it is governed by the selection invariants and is deliberately NOT a
+    // param. The lone layer is the primary, hence selected.
     assert("selected" in l0 && l0["selected"].type == JSONType.true_,
         "first layer is selected (foreground / primary)");
     assert("background" !in l0,
-        "v5 layer must NOT carry the retired background key");
-    // A fresh cube has an identity transform, so the optional xform key is
-    // omitted (omit-when-default). The xform round-trip is in test_layer_xform_io.
+        "v8 layer must NOT carry the retired background key");
     assert("xform" !in l0,
-        "a default (identity) layer must omit the optional xform key");
+        "the grouped xform block is retired — the transform is twelve flat "
+        ~ "channel keys now");
+    assert("pos.x" in ch && "pivot.z" in ch,
+        "…and those keys really are there");
 
     // The per-layer mesh sub-object is the shared shape (vertices + faces present).
     assert("mesh" in l0 && l0["mesh"].type == JSONType.object,
@@ -109,7 +127,7 @@ unittest { // a save emits the v5 layered shape (formatVersion + primaryLayer + 
         "cube mesh sub-object carries 6 faces");
 }
 
-unittest { // save -> load round-trip preserves geometry through the v5 path
+unittest { // save -> load round-trip preserves geometry through the v8 path
     enum string path = "/tmp/vibe3d-test-v3-roundtrip.v3d";
     if (exists(path)) remove(path);
     scope(exit) if (exists(path)) remove(path);
@@ -145,24 +163,24 @@ unittest { // save -> load round-trip preserves geometry through the v5 path
         foreach (k; 0 .. 3)
             assert(r[k].floating == o[k].floating,
                 "vertex " ~ i.to!string ~ " comp " ~ k.to!string
-                ~ " mismatch after v5 round-trip");
+                ~ " mismatch after the round-trip");
     }
 }
 
-unittest { // a multi-layer v5 file round-trips the SELECTED SET + primary identity
+unittest { // a multi-layer v8 file round-trips the SELECTED SET + primary identity
     // Three layers. The file marks layers 0 and 2 selected (a multi-foreground
     // SET) and names layer 2 as primary. /api/model is primary-only, so it must
     // report the primary (layer 2) geometry. Re-saving must preserve the SAME
-    // selected set + primary in the v5 shape.
+    // selected set + primary in the v8 shape.
     enum string path = "/tmp/vibe3d-test-v3-multilayer.v3d";
     write(path,
-        `{"formatVersion":7,"primaryLayer":2,"layers":[`
-        ~ `{"name":"Tri","visible":true,"selected":true,`
+        `{"formatVersion":8,"primaryLayer":2,"layers":[`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":"Tri","visible":true},`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}},`
-        ~ `{"name":"Quad","visible":true,"selected":false,`
+        ~ `{"type":"mesh","selected":false,"channels":{"name":"Quad","visible":true},`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0]],`
         ~ `"faces":[[0,1,2,3]]}},`
-        ~ `{"name":"Pent","visible":true,"selected":true,`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":"Pent","visible":true},`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0],[-1,0,0]],`
         ~ `"faces":[[0,1,2,3,4]]}}`
         ~ `]}`);
@@ -178,14 +196,14 @@ unittest { // a multi-layer v5 file round-trips the SELECTED SET + primary ident
     assert(m["faceCount"].integer == 1, "primary layer 2 face count");
 
     // Re-save: the document now holds three layers with the same selected set
-    // (0 and 2) + primary (2); the v5 writer must reproduce both.
+    // (0 and 2) + primary (2); the writer must reproduce both.
     enum string outp = "/tmp/vibe3d-test-v3-multilayer-out.v3d";
     if (exists(outp)) remove(outp);
     scope(exit) if (exists(outp)) remove(outp);
     runCmd("file.save", `{"path":"` ~ outp ~ `"}`);
     auto saved = parseJSON(readText(outp));
 
-    assert(saved["formatVersion"].integer == 7, "re-save is v7");
+    assert(saved["formatVersion"].integer == 8, "re-save is v8");
     assert(saved["primaryLayer"].integer == 2,
         "re-save preserves primary index 2, got "
         ~ saved["primaryLayer"].integer.to!string);
@@ -203,9 +221,9 @@ unittest { // a multi-layer v5 file round-trips the SELECTED SET + primary ident
     assert("activeLayer" !in saved, "no activeLayer key on re-saved doc");
 }
 
-unittest { // a v4 file with an empty "layers" array is rejected cleanly
+unittest { // a v8 file with an empty "layers" array is rejected cleanly
     enum string path = "/tmp/vibe3d-test-v3-emptylayers.v3d";
-    write(path, `{"formatVersion":7,"primaryLayer":0,"layers":[]}`);
+    write(path, `{"formatVersion":8,"primaryLayer":0,"layers":[]}`);
     scope(exit) if (exists(path)) remove(path);
 
     resetCube();
@@ -223,8 +241,8 @@ unittest { // an out-of-range primaryLayer is clamped, not rejected
     // primaryLayer 5 with a single layer must clamp to index 0 and load fine.
     enum string path = "/tmp/vibe3d-test-v3-badprimary.v3d";
     write(path,
-        `{"formatVersion":7,"primaryLayer":5,"layers":[`
-        ~ `{"name":"Only","visible":true,"selected":true,`
+        `{"formatVersion":8,"primaryLayer":5,"layers":[`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":"Only","visible":true},`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}}`
         ~ `]}`);
     scope(exit) if (exists(path)) remove(path);
@@ -239,14 +257,14 @@ unittest { // an out-of-range primaryLayer is clamped, not rejected
     assert(m["faceCount"].integer == 1, "clamped primary layer face count");
 }
 
-unittest { // an inconsistent v4 file (primary marked deselected) is forced selected
+unittest { // an inconsistent file (primary marked deselected) is forced selected
     // The file names layer 0 primary but marks it `selected:false`. The reader
     // must FORCE the primary selected (the edit target can't be deselected), so
     // the re-saved file shows it selected.
     enum string path = "/tmp/vibe3d-test-v3-inconsistent.v3d";
     write(path,
-        `{"formatVersion":7,"primaryLayer":0,"layers":[`
-        ~ `{"name":"Only","visible":true,"selected":false,`
+        `{"formatVersion":8,"primaryLayer":0,"layers":[`
+        ~ `{"type":"mesh","selected":false,"channels":{"name":"Only","visible":true},`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}}`
         ~ `]}`);
     scope(exit) if (exists(path)) remove(path);
@@ -305,13 +323,15 @@ unittest { // a legacy v1 file (top-level mesh) is now REJECTED cleanly
         "cube must be intact after a rejected v1 load");
 }
 
-unittest { // a v3 file (no uvMaps) is now REJECTED cleanly (the UV-maps Stage 3 break)
-    // v3 was the previous current shape (layers + selected + primaryLayer, no
-    // uvMaps). Bumping past v3 makes it reject at the version gate, leaving the
-    // cube untouched — same deliberate clean-break stance as the v2/v1 rejects.
-    enum string path = "/tmp/vibe3d-test-v3-reject.v3d";
+unittest { // the IMMEDIATELY PREVIOUS version (v7) is REJECTED cleanly
+    // v7 rather than v3: the near miss is the one users actually hit, and it is
+    // the shape a reader that tolerated "close enough" would wave through — a
+    // v7 layer envelope differs from v8 only by where `name`/`visible`/`xform`
+    // live, so it would parse into a plausible-looking document if the version
+    // gate ever softened.
+    enum string path = "/tmp/vibe3d-test-v7-reject.v3d";
     write(path,
-        `{"formatVersion":3,"primaryLayer":0,"layers":[`
+        `{"formatVersion":7,"primaryLayer":0,"layers":[`
         ~ `{"name":"Layer 1","visible":true,"selected":true,`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}}`
         ~ `]}`);
@@ -321,11 +341,11 @@ unittest { // a v3 file (no uvMaps) is now REJECTED cleanly (the UV-maps Stage 3
     auto resp = runCmdAllowError("file.load", `{"path":"` ~ path ~ `"}`);
     auto j = parseJSON(resp);
     assert(j["status"].str == "error",
-        "expected error for legacy v3 file (UV-maps Stage 3 clean break), got: " ~ resp);
+        "expected error for a v7 file (the task 0616 Ph6 clean break), got: " ~ resp);
 
     auto m = model();
     assert(m["vertexCount"].integer == 8,
-        "cube must be intact after a rejected v3 load");
+        "cube must be intact after a rejected v7 load");
 }
 
 unittest { // per-corner UV round-trips byte-exact through load -> save
@@ -337,8 +357,8 @@ unittest { // per-corner UV round-trips byte-exact through load -> save
     // in the same order, so an exact match proves the corner correspondence held.
     enum string path = "/tmp/vibe3d-test-v4-uv-in.v3d";
     write(path,
-        `{"formatVersion":7,"primaryLayer":0,"layers":[`
-        ~ `{"name":"Tri","visible":true,"selected":true,`
+        `{"formatVersion":8,"primaryLayer":0,"layers":[`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":"Tri","visible":true},`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]],`
         ~ `"uvMaps":[{"name":"uv","dim":2,`
         ~ `"data":[0.1,0.2, 0.3,0.4, 0.5,0.6]}]}}`
@@ -388,8 +408,8 @@ unittest { // a wrong-length uvMaps entry is ignored tolerantly (file still load
     // never registered) — proving the tolerant skip, not a crash.
     enum string path = "/tmp/vibe3d-test-v4-uv-badlen.v3d";
     write(path,
-        `{"formatVersion":7,"primaryLayer":0,"layers":[`
-        ~ `{"name":"Tri","visible":true,"selected":true,`
+        `{"formatVersion":8,"primaryLayer":0,"layers":[`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":"Tri","visible":true},`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]],`
         ~ `"uvMaps":[{"name":"uv","dim":2,"data":[0.1,0.2, 0.3,0.4]}]}}`
         ~ `]}`);
@@ -422,13 +442,13 @@ unittest { // a multi-layer doc round-trips UV on ONE layer, none on the other
     // own mesh sub-object), so they must not bleed across layers.
     enum string path = "/tmp/vibe3d-test-v4-uv-multilayer.v3d";
     write(path,
-        `{"formatVersion":7,"primaryLayer":0,"layers":[`
-        ~ `{"name":"Quad","visible":true,"selected":true,`
+        `{"formatVersion":8,"primaryLayer":0,"layers":[`
+        ~ `{"type":"mesh","selected":true,"channels":{"name":"Quad","visible":true},`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0]],`
         ~ `"faces":[[0,1,2,3]],`
         ~ `"uvMaps":[{"name":"uv","dim":2,`
         ~ `"data":[0.0,0.0, 1.0,0.0, 1.0,1.0, 0.0,1.0]}]}},`
-        ~ `{"name":"Tri","visible":true,"selected":false,`
+        ~ `{"type":"mesh","selected":false,"channels":{"name":"Tri","visible":true},`
         ~ `"mesh":{"vertices":[[0,0,0],[1,0,0],[0,1,0]],"faces":[[0,1,2]]}}`
         ~ `]}`);
     scope(exit) if (exists(path)) remove(path);

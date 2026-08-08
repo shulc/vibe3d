@@ -123,13 +123,18 @@ class FileSave : Command {
         // rows (obj/gltf/glb/fbx) take the registry's exporter id.
         const ext = extension(path).toLower;
         const fi  = formatFor(ext);
-        // Whether the write covered the WHOLE document. Only the native
-        // .v3d branch below can leave this `false` — `writeV3d` skips any
-        // layer v7 cannot yet represent (a non-mesh item) rather than
-        // crashing or rejecting the whole file (task 0615 Stage 6/7 review
-        // round 2, should-fix 4). Gates the dirty-flag rebaseline below: a
-        // skip means the on-disk file no longer matches the in-memory
-        // document, so the document must NOT be marked clean.
+        // Whether the write covered the WHOLE document. Gates the dirty-flag
+        // rebaseline below: a partial write means the on-disk file no longer
+        // matches the in-memory document, so the document must NOT be marked
+        // clean.
+        //
+        // Task 0616 Ph6: as of `.v3d` v8 the native branch can represent every
+        // item kind, so `writeV3d` has no remaining reason to report a partial
+        // write and always returns true. The channel is KEPT rather than
+        // deleted — this is the only place the decision is externally
+        // observable, and a future format-limited write path will want it back
+        // rather than have to re-derive it. (It was introduced when v7 had to
+        // skip non-mesh items, which is exactly the loss v8 closes.)
         bool wroteComplete = true;
         if (fi !is null && fi.kind == FormatKind.lwoNative) {
             // LWO export is LAYER-AWARE (Stage 2): one LAYR per Document layer
@@ -158,11 +163,10 @@ class FileSave : Command {
             }
         } else {
             // Native .v3d is the layered source of truth: serialize the WHOLE
-            // document (every layer + the active index) as formatVersion 2.
-            // Interchange exports above stay single-mesh (active layer) — that
-            // is Stage 3's job. writeV3d returns false when a non-mesh layer
-            // had to be skipped (v7 cannot represent it yet) — see
-            // `wroteComplete`'s doc comment above.
+            // document — every item of every kind, plus the primary and focus
+            // indices — as the current `formatVersion`. Interchange exports
+            // above stay single-mesh (active layer). See `wroteComplete`'s
+            // comment above for why the return value is still threaded.
             wroteComplete = writeV3d(*document, path);
         }
 
@@ -198,17 +202,25 @@ class FileSave : Command {
 }
 
 // ---------------------------------------------------------------------------
-// Task 0615 Stage 6/7 review round 2, SHOULD-FIX 4: a native .v3d save that
-// has to SKIP a non-mesh layer (v7 cannot represent one yet, `writeV3d`
-// omits it with a warning rather than crashing or rejecting the whole file)
-// used to unconditionally `requestDocRebaseline()` regardless — the UI would
-// then show the document as "saved" even though the file on disk no longer
-// matches the in-memory document (the skipped layer is simply gone from
-// disk). The fix threads `writeV3d`'s new `bool` return (true == every
-// layer was written) through as `wroteComplete`, and only rebaselines when
-// it is true. Pinned here via `io.doc_state`'s dirty-flag API — the only
-// place this decision is externally observable — contrasted against a
-// clean all-mesh save, which must still rebaseline exactly as before.
+// The dirty-flag gate, at the two ends of the change task 0616 Ph6 made.
+//
+// HISTORY, because it is what this test is for. A native `.v3d` save used to
+// SKIP any layer v7 could not represent (a non-mesh item) and rebaseline the
+// dirty flag anyway — so the UI showed "saved" over a document whose Empty
+// item was simply gone from disk. The fix threaded `writeV3d`'s `bool` return
+// through as `wroteComplete` and rebaselined only on true.
+//
+// v8 represents every item kind, so the skip is gone and the mixed document
+// now saves COMPLETELY and legitimately goes clean — which is the assertion
+// this case now makes. That is not the guard being deleted: the guard is still
+// wired, and the reason its trigger disappeared is that the underlying loss
+// was fixed. The all-mesh control below is unchanged and still proves the
+// rebaseline itself works.
+//
+// Discriminating: the mixed case asserts the document goes CLEAN *and* that
+// the saved file really carries the Empty item. "Clean" alone would also be
+// what a writer that silently dropped the item and returned true produces —
+// which is exactly the bug the original guard existed for.
 // ---------------------------------------------------------------------------
 unittest {
     import std.file   : tempDir, remove, exists;
@@ -235,10 +247,9 @@ unittest {
 
     auto v = new View(0, 0, 800, 600);
 
-    // Case 1: a MIXED document (a non-mesh layer will be skipped). Prime a
-    // baseline, then simulate an edit since that baseline so the document
-    // starts dirty — mirroring the state a real user is in right before
-    // hitting Save.
+    // Case 1: a MIXED document. Prime a baseline, then simulate an edit since
+    // that baseline so the document starts dirty — mirroring the state a real
+    // user is in right before hitting Save.
     {
         auto doc = Document.bootstrap(makeCube());
         auto empty = new Layer; empty.name = "Empty"; empty.kind = ItemKind.Empty;
@@ -250,16 +261,27 @@ unittest {
 
         auto save = new FileSave(doc.activeMesh(), v, EditMode.Vertices, &doc);
         save.setPath(pathMixed);
-        assert(save.apply(),
-            "save must still succeed even though a layer is skipped");
+        assert(save.apply(), "save must succeed");
 
         // Feed the SAME live revision through another sync, as the next
-        // frame's syncDocRevision(rev) call would — should-fix 4 says this
-        // must NOT clear the dirty flag when a layer was skipped.
+        // frame's syncDocRevision(rev) call would.
         syncDocRevision(101);
-        assert(docDirty(),
-            "should-fix 4: a save that skipped a non-mesh layer must leave "
-            ~ "the document DIRTY — the file on disk does not match memory");
+        assert(!docDirty(),
+            "a v8 save covers the non-mesh item too, so the document is "
+            ~ "legitimately CLEAN afterwards — this used to stay dirty because "
+            ~ "the item was dropped from the file");
+
+        // …and the reason it is clean is that the item is really there. Without
+        // this, "clean" would also be what a writer that silently dropped the
+        // item and reported success produces — the exact bug the dirty-flag
+        // gate was added for.
+        import std.json : parseJSON;
+        import std.file : readText;
+        auto saved = parseJSON(readText(pathMixed));
+        assert(saved["layers"].array.length == 2,
+            "the saved file carries BOTH items");
+        assert(saved["layers"].array[1]["type"].str == "empty",
+            "…and the second one is still the Empty");
     }
 
     // Case 2 (control): an all-mesh document — nothing skipped — must still

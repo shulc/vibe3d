@@ -260,11 +260,11 @@ unittest {
     // Hand-written v3d fixture — 3×3 quad grid with center UV perturbed.
     // The 32 UV floats are listed in face-major / corner-major (CSR) order.
     enum string v3d = `{
-  "formatVersion": 7,
+  "formatVersion": 8,
   "layers": [{
-    "name": "UV Relax Test",
-    "visible": true,
+    "type": "mesh",
     "selected": true,
+    "channels": { "name": "UV Relax Test", "visible": true },
     "mesh": {
       "vertices": [
         [0,0,0],[1,0,0],[2,0,0],
@@ -293,7 +293,7 @@ unittest {
     assert(exists(tmpSave), "expected saved file at " ~ tmpSave);
 
     auto j = parseJSON(readText(tmpSave));
-    assert(j["formatVersion"].integer == 7);
+    assert(j["formatVersion"].integer == 8);
     auto meshJ = j["layers"][0]["mesh"];
     assert("uvMaps" in meshJ, "uvMaps must be present after uv.relax");
     auto uvData = meshJ["uvMaps"][0]["data"].array;
@@ -375,11 +375,11 @@ unittest {
 
     // Minimal single-quad v3d with a UV map.
     enum string v3d = `{
-  "formatVersion": 7,
+  "formatVersion": 8,
   "layers": [{
-    "name": "UV Relax iter0",
-    "visible": true,
+    "type": "mesh",
     "selected": true,
+    "channels": { "name": "UV Relax iter0", "visible": true },
     "mesh": {
       "vertices": [[0,0,0],[1,0,0],[1,1,0],[0,1,0]],
       "faces": [[0,1,2,3]],
