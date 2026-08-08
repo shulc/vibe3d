@@ -224,6 +224,7 @@ import commands.tool.pipe     : ToolPipeAttrCommand;
 import commands.tool.begin_session : ToolBeginSessionCommand;
 import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
+import commands.ui.image_list      : UiImageListCommand;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
@@ -1756,6 +1757,15 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             ull.setVisible(pos[0].str);
+                    }
+                }
+            } else if (auto uil = cast(UiImageListCommand)cmd) {
+                // ui.imageList <show|hide> (test-only; task 0616 Ph4).
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            uil.setVisible(pos[0].str);
                     }
                 }
             } else if (auto uvp = cast(UiViewportPropsCommand)cmd) {

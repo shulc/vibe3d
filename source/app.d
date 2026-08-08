@@ -133,6 +133,7 @@ private enum int kToolPropsTabMain      = 0;
 private enum int kToolPropsTabSnapping  = 1;
 private __gshared int g_toolPropsTab = kToolPropsTabMain;
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
+import commands.ui.image_list      : UiImageListCommand, g_imageListShown;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 version (WithAI)
 import commands.ui.copilot_panel : g_copilotPanelShown;
@@ -5731,6 +5732,11 @@ void main(string[] args) {
                     // Right panel: Layers + Tool Properties + Viewport Properties
                     // as tabs (multiple DockWindow on same nodeId → auto-tab-bar).
                     ImGui.DockBuilderDockWindow("Layers",             rightId);
+                    // Task 0616 Ph4: the Images list is a sibling TAB of
+                    // Layers, not rows inside it — the two lists are exact
+                    // complements of `document.layers` and the Layers panel
+                    // stays about geometry.
+                    ImGui.DockBuilderDockWindow("Images",             rightId);
                     ImGui.DockBuilderDockWindow("Tool Properties",    rightId);
                     ImGui.DockBuilderDockWindow("Viewport Properties",rightId);
                     ImGui.DockBuilderDockWindow("Tab bar",            topId);
@@ -5885,6 +5891,16 @@ void main(string[] args) {
         if (!command.g_testMode || g_layerListShown) {
             import ui.panels : drawLayerListPanel;
             drawLayerListPanel(app);
+        }
+
+        // ---- Images (floating; task 0616 Ph4) ----
+        // The document's loaded images. Same imgui-determinism rule as the
+        // Layers panel above — hidden by default in --test, opt-in via
+        // `ui.imageList show` — so a second floating window cannot start
+        // swallowing the synthetic viewport drags every existing test drives.
+        if (!command.g_testMode || g_imageListShown) {
+            import ui.panels : drawImageListPanel;
+            drawImageListPanel(app);
         }
 
         // ---- Viewport Properties (floating) ----

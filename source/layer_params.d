@@ -1,8 +1,8 @@
 module layer_params;
 
 import params   : Param, ParamProvider;
-import document : Layer, kindInfo, ItemKind, ItemXform, MIN_ITEM_SCALE_MAG,
-                  MAX_ITEM_SCALE_MAG, sanitizeItemXform;
+import document : Layer, Document, kindInfo, ItemKind, ItemXform,
+                  MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG, sanitizeItemXform;
 import seltype  : SelType;
 
 // ---------------------------------------------------------------------------
@@ -37,7 +37,13 @@ final class LayerPropsProvider : ParamProvider {
     private Layer layer_;   // the wrapped layer (a class ⇒ stable heap identity)
 
     // P4 primary-transform interlock. When a transform tool is active, the panel
-    // ALWAYS binds the PRIMARY layer — the one the gizmo is operating on. Authoring
+    // binds the item-selection FOCUS (`itemPropsTarget`, below) — which on any
+    // all-mesh document IS the primary, the one the gizmo is operating on.
+    // Task 0616 Ph4 widened the binding so a non-mesh focus is reachable; the
+    // widening is conservative here, since a focused item that has no transform
+    // at all (an image) exposes none of the 12 params this flag gates, and a
+    // focused `Empty` at worst greys rows a geometry-mode gizmo is not writing.
+    // Authoring
     // a primary transform mid-gesture would silently desync the gizmo from the
     // mesh it thinks it is moving (the transform is render-only; the gizmo + drag
     // math run in the layer's LOCAL frame). So while this flag is set, the 12
@@ -323,6 +329,84 @@ final class LayerPropsProvider : ParamProvider {
     /// frame (no GPU vertex re-upload, since vertices never move and the mesh
     /// `mutationVersion` is untouched).
     void onParamChanged(string name) {}
+}
+
+/// Which item the shared item-properties form binds — the item-selection
+/// FOCUS, not the primary.
+///
+/// Task 0616 Ph4. The measured shape of the image list is explicit that a
+/// clip's editable properties live OUTSIDE the list, in the shared properties
+/// panel, and that the two must not overlap. That only means anything if the
+/// shared panel can actually reach a non-mesh item, and bound to
+/// `Document.primary` it never could: `primary` is by invariant a
+/// `canBePrimary` item, i.e. always a mesh, so an image item's `colorspace` /
+/// `useAlpha` params — declared in `kindParams` below precisely so the form
+/// could show them — had no reachable surface at all.
+///
+/// This is the SAME correction task 0615 Stage 6 made to the Layers panel's
+/// Delete button, and for the same reason: the panel highlighted the focus
+/// while the affordance addressed the primary, so on any document where the
+/// two differ the user acted on a row they were not looking at.
+///
+/// NOT a behaviour change on an all-mesh document. `focusedItem` and `primary`
+/// coincide there always (a mesh is `canBePrimary`, so every select that moves
+/// the focus moves the primary with it), which is what keeps every existing
+/// mesh-only expectation intact — and what makes the test below meaningful
+/// only because it also exercises a document where they differ.
+///
+/// Falls back to `primary` if the focus is somehow unset. `focusedItem !is
+/// null` is a document invariant, so the fallback is unreachable in a
+/// well-formed document; it exists so a partially built one (a fixture, a
+/// half-parsed file) draws instead of dereferencing null.
+Layer itemPropsTarget(Document* doc) {
+    if (doc is null) return null;
+    return doc.focusedItem !is null ? doc.focusedItem : doc.primary;
+}
+
+// ---------------------------------------------------------------------------
+// P0.4b (task 0616 Ph4): the properties form follows the FOCUS.
+//
+// Discriminating: the fixture's focus is an IMAGE while its primary is a mesh,
+// so an implementation returning `doc.primary` reads the mesh — a different
+// object, with a different name and a different param set. The all-mesh half
+// is the control that proves the change is inert where it must be.
+// ---------------------------------------------------------------------------
+unittest {
+    import document : Document, ItemKind, ImageData;
+    import mesh     : makeCube;
+    import seltype  : SelMode;
+
+    auto doc = Document.bootstrap(makeCube());
+    doc.layers[0].name = "the mesh";
+    assert(itemPropsTarget(&doc) is doc.primary,
+        "all-mesh control: focus and primary coincide, so the binding is "
+        ~ "unchanged from what it has always been");
+
+    auto img = new Layer;
+    img.name = "the image";
+    img.kind = ItemKind.Image;
+    img.imageRef() = new ImageData();
+    doc.layers ~= img;
+    doc.selectItem(img, SelMode.Set);
+
+    assert(doc.primary is doc.layers[0],
+        "vacuity guard: an image can never become the primary, so the focus "
+        ~ "and the primary here really are different objects");
+    assert(doc.focusedItem is img, "precondition: the image took the focus");
+
+    auto bound = itemPropsTarget(&doc);
+    assert(bound is img,
+        "the properties form binds the FOCUS; binding the primary would show "
+        ~ "'" ~ doc.primary.name ~ "' instead of '" ~ img.name ~ "'");
+
+    // And the bound provider really does expose the image's own channels —
+    // which is the whole point of following the focus.
+    auto prov = new LayerPropsProvider(bound);
+    bool sawColorspace = false;
+    foreach (p; prov.params()) if (p.name == "colorspace") sawColorspace = true;
+    assert(sawColorspace,
+        "the image's per-kind channels are reachable through the bound "
+        ~ "provider — they are not through the primary's");
 }
 
 // ---------------------------------------------------------------------------
