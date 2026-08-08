@@ -8,7 +8,10 @@ import tool;
 import mesh                : Mesh, GpuMesh, MeshCacheKey;
 import math               : Vec3, Viewport, projectToWindowFull, closestOnSegment2D,
                              screenPointToRay, closestPointOnSegmentToRay, dot,
-                             pointInPolygon2D, rayPlaneIntersect;
+                             pointInPolygon2D, rayPlaneIntersect,
+                             AimViewport, aimSpace, ModelSpace,
+                             screenPointToLocalRay;
+import document             : primaryModelSpace;
 import shader              : Shader;
 import operator            : VectorStack;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
@@ -893,8 +896,12 @@ private:
     // (`onShiftMmbDown`); the ratio tracks the cursor on every subsequent
     // motion event (`onMouseMotion`) and commits on release
     // (`onMouseButtonUp`'s MIDDLE branch, `commitAddLoop`). `seedRailA_`/
-    // `seedRailB_` are the directed world-space endpoints `ratioFromCursor`
-    // measures the `[0,1]` ratio against (`seedRail`, captured once at arm
+    // `seedRailB_` are the directed LAYER-LOCAL endpoints `ratioFromCursor`
+    // measures the `[0,1]` ratio against (task 0619: this said "world-space"
+    // and `seedRail` fills them from raw `m.vertices[]`; `ratioOnSegment`
+    // is what lifts them for its own world election, and the ratio comes
+    // back local for free because an affine map preserves ratios along a
+    // line) (`seedRail`, captured once at arm
     // time — the mesh is never mutated between arm and commit, so
     // re-deriving them at every motion event would be redundant). Cleared
     // by `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
@@ -1608,11 +1615,60 @@ private:
         // real mouse event does).
     }
 
-    // Project a world point to a foreground-drawlist pixel; false when
-    // behind the camera (mirrors snap_render.d's private `project`).
-    static bool projectPt(Vec3 world, const ref Viewport vp, out ImVec2 pt) {
+    // ---------------------------------------------------------------------
+    // THE FILE'S ONE PROJECTION SEAM — split in two by SPACE (task 0619
+    // Stage 4a, doc/tool_aiming_item_transform_plan.md §2.2).
+    //
+    // What used to be here was a single `projectPt(Vec3 world, …)` whose
+    // parameter was named `world` and which was handed a raw, LAYER-LOCAL
+    // `mesh.vertices[…]` by most of its call sites. On a layer with a
+    // non-identity item transform that projects the geometry to where it
+    // would sit at IDENTITY, not to where it is drawn — so every pick,
+    // veto, gather and ghost in this file aimed at the wrong pixels.
+    //
+    // The name is deliberately GONE rather than fixed in place: deleting it
+    // turned all 161 of its call sites into build errors, which is the only
+    // mechanism that forces each one to be classified rather than assumed
+    // (§R2). The two replacements differ in the TYPE of their viewport, so a
+    // MIS-classified site cannot compile either:
+    //
+    //   * `projectLocalPt` takes an `AimViewport` — a viewport that has
+    //     already had a `ModelSpace` composed into it and that cannot be
+    //     produced any other way (math.d §2.0). Hand it `mesh.vertices[…]`
+    //     and any other layer-local quantity.
+    //   * `projectWorldPt` takes a plain `Viewport`. Hand it a value that is
+    //     ALREADY in world space — everything the CONS stage publishes
+    //     (`lastHit_.point` / `.normal` / `.nearestVertPos` /
+    //     `.nearestEdgeA/B`, world since 0617).
+    //
+    // Neither takes a `ModelSpace`, so there is no parameter to silence the
+    // compiler with an identity value: the only available choice is a
+    // semantic one.
+    //
+    // AIMING KIND for `projectLocalPt`: **Pixel** (§1.1). The law is "keep
+    // the geometry local, compose the viewport", because
+    // `proj·(view·M)·v ≡ proj·view·(M·v)` holds exactly — so the pixel this
+    // returns IS the pixel the vertex is drawn at, with no per-vertex
+    // transform. Build the `AimViewport` ONCE per query (§3): it is a stack
+    // copy plus one 4×4 multiply, which is cheap per event and unacceptable
+    // per vertex.
+    // ---------------------------------------------------------------------
+
+    /// Project a LAYER-LOCAL point to a foreground-drawlist pixel through the
+    /// aiming space; false when behind the camera.
+    static bool projectLocalPt(Vec3 pLocal, const ref AimViewport vpAim, out ImVec2 pt) {
         float sx, sy, ndcZ;
-        if (!projectToWindowFull(world, vp, sx, sy, ndcZ)) return false;
+        if (!projectToWindowFull(pLocal, vpAim.vp, sx, sy, ndcZ)) return false;
+        pt = ImVec2(sx, sy);
+        return true;
+    }
+
+    /// Project an ALREADY-WORLD point to a foreground-drawlist pixel; false
+    /// when behind the camera. The typed home for "this value is not a mesh
+    /// coordinate" — so nobody has to fabricate an aim space to say so.
+    static bool projectWorldPt(Vec3 pWorld, const ref Viewport vp, out ImVec2 pt) {
+        float sx, sy, ndcZ;
+        if (!projectToWindowFull(pWorld, vp, sx, sy, ndcZ)) return false;
         pt = ImVec2(sx, sy);
         return true;
     }
@@ -2027,9 +2083,13 @@ public:
             {
                 auto m = mesh;
                 if (fillSeed >= 0 && m !is null && fillSeed < cast(int)m.edges.length) {
+                    // Pixel (§1.1): the radius is a distance from the cursor
+                    // to the DRAWN endpoints of the seed edge, so the two
+                    // local vertices go through the aiming space.
+                    const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
                     ImVec2 pa, pb;
-                    if (projectPt(m.vertices[m.edges[fillSeed][0]], vp, pa)
-                     && projectPt(m.vertices[m.edges[fillSeed][1]], vp, pb)) {
+                    if (projectLocalPt(m.vertices[m.edges[fillSeed][0]], vpAim, pa)
+                     && projectLocalPt(m.vertices[m.edges[fillSeed][1]], vpAim, pb)) {
                         fillRadiusPx_    = fillHoverRadiusPx(cast(float)e.x, cast(float)e.y, pa, pb);
                         fillRadiusValid_ = true;
                     }
@@ -2331,6 +2391,10 @@ public:
         private Viewport aimVp_;
         private int      aimX_, aimY_;
         private Vec3     aimDir_ = Vec3(0, 0, 0);
+        // The same ray direction in the PRIMARY layer's LOCAL space (task
+        // 0619 §1.4), written beside `aimDir_` in `aimAt`. Deliberately NOT
+        // renormalized — only its SIGN against a local normal is read.
+        private Vec3     aimDirLocal_ = Vec3(0, 0, 0);
         private bool     aimed_;
 
         // What the service pushed in. Recorded, not consumed: the pen's own
@@ -2375,6 +2439,14 @@ public:
             aimY_  = my;
             Vec3 org;
             screenPointToRay(cast(float)mx, cast(float)my, vp, org, aimDir_);
+            // Task 0619 §1.4: the primary layer's LOCAL copy of this same
+            // ray direction, resolved ONCE per aim. `orientationAdmits`
+            // dots it against local face normals, so this replaces an
+            // O(faces) normal transform with one O(1) direction transform.
+            // `aimVp_`/`aimDir_` stay WORLD: `proximity` receives world
+            // candidate positions from the snapping service and must keep
+            // measuring its pixel distance in the world viewport.
+            aimDirLocal_ = primaryModelSpace().toLocalDir(aimDir_);
             aimed_ = true;
         }
 
@@ -2443,11 +2515,56 @@ public:
         /// and is therefore admitted, which is the same answer the border half
         /// gives face-less geometry.
         ///
-        /// No transform is applied to the normal where the reference applies
-        /// its view matrix: it needs one because the ray it holds and the mesh
-        /// it filters are in different spaces, and ours are both in world
-        /// space (`Document` has no per-layer transform yet). If that ever
-        /// changes, this is the line that has to learn about it.
+        /// THE SPACES — task 0619 §1.4, and the comment this replaces was
+        /// WRONG about them. It said "ours are both in world space
+        /// (`Document` has no per-layer transform yet)". `Document` has had
+        /// one since 0617, and `mesh_.faceNormal` was never a world normal
+        /// in the first place: it is built from `mesh_.vertices[]`, i.e.
+        /// LOCAL coordinates. Only `aimDir_` was world. The test therefore
+        /// dotted a local normal against a world ray, which is wrong for any
+        /// non-identity `M` — including under a pure rotation, where the
+        /// numbers stay plausible and the SIGN can still flip near grazing.
+        ///
+        /// The fix is one direction transform on the RAY, not one normal
+        /// transform per face, and its sign correction is **σ = +1** — no
+        /// `ms.mirrored`, no `det(M)`:
+        ///
+        ///     dot(n_local, ms.toLocalDir(d_world))
+        ///       == dot(ms.toWorldNormal(n_local), d_world)     EXACTLY,
+        ///
+        /// for any invertible `M`, mirrored or not, because
+        /// `dot((M^-1)^T n, M v) == dot(n, v)` is an identity. Four in-tree
+        /// citations, none of them this comment's own opinion:
+        ///   * `math.d:428-454` — `ModelSpace.mirrored`'s doc: a front-facing
+        ///     test done ENTIRELY in local space needs NO correction,
+        ///     mirrored or not; names the three sites that had it backwards
+        ///     and says not to reintroduce the flip;
+        ///   * `math.d:666-721` — the unittest that checks the local test
+        ///     against the true geometric world test (world normal via the
+        ///     inverse-transpose) across four `M`s, mirrored and not, and
+        ///     whose own comment records that its PREVIOUS version measured
+        ///     a winding artefact and could not fail. (The plan cites this
+        ///     as `math.d:570-592`; that range is the `toLocalPoint`
+        ///     round-trip and `toLocalDir` non-normalisation blocks — the
+        ///     line numbers moved, the argument did not.);
+        ///   * `math.d:495-512` — `toWorldNormal`'s doc: do NOT "fix" a
+        ///     mirror-flipped normal by cross-producting world points;
+        ///   * `app.d:4742-4752` (lasso `frontFacing`), `mesh.d:8146`
+        ///     (`visibleVertices`' cull) and `snap.d:1185` (`faceVisible`) —
+        ///     the three sites 0617 converted to exactly this law, each
+        ///     carrying its reason inline. (The plan cites the first two as
+        ///     `app.d:4644` / `mesh.d:6883`; those lines have since moved.
+        ///     Re-derived by searching for `ms.mirrored`, which is still read
+        ///     nowhere in production.)
+        ///
+        /// Two laws that are NOT this one, rejected on purpose:
+        ///   * the world WINDING normal (`sign(det M)` times this) — a true
+        ///     statement about `cross(Mu, Mv)`, and not the facing truth;
+        ///   * `mat3(M) * n`, what the lit vertex shader shades with
+        ///     (`shader.d:136`). That is the classic wrong normal transform
+        ///     under non-uniform scale — a pre-existing shading defect, not
+        ///     a definition of facing. Adopting it would import a renderer
+        ///     bug into a picking predicate.
         ///
         /// OURS, and unmeasured — the UN-AIMED case. The reference has no such
         /// state: it writes its screen ray immediately before the candidate
@@ -2472,7 +2589,12 @@ public:
             Vec3 n = Vec3(0, 0, 0);
             foreach (fi; mesh_.facesAroundVertex(vi))
                 n = n + mesh_.faceNormal(cast(uint)fi);
-            return !(dot(n, aimDir_) > 0.0f);
+            // `n` is LOCAL (a sum of local winding normals, and the sum is
+            // linear so it transports exactly the same way one of them
+            // does); `aimDirLocal_` is the aim ray carried into that same
+            // space. See this function's doc comment for why the sign needs
+            // no correction.
+            return !(dot(n, aimDirLocal_) > 0.0f);
         }
 
         // ---- SnapGuide ----------------------------------------------------
@@ -2798,11 +2920,18 @@ public:
         auto m = mesh;
         if (m is null) return 0;
 
+        // Pixel (§1.1), hoisted out of the per-moved-vertex loop (§3). The
+        // pixel this produces is fed straight back into
+        // `resolveSnapTargetVert`, which runs the SAME aiming space over the
+        // same mesh — the two must agree or a moved vertex would query at a
+        // pixel it was never drawn at.
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+
         uint[2][] pairs;
         foreach (vi; verts) {
             if (vi >= m.vertices.length) continue;   // stale arm — defensive
             ImVec2 pt;
-            if (!projectPt(m.vertices[vi], vp, pt)) continue;   // off-screen/behind
+            if (!projectLocalPt(m.vertices[vi], vpAim, pt)) continue;   // off-screen/behind
             immutable int t = resolveSnapTargetVert(cast(int)lround(pt.x),
                                                     cast(int)lround(pt.y), vp, verts);
             if (t < 0) continue;
@@ -2846,12 +2975,14 @@ public:
         auto m = mesh;
         if (m is null) return -1;
         if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
+        // Pixel (§1.1), built ONCE for the whole O(V) scan (§3).
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
         int   best   = -1;
         float bestD2 = float.infinity;
         foreach (vi; 0 .. m.vertices.length) {
             if (admit !is null && !admit(SnapType.Vertex, cast(int)vi, 0)) continue;
             ImVec2 pt;
-            if (!projectPt(m.vertices[vi], vp, pt)) continue;
+            if (!projectLocalPt(m.vertices[vi], vpAim, pt)) continue;
             float dx = pt.x - cast(float)mx, dy = pt.y - cast(float)my;
             float d2 = dx * dx + dy * dy;
             if (d2 < bestD2) { bestD2 = d2; best = cast(int)vi; }
@@ -3035,8 +3166,8 @@ public:
     // THE ONE MODELLED TERM, named so it is not mistaken for a measurement:
     // the ranking's 3-space distance is measured against the reference's own
     // internal cursor MODEL point, which is not a quantity we can read. We
-    // use this tool's OWN established screen→world mapping for it
-    // (`shiftedWorldPoint` — unproject the cursor onto the constant-view-
+    // use this tool's OWN established screen→layer mapping for it
+    // (`shiftedLocalPoint` — unproject the cursor onto the constant-view-
     // depth plane through the seed edge's midpoint), reusing the convention
     // every other gesture here already drags on rather than inventing a
     // second one. It is exact for the fronto-parallel planar rigs the rule
@@ -3152,8 +3283,14 @@ public:
     // transform has no failure branch; ours does, and every other screen-space
     // predicate in this tool skips on it. Clause 1 is purely topological and
     // is unaffected either way.
+    // Task 0619 Stage 4a: this is a screen-space predicate over PRIMARY-layer
+    // vertices, so its viewport parameter is the AIMING space (§1.1) — the
+    // caller composes it once (`fillRingFromSeed` already has one) and the
+    // TYPE is what stops a world viewport reaching a local vertex here. The
+    // function is `static`, so it cannot resolve a `ModelSpace` of its own;
+    // taking the composed viewport is also what keeps that honest.
     static bool ringRefusedByIncidentPolygon(const(Mesh)* m, const(uint)[] ring,
-                                             const ref Viewport vp) {
+                                             const ref AimViewport vpAim) {
         if (m is null || ring.length == 0) return false;
 
         // The ring's own screen corners, once.
@@ -3161,7 +3298,7 @@ public:
         auto ringOk  = new bool[](ring.length);
         foreach (i, v; ring)
             if (v < m.vertices.length)
-                ringOk[i] = projectPt(m.vertices[v], vp, ringPix[i]);
+                ringOk[i] = projectLocalPt(m.vertices[v], vpAim, ringPix[i]);
 
         foreach (const ref f; m.faces) {
             if (f.length <= 2) continue;         // ELIGIBILITY (unexercised)
@@ -3201,11 +3338,11 @@ public:
             // precisely so the next reader does not have to re-derive it.
             ImVec2 prev;
             bool   prevOk = f[$ - 1] < m.vertices.length
-                         && projectPt(m.vertices[f[$ - 1]], vp, prev);
+                         && projectLocalPt(m.vertices[f[$ - 1]], vpAim, prev);
             foreach (t; 0 .. f.length) {
                 ImVec2 cur;
                 immutable bool curOk = f[t] < m.vertices.length
-                                    && projectPt(m.vertices[f[t]], vp, cur);
+                                    && projectLocalPt(m.vertices[f[t]], vpAim, cur);
                 if (prevOk && curOk)
                     foreach (i; 0 .. ring.length) {
                         immutable size_t j = (i + 1) % ring.length;
@@ -3259,10 +3396,13 @@ public:
 
         immutable float cx = cast(float)mx, cy = cast(float)my;
 
+        // Pixel (§1.1), built ONCE for both the O(V) and the O(E) scan (§3).
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+
         float bestVertD = float.infinity;
         foreach (vi; 0 .. m.vertices.length) {
             ImVec2 pv;
-            if (!projectPt(m.vertices[vi], vp, pv)) continue;
+            if (!projectLocalPt(m.vertices[vi], vpAim, pv)) continue;
             immutable float d = hypot(pv.x - cx, pv.y - cy);
             if (d < bestVertD) bestVertD = d;
         }
@@ -3276,8 +3416,8 @@ public:
         foreach (ei, e; m.edges) {
             if (ei >= polyCount.length || polyCount[ei] != 1) continue;
             ImVec2 pa, pb;
-            if (!projectPt(m.vertices[e[0]], vp, pa)) continue;
-            if (!projectPt(m.vertices[e[1]], vp, pb)) continue;
+            if (!projectLocalPt(m.vertices[e[0]], vpAim, pa)) continue;
+            if (!projectLocalPt(m.vertices[e[1]], vpAim, pb)) continue;
             float t;
             immutable float d = closestOnSegment2D(cx, cy, pa.x, pa.y, pb.x, pb.y, t);
             if (d < bestEdgeD) { bestEdgeD = d; bestEdge = cast(int)ei; }
@@ -3308,9 +3448,12 @@ public:
         if (seedA == seedB) return null;   // malformed edge — two slots, one vertex
 
         immutable float cx = cast(float)mx, cy = cast(float)my;
+        // Pixel (§1.1), built ONCE at function entry and reused by every
+        // scan below AND by `ringRefusedByIncidentPolygon` at the tail (§3).
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
         ImVec2 pSeedA, pSeedB;
-        if (!projectPt(m.vertices[seedA], vp, pSeedA)) return null;
-        if (!projectPt(m.vertices[seedB], vp, pSeedB)) return null;
+        if (!projectLocalPt(m.vertices[seedA], vpAim, pSeedA)) return null;
+        if (!projectLocalPt(m.vertices[seedB], vpAim, pSeedB)) return null;
 
         // GATHER radius = range × the hover radius. `range` 0 leaves nothing
         // but the seeds reachable, so the count gate refuses — the measured
@@ -3319,9 +3462,21 @@ public:
             fillRange_ * fillHoverRadiusPx(cx, cy, pSeedA, pSeedB);
 
         // The cursor's 3-space point — the ONE modelled term, see the block
-        // comment above.
+        // comment above. Task 0619: both operands of the RANKING distance
+        // below are now in the SAME space. They were not: `m.vertices[v]` is
+        // local and this point used to be a world ray met against a local
+        // anchor, so under any layer transform the ranking compared two
+        // different frames — a quantity in no space at all.
+        //
+        // WHICH space the ranking should run in, once they agree, is a
+        // JUDGEMENT and not a measurement: the gather and the crossing reject
+        // are already screen-space, and only this last tie-break is 3D. LOCAL
+        // is chosen because that is where `m.vertices[v]` lives and because it
+        // is the smaller change; under a non-uniform scale a WORLD ranking
+        // would order the survivors differently. The reference's own cursor
+        // model point is unreadable (see above), so no capture settles it.
         immutable Vec3 seedMid = (m.vertices[seedA] + m.vertices[seedB]) * 0.5f;
-        immutable Vec3 cursorPt = shiftedWorldPoint(seedMid, mx, my, vp);
+        immutable Vec3 cursorPt = shiftedLocalPoint(seedMid, mx, my, vp);
 
         // The screen segments the crossing reject tests against: every edge
         // of every polygon incident to EITHER seed, gathered once. The
@@ -3338,8 +3493,8 @@ public:
                 immutable uint u0 = f[k], u1 = f[(k + 1) % f.length];
                 if (u0 >= m.vertices.length || u1 >= m.vertices.length) continue;
                 ImVec2 q0, q1;
-                if (!projectPt(m.vertices[u0], vp, q0)) continue;
-                if (!projectPt(m.vertices[u1], vp, q1)) continue;
+                if (!projectLocalPt(m.vertices[u0], vpAim, q0)) continue;
+                if (!projectLocalPt(m.vertices[u1], vpAim, q1)) continue;
                 barriers ~= [q0, q1];
             }
         }
@@ -3384,7 +3539,7 @@ public:
             if (already) continue;
 
             ImVec2 pv;
-            if (!projectPt(m.vertices[v], vp, pv)) continue;
+            if (!projectLocalPt(m.vertices[v], vpAim, pv)) continue;
             if (hypot(pv.x - cx, pv.y - cy) > reachPx) continue;
 
             // QUALIFIER — isolated, or degenerate-polygon-only, or border.
@@ -3433,7 +3588,7 @@ public:
         } else {
             ImVec2[4] sp;
             foreach (k; 0 .. 4)
-                if (!projectPt(m.vertices[slot[k]], vp, sp[k])) return null;
+                if (!projectLocalPt(m.vertices[slot[k]], vpAim, sp[k])) return null;
 
             if (screenQuadConvex(sp[0], sp[1], sp[2], sp[3])) {
                 ring = slot[0 .. 4].dup;
@@ -3455,7 +3610,7 @@ public:
         // A refusal returns `null`, which routes `fillDown` into the already-
         // ported destructive fall-through (arm Move on the pressed edge) — the
         // same fall-through the recording shows for a press that fails to arm.
-        if (ringRefusedByIncidentPolygon(m, ring, vp)) return null;
+        if (ringRefusedByIncidentPolygon(m, ring, vpAim)) return null;
         return ring;
     }
 
@@ -4034,10 +4189,16 @@ public:
         auto e = m.edges[ei];
         if (e[0] >= m.vertices.length || e[1] >= m.vertices.length) return false;
 
+        // Pixel (§1.1) — `mid` is the average of two LOCAL vertices, which
+        // is itself a local point (an affine map commutes with a midpoint),
+        // so both operands go through the same aiming space and the two
+        // pixel distances compared below are both measured against the
+        // DRAWN geometry.
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
         immutable Vec3 mid = (m.vertices[e[0]] + m.vertices[e[1]]) * 0.5f;
         ImVec2 pm, pv;
-        if (!projectPt(mid, vp, pm)) return false;             // does not project
-        if (!projectPt(m.vertices[vi], vp, pv)) return false;
+        if (!projectLocalPt(mid, vpAim, pm)) return false;             // does not project
+        if (!projectLocalPt(m.vertices[vi], vpAim, pv)) return false;
 
         immutable float dMid = hypot(pm.x - cast(float)mx, pm.y - cast(float)my);
         // The RANGE clause, and it uses the pen's own single press reach —
@@ -4312,7 +4473,12 @@ public:
         if (moveElem_ == MoveElem.Vertex) {
             Vec3[] one = [ moveBase_[0] ];
             readHit(vts);   // the CONS-snapped hit for THIS event's pixel
-            if (lastHit_.hit) one[0] = lastHit_.point;
+            // Landing (§1.5): `moveBase_` is LOCAL (arm-time `m.vertices[]`)
+            // and `lastHit_.point` is the CONS stage's WORLD hit, so this
+            // one array carried two spaces depending on whether the cursor
+            // was over a background surface. `applyMoveTargets` writes the
+            // result to `m.vertices[]`, so local is the space it must be in.
+            if (lastHit_.hit) one[0] = primaryModelSpace().toLocalPoint(lastHit_.point);
             return one;
         }
 
@@ -4645,12 +4811,14 @@ public:
         auto m = mesh;
         if (m is null) return -1;
         if (thresholdPx < 0.0f) thresholdPx = topoPenPressPickPx(vp);
+        // Pixel (§1.1), built ONCE for the whole O(E) scan (§3).
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
         int   best   = -1;
         float bestD  = float.infinity;
         foreach (ei, e; m.edges) {
             ImVec2 pa, pb;
-            if (!projectPt(m.vertices[e[0]], vp, pa)) continue;
-            if (!projectPt(m.vertices[e[1]], vp, pb)) continue;
+            if (!projectLocalPt(m.vertices[e[0]], vpAim, pa)) continue;
+            if (!projectLocalPt(m.vertices[e[1]], vpAim, pb)) continue;
             float t;
             float d = closestOnSegment2D(cast(float)mx, cast(float)my,
                                         pa.x, pa.y, pb.x, pb.y, t);
@@ -4693,8 +4861,10 @@ public:
         }
     }
 
-    // P6 (doc/topopen_p6_addloop_plan.md Phase 2): the directed world-space
-    // endpoints `ratioFromCursor` measures the `[0,1]` ratio against — MUST
+    // P6 (doc/topopen_p6_addloop_plan.md Phase 2): the directed LAYER-LOCAL
+    // endpoints `ratioFromCursor` measures the `[0,1]` ratio against (task
+    // 0619 corrected "world-space" here — every `out` below is a raw
+    // `m.vertices[]` read) — MUST
     // match the direction `insertEdgeLoops` treats as this seed edge's
     // p-rail, or a drag toward one end lands the cut near the OTHER end.
     // Copied verbatim from `tools.slice.loop_slice_tool.seedRail` (exact
@@ -4733,7 +4903,33 @@ public:
     // convenience wrapper. NOT used by Slide: Slide is a DELTA law
     // (`slideDeltaFromDrag`), not an absolute cursor parameterisation, and
     // has no `[0,1]` range at all.
-    private float ratioOnSegment(int mx, int my, const ref Viewport vp, Vec3 a, Vec3 b) {
+    //
+    // AIMING KIND: **Closest** (task 0619,
+    // doc/tool_aiming_item_transform_plan.md §1.3), and it is the ONE kind
+    // whose correct space is WORLD — deliberately the opposite of the
+    // RayPlane law `shiftedLocalPoint` below runs:
+    //
+    //   * the closest-approach election is NOT affine-invariant. Under a
+    //     non-uniform `M` the 3D-nearest point of the LOCAL rail to the local
+    //     ray maps to a DIFFERENT point than the 3D-nearest point of the
+    //     WORLD rail to the world ray. The user scrubs along the rail as it
+    //     is DRAWN, so world is the election the cursor means;
+    //   * the result converts back for FREE: what leaves here is a RATIO
+    //     along the rail, and an affine map preserves ratios along a line —
+    //     so the world `t` IS the local `t` `insertEdgeLoops` wants. No
+    //     back-transform, no new primitive;
+    //   * applying §1.2's "move it into local" law here compiles and is
+    //     invisible at identity AND under uniform scale. That is why the
+    //     parameters say `Local` and this comment says WORLD.
+    //
+    // The one caller (`ratioFromCursor`) passes `seedRailA_`/`seedRailB_`,
+    // which `seedRail` fills from raw `m.vertices[]` — LOCAL, whatever the
+    // comment at that field once said.
+    private float ratioOnSegment(int mx, int my, const ref Viewport vp,
+                                 Vec3 aLocal, Vec3 bLocal) {
+        const ms = primaryModelSpace();
+        Vec3 a = ms.toWorldPoint(aLocal);
+        Vec3 b = ms.toWorldPoint(bLocal);
         Vec3 origin, dir;
         screenPointToRay(cast(float)mx, cast(float)my, vp, origin, dir);
         Vec3 hit = closestPointOnSegmentToRay(a, b, origin, dir);
@@ -4768,11 +4964,24 @@ public:
     // index — arbitrary but deterministic, which is all a tie needs; the
     // captured data never exercises one.
     private static float dominantAxisDelta(Vec3 delta) {
+        final switch (dominantAxisIndex(delta)) {
+            case 0: return delta.x;
+            case 1: return delta.y;
+            case 2: return delta.z;
+        }
+    }
+
+    /// WHICH axis `dominantAxisDelta` picked (0/1/2). Split out (task 0619)
+    /// so `slideDeltaFromDrag` can carry the elected step across spaces
+    /// without a second copy of the tie rule that could drift from this one.
+    /// `dominantAxisDelta` is defined in terms of it, so there is exactly one
+    /// argmax in the file.
+    private static int dominantAxisIndex(Vec3 delta) {
         import std.math : abs;
         float ax = abs(delta.x), ay = abs(delta.y), az = abs(delta.z);
-        if (ax >= ay && ax >= az) return delta.x;
-        if (ay >= az)             return delta.y;
-        return delta.z;
+        if (ax >= ay && ax >= az) return 0;
+        if (ay >= az)             return 1;
+        return 2;
     }
 
     // Slide, THE MEASURED LAW — step 2 of 2: the endpoint's new position.
@@ -4895,13 +5104,47 @@ public:
     // `skip` (projection failure — degenerate viewport, anchor behind the
     // camera) yields 0, i.e. no slide this evaluation, rather than a garbage
     // scalar.
+    // Task 0619 §1.5 (Landing) — the two spaces this crosses, and where.
+    //
+    // The ELECTION is a WORLD choice and stays one: `planeDragDelta` builds
+    // its pixel→world Jacobian at an anchor, against the most-facing WORLD
+    // plane, from the world viewport, and the user is dragging on screen. So
+    // the anchor is lifted: `slideAnchor_` is the grabbed edge's midpoint
+    // read from `m.vertices[]`, i.e. LOCAL, and feeding a local point to a
+    // world Jacobian measured the drag gain at the wrong depth and the wrong
+    // place on screen.
+    //
+    // The MAGNITUDE is consumed as a LOCAL length: `slideEndpointPos` moves a
+    // local vertex by exactly `|deltaK|` along a rail built from two more
+    // local vertices. So the elected world step is carried into local and its
+    // length taken there. The sign is carried through unchanged — this law's
+    // axis choice and sign are frozen reference behaviour (see the block
+    // comment on `dominantAxisDelta` above: two opposite pixel drags along
+    // one rail produced the same motion direction), so there is no principled
+    // re-derivation of the sign from the local frame either.
+    //
+    // RESIDUAL, stated rather than hidden: the carried length is exact only
+    // where the local rail is parallel to the elected axis; in general `M`
+    // scales the two differently. The law is a single scalar shared by two
+    // endpoints with different rails, so no per-rail conversion exists that
+    // preserves it. This is the smallest change that puts the scalar in the
+    // space its consumer measures in.
     private float slideDeltaFromDrag(int mx, int my, const ref Viewport vp) {
+        const ms = primaryModelSpace();
         bool skip;
         Vec3 d = planeDragDelta(mx, my, slideStartX_, slideStartY_,
                                 3,                    // most-facing world plane
-                                slideAnchor_, vp, skip);
+                                ms.toWorldPoint(slideAnchor_), vp, skip);
         if (skip) return 0.0f;
-        return dominantAxisDelta(d);
+        immutable float kWorld = dominantAxisDelta(d);
+        if (ms.isIdentity) return kWorld;   // byte-identical pre-0619 path
+
+        immutable int axis = dominantAxisIndex(d);
+        Vec3 stepWorld = Vec3(axis == 0 ? kWorld : 0.0f,
+                              axis == 1 ? kWorld : 0.0f,
+                              axis == 2 ? kWorld : 0.0f);
+        immutable float lenLocal = ms.toLocalDir(stepWorld).length;
+        return kWorld >= 0.0f ? lenLocal : -lenLocal;
     }
 
     // Slide, valence>2 endpoints: the DISTINCT polygon-continuation
@@ -5364,12 +5607,12 @@ public:
         return true;   // consume; the relax+re-snap (if any) commits on release
     }
 
-    // The world point a shared SCREEN drag puts `orig` at: unproject the
-    // shifted pixel onto the plane through `orig` parallel to the image
-    // plane — i.e. drag at CONSTANT view depth. Same pixel-CENTRE
-    // convention (`+0.5f`) the ray path used, so the screen→world mapping
-    // this tool has always applied is unchanged; only what happens to the
-    // resulting point (see `resnapToBackground`) is.
+    // The point a shared SCREEN drag puts `orig` at, in `orig`'s OWN space:
+    // unproject the shifted pixel onto the plane through `orig` parallel to
+    // the image plane — i.e. drag at CONSTANT view depth. Same pixel-CENTRE
+    // convention (`+0.5f`) the ray path used, so the screen→3D mapping this
+    // tool has always applied is unchanged in shape; task 0619 changed only
+    // which space it resolves in (see the aiming-kind note below).
     //
     // TASK 0503, on the ONE clause of the measured law this does NOT port.
     // The reference feeds its constraint `src_i + Δ` with a SINGLE 3D offset
@@ -5384,18 +5627,48 @@ public:
     // explicitly NOT established by either note. Porting the shared-Δ shape
     // would therefore mean inventing Δ, so this keeps the existing
     // per-vertex mapping and records the gap instead.
-    private static Vec3 shiftedWorldPoint(Vec3 orig, int px, int py,
+    // AIMING KIND: **RayPlane** (task 0619 §1.2), and the RENAME is part of
+    // the fix — the old name was `shiftedWorldPoint`, which lied twice over:
+    // its `orig` argument is a LAYER-LOCAL mesh point at both call sites, and
+    // what it returned was neither space (a WORLD ray met a plane through a
+    // LOCAL anchor).
+    //
+    // The law has three steps that must not be reordered, so it goes through
+    // `screenPointToLocalRay` (math.d) rather than being open-coded:
+    //   1. build the ray from the UN-composed, world `vp` — an `AimViewport`
+    //      must not be used, because `screenRay` treats the view 3x3's
+    //      transpose as its inverse and `M` generally carries a scale;
+    //   2. carry origin and direction into local, the direction NOT
+    //      renormalized so `t` keeps meaning a world distance;
+    //   3. carry the plane's WORLD normal across with `toLocalNormal`
+    //      (`M^T`), NOT `toLocalDir` (`M^-1`). The two are EQUAL for a pure
+    //      rotation and diverge under any non-uniform scale, so a
+    //      rotation-only fixture cannot tell them apart — and getting it
+    //      wrong tilts the constant-depth plane, which moves the answer
+    //      along the ray rather than merely scaling it.
+    // Then `dot(n_l, (o_l + t·d_l) − p_l) ≡ dot(n_w, (o_w + t·d_w) − p_w)`
+    // exactly, for any invertible `M`.
+    //
+    // LOCAL is the destination because both consumers want local: the Fill
+    // search ranks `(m.vertices[v] − cursorPt).length`, and
+    // `resnapToBackground` writes its answer into `m.vertices[]` after one
+    // explicit world round trip for the background query.
+    private static Vec3 shiftedLocalPoint(Vec3 origLocal, int px, int py,
                                           const ref Viewport vp) {
+        const ms = primaryModelSpace();
         Vec3 org, dir;
-        screenPointToRay(cast(float)px + 0.5f, cast(float)py + 0.5f, vp, org, dir);
+        screenPointToLocalRay(cast(float)px + 0.5f, cast(float)py + 0.5f,
+                              vp, ms, org, dir);
         // View matrix third ROW (column-major m[row + col*4]) = the
-        // camera-back direction; the plane through `orig` with that normal
-        // is the constant-view-depth plane. Same derivation `drag.d`'s
-        // `planeDragDelta` uses for its own camera-facing plane.
+        // camera-back direction; the plane through `origLocal` with that
+        // normal is the constant-view-depth plane. Same derivation `drag.d`'s
+        // `planeDragDelta` uses for its own camera-facing plane. It is a
+        // WORLD normal oriented by the camera, so it crosses with `M^T`.
         const ref float[16] v = vp.view;
-        Vec3 camBack = Vec3(v[2], v[6], v[10]);
+        Vec3 camBackLocal = ms.toLocalNormal(Vec3(v[2], v[6], v[10]));
         Vec3 q;
-        if (!rayPlaneIntersect(org, dir, orig, camBack, q)) return orig;   // degenerate view
+        if (!rayPlaneIntersect(org, dir, origLocal, camBackLocal, q))
+            return origLocal;   // degenerate view
         return q;
     }
 
@@ -5464,7 +5737,20 @@ public:
         auto sources = backgroundSourcesFull();
         if (sources.length == 0) return false;
 
-        Vec3 query = shiftedWorldPoint(orig, px, py, vp);
+        // Task 0619 §1.5 (Landing) — the space chain, converted at exactly
+        // one point in each direction:
+        //   * `orig` and the shifted query are the PRIMARY layer's LOCAL
+        //     coordinates (`shiftedLocalPoint`);
+        //   * `closestPointOnMeshes` folds every BACKGROUND source through
+        //     its OWN ModelSpace and answers in WORLD (constraint.d:160),
+        //     so the query is lifted to world for it;
+        //   * the foot comes back to the PRIMARY's local space, because
+        //     every consumer of `outPoint` writes it into `m.vertices[]`
+        //     (`applyMoveTargets`, `commitMoveLoop`, `commitDupEdges`).
+        // Leaving the result in world is the producer-moved / consumer-left
+        // defect one call deeper, and it is what this function used to do.
+        const ms = primaryModelSpace();
+        Vec3 query = ms.toWorldPoint(shiftedLocalPoint(orig, px, py, vp));
 
         Vec3  hitPt, hitN;
         int   si, fi;
@@ -5472,7 +5758,7 @@ public:
         enum bool dblSided = false;   // matches P8/P12/CONS Point-mode's own default
         if (!closestPointOnMeshes(query, sources, dblSided, hitPt, hitN, si, fi, d2))
             return false;
-        outPoint = hitPt;
+        outPoint = ms.toLocalPoint(hitPt);
         return true;
     }
 
@@ -5512,13 +5798,20 @@ public:
     // at release — Move Loop / Dup Loop are unchanged by this split.
     private Vec3[] perVertexTargetsFrom(const(Vec3)[] base, int dx, int dy,
                                         const ref Viewport vp) {
+        // Pixel (§1.1), hoisted out of the per-vertex loop (§3). `base` is
+        // LOCAL in both callers — `perVertexTargets` fills it from
+        // `m.vertices[]`, and Move's own caller hands in `moveBase_`, the
+        // ARM-TIME copy of those same local positions. The pixel this
+        // produces is the one the drag delta is measured from, so it has to
+        // be the pixel the vertex is DRAWN at.
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
         Vec3[] targets;
         targets.length = base.length;
         foreach (i, orig; base) {
             targets[i] = orig;   // default: a miss keeps the original
 
             ImVec2 pt;
-            if (!projectPt(orig, vp, pt)) continue;   // behind camera -> keep original
+            if (!projectLocalPt(orig, vpAim, pt)) continue;   // behind camera -> keep original
 
             int px = cast(int)(pt.x + cast(float)dx);
             int py = cast(int)(pt.y + cast(float)dy);
@@ -5595,7 +5888,15 @@ public:
         if (placeArmed_) {
             placeArmed_ = false;
             readHit(vts);   // refresh lastHit_ to THIS release event's CONS-snapped hit
-            if (lastHit_.hit) placeVertexAt(lastHit_.point, vts);
+            // Task 0619 §1.5 (Landing), and the most user-visible item in
+            // the stage: `lastHit_.point` is the CONS stage's WORLD hit —
+            // on a BACKGROUND layer, through that layer's own transform —
+            // while `addVertex` stores a coordinate in the PRIMARY layer's
+            // LOCAL array. On a transformed primary the click landed the new
+            // vertex at `hit` rather than at `M^-1·hit`, i.e. visibly away
+            // from the cursor.
+            if (lastHit_.hit)
+                placeVertexAt(primaryModelSpace().toLocalPoint(lastHit_.point), vts);
             return true;
         }
         if (moveArmed_) {
@@ -5654,7 +5955,10 @@ public:
         if (!lastHit_.hit) return true;        // no surface hit at release -> nothing to build
         if (casee == BuildCase.None) return true;   // unsupported source state / one-shot ceiling
 
-        buildFromSource(a, casee, n, p, q, triFi, lastHit_.point);
+        // Landing (§1.5), same conversion as Place above: the CONS hit is
+        // world, `m.addVertex` inside `buildFromSource` stores local.
+        buildFromSource(a, casee, n, p, q, triFi,
+                        primaryModelSpace().toLocalPoint(lastHit_.point));
         return true;
     }
 
@@ -6025,7 +6329,10 @@ public:
     // missing factory or a rejected `evaluate`), for P3's chain-building to
     // reuse (doc/topopen_p2_plan.md §Extension); this tool itself does not
     // use the return value yet.
-    private int placeVertexAt(Vec3 point, ref VectorStack vts) {
+    /// `pointLocal` is a PRIMARY-LAYER LOCAL coordinate (task 0619): the
+    /// command writes it straight into `mesh.vertices[]`, so a caller
+    /// holding a world hit converts BEFORE calling, not after.
+    private int placeVertexAt(Vec3 pointLocal, ref VectorStack vts) {
         // Guard BOTH prerequisites BEFORE creating/applying the command
         // (review NIT): meshSrc_/gpu_/vc_/ec_/fc_ are wired together with
         // addVertexFactory_ (registration.d), so a partially-constructed tool
@@ -6035,7 +6342,7 @@ public:
         if (addVertexFactory_ is null || meshSrc_ is null) return -1;
 
         auto cmd = addVertexFactory_();   // binds &mesh() = primary NOW
-        cmd.setPos(point);
+        cmd.setPos(pointLocal);
         if (!cmd.evaluate(vts)) return -1;
 
         if (history_ !is null) history_.record(cmd);   // non-coalescing -> one undo entry
@@ -6091,7 +6398,9 @@ public:
     // INDEX can dangle from a pure position write).
     //
     // `deltaK` is the law's single signed scalar (`dominantAxisDelta` of the
-    // gesture's world-space move delta) — ONE value for BOTH endpoints, which
+    // gesture's world-space move delta, then carried into the layer's own
+    // space by `slideDeltaFromDrag` — the rails it is applied along below
+    // are local) — ONE value for BOTH endpoints, which
     // is measured, not an economy: the two endpoints differ only in their rail
     // DIRECTION. See `slideEndpointPos` for the per-endpoint law and for why
     // there is no `[0,1]` clamp any more.
@@ -6407,6 +6716,7 @@ public:
         if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
 
         auto sources = backgroundSourcesFull();   // point-in-time, fetched ONCE per commit
+        const ms = primaryModelSpace();           // read fresh, once per commit (§2.4)
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         immutable size_t nV = m.vertices.length;
@@ -6449,8 +6759,18 @@ public:
                 int   si, fi;
                 float d2;
                 enum bool dblSided = false;   // V1 default — matches CONS Point-mode's own default
-                if (closestPointOnMeshes(relaxed, sources, dblSided, hit, hitN, si, fi, d2))
-                    relaxed = hit;
+                // Task 0619 §1.5 (Landing): `relaxed` is a LOCAL position
+                // (the relaxation ran entirely on `m.vertices[]`), while
+                // `closestPointOnMeshes` takes and returns WORLD — it folds
+                // every background source through its own ModelSpace. So the
+                // query goes up and the foot comes back down, once each; the
+                // write below is a LOCAL vertex coordinate. Without the
+                // round trip the re-snap measured the nearest background
+                // point to where the layer would sit at identity, and then
+                // stored a world coordinate in a local array.
+                if (closestPointOnMeshes(ms.toWorldPoint(relaxed), sources,
+                                         dblSided, hit, hitN, si, fi, d2))
+                    relaxed = ms.toLocalPoint(hit);
             }
             m.vertices[vi] = relaxed;
         }
@@ -6534,6 +6854,7 @@ public:
         if (passCount > MAX_TOPOPEN_SMOOTH_PASSES) passCount = MAX_TOPOPEN_SMOOTH_PASSES;
 
         auto sources = backgroundSourcesFull();   // point-in-time, fetched ONCE per commit
+        const ms = primaryModelSpace();           // read fresh, once per commit (§2.4)
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
         foreach (pass; 0 .. passCount) {
@@ -6554,8 +6875,12 @@ public:
                     int   si, fi;
                     float d2;
                     enum bool dblSided = false;   // V1 default -- matches P8/CONS Point-mode's own default
-                    if (closestPointOnMeshes(relaxed, sources, dblSided, hit, hitN, si, fi, d2))
-                        relaxed = hit;
+                    // Same Landing round trip as `applySmoothPasses` — local
+                    // query up to world, world foot back down to local,
+                    // because the write on the next line is a local vertex.
+                    if (closestPointOnMeshes(ms.toWorldPoint(relaxed), sources,
+                                             dblSided, hit, hitN, si, fi, d2))
+                        relaxed = ms.toLocalPoint(hit);
                 }
                 m.vertices[vi] = relaxed;
             }
@@ -6589,15 +6914,19 @@ public:
     // every new edge/face the case implies) is ONE atomic undo entry. Every
     // guard (armed/motion/hit/case) already ran in `onMouseButtonUp`; this
     // is the unconditional mutation + undo-record + display-refresh tail.
+    /// `bPosLocal` is a PRIMARY-LAYER LOCAL coordinate (task 0619) — it goes
+    /// straight into `m.addVertex`. The gesture's caller converts the CONS
+    /// world hit; the direct-construction unittests below already pass local
+    /// fixture positions, which is what they always meant.
     private void buildFromSource(int a, BuildCase casee, int n, int p, int q,
-                                 int triFi, Vec3 bPos) {
+                                 int triFi, Vec3 bPosLocal) {
         if (!commitReady(factories_.build)) return;
         auto m = mesh;
         if (m is null) return;
 
         MeshSnapshot before = MeshSnapshot.capture(*m);
 
-        uint b = m.addVertex(bPos);
+        uint b = m.addVertex(bPosLocal);
         // Same hazard `MeshVertexNew.evaluate` (vertex_new.d:54) documents:
         // addVertex only grows `vertices[]` — grow the selection arrays to
         // match BEFORE anything below could index vertexMarks at `b`.
@@ -7447,23 +7776,29 @@ public:
         if (addLoopArmed_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null && addLoopSeed_ >= 0 && addLoopSeed_ < cast(int)m.edges.length) {
+                // Pixel (§1.1), once for the whole ring (§3).
+                const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
                 enum uint loopCol = IM_COL32(255, 90, 220, 220);   // add-loop magenta
                 foreach (ei; m.loopSliceRingEdges(cast(uint)addLoopSeed_)) {
                     if (ei < 0 || ei >= cast(int)m.edges.length) continue;
                     auto ringE = m.edges[ei];
                     ImVec2 ra, rb;
-                    if (projectPt(m.vertices[ringE[0]], vp, ra)
-                     && projectPt(m.vertices[ringE[1]], vp, rb))
+                    if (projectLocalPt(m.vertices[ringE[0]], vpAim, ra)
+                     && projectLocalPt(m.vertices[ringE[1]], vpAim, rb))
                         dl.AddLine(ra, rb, loopCol, 2.0f);
                 }
                 // The ghost marker previews what a release WOULD commit, so
                 // it reads the same `addLoopFrac` law `addLoopUp` does — with
                 // the "at the Middle" option on, the marker pins to 50% of
                 // the rail and stops following the cursor.
+                // LOCAL: `seedRailA_`/`seedRailB_` are raw `m.vertices[]`
+                // reads (`seedRail`), and a lerp between two local points is
+                // local. Task 0619 corrected two comments in this file that
+                // called them "WORLD".
                 Vec3 markerPos = seedRailA_
                                + (seedRailB_ - seedRailA_) * addLoopFrac(addLoopRatio_);
                 ImVec2 mk;
-                if (projectPt(markerPos, vp, mk))
+                if (projectLocalPt(markerPos, vpAim, mk))
                     dl.AddCircleFilled(mk, 5.0f, loopCol, 16);
             }
         }
@@ -7491,6 +7826,11 @@ public:
                 enum uint slideCol     = IM_COL32(120, 200, 255, 220);   // slide cyan-blue
                 enum uint slideRailCol = IM_COL32(120, 200, 255, 90);    // faint rail
 
+                // Pixel (§1.1), once for the whole ghost (§3). Every point
+                // below is LOCAL: `slideEndpointPos` moves a local vertex
+                // along a rail built from two more local vertices.
+                const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+
                 Vec3 pA = (slideNbrA_ >= 0 && slideNbrA_ < cast(int)m.vertices.length)
                     ? slideEndpointPos(m.vertices[slideEndA_], m.vertices[slideNbrA_], slideDeltaK_)
                     : m.vertices[slideEndA_];
@@ -7499,7 +7839,7 @@ public:
                     : m.vertices[slideEndB_];
 
                 ImVec2 pa, pb;
-                if (projectPt(pA, vp, pa) && projectPt(pB, vp, pb)) {
+                if (projectLocalPt(pA, vpAim, pa) && projectLocalPt(pB, vpAim, pb)) {
                     dl.AddLine(pa, pb, slideCol, 2.5f);
                     dl.AddCircleFilled(pa, 4.0f, slideCol, 16);
                     dl.AddCircleFilled(pb, 4.0f, slideCol, 16);
@@ -7508,7 +7848,8 @@ public:
                 void faintRail(int end, int nbr) {
                     if (nbr < 0 || nbr >= cast(int)m.vertices.length) return;
                     ImVec2 ra, rb;
-                    if (projectPt(m.vertices[end], vp, ra) && projectPt(m.vertices[nbr], vp, rb))
+                    if (projectLocalPt(m.vertices[end], vpAim, ra)
+                     && projectLocalPt(m.vertices[nbr], vpAim, rb))
                         dl.AddLine(ra, rb, slideRailCol, 1.0f);
                 }
                 faintRail(slideEndA_, slideNbrA_);
@@ -7522,7 +7863,8 @@ public:
     // position while `smoothArmed_`. Unlike the P1 hover marker below
     // (which needs a CONS hit against a background layer) or the Add
     // Loop/Slide ghosts above (which key off an armed seed edge's
-    // WORLD position), Smooth has neither a source pick nor a
+    // LAYER-LOCAL position — task 0619 corrected "WORLD" here), Smooth has
+    // neither a source pick nor a
     // background dependency — it relaxes the WHOLE primary mesh, so
     // tying its affordance to `lastHit_.point` would make it invisible
     // in exactly the bg-less scene this preview must still cover.
@@ -7557,11 +7899,12 @@ public:
             auto m = mesh;
             if (m !is null && splitSourceVert_ >= 0 && splitSourceVert_ < cast(int)m.vertices.length) {
                 enum uint splitCol = IM_COL32(80, 200, 230, 220);   // split cyan
+                const AimViewport vpAim = aimSpace(vp, primaryModelSpace());   // Pixel (§1.1)
                 ImVec2 aPt;
-                if (projectPt(m.vertices[splitSourceVert_], vp, aPt)
+                if (projectLocalPt(m.vertices[splitSourceVert_], vpAim, aPt)
                  && splitTargetVert_ >= 0 && splitTargetVert_ < cast(int)m.vertices.length) {
                     ImVec2 cPt;
-                    if (projectPt(m.vertices[splitTargetVert_], vp, cPt)) {
+                    if (projectLocalPt(m.vertices[splitTargetVert_], vpAim, cPt)) {
                         dl.AddLine(aPt, cPt, splitCol, 2.0f);
                         dl.AddCircleFilled(cPt, 5.0f, splitCol, 16);
                     }
@@ -7591,13 +7934,28 @@ public:
                 int dx = moveLoopCurX_ - moveLoopStartX_;
                 int dy = moveLoopCurY_ - moveLoopStartY_;
 
+                // Pixel (§1.1), once for the whole ghost (§3).
+                const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+
+                // `ghostPos` used to be a MIXED-SPACE map — the rename is
+                // what exposed it: a miss stored `orig` (LOCAL) while a hit
+                // stored `resnapToBackground`'s answer, which was WORLD
+                // because `closestPointOnMeshes` folds every background
+                // source to world. Neither classification was honest for the
+                // three reads below, and drawing both branches through the
+                // world viewport (what this code always did) put the ghost
+                // for a HIT vertex at a different pixel from the ghost for a
+                // MISSED one on the same transformed layer. Since
+                // `resnapToBackground` now returns the primary's LOCAL
+                // coordinate — the space its consumers write — the map has
+                // one space and every read is `projectLocalPt`.
                 Vec3[uint] ghostPos;
                 foreach (vi; moveLoopVerts_) {
                     if (vi >= m.vertices.length) continue;
                     Vec3 orig = m.vertices[vi];
                     Vec3 g    = orig;   // default: miss (or off-screen) keeps the original
                     ImVec2 pt;
-                    if (projectPt(orig, vp, pt)) {
+                    if (projectLocalPt(orig, vpAim, pt)) {
                         int px = cast(int)(pt.x + cast(float)dx);
                         int py = cast(int)(pt.y + cast(float)dy);
                         Vec3 hitPt2;
@@ -7613,12 +7971,12 @@ public:
                     auto gb = ringE[1] in ghostPos;
                     if (ga is null || gb is null) continue;
                     ImVec2 pa, pb;
-                    if (projectPt(*ga, vp, pa) && projectPt(*gb, vp, pb))
+                    if (projectLocalPt(*ga, vpAim, pa) && projectLocalPt(*gb, vpAim, pb))
                         dl.AddLine(pa, pb, moveLoopCol, 2.0f);
                 }
                 foreach (vi, pos; ghostPos) {
                     ImVec2 gp;
-                    if (projectPt(pos, vp, gp))
+                    if (projectLocalPt(pos, vpAim, gp))
                         dl.AddCircleFilled(gp, 4.0f, moveLoopCol, 16);
                 }
             }
@@ -7658,12 +8016,13 @@ public:
             auto m = mesh;
             if (m !is null && smoothLoopSeed_ >= 0 && smoothLoopSeed_ < cast(int)m.edges.length) {
                 enum uint smoothLoopCol = IM_COL32(120, 255, 200, 220);   // smoothing green-blue (P8's own hue)
+                const AimViewport vpAim = aimSpace(vp, primaryModelSpace());   // Pixel (§1.1), once (§3)
                 foreach (ei; m.selectLoopEdges(cast(uint)smoothLoopSeed_)) {
                     if (ei < 0 || ei >= cast(int)m.edges.length) continue;
                     auto ringE = m.edges[ei];
                     ImVec2 ra, rb;
-                    if (projectPt(m.vertices[ringE[0]], vp, ra)
-                     && projectPt(m.vertices[ringE[1]], vp, rb))
+                    if (projectLocalPt(m.vertices[ringE[0]], vpAim, ra)
+                     && projectLocalPt(m.vertices[ringE[1]], vpAim, rb))
                         dl.AddLine(ra, rb, smoothLoopCol, 2.5f);
                 }
                 ImVec2 cur = ImVec2(cast(float)smoothLoopCurX_, cast(float)smoothLoopCurY_);
@@ -7690,6 +8049,11 @@ public:
         if (!anyGestureArmed() && hoverOverMesh_ && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null) {
+                // Pixel (§1.1), once for every branch below (§3). The
+                // highlight is what the user aims BY, so it has to land on
+                // the pixels the element is drawn at, not on where the layer
+                // would sit at identity.
+                const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
                 // ONE element — the one a press would grab (task 0484
                 // follow-up), resolved by the press's own
                 // `resolveGrabTarget`. This block used to paint the nearest
@@ -7707,7 +8071,7 @@ public:
                 case MoveElem.Vertex:
                     if (hoverGrabIndex_ >= 0 && hoverGrabIndex_ < cast(int)m.vertices.length) {
                         ImVec2 vc;
-                        if (projectPt(m.vertices[hoverGrabIndex_], vp, vc))
+                        if (projectLocalPt(m.vertices[hoverGrabIndex_], vpAim, vc))
                             dl.AddRectFilled(
                                 ImVec2(vc.x - kHoverVertSquareHalfPx, vc.y - kHoverVertSquareHalfPx),
                                 ImVec2(vc.x + kHoverVertSquareHalfPx, vc.y + kHoverVertSquareHalfPx),
@@ -7719,8 +8083,8 @@ public:
                     if (hoverGrabIndex_ >= 0 && hoverGrabIndex_ < cast(int)m.edges.length) {
                         auto he = m.edges[hoverGrabIndex_];
                         ImVec2 ea, eb;
-                        if (projectPt(m.vertices[he[0]], vp, ea)
-                         && projectPt(m.vertices[he[1]], vp, eb))
+                        if (projectLocalPt(m.vertices[he[0]], vpAim, ea)
+                         && projectLocalPt(m.vertices[he[1]], vpAim, eb))
                             dl.AddLine(ea, eb, kHoverElemCol, kHoverEdgeWidthPx);
                     }
                     break;
@@ -7736,7 +8100,7 @@ public:
                         bool ok = true;
                         foreach (fvi; m.faces[hoverGrabIndex_]) {
                             ImVec2 p;
-                            if (!projectPt(m.vertices[fvi], vp, p)) { ok = false; break; }
+                            if (!projectLocalPt(m.vertices[fvi], vpAim, p)) { ok = false; break; }
                             pts ~= p;
                         }
                         if (ok && pts.length >= 3) {
@@ -7773,11 +8137,12 @@ public:
             auto m = mesh;
             if (m !is null) {
                 immutable size_t vlen2 = m.vertices.length;
+                const AimViewport vpAim = aimSpace(vp, primaryModelSpace());   // Pixel (§1.1), once (§3)
                 bool ok = true;
                 ImVec2[] pts;
                 pts.length = fillRing_.length;
                 foreach (k, vi; fillRing_) {
-                    if (vi >= vlen2 || !projectPt(m.vertices[vi], vp, pts[k])) { ok = false; break; }
+                    if (vi >= vlen2 || !projectLocalPt(m.vertices[vi], vpAim, pts[k])) { ok = false; break; }
                 }
                 if (ok) {
                     hatchScreenPolygon(dl, pts, kFillPreviewCol,
@@ -7829,8 +8194,15 @@ public:
         enum uint markerCol = IM_COL32(255, 150, 0, 230);   // pen orange
         enum uint cyan      = IM_COL32(0, 220, 255, 230);   // snap highlight
 
+        // Every point in this function is ALREADY WORLD — the CONS stage
+        // publishes `lastHit_.point` / `.normal` / `.nearestVertPos` /
+        // `.nearestEdgeA/B` through `ms.toWorldPoint` (0617,
+        // toolpipe/stages/constrain.d:291-303, :375-387), and they are
+        // anchored on the BACKGROUND layer, not on the primary. So this is
+        // the canonical `projectWorldPt` block and it proves the
+        // two-destination split is real rather than decorative.
         ImVec2 hitPt;
-        bool   hitPtOk = projectPt(lastHit_.point, vp, hitPt);
+        bool   hitPtOk = projectWorldPt(lastHit_.point, vp, hitPt);
         if (hitPtOk) {
             // Hover marker: filled dot + ring ("free place-point" cursor).
             dl.AddCircleFilled(hitPt, 4.0f, markerCol, 16);
@@ -7838,21 +8210,21 @@ public:
 
             // Normal pin — short line showing surface orientation.
             ImVec2 tip;
-            if (projectPt(lastHit_.point + lastHit_.normal * 0.15f, vp, tip))
+            if (projectWorldPt(lastHit_.point + lastHit_.normal * 0.15f, vp, tip))
                 dl.AddLine(hitPt, tip, markerCol, 2.0f);
         }
 
         final switch (ht.kind) {
             case HoverTargetKind.Vertex: {
                 ImVec2 vpt;
-                if (projectPt(lastHit_.nearestVertPos, vp, vpt))
+                if (projectWorldPt(lastHit_.nearestVertPos, vp, vpt))
                     dl.AddCircleFilled(vpt, 5.0f, cyan, 16);
                 break;
             }
             case HoverTargetKind.Edge: {
                 ImVec2 a, b;
-                if (projectPt(lastHit_.nearestEdgeA, vp, a)
-                 && projectPt(lastHit_.nearestEdgeB, vp, b))
+                if (projectWorldPt(lastHit_.nearestEdgeA, vp, a)
+                 && projectWorldPt(lastHit_.nearestEdgeB, vp, b))
                     dl.AddLine(a, b, cyan, 2.5f);
                 break;
             }
@@ -7871,20 +8243,26 @@ public:
     private void drawBuildGhost(ImDrawList* dl, const ref Viewport vp) {
         // `hitPt` recomputed locally — pre-split it was shared with the
         // snap-target marker block above (`hitPtOk`).
+        // TWO SPACES in one ghost, deliberately: `lastHit_.point` is the
+        // CONS stage's WORLD hit on a BACKGROUND layer, while
+        // `m.vertices[...]` are the PRIMARY layer's LOCAL coordinates. Each
+        // end of the drawn line therefore takes a different projector, and
+        // the type split is what makes that statable at all.
         ImVec2 hitPt;
-        bool   hitPtOk = projectPt(lastHit_.point, vp, hitPt);
+        bool   hitPtOk = projectWorldPt(lastHit_.point, vp, hitPt);
         if (dragArmed_ && hitPtOk && meshSrc_ !is null) {
             auto m = mesh;
             if (m !is null && sourceVert_ >= 0 && sourceVert_ < cast(int)m.vertices.length) {
                 enum uint ghostCol = IM_COL32(255, 210, 60, 220);
+                const AimViewport vpAim = aimSpace(vp, primaryModelSpace());   // Pixel (§1.1)
                 ImVec2 aPt;
-                if (projectPt(m.vertices[sourceVert_], vp, aPt))
+                if (projectLocalPt(m.vertices[sourceVert_], vpAim, aPt))
                     dl.AddLine(aPt, hitPt, ghostCol, 2.0f);
 
                 void ghostTo(int vi) {
                     if (vi < 0 || vi >= cast(int)m.vertices.length) return;
                     ImVec2 p;
-                    if (projectPt(m.vertices[vi], vp, p))
+                    if (projectLocalPt(m.vertices[vi], vpAim, p))
                         dl.AddLine(p, hitPt, ghostCol, 1.5f);
                 }
                 final switch (classifiedCase_) {
@@ -7911,10 +8289,11 @@ public:
             if (m !is null) {
                 enum uint  moveGhostCol = IM_COL32(80, 220, 120, 220);   // move green
                 enum float halfPx       = 4.0f;
+                const AimViewport vpAim = aimSpace(vp, primaryModelSpace());   // Pixel (§1.1), once (§3)
                 foreach (vi; moveVerts_) {
                     if (vi >= m.vertices.length) continue;
                     ImVec2 p;
-                    if (!projectPt(m.vertices[vi], vp, p)) continue;
+                    if (!projectLocalPt(m.vertices[vi], vpAim, p)) continue;
                     dl.AddRectFilled(ImVec2(p.x - halfPx, p.y - halfPx),
                                      ImVec2(p.x + halfPx, p.y + halfPx), moveGhostCol);
                 }
@@ -7935,27 +8314,35 @@ public:
         if (m is null) return;
         enum uint dupCol = IM_COL32(60, 220, 140, 220);   // duplicate ghost green
 
+        // Pixel (§1.1) for the source edge, once for the whole list (§3).
+        const AimViewport vpAim = aimSpace(vp, primaryModelSpace());
+
         foreach (ei; edgeList) {
             if (ei < 0 || ei >= cast(int)m.edges.length) continue;
             auto edgeE = m.edges[ei];
             Vec3 a = m.vertices[edgeE[0]], b = m.vertices[edgeE[1]];
 
+            // `aP`/`bP` were MIXED-SPACE for exactly the reason
+            // `drawMoveLoopGhost`'s `ghostPos` was — a miss keeps the LOCAL
+            // `a`/`b`, a hit took `resnapToBackground`'s then-WORLD answer.
+            // Both branches are LOCAL now, so the predicted duplicate edge
+            // and its bridge quad are drawn in one space.
             Vec3 aP = a, bP = b;   // default: miss (or off-screen) keeps coincident
             ImVec2 pa, pb;
-            if (projectPt(a, vp, pa)) {
+            if (projectLocalPt(a, vpAim, pa)) {
                 Vec3 hitA;
                 if (resnapToBackground(a, cast(int)(pa.x + cast(float)dx),
                                        cast(int)(pa.y + cast(float)dy), vp, hitA)) aP = hitA;
             }
-            if (projectPt(b, vp, pb)) {
+            if (projectLocalPt(b, vpAim, pb)) {
                 Vec3 hitB;
                 if (resnapToBackground(b, cast(int)(pb.x + cast(float)dx),
                                        cast(int)(pb.y + cast(float)dy), vp, hitB)) bP = hitB;
             }
 
             ImVec2 sa, sb, saP, sbP;
-            bool ok = projectPt(a, vp, sa) && projectPt(b, vp, sb)
-                   && projectPt(aP, vp, saP) && projectPt(bP, vp, sbP);
+            bool ok = projectLocalPt(a, vpAim, sa) && projectLocalPt(b, vpAim, sb)
+                   && projectLocalPt(aP, vpAim, saP) && projectLocalPt(bP, vpAim, sbP);
             if (!ok) continue;
 
             // The predicted bridge quad a-b-b'-a' + the new duplicate edge
@@ -9191,7 +9578,7 @@ unittest {
     // ignored option would resolve ~0.8 (|x| = 0.3) instead of 0.5 (x = 0).
     Vec3 releasePos = t.seedRailA_ + (t.seedRailB_ - t.seedRailA_) * 0.8f;
     ImVec2 rp;
-    assert(TopologyPenTool.projectPt(releasePos, vp, rp), "setup: releasePos must project");
+    assert(TopologyPenTool.projectWorldPt(releasePos, vp, rp), "setup: releasePos must project");
 
     SDL_MouseButtonEvent eUp;
     eUp.button = SDL_BUTTON_MIDDLE;
@@ -11926,7 +12313,7 @@ version (unittest) private void driveWeldingVertexGrab(TopologyPenTool t, ref Me
                                                        uint grab, Vec3 landing) {
     import std.format : format;
     ImVec2 pg;
-    assert(TopologyPenTool.projectPt(m.vertices[grab], vp, pg),
+    assert(TopologyPenTool.projectWorldPt(m.vertices[grab], vp, pg),
         "setup: the grabbed vertex must project");
 
     SDL_MouseButtonEvent down;
@@ -11948,7 +12335,7 @@ version (unittest) private void driveWeldingVertexGrab(TopologyPenTool t, ref Me
     vts.put(hit);
 
     ImVec2 pl;
-    assert(TopologyPenTool.projectPt(landing, vp, pl), "setup: the landing must project");
+    assert(TopologyPenTool.projectWorldPt(landing, vp, pl), "setup: the landing must project");
     SDL_MouseButtonEvent up;
     up.button = SDL_BUTTON_LEFT;
     up.x = cast(int)pl.x; up.y = cast(int)pl.y;
@@ -12123,13 +12510,13 @@ unittest {
     // because the query found nothing at all — a different reason from the one
     // it names.
     ImVec2 pl;
-    assert(TopologyPenTool.projectPt(landing, vp, pl), "setup: the landing must project");
+    assert(TopologyPenTool.projectWorldPt(landing, vp, pl), "setup: the landing must project");
     float best = float.infinity;
     size_t bestVi = size_t.max;
     foreach (vi; 0 .. m.vertices.length) {
         if (vi == 1) continue;                    // the grab itself, always excluded
         ImVec2 pc;
-        if (!TopologyPenTool.projectPt(m.vertices[vi], vp, pc)) continue;
+        if (!TopologyPenTool.projectWorldPt(m.vertices[vi], vp, pc)) continue;
         immutable float d = hypot(pc.x - pl.x, pc.y - pl.y);
         if (d < best) { best = d; bestVi = vi; }
     }
@@ -12215,15 +12602,15 @@ unittest {
     // The press: the screen midpoint of edge 1-4, which is 40px from either
     // endpoint and so resolves as an EDGE grab and not a vertex one.
     ImVec2 p1, p4;
-    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1));
-    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[1], vp, p1));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[4], vp, p4));
     immutable int pressX = cast(int)((p1.x + p4.x) * 0.5f);
     immutable int pressY = cast(int)((p1.y + p4.y) * 0.5f);
 
     // The drag, stated in WORLD terms and converted: stop 0.05 short of the
     // right column, the same "near, not on" reasoning the other cases use.
     ImVec2 pLand;
-    assert(TopologyPenTool.projectPt(m.vertices[1] + Vec3(0.95f, 0, 0), vp, pLand));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[1] + Vec3(0.95f, 0, 0), vp, pLand));
     immutable int dx = cast(int)(pLand.x - p1.x), dy = cast(int)(pLand.y - p1.y);
     assert(dx * dx + dy * dy > 9,
         "setup: the drag must clear the tool's own 3px click-vs-drag gate");
@@ -12409,7 +12796,7 @@ unittest {
     // inside the acceptance radius, so a weld is available to be wrongly taken.
     t.dragSnap_ = *penTestSnapOn();
     ImVec2 p0;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0), "setup: v0 must project");
     assert(t.resolveSnapTargetVert(cast(int)p0.x, cast(int)p0.y, vp, [0u]) >= 0,
         "setup: v0 must have an admissible neighbour inside the acceptance radius, or this "
       ~ "case cannot tell a gate from an empty query");
@@ -12693,8 +13080,8 @@ unittest {
     Vec3 v1 = srcMid + camRight * (L * 0.5f);
 
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(v0, vp, p0)
-        && TopologyPenTool.projectPt(v1, vp, p1),
+    assert(TopologyPenTool.projectWorldPt(v0, vp, p0)
+        && TopologyPenTool.projectWorldPt(v1, vp, p1),
         "setup: both source verts must project on-screen");
 
     foreach (degrees; [30.0f, 45.0f, 60.0f]) {
@@ -12793,8 +13180,8 @@ unittest {
     setBackgroundSnapSources(srcs, new ModelSpace[](srcs.length));
 
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(v0, vp, p0)
-        && TopologyPenTool.projectPt(v1, vp, p1), "setup: both verts must project on-screen");
+    assert(TopologyPenTool.projectWorldPt(v0, vp, p0)
+        && TopologyPenTool.projectWorldPt(v1, vp, p1), "setup: both verts must project on-screen");
 
     Vec3 got0, got1;
     assert(t.resnapToBackground(v0, cast(int)p0.x, cast(int)p0.y, vp, got0));
@@ -12818,7 +13205,7 @@ unittest {
 //
 // A shared screen-delta is still applied to EACH vertex's own screen
 // projection before re-snapping (the shared-3D-offset shape the reference
-// uses is recorded as an open divergence — see `shiftedWorldPoint`). What
+// uses is recorded as an open divergence — see `shiftedLocalPoint`). What
 // changed is what a vertex pointing at empty space does: a camera ray MISSED
 // and the vertex kept its original position; a nearest-foot query over a
 // bounded facet does not miss, it CLAMPS to the facet edge. That clamp is
@@ -12917,8 +13304,8 @@ unittest {
     vts.put(&subj);
 
     ImVec2 p3, p4;
-    assert(TopologyPenTool.projectPt(m.vertices[3], vp, p3));
-    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[3], vp, p3));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[4], vp, p4));
     int mx = cast(int)((p3.x + p4.x) * 0.5f), my = cast(int)((p3.y + p4.y) * 0.5f);
 
     SDL_MouseButtonEvent eHit;
@@ -13092,8 +13479,8 @@ unittest {
     vts.put(&subj);
 
     ImVec2 p3, p4;
-    assert(TopologyPenTool.projectPt(m.vertices[3], vp, p3));
-    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[3], vp, p3));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[4], vp, p4));
     int mx = cast(int)((p3.x + p4.x) * 0.5f), my = cast(int)((p3.y + p4.y) * 0.5f);
 
     SDL_MouseButtonEvent eDown;
@@ -13247,7 +13634,7 @@ unittest { // U1 — nearest-vertex resolution: a cursor at vertex 0's own
 
     auto vp = makeHoverIndicatorTestViewport();
     ImVec2 p0;
-    assert(TopologyPenTool.projectPt(m.vertices[v0], vp, p0), "setup: v0 must project on-screen");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[v0], vp, p0), "setup: v0 must project on-screen");
 
     t.computeHoverIndicator(cast(int)p0.x, cast(int)p0.y, vp);
     assert(t.hoverNearestVert_ == cast(int)v0,
@@ -13271,8 +13658,8 @@ unittest { // U2 — nearest-edge resolution: a cursor at an edge's screen
 
     auto vp = makeHoverIndicatorTestViewport();
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(m.vertices[v0], vp, p0));
-    assert(TopologyPenTool.projectPt(m.vertices[v1], vp, p1));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[v0], vp, p0));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[v1], vp, p1));
     int mx = cast(int)((p0.x + p1.x) * 0.5f);
     int my = cast(int)((p0.y + p1.y) * 0.5f);
 
@@ -13306,8 +13693,8 @@ unittest { // U3 — boundary detection: `makeGridPlane(2)`'s edge 0-1 (a
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0));
-    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[1], vp, p1));
     int mx = cast(int)((p0.x + p1.x) * 0.5f);
     int my = cast(int)((p0.y + p1.y) * 0.5f);
 
@@ -13334,8 +13721,8 @@ unittest { // U4 — interior (non-boundary) edge: `makeGridPlane(2)`'s edge
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 p3, p4;
-    assert(TopologyPenTool.projectPt(m.vertices[3], vp, p3));
-    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[3], vp, p3));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[4], vp, p4));
     int mx = cast(int)((p3.x + p4.x) * 0.5f);
     int my = cast(int)((p3.y + p4.y) * 0.5f);
 
@@ -13382,7 +13769,7 @@ unittest { // U6 — both-simultaneous ("not one-or-the-other" guard): the
 
     auto vp = makeHoverIndicatorTestViewport();
     ImVec2 p0;
-    assert(TopologyPenTool.projectPt(m.vertices[v0], vp, p0));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[v0], vp, p0));
 
     t.computeHoverIndicator(cast(int)p0.x, cast(int)p0.y, vp);
     assert(t.hoverNearestVert_ == cast(int)v0,
@@ -13412,7 +13799,7 @@ unittest { // U7 (REV1 FIX-2 — the test that would have caught FIX-1): a
 
     auto vp = makeHoverIndicatorTestViewport();
     ImVec2 p0;
-    assert(TopologyPenTool.projectPt(m.vertices[v0], vp, p0));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[v0], vp, p0));
 
     SubjectPacket subj;
     subj.mesh     = &m;
@@ -13736,8 +14123,8 @@ unittest {
     vts.put(&subj);
 
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(m.vertices[m.edges[0][0]], vp, p0), "setup: endpoint projects");
-    assert(TopologyPenTool.projectPt(m.vertices[m.edges[0][1]], vp, p1), "setup: endpoint projects");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[m.edges[0][0]], vp, p0), "setup: endpoint projects");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[m.edges[0][1]], vp, p1), "setup: endpoint projects");
 
     // --- EDGE midpoint: no vertex within snap range, so the edge outcome.
     SDL_MouseButtonEvent eEdge;
@@ -13817,8 +14204,8 @@ unittest {
 
     SDL_MouseButtonEvent pixOf(int ei) {
         ImVec2 pa, pb;
-        assert(TopologyPenTool.projectPt(m.vertices[m.edges[ei][0]], vp, pa));
-        assert(TopologyPenTool.projectPt(m.vertices[m.edges[ei][1]], vp, pb));
+        assert(TopologyPenTool.projectWorldPt(m.vertices[m.edges[ei][0]], vp, pa));
+        assert(TopologyPenTool.projectWorldPt(m.vertices[m.edges[ei][1]], vp, pb));
         SDL_MouseButtonEvent ev;
         ev.x = cast(int)((pa.x + pb.x) * 0.5f);
         ev.y = cast(int)((pa.y + pb.y) * 0.5f);
@@ -13891,8 +14278,8 @@ unittest {
     vts.put(&subj);
 
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0));
-    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[1], vp, p1));
     int mx = cast(int)((p0.x + p1.x) * 0.5f), my = cast(int)((p0.y + p1.y) * 0.5f);
 
     SDL_MouseButtonEvent eHit;
@@ -14082,8 +14469,8 @@ unittest {
     vts.put(&subj);
 
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0));
-    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[1], vp, p1));
     int mx = cast(int)((p0.x + p1.x) * 0.5f), my = cast(int)((p0.y + p1.y) * 0.5f);
 
     SDL_MouseButtonEvent eDown;
@@ -14390,8 +14777,8 @@ unittest {
     vts.put(&subj);
 
     ImVec2 p3, p4;
-    assert(TopologyPenTool.projectPt(m.vertices[3], vp, p3));
-    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[3], vp, p3));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[4], vp, p4));
     int mx = cast(int)((p3.x + p4.x) * 0.5f), my = cast(int)((p3.y + p4.y) * 0.5f);
 
     SDL_MouseButtonEvent eHit;
@@ -14580,8 +14967,8 @@ unittest {
     vts.put(&subj);
 
     ImVec2 p3, p4;
-    assert(TopologyPenTool.projectPt(m.vertices[3], vp, p3));
-    assert(TopologyPenTool.projectPt(m.vertices[4], vp, p4));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[3], vp, p3));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[4], vp, p4));
     int mx = cast(int)((p3.x + p4.x) * 0.5f), my = cast(int)((p3.y + p4.y) * 0.5f);
 
     Vec3 orig3 = m.vertices[3], orig5 = m.vertices[5];
@@ -14956,8 +15343,8 @@ unittest {
     auto vp = makeGridPlaneTestViewport();
 
     ImVec2 pa, pb;
-    assert(TopologyPenTool.projectPt(m.vertices[m.edges[0][0]], vp, pa), "setup: endpoint projects");
-    assert(TopologyPenTool.projectPt(m.vertices[m.edges[0][1]], vp, pb), "setup: endpoint projects");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[m.edges[0][0]], vp, pa), "setup: endpoint projects");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[m.edges[0][1]], vp, pb), "setup: endpoint projects");
 
     SubjectPacket subj;
     subj.mesh     = &m;
@@ -15083,7 +15470,7 @@ unittest {
     // A vertex pixel: every mode below resolves SOMETHING there, so the rows
     // differ by the routing decision and not by a pick miss.
     ImVec2 p0;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0), "setup: v0 must project");
     SDL_MouseButtonEvent e;
     e.x = cast(int)p0.x; e.y = cast(int)p0.y;
 
@@ -15206,7 +15593,7 @@ unittest {
     vts.put(&subj);
 
     ImVec2 p0;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0), "setup: v0 must project");
     SDL_MouseButtonEvent e;
     e.x = cast(int)p0.x; e.y = cast(int)p0.y;
 
@@ -15257,7 +15644,7 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 p0;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0), "setup: v0 must project");
 
     SubjectPacket subj;
     subj.mesh     = &m;
@@ -15493,8 +15880,8 @@ unittest {
     // Release pixel = the screen-space midpoint of the projected edge (2,3)
     // — NOT either endpoint's own pixel, so it never snaps to a vertex.
     ImVec2 p2, p3;
-    assert(TopologyPenTool.projectPt(m.vertices[2], vp, p2));
-    assert(TopologyPenTool.projectPt(m.vertices[3], vp, p3));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[2], vp, p2));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[3], vp, p3));
     int midX = cast(int)((p2.x + p3.x) * 0.5f), midY = cast(int)((p2.y + p3.y) * 0.5f);
 
     SDL_MouseButtonEvent eDown;
@@ -15595,7 +15982,7 @@ unittest {
     Vec3 centroid = (m.vertices[cellVerts[0]] + m.vertices[cellVerts[1]]
                     + m.vertices[cellVerts[2]] + m.vertices[cellVerts[3]]) * 0.25f;
     ImVec2 cpix;
-    assert(TopologyPenTool.projectPt(centroid, vp, cpix),
+    assert(TopologyPenTool.projectWorldPt(centroid, vp, cpix),
         "setup: the gap cell's centroid must project on-screen");
 
     // The press pixel is the gap cell's own CENTROID -- as far from every
@@ -15721,7 +16108,7 @@ unittest {
     Vec3 centroid = (m.vertices[cellVerts[0]] + m.vertices[cellVerts[1]]
                     + m.vertices[cellVerts[2]] + m.vertices[cellVerts[3]]) * 0.25f;
     ImVec2 cpix;
-    assert(TopologyPenTool.projectPt(centroid, vp, cpix),
+    assert(TopologyPenTool.projectWorldPt(centroid, vp, cpix),
         "setup: the notch cell's centroid must project on-screen");
 
     auto cell = t.findFillRing(cast(int)cpix.x, cast(int)cpix.y, vp);
@@ -15810,8 +16197,8 @@ unittest {
     Vec3 centB = (m.vertices[cellB[0]] + m.vertices[cellB[1]]
                 + m.vertices[cellB[2]] + m.vertices[cellB[3]]) * 0.25f;
     ImVec2 pixA, pixB;
-    assert(TopologyPenTool.projectPt(centA, vp, pixA));
-    assert(TopologyPenTool.projectPt(centB, vp, pixB));
+    assert(TopologyPenTool.projectWorldPt(centA, vp, pixA));
+    assert(TopologyPenTool.projectWorldPt(centB, vp, pixB));
 
     auto foundA = t.findFillRing(cast(int)pixA.x, cast(int)pixA.y, vp);
     assert(foundA.length == 4, "a cursor over gap A must resolve exactly that cell");
@@ -15896,7 +16283,7 @@ unittest {
     Vec3 leftC = (m.vertices[leftVerts[0]] + m.vertices[leftVerts[1]]
                 + m.vertices[leftVerts[2]] + m.vertices[leftVerts[3]]) * 0.25f;
     ImVec2 leftPix;
-    assert(TopologyPenTool.projectPt(leftC, vp, leftPix));
+    assert(TopologyPenTool.projectWorldPt(leftC, vp, leftPix));
 
     auto cell = t.findFillRing(cast(int)leftPix.x, cast(int)leftPix.y, vp);
     assert(cell.length == 4,
@@ -15956,8 +16343,8 @@ unittest {
     Vec3 rightC = (m.vertices[rightVerts[0]] + m.vertices[rightVerts[1]]
                  + m.vertices[rightVerts[2]] + m.vertices[rightVerts[3]]) * 0.25f;
     ImVec2 leftPix, rightPix;
-    assert(TopologyPenTool.projectPt(leftC,  vp, leftPix));
-    assert(TopologyPenTool.projectPt(rightC, vp, rightPix));
+    assert(TopologyPenTool.projectWorldPt(leftC,  vp, leftPix));
+    assert(TopologyPenTool.projectWorldPt(rightC, vp, rightPix));
 
     auto leftCell = t.findFillRing(cast(int)leftPix.x, cast(int)leftPix.y, vp);
     assert(leftCell.length == 4,
@@ -16013,7 +16400,7 @@ unittest {
     Vec3 solidCentroid = (m.vertices[solidVerts[0]] + m.vertices[solidVerts[1]]
                          + m.vertices[solidVerts[2]] + m.vertices[solidVerts[3]]) * 0.25f;
     ImVec2 spix;
-    assert(TopologyPenTool.projectPt(solidCentroid, vp, spix));
+    assert(TopologyPenTool.projectWorldPt(solidCentroid, vp, spix));
     auto cellOverFace = t.findFillRing(cast(int)spix.x, cast(int)spix.y, vp);
     assert(cellOverFace.length == 0,
         "findFillRing must return [] over an already-faced INTERIOR cell (no border edges "
@@ -16062,7 +16449,7 @@ unittest {
     Vec3 centroid = (m.vertices[cellVerts[0]] + m.vertices[cellVerts[1]]
                     + m.vertices[cellVerts[2]] + m.vertices[cellVerts[3]]) * 0.25f;
     ImVec2 cpix;
-    assert(TopologyPenTool.projectPt(centroid, vp, cpix));
+    assert(TopologyPenTool.projectWorldPt(centroid, vp, cpix));
 
     SubjectPacket subj;
     subj.mesh     = &m;
@@ -16116,7 +16503,7 @@ unittest {
     Vec3 centroid = (m.vertices[cellVerts[0]] + m.vertices[cellVerts[1]]
                     + m.vertices[cellVerts[2]] + m.vertices[cellVerts[3]]) * 0.25f;
     ImVec2 cpix;
-    assert(TopologyPenTool.projectPt(centroid, vp, cpix));
+    assert(TopologyPenTool.projectWorldPt(centroid, vp, cpix));
 
     SubjectPacket subj;
     subj.mesh     = &m;
@@ -16211,8 +16598,8 @@ unittest {
     // it is unambiguously the screen-nearest border edge regardless of
     // perspective distortion.
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(m.vertices[cellVerts[0]], vp, p0));
-    assert(TopologyPenTool.projectPt(m.vertices[cellVerts[1]], vp, p1));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[cellVerts[0]], vp, p0));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[cellVerts[1]], vp, p1));
     ImVec2 hoverPix = ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
 
     SubjectPacket subj;
@@ -16359,7 +16746,7 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 cur;
-    assert(TopologyPenTool.projectPt(Vec3(-0.05f, 0, 0), vp, cur));
+    assert(TopologyPenTool.projectWorldPt(Vec3(-0.05f, 0, 0), vp, cur));
 
     // The closing side does not exist as an edge before the fill — that is
     // the whole premise, asserted rather than assumed.
@@ -16412,7 +16799,7 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 cur;
-    assert(TopologyPenTool.projectPt(Vec3(-0.05f, 0, 0), vp, cur));
+    assert(TopologyPenTool.projectWorldPt(Vec3(-0.05f, 0, 0), vp, cur));
     immutable int cx = cast(int)cur.x, cy = cast(int)cur.y;
 
     // Below the threshold: the seeds are ~0.25 from the cursor and the far
@@ -16489,7 +16876,7 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 cur;
-    assert(TopologyPenTool.projectPt(Vec3(0, 0, -0.05f), vp, cur));
+    assert(TopologyPenTool.projectWorldPt(Vec3(0, 0, -0.05f), vp, cur));
     immutable int cx = cast(int)cur.x, cy = cast(int)cur.y;
 
     immutable int seed = t.fillSeedEdge(cx, cy, vp);
@@ -16518,7 +16905,7 @@ unittest {
     // orders the search tries can hold, so this pins the search's output
     // without depending on which one won.
     ImVec2[4] sp;
-    foreach (k; 0 .. 4) assert(TopologyPenTool.projectPt(m.vertices[ring[k]], vp, sp[k]));
+    foreach (k; 0 .. 4) assert(TopologyPenTool.projectWorldPt(m.vertices[ring[k]], vp, sp[k]));
     assert(TopologyPenTool.screenQuadConvex(sp[0], sp[1], sp[2], sp[3]),
         "the returned order is the one the shape test accepted");
     assert(!TopologyPenTool.screenQuadConvex(sp[0], sp[1], sp[3], sp[2]),
@@ -16566,7 +16953,7 @@ unittest {
 
     // OUTSIDE the gap, just past the hole's bottom border edge.
     ImVec2 outside;
-    assert(TopologyPenTool.projectPt(Vec3(0, 0, -0.36f), vp, outside));
+    assert(TopologyPenTool.projectWorldPt(Vec3(0, 0, -0.36f), vp, outside));
     immutable int ox = cast(int)outside.x, oy = cast(int)outside.y;
 
     immutable int seedOut = t.fillSeedEdge(ox, oy, vp);
@@ -16575,9 +16962,9 @@ unittest {
     // The reach covers the candidates — so the refusal below is NOT a reach
     // refusal. Computed from the very law the search uses.
     ImVec2 pa, pb, pIso;
-    assert(TopologyPenTool.projectPt(m.vertices[m.edges[seedOut][0]], vp, pa));
-    assert(TopologyPenTool.projectPt(m.vertices[m.edges[seedOut][1]], vp, pb));
-    assert(TopologyPenTool.projectPt(m.vertices[isoR], vp, pIso));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[m.edges[seedOut][0]], vp, pa));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[m.edges[seedOut][1]], vp, pb));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[isoR], vp, pIso));
     immutable float reach =
         1.5f * TopologyPenTool.fillHoverRadiusPx(cast(float)ox, cast(float)oy, pa, pb);
     assert(hypot(pIso.x - ox, pIso.y - oy) < reach,
@@ -16588,7 +16975,7 @@ unittest {
 
     // INSIDE the gap, 0.06 world units away, same seed edge, same reach.
     ImVec2 inside;
-    assert(TopologyPenTool.projectPt(Vec3(0, 0, -0.30f), vp, inside));
+    assert(TopologyPenTool.projectWorldPt(Vec3(0, 0, -0.30f), vp, inside));
     immutable int ix = cast(int)inside.x, iy = cast(int)inside.y;
     immutable int seedIn = t.fillSeedEdge(ix, iy, vp);
     assert(seedIn == seedOut, "setup: the pair must differ ONLY in which side of the edge "
@@ -16600,7 +16987,7 @@ unittest {
         "and they are exactly the two that were rejected from the other side");
 
     ImVec2[4] sp;
-    foreach (k; 0 .. 4) assert(TopologyPenTool.projectPt(m.vertices[ring[k]], vp, sp[k]));
+    foreach (k; 0 .. 4) assert(TopologyPenTool.projectWorldPt(m.vertices[ring[k]], vp, sp[k]));
     assert(TopologyPenTool.screenQuadConvex(sp[0], sp[1], sp[2], sp[3]),
         "the returned order is the accepted one");
 }
@@ -16643,7 +17030,7 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 cur;
-    assert(TopologyPenTool.projectPt(Vec3(-0.05f, 0, 0), vp, cur));
+    assert(TopologyPenTool.projectWorldPt(Vec3(-0.05f, 0, 0), vp, cur));
     immutable int cx = cast(int)cur.x, cy = cast(int)cur.y;
 
     assert(t.fillQuadOnly_, "the measured default is ON");
@@ -16694,7 +17081,7 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 cur;
-    assert(TopologyPenTool.projectPt(Vec3(-0.05f, 0, 0), vp, cur));
+    assert(TopologyPenTool.projectWorldPt(Vec3(-0.05f, 0, 0), vp, cur));
 
     SubjectPacket subj;
     subj.mesh     = &m;
@@ -16769,7 +17156,7 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 cur;
-    assert(TopologyPenTool.projectPt(Vec3(-0.05f, 0, 0), vp, cur));
+    assert(TopologyPenTool.projectWorldPt(Vec3(-0.05f, 0, 0), vp, cur));
 
     // The degenerate polygons must not disturb the search: their corners
     // qualify through the border clause exactly as before (a vertex on a
@@ -16815,7 +17202,7 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 cur;
-    assert(TopologyPenTool.projectPt(Vec3(0, 0, 0), vp, cur));   // the hole's centre
+    assert(TopologyPenTool.projectWorldPt(Vec3(0, 0, 0), vp, cur));   // the hole's centre
     immutable int cx = cast(int)cur.x, cy = cast(int)cur.y;
 
     // With nothing in the hole, the centre press reaches the border edge
@@ -16887,10 +17274,15 @@ unittest {
     m.buildLoops();
 
     auto vp = makeGridPlaneTestViewport();
+    // Identity aim space: this block's rig has no layer transform, so the
+    // composed viewport is field-identical to `vp` (task 0619 §2.3 permits
+    // `ModelSpace.world()` inside a unittest block; production code in this
+    // file must not name it).
+    const vpAimId = aimSpace(vp, ModelSpace.world());
 
-    assert(TopologyPenTool.ringRefusedByIncidentPolygon(&m, [q0, a, b], vp),
+    assert(TopologyPenTool.ringRefusedByIncidentPolygon(&m, [q0, a, b], vpAimId),
         "a ring side that properly crosses an INCIDENT polygon's edge is refused");
-    assert(!TopologyPenTool.ringRefusedByIncidentPolygon(&m, [q0, c, d], vp),
+    assert(!TopologyPenTool.ringRefusedByIncidentPolygon(&m, [q0, c, d], vpAimId),
         "the same ring shape clear of every incident edge is accepted -- sharing a "
         ~ "corner with a polygon is not by itself a refusal");
 
@@ -16906,14 +17298,14 @@ unittest {
     m.buildLoops();
 
     ImVec2 pc, pd, pr2, pr3;
-    assert(TopologyPenTool.projectPt(m.vertices[c],  vp, pc));
-    assert(TopologyPenTool.projectPt(m.vertices[d],  vp, pd));
-    assert(TopologyPenTool.projectPt(m.vertices[r2], vp, pr2));
-    assert(TopologyPenTool.projectPt(m.vertices[r3], vp, pr3));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[c],  vp, pc));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[d],  vp, pd));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[r2], vp, pr2));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[r3], vp, pr3));
     assert(TopologyPenTool.segmentsProperlyCross(pc, pd, pr3, pr2),
         "setup: the ring side really does cut the non-incident polygon's edge");
 
-    assert(!TopologyPenTool.ringRefusedByIncidentPolygon(&m, [q0, c, d], vp),
+    assert(!TopologyPenTool.ringRefusedByIncidentPolygon(&m, [q0, c, d], vpAimId),
         "the gate never looks past the polygons incident to a ring vertex -- a ring "
         ~ "side may cross a distant face's edge freely");
 }
@@ -16949,12 +17341,17 @@ private Mesh makeRingGateLinePolyRig(out uint[3] ring, out uint cutA, out uint c
 
 unittest {
     auto vp = makeGridPlaneTestViewport();
+    // Identity aim space: this block's rig has no layer transform, so the
+    // composed viewport is field-identical to `vp` (task 0619 §2.3 permits
+    // `ModelSpace.world()` inside a unittest block; production code in this
+    // file must not name it).
+    const vpAimId = aimSpace(vp, ModelSpace.world());
 
     uint[3] ring; uint cutA, cutB;
     Mesh line = makeRingGateLinePolyRig(ring, cutA, cutB);
     line.addFace([cutA, cutB]);                 // a LINE polygon: two corners
     line.buildLoops();
-    assert(!TopologyPenTool.ringRefusedByIncidentPolygon(&line, ring[], vp),
+    assert(!TopologyPenTool.ringRefusedByIncidentPolygon(&line, ring[], vpAimId),
         "a polygon of two corners is exempt from the whole gate, crossing or not");
 
     uint[3] ring2; uint cutA2, cutB2;
@@ -16962,7 +17359,7 @@ unittest {
     immutable uint apex = tri.addVertex(Vec3(1.0f, 0, -0.2f));
     tri.addFace([cutA2, cutB2, apex]);          // the SAME segment, now eligible
     tri.buildLoops();
-    assert(TopologyPenTool.ringRefusedByIncidentPolygon(&tri, ring2[], vp),
+    assert(TopologyPenTool.ringRefusedByIncidentPolygon(&tri, ring2[], vpAimId),
         "give that identical segment a third corner and the crossing clause bites");
 }
 
@@ -17013,8 +17410,13 @@ unittest {
     t.fillRange_ = 3.0f;      // reach 1.5 world units: h2/h5 in (1.323), h3/h4 out (1.803)
 
     auto vp = makeGridPlaneTestViewport();
+    // Identity aim space: this block's rig has no layer transform, so the
+    // composed viewport is field-identical to `vp` (task 0619 §2.3 permits
+    // `ModelSpace.world()` inside a unittest block; production code in this
+    // file must not name it).
+    const vpAimId = aimSpace(vp, ModelSpace.world());
     ImVec2 cur;
-    assert(TopologyPenTool.projectPt((m.vertices[h[0]] + m.vertices[h[1]]) * 0.5f, vp, cur));
+    assert(TopologyPenTool.projectWorldPt((m.vertices[h[0]] + m.vertices[h[1]]) * 0.5f, vp, cur));
     immutable int cx = cast(int)cur.x, cy = cast(int)cur.y;
 
     // (1) the seed is side 0–1.
@@ -17027,14 +17429,14 @@ unittest {
     // (2) exactly two more corners are in reach, so the count gate passes at
     // four with no eviction at all — read off the search's own radius law.
     ImVec2 pa, pb;
-    assert(TopologyPenTool.projectPt(m.vertices[sa], vp, pa));
-    assert(TopologyPenTool.projectPt(m.vertices[sb], vp, pb));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[sa], vp, pa));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[sb], vp, pb));
     immutable float reach =
         3.0f * TopologyPenTool.fillHoverRadiusPx(cast(float)cx, cast(float)cy, pa, pb);
     size_t inReach = 0;
     foreach (k; 2 .. 6) {
         ImVec2 pk;
-        assert(TopologyPenTool.projectPt(m.vertices[h[k]], vp, pk));
+        assert(TopologyPenTool.projectWorldPt(m.vertices[h[k]], vp, pk));
         if (hypot(pk.x - cx, pk.y - cy) <= reach) ++inReach;
     }
     assert(inReach == 2, "setup: h2 and h5 are in reach, h3 and h4 are not");
@@ -17042,10 +17444,10 @@ unittest {
     // (3) the shape test would accept — one of the two cyclic orders the
     // search tries is convex, exactly as the search asks it.
     ImVec2[4] sp;
-    assert(TopologyPenTool.projectPt(m.vertices[sa],   vp, sp[0]));
-    assert(TopologyPenTool.projectPt(m.vertices[sb],   vp, sp[1]));
-    assert(TopologyPenTool.projectPt(m.vertices[h[2]], vp, sp[2]));
-    assert(TopologyPenTool.projectPt(m.vertices[h[5]], vp, sp[3]));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[sa],   vp, sp[0]));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[sb],   vp, sp[1]));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[h[2]], vp, sp[2]));
+    assert(TopologyPenTool.projectWorldPt(m.vertices[h[5]], vp, sp[3]));
     uint[] ring;
     if (TopologyPenTool.screenQuadConvex(sp[0], sp[1], sp[2], sp[3]))
         ring = [sa, sb, h[2], h[5]];
@@ -17057,7 +17459,7 @@ unittest {
 
     // (4) the gate refuses it, and the reason is the SUBSET clause: all four
     // corners are corners of the hexagon, and it has six.
-    assert(TopologyPenTool.ringRefusedByIncidentPolygon(&m, ring, vp),
+    assert(TopologyPenTool.ringRefusedByIncidentPolygon(&m, ring, vpAimId),
         "every ring corner is a corner of the incident hexagon -- a STRICT subset, "
         ~ "and the gate refuses subsets, not just duplicates");
 
@@ -17116,8 +17518,8 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
-    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1), "setup: v1 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[1], vp, p1), "setup: v1 must project");
     ImVec2 mid = ImVec2((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
 
     SubjectPacket subj;
@@ -17296,7 +17698,7 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 p0;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0), "setup: v0 must project");
 
     SubjectPacket subj;
     subj.mesh     = &m;
@@ -17397,8 +17799,8 @@ unittest {
 
     ImVec2 pixOf(uint a, uint b) {
         ImVec2 pa, pb;
-        assert(TopologyPenTool.projectPt(m.vertices[a], vp, pa), "setup: endpoint must project");
-        assert(TopologyPenTool.projectPt(m.vertices[b], vp, pb), "setup: endpoint must project");
+        assert(TopologyPenTool.projectWorldPt(m.vertices[a], vp, pa), "setup: endpoint must project");
+        assert(TopologyPenTool.projectWorldPt(m.vertices[b], vp, pb), "setup: endpoint must project");
         return ImVec2((pa.x + pb.x) * 0.5f, (pa.y + pb.y) * 0.5f);
     }
 
@@ -17524,8 +17926,8 @@ unittest {
     auto vp = makeGridPlaneTestViewport();
 
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
-    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1), "setup: v1 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[1], vp, p1), "setup: v1 must project");
 
     // --- vertex resolver, at both ends of the measured bracket ---
     immutable int inX  = cast(int)(p0.x + 7.0f), inY  = cast(int)p0.y;
@@ -17611,8 +18013,8 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
-    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1), "setup: v1 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[1], vp, p1), "setup: v1 must project");
 
     // --- the reference's own `P_vert14` cell: a vertex 14px away, nothing
     // else nearby. We grabbed it; the reference resolved the polygon.
@@ -17677,8 +18079,8 @@ unittest {
 
     auto vp = makeGridPlaneTestViewport();
     ImVec2 p0, p1;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, p0), "setup: v0 must project");
-    assert(TopologyPenTool.projectPt(m.vertices[1], vp, p1), "setup: v1 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, p0), "setup: v0 must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[1], vp, p1), "setup: v1 must project");
     assert(p0.y == p1.y && p1.x > p0.x,
         "setup: grid edge 0-1 must be a horizontal screen segment running +x from v0");
 
@@ -18400,9 +18802,9 @@ unittest {
 
     static void driveSplit(ref Rig r, uint fromVert, uint toVert) {
         ImVec2 pa, pb;
-        assert(TopologyPenTool.projectPt(r.m.vertices[fromVert], r.vp, pa),
+        assert(TopologyPenTool.projectWorldPt(r.m.vertices[fromVert], r.vp, pa),
             "setup: the source vertex must project");
-        assert(TopologyPenTool.projectPt(r.m.vertices[toVert], r.vp, pb),
+        assert(TopologyPenTool.projectWorldPt(r.m.vertices[toVert], r.vp, pb),
             "setup: the target vertex must project");
         SDL_MouseButtonEvent down;
         down.button = SDL_BUTTON_MIDDLE;
@@ -18533,8 +18935,8 @@ unittest {
         vts.put(snapPkt is null ? penTestSnapOn() : snapPkt);
 
         ImVec2 pa, pb;
-        assert(TopologyPenTool.projectPt(m.vertices[1], vp, pa), "setup: v1 must project");
-        assert(TopologyPenTool.projectPt(m.vertices[5], vp, pb), "setup: v5 must project");
+        assert(TopologyPenTool.projectWorldPt(m.vertices[1], vp, pa), "setup: v1 must project");
+        assert(TopologyPenTool.projectWorldPt(m.vertices[5], vp, pb), "setup: v5 must project");
         assert(!TopologyPenTool.isVertexInterior(m, 1) && !TopologyPenTool.isVertexInterior(m, 5),
             "setup: BOTH ends of this diagonal must be border vertices, so innerSnap is not the "
           ~ "thing under test here");
@@ -18612,13 +19014,13 @@ unittest {
 
 version (unittest) private float projectedX(Mesh* m, uint vi, const ref Viewport vp) {
     ImVec2 p;
-    assert(TopologyPenTool.projectPt(m.vertices[vi], vp, p), "vertex must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[vi], vp, p), "vertex must project");
     return p.x;
 }
 
 version (unittest) private float projectedY(Mesh* m, uint vi, const ref Viewport vp) {
     ImVec2 p;
-    assert(TopologyPenTool.projectPt(m.vertices[vi], vp, p), "vertex must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[vi], vp, p), "vertex must project");
     return p.y;
 }
 
@@ -18660,8 +19062,8 @@ version (unittest) private TopologyPenTool makeRemoveTestTool(Mesh* m, CommandHi
 version (unittest) private SDL_MouseButtonEvent gridEdgeMidPixel(ref Mesh m, ref Viewport vp,
                                                                  uint a, uint b) {
     ImVec2 pa, pb;
-    assert(TopologyPenTool.projectPt(m.vertices[a], vp, pa), "setup: endpoint projects");
-    assert(TopologyPenTool.projectPt(m.vertices[b], vp, pb), "setup: endpoint projects");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[a], vp, pa), "setup: endpoint projects");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[b], vp, pb), "setup: endpoint projects");
     SDL_MouseButtonEvent e;
     e.x = cast(int)((pa.x + pb.x) * 0.5f);
     e.y = cast(int)((pa.y + pb.y) * 0.5f);
@@ -18670,7 +19072,7 @@ version (unittest) private SDL_MouseButtonEvent gridEdgeMidPixel(ref Mesh m, ref
 
 version (unittest) private SDL_MouseButtonEvent gridVertPixel(ref Mesh m, ref Viewport vp, uint v) {
     ImVec2 p;
-    assert(TopologyPenTool.projectPt(m.vertices[v], vp, p), "setup: vertex projects");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[v], vp, p), "setup: vertex projects");
     SDL_MouseButtonEvent e;
     e.x = cast(int)p.x;
     e.y = cast(int)p.y;
@@ -19131,12 +19533,12 @@ unittest {
     t.meshSrc_ = () => &m;
 
     ImVec2 pv, pmid;
-    assert(TopologyPenTool.projectPt(m.vertices[0], vp, pv), "setup: the vertex must project");
+    assert(TopologyPenTool.projectWorldPt(m.vertices[0], vp, pv), "setup: the vertex must project");
     // The projection of the WORLD midpoint, which is what the rule measures —
     // not the midpoint of the two projected endpoints. On this z = 0 rig the
     // two coincide, but the rule is stated on the world point and the fixture
     // has to ask the same question the code does.
-    assert(TopologyPenTool.projectPt((m.vertices[1] + m.vertices[2]) * 0.5f, vp, pmid),
+    assert(TopologyPenTool.projectWorldPt((m.vertices[1] + m.vertices[2]) * 0.5f, vp, pmid),
         "setup: the edge midpoint must project");
 
     immutable float reach = topoPenPressPickPx(vp);
@@ -19228,4 +19630,219 @@ unittest {
             "and on the vertex the drag-build must still arm, untouched — the "
             ~ "veto is a comparison, not a ban on grabbing vertices");
     }
+}
+
+// ===========================================================================
+// TASK 0619 — the snap guide's ORIENTATION admission across a layer transform
+// (P6, doc/tool_aiming_item_transform_plan.md §1.4 and §Phase 0's two-fixture
+// table). Two blocks, because ONE fixture cannot separate the three candidate
+// laws from each other:
+//
+//   A  the geometric outward normal — ADOPTED:
+//        dot(n_local, ms.toLocalDir(d_world)) == dot((M^-1)^T n, d)   exactly
+//   B  the world WINDING normal:  sign(det M) * A
+//   C  what the lit vertex shader shades with (shader.d:136): dot(mat3(M)·n, d)
+//   PRE  what this code did before 0619: dot(n_local, d_world) — a local
+//        normal against a world ray, i.e. no transform at all
+//
+// Under a MIRROR the matrix is orthogonal, so `mat3(M) == (M^-1)^T` and C
+// collapses onto A: that fixture separates B (and PRE) only. Under a
+// non-uniform scale `det > 0`, so B collapses onto A: that fixture separates
+// C only. Hence two blocks, and each one asserts its own separation BEFORE it
+// asserts the verdict — a fixture that stopped separating would fail loudly
+// instead of passing vacuously.
+//
+// THE INSTRUMENT. `PenSnapGuide` is constructed directly and its own
+// `aimDir_` is read back, so every candidate below is evaluated against the
+// ray the guide ACTUALLY holds rather than against one the test assumes. The
+// expected verdict is derived by the INVERSE-TRANSPOSE route
+// (`ms.toWorldNormal`), which is a different expression from the
+// implementation's (`ms.toLocalDir` on the ray) — so the assertion cannot be
+// a restatement of the code under test. Nothing here reads the GPU/BVH
+// identity picker, which is two-sided (`bvh_pick.d:814-816`) and blind to
+// every facing question (plan R11).
+//
+// `interiorOk = true` on both `retarget` calls: the border half of the
+// admission rule is switched off so ORIENTATION is the only thing measured.
+//
+// NOTE for the standing "`ms.mirrored` is read nowhere" gate (0617): the two
+// blocks below DO read it — as the `sign(det M)` factor of candidate B, the
+// law they exist to REFUTE, and only inside a unittest. Production code in
+// this file still never reads it, and must not start.
+// ===========================================================================
+
+// A deliberately lopsided fan around vertex 0 — asymmetric on all three axes,
+// and NOT symmetric about any coordinate plane, so a mirror cannot map its
+// vertex set onto itself (the fixture shape that shipped 0617's bug). Its
+// summed fan normal is OBLIQUE, which is what P6b's non-uniform separation
+// needs: an axis-aligned normal makes A and C differ only by a positive
+// factor and the case goes vacuous.
+version (unittest) private Mesh makeObliqueFanRig() {
+    Mesh m;
+    m.addVertex(Vec3( 0.00f,  0.00f,  0.00f));   // 0 — the fan apex
+    m.addVertex(Vec3( 1.00f,  0.40f,  0.05f));   // 1
+    m.addVertex(Vec3( 0.30f,  0.20f,  1.00f));   // 2
+    m.addVertex(Vec3(-0.80f,  0.55f,  0.40f));   // 3
+    m.addFace([0, 1, 2]);
+    m.addFace([0, 2, 3]);
+    m.buildLoops();
+    return m;
+}
+
+// The summed fan normal `orientationAdmits` builds, recomputed here from the
+// mesh's own `faceNormal` so the candidates below all start from the same
+// LOCAL vector the implementation starts from.
+version (unittest) private Vec3 fanNormalLocal(Mesh* m, uint vi) {
+    Vec3 n = Vec3(0, 0, 0);
+    foreach (fi; m.facesAroundVertex(vi)) n = n + m.faceNormal(cast(uint)fi);
+    return n;
+}
+
+// The linear part of `ms.m` applied to a vector — candidate C's transport,
+// i.e. `mat3(u_model) * aNormal` as `shader.d:136` writes it. Column-major,
+// same indexing `math.applyAffine` uses minus the translation column.
+version (unittest) private Vec3 shaderNormalWorld(const ModelSpace ms, Vec3 nLocal) {
+    return Vec3(ms.m[0]*nLocal.x + ms.m[4]*nLocal.y + ms.m[ 8]*nLocal.z,
+                ms.m[1]*nLocal.x + ms.m[5]*nLocal.y + ms.m[ 9]*nLocal.z,
+                ms.m[2]*nLocal.x + ms.m[6]*nLocal.y + ms.m[10]*nLocal.z);
+}
+
+// A perspective viewport whose centre-pixel ray points along `dir`.
+version (unittest) private Viewport viewportAlong(Vec3 dir, Vec3 focus) {
+    import math : lookAt, perspectiveMatrix, normalize;
+    import std.math : PI, fabs;
+    Vec3 d = normalize(dir);
+    Viewport vp;
+    vp.eye    = focus - d * 6.0f;
+    // Any `up` not parallel to `d`; picked by the smallest |component| so the
+    // choice is deterministic and never degenerate.
+    Vec3 up = (fabs(d.y) < 0.9f) ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+    vp.view   = lookAt(vp.eye, focus, up);
+    vp.proj   = perspectiveMatrix(PI / 3, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800; vp.height = 800; vp.x = 0; vp.y = 0;
+    vp.focus  = focus;
+    return vp;
+}
+
+unittest { // P6a — MIRROR. Separates candidate B (and the pre-0619 law) from A.
+    import document : ItemXform, primaryModelSpaceResolver;
+    import math : normalize;
+    import std.format : format;
+
+    Mesh m = makeObliqueFanRig();
+    Mesh* mp = &m;
+
+    // scl.x = -1 -> det(M) < 0. Rotation on all three axes as well, so the
+    // fixture is not the "mirror alone on a symmetric cube" shape 0617's retro
+    // forbids: nothing here maps its own vertex set to itself.
+    ItemXform xf;
+    xf.pos = Vec3(0.9f, -0.45f, 0.30f);
+    xf.rot = Vec3(13.0f, 38.0f, -9.0f);
+    xf.scl = Vec3(-1.0f, 1.0f, 1.0f);
+    const ModelSpace ms = xf.modelSpace();
+    assert(ms.mirrored, "setup: scl.x = -1 must produce a mirrored ModelSpace");
+
+    auto saved = primaryModelSpaceResolver;
+    scope(exit) primaryModelSpaceResolver = saved;
+    primaryModelSpaceResolver = () => ms;
+
+    Vec3 nLocal = fanNormalLocal(mp, 0);
+    assert(nLocal.length > 1e-3f, "setup: the fan normal must not be degenerate");
+
+    // Aim so that the ADOPTED law and the pre-0619 law land on OPPOSITE sides
+    // of the ray. `w - u` is on the far side of `u` and the near side of `w`
+    // for any two non-parallel unit vectors, which is exactly that.
+    Vec3 nAdopted = normalize(ms.toWorldNormal(nLocal));   // (M^-1)^T n
+    Vec3 nPre     = normalize(nLocal);                     // what the old code dotted
+    Viewport vp   = viewportAlong(nPre - nAdopted, ms.toWorldPoint(Vec3(0, 0, 0)));
+
+    auto g = new TopologyPenTool.PenSnapGuide();
+    g.retarget(mp, true);            // interior filter OFF: orientation only
+    g.aimAt(vp, vp.width / 2, vp.height / 2);
+
+    // Every candidate, evaluated against the ray the guide ACTUALLY holds.
+    immutable float dA   = dot(ms.toWorldNormal(nLocal), g.aimDir_);
+    immutable float dB   = (ms.mirrored ? -1.0f : 1.0f) * dA;
+    immutable float dC   = dot(shaderNormalWorld(ms, nLocal), g.aimDir_);
+    immutable float dPre = dot(nLocal, g.aimDir_);
+
+    // ANTI-VACUITY. Each candidate must be far enough from zero to have a
+    // sign at all, and the ones this fixture is here to separate must
+    // genuinely predict the opposite verdict.
+    assert(dA > 1e-3f || dA < -1e-3f, "candidate A sits on the ray — no verdict to read");
+    assert((dA > 0) != (dB > 0),
+        "vacuous: the mirror fixture must separate the winding-normal law from the adopted one");
+    assert((dA > 0) != (dPre > 0),
+        "vacuous: this fixture must separate the PRE-0619 law (local normal vs world ray) "
+        ~ "from the adopted one, or the break check below could not fail");
+    // ...and the one it CANNOT separate, asserted so the reason is on record
+    // rather than assumed: under a mirror `M` is orthogonal, so `mat3(M)`
+    // equals the inverse-transpose and the lit-shader law IS the adopted one
+    // here. That is why P6b exists.
+    assert((dA > 0) == (dC > 0),
+        "a mirror cannot separate the lit-shader law from the adopted one — if it "
+        ~ "suddenly does, this fixture is not the mirror it claims to be");
+
+    immutable bool expected = !(dA > 0.0f);   // the rule: a positive dot REFUSES
+    assert(g.admits(SnapType.Vertex, 0, 0) == expected, format(
+        "the orientation verdict must follow the geometric outward normal (candidate A), "
+        ~ "derived here through the inverse-transpose rather than by re-running the tool; "
+        ~ "admits=%s expected=%s  dA=%.5f dB=%.5f dC=%.5f dPre=%.5f",
+        g.admits(SnapType.Vertex, 0, 0), expected, dA, dB, dC, dPre));
+}
+
+unittest { // P6b — NON-UNIFORM SCALE. Separates candidate C from A.
+    import document : ItemXform, primaryModelSpaceResolver;
+    import math : normalize;
+    import std.format : format;
+
+    Mesh m = makeObliqueFanRig();
+    Mesh* mp = &m;
+
+    // det(M) > 0, so candidate B collapses onto A here and this fixture is
+    // blind to it — which is the whole reason P6a is a separate block.
+    ItemXform xf;
+    xf.pos = Vec3(0.9f, -0.45f, 0.30f);
+    xf.rot = Vec3(13.0f, 38.0f, -9.0f);
+    xf.scl = Vec3(1.7f, 1.0f, 0.6f);
+    const ModelSpace ms = xf.modelSpace();
+    assert(!ms.mirrored, "setup: this fixture must NOT be mirrored");
+
+    auto saved = primaryModelSpaceResolver;
+    scope(exit) primaryModelSpaceResolver = saved;
+    primaryModelSpaceResolver = () => ms;
+
+    Vec3 nLocal = fanNormalLocal(mp, 0);
+    assert(nLocal.length > 1e-3f, "setup: the fan normal must not be degenerate");
+
+    // The GRAZING aim the plan asks for, constructed rather than searched:
+    // the two transports of the same normal are not parallel under a
+    // non-uniform scale, and `w - u` straddles them.
+    Vec3 nAdopted = normalize(ms.toWorldNormal(nLocal));            // (M^-1)^T n
+    Vec3 nShader  = normalize(shaderNormalWorld(ms, nLocal));       // mat3(M) n
+    Viewport vp   = viewportAlong(nShader - nAdopted, ms.toWorldPoint(Vec3(0, 0, 0)));
+
+    auto g = new TopologyPenTool.PenSnapGuide();
+    g.retarget(mp, true);
+    g.aimAt(vp, vp.width / 2, vp.height / 2);
+
+    immutable float dA = dot(ms.toWorldNormal(nLocal), g.aimDir_);
+    immutable float dB = (ms.mirrored ? -1.0f : 1.0f) * dA;
+    immutable float dC = dot(shaderNormalWorld(ms, nLocal), g.aimDir_);
+
+    assert(dA > 1e-3f || dA < -1e-3f, "candidate A sits on the ray — no verdict to read");
+    assert((dA > 0) != (dC > 0),
+        "vacuous: the non-uniform fixture must separate the lit-shader law from the "
+        ~ "adopted one, or it measures nothing P6a did not already measure");
+    assert((dA > 0) == (dB > 0),
+        "det(M) > 0 here, so the winding-normal law MUST collapse onto the adopted one — "
+        ~ "if it does not, this fixture is secretly mirrored");
+
+    immutable bool expected = !(dA > 0.0f);
+    assert(g.admits(SnapType.Vertex, 0, 0) == expected, format(
+        "the orientation verdict must follow the geometric outward normal, NOT the normal "
+        ~ "the lit vertex shader transports (shader.d:136 — a pre-existing shading defect, "
+        ~ "plan R10, deliberately not imported into a picking predicate); "
+        ~ "admits=%s expected=%s  dA=%.5f dB=%.5f dC=%.5f",
+        g.admits(SnapType.Vertex, 0, 0), expected, dA, dB, dC));
 }

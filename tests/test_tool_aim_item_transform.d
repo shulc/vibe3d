@@ -1241,3 +1241,613 @@ unittest { // T7: the loop scrub elects on the DRAWN rail
     assert(ratioGap(got, tLocal) > 0.04f,
         format("loop slice scrubbed to the IDENTITY-pose election %.4f", got));
 }
+
+// ===========================================================================
+// The Topology Pen family — Stages 4a and 4b.
+//
+// `topology_pen.d` had ONE projection helper (`projectPt`) shared by 161 call
+// sites, whose parameter was named `world` and which was handed a raw
+// `mesh.vertices[...]` by most of them. Stage 4a split it in two by SPACE and
+// classified every site; Stage 4b fixed the half a rename cannot reach — the
+// values that cross spaces without their NAME changing (a ray/plane meet, a
+// closest-point election, and three landings that write a world point into a
+// local vertex array).
+//
+// The four cases below are one per law, not one per site: per-site coverage
+// is delivered by the compile gate (`AimViewport` cannot be produced without
+// a `ModelSpace`, and `projectLocalPt`/`projectWorldPt` differ in the TYPE of
+// their viewport), and these cases are what catch a whole law implemented
+// wrongly.
+//
+// P6a/P6b (the orientation admission, §1.4) are NOT here: they need to read a
+// predicate that has no HTTP observable which can express all three candidate
+// laws, so they live as in-file unittests in `source/tools/edit/topology_pen.d`
+// where the guide can be constructed directly and its own aim ray read back.
+// ===========================================================================
+
+// The pen's press-pick reach — `constraint.d`'s kTopoPenPressPickNominalPx,
+// times `viewPixelScale` which is 1.0. Every fixture guard below is stated in
+// terms of it: a decoy must be INSIDE it for the wrong law, and the intended
+// element must be OUTSIDE it for the wrong law, or the case cannot separate.
+enum float PEN_PICK_PX = 8.0f;
+
+// The box vertex P1 aims at, and the box edge P2 aims at. They share a corner
+// so ONE decoy quad serves both cases.
+enum int PEN_VK = 2;
+enum int PEN_EA = 2, PEN_EB = 6;
+
+// Decoy indices in the fixture built by `penBuildFixture`.
+enum int PEN_DA = 8;    // sits at the LOCAL coordinate M*box[PEN_EA]
+enum int PEN_DB = 9;    // sits at the LOCAL coordinate M*box[PEN_EB]
+
+// The box, plus a decoy quad whose first two corners are placed at the LOCAL
+// coordinates `M*box[PEN_EA]` and `M*box[PEN_EB]`. Their IDENTITY-pose
+// projections therefore land exactly on the two DRAWN pixels of the box's own
+// vertex/edge — so the pre-0619 law does not merely miss, it elects a
+// different REAL element, and the reported index (never a count, never a -1)
+// is what separates the laws.
+void penBuildFixture(float[16] M, out Vec3[] verts, out int[][] faces) {
+    verts = BOX_BASE.dup;
+    Vec3 dA = transformPoint(M, BOX_BASE[PEN_EA]);
+    Vec3 dB = transformPoint(M, BOX_BASE[PEN_EB]);
+    // The decoy quad's far side is pushed well clear so its OWN corners can
+    // never be the nearest thing to either click pixel under either law; the
+    // guards below check that rather than trusting the offset.
+    Vec3 off = Vec3(0.15f, -1.30f, 0.65f);
+    verts ~= [dA, dB, dB + off, dA + off];
+    faces = BOX_FACES.dup;
+    faces ~= [PEN_DA, PEN_DB, PEN_DB + 2, PEN_DA + 2];
+}
+
+// A faithful re-run of `findSourceVertex` (topology_pen.d) in EITHER space.
+// `M == null` is the pre-0619 law (project the raw local coordinate through
+// the world viewport); `M != null` is the correct one (project the DRAWN
+// point). Returns the elected index or -1, plus the winner's and runner-up's
+// pixel distances so the fixture can prove the election is unambiguous.
+int penNearestVertex(Vec3[] verts, const float[16]* M, const ref Viewport vp,
+                     float sx, float sy, out double outBest, out double outRunnerUp)
+{
+    outBest = double.infinity; outRunnerUp = double.infinity;
+    int best = -1;
+    foreach (i, v; verts) {
+        Vec3 p = (M is null) ? v : transformPoint(*M, v);
+        float px, py, ndcZ;
+        if (!projectToWindowFull(p, vp, px, py, ndcZ)) continue;
+        double d = dist(px, py, sx, sy);
+        if (d < outBest) { outRunnerUp = outBest; outBest = d; best = cast(int) i; }
+        else if (d < outRunnerUp) outRunnerUp = d;
+    }
+    return (outBest <= PEN_PICK_PX) ? best : -1;
+}
+
+// The same for `findRingSeedEdge`: nearest projected SEGMENT, by 2D
+// point-to-segment distance. Returns the winning vertex PAIR (or [-1,-1]).
+int[2] penNearestEdge(Vec3[] verts, int[2][] edges, const float[16]* M,
+                      const ref Viewport vp, float sx, float sy,
+                      out double outBest, out double outRunnerUp)
+{
+    outBest = double.infinity; outRunnerUp = double.infinity;
+    int[2] best = [-1, -1];
+    foreach (e; edges) {
+        Vec3 a = (M is null) ? verts[e[0]] : transformPoint(*M, verts[e[0]]);
+        Vec3 b = (M is null) ? verts[e[1]] : transformPoint(*M, verts[e[1]]);
+        float ax, ay, bx, by;
+        if (!projectOnScreen(a, vp, ax, ay)) continue;
+        if (!projectOnScreen(b, vp, bx, by)) continue;
+        double d = distToSeg(sx, sy, ax, ay, bx, by);
+        if (d < outBest) { outRunnerUp = outBest; outBest = d; best = [e[0], e[1]]; }
+        else if (d < outRunnerUp) outRunnerUp = d;
+    }
+    return (outBest <= PEN_PICK_PX) ? best : [-1, -1];
+}
+
+// Every undirected edge of the fixture, in the SAME order `Mesh.rebuildEdges`
+// derives them (first appearance while walking faces in order, each face's
+// corners in winding order) — so an edge INDEX reported over the wire can be
+// mapped back to a vertex pair without trusting a second copy of the mesh.
+int[2][] fixtureEdges(int[][] faces) {
+    int[2][] es;
+    foreach (f; faces) {
+        foreach (k; 0 .. f.length) {
+            int a = f[k], b = f[(k + 1) % f.length];
+            int lo = a < b ? a : b, hi = a < b ? b : a;
+            bool seen = false;
+            foreach (e; es) if (e[0] == lo && e[1] == hi) { seen = true; break; }
+            if (!seen) es ~= [lo, hi];
+        }
+    }
+    return es;
+}
+
+// `/api/model`'s own edge list for a layer — the authority for what an edge
+// INDEX means, read back rather than assumed.
+int[2][] fetchEdges(int layer = 0) {
+    int[2][] r;
+    foreach (e; getJson("/api/model?layer=" ~ layer.to!string)["edges"].array)
+        r ~= [cast(int) e.array[0].integer, cast(int) e.array[1].integer];
+    return r;
+}
+
+bool samePair(int[2] a, int[2] b) {
+    return (a[0] == b[0] && a[1] == b[1]) || (a[0] == b[1] && a[1] == b[0]);
+}
+
+// One stationary hover — settles the pen's hover indicator without arming
+// anything.
+string penHoverLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
+    string log = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        vpX, vpY, vpW, vpH);
+    foreach (i; 0 .. 4)
+        log ~= format(
+            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n",
+            20.0 + i * 30.0, x, y);
+    return log;
+}
+
+// Load the box+decoy fixture, transform layer 0, frame the camera on the
+// DRAWN box, and arm the pen. Returns the live viewport and the local verts.
+void penSetup(out float[16] M, out ModelSpace ms, out CamInfo cam,
+              out Viewport vp, out Vec3[] local, out int[][] faces)
+{
+    resetScene();
+    M  = composed(AIM_POS, AIM_ROT, AIM_SCL);
+    ms = aimSpaceOf(AIM_POS, AIM_ROT, AIM_SCL);
+
+    Vec3[] verts;
+    penBuildFixture(M, verts, faces);
+    loadMesh(verts, faces);
+    setXform(0, AIM_POS, AIM_ROT, AIM_SCL);
+
+    Vec3 boxCentre = Vec3(0, 0, 0);
+    foreach (v; BOX_BASE) boxCentre = boxCentre + v;
+    setCameraAt(0.70f, 0.55f, 7.0f, transformPoint(M, boxCentre * (1.0f / 8.0f)));
+
+    cam   = fetchCam();
+    vp    = buildViewport(cam);
+    local = fetchVerts();
+    assert(local.length == 12, format("fixture must load 12 vertices, got %d", local.length));
+}
+
+// ===========================================================================
+// P1 — Topology Pen hover, aiming kind **Pixel** (§1.1). STAGE 4a.
+//
+// THE PAIR:
+//   correct law  project `M * v_local` (compose M into the viewport)
+//   wrong  law   project `v_local` through the WORLD viewport   <- pre-0619
+//
+// DISCRIMINATING INPUT: decoy vertex `PEN_DA` sits at the LOCAL coordinate
+// `M * box[PEN_VK]`, so its identity-pose projection lands EXACTLY on the
+// pixel where box vertex `PEN_VK` is DRAWN. The wrong law therefore reports a
+// different vertex INDEX rather than reporting nothing — which is why every
+// assertion here is about identity, not about a count or a -1.
+//
+// ORACLE (R11): `/api/tool/state`'s `hoverIndicator.grabElem` / `.grabIndex`
+// — the pen's OWN resolution (`resolveGrabTarget` -> `findSourceVertex` /
+// `findRingSeedEdge` / `pressVertexVetoed`), not the two-sided GPU identity
+// picker, and no facing question is asked of it.
+// ===========================================================================
+
+unittest { // P1: the pen's hover names the DRAWN vertex, not the identity-pose one
+    float[16] M; ModelSpace ms; CamInfo cam; Viewport vp; Vec3[] local; int[][] faces;
+    penSetup(M, ms, cam, vp, local, faces);
+
+    float dx_, dy_, ix_, iy_;
+    assert(projectOnScreen(transformPoint(M, local[PEN_VK]), vp, dx_, dy_),
+        "the drawn target vertex is off-screen");
+    assert(projectOnScreen(local[PEN_VK], vp, ix_, iy_),
+        "the identity-pose target vertex is off-screen");
+
+    // VACUITY (1): the transform must actually move the pixel.
+    assert(dist(dx_, dy_, ix_, iy_) > 20.0,
+        format("transform does not separate drawn/identity pixels (%.1f px) — vacuous",
+               dist(dx_, dy_, ix_, iy_)));
+
+    immutable int cx = cast(int) dx_, cy = cast(int) dy_;
+
+    // VACUITY (2): under the CORRECT law the intended vertex wins outright.
+    double best, runner;
+    int okPick = penNearestVertex(local, &M, vp, cx, cy, best, runner);
+    assert(okPick == PEN_VK,
+        format("drawn-space hover should elect v%d, elects %d", PEN_VK, okPick));
+    assert(runner > PEN_PICK_PX,
+        format("drawn-space hover is ambiguous: runner-up at %.1f px is inside the %.0f px "
+               ~ "reach", runner, PEN_PICK_PX));
+
+    // VACUITY (3): under the WRONG law a DIFFERENT REAL vertex is elected —
+    // the decoy — and the intended one is out of reach entirely.
+    int badPick = penNearestVertex(local, null, vp, cx, cy, best, runner);
+    assert(badPick == PEN_DA,
+        format("the pre-0619 law must elect the decoy v%d here, elects %d — the fixture "
+               ~ "no longer separates the two laws", PEN_DA, badPick));
+    {
+        float bx, by;
+        assert(projectOnScreen(local[PEN_VK], vp, bx, by));
+        assert(dist(bx, by, cx, cy) > PEN_PICK_PX,
+            "the intended vertex is inside the pre-0619 law's reach — vacuous");
+    }
+
+    cmd("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen mode move");
+    playAndWait(penHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, cx, cy));
+    Thread.sleep(dur!"msecs"(150));
+    auto hi = toolState()["hoverIndicator"];
+
+    assert(hi["overMesh"].type == JSONType.true_,
+        "the drawn-vertex pixel must be over the mesh: " ~ hi.toString);
+    assert(hi["grabElem"].str == "vertex",
+        "a hover on a drawn corner must promise the VERTEX; got " ~ hi["grabElem"].str);
+    assert(hi["grabIndex"].integer == PEN_VK,
+        format("the pen promised v%d; the DRAWN vertex is v%d and the identity-pose "
+               ~ "election is the decoy v%d",
+               hi["grabIndex"].integer, PEN_VK, PEN_DA));
+
+    // THE PAIR'S OTHER HALF: at the IDENTITY-pose pixel the pen must NOT
+    // report the intended vertex. Under the pre-0619 law it reports exactly
+    // that, at zero pixel distance.
+    playAndWait(penHoverLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                            cast(int) ix_, cast(int) iy_));
+    Thread.sleep(dur!"msecs"(150));
+    auto hi2 = toolState()["hoverIndicator"];
+    cmd("tool.set mesh.topoPen off");
+    assert(!(hi2["grabElem"].str == "vertex" && hi2["grabIndex"].integer == PEN_VK),
+        "the pen answered the intended vertex at its IDENTITY-pose pixel — it is still "
+        ~ "aiming at where the layer would sit at identity: " ~ hi2.toString);
+}
+
+// ===========================================================================
+// P2 — Topology Pen press-pick on an EDGE, aiming kind **Pixel** (§1.1).
+// STAGE 4a. Same pair as P1, on `findRingSeedEdge` instead of
+// `findSourceVertex`, and with the vertex clause deliberately out of reach so
+// the edge clause is what answers.
+//
+// DISCRIMINATING INPUT: the decoy quad's `PEN_DA`-`PEN_DB` side is the pair
+// of LOCAL coordinates `M*box[PEN_EA]`, `M*box[PEN_EB]`, so its identity-pose
+// projection lies along the DRAWN box edge. A wrong implementation therefore
+// reports a different edge INDEX, not -1.
+//
+// ORACLE (R11): the same `hoverIndicator` pair, mapped from an edge index
+// back to a vertex pair through `/api/model`'s own `edges` array.
+// ===========================================================================
+
+unittest { // P2: the pen's edge pick elects on the DRAWN edge
+    float[16] M; ModelSpace ms; CamInfo cam; Viewport vp; Vec3[] local; int[][] faces;
+    penSetup(M, ms, cam, vp, local, faces);
+
+    int[2][] wireEdges = fetchEdges(0);
+    int[2][] predEdges = fixtureEdges(faces);
+    assert(wireEdges.length == predEdges.length,
+        format("edge count disagreement: wire %d, predicted %d",
+               wireEdges.length, predEdges.length));
+
+    Vec3 aD = transformPoint(M, local[PEN_EA]);
+    Vec3 bD = transformPoint(M, local[PEN_EB]);
+    float ax, ay, bx, by;
+    assert(projectOnScreen(aD, vp, ax, ay), "drawn edge endpoint A off-screen");
+    assert(projectOnScreen(bD, vp, bx, by), "drawn edge endpoint B off-screen");
+
+    // 40% along the drawn edge — far enough from both corners that the vertex
+    // clause cannot fire (asserted below), which is what makes this an EDGE
+    // case rather than a second copy of P1.
+    immutable int cx = cast(int)(ax + (bx - ax) * 0.40f);
+    immutable int cy = cast(int)(ay + (by - ay) * 0.40f);
+
+    // VACUITY (1): the transform moves the pixel.
+    {
+        float iax, iay;
+        assert(projectOnScreen(local[PEN_EA], vp, iax, iay), "identity endpoint off-screen");
+        assert(dist(ax, ay, iax, iay) > 20.0,
+            format("transform does not separate drawn/identity edge pixels (%.1f px) — vacuous",
+                   dist(ax, ay, iax, iay)));
+    }
+
+    // VACUITY (2): no vertex is within reach under EITHER law, so the edge
+    // clause is what both laws answer with.
+    {
+        double b0, r0;
+        assert(penNearestVertex(local, &M,   vp, cx, cy, b0, r0) < 0,
+            "a drawn vertex is inside the pick reach — this would be a vertex case");
+        assert(penNearestVertex(local, null, vp, cx, cy, b0, r0) < 0,
+            "an identity-pose vertex is inside the pick reach — ambiguous fixture");
+    }
+
+    // VACUITY (3): the two laws elect DIFFERENT REAL edges.
+    double best, runner;
+    int[2] okEdge  = penNearestEdge(local, predEdges, &M,   vp, cx, cy, best, runner);
+    assert(samePair(okEdge, [PEN_EA, PEN_EB]),
+        format("drawn-space pick should elect edge (%d,%d), elects (%d,%d)",
+               PEN_EA, PEN_EB, okEdge[0], okEdge[1]));
+    assert(runner > PEN_PICK_PX,
+        format("drawn-space edge pick is ambiguous: runner-up at %.1f px", runner));
+    int[2] badEdge = penNearestEdge(local, predEdges, null, vp, cx, cy, best, runner);
+    assert(samePair(badEdge, [PEN_DA, PEN_DB]),
+        format("the pre-0619 law must elect the decoy edge (%d,%d) here, elects (%d,%d)",
+               PEN_DA, PEN_DB, badEdge[0], badEdge[1]));
+
+    cmd("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen mode move");
+    playAndWait(penHoverLog(cam.vpX, cam.vpY, cam.width, cam.height, cx, cy));
+    Thread.sleep(dur!"msecs"(150));
+    auto hi = toolState()["hoverIndicator"];
+    cmd("tool.set mesh.topoPen off");
+
+    assert(hi["grabElem"].str == "edge",
+        "a hover along a drawn edge, clear of every corner, must promise the EDGE; got "
+        ~ hi["grabElem"].str);
+    immutable long ei = hi["grabIndex"].integer;
+    assert(ei >= 0 && ei < wireEdges.length,
+        format("reported edge index %d is out of range", ei));
+    int[2] gotPair = wireEdges[cast(size_t) ei];
+    assert(samePair(gotPair, [PEN_EA, PEN_EB]),
+        format("the pen promised edge (%d,%d); the DRAWN edge is (%d,%d) and the "
+               ~ "identity-pose election is the decoy (%d,%d)",
+               gotPair[0], gotPair[1], PEN_EA, PEN_EB, PEN_DA, PEN_DB));
+}
+
+// ===========================================================================
+// P3 — Topology Pen Place, aiming kind **Landing** (§1.5). STAGE 4b.
+//
+// Not an aiming kind at all: the same defect one call deeper. The CONS stage
+// publishes its raycast hit in WORLD space (0617), against a BACKGROUND
+// layer; `mesh.addVertex` stores a coordinate in the PRIMARY layer's LOCAL
+// array. The pen used to hand the world hit straight to `addVertex`.
+//
+// THE PAIR:
+//   correct law  the stored coordinate is `M_primary^-1 * hit_world`
+//   wrong  law   the stored coordinate is `hit_world`             <- pre-0619
+//
+// DISCRIMINATING INPUT: the primary and the background carry DIFFERENT
+// transforms (the background is identity, the primary is not) — without that
+// the two laws are indistinguishable, which is why this case cannot be built
+// on a single-layer scene.
+//
+// The expected hit is computed here from the app's own `screenPointToRay` and
+// `rayPlaneIntersect` against the background quad's plane — an independent
+// prediction, never a second server reading compared against the first.
+//
+// ORACLE (R11): `/api/model?layer=1` — a stored position. No facing question.
+// ===========================================================================
+
+// A big background quad in the y = -1.2 plane, wide enough that the centre
+// pixel's ray lands well inside it (asserted below, not assumed).
+enum Vec3[4] P3_BG = [
+    Vec3(-6.0f, -1.20f, -6.0f),
+    Vec3( 6.0f, -1.20f, -6.0f),
+    Vec3( 6.0f, -1.20f,  6.0f),
+    Vec3(-6.0f, -1.20f,  6.0f),
+];
+
+Vec3[] fetchVertsLayer(int layer) { return fetchVerts(layer); }
+
+unittest { // P3: Place stores the LOCAL pre-image of the world hit
+    resetScene();
+
+    // Layer 0 = background quad (identity). Layer 1 = the empty primary the
+    // pen edits, carrying the transform.
+    loadMesh(P3_BG.dup, [[0, 1, 2, 3]]);
+    cmd("layer.add name:Edit");
+    setXform(1, AIM_POS, AIM_ROT, AIM_SCL);
+
+    setCameraAt(0.35f, 0.62f, 9.0f, Vec3(0, -1.2f, 0));
+    auto cam = fetchCam();
+    auto vp  = buildViewport(cam);
+
+    const ModelSpace ms = aimSpaceOf(AIM_POS, AIM_ROT, AIM_SCL);
+
+    immutable int cx = cam.vpX + cam.width / 2;
+    immutable int cy = cam.vpY + cam.height / 2;
+
+    Vec3 oW, dW;
+    screenPointToRay(cast(float) cx, cast(float) cy, vp, oW, dW);
+    Vec3 hitWorld;
+    assert(rayPlaneIntersect(oW, dW, P3_BG[0], Vec3(0, 1, 0), hitWorld),
+        "the centre-pixel ray must meet the background plane");
+    // ...and inside the quad, or the raycast would miss the facet entirely.
+    assert(hitWorld.x > -5.0f && hitWorld.x < 5.0f && hitWorld.z > -5.0f && hitWorld.z < 5.0f,
+        format("the centre-pixel hit (%.3f,%.3f,%.3f) is outside the background quad",
+               hitWorld.x, hitWorld.y, hitWorld.z));
+
+    Vec3 expectedLocal = ms.toLocalPoint(hitWorld);
+
+    // VACUITY: the two laws must predict positions far apart, or storing the
+    // world point would be indistinguishable from storing its pre-image.
+    assert((expectedLocal - hitWorld).length > 0.5f,
+        format("the local pre-image %s and the world hit %s are only %.3f apart — vacuous",
+               expectedLocal, hitWorld, (expectedLocal - hitWorld).length));
+
+    assert(fetchVertsLayer(1).length == 0, "the primary layer must start empty");
+
+    cmd("tool.set mesh.topoPen on");
+    cmd("tool.attr mesh.topoPen mode point");   // the place-on-empty gesture
+    playAndWait(clickOnlyLog(cam.vpX, cam.vpY, cam.width, cam.height, cx, cy));
+    Thread.sleep(dur!"msecs"(200));
+    cmd("tool.set mesh.topoPen off");
+
+    Vec3[] placed = fetchVertsLayer(1);
+    assert(placed.length == 1,
+        format("Place must add exactly one vertex to the primary; got %d", placed.length));
+
+    // The pixel is integer-quantised and the tool re-derives its own ray, so
+    // a small tolerance is inherent; it is an order of magnitude below the
+    // vacuity gap above.
+    assert((placed[0] - expectedLocal).length < 0.05f,
+        format("Place stored %s; the LOCAL pre-image of the world hit is %s and the raw "
+               ~ "world hit is %s", placed[0], expectedLocal, hitWorld));
+    assert((placed[0] - hitWorld).length > 0.4f,
+        format("Place stored the RAW WORLD hit %s — the value never came back into the "
+               ~ "layer's own space", placed[0]));
+
+    assert(fetchVertsLayer(0).length == 4, "the background layer must be untouched");
+}
+
+// ===========================================================================
+// P5 — Topology Pen Add Loop, aiming kind **Closest** (§1.3). STAGE 4b.
+//
+// THE PAIR:
+//   correct law  elect on the WORLD rail (`M*a`, `M*b`) -> t_world
+//   wrong  law   elect on the LOCAL rail (a, b)         -> t_local  <- pre-0619
+//
+// `seedRail` fills `seedRailA_`/`seedRailB_` from raw `m.vertices[]` (their
+// field comment said "world-space endpoints" until this task) and
+// `ratioOnSegment` elected against them directly. The election is not
+// affine-invariant, so the two answers genuinely differ under a non-uniform
+// scale — and the ratio that comes back IS affine-invariant, which is why no
+// back-transform is needed once the election is done in the right space.
+//
+// DISCRIMINATING INPUT: a seed edge whose endpoints differ in DEPTH. On a
+// fronto-parallel rail the two elections agree; the guard below asserts they
+// differ under BOTH rail orientations before anything is driven.
+//
+// ORACLE (R11): `/api/tool/state`'s `addLoopRatio` — a scalar the tool
+// computed. No facing question.
+//
+// SATURATING RED, stated rather than dressed up. The deliberate-break check
+// for this case (elect on the local rail) reads **1.0000** against the
+// correct 0.7000 — and 1.0 is the top of `ratioOnSegment`'s own `[0,1]`
+// clamp. On this fixture the local rail sits far enough off the world ray
+// that its nearest point is an ENDPOINT, so the wrong law is indistinguishable
+// from any other law that overshoots the rail. The negative assertion below
+// is therefore NOT what carries this case; the positive one is — it pins the
+// exact drawn-rail election (0.70 of the rail, the pixel the drag ended on),
+// which no overshooting law can produce. Reducing the transform until the
+// local election lands in range would also collapse the two elections onto
+// each other, which is the vacuity this case's guard (3) forbids.
+// ===========================================================================
+
+enum uint P5_LSHIFT = 0x0001;   // KMOD_LSHIFT — the Add Loop gesture's modifier
+
+// Shift+MMB press then drag, with NO release: `addLoopRatio` is arm state and
+// a release commits and clears it.
+string mmbDragNoReleaseLog(int vpX, int vpY, int vpW, int vpH,
+                           int x0, int y0, int x1, int y1, int steps)
+{
+    string log = format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        vpX, vpY, vpW, vpH);
+    log ~= format(
+        `{"t":50.000,"type":"SDL_MOUSEBUTTONDOWN","btn":2,"x":%d,"y":%d,"clicks":1,"mod":%u}` ~ "\n",
+        x0, y0, P5_LSHIFT);
+    int lastX = x0, lastY = y0;
+    foreach (i; 1 .. steps + 1) {
+        int x = x0 + cast(int)((cast(double)(x1 - x0) * i) / steps);
+        int y = y0 + cast(int)((cast(double)(y1 - y0) * i) / steps);
+        log ~= format(
+            `{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":%d,"yrel":%d,` ~
+            `"state":2,"mod":%u}` ~ "\n",
+            50.0 + i * 40.0, x, y, x - lastX, y - lastY, P5_LSHIFT);
+        lastX = x; lastY = y;
+    }
+    return log;
+}
+
+string mmbReleaseLog(int vpX, int vpY, int vpW, int vpH, int x, int y) {
+    return format(
+        `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
+        vpX, vpY, vpW, vpH)
+      ~ format(`{"t":20.000,"type":"SDL_MOUSEBUTTONUP","btn":2,"x":%d,"y":%d,"clicks":1,"mod":%u}` ~ "\n",
+               x, y, P5_LSHIFT);
+}
+
+unittest { // P5: Add Loop's ratio elects on the DRAWN rail
+    resetScene();
+
+    float[16] M = composed(AIM_POS, AIM_ROT, AIM_SCL);
+    const ModelSpace ms = aimSpaceOf(AIM_POS, AIM_ROT, AIM_SCL);
+
+    Vec3 boxCentre = Vec3(0, 0, 0);
+    foreach (v; BOX_BASE) boxCentre = boxCentre + v;
+
+    loadMesh(BOX_BASE.dup, BOX_FACES.dup);
+    setXform(0, AIM_POS, AIM_ROT, AIM_SCL);
+    setCameraAt(0.70f, 0.55f, 5.5f, transformPoint(M, boxCentre * (1.0f / 8.0f)));
+
+    auto cam = fetchCam();
+    auto vp  = buildViewport(cam);
+    Vec3[] local = fetchVerts();
+    assert(local.length == 8, format("fixture must load 8 vertices, got %d", local.length));
+    // Read the edge table BEFORE anything is driven: the release below COMMITS
+    // the loop cut, which appends vertices and rewrites the edge array, so an
+    // index resolved afterwards would name a different pair.
+    int[2][] wireEdges = fetchEdges(0);
+    assert(wireEdges.length == 12, format("the box must have 12 edges, got %d", wireEdges.length));
+
+    Vec3 aDrawn = transformPoint(M, local[T6_EDGE_A]);
+    Vec3 bDrawn = transformPoint(M, local[T6_EDGE_B]);
+    float ax, ay, bx, by, iax, iay;
+    assert(projectOnScreen(aDrawn, vp, ax, ay), "drawn rail endpoint A off-screen");
+    assert(projectOnScreen(bDrawn, vp, bx, by), "drawn rail endpoint B off-screen");
+    assert(projectOnScreen(local[T6_EDGE_A], vp, iax, iay), "identity rail endpoint off-screen");
+
+    // VACUITY (1): the transform moves the rail's pixels.
+    assert(dist(ax, ay, iax, iay) > 20.0,
+        format("transform does not separate drawn/identity rail pixels (%.1f px) — vacuous",
+               dist(ax, ay, iax, iay)));
+
+    // Press at 20% along the DRAWN rail, drag to 70% of it.
+    immutable int px0 = cast(int)(ax + (bx - ax) * 0.20f);
+    immutable int py0 = cast(int)(ay + (by - ay) * 0.20f);
+    immutable int px1 = cast(int)(ax + (bx - ax) * 0.70f);
+    immutable int py1 = cast(int)(ay + (by - ay) * 0.70f);
+
+    // VACUITY (2): no OTHER drawn edge passes near the press, or the seed
+    // pick could latch a different rail and the ratio would mean nothing.
+    foreach (e; boxEdges()) {
+        if (samePair([e[0], e[1]], [T6_EDGE_A, T6_EDGE_B])) continue;
+        float q0x, q0y, q1x, q1y;
+        if (!projectOnScreen(transformPoint(M, local[e[0]]), vp, q0x, q0y)) continue;
+        if (!projectOnScreen(transformPoint(M, local[e[1]]), vp, q1x, q1y)) continue;
+        double dd = distToSeg(px0, py0, q0x, q0y, q1x, q1y);
+        assert(dd > 10.0,
+            format("drawn edge (%d,%d) passes %.1f px from the press — ambiguous fixture",
+                   e[0], e[1], dd));
+    }
+
+    Vec3 oW, dW, oL, dL;
+    aimRays(vp, ms, cast(float) px1, cast(float) py1, oW, dW, oL, dL);
+    float tWorld = railRatio(aDrawn, bDrawn, oW, dW);
+    float tLocal = railRatio(local[T6_EDGE_A], local[T6_EDGE_B], oW, dW);
+
+    // VACUITY (3): the elections must differ under BOTH rail orientations —
+    // `seedRail` takes its (a,b) order from a face winding, so the answer may
+    // legitimately arrive as `1-t` and `ratioGap` must not launder a wrong one.
+    assert(ratioGap(tWorld, tLocal) > 0.04f,
+        format("the world and local elections agree up to rail orientation "
+               ~ "(t_world %.4f, t_local %.4f) — pick a rail with more depth variation",
+               tWorld, tLocal));
+    assert(tWorld > 0.05f && tWorld < 0.95f,
+        format("t_world %.4f is against an endpoint — the [0,1] clamp would mask the law",
+               tWorld));
+
+    cmd("tool.set mesh.topoPen on");
+    playAndWait(mmbDragNoReleaseLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                    px0, py0, px1, py1, 10));
+    Thread.sleep(dur!"msecs"(200));
+    auto st = toolState();
+    // Clean up the arm before any assertion can abort the block.
+    playAndWait(mmbReleaseLog(cam.vpX, cam.vpY, cam.width, cam.height, px1, py1));
+    Thread.sleep(dur!"msecs"(150));
+    cmd("tool.set mesh.topoPen off");
+
+    assert(st["addLoopArmed"].type == JSONType.true_,
+        "Add Loop never armed — the press found no ring seed edge: " ~ st.toString);
+    immutable long seed = st["addLoopSeed"].integer;
+    assert(seed >= 0 && seed < wireEdges.length, format("seed edge %d out of range", seed));
+    assert(samePair(wireEdges[cast(size_t) seed], [T6_EDGE_A, T6_EDGE_B]),
+        format("Add Loop seeded edge (%d,%d), not the drawn rail (%d,%d) — this case is "
+               ~ "about the RATIO, so a wrong seed makes it meaningless",
+               wireEdges[cast(size_t) seed][0], wireEdges[cast(size_t) seed][1],
+               T6_EDGE_A, T6_EDGE_B));
+
+    immutable float got = cast(float) st["addLoopRatio"].floating;
+    assert(ratioGap(got, tWorld) < 0.03f,
+        format("Add Loop tracked ratio %.4f; the DRAWN-rail election is %.4f (or %.4f "
+               ~ "reversed) and the identity-pose election is %.4f",
+               got, tWorld, 1.0f - tWorld, tLocal));
+    // The negative half. NOTE it is weak on this fixture — see the block
+    // comment: the local election saturates at the clamp, so this cannot
+    // separate "elected on the local rail" from "overshot for any other
+    // reason". The assertion above is the one with the discriminating power.
+    assert(ratioGap(got, tLocal) > 0.04f,
+        format("Add Loop tracked the IDENTITY-pose election %.4f (saturating: t_local is "
+               ~ "%.4f, at the [0,1] clamp)", got, tLocal));
+}
