@@ -427,28 +427,42 @@ bool kindFromToken(string token, ref ItemKind kind) pure nothrow @nogc @safe {
 string tokenOf(ItemKind k) pure nothrow @nogc @safe { return kindInfo(k).token; }
 
 /// An image item's payload (task 0616). A CLASS reference — unlike `Mesh`
-/// (a value struct `MeshSnapshot` moves) — because the natural operation on
-/// two layers sharing one image is SHARE, not copy: `LayerDuplicate` points
-/// a clone's `image_` at the exact same `ImageData` object as its source
-/// (`Layer.imageRef()` below), the same way twenty consumers of one loaded
-/// image share one entry in the pixel cache a later stage adds on top of
-/// this. `Layer.parent` is the existing precedent for a shared class
-/// reference on `Layer` — and the cautionary one: `parent` has no refcount,
-/// which is exactly the un-refcounted-alias shape a cache must not repeat
-/// (the refcount bump on a shared clone is Stage 5's job, not this one's).
+/// (a value struct `MeshSnapshot` moves) — so that a `Layer` can be REPOINTED
+/// at another payload through `Layer.imageRef()` without the field itself
+/// having to move, and so the pixel-cache handle a later stage parks here has
+/// one identity to hang off.
+///
+/// EVERY ITEM OWNS ITS OWN `ImageData`. An earlier revision of this comment
+/// said the opposite — that `LayerDuplicate` points a clone at the exact same
+/// object — and that is not what the code does, nor what it may do:
+/// `commands/layer/commands.d` deep-copies all seven fields into a fresh
+/// `ImageData`, and `io/native.d`'s round-trip test asserts two same-path
+/// clips come back as two DISTINCT payloads. The aliasing version shipped
+/// briefly under the heading "one decode, N consumers" and was a real defect:
+/// `image.replace` on the clone re-pointed BOTH rows, because they were one
+/// object. Sharing belongs one level down (the plan's cache is keyed by PATH,
+/// so two items naturally meet at one cache entry) and one level up
+/// (`ItemLink` is how many consumers reference one clip). Not here.
+///
+/// `Layer.parent` is the existing precedent for a shared class reference on
+/// `Layer`, and the cautionary one: it has no refcount, which is the
+/// un-refcounted-alias shape the pixel cache must not repeat.
 ///
 /// Stage 2 shipped only the one field that already had a consumer:
 /// `storedPath`, so a duplicated image row had something non-default to
-/// compare against its source. Stage 3 (this stage) adds the two remaining
-/// v1 channels the item's provider bundle exposes — `colorspace` and
-/// `useAlpha` (`layer_params.d`'s `kindParams`, §Q2 of the plan). Both are
-/// inert today (nothing reads them; §Q2 records why) and both are AUTHORED
+/// compare against its source. Stage 3 adds the two remaining v1 channels the
+/// item's provider bundle exposes — `colorspace` and `useAlpha`
+/// (`layer_params.d`'s `kindParams`, §Q2 of the plan). Both are AUTHORED
 /// fields, never computed — the distinction that keeps them out of the
-/// "derived value in a writable channel" trap `format` would have been.
-/// Later stages extend this class rather than replace it: Stage 4 adds the
-/// derived `resolvedPath` / `width` / `height` / `missing` / `format`
-/// fields (the path model; NONE of those become provider params — they are
-/// recomputed from the file, never authored), Stage 5 adds the pixel-cache
+/// "derived value in a writable channel" trap a `format` channel would have
+/// been. Stage 4 added the DERIVED `width` / `height` / `channels` /
+/// `missing`, recomputed from the file by `io/image_path.d`'s
+/// `refreshImageMeta` and never authored, so none of them is a provider param.
+/// There is no `resolvedPath` field and no `format` field: the resolved
+/// absolute path is computed on demand (`resolveStoredPath`) rather than
+/// cached beside a `storedPath` it could contradict, and the pixel format the
+/// panel shows is derived from `channels` at display time
+/// (`ui/image_rows.d`'s `pixelFormatText`). Stage 5 adds the pixel-cache
 /// handle. Bend #4 (the plan) notes the limit this shape has, in advance: a
 /// faithful one-slot-per-kind payload for kind #2 and #3, a tagged union by
 /// kind #6 — not paid for now.

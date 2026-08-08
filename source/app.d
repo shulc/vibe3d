@@ -2835,6 +2835,13 @@ void main(string[] args) {
     bool   quitConfirmOpen;
     bool   quitConfirmPending;
     bool   quitAfterSave;
+    // Command-failure notice (task 0616 review B1). Same pendingOpen→OpenPopup
+    // convention. `noticeText` is built by ui.command_notice.commandNoticeText,
+    // which is also what decides whether there IS a notice — a command that
+    // declined without a reason (a cancelled file dialog) stays silent.
+    string noticeText;
+    bool   noticeOpen;
+    bool   noticePending;
     string lastWindowTitle;
     string ai3dPickedImagePath;
     char[256] ai3dWorkerUrlBuf;
@@ -3339,6 +3346,9 @@ void main(string[] args) {
     app.quitConfirmOpenPtr            = &quitConfirmOpen;
     app.quitConfirmPendingPtr         = &quitConfirmPending;
     app.quitAfterSavePtr              = &quitAfterSave;
+    app.noticeTextPtr                 = &noticeText;
+    app.noticeOpenPtr                 = &noticeOpen;
+    app.noticePendingPtr              = &noticePending;
     app.historyFilterPtr              = &historyFilter;
     app.historyShowArgsPtr            = &historyShowArgs;
     app.historyShowRowNumbersPtr      = &historyShowRowNumbers;
@@ -3816,11 +3826,26 @@ void main(string[] args) {
     // Run a Command through the same dispatch the HTTP /api/command path
     // uses: refire-aware apply, history.record on success. Used by both
     // keyboard shortcut and UI-button click sites so they're uniformly
-    // undoable. Silently no-ops on null / apply()-failure (e.g. file.load
-    // when the user cancels the native dialog).
+    // undoable.
+    //
+    // `throwMsg` stays null here (a UI click has no caller to throw at), so a
+    // command that declines still no-ops — but NOT SILENTLY when it said why
+    // (task 0616 review B1). `Command.refusalReason()` is "" for every command
+    // that does not override it and is reset at the top of every overrider's
+    // apply(), so a non-empty value here means exactly "the call I just made
+    // declined, and here is the sentence to show". A decline WITHOUT a reason
+    // is still silent, which is what keeps a cancelled file dialog quiet —
+    // see ui/command_notice.d.
     void runCommand(Command cmd) {
+        import ui.command_notice : commandNoticeText;
         if (cmd is null) return;
         applyOrRefire(cmd, RecordMode.Record, null);
+        auto notice = commandNoticeText(cmd.label(), cmd.refusalReason());
+        if (notice.length) {
+            noticeText    = notice;
+            noticeOpen    = true;
+            noticePending = true;
+        }
     }
 
     // AI3D (task 0381) main-thread drain handler — the ONLY place the

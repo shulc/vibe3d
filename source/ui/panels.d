@@ -1304,7 +1304,21 @@ void drawImageListPanel(EditorApp app) {
     static string removeConfirmText;
     static size_t removeConfirmIndex;
 
+    // BALANCED ON EVERY EXIT, INCLUDING A THROWN ONE (review S3). `ImGui.End`
+    // and the style pop are not optional cleanup — ImGui keeps a window stack
+    // and a style stack, and an unwound frame that skipped either leaves both
+    // one deep. The symptom then appears on the NEXT frame, as an assertion
+    // inside ImGui with no connection to the code that threw.
+    //
+    // There ARE throwing calls on this path, which is what makes this real
+    // rather than defensive: every `commandHandlerDelegate` call below routes
+    // through `applyOrRefire` with a non-null `throwMsg`, so a refused
+    // `image.remove` / `layer.rename` / `image.load` throws from inside the
+    // draw; and the row model touches user-supplied paths (see `elideEnd`).
+    // `scope(exit)` runs on all three of return, fall-through and unwind.
     pushPanelChromeStyle();
+    scope(exit) popPanelChromeStyle();
+    scope(exit) ImGui.End();
     if (ImGui.Begin("Images")) {
         // ---- Load button ----
         // No `path` argument: `image.load` with none opens the file dialog,
@@ -1323,26 +1337,33 @@ void drawImageListPanel(EditorApp app) {
         // dispatched index cannot disagree — the bug that shape exists to
         // prevent.
         auto rem = imageRemoveTarget(&document());
-        ImGui.BeginDisabled(!rem.enabled);
-        if (ImGui.SmallButton("Remove")) {
-            if (rem.enabled) {
-                // CLICK TIME is the only place the reverse referrer sweep may
-                // run: `Document.referrersOf` explicitly forbids a draw-path
-                // call, and this is the delete-time query it was written for.
-                removeConfirmText  = imageRemoveConfirmText(&document(),
-                                                            rem.layer);
-                removeConfirmIndex = rem.index;
-                if (removeConfirmText.length) {
-                    removeConfirmOpen        = true;
-                    removeConfirmPendingOpen = true;
-                } else if (commandHandlerDelegate !is null) {
-                    // Nothing references it — nothing to warn about.
-                    commandHandlerDelegate("image.remove",
-                        `{"index":` ~ to!string(rem.index) ~ `}`);
+        // Braced so the `scope(exit)` ends the disabled state HERE and not at
+        // the end of the whole panel. Same balance-on-unwind rule as the
+        // window itself: the dispatch below throws on a refusal, and the
+        // disabled stack must not be left one deep for the rest of the frame.
+        {
+            ImGui.BeginDisabled(!rem.enabled);
+            scope(exit) ImGui.EndDisabled();
+            if (ImGui.SmallButton("Remove")) {
+                if (rem.enabled) {
+                    // CLICK TIME is the only place the reverse referrer sweep
+                    // may run: `Document.referrersOf` explicitly forbids a
+                    // draw-path call, and this is the delete-time query it was
+                    // written for.
+                    removeConfirmText  = imageRemoveConfirmText(&document(),
+                                                                rem.layer);
+                    removeConfirmIndex = rem.index;
+                    if (removeConfirmText.length) {
+                        removeConfirmOpen        = true;
+                        removeConfirmPendingOpen = true;
+                    } else if (commandHandlerDelegate !is null) {
+                        // Nothing references it — nothing to warn about.
+                        commandHandlerDelegate("image.remove",
+                            `{"index":` ~ to!string(rem.index) ~ `}`);
+                    }
                 }
             }
         }
-        ImGui.EndDisabled();
 
         // ---- In-use confirmation ----
         // Same pendingOpen convention as the AI3D modals below.
@@ -1353,6 +1374,9 @@ void drawImageListPanel(EditorApp app) {
             }
             if (ImGui.BeginPopupModal("Remove Image?", null,
                                       ImGuiWindowFlags.AlwaysAutoResize)) {
+                // Balanced on unwind: the Remove button below dispatches a
+                // command that throws when it refuses.
+                scope(exit) ImGui.EndPopup();
                 ImGui.TextUnformatted(removeConfirmText);
                 ImGui.TextUnformatted("Remove it anyway?");
                 if (ImGui.Button("Remove")) {
@@ -1367,7 +1391,6 @@ void drawImageListPanel(EditorApp app) {
                     ImGui.CloseCurrentPopup();
                     removeConfirmOpen = false;
                 }
-                ImGui.EndPopup();
             } else {
                 removeConfirmOpen = false;   // closed via ESC
             }
@@ -1390,6 +1413,10 @@ void drawImageListPanel(EditorApp app) {
         foreach (ref r; rows) {
             immutable int idx = cast(int) r.index;
             ImGui.PushID(idx);
+            // Per-ITERATION (a `scope(exit)` in a loop body runs at the end of
+            // each pass), and balanced on unwind for the same reason as the
+            // window above: this body dispatches commands that throw.
+            scope(exit) ImGui.PopID();
 
             // ---- line 1: focus marker + name + dimensions + format ----
             // The marker is the same three-state glyph the Layers panel uses
@@ -1450,7 +1477,15 @@ void drawImageListPanel(EditorApp app) {
                 if (dbl) {
                     layerRenameIndex = idx;
                     layerRenameBuf[] = 0;
-                    auto src = r.name;
+                    // `renameSeed`, not `name` (review S5). `name` is what the
+                    // row DRAWS, and for an unnamed item that is the literal
+                    // "(unnamed)" placeholder — seeding the editor with it
+                    // means pressing Enter renames the layer TO the
+                    // placeholder, and the Layers panel (which reads the raw
+                    // field) then shows an item genuinely called "(unnamed)".
+                    // The two fields exist separately so a test can see the
+                    // difference; see `ui/image_rows.d`.
+                    auto src = r.renameSeed;
                     size_t n = src.length < layerRenameBuf.length - 1
                              ? src.length : layerRenameBuf.length - 1;
                     layerRenameBuf[0 .. n] = src[0 .. n];
@@ -1458,9 +1493,9 @@ void drawImageListPanel(EditorApp app) {
             }
 
             // Pixel dimensions, then pixel format — each its own column, both
-            // read-only labels, drawn through the single-string overload so a
-            // token carrying a `%` can never be read as a printf specifier
-            // (the documented crash class in this file).
+            // read-only labels, drawn through `TextUnformatted`, which takes
+            // no format string at all (see the note on the path line below for
+            // what "the single-string overload" means in THIS binding).
             //
             // The two offsets are wide enough for the widest cell either
             // column can hold: `MAX_IMAGE_DIM` is 16384, so "16384 x 16384"
@@ -1488,9 +1523,31 @@ void drawImageListPanel(EditorApp app) {
                     immutable long b = cast(long)(avail / chW);
                     budget = b < 8 ? 8 : cast(size_t) b;
                 }
-                // Single-string overloads throughout: they route through
-                // `%.*s` and so cannot read a `%` in a user's path as a
-                // printf specifier (the documented crash class in this file).
+                // WHY A USER'S PATH IS SAFE TO PASS DIRECTLY HERE — stated
+                // precisely, because "TextDisabled is printf-style" is true of
+                // the upstream C++ API and NOT of the binding this build links
+                // (review B2 was raised against the wrong package).
+                //
+                // `dub.selections.json` resolves `d_imgui` to the cimgui shim,
+                // whose `source/d_imgui/package.d` declares:
+                //
+                //     void TextDisabled(string s)  { igTextDisabled("%.*s", cast(int) s.length, s.ptr); }
+                //     void SetTooltip(string s)    { igSetTooltip  ("%.*s", cast(int) s.length, s.ptr); }
+                //
+                // — non-template, exactly one string parameter, and the format
+                // string is the binding's own literal. `elideEnd(...)` and
+                // `pathTooltip` are ARGUMENTS to `%.*s`, never the format, so
+                // a path holding `%20i` or `%s` (a browser download, a shell
+                // artefact) is drawn literally. The printf-style overloads in
+                // this binding all take an explicit format PLUS typed args
+                // (`(string fmt, string)`, `(string fmt, int)`, `(string fmt,
+                // int, int)`) and cannot be selected by a single argument.
+                //
+                // If the binding is ever swapped for one whose only overload is
+                // a variadic `(string fmt, A...)`, these two calls become the
+                // crash — so the swap must re-check this block. That is also
+                // why the columns above use `TextUnformatted`, which has no
+                // format-string form to regress into under any binding.
                 if (r.pathText.length)
                     ImGui.TextDisabled(elideEnd(r.pathText, budget));
                 else
@@ -1504,12 +1561,11 @@ void drawImageListPanel(EditorApp app) {
                     ImGui.TextDisabled("(not found)");
                 }
             }
-
-            ImGui.PopID();
         }
     }
-    ImGui.End();
-    popPanelChromeStyle();
+    // `ImGui.End()` + `popPanelChromeStyle()` are the two `scope(exit)`s
+    // registered at the top of this function — see the note there for why they
+    // are not plain statements here.
     }
 }
 
@@ -3407,6 +3463,42 @@ void drawQuitGuardModal(EditorApp app) {
             } else {
                 // Closed via ESC / [X] — same semantics as No: cancel the quit.
                 quitConfirmOpen = false;
+            }
+        }
+
+        // ---- Command-failure notice (task 0616 review B1) ----------------
+        // THE ONLY PLACE A DECLINED COMMAND BECOMES VISIBLE. `log.d`'s single
+        // sink is a stderr echo and no UI listens to it, so before this the
+        // File → Open of a pre-v8 document simply did nothing on screen. The
+        // text (and the decision that there is any) comes from
+        // `ui.command_notice.commandNoticeText`, driven by `runCommand`.
+        //
+        // NOT gated on `g_testMode`, unlike the quit guard above: that one is
+        // gated because it would BLOCK the harness's window close, whereas
+        // this one is only ever raised by a command that declined WITH a
+        // reason through the keyboard/UI path — which `--test` does not do
+        // (a pathless `file.load` in test mode returns early and sets no
+        // reason). Leaving it live keeps the surface real in the same binary
+        // the tests run.
+        if (noticeOpen) {
+            if (noticePending) {
+                ImGui.OpenPopup("Command Failed");
+                noticePending = false;
+            }
+            if (ImGui.BeginPopupModal("Command Failed", null,
+                                      ImGuiWindowFlags.AlwaysAutoResize)) {
+                // TextUnformatted, not TextDisabled/Text: the reason carries a
+                // user-supplied FILE PATH, and this is the overload that takes
+                // no format string at all.
+                ImGui.TextUnformatted(noticeText);
+                ImGui.Separator();
+                if (ImGui.Button("OK")) {
+                    noticeOpen = false;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.EndPopup();
+            } else {
+                noticeOpen = false;   // closed via ESC / [X]
             }
         }
     }

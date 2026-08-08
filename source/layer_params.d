@@ -354,13 +354,31 @@ final class LayerPropsProvider : ParamProvider {
 /// mesh-only expectation intact — and what makes the test below meaningful
 /// only because it also exercises a document where they differ.
 ///
-/// Falls back to `primary` if the focus is somehow unset. `focusedItem !is
-/// null` is a document invariant, so the fallback is unreachable in a
-/// well-formed document; it exists so a partially built one (a fixture, a
-/// half-parsed file) draws instead of dereferencing null.
+/// Falls back to `primary` when the focus is not a MEMBER of the document —
+/// `doc.isMember`, not `!is null` (review S4).
+///
+/// The two are not the same test, and only one of them is reachable.
+/// "Non-null" is a document invariant, so a null focus is the case that cannot
+/// happen; STALE is the one that can, and `Document.isMember`'s own doc comment
+/// names the mechanism: a caller that replaces `layers` on a live `Document` by
+/// direct field assignment leaves `focusedItem` non-null but no longer present
+/// — which is exactly what `readV3d` does through `FileLoad`, and what
+/// `document.d`'s own stale-focus fixture pins.
+///
+/// A stale focus is not a cosmetic problem here. This function's result is
+/// handed to `document.indexOf`, which answers `layers.length` for a
+/// non-member; `resolveIndex` (`commands/layer/commands.d`) CLAMPS that into
+/// range, so every `layer.attr` the form dispatched would land on the LAST
+/// item in the document — a real item, silently edited, with the panel showing
+/// someone else's values. Falling back to `primary` targets an item that is a
+/// member by invariant.
+///
+/// The sibling affordance added in the same change already gets this right
+/// (`ui/image_rows.d`'s `imageRemoveTarget` refuses an out-of-range index);
+/// this is the other half of one rule.
 Layer itemPropsTarget(Document* doc) {
     if (doc is null) return null;
-    return doc.focusedItem !is null ? doc.focusedItem : doc.primary;
+    return doc.isMember(doc.focusedItem) ? doc.focusedItem : doc.primary;
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +425,66 @@ unittest {
     assert(sawColorspace,
         "the image's per-kind channels are reachable through the bound "
         ~ "provider — they are not through the primary's");
+}
+
+// ---------------------------------------------------------------------------
+// P0.4c (review S4): a STALE focus falls back to the primary.
+//
+// The guard here used to be `focusedItem !is null`, which is the UNREACHABLE
+// case — non-null is a document invariant. The reachable one is stale:
+// non-null but no longer a member of `layers`, which is what
+// `Document.isMember`'s own doc comment describes and what a whole-document
+// replacement by direct field assignment produces. `readV3d` (through
+// `FileLoad`) is that replacement, on the live `Document`, every File → Open.
+//
+// WHY IT MATTERS, and why "it draws the wrong panel" understates it: the bound
+// item's index is what the form's rows dispatch `layer.attr` against.
+// `indexOf` answers `layers.length` for a non-member and `resolveIndex`
+// (`commands/layer/commands.d`) CLAMPS that into range — so every edit made in
+// the properties panel would land on the LAST item in the document. The
+// assertion below reads that number directly rather than describing it.
+//
+// Discriminating: the stale item is a real, live `Layer` object with a
+// different name, so a `!is null` implementation returns it and every
+// assertion here reads it — `is` identity, not "not null".
+// ---------------------------------------------------------------------------
+unittest {
+    import document : Document, Layer;
+    import mesh     : makeCube;
+
+    auto doc = Document.bootstrap(makeCube());
+    doc.layers[0].name = "the document that was open before";
+    auto stale = doc.focusedItem;
+    assert(stale !is null, "fixture: there is a focus to go stale");
+
+    // The whole layer list is replaced by direct field assignment — the shape
+    // `readV3d` uses, and the only way `primary`/`focusedItem` can go stale.
+    auto fresh = new Layer;
+    fresh.name = "the document just loaded";
+    fresh.meshRef() = makeCube();
+    fresh.selected  = true;
+    doc.layers      = [fresh];
+    doc.primary     = fresh;
+    // …and `focusedItem` is deliberately NOT repointed: that is the bug state.
+
+    assert(doc.focusedItem is stale,
+        "precondition: the focus still points at the OLD object — if a "
+        ~ "mutator had already healed it there would be nothing to test");
+    assert(!doc.isMember(doc.focusedItem),
+        "…and that object is no longer in the document, which is exactly what "
+        ~ "`!is null` cannot see");
+    assert(doc.indexOf(doc.focusedItem) == doc.layers.length,
+        "…so its index is the out-of-range sentinel that `resolveIndex` "
+        ~ "clamps onto the last item");
+
+    auto bound = itemPropsTarget(&doc);
+    assert(bound is fresh,
+        "a stale focus falls back to the primary; a `!is null` guard binds '"
+        ~ stale.name ~ "' — an item that left the document, whose index "
+        ~ "clamps every `layer.attr` the panel dispatches onto the last row");
+    assert(doc.isMember(bound),
+        "…and whatever is bound is a genuine member, which is the property "
+        ~ "the index arithmetic downstream depends on");
 }
 
 // ---------------------------------------------------------------------------

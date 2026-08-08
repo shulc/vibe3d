@@ -25,14 +25,28 @@
 //      document path (`io.doc_state` is right there, and `file.save` consults
 //      it three lines below the write) instead of the file at hand.
 //
-//   2. A LINK THAT CAME FROM A FILE SOMEBODY ELSE WROTE. Today a `.v3d` with a
-//      `links` array is the ONLY user-reachable way a link enters the document
-//      — the first command that creates one arrives with the reference-image
-//      item, a later task. Every existing link test round-trips through OUR
-//      writer, so a reader and a writer that agreed on the WRONG meaning of
-//      `target` would round-trip perfectly and prove nothing. A hand-authored
-//      file pins the wire meaning: `target: 2` is `layers[2]`, and the proof
-//      is that removing `layers[2]` is what breaks the link.
+//   2. A FILTERED-SUBSET INDEX ENCODING. `target` is documented as an index
+//      into the whole `layers` array. The in-module link suite cannot see a
+//      reader (or writer) that treated it as an index among the IMAGE items
+//      only, because its own fixture puts the clips at layers 0, 1 and 2 —
+//      where the full-array index and the images-only index are the same
+//      number for every clip. This fixture separates them: the mesh takes
+//      index 0 and the clips sit at 1, 2 and 3, so an images-only encoding
+//      reads `target: 2` as clipC and the assertions below name a different
+//      item.
+//
+//      (An earlier revision justified this case as "a hand-authored file, so
+//      the reader and writer cannot agree on a wrong meaning". That reason was
+//      false: `io/native.d`'s own link test already pins the raw written
+//      `target` against an independently established index, and then mutates
+//      the document — so a symmetric off-by-one, and a 1-based encoding, were
+//      both already dead IN-MODULE. The case earns its place for the reason
+//      above instead, which that fixture's shape genuinely cannot reach.)
+//
+//      It is also the only END-TO-END link test: the file is loaded through
+//      the real `file.load`, the clip is removed through the real
+//      `image.remove`, and the undo goes through `/api/undo` rather than a
+//      direct `revert()` call.
 //
 // Both cases write their files from this process and hand the app absolute
 // paths, exactly as the file dialog would.
@@ -192,14 +206,20 @@ unittest {
     assert(layerAt(idx)["type"].str == "image" && layerAt(idx)["name"].str == "img",
         "…and it is still the image row");
 
+    // Vacuity guard for THE ASSERTION below, and the only thing that makes it
+    // discriminating: the two candidate answers must be DIFFERENT STRINGS.
+    // (An earlier revision followed the assertion with a `dirName(...) == dirB`
+    // check instead — which is a strict consequence of the full equality and
+    // could not fail once it had passed.)
+    assert(imgA != imgB && dirName(imgA) != dirName(imgB),
+        "fixture: the two copies live in different directories, so 'resolved "
+        ~ "into B' and 'resolved into A' are distinguishable answers");
+
     // THE ASSERTION.
     assert(storedPathOf(idx) == imgB,
         "the moved document finds the image BESIDE ITSELF. An absolute stored "
         ~ "path reads " ~ imgA ~ " here — which exists and opens. Got "
         ~ storedPathOf(idx));
-    assert(dirName(storedPathOf(idx)) == buildNormalizedPath(dirB),
-        "…stated as the directory too, so a path that merely ends in the right "
-        ~ "basename cannot pass");
 
     // --- and the STORE side re-anchors on B ---------------------------------
     auto docB2 = buildPath(dirB, "scene2.v3d");
@@ -234,6 +254,12 @@ bool loadOk(string path) {
 //
 // Every part of that shape is load-bearing:
 //
+//   * A MESH AT INDEX 0, so the clips sit at 1/2/3 and the full-array index of
+//     each clip differs from its position among the images (0/1/2). This is
+//     the one thing `io/native.d`'s in-module link fixture cannot express — it
+//     puts its clips at 0/1/2, where the two numberings coincide — and it is
+//     what makes an images-only reading of `target` visible: such a reader
+//     resolves `target: 2` to clipC, a real item with a different name.
 //   * THREE clips and the links aim at the MIDDLE one. An off-by-one in the
 //     post-parse resolve lands on clipA or clipC — both real items, so "the
 //     link resolved" passes.
@@ -251,10 +277,10 @@ bool loadOk(string path) {
 //     (maskImage before backdropImage). The re-save must emit them sorted, so
 //     the order is re-derived from the slot list rather than echoed.
 //
-// The removal is what makes the READ side honest. A reader and a writer that
-// agreed on a wrong meaning of `target` round-trip perfectly; but if the reader
-// had resolved `2` to clipA, then removing clipB leaves both links LIVE and the
-// re-saved file still carries them.
+// The removal is what turns "it resolved to something" into "it resolved to
+// THIS": if the reader had resolved `2` to clipA (path-keyed) or to clipC
+// (images-only), removing clipB leaves both links LIVE and the re-saved file
+// still carries them, where the correct build writes no `links` block at all.
 // ===========================================================================
 unittest {
     auto root = scratch("links");
@@ -287,9 +313,24 @@ unittest {
         "fixture: clipB is the MIDDLE clip, at index 2");
     assert(layerAt(1)["name"].str == "clipA" && layerAt(3)["name"].str == "clipC",
         "fixture: a clip on either side of it");
-    assert(storedPathOf(1) == storedPathOf(2),
-        "fixture: clipA and clipB resolve to ONE file — that is what makes a "
-        ~ "path-keyed resolve pick the wrong clip instead of no clip");
+    // The decoy really is a decoy. Comparing the two reads to EACH OTHER would
+    // be two values produced by identical code from identical input; both are
+    // compared against the file this test wrote, which is an oracle from
+    // outside the code under test. clipC is the control that shows the reads
+    // are not simply all the same.
+    immutable sharedFile = buildNormalizedPath(buildPath(root, "shared.bmp"));
+    immutable otherFile  = buildNormalizedPath(buildPath(root, "other.bmp"));
+    assert(storedPathOf(1) == sharedFile,
+        "fixture: clipA resolves to the file this test wrote. Got "
+        ~ storedPathOf(1));
+    assert(storedPathOf(2) == sharedFile,
+        "fixture: and so does clipB — ONE file behind two clips is what makes "
+        ~ "a path-keyed resolve pick the wrong clip instead of no clip. Got "
+        ~ storedPathOf(2));
+    assert(storedPathOf(3) == otherFile,
+        "fixture: clipC does NOT — without this, 'the two agree' would be "
+        ~ "equally true of a build that resolved every clip to one path. Got "
+        ~ storedPathOf(3));
 
     auto out0 = buildPath(root, "out0.v3d");
     cmd(`{"id":"file.save","params":{"path":` ~ jsonStr(out0) ~ `}}`);
