@@ -5890,10 +5890,10 @@ struct Mesh {
         }
     }
 
-    // R6 — selectionSignature must react to a hide. Once the whole-mesh
-    // fallback means "all VISIBLE", hiding an element changes the operand set
-    // of an empty-selection op without changing its selection, so a
-    // Select-only signature leaves the falloff / action-centre caches stale.
+    // T-S6b / R6 — selectionSignature must react to a hide. Once the
+    // whole-mesh fallback means "all VISIBLE", hiding an element changes the
+    // operand set of an empty-selection op without changing its selection, so
+    // a Select-only signature leaves the falloff / action-centre caches stale.
     unittest {
         auto base = makeCube();
         base.syncSelection();

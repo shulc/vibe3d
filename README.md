@@ -54,6 +54,10 @@ AI image→3D generation add-on). Or [build from source](#build-from-source).
 `Space` to cycle) with rectangle drag-select (Shift adds, Ctrl removes), loop /
 ring / connect / between, expand / contract, invert, and fill-holes. Every tool
 takes numeric parameter entry in a YAML-driven **Tool Properties** panel.
+**Hide** / **Isolate** / **Invert Hidden** / **Unhide All** (`H` / `Shift+H` /
+`Ctrl+H` / `U`) take part of a mesh out of the viewport, out of picking and out
+of every operation without deleting it — session state, so a save and reload
+brings it all back visible.
 
 **Transform** — interactive **Move** (`W`), **Rotate** (`E`), **Scale** (`R`)
 gizmos and a unified **Transform** (`Y`) that exposes all three banks at once.
@@ -107,6 +111,7 @@ A quick taste of the controls (the complete cheat-sheet lives in [USAGE.md](USAG
 | Vertices / Edges / Polygons mode | `1` / `2` / `3` |
 | Move / Rotate / Scale / Transform | `W` / `E` / `R` / `Y` |
 | Connected select / Invert | `]` / `[` |
+| Hide / Isolate / Unhide All | `H` / `Shift+H` / `U` |
 | Subdivide / Subpatch toggle | `D` / `Tab` |
 | Undo / Redo | `Ctrl+Z` / `Ctrl+Shift+Z` |
 

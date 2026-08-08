@@ -233,6 +233,53 @@ Alt-click for granular options.
 | Between | Shift + `G` |
 | Drop selection | `Esc` |
 
+### Visibility (hiding geometry)
+
+Hiding takes part of a mesh out of the way **without deleting it**. Hidden
+geometry is not drawn, does not occlude what is behind it, cannot be picked by
+click or drag-rect, is not snapped to, and is left untouched by every mesh
+operation. It is what you reach for when you model inside a volume: hide the
+back of a head and you stop fighting it while you work on the face.
+
+| Action | Key |
+|---|---|
+| Hide Selected | `H` |
+| Isolate (hide unselected) | `Shift+H` |
+| Invert Hidden | `Ctrl+H` |
+| Unhide All | `U` |
+
+The same four commands sit under **Visibility** on the **Selection** tab of the
+command panel.
+
+What hiding does, precisely:
+
+- **It works per component type.** Hiding polygons hides those polygons; a
+  vertex or an edge becomes hidden only once *every* polygon using it is hidden
+  — or, for a loose point with no polygon at all, when it is hidden in its own
+  right. So hiding two polygons of a cube hides no vertex and no edge, and all
+  8 vertices stay selectable.
+- **Hidden geometry leaves the selection.** Hiding what you had selected leaves
+  you with an empty selection, and nothing you cannot see can be selected
+  afterwards — not by clicking, not by a rectangle, not through the symmetry
+  auto-add.
+- **An empty selection means "everything visible".** Commands that fall back to
+  the whole mesh when nothing is selected act on the *visible* whole mesh, so
+  hiding is also a way to scope an operation.
+- **Hide, Isolate and Invert Hidden only ever add to what is already hidden**;
+  `U` (Unhide All) is what takes hiding away. One consequence is worth knowing
+  before it surprises you: isolating onto something that is *already* hidden
+  blanks the viewport, because the hidden set then covers the whole mesh. That
+  is intended behaviour, not a bug — and it is why a hidden count is always on
+  screen (`Hidden: 4 vert, 6 poly` on the command row, `4/0/6 hidden` beside the
+  selection counts). An empty viewport with a hidden count is a mesh that `U`
+  brings straight back, not a mesh you lost.
+- **Undo puts it back in one step.** A hide and the deselection it causes are a
+  single `Ctrl+Z`.
+- **Hiding does not survive save and reload.** It is session state, not document
+  content: save a document with half of it hidden, reopen it, and everything is
+  visible again. Nothing is lost — only the hiding is forgotten. The same holds
+  for File → New, for `.v3d` and for every interchange format.
+
 ### Mesh operations
 
 | Action | Key |
