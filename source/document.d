@@ -482,6 +482,145 @@ final class ImageData {
     bool   useAlpha   = true;        ///< inert; round-tripped, nothing reads it
 }
 
+// ===========================================================================
+// Task 0616 Stage 6 (task file Ph3) — the CONSUMER → ITEM link.
+//
+// WHAT IDENTIFIES THE TARGET: the target `Layer` OBJECT itself. Nothing else.
+// The three candidates that look like identity and are not:
+//
+//   * A PATH is not identity. Two image items may legitimately carry the same
+//     `storedPath` (the user loaded one file twice and renamed the rows apart,
+//     or two rows converged after a `replace`), so a path does not name ONE
+//     row; and the whole point of the item indirection is that re-pointing an
+//     image at a different file must reach every consumer WITHOUT touching
+//     any consumer — impossible if the consumer stores the path.
+//   * An INDEX is not identity. `layers[]` is spliced by `layer.delete` and
+//     permuted by `layer.reorder` — whose own comment is explicit that
+//     identity is untouched by the splice. A stored index survives neither,
+//     and its failure mode is the worst available one: after a MIDDLE delete
+//     every index past the hole silently addresses its NEIGHBOUR. That is not
+//     a broken link, it is a link to the wrong thing, with nothing to notice.
+//   * A NAME is not identity. `layer.rename` is a supported operation on an
+//     image row (the reference's list renames the reference, never the file),
+//     and layer names are not unique — two rows may share one.
+//
+// The `Layer` class already exists FOR this: its doc comment below states
+// that a class buys a stable heap address that no slicing / reordering /
+// reallocation of `layers[]` can move, and that the GC keeps a deleted layer
+// alive for as long as anything still points at it. A link is one more thing
+// that points at it.
+//
+// WHAT WOULD BE PERSISTED (Ph6/v8, NOT this phase): the target's INDEX into
+// the fully written `layers[]` array, resolved back to the object after the
+// whole file is parsed. That is a wire ENCODING of this same identity, not a
+// second identity scheme: within one file the item list is written complete
+// and in order, so index ↔ object is total and injective, and the object
+// identity is authoritative again the moment the parse finishes. Its one
+// precondition is written down here so the writer cannot quietly break it:
+// **every item must be written, unfiltered** — if the writer ever filters the
+// item list again, the index encoding stops being injective and a per-item
+// stable id becomes necessary. Until then it is not (see the plan's rejection
+// of per-item UUIDs).
+//
+// DELETE BEHAVIOUR — resolution is CHECKED, links are never swept.
+// `resolve()` answers only for a target that is a present member of the
+// document it is asked about; anything else is `Dangling` and resolves to
+// `null`. Deleting a target therefore neither crashes nor silently re-points
+// a consumer, and it needs no cooperation from the delete path at all.
+//
+// This DIVERGES from the plan's §Q5 provisional recommendation (sweep every
+// referring link clear inside the delete's undo step) and from the house
+// precedent one field over — `Layer.parent`, which `LayerDelete` does clear
+// on apply and restore on revert. The distinction is in the consumer, not in
+// taste: `parent`'s consumers dereference it unconditionally (`l.parent.xform`),
+// so a dangling parent is an unnoticed wrong answer and MUST be cleared,
+// whereas an item link is only reachable through `resolve()`, whose `null`
+// result every consumer must already handle — the target file can be missing
+// from disk regardless of whether the item exists. Three further reasons:
+//
+//   1. The sweep would not be sufficient on its own. FOUR separate sites
+//      replace the whole layer list (scene reset, the `.v3d` reader, the
+//      interchange import, and delete), so a link can outlive its document
+//      without any delete running. Checked resolution is required anyway;
+//      given that, the sweep is redundancy, not safety.
+//   2. Undo becomes exact for free. `LayerDelete.revert` reinserts the SAME
+//      object, so every link that pointed at it is Live again by identity —
+//      with no recorded list to restore and therefore no way to restore it
+//      wrong (e.g. re-establishing two links onto two different objects).
+//   3. "Deleted" is strictly more information than "never set", and a panel
+//      that wants to offer "this consumer's image was deleted — re-point it?"
+//      cannot ask a link that was cleared.
+//
+// The choice is also the reversible one: a later policy of clearing on delete
+// layers cleanly ON TOP of checked resolution (`Document.referrersOf` below is
+// the sweep it would need), while the reverse — trusting an unchecked pointer
+// because a sweep was supposed to have cleared it — has no recovery.
+// ===========================================================================
+
+/// How an `ItemLink` resolves against one particular `Document`. A link has
+/// no state of its own — the same link is `Live` against the document that
+/// holds its target and `Dangling` against any other — which is why every
+/// query below takes the document to answer for.
+enum LinkState : ubyte {
+    Unset    = 0,  ///< no target set (never set, or explicitly cleared)
+    Live     = 1,  ///< target set and a present member of that document
+    Dangling = 2,  ///< target set, but not a member of that document — it was
+                    ///< deleted, or the link outlived its whole document
+}
+
+/// A forward, many→one reference from one document item (the CONSUMER) to
+/// another (the TARGET). Forward-only: the target does not know its
+/// consumers, so "who references me" is a sweep (`Document.referrersOf`),
+/// deliberately paid at delete/panel time and never on a draw or pick path.
+///
+/// The only ways to get at the target are `resolve()` (checked, `null` unless
+/// `Live`) and `targetUnchecked()` (unchecked, and named so). There is no
+/// plain `target` accessor, because "the pointer, trusted" is exactly the
+/// zombie the checked-resolution decision above exists to make unreachable.
+struct ItemLink {
+    private Layer target_;
+
+    /// A link to `l`. `null` yields the `Unset` link — a link is a value, so
+    /// `ItemLink.init` is already the well-formed "points at nothing".
+    static ItemLink to(Layer l) { ItemLink r; r.target_ = l; return r; }
+
+    /// True iff a target was set. Says nothing about whether it resolves —
+    /// that needs a document (`state`).
+    bool isSet() const { return target_ !is null; }
+
+    /// How this link resolves against `doc`. `isMember` (not `!is null`) is
+    /// the membership test, for the reason its own doc comment gives: a
+    /// deleted or replaced-away layer stays non-null and reachable.
+    LinkState state(const ref Document doc) const {
+        if (target_ is null) return LinkState.Unset;
+        return doc.isMember(target_) ? LinkState.Live : LinkState.Dangling;
+    }
+
+    /// The target as an item of `doc`, or `null` when the link is `Unset` or
+    /// `Dangling`. This is the accessor consumers use; the `null` it can
+    /// return is the same `null` an unset link returns, so a consumer needs
+    /// exactly one branch (and `state` when it wants to say WHICH).
+    inout(Layer) resolve(const ref Document doc) inout {
+        return state(doc) == LinkState.Live ? target_ : null;
+    }
+
+    /// The stored target WITHOUT the membership check — the identity itself.
+    /// For the two jobs that legitimately need the raw pointer: comparing two
+    /// links for identity, and encoding one for serialisation
+    /// (`Document.indexOf`). NOT for reaching a target to use it: a value
+    /// from here may name an item that no longer exists.
+    inout(Layer) targetUnchecked() inout { return target_; }
+}
+
+/// One named link slot on a consumer item. The name is a slot on the
+/// CONSUMER (e.g. which of its several image inputs this is), part of that
+/// consumer's own contract — it is never the target's name, and renaming
+/// either end does not touch it.
+struct LinkSlot {
+    string   name;   ///< slot name, unique within one item
+    ItemLink link;   ///< what that slot points at
+}
+
 /// A single document layer. Deliberately a CLASS, for two reasons:
 ///   (a) the interior `Mesh` sits at a stable heap address no matter how
 ///       `layers[]` is sliced / reordered / reallocated — the
@@ -587,6 +726,82 @@ final class Layer {
     ref inout(ImageData) imageRef() inout {
         debug assert(hasImage, "imageRef() called on a non-image item");
         return image_;
+    }
+
+    // Task 0616 Stage 6 (Ph3): this item's outgoing links, as named slots.
+    //
+    // Kept SORTED by `name`, with names unique. Sorted rather than an
+    // associative array on purpose: the set is tiny (one or two slots on a
+    // consumer), and a canonical order means Ph6 can write the `links` block
+    // straight out of `linkSlots()` and get the same bytes for the same
+    // document every time — an AA's iteration order is a hash order and would
+    // have made a byte-comparison round-trip test depend on insertion history.
+    //
+    // No `parent`-style special case lives here: `parent` is a separate,
+    // structural field with its own delete handling, and folding it into this
+    // generic map would change its (unchecked, dereferenced-directly)
+    // semantics — see the header comment above `LinkState`.
+    private LinkSlot[] links_;
+
+    /// The link in slot `name`, or the `Unset` link when there is no such
+    /// slot. Never `null`-returning and never throwing: an absent slot and an
+    /// unset one are the same state to a consumer, and the difference has no
+    /// representation to leak.
+    ItemLink link(string name) {
+        foreach (ref s; links_) if (s.name == name) return s.link;
+        return ItemLink.init;
+    }
+
+    /// Point slot `name` at `target`, replacing whatever it held. A `null`
+    /// `target` REMOVES the slot rather than leaving an unset one behind —
+    /// two representations of "points at nothing" would both have to be
+    /// written by Ph6 and compared by every reader, so there is only one.
+    void setLink(string name, Layer target) {
+        assert(name.length > 0, "setLink: a link slot must be named");
+        if (target is null) { clearLink(name); return; }
+        size_t i = 0;
+        while (i < links_.length && links_[i].name < name) ++i;
+        if (i < links_.length && links_[i].name == name) {
+            links_[i].link = ItemLink.to(target);
+            return;
+        }
+        links_ = links_[0 .. i] ~ LinkSlot(name, ItemLink.to(target)) ~ links_[i .. $];
+    }
+
+    /// Remove slot `name`. Returns true iff a slot was actually removed.
+    bool clearLink(string name) {
+        foreach (i, ref s; links_) if (s.name == name) {
+            links_ = links_[0 .. i] ~ links_[i + 1 .. $];
+            return true;
+        }
+        return false;
+    }
+
+    /// Every slot on this item, in canonical (name-sorted) order. `const`, so
+    /// the read-only consumers that will need it — a `const ref Document`
+    /// writer, an HTTP reporter — reach it without a mutable handle.
+    const(LinkSlot)[] linkSlots() const { return links_; }
+
+    /// True iff any slot on this item names `t` — by IDENTITY, and
+    /// deliberately UNCHECKED (`targetUnchecked`): the question this answers
+    /// is "does this item still point at that object", which stays meaningful
+    /// (and is the only useful question) precisely when the object is no
+    /// longer a document member. `Document.referrersOf` is built on it.
+    bool linksTo(const(Layer) t) const {
+        if (t is null) return false;
+        foreach (ref s; links_) if (s.link.targetUnchecked() is t) return true;
+        return false;
+    }
+
+    /// Copy `src`'s link slots onto this item — a SHALLOW copy: the slot
+    /// array is duplicated (so the two items' slot sets are independent), the
+    /// targets are shared by identity (so a cloned consumer points at the
+    /// same item its source did, which is the whole many→one point). The
+    /// `.dup` is load-bearing: without it `setLink`'s in-place replacement
+    /// branch on one item would write through the other's slice.
+    void copyLinksFrom(Layer src) {
+        if (src is null) { links_ = null; return; }
+        links_ = src.links_.dup;
     }
 }
 
@@ -1015,6 +1230,33 @@ struct Document {
     /// `document.layers = parsed` before any mutator has a chance to run. A
     /// plain `l is null` check does not catch this; `indexOf` does.
     bool isMember(const(Layer) l) const { return l !is null && indexOf(l) != layers.length; }
+
+    /// Every item that still links to `target`, in `layers` order — the
+    /// REVERSE of a forward-only link, and therefore a full sweep of the item
+    /// list (O(items × slots)). There is no back-edge to consult: the target
+    /// does not know its consumers, by design, so this is the only way to ask.
+    ///
+    /// Cost is why the phrasing matters: this is a DELETE-TIME / PANEL-TIME
+    /// query ("is this image still used", "which consumers would a delete
+    /// affect", and — if a later policy ever wants to clear links on delete —
+    /// the exact list it would clear). It must never be reached from a draw,
+    /// pick or per-frame path.
+    ///
+    /// Reports referrers whose link is DANGLING too (it matches on identity,
+    /// not on resolution), because the caller that most needs this list is
+    /// the one asking about an item that has just left, or is about to.
+    ///
+    /// Fills `outBuf` in place — the `selectedItemsInto` idiom, so a caller
+    /// that asks repeatedly keeps one buffer instead of churning an array.
+    void referrersOf(const(Layer) target, ref Layer[] outBuf) {
+        size_t n = 0;
+        if (target !is null)
+            foreach (l; layers) if (l !is null && l.linksTo(target)) ++n;
+        if (outBuf.length != n) outBuf.length = n;
+        if (n == 0) return;
+        size_t i = 0;
+        foreach (l; layers) if (l !is null && l.linksTo(target)) outBuf[i++] = l;
+    }
 
     /// Build a one-layer document from an existing mesh. The mesh is moved
     /// into a fresh "Layer 1" which becomes the (only, active, selected) layer.
@@ -1483,6 +1725,280 @@ unittest {  // hasImage()/imageOrNull()/imageRef() mirror the mesh trio: a
     assert(img.imageOrNull !is null, "imageOrNull is non-null once imageRef() is assigned");
     assert(img.imageOrNull.storedPath == "logo.png", "imageOrNull aliases the same object imageRef() wrote");
     assert(&img.imageRef() is &img.image_, "imageRef() aliases the same image_ field");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0616 Stage 6 (Ph3): the consumer → item link.
+//
+// The fixture below is built to defeat the two ways a link test goes inert:
+//
+//   * THREE image items, TWO consumers. With one of each, "the link resolved
+//     to the right item" is indistinguishable from "everything resolves to
+//     the only item there is", and a sweep that clears the first match and
+//     stops is indistinguishable from a correct one.
+//   * TWO of the images share one `storedPath`. A path-keyed implementation
+//     then resolves to the WRONG one of the two, with a different name to
+//     read — so "a path is not identity" has an observable value, not just an
+//     argument.
+//   * Deletes happen in the MIDDLE of the list. Deleting the tail cannot tell
+//     "the link reports dangling" apart from "an index was clamped into an
+//     empty range", and cannot expose the index scheme's real failure — the
+//     slot past the hole changing owner.
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    private struct LinkFixture {
+        Document doc;
+        Layer meshLayer, clipA, clipB, clipC, consumerX, consumerY;
+    }
+
+    /// layers = [mesh, clipA, clipB, clipC, consumerX, consumerY]
+    ///   clipA and clipB deliberately share one storedPath;
+    ///   consumerX links backdropImage→clipB and maskImage→clipC,
+    ///   consumerY links backdropImage→clipB  (many→one on clipB).
+    private LinkFixture makeLinkFixture() {
+        LinkFixture f;
+        Mesh m;
+        f.doc = Document.bootstrap(m);
+        f.meshLayer = f.doc.layers[0];
+
+        Layer mkClip(string name, string path) {
+            auto l = new Layer;
+            l.kind = ItemKind.Image;
+            l.name = name;
+            l.imageRef() = new ImageData();
+            l.imageRef().storedPath = path;
+            return l;
+        }
+        Layer mkConsumer(string name) {
+            auto l = new Layer;
+            l.kind = ItemKind.Empty;   // a scene item that is not itself an image
+            l.name = name;
+            return l;
+        }
+
+        f.clipA = mkClip("clipA", "shared.png");
+        f.clipB = mkClip("clipB", "shared.png");   // SAME file, different item
+        f.clipC = mkClip("clipC", "other.png");
+        f.consumerX = mkConsumer("consumerX");
+        f.consumerY = mkConsumer("consumerY");
+        f.doc.layers ~= [f.clipA, f.clipB, f.clipC, f.consumerX, f.consumerY];
+
+        // Slots set in REVERSE alphabetical order, so the canonical ordering
+        // `linkSlots()` promises is produced by the insert, not by luck.
+        f.consumerX.setLink("maskImage",     f.clipC);
+        f.consumerX.setLink("backdropImage", f.clipB);
+        f.consumerY.setLink("backdropImage", f.clipB);
+        return f;
+    }
+}
+
+unittest {  // Ph3 core: many→one, per-slot independence, canonical slot order,
+            // and the reverse sweep. Every assertion here needs at least two
+            // clips or two slots to be able to fail.
+    auto f = makeLinkFixture();
+
+    auto xBack = f.consumerX.link("backdropImage").resolve(f.doc);
+    auto yBack = f.consumerY.link("backdropImage").resolve(f.doc);
+    auto xMask = f.consumerX.link("maskImage").resolve(f.doc);
+
+    assert(xBack is f.clipB, "consumerX's backdrop link resolves to clipB");
+    assert(yBack is f.clipB, "consumerY's backdrop link resolves to clipB");
+    assert(xBack is yBack,
+        "two consumers of one image must resolve to the SAME object, not to "
+        ~ "two equal-looking ones");
+    assert(xMask is f.clipC,
+        "a second named slot on the SAME consumer is independent — this is "
+        ~ "clipC, not the other slot's clipB");
+
+    assert(f.consumerX.link("backdropImage").state(f.doc) == LinkState.Live);
+    assert(f.consumerX.link("noSuchSlot").state(f.doc) == LinkState.Unset,
+        "an absent slot is Unset, not Dangling and not a crash");
+    assert(f.consumerX.link("noSuchSlot").resolve(f.doc) is null);
+    assert(f.meshLayer.linkSlots().length == 0, "an item with no links has no slots");
+
+    // Canonical order, and the exact slot set — inserted mask-then-backdrop.
+    auto slots = f.consumerX.linkSlots();
+    assert(slots.length == 2, "consumerX has exactly two slots");
+    assert(slots[0].name == "backdropImage" && slots[1].name == "maskImage",
+        "linkSlots() is name-sorted regardless of insertion order");
+
+    // The reverse direction. clipB has two referrers, in layers order.
+    Layer[] refs;
+    f.doc.referrersOf(f.clipB, refs);
+    assert(refs.length == 2, "clipB has two referrers");
+    assert(refs[0] is f.consumerX && refs[1] is f.consumerY,
+        "referrersOf reports in layers order");
+
+    // A PATH IS NOT IDENTITY. clipA carries byte-identical `storedPath` to
+    // clipB and is reached by nothing — a path-keyed link or a path-keyed
+    // sweep would hand back clipA (it is the earlier of the two) and would
+    // report clipA as having two referrers.
+    assert(f.clipA.imageOrNull.storedPath == f.clipB.imageOrNull.storedPath,
+        "fixture vacuity guard: the two clips really do share one path");
+    assert(f.clipA !is f.clipB, "…and are still two distinct items");
+    f.doc.referrersOf(f.clipA, refs);
+    assert(refs.length == 0,
+        "nothing links to clipA — sharing a file with clipB is not sharing "
+        ~ "clipB's identity");
+    f.doc.referrersOf(f.clipC, refs);
+    assert(refs.length == 1 && refs[0] is f.consumerX, "clipC has one referrer");
+}
+
+unittest {  // A NAME IS NOT IDENTITY — renaming either end changes nothing.
+    auto f = makeLinkFixture();
+
+    f.clipB.name     = "renamed";      // the target
+    f.consumerX.name = "consumerX2";   // and the consumer, for good measure
+
+    assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipB,
+        "rename must not break the link");
+    assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB,
+        "…for either consumer");
+    assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC,
+        "…and must not disturb the sibling slot");
+    assert(f.consumerX.linkSlots()[0].name == "backdropImage",
+        "the SLOT name belongs to the consumer, not to the target — a target "
+        ~ "rename does not rename the slot");
+
+    // Names are not even unique: give a second item the renamed one's name and
+    // the link still names exactly one item.
+    f.clipC.name = "renamed";
+    assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipB,
+        "two items may share a name; the link still resolves to one of them");
+    assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC,
+        "…and the other slot still resolves to the OTHER one");
+}
+
+unittest {  // AN INDEX IS NOT IDENTITY — a pure reorder of layers[] moves
+            // every slot number and no link.
+    auto f = makeLinkFixture();
+    assert(f.doc.indexOf(f.clipB) == 2 && f.doc.indexOf(f.clipC) == 3,
+        "fixture vacuity guard: clipB at 2, clipC at 3 before the permute");
+
+    // Move clipB (2) to the tail — the shape `layer.reorder` produces.
+    f.doc.layers = f.doc.layers[0 .. 2] ~ f.doc.layers[3 .. $] ~ f.clipB;
+    assert(f.doc.indexOf(f.clipB) == 5 && f.doc.indexOf(f.clipC) == 2,
+        "vacuity guard: both slot numbers really did change");
+
+    assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipB,
+        "reorder must not move a link");
+    assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB);
+    assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC);
+}
+
+unittest {  // Deleting the MIDDLE clip: both links report themselves dangling,
+            // the sibling slot is untouched, and nothing swaps to a neighbour.
+    auto f = makeLinkFixture();
+    immutable size_t bIdx = f.doc.indexOf(f.clipB);
+    assert(bIdx == 2, "vacuity guard: clipB is a MIDDLE layer, not the tail");
+
+    // Splice clipB out — the exact operation LayerDelete performs.
+    f.doc.layers = f.doc.layers[0 .. bIdx] ~ f.doc.layers[bIdx + 1 .. $];
+    assert(f.doc.layers.length == 5,
+        "vacuity guard: the list is still non-empty, so 'dangling' cannot be "
+        ~ "an index clamped into an empty range");
+
+    assert(f.consumerX.link("backdropImage").state(f.doc) == LinkState.Dangling,
+        "a link to a deleted item reports Dangling");
+    assert(f.consumerY.link("backdropImage").state(f.doc) == LinkState.Dangling,
+        "…for BOTH consumers — not just the first one a sweep would reach");
+    assert(f.consumerX.link("backdropImage").resolve(f.doc) is null,
+        "a dangling link resolves to null");
+    assert(f.consumerY.link("backdropImage").resolve(f.doc) is null);
+    assert(f.consumerX.link("backdropImage").state(f.doc) != LinkState.Unset,
+        "Dangling is distinguishable from Unset — 'the image you chose was "
+        ~ "deleted' is not the same statement as 'you chose no image'");
+
+    // NOT A SILENT SWAP. clipC sat at slot 3; the delete slid consumerX into
+    // that slot. A link that stored the NUMBER 3 would now hand back
+    // consumerX — a live, plausible-looking, completely wrong item. The first
+    // assertion is the vacuity guard that proves the slot really changed
+    // owner, so the second one is testing something.
+    assert(f.doc.layers[3] is f.consumerX,
+        "vacuity guard: the middle delete moved a DIFFERENT item into clipC's "
+        ~ "old slot 3");
+    assert(f.consumerX.link("maskImage").resolve(f.doc) is f.clipC,
+        "the surviving link followed the OBJECT, not the slot number");
+    assert(f.consumerX.link("maskImage").state(f.doc) == LinkState.Live);
+
+    // The identity survives even though the resolution does not — which is
+    // what makes the reverse sweep able to answer "who was pointing at the
+    // thing that just went", the question a re-point UI or a later
+    // clear-on-delete policy has to ask.
+    assert(f.consumerX.link("backdropImage").targetUnchecked() is f.clipB,
+        "a dangling link still names WHICH item it lost");
+    Layer[] refs;
+    f.doc.referrersOf(f.clipB, refs);
+    assert(refs.length == 2 && refs[0] is f.consumerX && refs[1] is f.consumerY,
+        "referrersOf still finds both consumers of the deleted clip");
+
+    // Undo shape: reinsert the SAME object at its old slot. Both links are
+    // Live again, on one and the same object, with nothing to restore.
+    f.doc.layers = f.doc.layers[0 .. bIdx] ~ f.clipB ~ f.doc.layers[bIdx .. $];
+    auto xBack = f.consumerX.link("backdropImage").resolve(f.doc);
+    auto yBack = f.consumerY.link("backdropImage").resolve(f.doc);
+    assert(xBack is f.clipB && yBack is f.clipB,
+        "reinserting the object relinks both consumers");
+    assert(xBack is yBack,
+        "…to ONE object — an implementation that restored two links onto two "
+        ~ "objects would pass a 'both are non-null' check");
+}
+
+unittest {  // A link answers for the document it is ASKED about. This is the
+            // whole-document-replacement case (scene reset, .v3d load,
+            // interchange import) — the one no delete-time sweep can cover.
+    auto f     = makeLinkFixture();
+    auto other = makeLinkFixture();   // same shape, all-new objects
+
+    assert(other.doc.layers[2].name == "clipB",
+        "vacuity guard: the other document has a same-named item at the SAME "
+        ~ "slot, so an index- or name-keyed link would happily resolve here");
+    assert(other.doc.layers[2] !is f.clipB, "…but it is a different object");
+
+    assert(f.consumerX.link("backdropImage").state(other.doc) == LinkState.Dangling,
+        "a link into a replaced-away document is Dangling, not Live");
+    assert(f.consumerX.link("backdropImage").resolve(other.doc) is null,
+        "…and must not resolve into the new document's item at that slot");
+    assert(f.consumerX.link("backdropImage").state(f.doc) == LinkState.Live,
+        "the same link is still Live against its own document — the state is "
+        ~ "a property of the PAIR, not of the link");
+}
+
+unittest {  // Slot mutation: replace, clear, the null-target spelling, and the
+            // independence a cloned slot set must have.
+    auto f = makeLinkFixture();
+
+    // Replace, not append.
+    f.consumerX.setLink("backdropImage", f.clipA);
+    assert(f.consumerX.linkSlots().length == 2, "re-pointing a slot does not add one");
+    assert(f.consumerX.link("backdropImage").resolve(f.doc) is f.clipA,
+        "the slot now points at clipA");
+    assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB,
+        "…and the OTHER consumer's slot is untouched");
+
+    // Clear, and the null-target spelling of the same thing — one
+    // representation of "points at nothing", never a leftover empty slot.
+    assert(f.consumerX.clearLink("backdropImage"), "clearLink reports the removal");
+    assert(!f.consumerX.clearLink("backdropImage"), "…and reports nothing the second time");
+    assert(f.consumerX.linkSlots().length == 1, "the slot is gone, not emptied");
+    assert(f.consumerX.linkSlots()[0].name == "maskImage");
+    f.consumerX.setLink("maskImage", null);
+    assert(f.consumerX.linkSlots().length == 0,
+        "setLink(name, null) removes the slot rather than leaving an unset one");
+
+    // Cloning a slot set shares TARGETS but not the slot array.
+    auto clone = new Layer;
+    clone.kind = ItemKind.Empty;
+    clone.name = "clone";
+    clone.copyLinksFrom(f.consumerY);
+    f.doc.layers ~= clone;
+    assert(clone.link("backdropImage").resolve(f.doc) is f.clipB,
+        "the clone points at the SAME item, not a copy of it");
+    clone.setLink("backdropImage", f.clipC);
+    assert(f.consumerY.link("backdropImage").resolve(f.doc) is f.clipB,
+        "re-pointing the clone must not write through into the source's slots");
+    assert(clone.link("backdropImage").resolve(f.doc) is f.clipC);
 }
 
 // ---------------------------------------------------------------------------
