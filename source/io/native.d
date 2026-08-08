@@ -7,7 +7,8 @@ import std.format    : format;
 
 import mesh;
 import math;
-import document : Document, Layer, ItemXform;
+import document : Document, Layer, ItemXform, sanitizeItemXform,
+                  MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
 import seltype  : SelMode;
 import log : logWarn, logInfo;
 
@@ -881,6 +882,16 @@ private:
 /// constructed from the caller), and the rest of the block still loads. So a
 /// degenerate block degrades gracefully to identity-where-broken rather than
 /// failing the load. `li` is the layer index, for diagnostics.
+///
+/// The parsed block is then put through `document.sanitizeItemXform` (task 0614
+/// Phase 5 review, B3). Tolerating a MALFORMED sub-array is not the same as
+/// tolerating a well-formed but ILLEGAL value: `"scl":[0,1,1]` parses perfectly
+/// and loads a singular `ItemXform`, exactly the state the R7 guard exists to
+/// make impossible. `.v3d` is the NATIVE format, so it is the likeliest carrier
+/// of such a value — a file written by an older build, hand-edited, or produced
+/// by a tool that never saw the band. `ItemXform.init` is passed as the "prior"
+/// value because a fresh load has none: a non-finite component therefore falls
+/// back to its channel identity rather than to some other layer's number.
 void readXform(const JSONValue xv, size_t li, ref ItemXform x)
 {
     if (xv.type != JSONType.object) {
@@ -905,6 +916,16 @@ void readXform(const JSONValue xv, size_t li, ref ItemXform x)
     readTriple("rot",   x.rot);
     readTriple("scl",   x.scl);
     readTriple("pivot", x.pivot);
+
+    // Enforce the R7 value policy on the loaded block. Warn when it fires: a
+    // silent repair of a file the user wrote is a value change they should be
+    // told about, and a stream of these is how a bad exporter gets found.
+    ItemXform noPrior;                       // == ItemXform.init (identity)
+    if (sanitizeItemXform(x, noPrior))
+        v3dWarn(format("layer %d xform carried out-of-range values; clamped "
+                     ~ "scale to [%g, %g] (sign preserved) and replaced any "
+                     ~ "non-finite component with its identity",
+                       li, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG));
 }
 
 /// Read a JSON number as a float, accepting integer, unsigned and floating
@@ -985,4 +1006,104 @@ unittest {
         ~ "MeshA is output index 0, not its original index 1 (the unfixed "
         ~ "writer would have emitted the raw index 1 and loaded MeshB instead)");
     assert(loaded.primary.hasMesh);
+}
+
+// ---------------------------------------------------------------------------
+// Task 0614 Phase 5 review, B3: the `.v3d` reader is a WRITE PATH into
+// `ItemXform.scl` and must enforce the R7 band like every other one.
+//
+// `"scl":[0,1,1]` is not malformed — it parses perfectly and used to load a
+// SINGULAR `ItemXform`, precisely the state the guard exists to prevent. And
+// `.v3d` is the NATIVE format, so it is the likeliest carrier of a poisoned
+// value: a file from a build that predates the guard, a hand edit, an exporter
+// that never saw the band. Enforcing the band on the two command paths and the
+// gesture kernel but not here makes the invalid state rare instead of
+// impossible.
+//
+// THE PRECONDITION THAT KEEPS THIS TEST HONEST: it asserts the on-disk JSON
+// really carries the degenerate numbers before loading them. The fixture gets
+// them onto disk through `writeV3d` (the writer has no band of its own, by
+// design — it persists what the document holds), so if a band is ever added to
+// the WRITER this case would silently start testing a clean file and prove
+// nothing about the reader. The precondition fails loudly instead.
+//
+// The rig is displaced and rotated off every axis so "the reader restored the
+// value" and "the reader reset the channel to its identity" read different
+// numbers — at pos=0/rot=0 they read the same and the case would pass either
+// way.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.file   : tempDir, remove, exists, readText;
+    import std.path   : buildPath;
+    import std.format : format;
+    import std.random : uniform;
+    import std.math   : isFinite, fabs;
+    import mesh       : makeCube;
+
+    auto path = buildPath(tempDir(),
+        format("vibe3d_native_scl_ut_%d.v3d", uniform(0, int.max)));
+    scope(exit) if (exists(path)) remove(path);
+
+    auto doc = Document.bootstrap(makeCube());
+    auto l   = doc.layers[0];
+    l.xform.pos   = Vec3(1.3f, 0.7f, -0.9f);
+    l.xform.rot   = Vec3(20f, 35f, -50f);
+    l.xform.pivot = Vec3(0.25f, -0.4f, 0.6f);
+    // x: dead zero (singular). y: NEGATIVE and under the floor — a mirror must
+    // survive the repair as a mirror. z: finite but absurd — the ceiling.
+    l.xform.scl   = Vec3(0.0f, -1e-9f, 1e30f);
+
+    assert(writeV3d(doc, path), "fixture write must succeed");
+
+    // Precondition: the degenerate numbers really are on disk.
+    {
+        auto raw = parseJSON(readText(path));
+        auto s   = raw["layers"].array[0]["xform"]["scl"].array;
+        assert(jsonFloat(s[0]) == 0.0f,
+            "precondition: the file must literally carry scl.x == 0 — if the "
+          ~ "WRITER has grown a band, this case is now loading a clean file "
+          ~ "and pins nothing about the reader");
+        assert(jsonFloat(s[1]) < 0.0f && fabs(jsonFloat(s[1])) < MIN_ITEM_SCALE_MAG,
+            "precondition: scl.y is on disk as a negative under-floor value");
+        assert(jsonFloat(s[2]) > MAX_ITEM_SCALE_MAG,
+            "precondition: scl.z is on disk as an over-ceiling value");
+    }
+
+    Document loaded;
+    assert(readV3d(path, loaded), "load must succeed — a repair is not a reject");
+    auto x = loaded.layers[0].xform;
+
+    assert(x.scl.x == MIN_ITEM_SCALE_MAG,
+        "a zero scale in a .v3d must load as the POSITIVE floor, not as 0 — "
+      ~ "0 loads a singular ItemXform whose composedMatrix() cannot be "
+      ~ "inverted, poisoning the action centre, the axis basis, every snap "
+      ~ "frame and the next export. Got " ~ x.scl.x.to!string);
+    assert(x.scl.y == -MIN_ITEM_SCALE_MAG,
+        "a negative under-floor scale must load as the NEGATIVE floor: the "
+      ~ "band caps the MAGNITUDE and a mirror is a legal item transform, so a "
+      ~ "repair that clamps to +floor silently un-mirrors the item. Got "
+      ~ x.scl.y.to!string);
+    assert(x.scl.z == MAX_ITEM_SCALE_MAG,
+        "an over-ceiling scale must load capped: finite on disk, but it "
+      ~ "overflows to infinity at the first matrix product. Got "
+      ~ x.scl.z.to!string);
+
+    // The repair is per-component and must not normalise the rest of the rig
+    // on its way past. (Exact equality: the JSON round-trip is float-text
+    // deterministic — this is the same basis xformToJson's default test uses.)
+    assert(x.pos   == Vec3(1.3f, 0.7f, -0.9f),   "pos survives the repair");
+    assert(x.rot   == Vec3(20f, 35f, -50f),      "rot survives the repair");
+    assert(x.pivot == Vec3(0.25f, -0.4f, 0.6f),  "pivot survives the repair");
+
+    // The property the band is actually for.
+    auto m = x.composedMatrix();
+    foreach (v; m) assert(isFinite(v), "the repaired xform composes finitely");
+    immutable float det = m[0] * (m[5]*m[10] - m[6]*m[9])
+                        - m[4] * (m[1]*m[10] - m[2]*m[9])
+                        + m[8] * (m[1]*m[6]  - m[2]*m[5]);
+    assert(det != 0.0f && isFinite(det),
+        "and to an INVERTIBLE one — the whole point of the floor");
+    assert(x.modelSpace().invertible,
+        "the picking-facing ModelSpace agrees: a loaded document can never "
+      ~ "present a non-invertible item transform");
 }

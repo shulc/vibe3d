@@ -1,7 +1,8 @@
 module layer_params;
 
 import params   : Param, ParamProvider;
-import document : Layer, ItemXform, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
+import document : Layer, ItemXform, MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
+                  sanitizeItemXform;
 import seltype  : SelType;
 
 // ---------------------------------------------------------------------------
@@ -175,56 +176,21 @@ final class LayerPropsProvider : ParamProvider {
     ///    perfectly ordinary thing to type on the way to `0.5`, and the nearest
     ///    legal value is well defined.
     ///
-    /// Called by the single authored-write point (`layer.attr`, which owns the
-    /// undo snapshot and the change-bus publication) with the xform it captured
-    /// BEFORE the injection. The gesture path does not come through here — it is
-    /// guarded at its own layer by the kernel's `clampedScaleComponent`, and both
-    /// layers read the bounds from the one declaration in `document.d`.
+    /// Called by the authored-write points in `layer.attr` — `apply()`, which
+    /// owns the undo snapshot and the change-bus publication, and `revert()`,
+    /// which re-injects the snapshotted prior value — each with the xform it
+    /// captured BEFORE its own injection. The gesture path does not come through
+    /// here (it is guarded at its own layer by the kernel's
+    /// `clampedScaleComponent`) and neither does the `.v3d` reader (it calls
+    /// `sanitizeItemXform` directly, with no prior value to restore); all three
+    /// enforcement points read the bounds AND the policy from `document.d`, so
+    /// they cannot drift apart.
+    ///
+    /// This wrapper is the provider-shaped face of `document.sanitizeItemXform`:
+    /// it exists so a caller holding a `LayerPropsProvider` does not have to
+    /// reach through to `layer_.xform` itself.
     bool sanitizeXform(ref const ItemXform before) {
-        import std.math : isFinite, fabs;
-
-        bool repaired = false;
-
-        // Reject a non-finite write: restore `prior`, or the identity element if
-        // the prior value was itself unusable.
-        void finite(ref float v, float prior, float identity) {
-            if (isFinite(v)) return;
-            v = isFinite(prior) ? prior : identity;
-            repaired = true;
-        }
-        finite(layer_.xform.pos.x,   before.pos.x,   0.0f);
-        finite(layer_.xform.pos.y,   before.pos.y,   0.0f);
-        finite(layer_.xform.pos.z,   before.pos.z,   0.0f);
-        finite(layer_.xform.rot.x,   before.rot.x,   0.0f);
-        finite(layer_.xform.rot.y,   before.rot.y,   0.0f);
-        finite(layer_.xform.rot.z,   before.rot.z,   0.0f);
-        finite(layer_.xform.scl.x,   before.scl.x,   1.0f);
-        finite(layer_.xform.scl.y,   before.scl.y,   1.0f);
-        finite(layer_.xform.scl.z,   before.scl.z,   1.0f);
-        finite(layer_.xform.pivot.x, before.pivot.x, 0.0f);
-        finite(layer_.xform.pivot.y, before.pivot.y, 0.0f);
-        finite(layer_.xform.pivot.z, before.pivot.z, 0.0f);
-
-        // Clamp |scl| into the legal band, sign preserved (a negative scale is a
-        // mirror, not an error). The ceiling is re-applied here as well as by
-        // `enforceBounds` so this method is a complete statement of the policy on
-        // its own — a caller that reached the field some other way still lands in
-        // the same band.
-        void band(ref float v) {
-            immutable float m = fabs(v);
-            if (m < MIN_ITEM_SCALE_MAG) {
-                v = v < 0 ? -MIN_ITEM_SCALE_MAG : MIN_ITEM_SCALE_MAG;
-                repaired = true;
-            } else if (m > MAX_ITEM_SCALE_MAG) {
-                v = v < 0 ? -MAX_ITEM_SCALE_MAG : MAX_ITEM_SCALE_MAG;
-                repaired = true;
-            }
-        }
-        band(layer_.xform.scl.x);
-        band(layer_.xform.scl.y);
-        band(layer_.xform.scl.z);
-
-        return repaired;
+        return sanitizeItemXform(layer_.xform, before);
     }
 
     /// P4: the 12 transform-component params (pos.*/rot.*/scl.*/pivot.*) are
@@ -361,6 +327,8 @@ unittest {
 // ---------------------------------------------------------------------------
 
 unittest {
+    import std.conv : to;   // `t` is a RUNTIME loop variable: `t.stringof` is
+                            // the literal "t", never the enum member's name.
     auto l = new Layer;
     auto prov = new LayerPropsProvider(l);
 
@@ -386,7 +354,7 @@ unittest {
         foreach (n; transformRows)
             assert(!prov.paramEnabled(n),
                    "a transform tool over a GEOMETRY selection must still grey "
-                   ~ "the transform rows (" ~ n ~ ", selType " ~ t.stringof ~ ")");
+                   ~ "the transform rows (" ~ n ~ ", selType " ~ t.to!string ~ ")");
         assert(prov.paramEnabled("name") && prov.paramEnabled("visible"),
                "name/visible are never part of the interlock");
     }

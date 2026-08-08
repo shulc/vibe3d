@@ -23,21 +23,34 @@
 // HOW THE MODE IS SET, and why it matters. The item-anchored mode is engaged
 // through `actr.pivot` — the combined preset command, which goes through
 // `AxisStage.setUserMode` and sets `userLocked` (commands/actr.d) — and NOT
-// through the granular `tool.pipe.attr axis mode pivot`. Measured difference,
-// with the mode set FIRST and the mirror authored afterwards (the ordering
-// case (b) below uses):
+// through the granular `tool.pipe.attr axis mode pivot`, which reaches
+// `setAttr` and leaves `userLocked` false. That difference is load-bearing
+// here, and the reason is a chain, not a staleness:
+//
+//   `layer.attr` is a Model-class command, so app.d's dispatcher used to drop
+//   the armed tool for it → `setActiveTool(null)` calls
+//   `resetTransientPipeStages()` → `AxisStage.resetTransient()` early-returns
+//   ONLY when `userLocked` (toolpipe/stages/axis.d) → so the granular mode was
+//   wiped back to the world default while the `actr.pivot` one survived.
+//
+// The historically measured difference, mode set FIRST and the mirror authored
+// afterwards (the ordering case (b) below uses):
 //
 //     actr.pivot           then `layer.attr 0 scl.x -1`  ⇒ right = (-1, 0, 0)
 //     tool.pipe.attr …     then `layer.attr 0 scl.x -1`  ⇒ right = ( 1, 0, 0)
 //
-// Both orderings agree when the mirror is authored BEFORE the mode, so this is
-// a staleness in what the granular path publishes after a later item-transform
-// write, not the mode failing to take. The underlying cause is NOT diagnosed
-// here — it is pre-existing and outside task 0614 Phase 5 — but it is the
-// reason this file uses the locked preset: with the granular form, case (b)
-// would read the unmirrored basis and the "flip" it means to pin would never
-// appear. Which is the vacuous-test failure mode R12 warns about, arriving by
-// a different door than R12 expected.
+// (A first reading of that pair called it "a staleness in what the granular
+// path publishes". It was not: the granular mode was gone, not stale.)
+//
+// The Phase 5 review's B1 fix excludes `layer.attr` from that tool drop — a
+// panel write CONTINUES the transform session — so with B1 in place the axis
+// stage is no longer reset and the two forms agree again. Do NOT read the
+// table above as a live property; it records why this file was written the way
+// it is. The `actr.pivot` choice STAYS regardless: it is the form that survives
+// every other tool drop too (tool.set, a tool switch, `scene.*`), so a future
+// case that adds one of those in front of the mirror still reads a mirrored
+// basis instead of quietly falling back to the world default and pinning
+// nothing — which is exactly the vacuous-test failure mode R12 warns about.
 
 import std.net.curl;
 import std.json;

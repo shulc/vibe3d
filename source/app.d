@@ -2439,6 +2439,30 @@ void main(string[] args) {
         //     ahead of the reset (test_scene_reset_armed_tool).
         //   * selection / edit-mode commands are UiState (not Model), already
         //     skipped by the flag.
+        //   * layer.attr, and ONLY layer.attr, of the `layer.*` family (task
+        //     0614 Phase 5 review, B1). It writes one property of one EXISTING
+        //     layer through the same param path the item transform tool itself
+        //     writes, so it CONTINUES the session for the same reason `tool.*`
+        //     does. Concretely: under SelType.Item the Layers panel's transform
+        //     rows dispatch `layer.attr` (config/forms/layer_props.yaml) and
+        //     Phase 5 deliberately un-greyed those rows while a transform tool
+        //     is armed — so without this exclusion the FIRST numeric edit in a
+        //     freshly-enabled row would drop the tool and take the gizmo with
+        //     it, making the phase's own goal unreachable through exactly the
+        //     rows it enabled.
+        //
+        //     A blanket `layer.` prefix would be WRONG. Of the Model-class
+        //     `layer.*` commands — add, duplicate, reorder, delete, rename,
+        //     setVisible, attr, parent (`layer.select` is UiState and already
+        //     skipped) — `layer.attr` is the only one that can change neither
+        //     the layer SET nor WHICH layer is primary. add / duplicate make a
+        //     NEW layer primary, delete can remove the tool's own target, and
+        //     setVisible can promote a different layer when the primary is
+        //     hidden: for those the drop is correct, and each additionally
+        //     routes a primary change through `onActiveLayerChanged` (which
+        //     drops the tool itself). reorder / rename / parent leave the
+        //     primary put but are not session CONTINUATIONS either, so they
+        //     keep the status-quo drop.
         // Never fires during a refire bracket (those carry only SideEffect
         // tool.attr); after the drop activeTool is null so the tool's own
         // lifecycle-undo emit cannot re-enter this branch.
@@ -2447,7 +2471,8 @@ void main(string[] args) {
             string cn = cmd.name();
             if (!cn.startsWith("tool.")
                 && !cn.startsWith("scene.")
-                && !cn.startsWith("file.")) {
+                && !cn.startsWith("file.")
+                && cn != "layer.attr") {
                 setActiveTool(null);
                 activeToolId = "";
             }

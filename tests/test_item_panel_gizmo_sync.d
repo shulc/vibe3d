@@ -123,6 +123,55 @@ Vec3 publishedCentre() {
                 cast(float)c[2].floating);
 }
 
+// The ACTIVE TOOL's own state — `{}` when no tool is armed (http_providers:
+// `activeTool is null ? "{}"`). Distinct from `publishedCentre()` above in the
+// way that matters for case 2: `/api/toolpipe/eval` builds its OWN
+// SubjectPacket and never touches `activeTool`, so it answers identically with
+// no tool at all.
+JSONValue toolState() {
+    return parseJSON(cast(string)get(BASE ~ "/api/tool/state"));
+}
+
+bool toolIsArmed() {
+    auto st = toolState();
+    return st.type == JSONType.object && ("pivot" in st) !is null;
+}
+
+// The GIZMO's own centre, straight off the tool (`moveGizmoCenter()`, the
+// shared pose every enabled bank is posed to each frame) — NOT the pipeline's
+// re-evaluated action centre. Asserts the tool is armed first, so "the tool was
+// dropped" fails HERE with that diagnosis instead of surfacing later as a
+// missing-key exception.
+Vec3 gizmoCentre(string ctx) {
+    auto st = toolState();
+    assert(st.type == JSONType.object && ("pivot" in st) !is null,
+        ctx ~ ": no tool is armed — /api/tool/state answered " ~ st.toString
+      ~ ". Any assertion about the gizmo below would be about nothing.");
+    auto p = st["pivot"].array;
+    return Vec3(cast(float)p[0].floating, cast(float)p[1].floating,
+                cast(float)p[2].floating);
+}
+
+// The tool's gizmo pose is written during the frame's update/draw, while a
+// command applies on the main thread inside tickAll — measured to land in the
+// same frame, but nothing in the contract PROMISES that ordering, and a loaded
+// `-j 8` host is where an unpromised ordering stops holding. So poll, bounded,
+// and hand back whatever the last read was: the CALLER asserts. A poll that
+// times out therefore fails on the real value with the real message, never on a
+// timeout that hides which number was wrong.
+Vec3 gizmoCentreSettled(string ctx, Vec3 want, double eps = 1e-4) {
+    import core.thread : Thread;
+    import core.time   : dur;
+    Vec3 got;
+    foreach (_; 0 .. 40) {                 // 40 x 25 ms = 1 s ceiling
+        got = gizmoCentre(ctx);
+        if (approx(got.x, want.x, eps) && approx(got.y, want.y, eps)
+         && approx(got.z, want.z, eps)) return got;
+        Thread.sleep(dur!"msecs"(25));
+    }
+    return got;
+}
+
 // Read a layer attr back through the panel's OWN read path — the `?` query
 // idiom the forms rows use to display a value (`layer.attr <i> <attr> ?`).
 double readAttr(string attr, int index = 0) {
@@ -243,22 +292,119 @@ unittest {
 }
 
 // -----------------------------------------------------------------------
+// 1c. The guard must not eat an off-gizmo drag in an action-centre mode
+//     where the press RELOCATES NOTHING.
+//
+//     The guard exists to stop a press from pushing a `userPlaced` pin that
+//     outranks the item redirect (case 1). That pin is pushed only in a
+//     relocate-PERMITTED mode — `acenAllowsClickRelocate()`, which is Auto,
+//     None and Screen and nothing else. In every OTHER mode the same press
+//     relocates nothing and still arms a drag from the stable pinned pivot:
+//     move's `relocates == false` arm reaches `beginScreenPlaneDragAt(...,
+//     notifyAcen=false)`, rotate's arms the arcball, scale's pinned `else`
+//     branch calls `armPlaneDrag` unconditionally. Swallowing the press there
+//     turns a legitimate drag into a NO-OP and buys nothing: there is no
+//     relocate to prevent.
+//
+//     `actr.pivot` is used because it is the natural item-mode action centre
+//     AND relocate-disallowed (Mode.Pivot == 10, outside the Auto/None/Screen
+//     set), so this is a live regression rather than a corner case. It also
+//     goes through `AxisStage.setUserMode` → `userLocked`, so the mode
+//     survives anything that resets the transient pipe stages.
+//
+//     The item's own gizmo pivot is asserted UNCHANGED across the drag in the
+//     sense that matters here: the centre tracks pos+pivot, so a relocate
+//     would break that identity. Checking "it moved" alone would be satisfied
+//     by a press that relocated and then dragged about the wrong point.
+// -----------------------------------------------------------------------
+
+unittest {
+    buildRig();
+    script("tool.set move");
+    cmd("actr.pivot");
+
+    Vec3 pinned = publishedCentre();
+    assert(approx(pinned.x, RIG_PIVOT_X) && approx(pinned.y, RIG_PIVOT_Y)
+        && approx(pinned.z, RIG_PIVOT_Z),
+        "precondition: under `actr.pivot` the centre is the item's world "
+        ~ "pivot (1.55, 0.30, -0.30), got " ~ show(pinned));
+
+    auto cam = fetchCamera();
+    // A corner pixel: no handle, no geometry — the same "missed the gizmo"
+    // press case 1 fires, but now in a mode where it relocates nothing.
+    int x0 = cam.vpX + 40, y0 = cam.vpY + 40;
+    double[3] before = layerChannel("pos");
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             x0, y0, x0 + 120, y0 + 40));
+    double[3] after = layerChannel("pos");
+    script("tool.set move off");
+
+    assert(!approx(after[0], before[0], 1e-3)
+        || !approx(after[1], before[1], 1e-3)
+        || !approx(after[2], before[2], 1e-3),
+        "an off-gizmo drag in a relocate-DISALLOWED mode (`actr.pivot`) must "
+        ~ "still move the item: the press pins nothing, so there is nothing "
+        ~ "for the Item-mode guard to protect and swallowing it makes the "
+        ~ "drag a no-op. pos stayed at ("
+        ~ after[0].to!string ~ ", " ~ after[1].to!string ~ ", "
+        ~ after[2].to!string ~ ")");
+
+    // The drag moved the item about its OWN pivot, not about a relocated
+    // point: the centre still equals pos+pivot.
+    Vec3 endCentre = publishedCentre();
+    assert(approx(endCentre.x, after[0] + 0.25)
+        && approx(endCentre.y, after[1] - 0.4)
+        && approx(endCentre.z, after[2] + 0.6),
+        "the action centre must still be the item's own world pivot after the "
+        ~ "drag — if the press had relocated, it would sit wherever the click "
+        ~ "ray met the work plane instead. Centre " ~ show(endCentre));
+}
+
+// -----------------------------------------------------------------------
 // 2. Panel -> gizmo: a numeric write lands WHILE the item tool is armed,
-//    and the gizmo follows it in the same frame's read.
+//    the tool SURVIVES it, and the tool's own gizmo follows.
+//
+//    READ PATH, and why it is not `publishedCentre()`. This case used to
+//    assert on /api/toolpipe/eval, which was inert: that provider builds its
+//    OWN SubjectPacket and never references `activeTool`, so the assertion
+//    held with `tool.set move` deleted AND with every line of the tool's item
+//    support deleted. What it actually pinned was the action-centre stage's
+//    item redirect tracking `pos` — a Phase 2 property with its own tests.
+//    The tool's gizmo pose (/api/tool/state `pivot` == `moveGizmoCenter()`)
+//    is the thing this case names, and it exists only while a tool is armed.
+//
+//    It is also the direct observable for the review's B1 fix: `layer.attr` is
+//    a Model-class command, and app.d's dispatcher drops the armed tool for
+//    Model commands outside the `tool.` / `scene.` / `file.` families. Before
+//    B1 excluded `layer.attr` from that drop, the FIRST numeric edit in a row
+//    Phase 5 had just un-greyed took the gizmo away with it.
 // -----------------------------------------------------------------------
 
 unittest {
     buildRig();
     script("tool.set move");
 
-    Vec3 before = publishedCentre();
-    assert(approx(before.x, RIG_PIVOT_X),
-        "precondition: gizmo on the item pivot, got " ~ show(before));
+    Vec3 before = gizmoCentre("precondition");
+    assert(approx(before.x, RIG_PIVOT_X) && approx(before.y, RIG_PIVOT_Y)
+        && approx(before.z, RIG_PIVOT_Z),
+        "precondition: the tool's own gizmo starts on the item pivot "
+        ~ "(1.55, 0.30, -0.30), got " ~ show(before));
+    assert(toolState()["subject"].str == "item",
+        "precondition: the tool's apply path is targeting the ITEM — without "
+        ~ "this the case is about a vertex tool that happens to sit nearby");
 
     // 4.25 is chosen so pos.x + pivot.x = 4.50 differs from EVERY other number
-    // in the rig — a centre that silently kept reading some other channel
+    // in the rig — a gizmo that silently kept reading some other channel
     // cannot accidentally match it.
     cmd("layer.attr 0 pos.x 4.25");
+
+    // B1, asserted before anything reads a value off the tool: a panel edit
+    // CONTINUES the transform session.
+    assert(toolIsArmed(),
+        "a `layer.attr` write must not drop the armed transform tool — it "
+        ~ "writes the very channels the tool is authoring, so it continues the "
+        ~ "session exactly as a `tool.*` command does. /api/tool/state answered "
+        ~ toolState().toString);
 
     assert(approx(readAttr("pos.x"), 4.25),
         "the panel's own read path must report the value it just wrote while "
@@ -266,12 +412,23 @@ unittest {
     assert(approx(layerChannel("pos")[0], 4.25),
         "and the document must agree with the panel");
 
-    Vec3 after = publishedCentre();
-    assert(approx(after.x, 4.25 + 0.25) && approx(after.y, RIG_PIVOT_Y)
-        && approx(after.z, RIG_PIVOT_Z),
-        "the gizmo must follow a panel write to (4.50, 0.30, -0.30) — a tool "
-        ~ "that cached the item pivot for the life of its arming would still "
-        ~ "read " ~ show(before) ~ ". Got " ~ show(after));
+    Vec3 want  = Vec3(cast(float)(4.25 + 0.25), cast(float)RIG_PIVOT_Y,
+                      cast(float)RIG_PIVOT_Z);
+    Vec3 after = gizmoCentreSettled("panel write", want);
+    assert(approx(after.x, want.x) && approx(after.y, want.y)
+        && approx(after.z, want.z),
+        "the tool's OWN gizmo must follow a panel write to (4.50, 0.30, "
+        ~ "-0.30) — a tool that cached the item pivot for the life of its "
+        ~ "arming would still read " ~ show(before) ~ ". Got " ~ show(after));
+
+    // The pipeline agrees with the tool. Kept as a SECOND, independent read
+    // rather than the primary one: two sources reporting the same number is a
+    // real comparison; the eval read alone is not a statement about the tool.
+    Vec3 pipe = publishedCentre();
+    assert(approx(pipe.x, after.x) && approx(pipe.y, after.y)
+        && approx(pipe.z, after.z),
+        "the pipeline's action centre and the tool's gizmo must be the same "
+        ~ "point — tool " ~ show(after) ~ " vs pipeline " ~ show(pipe));
 
     script("tool.set move off");
 }

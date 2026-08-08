@@ -2129,17 +2129,38 @@ noBankConsumed:
         //    is load-bearing: `app.d` offers the camera chords (Alt+LMB orbit,
         //    Alt+Shift pan, Ctrl+Alt zoom) to the tool FIRST, and consuming one
         //    would kill camera navigation in Item mode.
+        //  - `acenAllowsClickRelocate()` — the relocate is the ONLY thing that
+        //    needs suppressing, and this predicate is exactly where it can
+        //    fire. Getting this term wrong is a live regression, not a corner
+        //    case: in a relocate-DISALLOWED mode the same press relocates
+        //    nothing and still arms an off-gizmo drag from the stable pinned
+        //    pivot — `move.d`'s `relocates == false` arm reaches
+        //    `beginScreenPlaneDragAt(..., notifyAcen=false)`, `rotate.d`'s arms
+        //    the arcball as `dragAxis = 3`, and `scale.d`'s pinned `else`
+        //    branch takes `queryActionCenter(vts)` and calls `armPlaneDrag`
+        //    unconditionally (the `wasPinnedOffGizmo` / `rotWasPinnedOffGizmo`
+        //    twins below exist for precisely this case). Since the predicate
+        //    admits only Auto/None/Screen, EVERY other mode — Select,
+        //    SelectAuto, Element, Local, Origin, Manual, Pivot, Parent, Border
+        //    — keeps its off-gizmo drag, and `actr.pivot` (the natural
+        //    item-mode action centre) is one of them. Swallowing the press
+        //    there would turn a legitimate drag into a no-op for no benefit:
+        //    there is no relocate to prevent.
         //
-        // What this deliberately gives up, in Item mode only: the off-gizmo
-        // screen-plane move drag, the off-ring arcball rotate and the off-handle
-        // plane scale. All three are reachable only through the same press that
-        // relocates, and all three would drag the item about the just-relocated
-        // (i.e. wrong) centre. Grab a handle to transform an item.
+        // What this deliberately gives up, in Item mode AND only in a
+        // relocate-permitted action-centre mode (Auto/None/Screen): the
+        // off-gizmo screen-plane move drag, the off-ring arcball rotate and the
+        // off-handle plane scale. In those modes all three arrive through the
+        // same press that relocates, so all three would drag the item about the
+        // just-relocated (i.e. wrong) centre. Grab a handle to transform an
+        // item — or pin the centre with an item-anchored mode, which restores
+        // the off-gizmo drags because nothing relocates under them.
         immutable bool itemOffGizmoDown =
             itemSubjectActive()
             && e.button == SDL_BUTTON_LEFT
             && hitPart < 0
-            && (SDL_GetModState() & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0;
+            && (SDL_GetModState() & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0
+            && acenAllowsClickRelocate();
 
         if (!itemOffGizmoDown && routeResolvedHandlePart(e, vts, hitPart))
             return true;

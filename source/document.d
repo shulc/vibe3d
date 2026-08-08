@@ -182,6 +182,74 @@ struct ItemXform {
     }
 }
 
+/// Repair an `ItemXform` in place and report whether anything had to be
+/// repaired. This is THE statement of the R7 value policy (task 0614): every
+/// write path that can introduce a NEW `ItemXform` value ends here, so the
+/// invalid state is impossible rather than merely rare.
+///
+/// Two hazards, two different policies:
+///
+///  * **Non-finite, on any of the 12 components.** A NaN anywhere makes
+///    `composedMatrix()` all-NaN, which propagates into the action centre, the
+///    axis basis, every snap frame and the exported file. Policy: **reject** —
+///    restore the component's value from `before`, exactly like a command that
+///    declines an out-of-domain argument. There is no "nearest legal value"
+///    for a NaN, so any number invented here would be an edit nobody asked
+///    for. If `before`'s own component is ALSO non-finite (a document written
+///    before this guard existed), fall back to the channel's identity element
+///    so the repair always terminates in a composable xform. A caller with no
+///    meaningful prior value (a fresh file load) passes `ItemXform.init`,
+///    which makes the identity fallback the whole rule.
+///  * **A `scl` component outside `[MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG]`
+///    in MAGNITUDE.** Below the floor the matrix is singular; above the
+///    ceiling it overflows to infinity at the first product. Policy:
+///    **clamp**, sign preserved — a negative scale is a legitimate mirror, and
+///    unlike the NaN case the nearest legal value is well defined (`scl.x 0`
+///    is an ordinary keystroke on the way to `0.5`).
+///
+/// Deliberately NOT a method on `ItemXform`: it is a repair applied by the
+/// write paths, not a property of the value, and keeping it free makes the
+/// call sites read as the enforcement points they are.
+bool sanitizeItemXform(ref ItemXform x, ref const ItemXform before) {
+    import std.math : isFinite, fabs;
+
+    bool repaired = false;
+
+    void finite(ref float v, float prior, float identity) {
+        if (isFinite(v)) return;
+        v = isFinite(prior) ? prior : identity;
+        repaired = true;
+    }
+    finite(x.pos.x,   before.pos.x,   0.0f);
+    finite(x.pos.y,   before.pos.y,   0.0f);
+    finite(x.pos.z,   before.pos.z,   0.0f);
+    finite(x.rot.x,   before.rot.x,   0.0f);
+    finite(x.rot.y,   before.rot.y,   0.0f);
+    finite(x.rot.z,   before.rot.z,   0.0f);
+    finite(x.scl.x,   before.scl.x,   1.0f);
+    finite(x.scl.y,   before.scl.y,   1.0f);
+    finite(x.scl.z,   before.scl.z,   1.0f);
+    finite(x.pivot.x, before.pivot.x, 0.0f);
+    finite(x.pivot.y, before.pivot.y, 0.0f);
+    finite(x.pivot.z, before.pivot.z, 0.0f);
+
+    void band(ref float v) {
+        immutable float m = fabs(v);
+        if (m < MIN_ITEM_SCALE_MAG) {
+            v = v < 0 ? -MIN_ITEM_SCALE_MAG : MIN_ITEM_SCALE_MAG;
+            repaired = true;
+        } else if (m > MAX_ITEM_SCALE_MAG) {
+            v = v < 0 ? -MAX_ITEM_SCALE_MAG : MAX_ITEM_SCALE_MAG;
+            repaired = true;
+        }
+    }
+    band(x.scl.x);
+    band(x.scl.y);
+    band(x.scl.z);
+
+    return repaired;
+}
+
 /// The kind of document item a `Layer` represents. `Mesh` is the only kind
 /// the pre-0615 editor path assumed; `Empty` is the first non-geometry kind
 /// (task 0615) — a transform-only item with no mesh payload. New kinds

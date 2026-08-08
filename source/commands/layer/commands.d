@@ -27,7 +27,8 @@ import mesh;
 import view;
 import editmode;
 import params : Param, paramToJson, injectParamsInto;
-import document : Document, Layer, ItemKind, ItemXform, kindInfo;
+import document : Document, Layer, ItemKind, ItemXform, kindInfo,
+                  MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
 import layer_params : LayerPropsProvider;
 import seltype : SelMode, selModeFromToken;
 import change_bus : MeshChangeAll, noteLayerChange, LayerChange,
@@ -968,7 +969,30 @@ final class LayerAttr : LayerCommandBase {
         // of the 12; a `scl` component inside the degenerate band around zero) —
         // see LayerPropsProvider.sanitizeXform. Runs BEFORE the change-bus
         // publication so no consumer ever observes the unrepaired state.
-        prov.sanitizeXform(beforeXform);
+        //
+        // The verdict is CONSUMED, not discarded (task 0614 Phase 5 review,
+        // SF4): a repair silently rewrites a number the user authored — a typed
+        // `0` lands as ±1e-4 — and the log ring is this project's channel for
+        // "we changed your value and here is why". `logWarnOnce` keys the
+        // message per (layer, attr) so a slider dragged through the degenerate
+        // band reports once instead of once per frame. Keeping the `bool` alive
+        // matters beyond the message: it is the ONLY signal that separates "the
+        // write landed as typed" from "the write was repaired", and nothing
+        // downstream can re-derive it after the fact.
+        if (prov.sanitizeXform(beforeXform)) {
+            import log       : logWarnOnce;
+            import std.conv  : to;
+            immutable string key = "layer.attr.clamp:" ~ target_.to!string
+                                 ~ ":" ~ attrName_;
+            logWarnOnce("layer", key,
+                        "layer " ~ target_.to!string ~ " " ~ attrName_
+                      ~ ": value was out of range and has been repaired "
+                      ~ "(scale magnitude is clamped to ["
+                      ~ MIN_ITEM_SCALE_MAG.to!string ~ ", "
+                      ~ MAX_ITEM_SCALE_MAG.to!string
+                      ~ "] with the sign kept; a non-finite component is "
+                      ~ "rejected back to its previous value)");
+        }
         applied_ = true;
 
         // Pure document-state change: publish the generic property-changed kind,
@@ -984,9 +1008,19 @@ final class LayerAttr : LayerCommandBase {
         // Restore the snapshotted prior value of the one touched attr.
         auto prov = new LayerPropsProvider(doc.layers[target_]);
         auto ps   = prov.params();
+        immutable ItemXform beforeXform = doc.layers[target_].xform;
         JSONValue pj = JSONValue(cast(JSONValue[string]) null);
         pj[attrName_] = priorValue_;
         injectParamsInto(ps, pj);
+        // Task 0614 Phase 5 review, B3: an undo is a WRITE like any other, so
+        // it gets the same guard as apply(). `priorValue_` is normally already
+        // legal (it was read off a sanitised layer), but "normally" is exactly
+        // what the guard is not allowed to rely on: a document loaded before
+        // this guard existed, or one whose xform was reached by some future
+        // path, would let an undo re-inject a degenerate value into a layer
+        // apply() had just repaired. A band enforced on some write paths makes
+        // the invalid state rare; enforced on all of them it is impossible.
+        prov.sanitizeXform(beforeXform);
         noteLayerChange(LayerChange.PropertyChanged);
         return true;
     }
@@ -1402,6 +1436,7 @@ unittest {
     import view : View;
     import std.json : JSONValue, JSONType;
     import std.math : isClose;
+    import std.conv : to;
 
     auto doc  = Document.bootstrap(makeCube());
     auto v    = new View(0, 0, 800, 600);
@@ -1487,6 +1522,47 @@ unittest {
         auto py = mk(); py.setIndex(0); py.setAttrName("pos.y"); py.setAttrValue(JSONValue(4.0)); assert(py.apply());
         assert(py.compareOp(px) == CompareResult.Different,
                "different attr breaks the coalescing run");
+    }
+
+    // ---- revert() is a WRITE, and gets the band too (Phase 5 review, B3) ----
+    //
+    // apply() sanitises; revert() re-injects `priorValue_` and used to do so
+    // RAW. That is only harmless while every prior value is guaranteed legal —
+    // which is exactly the guarantee the guard is not allowed to assume. The
+    // fixture pokes the field directly to stand in for the value's real source
+    // (a document written before the guard existed, or reached by a path added
+    // later); the WRITE then repairs the layer, and the UNDO must not put the
+    // singular value back.
+    {
+        doc.layers[0].xform.scl.x = 0.0f;         // pre-guard document state
+
+        auto c = mk();
+        c.setIndex(0);
+        c.setAttrName("scl.x");
+        c.setAttrValue(JSONValue(2.0));
+        assert(c.apply(), "write apply");
+        assert(isClose(doc.layers[0].xform.scl.x, 2.0f, 1e-6f),
+               "the write landed");
+
+        assert(c.revert(), "revert");
+        assert(doc.layers[0].xform.scl.x == MIN_ITEM_SCALE_MAG,
+               "undo must restore the prior value THROUGH the band: a raw "
+             ~ "re-injection lands 0 and hands back the singular ItemXform "
+             ~ "apply() had just repaired. Got "
+             ~ doc.layers[0].xform.scl.x.to!string);
+
+        // Sign side of the same rule: the mirror survives the undo.
+        doc.layers[0].xform.scl.y = -1e-9f;
+        auto c2 = mk();
+        c2.setIndex(0);
+        c2.setAttrName("scl.y");
+        c2.setAttrValue(JSONValue(3.0));
+        assert(c2.apply());
+        assert(c2.revert());
+        assert(doc.layers[0].xform.scl.y == -MIN_ITEM_SCALE_MAG,
+               "an undo that repairs must keep the sign — clamping to +floor "
+             ~ "un-mirrors the item. Got "
+             ~ doc.layers[0].xform.scl.y.to!string);
     }
 }
 

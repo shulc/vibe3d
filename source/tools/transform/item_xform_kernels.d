@@ -599,3 +599,44 @@ unittest {
     assert(isClose(l2.xform.scl.x, -MIN_ITEM_SCALE_MAG, 1e-6f),
            "a tiny negative result must floor to the NEGATIVE magnitude, sign preserved");
 }
+
+// The CEILING, on the GESTURE path (task 0614 Phase 5 review, SF1).
+//
+// This case exists because the ceiling had no test at all that could see it.
+// The floor/NaN/inf case above never reaches it, and the HTTP `scl.z 1e30`
+// case is satisfied by `Param.max(MAX_ITEM_SCALE_MAG).enforceBounds()` at
+// inject time — that write never enters `clampedScaleComponent`, so deleting
+// the kernel's two ceiling lines left the whole suite green.
+//
+// ONE call discriminates BOTH wrong implementations, which is why the baseline
+// is NEGATIVE and the factor is huge:
+//   * ceiling omitted from the kernel      → scl.x lands at -3e9  (uncapped)
+//   * ceiling clamps to +MAX ignoring sign → scl.x lands at +1e6  (un-mirrored)
+// Only "cap the MAGNITUDE, keep the sign" produces -1e6. A positive baseline
+// would make the second implementation indistinguishable from the correct one.
+//
+// -3e9 is finite in float (max ~3.4e38), so this is genuinely the ceiling's
+// job — `clampedScaleComponent`'s non-finite rejection cannot cover for it.
+unittest {
+    import std.math : isFinite;
+    import std.conv : to;
+    auto l = new Layer();
+    l.xform.scl = Vec3(-3, 1, 1);
+    auto baselines = [l.xform];
+    Vec3 centre = applyAffine(l.xform.composedMatrix(), l.xform.pivot);
+
+    applyGestureToItems([l], baselines, centre,
+        Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+        Vec3(0,0,0), identityMatrix, Vec3(1e9f, 1, 1));
+
+    assert(isClose(l.xform.scl.x, -MAX_ITEM_SCALE_MAG, 1e-6f),
+           "an absurd gesture factor on a NEGATIVE baseline must cap at the "
+         ~ "negative ceiling -1e6 (magnitude capped, mirror preserved) — got "
+         ~ l.xform.scl.x.to!string);
+    assert(l.xform.scl.x < 0,
+           "the cap must not un-mirror the item: a ceiling that clamps to "
+         ~ "+MAX regardless of sign silently flips a mirrored item back");
+    // The point of the ceiling: the capped value still composes finitely.
+    foreach (v; l.xform.composedMatrix())
+        assert(isFinite(v), "a capped scale composes to a finite matrix");
+}
