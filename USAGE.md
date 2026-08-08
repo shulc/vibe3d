@@ -20,6 +20,36 @@ exactly.
 | **Element Move** | `T` | Transform preset with action center + falloff pinned to **Element** — moves each connected cluster about its own center. |
 | **Flex** | — | Soft-selection transform (T+R+S) under a selection falloff. |
 
+#### Transforming whole items
+
+Selecting a layer in the Layers panel makes **item** the current selection type.
+`W` / `E` / `R` then move, rotate and scale the whole layer: the gizmo sits on
+the item's pivot (its position plus its pivot offset) with world-aligned
+handles, and a drag writes the layer's own transform channels — the mesh rides
+along and its local vertex coordinates do not change. The numeric fields in the
+Layers panel and the gizmo always show the same values. Every **selected** layer
+is transformed, including a selected layer that is currently hidden, and one
+drag is one undo entry no matter how many layers it moved.
+
+In item mode you must grab a handle. An unmodified left press that misses the
+gizmo is swallowed by the tool: it will not relocate the action center and it
+will not switch you into a geometry mode. (Modified presses are unaffected —
+Alt still orbits.) The consequence is that the off-gizmo gestures the geometry
+modes offer — free screen-plane drag, arcball outside the rotate rings, plane
+scale outside the handles — are not available on items.
+
+**Item scale acts on the item's own axes, by index.** A scale handle multiplies
+the scale component with the *same index* as the handle: the X handle always
+writes the item's X scale. On a rotated item this is not the same as stretching
+along world X — the item stretches along its own first axis instead, so the
+result differs from a geometric world-axis scale. This is deliberate, not a
+rounding artefact: an item stores one position, one rotation, one scale and one
+pivot, and for an arbitrary rotation there is no per-axis scale in that form
+that reproduces a world-axis stretch. One rule applies at every pose rather
+than a rule that silently changes at particular angles. When you need a true
+world-axis stretch, scale the geometry in a vertex / edge / polygon mode
+instead.
+
 ### Create — procedural primitives
 
 Each Create tool drops an interactive gizmo plus a parameter panel; every value
@@ -254,8 +284,22 @@ Alt-click for granular options.
 
 ## Files & formats
 
-Vibe3D's native format is **`.v3d`** (JSON, lossless — geometry, subpatch,
-layers, surfaces). Use File → New / Open / Save / Save As.
+Vibe3D's native format is **`.v3d`** (JSON). Use File → New / Open / Save /
+Save As.
+
+A `.v3d` round-trip **keeps**: vertex coordinates (unchanged, to the last bit),
+n-gon faces, per-face subpatch flags, material and part ids, surfaces, UV and
+weight maps, the layer list with each layer's name, visibility and selection,
+which layer is the edit target, and each layer's full item transform —
+position, rotation, scale and pivot, all four exactly as authored.
+
+It **does not keep**: item parenting (a parent link is dropped on save), and
+items that carry no mesh (a transform-only item is skipped with a warning, and
+its transform goes with it — the format has no representation for one yet; a
+save that skipped a layer leaves the document marked as modified). A scale
+component whose magnitude falls outside 0.0001 … 1000000 is clamped into that
+range when the file is read, keeping its sign, because a value beyond it makes
+the item's matrix unusable.
 
 Interchange formats are available under File → Import / Export:
 

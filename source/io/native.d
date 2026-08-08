@@ -1107,3 +1107,194 @@ unittest {
         "the picking-facing ModelSpace agrees: a loaded document can never "
       ~ "present a non-invertible item transform");
 }
+
+// ---------------------------------------------------------------------------
+// Task 0614 Phase 7 — the `.v3d` item-transform round-trip, enumerated PER
+// FIELD and PER ITEM KIND rather than sampled.
+//
+// What already exists and what this adds. `test_layer_xform_io.d` drives
+// LOAD -> SAVE (a hand-written file re-emitted, compared at 1e-6); the band
+// case above drives SAVE -> LOAD but only to prove the REPAIR. Neither one
+// answers the question a user actually has: I dialled a transform in, I
+// saved, I re-opened — is what I get back the same item? That needs
+// SAVE -> LOAD compared BIT-EXACTLY on all twelve channels, and it needs the
+// answer for the things that are NOT channels: a non-mesh item, and the
+// parent link.
+//
+// THE FIXTURE IS THE TEST. A serialiser bug is only visible if the numbers
+// separate the wrong implementations from the right one, so the fixture is
+// chosen against a named list of them and the separation is ASSERTED, not
+// asserted-by-comment:
+//   * every one of the twelve numbers differs from its channel identity
+//     (0/0/1/0)  -> a dropped field reads a different number;
+//   * the twelve are pairwise distinct in magnitude  -> a swapped pair
+//     (pos<->pivot, x<->z, rot<->scl) reads a different number;
+//   * `rot` has no zero and no multiple of 90        -> a permuted euler
+//     triple composes to a different matrix (asserted below), which a
+//     90-degree or single-axis rotation would NOT;
+//   * `scl` is non-uniform and one component is NEGATIVE -> a serialiser
+//     that writes a magnitude, or a single uniform factor, reads different
+//     numbers;
+//   * `pivot` is non-zero AND the pose is rotated+scaled -> dropping the
+//     pivot changes the composed matrix (asserted below), which at
+//     rot=0/scl=1 it would NOT (T(p)·I·T(-p) == I for any p).
+// Bit-exactness is a legitimate bar, not an aspiration: `float` widens to
+// `double` in `JSONValue`, std.json prints a double with enough digits to
+// re-read it exactly, and the narrowing back to `float` is then exact.
+//
+// The two NON-channel answers this pins are LOSSES, and they are asserted as
+// losses on purpose: the day either one is fixed, this test goes red and
+// names the USAGE.md paragraph that has to change with it.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.file   : tempDir, remove, exists;
+    import std.path   : buildPath;
+    import std.format : format;
+    import std.random : uniform;
+    import std.math   : fabs, fmod;
+    import mesh       : makeCube;
+    import document   : ItemKind;
+
+    auto path = buildPath(tempDir(),
+        format("vibe3d_native_xform_rt_%d.v3d", uniform(0, int.max)));
+    scope(exit) if (exists(path)) remove(path);
+
+    // --- the fixture --------------------------------------------------------
+    ItemXform src;
+    src.pos   = Vec3( 1.3f,  -0.7f,   2.9f);
+    src.rot   = Vec3(17.3f, -43.7f,  61.1f);   // no 0, no multiple of 90
+    src.scl   = Vec3( 2.5f,   0.4f,  -1.75f);  // non-uniform, one mirror
+    src.pivot = Vec3(-0.35f,  0.85f,  1.15f);
+
+    // --- and the PROOF that the fixture discriminates -----------------------
+    {
+        immutable float[12] c = [src.pos.x, src.pos.y, src.pos.z,
+                                 src.rot.x, src.rot.y, src.rot.z,
+                                 src.scl.x, src.scl.y, src.scl.z,
+                                 src.pivot.x, src.pivot.y, src.pivot.z];
+        immutable float[12] identity = [0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0];
+        foreach (i; 0 .. 12)
+            assert(c[i] != identity[i],
+                "fixture: channel " ~ i.to!string ~ " must differ from its "
+              ~ "identity or a serialiser that DROPS it still passes");
+        foreach (i; 0 .. 12)
+            foreach (j; i + 1 .. 12)
+                assert(fabs(c[i]) != fabs(c[j]),
+                    "fixture: channels " ~ i.to!string ~ "/" ~ j.to!string
+                  ~ " share a magnitude — a serialiser that swaps them "
+                  ~ "still passes");
+        foreach (v; [src.rot.x, src.rot.y, src.rot.z])
+            assert(fmod(fabs(v), 90.0f) != 0.0f,
+                "fixture: a multiple of 90 degrees makes the euler ORDER "
+              ~ "unobservable in the composed matrix");
+
+        // Euler order is observable AT THIS TRIPLE: reversing it composes to a
+        // different rotation. (It would not for a single-axis rotation.)
+        auto rA = matrixFromEulerZYX(src.rot);
+        auto rB = matrixFromEulerZYX(Vec3(src.rot.z, src.rot.y, src.rot.x));
+        bool orderMatters = false;
+        foreach (i; 0 .. 16) if (fabs(rA[i] - rB[i]) > 1e-4f) orderMatters = true;
+        assert(orderMatters,
+            "fixture: this rot triple must be order-sensitive, else a codec "
+          ~ "that reverses the components is invisible");
+
+        // The pivot is load-bearing AT THIS POSE: zeroing it moves the item.
+        ItemXform noPivot = src;
+        noPivot.pivot = Vec3(0, 0, 0);
+        auto mA = src.composedMatrix(), mB = noPivot.composedMatrix();
+        bool pivotMatters = false;
+        foreach (i; 0 .. 16) if (fabs(mA[i] - mB[i]) > 1e-4f) pivotMatters = true;
+        assert(pivotMatters,
+            "fixture: dropping the pivot must change the composed matrix, "
+          ~ "else the pivot assertions below are decoration");
+    }
+
+    // --- the document: a mesh item, a NON-MESH item, and a PARENTED item ----
+    auto doc  = Document.bootstrap(makeCube());
+    auto A    = doc.layers[0];
+    A.name    = "A";
+    A.xform   = src;
+
+    auto E    = new Layer;
+    E.name    = "E";
+    E.kind    = ItemKind.Empty;
+    E.xform.pos = Vec3(9.5f, -8.5f, 7.5f);   // a transform-only item, dialled in
+
+    auto C    = new Layer;
+    C.name    = "C";
+    C.meshRef() = makeCube();
+    C.parent  = A;
+
+    doc.layers = [A, E, C];
+    doc.setActive(0);
+    assert(doc.primary is A,           "setup: A is the primary");
+    assert(C.parent is A,              "setup: C really is parented to A — "
+        ~ "without this the parent-drop assertion below is vacuous");
+    assert(E.kind == ItemKind.Empty,   "setup: E really is a non-mesh item");
+
+    // v7 cannot represent a non-mesh item, so the write is INCOMPLETE by
+    // contract (this is the same `false` the FileSave dirty-flag gate reads).
+    assert(!writeV3d(doc, path),
+        "a document holding a non-mesh item cannot be written completely");
+
+    Document loaded;
+    assert(readV3d(path, loaded), "round-trip load must succeed");
+
+    // === WHAT SURVIVES: all twelve channels, BIT-EXACT ======================
+    auto got = loaded.layers[0].xform;
+    assert(got.pos.x   == src.pos.x   && got.pos.y   == src.pos.y
+        && got.pos.z   == src.pos.z,   "pos must round-trip bit-exact, got "
+        ~ got.pos.x.to!string ~ "," ~ got.pos.y.to!string ~ "," ~ got.pos.z.to!string);
+    assert(got.rot.x   == src.rot.x   && got.rot.y   == src.rot.y
+        && got.rot.z   == src.rot.z,   "rot must round-trip bit-exact (DEGREES, "
+        ~ "ZYX order), got " ~ got.rot.x.to!string ~ "," ~ got.rot.y.to!string
+        ~ "," ~ got.rot.z.to!string);
+    assert(got.scl.x   == src.scl.x   && got.scl.y   == src.scl.y
+        && got.scl.z   == src.scl.z,   "scl must round-trip bit-exact INCLUDING "
+        ~ "the negative (mirror) component, got " ~ got.scl.x.to!string ~ ","
+        ~ got.scl.y.to!string ~ "," ~ got.scl.z.to!string);
+    assert(got.pivot.x == src.pivot.x && got.pivot.y == src.pivot.y
+        && got.pivot.z == src.pivot.z, "pivot must round-trip bit-exact, got "
+        ~ got.pivot.x.to!string ~ "," ~ got.pivot.y.to!string ~ ","
+        ~ got.pivot.z.to!string);
+
+    // The observable that follows from the four: the item lands in the same
+    // place. Implied by the channel equalities TODAY (the composed matrix is a
+    // pure function of them) — kept because it is the property a user cares
+    // about, and it survives a future codec that persists a matrix instead.
+    assert(loaded.layers[0].xform.composedMatrix() == src.composedMatrix(),
+        "the composed world matrix must be identical after a round-trip");
+
+    // === WHAT DOES NOT SURVIVE #1: a non-mesh item, and its transform =======
+    assert(loaded.layers.length == 2,
+        "v7 has no representation for a non-mesh item: the Empty item is "
+      ~ "DROPPED, not written as an empty mesh — got "
+      ~ loaded.layers.length.to!string ~ " layers");
+    foreach (l; loaded.layers) {
+        assert(l.kind == ItemKind.Mesh,
+            "every layer a v7 file can produce is mesh-kind");
+        assert(l.name != "E",
+            "the Empty item must not come back under any kind — its item "
+          ~ "transform (9.5,-8.5,7.5) went with it. If this ever fails, the "
+          ~ "format grew a type token and USAGE.md's `.v3d` note must change");
+    }
+
+    // === WHAT DOES NOT SURVIVE #2: the item PARENT link =====================
+    assert(loaded.layers[1].name == "C", "sanity: layer 1 is the parented item");
+    assert(loaded.layers[1].parent is null,
+        "v7 persists no parent key, so the link is dropped silently on save. "
+      ~ "This assertion documents a LOSS: if it fails, parenting became "
+      ~ "persistent and USAGE.md's `.v3d` note must change with it. Got parent="
+      ~ loaded.layers[1].parent.name);
+
+    // === Deliberately NOT asserted here: the item-selection FOCUS ===========
+    // v7 persists no focus key, so focus is re-derived on load (`readV3d`
+    // ends with `setPrimary`, whose `focusedItem = l` homes it on the
+    // primary). That is a traced fact, not a testable loss: `Document`
+    // maintains `focusedItem is primary` for an ALL-MESH document, and an
+    // all-mesh document is the only thing a v7 file can hold — the two
+    // answers "restored from the file" and "re-derived onto the primary"
+    // coincide, so any assertion here would pass against either. Focus can
+    // only diverge from the primary while a NON-MESH item is focused, and
+    // that item does not survive the save at all (above).
+}
