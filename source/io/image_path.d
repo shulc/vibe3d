@@ -13,7 +13,9 @@ module io.image_path;
 //     (an in-memory path is already absolute, see the storage rule below).
 //
 //   * `storePathFor` — the inverse: an absolute path -> the form written into
-//     a document at `docPath`.
+//     a document at `docPath`. `storePathForItem` (task 0635) is the same
+//     answer memoised on the item, for the draw path that asks once per row
+//     per frame; it is a cache in front of `storePathFor`, never a second rule.
 //
 //   * `refreshImageMeta` — re-read the header and refresh the four derived
 //     fields on `ImageData`. This is the ONLY writer of those fields, and it
@@ -165,6 +167,49 @@ string storePathFor(string absolute, string docPath) {
         return "../" ~ toPortableSeparators(rel);
 
     return toPortableSeparators(abs);
+}
+
+/// `storePathFor` for an image ITEM, memoised on the item (task 0635).
+///
+/// Same value as `storePathFor(img.storedPath, docPath)` — this is a cache in
+/// front of that function and nothing else; if the two could ever disagree the
+/// cache would be a second rule, which is the thing the whole storage/display
+/// story exists to avoid.
+///
+/// WHY IT EXISTS: the clip list calls this once per row per frame while its
+/// panel is open, and `storePathFor` allocates (four transient strings, none
+/// of which survive the row). Measured over 600 frames on 1 mesh + 20 clips,
+/// it was 81% of the row build's 5120 bytes/frame.
+///
+/// WHY IT IS SAFE: `storePathFor` reads no file — it is `buildNormalizedPath`
+/// + `relativePath` over two strings — so its answer is a total function of
+/// the pair `(storedPath, docPath)`, which is exactly the pair kept beside the
+/// cached value. `resolveStoredPath` below is the opposite case and must never
+/// get the same treatment: it calls `exists()`, so its answer changes when a
+/// file appears or disappears with nothing in the document changing at all.
+///
+/// The cache is KEYED rather than cleared by whoever writes `storedPath`; the
+/// argument for that, and the three mutation sites a hook would have missed,
+/// are on `RowTextMemo` in `document.d`.
+///
+/// (One input is implicit and shared with the uncached function: a
+/// `storedPath` that is not absolute is absolutised against the process CWD.
+/// `storedPath` is absolute in memory by the storage rule at the top of this
+/// module, and the CWD does not move between two frames of one panel, so the
+/// key is complete for every reachable state.)
+string storePathForItem(ImageData img, string docPath) {
+    if (img is null) return "";
+    if (img.rowText.storeValid
+        && img.rowText.storeSource == img.storedPath
+        && img.rowText.storeAnchor == docPath)
+        return img.rowText.storeText;
+
+    const text = storePathFor(img.storedPath, docPath);
+    img.rowText.storeText   = text;
+    img.rowText.storeSource = img.storedPath;
+    img.rowText.storeAnchor = docPath;
+    img.rowText.storeValid  = true;
+    return text;
 }
 
 /// The stored path resolved to a path this process can open, anchored at the

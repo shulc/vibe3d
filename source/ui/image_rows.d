@@ -45,17 +45,37 @@ module ui.image_rows;
 // plan's R13 enumerates. A model field that could never be filled would be a
 // promise this phase cannot keep; the slot is Stage 12's, deliberately last.
 //
-// COST. `imageRowsInto` fills the caller's buffer in place (the
+// COST — MEASURED (task 0635), and the earlier estimate here was wrong by a
+// factor of five, which is worth stating rather than quietly correcting. This
+// comment used to say "the two formatted strings per row are the only per-row
+// allocation". Two strings is what the SOURCE reads like; what it costs is
+// what the two functions behind them allocate on the way to producing them.
+// Over 600 frames on a document of 1 mesh + 20 clips, paths one directory
+// below the document:
+//
+//   whole row build       5120 bytes/frame
+//     the path text       4160  (81%)  — `storePathFor`: two normalisations,
+//                                        a `dirName`, a `relativePath`
+//     the dimensions      960   (19%)  — two `to!string` + a concatenation
+//     `elideEnd`          0            — measured, both cutting and not
+//
+// At 60 fps with the panel open that was ≈300 KiB/s, ≈17.6 MiB/min of GC
+// churn on the UI thread, growing with the number of rows. Both figures are
+// now memoised on the item (`RowTextMemo`, `document.d`): a frame in which
+// nothing changed allocates nothing at all, so the remaining per-frame cost
+// no longer scales with the row count. `elideEnd` is NOT memoised — zero is
+// zero, and a cache in front of it would be pure liability.
+//
+// `imageRowsInto` fills the caller's buffer in place (the
 // `Document.referrersOf` / `selectedItemsInto` idiom) so a panel holding one
-// static buffer does not churn an array per frame; the two formatted strings
-// per row are the only per-row allocation, bounded by the number of image
-// items. What is deliberately NOT on this path is `Document.referrersOf` —
-// its own doc comment forbids a draw-path call — so "is this image in use" is
-// asked once, at CLICK time, through `imageRemoveConfirmText`.
+// static buffer does not churn an array per frame. What is deliberately NOT
+// on this path is `Document.referrersOf` — its own doc comment forbids a
+// draw-path call — so "is this image in use" is asked once, at CLICK time,
+// through `imageRemoveConfirmText`.
 // ---------------------------------------------------------------------------
 
 import document        : Document, Layer, ImageData;
-import io.image_path   : storePathFor;
+import io.image_path   : storePathForItem;
 
 /// The empty-state line. The measured list has its own empty text rather than
 /// an empty rectangle; it has a second one pointing at a separate browsing
@@ -156,6 +176,35 @@ string dimensionsText(int width, int height, bool missing) {
     if (missing) return "";
     import std.conv : to;
     return to!string(width) ~ " x " ~ to!string(height);
+}
+
+/// `dimensionsText` for an image ITEM, memoised on the item (task 0635).
+///
+/// The second half of the row build's per-frame garbage, and the smaller one:
+/// 960 of the measured 5120 bytes/frame, against the relative path's 4160. It
+/// is taken anyway because the task's bar is that an open panel not allocate
+/// IN PROPORTION TO THE NUMBER OF ROWS, and three `to!string`-and-concatenate
+/// results per frame per row is exactly that shape — leaving it would have met
+/// the byte target while leaving the property unmet.
+///
+/// The key is the three inputs, which are `refreshImageMeta`'s three outputs;
+/// see `RowTextMemo` in `document.d` for why the cache is keyed on them rather
+/// than cleared by whoever writes them.
+string dimensionsTextFor(ImageData img) {
+    if (img is null) return "";
+    if (img.rowText.dimsValid
+        && img.rowText.dimsW == img.width
+        && img.rowText.dimsH == img.height
+        && img.rowText.dimsMissing == img.missing)
+        return img.rowText.dimsText;
+
+    const text = dimensionsText(img.width, img.height, img.missing);
+    img.rowText.dimsText    = text;
+    img.rowText.dimsW       = img.width;
+    img.rowText.dimsH       = img.height;
+    img.rowText.dimsMissing = img.missing;
+    img.rowText.dimsValid   = true;
+    return text;
 }
 
 /// Truncate `s` to at most `maxChars` CODE POINTS, keeping the HEAD and
@@ -273,8 +322,13 @@ void imageRowsInto(Document* doc, string docPath, ref ImageRow[] outBuf) {
             r.missing = true;
         } else {
             r.pathTooltip = img.storedPath;
-            r.pathText    = storePathFor(img.storedPath, docPath);
-            r.dimensions  = dimensionsText(img.width, img.height, img.missing);
+            // MEMOISED (task 0635), not because the values are expensive but
+            // because this runs once per row EVERY FRAME the panel is open —
+            // see `RowTextMemo`. Both wrappers return exactly what the bare
+            // functions return; the only difference is that a frame in which
+            // nothing changed does not allocate.
+            r.pathText    = storePathForItem(img, docPath);
+            r.dimensions  = dimensionsTextFor(img);
             // `img.channels` UNCONDITIONALLY — there is no `missing ? 0 :`
             // guard here, and there was one (review, inert-assertion 2).
             //
@@ -390,7 +444,7 @@ version (unittest) {
     import document                : ItemKind, Document, Layer;
     import io.image_path           : writeTestBmp, imageTestDir,
                                      refreshImageMeta;
-    import commands.image.commands : ImageLoad;
+    import commands.image.commands : ImageLoad, ImageReplace, ImageReload;
     import commands.layer.commands : LayerAdd;
     import params                  : injectParamsInto;
     import mesh                    : makeCube;
@@ -982,3 +1036,259 @@ unittest {
     assert(rows[0].dimensions == "" && rows[0].pixelFormat == "",
         "…and no measurements");
 }
+
+// ===========================================================================
+// Task 0635 — the row-text MEMO. Three tests, and the split between them is
+// the whole design of this section.
+//
+// THE ASSERTION HAS TO BE ABOUT BYTES, because correctness is not evidence
+// here. Every assertion in R1..R10 above passes with no cache whatsoever —
+// they check WHAT the row says, and a memo that is never consulted says the
+// same thing. So R11 measures GC bytes across two consecutive builds of an
+// unchanged document, which is the only reading that can tell "memoised" from
+// "recomputed and identical".
+//
+// AND THE BYTE TEST HAS TO BE PAIRED WITH INVALIDATION, because it is blind in
+// exactly the opposite direction: a cache that is filled once and NEVER
+// invalidated passes R11 perfectly while showing a stale path for the rest of
+// the session. R12 and R13 are that half — one per input.
+//
+// Both invalidation tests need MORE THAN ONE clip, and clips whose texts
+// DIFFER, or "the row followed the change" cannot be told from "the rows were
+// the same string anyway". The seven-item fixture already has three images at
+// three different anchors, which is why it is reused rather than replaced.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// R11 — a frame in which nothing changed allocates NOTHING.
+//
+// Discriminating, and this is the assertion the task exists for: the second
+// build of an unchanged document must allocate ZERO bytes. Not "less" — zero
+// is the only reading that proves the cost stopped scaling with the row count,
+// and "materially less" would still pass an implementation that memoised the
+// path and left the dimensions cell rebuilding once per row per frame (which
+// is precisely the half-measure on offer: the path was 81% of the bytes).
+//
+// The vacuity guard is the first reading: the COLD build must allocate
+// something, or "the warm build allocated nothing" would be a statement about
+// a function that never allocates at all and the test would prove nothing.
+//
+// BREAK-VERIFIED, and the second figure is the argument for `== 0`: against a
+// cold build of 1216 bytes for these three rows, disabling the path memo reads
+// a warm 1072 and disabling the dimensions memo reads a warm 144. A "warm is
+// materially less than cold" threshold passes that second one comfortably —
+// 144 against 1216 is an 88% cut — while leaving a per-row allocation on every
+// frame, which is the exact property this task is about.
+// ---------------------------------------------------------------------------
+unittest {
+    import core.memory : GC;
+    import std.conv    : to;
+
+    auto f = makeRowFixture("rows_memo_bytes");
+
+    size_t nImages = 0;
+    foreach (l; f.doc.layers) if (l !is null && l.hasImage) ++nImages;
+    assert(nImages == 3,
+        "fixture drift: the buffer below is pre-sized from this count, and a "
+        ~ "mismatch would put a resize inside the measured window; got "
+        ~ to!string(nImages));
+
+    // PRE-SIZED on purpose. `imageRowsInto` grows the caller's buffer once,
+    // and that one-off is not what this measures — the panel holds a static
+    // buffer across frames for exactly this reason, so a pre-sized buffer IS
+    // the panel's steady state rather than a convenience for the test.
+    ImageRow[] rows;
+    rows.length = nImages;
+
+    immutable a = GC.stats().allocatedInCurrentThread;
+    imageRowsInto(&f.doc, f.docPath, rows);
+    immutable b = GC.stats().allocatedInCurrentThread;
+    imageRowsInto(&f.doc, f.docPath, rows);
+    immutable c = GC.stats().allocatedInCurrentThread;
+
+    immutable cold = b - a;
+    immutable warm = c - b;
+
+    assert(cold > 0,
+        "vacuity guard: the FIRST build must allocate, or 'the second built "
+        ~ "nothing' says nothing about a cache. Got " ~ to!string(cold)
+        ~ " bytes");
+    assert(warm == 0,
+        "a frame in which nothing changed must allocate nothing: the row text "
+        ~ "is memoised on the item. Cold build " ~ to!string(cold)
+        ~ " bytes, warm build " ~ to!string(warm) ~ " bytes for "
+        ~ to!string(nImages) ~ " rows");
+
+    // …and the memo changed the COST, not the ANSWER.
+    assert(rows[0].pathText == "alpha.bmp" && rows[0].dimensions == "3 x 2",
+        "row 0 still reads what R2/R4 pin");
+    assert(rows[1].pathText == "tex/bravo.bmp" && rows[1].dimensions == "5 x 7",
+        "row 1 still reads what R2/R4 pin");
+    assert(rows[2].pathText == "../charlie.bmp" && rows[2].dimensions == "11 x 13",
+        "row 2 still reads what R2/R4 pin");
+
+    // THE BORN SLOT IS NOT AN ANSWER. A never-computed memo keys as
+    // `(0, 0, false)` — the same key a payload that genuinely measures zero
+    // pixels and is not missing would produce — and that payload's cell reads
+    // "0 x 0", not "". This is what `RowTextMemo.dimsValid` is for; without it
+    // the born slot hands back its empty default for a real measurement.
+    auto fresh = new ImageData();
+    fresh.missing = false;                    // 0x0, and NOT missing
+    immutable born = dimensionsTextFor(fresh);
+    assert(born == "0 x 0",
+        "an empty memo slot must not be mistaken for a cached empty cell; got '"
+        ~ born ~ "'");
+}
+
+// ---------------------------------------------------------------------------
+// R12 — the item's own inputs move, and the row follows.
+//
+// Two shapes, because they invalidate through different fields and a cache can
+// get one right and the other wrong:
+//
+//   * `image.replace` — the PATH moves (and the measurement with it);
+//   * `image.reload` after the file is rewritten in place — the MEASUREMENT
+//     moves and the path does not. A dimensions memo keyed on the path alone
+//     reads the old "5 x 7" here.
+//
+// And then the UNDO of the replace, which is the case that decides the whole
+// design. `image.replace` refreshes a SCRATCH payload and copies five fields
+// onto the live one; its revert writes the five fields back directly. Neither
+// direction calls `refreshImageMeta` on the item the panel draws — so a cache
+// cleared by a hook inside `refreshImageMeta` is never cleared here at all,
+// and the row shows the replacement's path for the rest of the session. That
+// is why `RowTextMemo` is keyed on its inputs instead. Break-verified against
+// a real hook implementation (no key, `refreshImageMeta` clears both slots):
+// the assertion below reads 'tex/bravo.bmp' after the replace.
+//
+// Discriminating: the OTHER two rows are asserted unchanged at every step, so
+// a single memo entry shared by all items (rather than one per item) drags
+// them along and reads differently; and every value asserted is distinct from
+// every other value in the fixture, so no assertion can pass by coincidence.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+
+    auto f = makeRowFixture("rows_memo_inputs");
+    ImageRow[] rows;
+    imageRowsInto(&f.doc, f.docPath, rows);      // WARMS every row's memo
+    assert(rows[1].pathText == "tex/bravo.bmp" && rows[1].dimensions == "5 x 7",
+        "control: the warm state is the one R2/R4 pin");
+
+    // --- the path moves -----------------------------------------------------
+    immutable newPath = buildPath(f.dir, "scene", "other", "renamed.bmp");
+    writeTestBmp(newPath, 9, 4);                 // a size no other row carries
+
+    auto rep = new ImageReplace(f.doc.activeMesh(), f.view, EditMode.Vertices,
+                                &f.doc, null);
+    {
+        auto ps = rep.params();
+        auto pj = parseJSON(`{"index":` ~ to!string(f.doc.indexOf(f.bravo))
+                            ~ `,"path":` ~ jsonString(newPath) ~ `}`);
+        injectParamsInto(ps, pj);
+    }
+    assert(rep.apply(), "fixture: image.replace must apply");
+
+    imageRowsInto(&f.doc, f.docPath, rows);
+    assert(rows[1].pathText == "other/renamed.bmp",
+        "the row text follows the item's new path — a memo that never "
+        ~ "invalidates reads 'tex/bravo.bmp' here and would keep reading it "
+        ~ "for the rest of the session; got '" ~ rows[1].pathText ~ "'");
+    assert(rows[1].dimensions == "9 x 4",
+        "…and so does the measurement; got '" ~ rows[1].dimensions ~ "'");
+    assert(rows[0].pathText == "alpha.bmp" && rows[0].dimensions == "3 x 2",
+        "one item's change moves one item: a single shared memo entry would "
+        ~ "drag row 0 along");
+    assert(rows[2].pathText == "../charlie.bmp" && rows[2].dimensions == "11 x 13",
+        "…and row 2 likewise");
+
+    // --- the undo, which never goes through `refreshImageMeta` --------------
+    assert(rep.revert(), "fixture: the replace must undo");
+    imageRowsInto(&f.doc, f.docPath, rows);
+    assert(rows[1].pathText == "tex/bravo.bmp",
+        "undo restores the path the document made, and the row must say so. "
+        ~ "`revert` writes the five fields back directly, so a cache cleared "
+        ~ "only inside `refreshImageMeta` reads 'other/renamed.bmp' here; got '"
+        ~ rows[1].pathText ~ "'");
+    assert(rows[1].dimensions == "5 x 7",
+        "…and the restored measurement, not the replacement's; got '"
+        ~ rows[1].dimensions ~ "'");
+
+    // --- the file moves under a path that does not ---------------------------
+    writeTestBmp(f.pathB, 21, 22);
+    auto rl = new ImageReload(f.doc.activeMesh(), f.view, EditMode.Vertices,
+                              &f.doc, null);
+    {
+        auto ps = rl.params();
+        auto pj = parseJSON(`{"index":` ~ to!string(f.doc.indexOf(f.bravo)) ~ `}`);
+        injectParamsInto(ps, pj);
+    }
+    assert(rl.apply(), "fixture: image.reload must apply");
+
+    imageRowsInto(&f.doc, f.docPath, rows);
+    assert(rows[1].dimensions == "21 x 22",
+        "the file changed under an unchanged path: a dimensions memo keyed on "
+        ~ "the PATH reads the stale '5 x 7' here; got '"
+        ~ rows[1].dimensions ~ "'");
+    assert(rows[1].pathText == "tex/bravo.bmp",
+        "…and the path text did not move, because the path did not; got '"
+        ~ rows[1].pathText ~ "'");
+}
+
+// ---------------------------------------------------------------------------
+// R13 — the DOCUMENT moves, and every row re-anchors.
+//
+// The input people forget, because it does not live on `ImageData` at all:
+// nothing on the item can be notified that a Save As moved the anchor, so the
+// anchor has to be part of the key. R3 already pins that the row text follows
+// the `docPath` ARGUMENT; what this adds is that it still follows once the
+// memo is WARM, and that it comes BACK — a cache that stored the first anchor
+// and kept answering from it is invisible to a single one-way move if the
+// caller only ever asks once.
+//
+// Discriminating: the new anchor is `tex/`, under which all three images
+// resolve to three DIFFERENT forms — a sibling, a parent-relative, and an
+// absolute — and none of the three equals its form under the old anchor. An
+// anchor-blind memo reads three stale strings; a memo that re-anchors only the
+// first row reads one new and two stale.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.path : isAbsolute;
+
+    auto f = makeRowFixture("rows_memo_anchor");
+    ImageRow[] rows;
+    imageRowsInto(&f.doc, f.docPath, rows);      // WARMS every row's memo
+    immutable a0 = rows[0].pathText;
+    immutable a1 = rows[1].pathText;
+    immutable a2 = rows[2].pathText;
+    assert(a0 == "alpha.bmp" && a1 == "tex/bravo.bmp" && a2 == "../charlie.bmp",
+        "control: the warm state is the one R2 pins");
+
+    // Save As into `tex/` — the same document, one directory deeper.
+    immutable inner = buildPath(f.dir, "scene", "tex", "inner.v3d");
+    imageRowsInto(&f.doc, inner, rows);
+
+    assert(rows[1].pathText == "bravo.bmp",
+        "the image beside the new document is now a bare name; got '"
+        ~ rows[1].pathText ~ "'");
+    assert(rows[0].pathText == "../alpha.bmp",
+        "the image one directory up takes the parent anchor; got '"
+        ~ rows[0].pathText ~ "'");
+    assert(isAbsolute(rows[2].pathText),
+        "and the image neither anchor reaches goes absolute; got '"
+        ~ rows[2].pathText ~ "'");
+    assert(rows[0].pathText != a0 && rows[1].pathText != a1
+        && rows[2].pathText != a2,
+        "vacuity guard: all three forms really did change, so 'the rows "
+        ~ "re-anchored' is a difference this fixture can express");
+
+    // …and back to where the document was. Restoring the ORIGINAL three forms
+    // is what separates a memo that re-checks its anchor from one that simply
+    // overwrote itself with the last thing it was asked for.
+    imageRowsInto(&f.doc, f.docPath, rows);
+    assert(rows[0].pathText == a0 && rows[1].pathText == a1
+        && rows[2].pathText == a2,
+        "the rows re-anchor back; got '" ~ rows[0].pathText ~ "', '"
+        ~ rows[1].pathText ~ "', '" ~ rows[2].pathText ~ "'");
+}
+

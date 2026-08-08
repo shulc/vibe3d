@@ -614,6 +614,78 @@ final class ImageData {
                           ///< answer, and claiming `missing == false` for a
                           ///< path nobody has opened is the one wrong answer
                           ///< a consumer cannot detect.
+
+    // -----------------------------------------------------------------------
+    // Task 0635 — the MEMOISED half. See `RowTextMemo`. Neither authored nor
+    // derived-from-the-file: a pure rendering of the two halves above (plus
+    // the document's own path), held only so a draw path does not rebuild it
+    // once per row per frame.
+    // -----------------------------------------------------------------------
+    RowTextMemo rowText;
+}
+
+/// Task 0635 — cached RENDERINGS of `ImageData`'s fields, for the clip list's
+/// draw path.
+///
+/// WHY: `ui/image_rows.d`'s `imageRowsInto` runs once per frame while the
+/// panel is open and rebuilt every row's text from scratch. MEASURED over 600
+/// frames on 1 mesh + 20 clips: 5120 bytes/frame for the whole row build, of
+/// which 4160 (81%) was the document-relative path and 960 the dimensions
+/// cell — ≈300 KiB/s of GC churn on the UI thread, growing with the number of
+/// rows. Both renderings are pure functions of inputs that do not change
+/// between frames, which is the whole reason this is memoisable at all.
+///
+/// A THIRD CATEGORY, and the distinction is the point. The authored fields are
+/// what the document SAYS; the derived fields are what the disk ANSWERED;
+/// these are neither — they carry no information of their own, nothing
+/// serialises them, nothing copies them across a duplicate, and throwing the
+/// whole struct away can only cost time. That is what makes it safe to park
+/// them on the same object as the two halves that do mean something.
+///
+/// KEYED, NOT HOOKED — each slot stores the inputs it was computed from and is
+/// used only while those still compare equal, rather than being cleared by
+/// whoever mutates an input. A hook would have to be added at every mutation
+/// site and there are already three shapes of site that would not get one:
+///
+///   * `image.replace`'s REVERT writes `storedPath` and the four derived
+///     fields back directly and never calls `refreshImageMeta` (deliberately —
+///     it restores the document as it was rather than re-reading a disk that
+///     may have moved on). A cache cleared only in `refreshImageMeta` would
+///     show the replacement's path for the rest of the session after an undo.
+///   * `layer.duplicate` builds a fresh payload by copying seven fields; a
+///     hook there is one more field to remember.
+///   * the DOCUMENT PATH is not a field on this object at all. Nothing here
+///     can be notified that a Save As moved the anchor, so the anchor has to
+///     be part of the key no matter what the other half does.
+///
+/// A key cannot be forgotten at a mutation site that does not exist yet.
+///
+/// WHAT MUST NOT BE MEMOISED HERE, stated so it is not added by analogy:
+/// `resolveStoredPath` (the other direction) calls `exists()`. Its answer
+/// changes when a file appears or disappears with no mutation to the document
+/// at all, so it has no key — which is exactly why `resolvedPath` is not a
+/// field on `ImageData` either (see the note above). `storePathFor` touches
+/// the filesystem nowhere: it is `buildNormalizedPath` + `relativePath` over
+/// two strings, and that is the property this whole struct rests on.
+///
+/// The two `…Valid` flags model "no entry yet", which is a different state
+/// from "an entry whose value is the empty string" and cannot be inferred from
+/// the key. `dimsValid` is the one that demonstrably earns its byte: a born
+/// slot keys as `(0, 0, false)`, and a payload really carrying that
+/// measurement renders `"0 x 0"`, so without the flag the born slot would hand
+/// back `""` for it.
+struct RowTextMemo {
+    // --- the document-relative path text: `io.image_path.storePathForItem` ---
+    string storeText;     ///< the memoised value
+    string storeSource;   ///< the `storedPath` it was computed from
+    string storeAnchor;   ///< the document path it was anchored at
+    bool   storeValid;    ///< false until the first computation
+
+    // --- the dimensions cell: `ui.image_rows.dimensionsTextFor` ---
+    string dimsText;      ///< the memoised value
+    int    dimsW, dimsH;  ///< the measurement it was computed from
+    bool   dimsMissing;   ///< …and the third input, which empties the cell
+    bool   dimsValid;     ///< false until the first computation
 }
 
 /// A reference-image plane's payload (task 0612). A class reference, for the
