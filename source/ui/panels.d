@@ -222,6 +222,8 @@ import commands.tool.host     : ToolHost;
 import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
 import commands.layer.commands : LayerAttr, layerDeleteButtonState;
+import ui.image_rows : ImageRow, imageRowsInto, imageRemoveTarget,
+                       imageRemoveConfirmText, elideEnd, kNoImagesText;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
@@ -272,7 +274,7 @@ import remesh.remesh_job         : RemeshJob, RemeshParams,
 import commands.mesh.remesh      : Remesh, RemeshStart, RemeshOpen;
 import property_panel : PropertyPanel;
 import forms_render;
-import layer_params   : LayerPropsProvider;
+import layer_params   : LayerPropsProvider, itemPropsTarget;
 import document       : Layer, Document, kindInfo, tokenOf;
 import snap           : ItemSnapFrame;
 import viewport       : LayoutPreset, ViewportManager, Viewport3D;
@@ -1162,10 +1164,17 @@ void drawLayerListPanel(EditorApp app) {
         }
 
         // ---- Layer (item) properties form ----
-        // Render the config-driven layer-props form for the ACTIVE
-        // (primary) layer below the layer list — the same FormsPanel that
-        // drives Tool Properties, fed a LayerPropsProvider wrapping the
-        // primary layer. The form is looked up by its explicit id
+        // Render the config-driven layer-props form for the FOCUSED item
+        // below the layer list — the same FormsPanel that drives Tool
+        // Properties, fed a LayerPropsProvider wrapping it. Task 0616 Ph4
+        // moved the binding from `primary` to `itemPropsTarget(&document())`
+        // (the item-selection focus): `primary` is by invariant a mesh, so
+        // bound to it this form could never show a non-mesh item's channels
+        // at all — an image row selected in the Images panel had its
+        // `colorspace` / `useAlpha` declared as `Param`s (Stage 3) with no
+        // surface that could reach them. On an all-mesh document focus and primary
+        // always coincide, so nothing there changes. The form is looked up by
+        // its explicit id
         // ("layer.props"); guard cleanly if it is absent (config/forms not
         // present, or VIBE3D_FORMS=0 kill-switch).
         //
@@ -1186,10 +1195,12 @@ void drawLayerListPanel(EditorApp app) {
                     // frame. The provider's params() always alias the live
                     // bound layer, so the rebind keeps it correct.
                     static LayerPropsProvider layerProv;
+                    auto propsTarget = itemPropsTarget(&document());
+                    if (propsTarget is null) propsTarget = document.primary;
                     if (layerProv is null)
-                        layerProv = new LayerPropsProvider(document.primary);
+                        layerProv = new LayerPropsProvider(propsTarget);
                     else
-                        layerProv.setLayer(document.primary);
+                        layerProv.setLayer(propsTarget);
                     // P4 primary-transform interlock: grey out the transform
                     // rows while a transform tool is active. The panel always
                     // binds the PRIMARY, so that is the only layer whose
@@ -1215,10 +1226,286 @@ void drawLayerListPanel(EditorApp app) {
                                     formsInteractiveDispatch,
                                     /*activeToolId=*/"",
                                     /*stageId=*/"",
+                                    // The dispatched `layer.attr <idx>` must
+                                    // address the layer the form is BOUND to,
+                                    // not the primary — those are the same
+                                    // index on an all-mesh document and a
+                                    // different one the moment a non-mesh row
+                                    // takes the focus.
                                     /*layerIndex=*/to!string(
-                                        document.activeIndex));
+                                        document.indexOf(propsTarget)));
                 }
             }
+        }
+    }
+    ImGui.End();
+    popPanelChromeStyle();
+    }
+}
+
+// -------------------------------------------------------------------------
+// Images panel (task 0616 Ph4)
+// -------------------------------------------------------------------------
+//
+// The document's loaded images, one row each. Its own panel, not rows in the
+// Layers panel: the Layers panel stays about geometry, and the two lists are
+// exact complements (`isSceneItem` there, `hasImage` here), so no item can
+// fall between them and none can appear twice.
+//
+// WHAT IS DRAWN is decided entirely by `ui/image_rows.d` — this body only
+// places it. That split is deliberate: an ImGui body cannot be asserted
+// headlessly, so everything assertable (which rows, which layer index, the two
+// path forms, the dimensions and format cells, the elision direction, the
+// selection/focus flags, the Remove target, the confirm sentence) lives in
+// that module behind in-module tests, and what is left here is geometry on
+// screen and nothing else.
+//
+// The measured shape (doc/tasks/0616-evidence/clip_panel_shape.md):
+//   - a TWO-LINE name cell: display name on line 1, the file path on line 2,
+//     dimmer and elided from the right;
+//   - pixel dimensions and pixel format as their own columns;
+//   - multi-select (ctrl-click), and selection is undoable — which it is,
+//     because the click dispatches `layer.select`, a `CmdFlags.UiState`
+//     command, i.e. this codebase's UI-undo class. Selection is view state,
+//     not document content, and that is exactly the separate undo class the
+//     reference gives it;
+//   - no sorting and no filter box (settled absences, not omissions);
+//   - editable per-item properties are NOT here — they are `Param`s on the
+//     item, shown in the shared item-properties form, which now follows the
+//     item-selection focus (`itemPropsTarget`, layer_params.d) so a selected
+//     image row's `colorspace` / `useAlpha` are reachable there. The list and
+//     the properties do not overlap.
+//
+// NOT taken, each for the reason the measurement itself gives: the visibility
+// column (declared but unbound, and absent from the shipped screenshot —
+// vestigial), the leading marker column (purpose not settled), and the four
+// size-responsive presentations (a separate concern). No thumbnail either —
+// nothing in this build decodes pixels, only headers (see `ui/image_rows.d`).
+//
+// EVERY interaction dispatches through commandHandlerDelegate, exactly as the
+// Layers panel does; the panel never mutates `document` directly.
+//
+// Visibility mirrors the Layers panel: always drawn in a normal run; in
+// --test HIDDEN by default (so it cannot swallow a synthetic viewport drag)
+// until `ui.imageList show`.
+void drawImageListPanel(EditorApp app) {
+    with (app) {
+    import std.json : JSONValue;
+    import std.conv : to;
+    import std.string : fromStringz;
+    import io.doc_state : currentDocPath;
+
+    // Confirm-before-remove state. Function-local statics rather than
+    // EditorApp fields: nothing outside this body reads them, and the panel is
+    // main-thread-only (same convention as the modal flags above, which are
+    // app fields only because they are shared with the side panel's menu).
+    static bool   removeConfirmOpen;
+    static bool   removeConfirmPendingOpen;
+    static string removeConfirmText;
+    static size_t removeConfirmIndex;
+
+    pushPanelChromeStyle();
+    if (ImGui.Begin("Images")) {
+        // ---- Load button ----
+        // No `path` argument: `image.load` with none opens the file dialog,
+        // which is the only route the reference offers either (its load
+        // command takes no arguments at all — measured). The by-path form
+        // exists for tests and scripts and is reached through /api/command.
+        if (ImGui.SmallButton("Load...")) {
+            if (commandHandlerDelegate !is null)
+                commandHandlerDelegate("image.load", "{}");
+        }
+        ImGui.SameLine();
+
+        // ---- Remove button ----
+        // Target + enabled state come from ONE function (`imageRemoveTarget`),
+        // in the `layerDeleteButtonState` shape, so the greying and the
+        // dispatched index cannot disagree — the bug that shape exists to
+        // prevent.
+        auto rem = imageRemoveTarget(&document());
+        ImGui.BeginDisabled(!rem.enabled);
+        if (ImGui.SmallButton("Remove")) {
+            if (rem.enabled) {
+                // CLICK TIME is the only place the reverse referrer sweep may
+                // run: `Document.referrersOf` explicitly forbids a draw-path
+                // call, and this is the delete-time query it was written for.
+                removeConfirmText  = imageRemoveConfirmText(&document(),
+                                                            rem.layer);
+                removeConfirmIndex = rem.index;
+                if (removeConfirmText.length) {
+                    removeConfirmOpen        = true;
+                    removeConfirmPendingOpen = true;
+                } else if (commandHandlerDelegate !is null) {
+                    // Nothing references it — nothing to warn about.
+                    commandHandlerDelegate("image.remove",
+                        `{"index":` ~ to!string(rem.index) ~ `}`);
+                }
+            }
+        }
+        ImGui.EndDisabled();
+
+        // ---- In-use confirmation ----
+        // Same pendingOpen convention as the AI3D modals below.
+        if (removeConfirmOpen) {
+            if (removeConfirmPendingOpen) {
+                ImGui.OpenPopup("Remove Image?");
+                removeConfirmPendingOpen = false;
+            }
+            if (ImGui.BeginPopupModal("Remove Image?", null,
+                                      ImGuiWindowFlags.AlwaysAutoResize)) {
+                ImGui.TextUnformatted(removeConfirmText);
+                ImGui.TextUnformatted("Remove it anyway?");
+                if (ImGui.Button("Remove")) {
+                    if (commandHandlerDelegate !is null)
+                        commandHandlerDelegate("image.remove",
+                            `{"index":` ~ to!string(removeConfirmIndex) ~ `}`);
+                    ImGui.CloseCurrentPopup();
+                    removeConfirmOpen = false;
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Cancel")) {
+                    ImGui.CloseCurrentPopup();
+                    removeConfirmOpen = false;
+                }
+                ImGui.EndPopup();
+            } else {
+                removeConfirmOpen = false;   // closed via ESC
+            }
+        }
+
+        ImGui.Separator();
+
+        // ---- Rows ----
+        // ONE buffer, refilled in place each frame (the `referrersOf` /
+        // `selectedItemsInto` idiom) rather than a fresh array per frame.
+        static ImageRow[] rows;
+        imageRowsInto(&document(), currentDocPath(), rows);
+
+        if (rows.length == 0) {
+            // The measured list has its own empty text rather than an empty
+            // rectangle.
+            ImGui.TextDisabled(kNoImagesText);
+        }
+
+        foreach (ref r; rows) {
+            immutable int idx = cast(int) r.index;
+            ImGui.PushID(idx);
+
+            // ---- line 1: focus marker + name + dimensions + format ----
+            // The marker is the same three-state glyph the Layers panel uses
+            // ("@" focus, "*" in the selection set, " " neither); ">" cannot
+            // occur here because an image item is never the mesh edit target.
+            immutable marker = r.focused ? "@" : r.selected ? "*" : " ";
+            if (ImGui.Selectable(marker, r.focused,
+                                 ImGuiSelectableFlags.AllowItemOverlap,
+                                 ImVec2(14, 0))) {
+                if (!r.focused && commandHandlerDelegate !is null)
+                    commandHandlerDelegate("layer.select",
+                        `{"index":` ~ to!string(idx) ~ `,"mode":"set"}`);
+            }
+            ImGui.SameLine();
+
+            if (layerRenameIndex == idx) {
+                // Inline rename — `layer.rename`, which writes the item's
+                // display name and NOTHING on disk. There is deliberately no
+                // `image.rename`: a second command would be a second way to
+                // get this wrong, and the reference's own list renames the
+                // reference and never the file either.
+                if (ImGui.IsWindowAppearing() || !ImGui.IsAnyItemActive())
+                    ImGui.SetKeyboardFocusHere();
+                ImGui.SetNextItemWidth(140);
+                bool commit = ImGui.InputText("##rename", layerRenameBuf[],
+                                  ImGuiInputTextFlags.EnterReturnsTrue);
+                bool cancel = ImGui.IsKeyPressed(ImGuiKey.Escape);
+                if (!commit && !cancel && ImGui.IsItemDeactivatedAfterEdit())
+                    commit = true;
+                if (commit) {
+                    string newName =
+                        cast(string) fromStringz(layerRenameBuf.ptr).dup;
+                    if (newName.length && commandHandlerDelegate !is null)
+                        commandHandlerDelegate("layer.rename",
+                            `{"index":` ~ to!string(idx) ~ `,"name":`
+                            ~ JSONValue(newName).toString() ~ `}`);
+                    layerRenameIndex = -1;
+                } else if (cancel || ImGui.IsItemDeactivated()) {
+                    layerRenameIndex = -1;
+                }
+            } else {
+                // Multi-select: plain click replaces the selection
+                // (`mode:set`), ctrl-click adds/removes (`mode:toggle`).
+                // Double-click opens the rename editor.
+                bool nameClicked =
+                    ImGui.Selectable(r.name, r.selected,
+                                     ImGuiSelectableFlags.AllowDoubleClick,
+                                     ImVec2(180, 0));
+                bool dbl = ImGui.IsItemHovered()
+                    && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left);
+                if (nameClicked && !dbl && commandHandlerDelegate !is null) {
+                    immutable mode = io.KeyCtrl ? `"toggle"` : `"set"`;
+                    if (io.KeyCtrl || !r.focused)
+                        commandHandlerDelegate("layer.select",
+                            `{"index":` ~ to!string(idx) ~ `,"mode":`
+                            ~ mode ~ `}`);
+                }
+                if (dbl) {
+                    layerRenameIndex = idx;
+                    layerRenameBuf[] = 0;
+                    auto src = r.name;
+                    size_t n = src.length < layerRenameBuf.length - 1
+                             ? src.length : layerRenameBuf.length - 1;
+                    layerRenameBuf[0 .. n] = src[0 .. n];
+                }
+            }
+
+            // Pixel dimensions, then pixel format — each its own column, both
+            // read-only labels, drawn through the single-string overload so a
+            // token carrying a `%` can never be read as a printf specifier
+            // (the documented crash class in this file).
+            //
+            // The two offsets are wide enough for the widest cell either
+            // column can hold: `MAX_IMAGE_DIM` is 16384, so "16384 x 16384"
+            // (13 characters) is the dimensions column's worst case, and the
+            // format column must start clear of it. Measured on screen at the
+            // first cut with 200/280, where "1024 x 1024" ran straight into
+            // "RGB".
+            ImGui.SameLine(210);
+            ImGui.TextUnformatted(r.dimensions.length ? r.dimensions : "-");
+            ImGui.SameLine(330);
+            ImGui.TextUnformatted(r.pixelFormat.length ? r.pixelFormat : "-");
+
+            // ---- line 2: the path, dimmer, elided from the RIGHT ----
+            // The budget is in code points, derived from the width actually
+            // available, so the head of the path survives a narrow panel.
+            // (`Dummy` + `SameLine` rather than `Indent`: this build's ImGui
+            // binding exposes no Indent/Unindent wrapper.)
+            ImGui.Dummy(ImVec2(18, 0));
+            ImGui.SameLine();
+            {
+                immutable float avail = ImGui.GetContentRegionAvail().x;
+                immutable float chW   = ImGui.CalcTextSize("m").x;
+                size_t budget = 16;
+                if (chW > 0.0f && avail > 0.0f) {
+                    immutable long b = cast(long)(avail / chW);
+                    budget = b < 8 ? 8 : cast(size_t) b;
+                }
+                // Single-string overloads throughout: they route through
+                // `%.*s` and so cannot read a `%` in a user's path as a
+                // printf specifier (the documented crash class in this file).
+                if (r.pathText.length)
+                    ImGui.TextDisabled(elideEnd(r.pathText, budget));
+                else
+                    ImGui.TextDisabled("(no file)");
+                // The tooltip is always the ABSOLUTE path — measured: relative
+                // in the row, absolute on hover.
+                if (ImGui.IsItemHovered() && r.pathTooltip.length)
+                    ImGui.SetTooltip(r.pathTooltip);
+                if (r.missing) {
+                    ImGui.SameLine();
+                    ImGui.TextDisabled("(not found)");
+                }
+            }
+
+            ImGui.PopID();
         }
     }
     ImGui.End();

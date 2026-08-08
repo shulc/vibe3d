@@ -222,6 +222,7 @@ import commands.tool.pipe     : ToolPipeAttrCommand;
 import commands.tool.begin_session : ToolBeginSessionCommand;
 import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesShown;
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
+import commands.ui.image_list      : UiImageListCommand;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
@@ -922,6 +923,8 @@ void registerCommands(EditorApp app) {
         new UiToolPropertiesCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["ui.layerList"] = () => cast(Command)
         new UiLayerListCommand(&mesh(), cameraView, editMode);
+    reg.commandFactories["ui.imageList"] = () => cast(Command)
+        new UiImageListCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["ui.viewportProps"] = () => cast(Command)
         new UiViewportPropsCommand(&mesh(), cameraView, editMode);
 
