@@ -174,8 +174,9 @@ mixin template MeshBevelOps() {
     ///     dihedral (it varies across a non-uniform selection); a boundary/rim
     ///     edge (no second face) has no dihedral and keeps the raw value.
     /// Returns the count of edges actually processed (0 ⇒ no-op, all skipped).
-    size_t bevelEdgesByMask(const bool[] mask, float width, int roundLevel = 0,
+    size_t bevelEdgesByMask(const bool[] maskIn, float width, int roundLevel = 0,
                             bool widthMode = false) {
+        const mask = maskMinusHiddenEdges(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (width < 1e-6f) return 0;
         if (mask.length != edges.length) return 0;
 
@@ -2830,7 +2831,8 @@ mixin template MeshBevelOps() {
     ///
     /// Returns the count of vertices actually processed (0 ⇒ no-op, caller
     /// should discard snapshot).
-    size_t bevelVerticesByMask(const bool[] mask, float amount) {
+    size_t bevelVerticesByMask(const bool[] maskIn, float amount) {
+        const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != vertices.length) return 0;
         if (amount < 1e-6f) return 0;
 

@@ -8,14 +8,6 @@ import editmode;
 import snapshot : MeshSnapshot;
 import mesh_edit_delta : MeshEditScope;
 
-/// All-true selection mask of length `n`, used when nothing is selected
-/// (empty selection ⇒ whole mesh).
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}
-
 /// Reverse the winding order of selected polygons, inverting their normals.
 /// Empty face-selection flips every face of the active layer (matching the
 /// `mesh.delete` empty-selection convention). Always operates in the face
@@ -39,9 +31,7 @@ class MeshFlip : Command, Operator {
 
     // The kernel mutation: always face-domain, never editMode-dependent (R3).
     private size_t runKernel() {
-        const all = !mesh.hasAnySelectedFaces();
-        return mesh.flipFacesByMask(
-            all ? allTrue(mesh.faces.length) : mesh.selectedFaces);
+        return mesh.flipFacesByMask(mesh.operandFaceMask());
     }
 
     bool evaluate(ref VectorStack vts) {

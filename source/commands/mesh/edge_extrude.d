@@ -8,14 +8,6 @@ import editmode;
 import params : Param;
 import snapshot : MeshSnapshot;
 
-/// All-true selection mask of length `n`, used when nothing is selected
-/// (empty selection ⇒ whole mesh). Mirrors the helper in delete_.d.
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}
-
 /// Edge Extrude (one-shot, undoable): shift the selected edges outward along
 /// the average normal of their neighbor polygon(s) by `extrude`, inset those
 /// neighbors by `width`, and bridge with new faces. Geometry lives in the
@@ -52,8 +44,7 @@ class MeshEdgeExtrude : Command, Operator {
         if (mesh.edges.length == 0) return false;
 
         snap = MeshSnapshot.capture(*mesh);
-        const all = mesh.nothingSelected(EditMode.Edges);
-        auto mask = all ? allTrue(mesh.edges.length) : mesh.selectedEdges;
+        auto mask = mesh.operandEdgeMask();
         size_t n = mesh.extrudeEdgesByMask(mask, extrude_, width_);
         if (n == 0) {
             snap = MeshSnapshot.init;

@@ -8,12 +8,6 @@ import editmode;
 import params : Param;
 import snapshot : MeshSnapshot;
 
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}
-
 /// Vertex Bevel (one-shot, undoable): for each selected interior-manifold
 /// vertex, split every incident edge at distance `amount` and replace the
 /// vertex with an N-gon cap through those split points. Vertices-mode only;
@@ -47,8 +41,7 @@ class MeshVertexBevel : Command, Operator {
         if (mesh.vertices.length == 0) return false;
 
         snap = MeshSnapshot.capture(*mesh);
-        const all = mesh.nothingSelected(EditMode.Vertices);
-        auto mask = all ? allTrue(mesh.vertices.length) : mesh.selectedVertices;
+        auto mask = mesh.operandVertexMask(EditMode.Vertices);
         size_t n = mesh.bevelVerticesByMask(mask, amount_);
         if (n == 0) {
             snap = MeshSnapshot.init;

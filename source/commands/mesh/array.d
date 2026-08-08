@@ -60,14 +60,8 @@ class MeshArray : Command, Operator {
 
         // Build face mask (empty user selection ⇒ whole mesh, same
         // convention as mesh.mirror / mesh.smooth).
-        bool[] mask = new bool[](mesh.faces.length);
-        bool any = false;
-        foreach (i, b; mesh.selectedFaces) {
-            if (b) { mask[i] = true; any = true; }
-        }
-        if (!any) {
-            foreach (i; 0 .. mesh.faces.length) mask[i] = true;
-        }
+        // L1 funnel (task 0613, S5): selected faces, else every VISIBLE face.
+        bool[] mask = mesh.operandFaceMask();
 
         snap = MeshSnapshot.capture(*mesh);
         // detachSubsetSource: reference parity for a PARTIAL selection — the

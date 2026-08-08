@@ -10,14 +10,6 @@ import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshEditScope,
                         captureSelectedEdgeEnds, restoreSelectedEdgeEnds,
                         undoTrackerEnabled;
 
-/// All-true selection mask of length `n`, used when nothing is selected
-/// (empty selection ⇒ whole mesh).
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}
-
 /// Tier 1.1: "Remove" (`vert.remove` / `edge.remove false` /
 /// `poly.remove`, dispatched by edit mode). Remove and Delete are
 /// DISTINCT topological operations, not aliases:
@@ -95,11 +87,10 @@ class MeshRemove : Command, Operator {
                 // vertex Delete — removes EXACTLY the selected verts and keeps
                 // collateral orphans as loose points (reference-editor parity).
                 return mesh.dissolveVerticesByMask(
-                    all ? allTrue(mesh.vertices.length) : mesh.selectedVertices,
+                    mesh.operandVertexMask(EditMode.Vertices),
                     /*keepOrphans=*/true);
             case EditMode.Edges:
-                auto n = mesh.removeEdgesByMask(
-                    all ? allTrue(mesh.edges.length) : mesh.selectedEdges);
+                auto n = mesh.removeEdgesByMask(mesh.operandEdgeMask());
                 // Scope the 2-valent cleanup to the removed edges' endpoints
                 // (task 0474): a pre-existing 2-valent vertex the remove did not
                 // touch — a 90° corner, a straight-through midpoint elsewhere —
@@ -115,8 +106,7 @@ class MeshRemove : Command, Operator {
                 // whereas Delete (mesh.delete) also compacts orphans. This
                 // matches the reference editor's poly-Remove vs Delete
                 // distinction (task 0465).
-                return mesh.deleteFacesByMask(
-                    all ? allTrue(mesh.faces.length) : mesh.selectedFaces,
+                return mesh.deleteFacesByMask(mesh.operandFaceMask(),
                     /*keepOrphans=*/true);
         }
     }

@@ -49,9 +49,11 @@ class MeshQuadruple : Command, Operator {
         bool polygonMode  = editMode == EditMode.Polygons;
         bool hasSelection = polygonMode && mesh.hasAnySelectedFaces();
 
+        // Mode-gated fallback — visibleFaceMask(), not operandFaceMask()
+        // (task 0613, S5; see the helper's doc comment in mesh.d).
         bool[] mask = hasSelection
             ? mesh.selectedFaces
-            : allTrue(mesh.faces.length);
+            : mesh.visibleFaceMask();
 
         mesh.quadrupleFacesByMask(mask);
         mesh.resetSelection();
@@ -67,8 +69,3 @@ class MeshQuadruple : Command, Operator {
     }
 }
 
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}

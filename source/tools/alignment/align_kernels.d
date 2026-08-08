@@ -84,7 +84,7 @@ private ulong packEdgeKey(uint a, uint b) pure nothrow @nogc @safe {
 /// propagation through Mesh's largely non-const method surface).
 AlignChain extractAlignChain(Mesh* mesh, EditMode editMode) {
     immutable size_t N = mesh.vertices.length;
-    bool[] vmask = new bool[](N);
+    bool[] vmask;   // assigned from the L1 funnel below
 
     // Polygons mode additionally restricts the walk to BOUNDARY edges of
     // the selected-face region (per the captured description: in
@@ -100,43 +100,34 @@ AlignChain extractAlignChain(Mesh* mesh, EditMode editMode) {
     // whole `bool[]` per read — indexing it inside these loops was
     // O(mesh²). Iterate the lock-step `*Marks.length` and test via the
     // non-allocating `isXSelected(i)` scalar accessor instead.
-    final switch (editMode) {
-        case EditMode.Vertices:
-            foreach (i; 0 .. mesh.vertexMarks.length)
-                if (mesh.isVertexSelected(i)) vmask[i] = true;
-            break;
-        case EditMode.Edges:
-            foreach (i; 0 .. mesh.edgeMarks.length)
-                if (mesh.isEdgeSelected(i))
-                    foreach (vi; mesh.edges[i]) vmask[vi] = true;
-            break;
-        case EditMode.Polygons: {
-            int[ulong] selCount;
-            foreach (fi; 0 .. mesh.faces.length) {
-                if (!mesh.isFaceSelected(fi)) continue;
-                auto ring = mesh.faces[fi];
-                immutable size_t n = ring.length;
-                foreach (k; 0 .. n) {
-                    uint a = ring[k], b = ring[(k + 1) % n];
-                    vmask[a] = true; vmask[b] = true;
-                    ulong key = packEdgeKey(a, b);
-                    if (auto c = key in selCount) ++(*c);
-                    else selCount[key] = 1;
-                }
+    // L1 funnel (task 0613, S5): the modal vertex fan-in — and its whole-mesh
+    // fallback, now narrowed to the VISIBLE vertices — lives in
+    // Mesh.operandVertexMask. This is shape D's fifth definition and the ONE
+    // that is not byte-identical to its siblings: Polygons mode additionally
+    // needs `boundaryEdge`, which is derived from the same face selection but
+    // is not part of the vertex operand set. So the vmask build moves to the
+    // funnel and the boundary-edge classification stays here, keyed off the
+    // face selection exactly as before.
+    vmask = mesh.operandVertexMask(editMode);
+    if (editMode == EditMode.Polygons) {
+        int[ulong] selCount;
+        foreach (fi; 0 .. mesh.faces.length) {
+            if (!mesh.isFaceSelected(fi)) continue;
+            auto ring = mesh.faces[fi];
+            immutable size_t n = ring.length;
+            foreach (k; 0 .. n) {
+                ulong key = packEdgeKey(ring[k], ring[(k + 1) % n]);
+                if (auto c = key in selCount) ++(*c);
+                else selCount[key] = 1;
             }
-            boundaryEdge.length = mesh.edges.length;
-            foreach (ei; 0 .. mesh.edges.length) {
-                ulong key = packEdgeKey(mesh.edges[ei][0], mesh.edges[ei][1]);
-                if (auto c = key in selCount)
-                    boundaryEdge[ei] = (*c == 1);
-            }
-            break;
+        }
+        boundaryEdge.length = mesh.edges.length;
+        foreach (ei; 0 .. mesh.edges.length) {
+            ulong key = packEdgeKey(mesh.edges[ei][0], mesh.edges[ei][1]);
+            if (auto c = key in selCount)
+                boundaryEdge[ei] = (*c == 1);
         }
     }
-
-    bool any = false;
-    foreach (m; vmask) if (m) { any = true; break; }
-    if (!any) foreach (i; 0 .. N) vmask[i] = true;
 
     uint[] idx;
     foreach (i; 0 .. N) if (vmask[i]) idx ~= cast(uint)i;

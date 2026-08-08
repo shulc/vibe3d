@@ -282,12 +282,8 @@ public:
 
 private:
     bool[] currentMask() {
-        if (mesh.nothingSelected(EditMode.Edges)) {
-            auto m = new bool[](mesh.edges.length);
-            m[] = true;
-            return m;
-        }
-        return mesh.selectedEdges;
+        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
+        return mesh.operandEdgeMask();
     }
 
     void computeGizmoFrame() {

@@ -292,12 +292,8 @@ public:
 
 private:
     bool[] currentMask() {
-        if (mesh.nothingSelected(EditMode.Polygons)) {
-            auto m = new bool[](mesh.faces.length);
-            m[] = true;
-            return m;
-        }
-        return mesh.selectedFaces;
+        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
+        return mesh.operandFaceMask();
     }
 
     void rebuildPreview() {
@@ -344,15 +340,19 @@ private:
         gizmoSelHash = mesh.selectionSignature(EditMode.Polygons);
         if (mesh.faces.length == 0) return;
 
-        bool wholeMesh = mesh.nothingSelected(EditMode.Polygons);
-        auto selFaces  = mesh.selectedFaces;
+        // L1 funnel (task 0613, S5). This is the SAME operand set currentMask()
+        // builds — the gizmo anchor/axis must be framed on exactly the faces
+        // the apply will extrude, or the handle sits somewhere the edit does
+        // not happen. Routing it through operandFaceMask() keeps the two in
+        // lockstep, including the hidden subtraction.
+        auto opFaces = mesh.operandFaceMask();
 
         Vec3   centSum = Vec3(0, 0, 0);
         size_t centN   = 0;
         Vec3   normSum = Vec3(0, 0, 0);
 
         foreach (fi; 0 .. mesh.faces.length) {
-            bool selected = wholeMesh || (fi < selFaces.length && selFaces[fi]);
+            bool selected = fi < opFaces.length && opFaces[fi];
             if (!selected) continue;
             Vec3 c = mesh.faceCentroid(cast(uint)fi);
             centSum = centSum + c;

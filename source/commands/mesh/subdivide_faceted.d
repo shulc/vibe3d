@@ -27,9 +27,11 @@ package void runFacetedFamily(Mesh* mesh, EditMode editMode, bool smooth)
     auto prevFaceVertCounts = new size_t[](mesh.faces.length);
     foreach (fi; 0 .. mesh.faces.length)
         prevFaceVertCounts[fi] = mesh.faces[fi].length;
+    // Mode-gated fallback — visibleFaceMask(), not operandFaceMask()
+    // (task 0613, S5; see the helper's doc comment in mesh.d).
     const bool[] mask = hadSelection
         ? mesh.selectedFaces
-        : allTrueMask(mesh.faces.length);
+        : mesh.visibleFaceMask();
     *mesh = smooth ? smoothSubdivide(*mesh, mask) : facetedSubdivide(*mesh, mask);
     mesh.resetSelection();
     // Rebuild the output selection: each selected cage face produced
@@ -87,8 +89,3 @@ class SubdivideFaceted : Command, Operator {
     }
 }
 
-private bool[] allTrueMask(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}

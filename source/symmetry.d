@@ -313,6 +313,16 @@ void applySymmetryMirror(Mesh* mesh, const ref SymmetryPacket sp,
         }
         int mi = sp.pairOf[i];
         if (mi < 0 || mi == cast(int)i) continue;
+        // R3 (task 0613, doc/hide_geometry_plan.md §3.4). `pairOf` is derived
+        // from POSITIONS, not from any mark, so the partner enters the operand
+        // set without being selected (R1 never sees it) and without being in
+        // any mask (R2's funnel never sees it) — this is the only place the
+        // guard can go. Placed BEFORE the base-side arbitration deliberately:
+        // a hidden partner must not be able to win the drive and write back
+        // into the visible side. A hidden partner cannot be selected (§3.1),
+        // so the both-sides ambiguity the arbitration resolves cannot arise
+        // for it; `i` simply drives and its write is dropped.
+        if (mesh.isVertexHidden(mi)) continue;
         bool mirrorAlsoSelected =
             (mi < cast(int)selected.length) && selected[mi];
         if (mirrorAlsoSelected) {
@@ -382,6 +392,10 @@ void applySymmetryMirrorDelta(Mesh* mesh, const ref SymmetryPacket sp,
         }
         int mi = sp.pairOf[i];
         if (mi < 0 || mi == cast(int)i) continue;
+        // R3 (task 0613) — the delta twin has the identical hole; see the
+        // guard's full reasoning in applySymmetryMirror above. Same placement:
+        // before the base-side arbitration.
+        if (mesh.isVertexHidden(mi)) continue;
         bool mirrorAlsoSelected =
             (mi < cast(int)selected.length) && selected[mi];
         if (mirrorAlsoSelected) {
@@ -934,3 +948,144 @@ unittest { // disconnected precondition: topological yields no pairs, spatial do
     assert(anyPaired, "spatial: disconnected mirrored mesh should have pairs");
 }
 
+
+// ---------------------------------------------------------------------------
+// R3 — the symmetry mirror partner (task 0613 S5, doc/hide_geometry_plan.md
+// §3.4). `pairOf` selects the partner from POSITIONS, by no mark at all, so a
+// hidden partner enters the operand set without ever being selected (R1 cannot
+// see it) and without ever being in a mask (R2's funnel cannot see it). These
+// two tests pin the guard that closes that route, one per function.
+//
+// Fixture note (the trap Stage 4 hit and this deliberately avoids): the hidden
+// vertex's NEIGHBOURS stay visible. Hiding face 1 (the -X quad) derives D(4)
+// and C(5) hidden — each touches only face 1 — while the seam verts c0(0) and
+// c1(1) stay visible, because they still touch the visible +X quad. So nothing
+// upstream can "accidentally" skip the write; only the new guard can.
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    // Symmetric two-quad mesh straddling X=0, paired spatially. Same layout as
+    // the equivalence test above, factored out so both R3 rows share it.
+    private Mesh makeSymmetricTwoQuadMesh() {
+        Mesh m;
+        m.addVertex(Vec3( 0.0f, 0.0f, 0.0f));   // 0: c0 (seam)
+        m.addVertex(Vec3( 0.0f, 1.0f, 0.0f));   // 1: c1 (seam)
+        m.addVertex(Vec3( 0.5f, 0.7f, 0.3f));   // 2: A  (+X driver)
+        m.addVertex(Vec3( 0.5f, 1.5f, 0.3f));   // 3: B  (+X)
+        m.addVertex(Vec3(-0.5f, 0.7f, 0.3f));   // 4: D  (-X partner of A)
+        m.addVertex(Vec3(-0.5f, 1.5f, 0.3f));   // 5: C  (-X partner of B)
+        m.addFace([0u, 2u, 3u, 1u]);            // face 0: +X quad
+        m.addFace([0u, 1u, 5u, 4u]);            // face 1: -X quad
+        m.buildLoops();
+        m.syncSelection();                      // size the marks arrays
+        return m;
+    }
+}
+
+unittest { // T-R3 row 1 — applySymmetryMirror refuses a hidden partner
+    import std.math : isClose, fabs;
+    import std.conv : to;
+
+    // The drag: +0.4 along Y. Y lies IN the mirror plane, so the mirrored
+    // write moves the partner in the SAME direction as the driver — which is
+    // exactly what makes "unchanged" and "mirrored" numerically distinct here
+    // (0.7 vs 1.1 on the partner's Y). A drag that left the partner where it
+    // already was could not tell a fired guard from a lucky no-op.
+    enum float DRAG_Y     = 0.4f;
+    enum float PARTNER_Y0 = 0.7f;          // D's original Y
+    enum float MIRRORED_Y = 1.1f;          // what an UNGUARDED mirror writes
+
+    // --- CONTROL ROW: nothing hidden ⇒ the mirror really does fire here. ---
+    // Without this row, row 2's "D did not move" would also pass on a build
+    // where the pairing simply failed, or symmetry was off.
+    {
+        auto m  = makeSymmetricTwoQuadMesh();
+        auto sp = xPlanePacket(1e-3f);
+        rebuildPairing(m, sp, sp.pairOf, sp.onPlane, sp.vertSign);
+        assert(sp.pairOf[2] == 4, "fixture: A(2) must pair with D(4)");
+
+        m.vertices[2].y += DRAG_Y;
+        bool[] sel = new bool[](6); sel[2] = true;
+        bool[] touched = new bool[](6);
+        applySymmetryMirror(&m, sp, sel, touched);
+
+        assert(isClose(m.vertices[4].y, MIRRORED_Y, 1e-5f),
+            "CONTROL: with nothing hidden the partner must mirror to y="
+            ~ MIRRORED_Y.to!string ~ ", got " ~ m.vertices[4].y.to!string);
+        assert(touched[4], "CONTROL: the partner must be reported as touched");
+    }
+
+    // --- THE ASSERTION: D hidden ⇒ the mirror write is dropped. ---
+    {
+        auto m  = makeSymmetricTwoQuadMesh();
+        auto sp = xPlanePacket(1e-3f);
+        rebuildPairing(m, sp, sp.pairOf, sp.onPlane, sp.vertSign);
+
+        m.setFaceHidden(1, true);          // -X quad ⇒ D(4) and C(5) derive hidden
+        assert(m.isVertexHidden(4), "fixture: D(4) must derive hidden");
+        assert(!m.isVertexHidden(0), "fixture: the seam vertex must stay VISIBLE "
+            ~ "(it still touches the visible +X quad) — a fixture where the "
+            ~ "hidden face owns all its corners lets an unrelated check pass this");
+
+        m.vertices[2].y += DRAG_Y;
+        bool[] sel = new bool[](6); sel[2] = true;
+        bool[] touched = new bool[](6);
+        applySymmetryMirror(&m, sp, sel, touched);
+
+        assert(isClose(m.vertices[4].y, PARTNER_Y0, 1e-6f),
+            "hidden partner must be bit-identical at y=" ~ PARTNER_Y0.to!string
+            ~ "; got " ~ m.vertices[4].y.to!string
+            ~ " (an unguarded mirror writes " ~ MIRRORED_Y.to!string ~ ")");
+        assert(isClose(m.vertices[4].x, -0.5f, 1e-6f), "hidden partner X moved");
+        assert(!touched[4],
+            "a dropped mirror write must not claim the partner was touched");
+        // The DRIVER still moved: the guard drops the partner write only.
+        assert(isClose(m.vertices[2].y, PARTNER_Y0 + DRAG_Y, 1e-6f),
+            "the visible driver must still move");
+    }
+}
+
+unittest { // T-R3 row 2 — applySymmetryMirrorDelta has the identical hole
+    import std.math : isClose;
+    import std.conv : to;
+
+    enum float DRAG_Y     = 0.4f;
+    enum float PARTNER_Y0 = 0.7f;
+    enum float MIRRORED_Y = 1.1f;   // delta-mirror on a symmetric base == absolute
+
+    // Control: the delta twin fires on this fixture with nothing hidden.
+    {
+        auto m  = makeSymmetricTwoQuadMesh();
+        auto sp = xPlanePacket(1e-3f);
+        rebuildPairing(m, sp, sp.pairOf, sp.onPlane, sp.vertSign);
+        auto baseline = m.vertices.dup;
+        m.vertices[2].y += DRAG_Y;
+        bool[] sel = new bool[](6); sel[2] = true;
+        bool[] touched = new bool[](6);
+        applySymmetryMirrorDelta(&m, sp, baseline, sel, touched);
+        assert(isClose(m.vertices[4].y, MIRRORED_Y, 1e-5f),
+            "CONTROL (delta): partner must mirror to y=" ~ MIRRORED_Y.to!string
+            ~ ", got " ~ m.vertices[4].y.to!string);
+    }
+
+    {
+        auto m  = makeSymmetricTwoQuadMesh();
+        auto sp = xPlanePacket(1e-3f);
+        rebuildPairing(m, sp, sp.pairOf, sp.onPlane, sp.vertSign);
+        m.setFaceHidden(1, true);
+        assert(m.isVertexHidden(4), "fixture: D(4) must derive hidden");
+
+        auto baseline = m.vertices.dup;
+        m.vertices[2].y += DRAG_Y;
+        bool[] sel = new bool[](6); sel[2] = true;
+        bool[] touched = new bool[](6);
+        applySymmetryMirrorDelta(&m, sp, baseline, sel, touched);
+
+        assert(isClose(m.vertices[4].y, PARTNER_Y0, 1e-6f),
+            "delta-mirror: hidden partner must be bit-identical at y="
+            ~ PARTNER_Y0.to!string ~ "; got " ~ m.vertices[4].y.to!string
+            ~ " (unguarded writes " ~ MIRRORED_Y.to!string ~ ")");
+        assert(!touched[4],
+            "delta-mirror: a dropped write must not claim the partner was touched");
+    }
+}

@@ -47,10 +47,12 @@ class MeshTriple : Command, Operator {
         bool   hasSelection       = polygonMode && mesh.hasAnySelectedFaces();
         bool[] prevSelectedFaces  = hasSelection ? mesh.selectedFaces.dup : null;
 
-        // Whole-mesh: allTrue mask (NOT null — length-checked kernel).
+        // Whole-mesh: every VISIBLE face (NOT null — length-checked kernel).
+        // Mode-gated fallback — visibleFaceMask(), not operandFaceMask()
+        // (task 0613, S5; see the helper's doc comment in mesh.d).
         bool[] mask = hasSelection
             ? mesh.selectedFaces
-            : allTrue(mesh.faces.length);
+            : mesh.visibleFaceMask();
 
         uint[] faceOrigin;
         mesh.triangulateFacesByMask(mask, &faceOrigin);
@@ -76,8 +78,3 @@ class MeshTriple : Command, Operator {
     }
 }
 
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}

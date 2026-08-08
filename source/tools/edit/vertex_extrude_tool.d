@@ -291,12 +291,8 @@ public:
 
 private:
     bool[] currentMask() {
-        if (mesh.nothingSelected(EditMode.Vertices)) {
-            auto m = new bool[](mesh.vertices.length);
-            m[] = true;
-            return m;
-        }
-        return mesh.selectedVertices;
+        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
+        return mesh.operandVertexMask(EditMode.Vertices);
     }
 
     void computeGizmoFrame() {

@@ -63,14 +63,8 @@ class MeshMirror : Command, Operator {
         // Build face mask. Empty user selection ⇒ mirror the whole mesh
         // ("no selection ⇒ act on everything", as in mesh.quantize /
         // mesh.smooth).
-        bool[] mask = new bool[](mesh.faces.length);
-        bool any = false;
-        foreach (i, b; mesh.selectedFaces) {
-            if (b) { mask[i] = true; any = true; }
-        }
-        if (!any) {
-            foreach (i; 0 .. mesh.faces.length) mask[i] = true;
-        }
+        // L1 funnel (task 0613, S5): selected faces, else every VISIBLE face.
+        bool[] mask = mesh.operandFaceMask();
 
         snap = MeshSnapshot.capture(*mesh);
         size_t inserted = mesh.mirrorFaces(mask, axis_[0], center_, weld_, flipNormals_);

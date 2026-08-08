@@ -326,13 +326,8 @@ public:
     // rule to commands/mesh/mirror.d:74-84.) -------------------------------
 
     private bool[] buildMaskFromSelection() const {
-        bool[] mask = new bool[](mesh.faces.length);
-        bool any = false;
-        foreach (i, b; mesh.selectedFaces) {
-            if (b) { mask[i] = true; any = true; }
-        }
-        if (!any) foreach (i; 0 .. mesh.faces.length) mask[i] = true;
-        return mask;
+        // L1 funnel (task 0613, S5): selected faces, else every VISIBLE face.
+        return mesh.operandFaceMask();
     }
 
     /// The mask used at commit time — re-derived from the LIVE selection

@@ -252,12 +252,8 @@ private:
     // The mask the kernel runs on: empty selection ⇒ whole mesh (matching
     // the mesh.poly_inset command convention).
     bool[] currentMask() {
-        if (mesh.nothingSelected(EditMode.Polygons)) {
-            auto m = new bool[](mesh.faces.length);
-            m[] = true;
-            return m;
-        }
-        return mesh.selectedFaces;
+        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
+        return mesh.operandFaceMask();
     }
 
     // The selected faces' centroid — this tool's anchor for the pixel→world

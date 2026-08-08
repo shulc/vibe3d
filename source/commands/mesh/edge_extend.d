@@ -9,14 +9,6 @@ import editmode;
 import params : Param;
 import snapshot : MeshSnapshot;
 
-/// All-true selection mask of length `n`, used when nothing is selected
-/// (empty selection ⇒ whole mesh). Mirrors the helper in edge_extrude.d.
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}
-
 /// Edge Extend (one-shot, undoable): ADDITIVE, non-manifold. Per selected edge
 /// (with ≥1 adjacent face) spawn 2 ridge verts + 1 bridge quad WITHOUT modifying
 /// the source mesh; vertices shared by multiple selected edges WELD to one new
@@ -78,8 +70,7 @@ class MeshEdgeExtend : Command, Operator {
         if (mesh.edges.length == 0) return false;
 
         snap = MeshSnapshot.capture(*mesh);
-        const all = mesh.nothingSelected(EditMode.Edges);
-        auto mask = all ? allTrue(mesh.edges.length) : mesh.selectedEdges;
+        auto mask = mesh.operandEdgeMask();
         size_t n = mesh.extendEdgesByMask(
             mask, inset_, shift_,
             Vec3(offsetX_, offsetY_, offsetZ_),

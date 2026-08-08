@@ -580,12 +580,8 @@ private:
     // The mask the kernel runs on: empty selection ⇒ whole mesh (matching the
     // mesh.edge_extend / mesh.delete convention).
     bool[] currentMask() {
-        if (mesh.nothingSelected(EditMode.Edges)) {
-            auto m = new bool[](mesh.edges.length);
-            m[] = true;
-            return m;
-        }
-        return mesh.selectedEdges;
+        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
+        return mesh.operandEdgeMask();
     }
 
     // Revert to the pre-extend cage + selection, then re-run the kernel from the

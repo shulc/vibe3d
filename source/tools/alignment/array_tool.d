@@ -336,13 +336,8 @@ private:
     // finding — see task 0355's capture notes §7.2 — so it is not treated
     // as a spec requirement.)
     bool[] currentMask() {
-        bool[] mask = new bool[](mesh.faces.length);
-        bool any = false;
-        foreach (i, b; mesh.selectedFaces) {
-            if (b) { mask[i] = true; any = true; }
-        }
-        if (!any) foreach (i; 0 .. mesh.faces.length) mask[i] = true;
-        return mask;
+        // L1 funnel (task 0613, S5): selected faces, else every VISIBLE face.
+        return mesh.operandFaceMask();
     }
 
     // Revert to the pre-array cage, then re-run the grid kernel from the

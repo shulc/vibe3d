@@ -348,12 +348,8 @@ public:
 
 private:
     bool[] currentMask() {
-        if (mesh.nothingSelected(EditMode.Polygons)) {
-            auto m = new bool[](mesh.faces.length);
-            m[] = true;
-            return m;
-        }
-        return mesh.selectedFaces;
+        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
+        return mesh.operandFaceMask();
     }
 
     void computeGizmoFrame() {

@@ -25,7 +25,8 @@ mixin template MeshExtrudeOps() {
     /// final ridgeVert[v] and insetVert[(v,f)] maps FIRST (averaging shared-corner
     /// in-plane directions), then do ONE rewrite pass per affected face so two
     /// selected edges that share a corner cannot race on faces[fi].
-    size_t extrudeEdgesByMask(in bool[] mask, float extrude, float width) {
+    size_t extrudeEdgesByMask(in bool[] maskIn, float extrude, float width) {
+        const mask = maskMinusHiddenEdges(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         import math : Vec3, cross, dot, normalize;
         import std.math : acos, sin, abs;
         import std.algorithm : clamp;
@@ -1920,8 +1921,9 @@ mixin template MeshExtrudeOps() {
     /// selects the new cap faces).
     ///
     /// Returns the number of accepted (processed) vertices, 0 on no-op.
-    size_t extrudeVerticesByMask(in bool[] mask, float shift, float width)
+    size_t extrudeVerticesByMask(in bool[] maskIn, float shift, float width)
     {
+        const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != vertices.length) return 0;
         if (width == 0.0f) return 0;
 
@@ -2151,10 +2153,11 @@ mixin template MeshExtrudeOps() {
     /// With a non-origin pivot the per-ring law becomes
     ///   ringVert_k(v) = (k/N)·offset + insetShiftDelta(v)
     ///                 + pivot + Scale_k( Rotate_k( E_src(v) − pivot ) ).
-    size_t extendEdgesByMask(in bool[] mask,
+    size_t extendEdgesByMask(in bool[] maskIn,
                              float inset, float shift,
                              Vec3 offset, Vec3 rotateDeg, Vec3 scale,
                              int segments, Vec3 pivot = Vec3(0, 0, 0)) {
+        const mask = maskMinusHiddenEdges(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         import math : Vec3, cross, dot, normalize;
         import std.math : sin, cos, abs, PI;
         if (mask.length != edges.length) return 0;
@@ -2753,7 +2756,8 @@ mixin template MeshExtrudeOps() {
     /// total), the whole call is a clean no-op (returns 0) rather than risk
     /// winding/coincident corruption from extruding into an already-invalid
     /// neighborhood.
-    size_t extrudeFacesByMask(in bool[] mask, float distance, bool smooth = false) {
+    size_t extrudeFacesByMask(in bool[] maskIn, float distance, bool smooth = false) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
         size_t selCount = 0;
         foreach (b; mask) if (b) ++selCount;
@@ -3080,7 +3084,8 @@ mixin template MeshExtrudeOps() {
     // Returns the number of faces cloned (0 on any no-op condition:
     // mismatched mask, nothing selected, or a closed island with no
     // boundary edges to wall).
-    size_t smoothShiftFacesByMask(in bool[] mask, float shift, float scale, bool thicken) {
+    size_t smoothShiftFacesByMask(in bool[] maskIn, float shift, float scale, bool thicken) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
         size_t selCount = 0;
         foreach (b; mask) if (b) ++selCount;

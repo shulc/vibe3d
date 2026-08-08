@@ -498,12 +498,8 @@ private:
     // The mask the kernel runs on: empty selection ⇒ whole mesh (matching the
     // mesh.delete / mesh.edge_extrude convention).
     bool[] currentMask() {
-        if (mesh.nothingSelected(EditMode.Edges)) {
-            auto m = new bool[](mesh.edges.length);
-            m[] = true;
-            return m;
-        }
-        return mesh.selectedEdges;
+        // L1 funnel (task 0613, S5): the selection, else every VISIBLE element.
+        return mesh.operandEdgeMask();
     }
 
     // Revert to the pre-extrude cage + selection, then rebuild from the
@@ -607,8 +603,10 @@ private:
         gizmoSelHash = mesh.selectionSignature(EditMode.Edges);
         if (mesh.edges.length == 0) return;
 
-        bool wholeMesh = mesh.nothingSelected(EditMode.Edges);
-        auto sel = mesh.selectedEdges;
+        // L1 funnel (task 0613, S5) — same operand set as currentMask(), so the
+        // gizmo is framed on exactly the edges the apply will extrude (see the
+        // matching note in tools/edit/poly_extrude.d).
+        auto opEdges = mesh.operandEdgeMask();
 
         Vec3 centSum  = Vec3(0, 0, 0);
         size_t centN  = 0;
@@ -616,7 +614,7 @@ private:
         Vec3 insetSum = Vec3(0, 0, 0);
 
         foreach (i; 0 .. mesh.edges.length) {
-            bool selected = wholeMesh || (i < sel.length && sel[i]);
+            bool selected = i < opEdges.length && opEdges[i];
             if (!selected) continue;
             uint va = mesh.edges[i][0];
             uint vb = mesh.edges[i][1];

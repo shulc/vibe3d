@@ -8,19 +8,13 @@ import editmode;
 import params : Param;
 import snapshot : MeshSnapshot;
 
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}
-
 /// One-shot Bevel command: dispatches by edit mode.
 ///   Polygons → bevelFacesByMask(mask, inset, shift, group, segments)
 ///              [params: inset, shift, group, segments]
 ///   Edges    → bevelEdgesByMask(mask, width, roundLevel, widthMode)
 ///              [params: width, roundLevel, widthMode]
-/// Empty face-selection ⇒ whole mesh (allTrue mask, per sibling convention).
-/// Empty edge-selection ⇒ allTrue mask.
+/// Empty face-selection ⇒ whole VISIBLE mesh; empty edge-selection likewise
+/// (Mesh.operand{Face,Edge}Mask — the L1 funnel, per sibling convention).
 /// |inset|<1e-6 && |shift|<1e-6 (polygon) or width<1e-6 (edge) → status:error.
 ///
 /// Neutral param names (task 0391 — NEVER the reference-editor's own names
@@ -96,12 +90,10 @@ class MeshBevel : Command, Operator {
         size_t n = 0;
 
         if (editMode == EditMode.Polygons) {
-            const all  = mesh.nothingSelected(EditMode.Polygons);
-            auto  mask = all ? allTrue(mesh.faces.length) : mesh.selectedFaces;
+            auto mask = mesh.operandFaceMask();
             n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_, square_);
         } else if (editMode == EditMode.Edges) {
-            const all  = mesh.nothingSelected(EditMode.Edges);
-            auto  mask = all ? allTrue(mesh.edges.length) : mesh.selectedEdges;
+            auto mask = mesh.operandEdgeMask();
             n = mesh.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
         }
 

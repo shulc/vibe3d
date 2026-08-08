@@ -140,22 +140,9 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         // whole `bool[]` per read — indexing it inside these loops was
         // O(mesh²). Iterate the lock-step `*Marks.length` and test via the
         // non-allocating `isXSelected(i)` scalar accessor instead.
-        bool[] vmask = new bool[](mesh.vertices.length);
-        bool any = false;
-        if (editMode == EditMode.Vertices) {
-            foreach (i; 0 .. mesh.vertexMarks.length)
-                if (mesh.isVertexSelected(i)) { vmask[i] = true; any = true; }
-        } else if (editMode == EditMode.Edges) {
-            foreach (i; 0 .. mesh.edgeMarks.length)
-                if (mesh.isEdgeSelected(i))
-                    foreach (vi; mesh.edges[i]) { vmask[vi] = true; any = true; }
-        } else {
-            foreach (i; 0 .. mesh.faceMarks.length)
-                if (mesh.isFaceSelected(i))
-                    foreach (vi; mesh.faces[i]) { vmask[vi] = true; any = true; }
-        }
-        if (!any)
-            foreach (i; 0 .. mesh.vertices.length) vmask[i] = true;
+        // L1 funnel (task 0613, S5): the modal fan-in this used to open-code,
+        // with the whole-mesh fallback narrowed to the VISIBLE vertices.
+        bool[] vmask = mesh.operandVertexMask(editMode);
 
         // Pre-smooth per-face normals — only needed by `preserve` (the
         // per-vert normal that defines each vert's tangent plane). The

@@ -49,14 +49,8 @@ class MeshClone : Command, Operator {
 
         // Build face mask — empty selection ⇒ whole mesh (same convention
         // as mesh.array / mesh.mirror).
-        bool[] mask = new bool[](mesh.faces.length);
-        bool any = false;
-        foreach (i, b; mesh.selectedFaces) {
-            if (b) { mask[i] = true; any = true; }
-        }
-        if (!any) {
-            foreach (i; 0 .. mesh.faces.length) mask[i] = true;
-        }
+        // L1 funnel (task 0613, S5): selected faces, else every VISIBLE face.
+        bool[] mask = mesh.operandFaceMask();
 
         snap = MeshSnapshot.capture(*mesh);
         // weld=0 PINNED — a zero-offset clone must keep the coincident copy

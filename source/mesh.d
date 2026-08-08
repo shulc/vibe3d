@@ -910,7 +910,8 @@ struct Mesh {
     /// survivor stays at the lowest-index member's position. Only `vert.merge`
     /// opts in; collapse / vert.join / decimate / drag-weld rely on the
     /// merge-to-first placement and pass the default.
-    size_t weldVerticesByMask(in bool[] mask, double epsSq, bool average = false) {
+    size_t weldVerticesByMask(in bool[] maskIn, double epsSq, bool average = false) {
+        const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (vertices.length < 2) return 0;
         if (mask.length != vertices.length) return 0;
         int[] remap;
@@ -1214,7 +1215,8 @@ struct Mesh {
     /// (addVertex does not resize MeshMap data). PolyVertex maps are
     /// untouched: the op preserves face/corner count and order, so
     /// loop-indexed UV values relocate correctly through buildLoops.
-    size_t splitVerticesByMask(in bool[] mask) {
+    size_t splitVerticesByMask(in bool[] maskIn) {
+        const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != vertices.length) return 0;
 
         // Per-vertex "first incident face already claimed" flag.
@@ -1276,7 +1278,8 @@ struct Mesh {
     /// weldVerticesByMask() to collapse them into one. Used by
     /// `vert.join` (set target = centroid or first-selected) before the
     /// weld pass.
-    void collapseVerticesByMask(in bool[] mask, Vec3 target) {
+    void collapseVerticesByMask(in bool[] maskIn, Vec3 target) {
+        const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != vertices.length) return;
         bool any = false;
         foreach (i; 0 .. mask.length) {
@@ -1301,7 +1304,8 @@ struct Mesh {
     /// essential: per-island welding would compact after each island and
     /// stale the remaining islands' index masks.
     /// Returns the number of vertices welded; 0 means nothing changed.
-    size_t collapseEdgesByMask(in bool[] edgeMask) {
+    size_t collapseEdgesByMask(in bool[] edgeMaskIn) {
+        const edgeMask = maskMinusHiddenEdges(edgeMaskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (edgeMask.length != edges.length) return 0;
 
         // Union-find over vertex indices: vertices connected through a
@@ -1373,7 +1377,8 @@ struct Mesh {
     /// sharing any vertex are in the same island. Uses the same
     /// move-all-then-weld-once structure as `collapseEdgesByMask`.
     /// Returns the number of vertices welded; 0 means nothing changed.
-    size_t collapseFacesByMask(in bool[] faceMask) {
+    size_t collapseFacesByMask(in bool[] faceMaskIn) {
+        const faceMask = maskMinusHiddenFaces(faceMaskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (faceMask.length != faces.length) return 0;
 
         bool anySelected = false;
@@ -1626,7 +1631,8 @@ struct Mesh {
     /// tilted) selection returns 0 without a version bump — clean no-op.
     ///
     /// Returns: number of vertices moved; 0 means nothing changed.
-    size_t alignFacesByMask(in bool[] faceMask) {
+    size_t alignFacesByMask(in bool[] faceMaskIn) {
+        const faceMask = maskMinusHiddenFaces(faceMaskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         import std.math : sqrt, abs;
 
         if (faceMask.length != faces.length) return 0;
@@ -2144,8 +2150,9 @@ struct Mesh {
     /// `edgeIndexMap` FROM it) re-syncs loops around the untouched edge set —
     /// so every floating edge, related or not, survives. Default `false`
     /// (byte-identical to every pre-task-0477 caller).
-    size_t deleteFacesByMask(in bool[] mask, bool keepOrphans = false,
+    size_t deleteFacesByMask(in bool[] maskIn, bool keepOrphans = false,
                              bool keepFloatingEdges = false) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
         uint[][] keptFaces;
         uint[]   keptWord;   // whole faceMarks word per survivor (task 0613 §4.2)
@@ -2269,7 +2276,8 @@ struct Mesh {
     /// each flipped face, new loop faceLoop[fi]+j maps to old loop
     /// faceLoop[fi]+(N-1-j); non-flipped faces use the identity mapping.
     /// Empty mask (all-false) is a no-op that returns 0.
-    size_t flipFacesByMask(in bool[] mask) {
+    size_t flipFacesByMask(in bool[] maskIn) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         import std.algorithm.mutation : reverse;
         if (mask.length != faces.length) return 0;
         const bool needUV = hasPolyVertexMap();
@@ -2327,7 +2335,8 @@ struct Mesh {
     /// vertex is never spared by that, because the mask is the caller naming
     /// it. `keepOrphans` remains the knob for the different question of what to
     /// do with verts THIS call newly orphaned.
-    size_t dissolveVerticesByMask(in bool[] mask, bool keepOrphans = false) {
+    size_t dissolveVerticesByMask(in bool[] maskIn, bool keepOrphans = false) {
+        const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != vertices.length) return 0;
         size_t dissolved = 0;
         foreach (vi; 0 .. mask.length) if (mask[vi]) ++dissolved;
@@ -2708,7 +2717,8 @@ struct Mesh {
     /// coincident-position caveat, as `lastEdgeDeleteRegion_`.
     ///
     /// Returns the number of edges dissolved, exactly as the one-argument form.
-    size_t removeEdgesByMask(in bool[] mask, bool keepConsumedVerts) {
+    size_t removeEdgesByMask(in bool[] maskIn, bool keepConsumedVerts) {
+        const mask = maskMinusHiddenEdges(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (keepConsumedVerts) return removeEdgesByMask(mask);
 
         Vec3[] consumedPos;
@@ -2750,7 +2760,8 @@ struct Mesh {
     /// SURVIVES — see the `captureLooseGeometry` block above for why the tail
     /// used to wipe it mesh-wide and why the fix lives here rather than in each
     /// caller.
-    size_t removeEdgesByMask(in bool[] mask) {
+    size_t removeEdgesByMask(in bool[] maskIn) {
+        const mask = maskMinusHiddenEdges(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != edges.length) return 0;
         // Before anything rewrites `faces[]`: what is face-less right NOW is
         // pre-existing, and nothing this call does can make it collateral.
@@ -3058,7 +3069,8 @@ struct Mesh {
     /// v1 restriction: fan triangulation is correct for convex polygons (every
     /// quad and convex n-gon). Concave polygons may produce inverted triangles;
     /// ear-clipping is the planned follow-up upgrade (same API, no test changes).
-    size_t triangulateFacesByMask(in bool[] mask, uint[]* faceOriginOut = null) {
+    size_t triangulateFacesByMask(in bool[] maskIn, uint[]* faceOriginOut = null) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
 
         // PolyVertex remap, mechanism (b): triangulation changes arity — each
@@ -3192,7 +3204,8 @@ struct Mesh {
     /// Uses a greedy matching so each triangle is consumed at most once.
     /// Unmatchable or non-convex/non-coplanar triangles stay as-is.
     /// Returns the number of edges dissolved.
-    size_t quadrupleFacesByMask(in bool[] mask) {
+    size_t quadrupleFacesByMask(in bool[] maskIn) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
         import math : cross, dot, normalize;
 
@@ -3243,7 +3256,8 @@ struct Mesh {
     /// a coplanar region is only partially dissolved. Tested cases (cube /
     /// quad round-trips) have no such interior verts; the `dissolveDegree2Verts`
     /// cleanup is a documented follow-up.
-    size_t detriangulateFacesByMask(in bool[] mask) {
+    size_t detriangulateFacesByMask(in bool[] maskIn) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
         import math : dot;
 
@@ -3270,7 +3284,8 @@ struct Mesh {
     /// coplanar quads sharing one edge yields a 6-corner n-gon, not a 4-corner
     /// rectangle); concave / non-coplanar / non-simply-connected (holed) selections
     /// produce a single boundary walk that may be non-planar or self-intersecting.
-    size_t mergeFacesByMask(in bool[] mask) {
+    size_t mergeFacesByMask(in bool[] maskIn) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
         bool acceptAll(uint, uint, uint) { return true; }
         bool[] edgeMask = selectMergeEdges(mask, &acceptAll, false /* region */);
@@ -4462,10 +4477,35 @@ struct Mesh {
                 }
                 break;
         }
-        if (!any)
-            foreach (i; 0 .. vertices.length)
-                if (!isVertexHidden(i)) vmask[i] = true;
+        if (!any) vmask = visibleVertexMask();
         return vmask;
+    }
+    // The fallback branch of the L1 funnel, factored out so "the whole mesh
+    // means the VISIBLE mesh" has exactly one body per plane (task 0613, S5).
+    //
+    // Called directly by the handful of whole-mesh fallbacks whose gate is NOT
+    // the plain `nothingSelected(mode)` convention and so CANNOT be routed
+    // through operand*Mask without a behaviour change — the four
+    // mode-gated face commands (`triple`, `quadruple`, `detriangulate`,
+    // `subdivide_faceted`) fall back to the whole mesh when the active mode is
+    // not Polygons EVEN IF a face selection exists. Substituting
+    // operandFaceMask() there would make them start honouring that stale face
+    // selection, which is a real semantic change wearing a refactor's clothes.
+    // They get the hide subtraction; they keep their own gate.
+    bool[] visibleVertexMask() const {
+        auto m = new bool[](vertices.length);
+        foreach (i; 0 .. vertices.length) if (!isVertexHidden(i)) m[i] = true;
+        return m;
+    }
+    bool[] visibleEdgeMask() const {
+        auto m = new bool[](edges.length);
+        foreach (i; 0 .. edges.length) if (!isEdgeHidden(i)) m[i] = true;
+        return m;
+    }
+    bool[] visibleFaceMask() const {
+        auto m = new bool[](faces.length);
+        foreach (i; 0 .. faces.length) if (!isFaceHidden(i)) m[i] = true;
+        return m;
     }
     /// L1 funnel, edge plane: the selected edges when any are selected, else
     /// every VISIBLE edge. No modal fan-in — the edge-flavoured copies of
@@ -4479,9 +4519,7 @@ struct Mesh {
             if (i >= emask.length) break;
             if (isEdgeSelected(i)) { emask[i] = true; any = true; }
         }
-        if (!any)
-            foreach (i; 0 .. edges.length)
-                if (!isEdgeHidden(i)) emask[i] = true;
+        if (!any) emask = visibleEdgeMask();
         return emask;
     }
     /// L1 funnel, face plane: the selected faces when any are selected, else
@@ -4495,10 +4533,45 @@ struct Mesh {
             if (i >= fmask.length) break;
             if (isFaceSelected(i)) { fmask[i] = true; any = true; }
         }
-        if (!any)
-            foreach (i; 0 .. faces.length)
-                if (!isFaceHidden(i)) fmask[i] = true;
+        if (!any) fmask = visibleFaceMask();
         return fmask;
+    }
+    // --- §3.3 backstop: the mask-taking kernels subtract hidden themselves --
+    // L1 (operand*Mask) closes the "empty selection ⇒ whole mesh" fallback at
+    // the point the operand set is BUILT. L3's substitution of the 25
+    // open-coded builders is mechanical, not compiler-enforced, so these three
+    // close the same hole at the point the operand set is CONSUMED: every
+    // `*ByMask` kernel funnels its incoming mask through the matching one
+    // before it does anything. A hand-built mask that reached a hidden element
+    // — through an L3 miss, or through a caller nobody has written yet — still
+    // cannot act on it.
+    //
+    // Returns the caller's own slice UNCHANGED when nothing on that plane is
+    // hidden, which is the overwhelmingly common case (and every existing
+    // unittest): no allocation, no copy, so 25 kernels pay one popcount-free
+    // word scan each. Only a mesh that genuinely has hidden geometry pays a
+    // `.dup`.
+    //
+    // NOT private: these are reached from the kernel bodies in
+    // `mesh_ops/{extrude,bevel}.d`, which are mixin templates whose bodies are
+    // analysed in THEIR module, so D's module-scoped `private` would hide them.
+    const(bool)[] maskMinusHiddenVertices(const(bool)[] mask) const {
+        if (!hasAnyHiddenVertices()) return mask;
+        auto outMask = mask.dup;
+        foreach (i; 0 .. outMask.length) if (isVertexHidden(i)) outMask[i] = false;
+        return outMask;
+    }
+    const(bool)[] maskMinusHiddenEdges(const(bool)[] mask) const {
+        if (!hasAnyHiddenEdges()) return mask;
+        auto outMask = mask.dup;
+        foreach (i; 0 .. outMask.length) if (isEdgeHidden(i)) outMask[i] = false;
+        return outMask;
+    }
+    const(bool)[] maskMinusHiddenFaces(const(bool)[] mask) const {
+        if (!hasAnyHiddenFaces()) return mask;
+        auto outMask = mask.dup;
+        foreach (i; 0 .. outMask.length) if (isFaceHidden(i)) outMask[i] = false;
+        return outMask;
     }
     /// The geometry type that mesh.delete / mesh.remove should operate on.
     ///
@@ -5736,6 +5809,115 @@ struct Mesh {
         assert(!emask[e01], "operandEdgeMask must exclude an edge derived-hidden through its hidden endpoint");
     }
 
+    // === S5 ==================================================================
+
+    // §3.2 shape A — the three `selectedVertexIndices*` accessors. These are
+    // the only shape whose fallback returns an INDEX LIST rather than a mask,
+    // and their live consumers are the transform drag (tools/transform) and
+    // the magnet deform, i.e. every whole-mesh gizmo move. All three share one
+    // fallback ("nothing selected ⇒ every vertex"), so all three are asserted.
+    unittest {
+        import std.conv : to;
+        // C8d/C8e, the measured per-component law, is what makes this pair
+        // discriminating: hiding two POLYGONS hides no vertex, so the vertex
+        // operand set is still all 8 — an implementation that propagated the
+        // face hide down to its corners reads 4 here. Hiding a whole corner's
+        // faces derives exactly ONE hidden vertex, so it reads 7 — an
+        // implementation that ignored hiding entirely reads 8, and one that
+        // froze every vertex of a hidden face reads 4.
+        auto a = makeCube();
+        a.syncSelection();
+        a.setFaceHidden(0, true);
+        a.setFaceHidden(4, true);          // two polygons, opposite-ish
+        assert(a.countHiddenVertices() == 0,
+            "fixture: two polygon hides must derive NO hidden vertex (C8d)");
+        assert(a.selectedVertexIndicesVertices().length == 8,
+            "C8d: a polygon hide must not shrink the VERTEX operand set");
+        assert(a.selectedVertexIndicesEdges().length    == 8, "C8d (edge accessor)");
+        assert(a.selectedVertexIndicesFaces().length    == 8, "C8d (face accessor)");
+
+        auto b = makeCube();
+        b.syncSelection();
+        b.setFaceHidden(0, true);
+        b.setFaceHidden(2, true);
+        b.setFaceHidden(5, true);          // vertex 0's three incident faces
+        assert(b.isVertexHidden(0) && b.countHiddenVertices() == 1,
+            "fixture: exactly vertex 0 derives hidden (C8e)");
+        foreach (name, idx; ["Vertices": 0, "Edges": 1, "Faces": 2]) {
+            auto got = idx == 0 ? b.selectedVertexIndicesVertices()
+                     : idx == 1 ? b.selectedVertexIndicesEdges()
+                                : b.selectedVertexIndicesFaces();
+            assert(got.length == 7,
+                "C8e / shape A (" ~ name ~ "): the whole-mesh fallback must return "
+                ~ "7 VISIBLE vertices, got " ~ got.length.to!string);
+            foreach (v; got)
+                assert(v != 0, "C8e / shape A (" ~ name ~ "): vertex 0 is hidden and "
+                    ~ "must not be in the whole-mesh operand set");
+        }
+    }
+
+    // §3.3 — the backstop. A hand-built mask that reaches a `*ByMask` kernel
+    // still cannot act on hidden geometry, even when no L1/L3 site is
+    // involved: this calls the kernel DIRECTLY with an all-true mask, which is
+    // precisely the shape an un-migrated caller (or a caller nobody has
+    // written yet) produces.
+    unittest {
+        import std.conv : to;
+        // flipFacesByMask is chosen because its effect is per-face and
+        // readable WITHOUT any topology change: winding. So "4 of 6 flipped"
+        // is checkable face by face, and the two hidden faces are asserted
+        // bit-identical rather than merely counted.
+        auto m = makeCube();
+        m.syncSelection();
+        m.setFaceHidden(1, true);
+        m.setFaceHidden(3, true);
+
+        auto before = new uint[][](m.faces.length);
+        foreach (fi; 0 .. m.faces.length) before[fi] = m.faces[fi].dup;
+
+        auto allTrueMask = new bool[](m.faces.length);
+        allTrueMask[] = true;               // the un-migrated caller's mask
+        const size_t n = m.flipFacesByMask(allTrueMask);
+
+        assert(n == 4, "backstop: an all-true mask must flip the 4 VISIBLE faces, got "
+            ~ n.to!string ~ " (unfiltered reads 6, a blanket refusal reads 0)");
+        foreach (fi; 0 .. m.faces.length) {
+            const hidden = (fi == 1 || fi == 3);
+            const same   = m.faces[fi] == before[fi];
+            assert(same == hidden,
+                "backstop: face " ~ fi.to!string ~ (hidden ? " is hidden and must be "
+                    ~ "bit-identical" : " is visible and must have been flipped"));
+        }
+    }
+
+    // R6 — selectionSignature must react to a hide. Once the whole-mesh
+    // fallback means "all VISIBLE", hiding an element changes the operand set
+    // of an empty-selection op without changing its selection, so a
+    // Select-only signature leaves the falloff / action-centre caches stale.
+    unittest {
+        auto base = makeCube();
+        base.syncSelection();
+        const ulong sig0 = base.selectionSignature(EditMode.Polygons);
+
+        auto hid = makeCube();
+        hid.syncSelection();
+        hid.setFaceHidden(2, true);
+        const ulong sigHide = hid.selectionSignature(EditMode.Polygons);
+        assert(sigHide != sig0, "hiding a face must change the polygon signature");
+
+        // The discriminator: hiding element i and SELECTING element i must
+        // produce DIFFERENT signatures. A naive `mix(i+1)` for both collides,
+        // and that collision is exactly what would serve a stale cache to an
+        // operation whose operand set changed.
+        auto sel = makeCube();
+        sel.syncSelection();
+        sel.selectFace(2);
+        const ulong sigSel = sel.selectionSignature(EditMode.Polygons);
+        assert(sigSel != sig0,  "selecting a face must change the signature");
+        assert(sigSel != sigHide,
+            "hiding element i and selecting element i must not collide");
+    }
+
     // === T-S1 — Hide rides topology edits (doc/hide_geometry_plan.md §6 S1,
     // §7) ======================================================================
     //
@@ -6173,7 +6355,8 @@ struct Mesh {
     ///
     /// Returns the number of faces processed (0 only when `mask` selects no
     /// face, e.g. an empty/undersized mask).
-    size_t insetFacesByMask(const bool[] mask, float inset) {
+    size_t insetFacesByMask(const bool[] maskIn, float inset) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         size_t processed = 0;
         const size_t nFaces = faces.length; // snapshot before appending ring quads
         foreach (fi; 0 .. nFaces) {
@@ -6566,9 +6749,10 @@ struct Mesh {
     /// face; the command/tool Param's `.min(0).max(MAX_BEVEL_SEGMENTS)
     /// .enforceBounds()` hint is a shallower UI/HTTP-only second line of
     /// defense.
-    size_t bevelFacesByMask(const bool[] mask, float inset, float shift,
+    size_t bevelFacesByMask(const bool[] maskIn, float inset, float shift,
                              bool group = false, int segments = 0,
                              bool square = false) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         import std.math : abs;
         // Parity (fuzz D6): inset==0 && shift==0 is NOT a no-op — the
         // reference still builds a ZERO-WIDTH bevel ring (the inset cap
@@ -7029,7 +7213,8 @@ struct Mesh {
     ///
     /// Returns the number of faces processed (> 0 on success; 0 means nothing in
     /// `mask` had ≥ 3 verts — caller should discard snapshot).
-    size_t spikeFacesByMask(const bool[] mask, float amount) {
+    size_t spikeFacesByMask(const bool[] maskIn, float amount) {
+        const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         size_t processed = 0;
         const size_t nFaces = faces.length; // snapshot before appending fan tris
 
@@ -7248,20 +7433,33 @@ struct Mesh {
             case EditMode.Polygons: marks = faceMarks;   break;
         }
         mix(marks.length);
-        foreach (i, mk; marks)
-            if (mk & 1 /*Marks.Select*/) mix(cast(ulong)i + 1);
+        foreach (i, mk; marks) {
+            if (mk & Marks.Select) mix(cast(ulong)i + 1);
+            // R6 (task 0613). Once the whole-mesh fallback means "all VISIBLE"
+            // (§3.2), hiding element i changes the operand set of an
+            // empty-selection op WITHOUT changing its selection — so a
+            // Select-only signature leaves the falloff / action-centre caches
+            // stale. Folded with a DISTINCT mix value so hiding i and
+            // selecting i cannot collide: selecting mixes (i+1), hiding mixes
+            // (i+1) | (1UL << 63), a bit no index can reach.
+            if (mk & Marks.Hide)   mix((cast(ulong)i + 1) | (1UL << 63));
+        }
         return h;
     }
 
     /// Return the vertex indices touched by the current vertex selection.
-    /// If nothing is selected, returns all vertex indices.
+    /// If nothing is selected, returns every VISIBLE vertex index (§3.2 shape
+    /// A, task 0613 — the whole-mesh fallback means "all visible", never "all";
+    /// the selected branch needs no filter because §3.1's Select ∧ Hide = ∅
+    /// invariant makes a hidden vertex unselectable).
     int[] selectedVertexIndicesVertices() const {
         int[] idx;
         if (hasAnySelectedVertices()) {
             foreach (i; 0 .. vertices.length)
                 if (isVertexSelected(i)) idx ~= cast(int)i;
         } else {
-            foreach (i; 0 .. vertices.length) idx ~= cast(int)i;
+            foreach (i; 0 .. vertices.length)
+                if (!isVertexHidden(i)) idx ~= cast(int)i;
         }
         return idx;
     }
@@ -7645,7 +7843,8 @@ struct Mesh {
 
     /// Return the vertex indices touched by the current edge selection.
     /// Each vertex is included at most once.
-    /// If nothing is selected, returns all vertex indices.
+    /// If nothing is selected, returns every VISIBLE vertex index (§3.2 shape
+    /// A, task 0613 — see selectedVertexIndicesVertices above).
     int[] selectedVertexIndicesEdges() const {
         int[] idx;
         if (hasAnySelectedEdges()) {
@@ -7656,14 +7855,16 @@ struct Mesh {
                 if (!added[edge[1]]) { added[edge[1]] = true; idx ~= cast(int)edge[1]; }
             }
         } else {
-            foreach (i; 0 .. vertices.length) idx ~= cast(int)i;
+            foreach (i; 0 .. vertices.length)
+                if (!isVertexHidden(i)) idx ~= cast(int)i;
         }
         return idx;
     }
 
     /// Return the vertex indices touched by the current face selection.
     /// Each vertex is included at most once.
-    /// If nothing is selected, returns all vertex indices.
+    /// If nothing is selected, returns every VISIBLE vertex index (§3.2 shape
+    /// A, task 0613 — see selectedVertexIndicesVertices above).
     int[] selectedVertexIndicesFaces() const {
         int[] idx;
         if (hasAnySelectedFaces()) {
@@ -7674,7 +7875,8 @@ struct Mesh {
                     if (!added[vi]) { added[vi] = true; idx ~= cast(int)vi; }
             }
         } else {
-            foreach (i; 0 .. vertices.length) idx ~= cast(int)i;
+            foreach (i; 0 .. vertices.length)
+                if (!isVertexHidden(i)) idx ~= cast(int)i;
         }
         return idx;
     }

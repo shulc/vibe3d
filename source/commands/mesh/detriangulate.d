@@ -51,9 +51,12 @@ class MeshDetriangulate : Command, Operator {
         bool polygonMode  = editMode == EditMode.Polygons;
         bool hasSelection = polygonMode && mesh.hasAnySelectedFaces();
 
+        // Mode-gated fallback: NOT the plain nothingSelected convention, so it
+        // stays on visibleFaceMask() rather than operandFaceMask() — see the
+        // helper's doc comment in mesh.d (task 0613, S5).
         bool[] mask = hasSelection
             ? mesh.selectedFaces
-            : allTrue(mesh.faces.length);
+            : mesh.visibleFaceMask();
 
         mesh.detriangulateFacesByMask(mask);
         mesh.resetSelection();
@@ -69,8 +72,3 @@ class MeshDetriangulate : Command, Operator {
     }
 }
 
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}

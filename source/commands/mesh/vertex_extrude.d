@@ -8,14 +8,6 @@ import editmode;
 import params : Param;
 import snapshot : MeshSnapshot;
 
-/// All-true selection mask of length `n`, used when nothing is selected
-/// (empty selection ⇒ whole mesh).
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}
-
 /// Vertex Extrude (one-shot, undoable): for each selected, interior-
 /// manifold vertex, builds an N-gon ring of new vertices around it from
 /// its incident edges (see `Mesh.extrudeVerticesByMask`'s doc-comment for
@@ -55,8 +47,7 @@ class MeshVertexExtrude : Command, Operator {
         if (mesh.vertices.length == 0) return false;
 
         snap = MeshSnapshot.capture(*mesh);
-        const all = mesh.nothingSelected(EditMode.Vertices);
-        auto mask = all ? allTrue(mesh.vertices.length) : mesh.selectedVertices;
+        auto mask = mesh.operandVertexMask(EditMode.Vertices);
         size_t n = mesh.extrudeVerticesByMask(mask, shift_, width_);
         if (n == 0) {
             snap = MeshSnapshot.init;

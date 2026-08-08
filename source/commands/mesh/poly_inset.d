@@ -8,14 +8,6 @@ import editmode;
 import params : Param;
 import snapshot : MeshSnapshot;
 
-/// All-true selection mask of length `n`, used when nothing is selected
-/// (empty selection ⇒ whole mesh). Mirrors the helper in edge_extrude.d.
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}
-
 /// Polygon Inset (one-shot, undoable): for each selected face, move each
 /// corner toward the polygon centroid by an absolute distance of `inset`
 /// world units (see mesh.insetFacesByMask / insetCornerCentroid) and connect
@@ -62,8 +54,7 @@ class MeshPolygonInset : Command, Operator {
         if (mesh.faces.length == 0) return false;
 
         snap = MeshSnapshot.capture(*mesh);
-        const all = mesh.nothingSelected(EditMode.Polygons);
-        auto mask = all ? allTrue(mesh.faces.length) : mesh.selectedFaces;
+        auto mask = mesh.operandFaceMask();
         size_t n = mesh.insetFacesByMask(mask, inset_);
         if (n == 0) {
             snap = MeshSnapshot.init;

@@ -8,14 +8,6 @@ import editmode;
 import params : Param;
 import snapshot : MeshSnapshot;
 
-/// All-true selection mask of length `n`, used when nothing is selected
-/// (empty selection ⇒ whole mesh). Mirrors the helper in poly_inset.d.
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}
-
 /// Spikey (one-shot, undoable): for each selected face, add an apex vertex at
 /// the face centroid displaced along the face normal by `amount * (perimeter/N)`
 /// (D1-B: amount is percent of average edge length), then replace the face with
@@ -49,8 +41,7 @@ class MeshSpikey : Command, Operator {
         if (mesh.faces.length == 0) return false;
 
         snap = MeshSnapshot.capture(*mesh);
-        const all = mesh.nothingSelected(EditMode.Polygons);
-        auto mask = all ? allTrue(mesh.faces.length) : mesh.selectedFaces;
+        auto mask = mesh.operandFaceMask();
         size_t n = mesh.spikeFacesByMask(mask, amount_);
         if (n == 0) {
             snap = MeshSnapshot.init;

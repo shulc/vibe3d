@@ -8,14 +8,6 @@ import editmode;
 import params : Param;
 import snapshot : MeshSnapshot;
 
-/// All-true selection mask of length `n`.  Mirrors the helpers in
-/// face_extrude.d and edge_extrude.d — empty selection ⇒ whole mesh.
-private bool[] allTrue(size_t n) {
-    auto m = new bool[](n);
-    m[] = true;
-    return m;
-}
-
 /// Smooth Shift (one-shot, undoable): extrude the selected polygon region
 /// where each cloned cap vertex is offset along the normalized average of its
 /// incident selected-face normals ("per-vertex smooth normal"), instead of the
@@ -54,8 +46,7 @@ class MeshSmoothShift : Command, Operator {
         if (mesh.faces.length == 0) return false;
 
         snap = MeshSnapshot.capture(*mesh);
-        const all = mesh.nothingSelected(EditMode.Polygons);
-        auto mask = all ? allTrue(mesh.faces.length) : mesh.selectedFaces;
+        auto mask = mesh.operandFaceMask();
         size_t n = mesh.extrudeFacesByMask(mask, shift_, true);
         if (n == 0) {
             snap = MeshSnapshot.init;

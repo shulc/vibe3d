@@ -74,14 +74,8 @@ class MeshRadialArray : Command, Operator {
          || (axis_[0] != 'X' && axis_[0] != 'Y' && axis_[0] != 'Z'))
             return false;
 
-        bool[] mask = new bool[](mesh.faces.length);
-        bool any = false;
-        foreach (i, b; mesh.selectedFaces) {
-            if (b) { mask[i] = true; any = true; }
-        }
-        if (!any) {
-            foreach (i; 0 .. mesh.faces.length) mask[i] = true;
-        }
+        // L1 funnel (task 0613, S5): selected faces, else every VISIBLE face.
+        bool[] mask = mesh.operandFaceMask();
 
         snap = MeshSnapshot.capture(*mesh);
         size_t inserted = mesh.radialArrayFaces(mask, count_, axis_[0], center_,
