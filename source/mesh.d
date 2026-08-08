@@ -443,6 +443,22 @@ struct Mesh {
         foreach (m; faceMarks) if (m & Marks.Hide) n++;
         return n;
     }
+    // The vertex/edge twins (S4). All three planes are reported, not just the
+    // stored one, because the readout has to answer "why is my geometry
+    // missing" in whichever selection type the user is in — a vertex-mode
+    // user who hid three faces around a corner sees one vertex vanish, and a
+    // face count of 3 does not explain it. Same recomputing contract as
+    // above: no cached counter anywhere (R13).
+    int countHiddenVertices() const {
+        int n = 0;
+        foreach (m; vertexMarks) if (m & Marks.Hide) n++;
+        return n;
+    }
+    int countHiddenEdges() const {
+        int n = 0;
+        foreach (m; edgeMarks) if (m & Marks.Hide) n++;
+        return n;
+    }
     int[]     vertexSelectionOrder;  // 1-based counter; 0 = not manually selected
     int[]     edgeSelectionOrder;    // 1-based counter; 0 = not manually selected
     int[]     faceSelectionOrder;    // 1-based counter; 0 = not manually selected
@@ -5494,6 +5510,44 @@ struct Mesh {
             assert(m.isVertexHidden(loose), "refreshHiddenDerived must not touch a loose vertex's own bit");
         }
     }
+    unittest { // S4 — the three hidden popcounts the "N hidden" readout reads
+        // (R9). One fixture, chosen so the three planes carry THREE DIFFERENT
+        // numbers: a cube with all three faces around vertex 0 hidden.
+        //
+        //   faces    3 — the ones hidden
+        //   vertices 1 — only v0 has ALL of its incident faces hidden
+        //   edges    3 — every edge with v0 as an endpoint
+        //
+        // The distinctness is the assertion. A readout wired to
+        // countHiddenFaces three times reads 3/3/3; one that returns the
+        // whole plane length reads 6/8/12; one that swaps the derived planes
+        // reads 3/3/1. All three differ from 3/1/3, and none of them would
+        // differ from it on a fixture where the counts happened to coincide
+        // (e.g. a lone quad, where all three are 1/4/4 — still fine — but a
+        // cube with ONE face hidden reads 1/0/0 and cannot separate a
+        // vert/edge swap at all).
+        auto m = makeCube();
+        m.syncSelection();
+        uint[] around;
+        foreach (fi; m.facesAroundVertex(0)) around ~= fi;
+        assert(around.length == 3, "a cube corner touches exactly three faces");
+        foreach (fi; around) m.setFaceHidden(fi, true);
+        m.refreshHiddenDerived();
+        import std.conv : to;
+        assert(m.countHiddenFaces()    == 3,
+            "three faces hidden, got " ~ m.countHiddenFaces().to!string);
+        assert(m.countHiddenVertices() == 1,
+            "exactly the corner derives hidden, got " ~ m.countHiddenVertices().to!string);
+        assert(m.countHiddenEdges()    == 3,
+            "exactly the corner's three edges derive hidden, got "
+            ~ m.countHiddenEdges().to!string);
+        // And zero is really zero — the readout's "print nothing" branch.
+        foreach (fi; around) m.setFaceHidden(fi, false);
+        m.refreshHiddenDerived();
+        assert(m.countHiddenFaces()    == 0);
+        assert(m.countHiddenVertices() == 0);
+        assert(m.countHiddenEdges()    == 0);
+    }
     unittest { // T-S0d — refreshHiddenDerived() self-heals after a topology
         // change, with NO hide command running: the whole point of routing
         // it through commitChange rather than only the (not-yet-built,
@@ -7945,6 +7999,22 @@ struct Mesh {
         front.reserve(faces.length);
         foreach (fi, ref face; faces) {
             if (face.length < 3) continue;
+            // Hide (task 0613 S4) — a hidden face is not drawn, so it must
+            // neither SEED visibility for its corners (the `vis[vi] = true`
+            // below) nor OCCLUDE anything behind it (pass 2 walks `front`).
+            // One `continue` delivers both, and it is the only Hide read this
+            // function needs:
+            //   * a vertex whose incident faces are ALL hidden is exactly the
+            //     derived-hidden rule (§1.2), and none of them seeds it, so it
+            //     comes out false without a separate `isVertexHidden` sweep —
+            //     a sweep here would be inert, and an inert guard is a guard
+            //     nobody can test;
+            //   * a hidden EDGE has a hidden endpoint by the same rule, so
+            //     `edgeVisible` in snap.d falls out too;
+            //   * a loose vertex is in no face, so it is never seeded true.
+            // A hidden face's corners that ALSO touch a visible face stay
+            // visible, which is right: they are on screen, drawn by that face.
+            if (isFaceHidden(fi)) continue;
             double[3] fn = planeNormal(vertices[face[0]], vertices[face[1]],
                                        vertices[face[2]]);
             {

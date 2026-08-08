@@ -269,13 +269,32 @@ public:
     }
 
 private:
+    // Hide (task 0613 S4, doc/hide_geometry_plan.md §6 S4.1) — a hidden face
+    // contributes no triangles to EITHER BVH. Named rather than inlined for
+    // the same reason mesh_gpu.d names its skip predicates: the count pass and
+    // the fill pass must agree in all FOUR loops below (two per BVH), and a
+    // pair that disagrees allocates one array size and writes another.
+    //
+    // `sourceMesh` is the subpatch preview when one is active, and the preview
+    // mesh carries Hide bits stamped from the cage (subpatch_osd.d, S3) — so
+    // this reads the right plane on both paths with no extra parameter, the
+    // same property `GpuMesh.upload` relies on.
+    //
+    // No cache-key change is needed: `pickFace` keys on `gpu.uploadVersion`
+    // (bumped by the re-upload a hide forces) and `pickSurfaceRay` on
+    // `sourceMesh.mutationVersion` (bumped by `commitChange` inside every Hide
+    // writer). Both move on a hide, so both rebuild.
+    static bool hideSkipFace(const ref Mesh m, size_t fi) {
+        return m.isFaceHidden(fi);
+    }
+
     void rebuild(const ref Mesh sourceMesh, const ref GpuMesh gpu) {
         invalidate();
 
         // Count triangles produced by fan triangulation.
         uint triCount = 0;
-        foreach (face; sourceMesh.faces) {
-            if (face.length >= 3)
+        foreach (fi, face; sourceMesh.faces) {
+            if (face.length >= 3 && !hideSkipFace(sourceMesh, fi))
                 triCount += cast(uint)(face.length - 2);
         }
         if (triCount == 0 || sourceMesh.vertices.length == 0) return;
@@ -294,7 +313,7 @@ private:
         _triToFace     = new uint[](triCount);
         uint ti = 0;
         foreach (fi, face; sourceMesh.faces) {
-            if (face.length < 3) continue;
+            if (face.length < 3 || hideSkipFace(sourceMesh, fi)) continue;
             uint i0 = face[0];
             // Cage face index: preview mode uses faceOriginGpu; cage mode is 1:1.
             uint cageFace;
@@ -335,8 +354,8 @@ private:
         invalidateSurface();
 
         uint triCount = 0;
-        foreach (face; sourceMesh.faces) {
-            if (face.length >= 3)
+        foreach (fi, face; sourceMesh.faces) {
+            if (face.length >= 3 && !hideSkipFace(sourceMesh, fi))
                 triCount += cast(uint)(face.length - 2);
         }
         if (triCount == 0 || sourceMesh.vertices.length == 0) return;
@@ -352,7 +371,7 @@ private:
         _surfTriToFace  = new uint[](triCount);
         uint ti = 0;
         foreach (fi, face; sourceMesh.faces) {
-            if (face.length < 3) continue;
+            if (face.length < 3 || hideSkipFace(sourceMesh, fi)) continue;
             uint i0 = face[0];
             uint cageFace;
             if (gpu !is null && gpu.faceOriginGpu.length > 0 && fi < gpu.faceOriginGpu.length)

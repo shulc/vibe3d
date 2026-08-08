@@ -1519,6 +1519,121 @@ unittest {
            "a command variant must not claim the button");
 }
 
+// ---------------------------------------------------------------------------
+// The hidden-geometry readout (task 0613 S4, doc/hide_geometry_plan.md R9)
+// ---------------------------------------------------------------------------
+//
+// Hidden geometry is invisible by construction, and that is precisely what
+// makes it dangerous: isolate-on-selection only ever SETS hide bits, so
+// isolating onto something that was already hidden empties the viewport, and a
+// delete-all after a hide-unselected destroys work the user cannot see. That
+// behaviour is the reference's and is deliberately not guarded against — this
+// readout IS the whole mitigation, which is why it is a shared function called
+// from two places rather than two hand-rolled format strings.
+//
+// Returns "" when nothing is hidden, so a caller renders NOTHING at all in the
+// overwhelmingly common case (no row, no gap, no reserved space) — the empty
+// string is the signal, not a value to print.
+//
+// All three planes are reported because the user's selection type decides
+// which one they will notice going missing: hiding three polygons around a
+// corner in vertex mode makes ONE VERTEX disappear, and "3 poly" alone does
+// not explain that. Zero planes are omitted rather than printed as "0 vert",
+// so the line stays short in the usual polygon-only case.
+string hiddenReadout(int hiddenVerts, int hiddenEdges, int hiddenFaces) {
+    import std.format : format;
+    if (hiddenVerts <= 0 && hiddenEdges <= 0 && hiddenFaces <= 0) return "";
+    string s = "Hidden:";
+    string sep = " ";
+    void part(int n, string what) {
+        if (n <= 0) return;
+        s ~= format("%s%d %s", sep, n, what);
+        sep = ", ";
+    }
+    part(hiddenVerts, "vert");
+    part(hiddenEdges, "edge");
+    part(hiddenFaces, "poly");
+    return s;
+}
+
+/// The same fact for a NARROW column: "8/12/6 hidden", or "" when nothing is.
+///
+/// Two spellings rather than one because the two homes have different widths,
+/// and that was measured, not assumed: the prose form clipped mid-word at
+/// "Hidden: 8 vert, 12 ed" in the ~145 px side panel — in exactly the state
+/// (everything hidden) where losing the text matters most. Here the numbers
+/// need no words: the line sits directly under three rows already labelled V,
+/// E and F, in that order.
+///
+/// Both spellings agree on WHEN there is something to say, because the caller
+/// gates on `hiddenReadout` either way and this one repeats the same test.
+string hiddenReadoutCompact(int hiddenVerts, int hiddenEdges, int hiddenFaces) {
+    import std.format : format;
+    if (hiddenVerts <= 0 && hiddenEdges <= 0 && hiddenFaces <= 0) return "";
+    return format("%d/%d/%d hidden", hiddenVerts, hiddenEdges, hiddenFaces);
+}
+
+unittest {
+    // Each row picks numbers a wrong-but-plausible implementation reads
+    // DIFFERENTLY, not merely a case where it produces nothing.
+    //
+    // 1. Nothing hidden ⇒ the empty signal. An implementation that always
+    //    builds the line reads "Hidden:" here and the callers reserve a row
+    //    for a mesh with nothing hidden.
+    assert(hiddenReadout(0, 0, 0) == "",
+        "nothing hidden must produce NO line at all, not an empty-valued one");
+
+    // 2. Three DIFFERENT non-zero counts. This is the row that separates the
+    //    plausible wrong implementations from each other: one that reads the
+    //    FACE plane for all three reads "3 vert, 3 edge, 3 poly"; one that
+    //    SUMS the planes reads "10 poly"; one that swaps vert/poly (the easy
+    //    transposition, since faces are the stored plane and vertices the
+    //    derived one) reads "3 vert, 5 edge, 2 poly". All three differ from
+    //    the answer below, which is why the counts must be distinct AND the
+    //    order asserted — equal counts would let the transposition through.
+    assert(hiddenReadout(2, 5, 3) == "Hidden: 2 vert, 5 edge, 3 poly",
+        "got: " ~ hiddenReadout(2, 5, 3));
+
+    // 3. Only the face plane — the ordinary polygon-mode hide. An
+    //    implementation that emits every plane unconditionally reads
+    //    "Hidden: 0 vert, 0 edge, 3 poly".
+    assert(hiddenReadout(0, 0, 3) == "Hidden: 3 poly",
+        "got: " ~ hiddenReadout(0, 0, 3));
+
+    // 4. Only the LEADING plane — pins the separator state machine. An
+    //    implementation that joins with a leading ", " reads "Hidden: , 1 vert"
+    //    and one that appends a trailing comma reads "Hidden: 1 vert,".
+    assert(hiddenReadout(1, 0, 0) == "Hidden: 1 vert",
+        "got: " ~ hiddenReadout(1, 0, 0));
+
+    // 5. A gap in the middle — the separator must attach to the SECOND
+    //    printed part, not to the second PLANE.
+    assert(hiddenReadout(4, 0, 6) == "Hidden: 4 vert, 6 poly",
+        "got: " ~ hiddenReadout(4, 0, 6));
+
+    // 6. The compact spelling. Same "nothing hidden ⇒ no line" contract, and
+    //    the same distinct-counts discriminator: a wrong wiring that fed it
+    //    the face count three times reads "3/3/3" and a vert/poly
+    //    transposition reads "3/5/2".
+    assert(hiddenReadoutCompact(0, 0, 0) == "",
+        "compact: nothing hidden must produce no line either");
+    assert(hiddenReadoutCompact(2, 5, 3) == "2/5/3 hidden",
+        "got: " ~ hiddenReadoutCompact(2, 5, 3));
+    // 7. The compact form keeps the ZERO planes, unlike the prose form —
+    //    deliberately, because its whole legibility rests on the reader
+    //    matching the three slots to the V/E/F rows above it. Dropping a zero
+    //    would slide "6" from the F slot into the V slot.
+    assert(hiddenReadoutCompact(0, 0, 6) == "0/0/6 hidden",
+        "got: " ~ hiddenReadoutCompact(0, 0, 6));
+
+    // 8. The two spellings must never disagree about WHETHER to draw — that
+    //    is the one property the side panel and the status bar share.
+    foreach (v; 0 .. 2) foreach (e; 0 .. 2) foreach (f; 0 .. 2)
+        assert((hiddenReadout(v, e, f).length > 0)
+            == (hiddenReadoutCompact(v, e, f).length > 0),
+            "the two readouts disagreed on emptiness");
+}
+
 void drawSidePanel(EditorApp app) {
     with (app) {
     pushPanelChromeStyle();
@@ -1675,6 +1790,20 @@ void drawSidePanel(EditorApp app) {
         ImGui.LabelText("F", "%d/%d",
             mesh.countSelectedFaces(),
             cast(int) mesh.faces.length);
+        // R9 — the hidden-state readout, next to the counts it qualifies. A
+        // "6/6" face count on a viewport showing three faces is not a
+        // contradiction the user can resolve without this line. Same linear
+        // walk as the counts above (no cached counter exists anywhere, by
+        // design — R13).
+        //
+        // COMPACT here, prose in the status bar — see `hiddenReadoutCompact`
+        // for the measurement behind the split.
+        {
+            const string hid = hiddenReadoutCompact(mesh.countHiddenVertices(),
+                                                    mesh.countHiddenEdges(),
+                                                    mesh.countHiddenFaces());
+            if (hid.length > 0) ImGui.TextUnformatted(hid);
+        }
     }
     ImGui.End();
     popPanelChromeStyle();
@@ -1895,6 +2024,24 @@ void drawStatusBar(EditorApp app) {
                 if (btn.ctrl.present)  renderVariantPopup("_ctrl",  btn.ctrl.action);
                 if (btn.alt.present)   renderVariantPopup("_alt",   btn.alt.action);
                 if (btn.shift.present) renderVariantPopup("_shift", btn.shift.action);
+            }
+        }
+        // R9 — the same readout, on the always-visible row. The side panel's
+        // copy sits beside the selection counts, which is where a user who is
+        // ALREADY asking "how much is selected" will find it; this one is for
+        // the user who is not asking anything yet and is about to delete what
+        // they cannot see. It renders only when something is hidden, so the
+        // button row is untouched — byte-for-byte the same widgets in the same
+        // order — on every mesh with nothing hidden.
+        {
+            const string hid = hiddenReadout(mesh.countHiddenVertices(),
+                                             mesh.countHiddenEdges(),
+                                             mesh.countHiddenFaces());
+            if (hid.length > 0) {
+                ImGui.SameLine();
+                ImGui.Dummy(ImVec2(interGroupGap, 0));
+                ImGui.SameLine();
+                ImGui.TextUnformatted(hid);
             }
         }
     }

@@ -297,6 +297,18 @@ panels:
         buttons:
           - { label: "Fill Holes",       action: { kind: command, id: select.fill.holes } }
           - { label: "Fill Inside Loop", action: { kind: command, id: select.fill.insideLoop } }
+      # Visibility (task 0613). Hiding is a SELECTION-scoped operation — what
+      # it hides is decided by the current selection and the current geometry
+      # type — so the group lives on this tab next to Grow / Shrink and
+      # Topology rather than on a Mesh tab. "Unhide All" is deliberately last
+      # and deliberately not conditional on anything: it is the only way back
+      # out of an isolate that emptied the viewport.
+      - title: Visibility
+        buttons:
+          - { label: Hide,          action: { kind: command, id: mesh.hide } }
+          - { label: Isolate,       action: { kind: command, id: mesh.hideUnselected } }
+          - { label: "Invert Hidden", action: { kind: command, id: mesh.hideInvert } }
+          - { label: "Unhide All",  action: { kind: command, id: mesh.unhideAll } }
   - title: UV
     items:
       - title: Create

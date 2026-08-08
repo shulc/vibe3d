@@ -1204,7 +1204,30 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             return vis.length == 0
                 || (a < vis.length && b < vis.length && vis[a] && vis[b]);
         }
-        bool faceVisible(const(uint)[] face) {
+        bool faceVisible(size_t fi, const(uint)[] face) {
+            // Hide (task 0613 S4). By INDEX, because the `vis[]` mask cannot
+            // express it, and the case where that bites is narrower than it
+            // first looks — worth writing down, because the first fixture
+            // built for this guard could not reach it.
+            //
+            // Hide a face whose vertices belong to it ALONE and every one of
+            // them derives hidden (§1.2), so `vis[v]` is already false for all
+            // of them and the all-corners test below rejects the face without
+            // any help. Hide a face in the MIDDLE of a surface — every corner
+            // still touches three visible faces — and not one vertex derives
+            // hidden. The mask says "visible" for all four corners, the
+            // front-facing test says "front", and this line is the only thing
+            // between the snap and a face that is not on screen.
+            //
+            // Vertices and edges need no equivalent guard: `visibleVertices`
+            // drops hidden faces from its seed pass, so a derived-hidden
+            // vertex is `vis[vi] == false` and a hidden edge has such an
+            // endpoint by construction. Only the FACE plane can be hidden
+            // while all of its vertices are visible.
+            //
+            // Placed inside the named gate rather than at its one call site so
+            // a second caller inherits it.
+            if (m.isFaceHidden(fi)) return false;
             if (vis.length == 0) return true;
             if (face.length < 3) return false;
             Vec3 fn = cross(m.vertices[face[1]] - m.vertices[face[0]],
@@ -1387,7 +1410,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             // it yet, and is deliberately not taken here.
             foreach (fi; cands) {
                 auto face = m.faces[fi];
-                if (!faceVisible(face)) continue;
+                if (!faceVisible(fi, face)) continue;
                 Vec3  hit;
                 float rankPx;
                 if (closestOnPolygonSurface(face, m, sx, sy, vp, ms, hit, rankPx))

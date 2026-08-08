@@ -4765,6 +4765,15 @@ void main(string[] args) {
                         foreach (fi; 0 .. pv.faces.length) {
                             uint cage = subpatchPreview.trace.faceOrigin[fi];
                             if (cage == uint.max || cage >= mesh.faces.length) continue;
+                            // Hide, branch 1/6 (task 0613 S4). It goes HERE,
+                            // beside the identity the branch already resolved
+                            // — the three closures above (`insideLasso`,
+                            // `projLocal`, `frontFacing`) take a POINT, not an
+                            // element, so they cannot know what is hidden.
+                            // FACES keep their VBO slot (faceTriCount == 0,
+                            // R3), so `gpuVisible[fi]` below stays correctly
+                            // keyed and only this guard is needed.
+                            if (mesh.isFaceHidden(cage)) continue;
                             auto face = pv.faces[fi];
                             if (face.length < 3) { cageAllInside[cage] = false; continue; }
                             Vec3 fn = pv.faceNormal(cast(uint)fi);
@@ -4795,6 +4804,11 @@ void main(string[] args) {
                         foreach (fi; 0 .. mesh.faces.length) {
                             uint[] face = mesh.faces[fi];
                             if (face.length < 3) continue;
+                            // Hide, branch 2/6. Same reasoning as the preview
+                            // branch above, and the same key: a hidden face
+                            // keeps its slot, so `fi` still indexes
+                            // `gpuVisible` correctly here.
+                            if (mesh.isFaceHidden(fi)) continue;
                             Vec3 fn = mesh.faceNormal(cast(uint)fi);
                             if (!frontFacing(fn, mesh.vertices[face[0]])) continue;
                             if (gpuVisible !is null
@@ -4826,6 +4840,18 @@ void main(string[] args) {
                         foreach (pi; 0 .. pv.vertices.length) {
                             uint cage = subpatchPreview.trace.vertOrigin[pi];
                             if (cage == uint.max) continue;
+                            // Hide, branch 3/6 — and note it sits BEFORE the
+                            // `++k`, not after. `k` is a VBO-slot counter and
+                            // `GpuMesh.upload` skips hidden vertices when it
+                            // fills that buffer (S3), so a guard placed after
+                            // the increment would leave `k` counting slots
+                            // that do not exist and shift every `gpuVisible`
+                            // lookup past the first hidden vertex. The
+                            // predicate is the PREVIEW mesh's, byte-for-byte
+                            // the one `upload` used (subpatch_osd stamps the
+                            // preview's Hide planes from the cage), because
+                            // matching the buffer is what keeps `k` honest.
+                            if (pv.isVertexHidden(pi)) continue;
                             scope(exit) ++k;
                             if (gpuVisible !is null
                                 && k < gpuVisible.length
@@ -4836,10 +4862,25 @@ void main(string[] args) {
                             }
                         }
                     } else {
+                        // Hide, branch 4/6, and it is NOT just a `continue`:
+                        // this branch used to key `gpuVisible` by CAGE index,
+                        // which was right only while VBO slot == cage vertex.
+                        // S3 broke that identity — `upload` skips hidden
+                        // vertices — so the mask needs a SLOT key. `k` counts
+                        // kept vertices in the same order and by the same
+                        // predicate `upload` uses, which is exactly the shape
+                        // the preview branch above already had (R11 part 2).
+                        // Hiding vertex 0 is what tells the two apart: with the
+                        // cage key every later lookup reads its neighbour's
+                        // visibility, which selects a set of the RIGHT SIZE and
+                        // the WRONG MEMBERS.
+                        size_t k = 0;
                         foreach (vi; 0 .. mesh.vertices.length) {
+                            if (mesh.isVertexHidden(vi)) continue;
+                            scope(exit) ++k;
                             if (gpuVisible !is null
-                                && vi < gpuVisible.length
-                                && !gpuVisible[vi]) continue;
+                                && k < gpuVisible.length
+                                && !gpuVisible[k]) continue;
                             if (insideLasso(mesh.vertices[vi])) {
                                 symmetricSelectVertex(&mesh(), vpWorld, editMode,
                                                       cast(int)vi, /*deselect=*/ctrl);
@@ -4862,6 +4903,11 @@ void main(string[] args) {
                         foreach (pei; 0 .. pv.edges.length) {
                             uint cage = subpatchPreview.trace.edgeOrigin[pei];
                             if (cage == uint.max || cage >= mesh.edges.length) continue;
+                            // Hide, branch 5/6 — before the `++k`, for the
+                            // reason spelled out in the vertex/preview branch
+                            // above: `k` is a VBO segment index and `upload`
+                            // skips hidden edges when it fills that buffer.
+                            if (pv.isEdgeHidden(pei)) continue;
                             scope(exit) ++k;
                             if (gpuVisible !is null
                                 && k < gpuVisible.length
@@ -4898,10 +4944,18 @@ void main(string[] args) {
                                                 cast(int)ei, /*deselect=*/ctrl);
                         }
                     } else {
+                        // Hide, branch 6/6 — the edge twin of branch 4: skip
+                        // hidden edges AND re-key `gpuVisible` from the cage
+                        // index to the VBO segment index, which stopped being
+                        // the same number when `upload` started dropping
+                        // hidden edges (R11 part 2).
+                        size_t k = 0;
                         foreach (ei; 0 .. mesh.edges.length) {
+                            if (mesh.isEdgeHidden(ei)) continue;
+                            scope(exit) ++k;
                             if (gpuVisible !is null
-                                && ei < gpuVisible.length
-                                && !gpuVisible[ei]) continue;
+                                && k < gpuVisible.length
+                                && !gpuVisible[k]) continue;
                             uint a = mesh.edges[ei][0], b = mesh.edges[ei][1];
                             float sxa, sya, sxb, syb;
                             if (!projLocal(mesh.vertices[a], sxa, sya)) continue;
