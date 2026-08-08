@@ -27,7 +27,7 @@ import mesh;
 import view;
 import editmode;
 import params : Param, paramToJson, injectParamsInto;
-import document : Document, Layer, ItemKind, ItemXform, kindInfo,
+import document : Document, Layer, ItemKind, ItemXform, kindInfo, LinkState,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG;
 import layer_params : LayerPropsProvider;
 import seltype : SelMode, selModeFromToken;
@@ -234,6 +234,15 @@ final class LayerDuplicate : LayerCommandBase {
         l2.visible = true;
         l2.xform   = src.xform;    // ItemXform is a value struct → value copy
         l2.parent  = src.parent;   // same parent ref; clone is never a target
+        // Task 0616 Stage 6 (Ph3): the clone's OUTGOING links. Third instance
+        // of the same defect class as `kind` and `image_` above — a field that
+        // `new Layer` leaves at its init and the field-by-field clone must be
+        // told about, or a duplicated consumer silently forgets what it was
+        // pointing at. Shallow by construction (`copyLinksFrom`): the slot
+        // SET is copied so the two consumers can be re-pointed independently,
+        // the TARGETS are shared by identity, because "two consumers, one
+        // target" is the model, not an aliasing accident.
+        l2.copyLinksFrom(src);
 
         // Append and make the clone the active primary (SET-of-one), BEFORE
         // fireSwitchIfChanged so the hook reads the correct (new) active mesh.
@@ -1821,4 +1830,114 @@ unittest {
     foreach (l; doc.layers) if (l is a) { foundA = true; break; }
     assert(foundA, "A restored after undo-delete");
     assert(b.parent is a, "undo-delete restored B.parent = A");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0616 Stage 6 (Ph3): the consumer → item link under the two commands
+// that move items around. Both fixtures carry THREE image items and TWO
+// consumers on purpose — with one of each, "resolved to the right image" and
+// "resolved to the only image" are the same observation.
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    private Layer mkLinkTestClip(string n) {
+        auto l = new Layer; l.kind = ItemKind.Image; l.name = n; return l;
+    }
+    private Layer mkLinkTestConsumer(string n) {
+        auto l = new Layer; l.kind = ItemKind.Empty; l.name = n; return l;
+    }
+}
+
+unittest {  // layer.delete on a MIDDLE image that two consumers still point
+            // at: the delete succeeds, both links report themselves dangling
+            // rather than crashing or sliding onto the item that took the
+            // vacated slot, and undo relinks both to ONE object with no
+            // recorded link list to restore.
+    import mesh : makeCube;
+    import view : View;
+
+    auto doc   = Document.bootstrap(makeCube());
+    auto clipA = mkLinkTestClip("clipA");
+    auto clipB = mkLinkTestClip("clipB");
+    auto clipC = mkLinkTestClip("clipC");
+    auto cx    = mkLinkTestConsumer("consumerX");
+    auto cy    = mkLinkTestConsumer("consumerY");
+    doc.layers ~= [clipA, clipB, clipC, cx, cy];   // [mesh, A, B, C, X, Y]
+    cx.setLink("backdropImage", clipB);
+    cx.setLink("maskImage",     clipC);
+    cy.setLink("backdropImage", clipB);
+
+    auto v   = new View(0, 0, 800, 600);
+    auto del = new LayerDelete(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
+    del.indexArg = 2;                     // clipB — a MIDDLE layer, not the tail
+    assert(doc.layers[2] is clipB, "fixture: index 2 is clipB");
+    assert(del.apply(), "deleting an image two consumers reference must SUCCEED");
+
+    assert(doc.layers.length == 5,
+        "vacuity guard: the item list is still non-empty, so 'dangling' cannot "
+        ~ "be an index clamped into an empty range");
+    assert(doc.layers[3] is cx,
+        "vacuity guard: the middle delete moved consumerX into clipC's old slot 3");
+
+    assert(cx.link("backdropImage").state(doc) == LinkState.Dangling,
+        "the deleted image's consumer reports Dangling");
+    assert(cy.link("backdropImage").state(doc) == LinkState.Dangling,
+        "…BOTH consumers, not just the first one reached");
+    assert(cx.link("backdropImage").resolve(doc) is null);
+    assert(cy.link("backdropImage").resolve(doc) is null);
+    assert(cx.link("maskImage").resolve(doc) is clipC,
+        "the untouched slot still resolves to clipC — by object, not by the "
+        ~ "slot number clipC used to occupy");
+
+    Layer[] refs;
+    doc.referrersOf(clipB, refs);
+    assert(refs.length == 2 && refs[0] is cx && refs[1] is cy,
+        "the reverse sweep still names both consumers of the deleted image");
+
+    // --- undo ---------------------------------------------------------------
+    assert(del.revert(), "revert must succeed");
+    assert(doc.layers.length == 6 && doc.layers[2] is clipB,
+        "revert reinserts the SAME object at its original slot");
+    auto xBack = cx.link("backdropImage").resolve(doc);
+    auto yBack = cy.link("backdropImage").resolve(doc);
+    assert(xBack is clipB && yBack is clipB, "undo relinks both consumers");
+    assert(xBack is yBack,
+        "…to one and the SAME object — an implementation that restored two "
+        ~ "links onto two objects would pass a 'both non-null' check");
+    assert(cx.link("backdropImage").state(doc) == LinkState.Live);
+}
+
+unittest {  // layer.duplicate carries the clone's OUTGOING links: same target
+            // by identity, independent slot set.
+    import mesh : makeCube;
+    import view : View;
+
+    auto doc   = Document.bootstrap(makeCube());
+    auto clipA = mkLinkTestClip("clipA");
+    auto clipB = mkLinkTestClip("clipB");
+    auto cx    = mkLinkTestConsumer("consumerX");
+    doc.layers ~= [clipA, clipB, cx];              // [mesh, A, B, X]
+    cx.setLink("backdropImage", clipB);            // the SECOND clip, so
+                                                   // "points at the only clip"
+                                                   // cannot pass this test
+
+    auto v   = new View(0, 0, 800, 600);
+    auto dup = new LayerDuplicate(doc.activeMesh(), v, EditMode.Vertices, &doc, null);
+    dup.indexArg = 3;                              // duplicate the consumer
+    assert(dup.apply(), "duplicate must succeed");
+
+    auto clone = dup.added;
+    assert(clone !is cx, "the clone is a new object");
+    assert(clone.link("backdropImage").resolve(doc) is clipB,
+        "the clone kept the link, and it points at clipB");
+    assert(clone.link("backdropImage").resolve(doc)
+            is cx.link("backdropImage").resolve(doc),
+        "source and clone resolve to the SAME image object");
+
+    // Independent slot SET, shared TARGET — re-pointing one must not move the
+    // other. (Without the `.dup` in copyLinksFrom this writes through.)
+    clone.setLink("backdropImage", clipA);
+    assert(cx.link("backdropImage").resolve(doc) is clipB,
+        "re-pointing the clone must not write through into the source");
+    assert(clone.link("backdropImage").resolve(doc) is clipA);
 }
