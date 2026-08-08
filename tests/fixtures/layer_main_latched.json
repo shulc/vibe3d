@@ -1,0 +1,50 @@
+{
+  "name": "layer_main_latched",
+  "description": "Frozen reference behaviour: the mesh EDIT TARGET is latched, not derived from the item selection. It tracks the last-selected MESH and is untouched by selecting a non-mesh item. So the transform set and the edit target are two different things — which is exactly how selecting only a reference-image item avoids dragging the mesh.",
+  "source": "Frozen reference capture (headless, scripted): a two-mesh scene plus one non-mesh item, six selection steps, reading the edit target's identity after each.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "self-drive",
+    "captured_utc": "2026-08-08",
+    "harness": "private headless capture harness (case script + per-case result JSON live in the private tree)",
+    "task": "0612 / 0614 side-question",
+    "notes": "A ONE-mesh scene cannot answer this — the edit target would have only one possible non-empty value, so 'it never changed' would be equally consistent with latched and with constant. Two earlier runs were exactly that and are not evidence on their own; only the two-mesh run below is. An independent second line of evidence was obtained in the same session: with ONLY the non-mesh item selected, an auto-fit operation on it fitted to the UNSELECTED mesh's bounds."
+  },
+
+  "rig": {
+    "meshes": 2,
+    "non_mesh_items": 1,
+    "labels": { "0": "mesh A", "1": "mesh B", "2": "non-mesh item" }
+  },
+
+  "rows": [
+    { "step": 1, "item_selection": ["mesh A"],                  "edit_target": "mesh A", "role": "" },
+    { "step": 2, "item_selection": ["mesh B"],                  "edit_target": "mesh B", "role": "CONTROL — the edit target DID move when a different mesh was selected, so the read is live. Without this row every later 'it did not move' is worthless: an inert read predicts the same thing." },
+    { "step": 3, "item_selection": ["non-mesh item"],           "edit_target": "mesh B", "role": "latched — selecting a non-mesh item leaves the edit target where the last mesh selection put it" },
+    { "step": 4, "item_selection": ["mesh A"],                  "edit_target": "mesh A", "role": "re-arm, so step 5 latches onto a DIFFERENT mesh than step 3 did" },
+    { "step": 5, "item_selection": ["non-mesh item"],           "edit_target": "mesh A", "role": "latched again, and to the other mesh — so the value follows the last mesh selection rather than being pinned to one particular layer" },
+    { "step": 6, "item_selection": ["mesh A", "non-mesh item"], "edit_target": "mesh A", "role": "a mixed selection resolves to the mesh" }
+  ],
+
+  "control_row_is_load_bearing": "Step 2 is why this fixture asserts anything. Every other row reports that the edit target did NOT follow the selection; a broken or constant read reports that too. Step 2 is the only row where the two predictions differ.",
+
+  "corroboration": {
+    "what": "auto-fit on the non-mesh item, with only that item selected",
+    "result": "it fitted to the UNSELECTED mesh's bounds",
+    "detail": "the item went from unit scale to (3,3,1) and from the origin to (5,0,1.5), matching the mesh that was sitting at position (5,0,0) with scale (3,3,3)",
+    "why_it_corroborates": "a second, independent consumer of the edit target reached the same latched mesh"
+  },
+
+  "not_answered": {
+    "what": "whether a non-mesh item is pickable in the viewport",
+    "why": "The item's image link defaults to none, so it draws nothing and a click cannot reach it. The control leg — forcing it selectable — selected nothing on a centre click, which proves the rig could not deliver a click to it at all; the default leg's 'nothing was selected' would therefore have been vacuous. Blocked, not negative."
+  },
+
+  "classification": {
+    "verdict": "match",
+    "detail": "vibe3d already implements the latched law. The edit target is the document's primary layer, and only a layer whose kind can be primary is eligible; selecting an item that cannot be primary moves the item-selection FOCUS but leaves the primary where the last mesh selection put it. Driving the six steps above against vibe3d reproduces the edit-target column row for row, control included. This fixture is a LIVE test that must pass.",
+    "secondary_difference_not_asserted": "The item-selection SET differs on steps 3 and 5. The reference can hold a selection consisting of the non-mesh item ALONE; vibe3d cannot — its invariant keeps at least one primary-eligible layer selected, so the previously selected mesh stays in the set alongside the non-mesh item. The edit-target column — the thing this fixture is about — is unaffected, so the set is recorded here and left out of the assertions."
+  }
+}

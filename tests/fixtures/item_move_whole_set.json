@@ -1,0 +1,49 @@
+{
+  "name": "item_move_whole_set",
+  "description": "Frozen reference behaviour: an item-mode translate moves the WHOLE selected set, not just the distinguished item. Three items are selected and given a single translate of -1.2 on Y; all three land -1.2 lower and none of them moves on X. Companion to item_acen_primary_of_three: the shared centre follows the primary alone, but the motion applies to every selected item — the two are deliberately NOT the same set.",
+  "source": "Frozen reference capture (headless, scripted): a numeric translate attribute followed by an apply, read back as per-item positions. Two different transform configurations produced identical results.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "self-drive",
+    "captured_utc": "2026-08-08",
+    "harness": "private headless capture harness (scripts + per-case result JSON live in the private tree)",
+    "task": "0614 Ph0c",
+    "notes": "Driven as a numeric attribute + apply rather than a viewport drag, so the amount is exact rather than pixel-derived. The X column is asserted UNCHANGED as well as the Y column moved: a implementation that moved the set along the wrong axis, or that rebased every item onto the shared centre, would disturb X."
+  },
+  "tolerance": 1e-6,
+
+  "rig": {
+    "comment": "Identical rig to item_acen_primary_of_three — same three items, same selection order, so the two fixtures pin the centre and the moving set on ONE state.",
+    "selection_order": ["set item 0", "add item 1", "add item 2"],
+    "primary_is": 2,
+    "vertices": [
+      [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+      [-0.5, -0.5,  0.5], [0.5, -0.5,  0.5], [0.5, 0.5,  0.5], [-0.5, 0.5,  0.5]
+    ],
+    "faces": [
+      [0, 1, 2, 3], [7, 6, 5, 4], [0, 4, 5, 1],
+      [2, 6, 7, 3], [0, 3, 7, 4], [1, 5, 6, 2]
+    ]
+  },
+
+  "gesture": { "axis": "y", "amount": -1.2 },
+
+  "expected": {
+    "before": [[0.0, 0.0, 0.0], [6.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+    "after":  [[0.0, -1.2, 0.0], [6.0, -1.2, 0.0], [2.0, -1.2, 0.0]],
+    "per_item_delta": [0.0, -1.2, 0.0],
+    "law": "every selected item translates by the same world delta; the distinguished item is not privileged in the motion"
+  },
+
+  "rejected": [
+    { "candidate": "only the distinguished item moves", "after": [[0.0, 0.0, 0.0], [6.0, 0.0, 0.0], [2.0, -1.2, 0.0]] },
+    { "candidate": "the set collapses onto the shared centre", "after": [[2.0, -1.2, 0.0], [2.0, -1.2, 0.0], [2.0, -1.2, 0.0]] }
+  ],
+
+  "classification": {
+    "verdict": "match",
+    "detail": "vibe3d binds the item transform to the whole selected item set and translates each about the shared frozen centre; the measured after-positions are identical to the reference's, including the untouched X column. This fixture is a LIVE test that must pass."
+  }
+}

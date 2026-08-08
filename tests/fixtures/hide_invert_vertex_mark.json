@@ -1,0 +1,154 @@
+{
+  "name": "hide_invert_vertex_mark",
+  "description": "Frozen reference behaviour: after a hide-invert issued with the selection type set to VERTICES, a vertex whose only polygon has just become hidden still reads NOT hidden — and stays that way until a hide operation touches that specific vertex. The vertex hide plane is therefore derived INCREMENTALLY, over the elements an operation touches; it is neither a stored bit that is never derived, nor a derivation that re-runs globally whenever hiding is applied. Both of those simpler readings are refuted here, each by a named row.",
+  "source": "Frozen reference capture (headless, scripted): one process per case so no attribute or selection state can leak between them; seven trigger cases plus one that did not discriminate.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "self-drive",
+    "captured_utc": "2026-08-08",
+    "harness": "private headless capture harness (case script + per-case result JSON live in the private tree)",
+    "task": "0628 Ph0",
+    "notes": "Every case re-runs the whole prefix from an empty scene and asserts the anomaly reproduced before applying its trigger; it reproduced in all seven. The rig's premise — that the probed vertex has valence ONE — is asserted BY the case, because a vertex sharing a still-visible polygon is hidden under neither reading and would make the entire experiment vacuous."
+  },
+
+  "rig": {
+    "comment": "A 3x3 quad grid PLUS a disconnected spare quad parked far away on +X, sharing no vertices with the grid. The spare exists so there is a genuinely unrelated polygon available as a trigger.",
+    "grid_vertices": 16,
+    "grid_polygons": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+    "spare_vertices": [16, 17, 18, 19],
+    "spare_polygon": 9,
+    "probe_vertex": 0,
+    "probe_vertex_valence": 1,
+    "probe_vertex_valence_is_load_bearing": "A vertex with more than one incident polygon would still have a visible polygon and would be un-hidden under BOTH readings, so no trigger could separate them. Assert this or the fixture asserts nothing.",
+    "grid_polygon_0_vertices": [0, 1, 5, 4],
+    "vertices": [
+      [0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [3.0, 0.0, 0.0],
+      [0.0, 0.0, 1.0], [1.0, 0.0, 1.0], [2.0, 0.0, 1.0], [3.0, 0.0, 1.0],
+      [0.0, 0.0, 2.0], [1.0, 0.0, 2.0], [2.0, 0.0, 2.0], [3.0, 0.0, 2.0],
+      [0.0, 0.0, 3.0], [1.0, 0.0, 3.0], [2.0, 0.0, 3.0], [3.0, 0.0, 3.0],
+      [10.0, 0.0, 0.0], [11.0, 0.0, 0.0], [11.0, 0.0, 1.0], [10.0, 0.0, 1.0]
+    ],
+    "faces": [
+      [0, 1, 5, 4],   [1, 2, 6, 5],   [2, 3, 7, 6],
+      [4, 5, 9, 8],   [5, 6, 10, 9],  [6, 7, 11, 10],
+      [8, 9, 13, 12], [9, 10, 14, 13], [10, 11, 15, 14],
+      [16, 17, 18, 19]
+    ]
+  },
+
+  "prefix": {
+    "comment": "The common state every trigger case reaches. Hiding the spare as well as the grid corner is what leaves the spare VISIBLE after the invert — which is what makes an unrelated, still-hideable polygon available.",
+    "steps": [
+      "with the selection type set to polygons, select grid polygon 0 and the spare polygon 9, then hide the selection",
+      "switch the selection type to vertices",
+      "invert the hiding"
+    ],
+    "after_hide": { "hidden_polygons": [0, 9], "probe_vertex_hidden": 1 },
+    "after_invert": {
+      "hidden_polygons": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      "spare_polygon_hidden": 0,
+      "probe_vertex_hidden": 0,
+      "the_anomaly": "grid polygon 0 IS hidden and it is the probe vertex's only polygon, yet the probe vertex reads 0"
+    }
+  },
+
+  "rows": [
+    {
+      "id": "none",
+      "trigger": "no operation at all; read the probe vertex twice more",
+      "touches_probe_vertex": false,
+      "probe_vertex_after": 0,
+      "hidden_polygons_after": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      "role": "control — the value is STABLE under a bare re-read. Without this, any later flip could be a read-ordering artefact rather than a re-derivation."
+    },
+    {
+      "id": "hide_unrelated",
+      "trigger": "hide the disconnected spare polygon",
+      "touches_probe_vertex": false,
+      "probe_vertex_after": 0,
+      "hidden_polygons_after": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+      "refutes": "derived-globally-on-every-hide-apply",
+      "role": "a REAL hide was applied and the probe vertex stayed stale, so the derivation is not global"
+    },
+    {
+      "id": "hide_already_hidden_other",
+      "trigger": "hide grid polygon 4, which is already hidden — the hidden set does not change at all",
+      "touches_probe_vertex": false,
+      "probe_vertex_after": 0,
+      "hidden_polygons_after": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      "refutes": "derived-globally-on-every-hide-apply",
+      "role": "second, independent refutation of the global reading"
+    },
+    {
+      "id": "selection_type_roundtrip",
+      "trigger": "switch the selection type to polygons and back to vertices; no visibility operation at all",
+      "touches_probe_vertex": false,
+      "probe_vertex_after": 0,
+      "hidden_polygons_after": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      "role": "separates 'any command re-derives' from 'the hide path re-derives' — the weakest possible trigger, and it does nothing"
+    },
+    {
+      "id": "hide_already_hidden_own",
+      "trigger": "hide grid polygon 0 — the probe vertex's OWN polygon — which is already hidden, so no polygon bit changes",
+      "touches_probe_vertex": true,
+      "probe_vertex_after": 1,
+      "hidden_polygons_after": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      "polygon_set_changed": false,
+      "refutes": "stored-bit-never-derived",
+      "role": "THE row. No polygon bit changes and the vertex flips anyway, so something recomputed it — and it recomputed only because the operation named the probe vertex's own polygon."
+    },
+    {
+      "id": "vertex_mode_hide_probe_selected",
+      "trigger": "with the selection type set to vertices and the probe vertex selected, hide the selection",
+      "touches_probe_vertex": true,
+      "probe_vertex_after": 1,
+      "hidden_polygons_after": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+      "polygon_set_changed": false,
+      "refutes": "stored-bit-never-derived",
+      "role": "second, independent refutation, driven from the vertex side rather than the polygon side"
+    },
+    {
+      "id": "clear_then_rehide",
+      "trigger": "unhide everything, then re-hide grid polygon 0 the ordinary way",
+      "touches_probe_vertex": true,
+      "probe_vertex_after": 1,
+      "hidden_polygons_after": [0],
+      "intermediate": { "hidden_polygons": [], "probe_vertex_hidden": 0 },
+      "role": "the plane RESUMES deriving normally once the state is cleared, so the invert's own write is a latch on a normally-derived plane rather than the plane never being derived"
+    }
+  ],
+
+  "non_discriminating": {
+    "id": "unhide_with_spare_selected",
+    "trigger": "unhide with only the spare selected",
+    "probe_vertex_after": 0,
+    "hidden_polygons_after": [],
+    "status": "DID NOT DISCRIMINATE — recorded as such, not as evidence",
+    "why": "The unhide cleared the hidden set ENTIRELY, so the probe vertex's polygon was no longer hidden. After that both readings predict 0; the row carries no information about which is right.",
+    "worth_knowing_anyway": "A selection-scoped unhide un-hid everything, not just the selection."
+  },
+
+  "conclusion": {
+    "law": "The vertex hide plane is derived INCREMENTALLY, over the elements the operation touches. A hide-invert writes the vertex plane directly and leaves exactly the entries whose derived value it contradicts stale.",
+    "refuted": [
+      { "reading": "stored-bit-never-derived", "refuted_by": ["hide_already_hidden_own", "vertex_mode_hide_probe_selected", "clear_then_rehide"] },
+      { "reading": "derived-globally-on-every-hide-apply", "refuted_by": ["hide_unrelated", "hide_already_hidden_other"] }
+    ]
+  },
+
+  "classification": {
+    "verdict": "divergence",
+    "detail": "vibe3d's hide-invert is a plain polygon flip that ignores the selection type entirely, and its vertex plane is re-derived TOTALLY from the polygon plane after every mutation — so it has no stale window at all. The divergence shows up first and most cleanly in the polygon set: after the same prefix the reference hides the nine grid polygons while vibe3d hides eight (it flips the two originally-hidden polygons back to visible instead of flipping the vertex plane and propagating upward).",
+    "vibe3d_measured": {
+      "after_hide": { "hidden_polygons": [0, 9], "probe_vertex_hidden": 1, "agrees_with_reference": true },
+      "after_invert": { "hidden_polygons": [1, 2, 3, 4, 5, 6, 7, 8], "probe_vertex_hidden": 0 },
+      "clear_then_rehide": { "hidden_polygons": [0], "probe_vertex_hidden": 1, "agrees_with_reference": true }
+    },
+    "unrepresentable_here": "The 'hide an already-hidden polygon' trigger cannot be expressed in vibe3d: a hidden face cannot be selected (hidden and selected are mutually exclusive), and a hide with an empty selection hides EVERYTHING — so attempting that row hides all ten polygons rather than being the no-op the reference makes it.",
+    "expected_divergence": true,
+    "divergence_owner": "0628",
+    "retire_when": "0628 makes the invert component-typed. At that point vibe3d's post-invert hidden set becomes the reference's, the divergence assertion in the test flips to red, and the test must be converted from an expected-divergence check into a live parity assertion. A red there means the gap CLOSED, not that something broke."
+  }
+}

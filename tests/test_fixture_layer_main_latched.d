@@ -1,0 +1,191 @@
+// Frozen reference behaviour — the mesh EDIT TARGET is latched, not derived
+// from the item selection. It tracks the last-selected MESH and is untouched
+// by selecting a non-mesh item.
+// Fixture: tests/fixtures/layer_main_latched.json.
+//
+// WHAT WRONG IMPLEMENTATION THIS DISCRIMINATES AGAINST
+// ----------------------------------------------------
+// An edit target derived from the item selection — the obvious reading, and
+// the one that makes selecting a reference image drag the mesh. That
+// implementation reads the NON-MESH item (index 2) at steps 3 and 5, where
+// the correct one reads the last-selected mesh (index 1, then index 0).
+//
+// TWO GUARDS, because "the edit target did not move" is also what a broken
+// or constant read reports:
+//   * The CONTROL row (step 2) selects a different MESH and requires the edit
+//     target to move. A constant read fails there.
+//   * At steps 3 and 5 the item-selection FOCUS is required to have moved ONTO
+//     the non-mesh item. Without this, "the edit target did not move" could
+//     simply mean the select did nothing at all.
+// Steps 3 and 5 latch onto DIFFERENT meshes, so the answer also cannot be a
+// value pinned to one particular layer.
+
+import std.net.curl;
+import std.json;
+import std.conv   : to;
+import std.format : format;
+import std.file   : mkdirRecurse, write;
+import std.path   : buildPath;
+
+import fixture_helpers : requireProvenance;
+
+void main() {}
+
+immutable baseUrl = "http://localhost:8080";
+
+JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
+
+JSONValue cmd(string argstring) {
+    auto j = parseJSON(cast(string) post(baseUrl ~ "/api/command", argstring));
+    assert(j["status"].str == "ok", "cmd `" ~ argstring ~ "` failed: " ~ j.toString);
+    return j;
+}
+
+void postOk(string path, string body_) {
+    auto j = parseJSON(cast(string) post(baseUrl ~ path, body_));
+    assert(j["status"].str == "ok", path ~ " failed: " ~ j.toString);
+}
+
+// A minimal uncompressed 24-bit BMP, written rather than checked in — the
+// non-mesh item this fixture needs is created by loading an image, and the
+// loader wants a real file. Mirrors tests/test_image_commands.d's helper.
+immutable scratch = "/tmp/vibe3d_latched_img";
+
+string writeBmp(string name, int w, int h) {
+    mkdirRecurse(scratch);
+    auto path = buildPath(scratch, name);
+    ubyte[] b;
+    void u16(ushort v) { b ~= cast(ubyte)(v & 0xFF); b ~= cast(ubyte)((v >> 8) & 0xFF); }
+    void u32(uint v) {
+        b ~= cast(ubyte)(v & 0xFF);         b ~= cast(ubyte)((v >> 8)  & 0xFF);
+        b ~= cast(ubyte)((v >> 16) & 0xFF); b ~= cast(ubyte)((v >> 24) & 0xFF);
+    }
+    immutable size_t rowBytes = cast(size_t)((w * 3 + 3) & ~3);
+    immutable size_t pixBytes = rowBytes * h;
+    b ~= cast(ubyte)'B'; b ~= cast(ubyte)'M';
+    u32(cast(uint)(54 + pixBytes));
+    u16(0); u16(0); u32(54); u32(40);
+    u32(cast(uint) w); u32(cast(uint) h);
+    u16(1); u16(24); u32(0); u32(cast(uint) pixBytes);
+    u32(2835); u32(2835); u32(0); u32(0);
+    foreach (y; 0 .. h) {
+        foreach (x; 0 .. w) {
+            b ~= cast(ubyte)(x * 7 + 3); b ~= cast(ubyte)(y * 11 + 5); b ~= cast(ubyte)(x * 3 + y);
+        }
+        foreach (_; 0 .. rowBytes - cast(size_t)(w * 3)) b ~= cast(ubyte) 0;
+    }
+    write(path, b);
+    return path;
+}
+
+struct DocState { long primary = -1; long focused = -1; long[] selected; }
+
+DocState docState() {
+    DocState s;
+    foreach (l; getJson("/api/layers")["layers"].array) {
+        immutable long i = l["index"].integer;
+        if (l["selected"].type == JSONType.true_) s.selected ~= i;
+        if (l["primary"].type  == JSONType.true_) s.primary = i;
+        if ("focused" in l && l["focused"].type == JSONType.true_) s.focused = i;
+    }
+    return s;
+}
+
+// The fixture's labels -> layer indices in the rig built below.
+long indexOfLabel(JSONValue rig, string label) {
+    foreach (string k, v; rig["labels"])
+        if (v.str == label) return k.to!long;
+    assert(false, "fixture rig has no label '" ~ label ~ "'");
+}
+
+unittest {
+    enum string fixtureJson = import("fixtures/layer_main_latched.json");
+    auto fx = parseJSON(fixtureJson);
+    requireProvenance(fx, "layer_main_latched");
+
+    auto rig = fx["rig"];
+    assert(rig["meshes"].integer == 2 && rig["non_mesh_items"].integer == 1,
+           "fixture premise: two meshes are required — a one-mesh scene cannot "
+           ~ "tell 'latched' from 'constant'");
+
+    immutable long iMeshA   = indexOfLabel(rig, "mesh A");
+    immutable long iMeshB   = indexOfLabel(rig, "mesh B");
+    immutable long iNonMesh = indexOfLabel(rig, "non-mesh item");
+
+    // ---- build the rig: two meshes, then a non-mesh item -------------------
+    postOk("/api/reset", "");
+    cmd(`{"id":"history.clear"}`);
+    cmd(`{"id":"layer.add"}`);
+    {
+        auto path = writeBmp("latched.bmp", 3, 2);
+        cmd(`{"id":"image.load","path":` ~ JSONValue(path).toString ~ `}`);
+    }
+
+    {
+        auto layers = getJson("/api/layers")["layers"].array;
+        assert(layers.length == 3, format("rig has three items, got %d", layers.length));
+        assert(layers[cast(size_t) iMeshA]["type"].str == "mesh", "item 0 is a mesh");
+        assert(layers[cast(size_t) iMeshB]["type"].str == "mesh", "item 1 is a mesh");
+        assert(layers[cast(size_t) iNonMesh]["type"].str != "mesh",
+               "item 2 must be a NON-mesh item, got type "
+               ~ layers[cast(size_t) iNonMesh]["type"].str);
+    }
+
+    // The six steps, in order. Each names the layer to select and how.
+    static struct Step { size_t id; long[] setThenAdd; }
+    immutable Step[] steps = [
+        Step(1, [0]),
+        Step(2, [1]),
+        Step(3, [2]),
+        Step(4, [0]),
+        Step(5, [2]),
+        Step(6, [0, 2]),
+    ];
+
+    long[] editTargetPerStep;
+
+    foreach (st; steps) {
+        foreach (i, idx; st.setThenAdd)
+            cmd(format("layer.select index:%d mode:%s", idx, i == 0 ? "set" : "add"));
+
+        auto row  = fx["rows"].array[st.id - 1];
+        assert(row["step"].integer == st.id, "fixture rows are in step order");
+
+        immutable long wantTarget = indexOfLabel(rig, row["edit_target"].str);
+        auto got = docState();
+        editTargetPerStep ~= got.primary;
+
+        assert(got.primary == wantTarget,
+               format("step %d (%s): edit target is item %d, want item %d. Reading %d "
+                      ~ "would mean the edit target follows the item selection instead of "
+                      ~ "latching onto the last-selected mesh.",
+                      st.id, row["item_selection"].toString, got.primary, wantTarget,
+                      iNonMesh));
+
+        // The selection really landed: at the two latching steps the FOCUS must
+        // be on the non-mesh item, otherwise "the edit target did not move" is
+        // consistent with the select having done nothing.
+        if (st.id == 3 || st.id == 5)
+            assert(got.focused == iNonMesh,
+                   format("step %d: the item-selection focus must have moved onto the "
+                          ~ "non-mesh item (%d), got %d — without that this row cannot "
+                          ~ "tell 'latched' from 'the select was a no-op'",
+                          st.id, iNonMesh, got.focused));
+    }
+
+    // ---- the control row is what makes the rest mean anything ---------------
+    assert(editTargetPerStep[0] != editTargetPerStep[1],
+           format("CONTROL (step 2): selecting a different mesh must MOVE the edit target "
+                  ~ "(%d -> %d). If it does not, this read is constant or broken and every "
+                  ~ "'the edit target did not move' row below is vacuous.",
+                  editTargetPerStep[0], editTargetPerStep[1]));
+    assert(editTargetPerStep[0] == iMeshA && editTargetPerStep[1] == iMeshB,
+           "CONTROL (step 2): the edit target must follow the mesh that was selected");
+
+    // ---- and the two latching steps latch onto DIFFERENT meshes ------------
+    assert(editTargetPerStep[2] != editTargetPerStep[4],
+           format("steps 3 and 5 must latch onto different meshes (%d vs %d) — otherwise "
+                  ~ "the answer could be a value pinned to one particular layer rather "
+                  ~ "than the last mesh selected",
+                  editTargetPerStep[2], editTargetPerStep[4]));
+}

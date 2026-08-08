@@ -1,0 +1,89 @@
+{
+  "name": "center_handle_visibility",
+  "description": "Frozen reference behaviour for the transform gizmo's CENTRE HANDLE — the grab target drawn at the gizmo origin, distinct from the axis arms and from the action-centre marker underneath it. Three facts: it defaults ON; the item-move configuration turns it OFF; and its state disturbs neither the action centre nor the axis banks. Also records, deliberately, WHICH probe answered the 'is it grabbable' question and which one could not.",
+  "source": "Frozen reference capture (headless, scripted): attribute reads for the default/override, an A/B viewport capture for what is drawn, a hover capture for what is interactive, and a drag capture that turned out not to discriminate.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "self-drive",
+    "captured_utc": "2026-08-08",
+    "harness": "private headless capture harness (scripts, per-case result JSON and four retained screenshots live in the private tree)",
+    "task": "0614 Ph0c",
+    "notes": "The pixel figures below were RE-DERIVED from the retained screenshots while writing this fixture, not copied from the capture's prose — and the re-derivation corrected it: the capture reported ONE changed viewport cluster, there are two (see drawn.clusters). The centre-handle-off hover leg is the one figure here that could not be re-derived: its screenshots were not retained, so it is marked reported_only."
+  },
+
+  "attribute": {
+    "comment": "The centre handle is a boolean the tool configuration can carry. Read headless off the live tool.",
+    "default": 1,
+    "item_move_configuration": 0,
+    "order_independent": true,
+    "order_independence_evidence": "Both orders were run in one session — base, then item-move, then base again (1, 0, 1); and item-move, then base, then item-move (0, 1, 0). A configuration therefore RESETS attributes it does not itself list, so the item-move configuration's 0 is a real override and not a redundant no-op that happened to agree with a leftover value.",
+    "other_configurations_carrying_zero": 5,
+    "other_configurations_carrying_one": 1,
+    "note": "Only the MOVE member of the item-suffixed transform family carries the override; the rotate/scale/combined item members do not."
+  },
+
+  "drawn": {
+    "comment": "A/B screenshot on ONE session: same scene, same camera, only the flag flips. Counts are restricted to the viewport pane [4..908] x [4..966]; the rest of the screen also changes because the properties panel redraws the flag's own row, which is not evidence about the gizmo.",
+    "changed_px_in_pane": 491,
+    "clusters": [
+      {
+        "what": "the centre handle itself, at the gizmo origin",
+        "px": 103,
+        "bbox_x": [709, 720],
+        "bbox_y": [559, 570],
+        "dominant_color_when_off": [255, 168, 41],
+        "dominant_color_when_on": [102, 255, 255],
+        "note": "When the handle is ON it COVERS the action-centre marker that is what you see when it is OFF — the marker does not move, it is occluded."
+      },
+      {
+        "what": "an off-gizmo viewport-corner widget",
+        "px": 388,
+        "bbox_x": [97, 116],
+        "bbox_y": [567, 586],
+        "note": "Far from the gizmo and unrelated to the axis banks. The capture's prose claimed the gizmo blob was the ONLY in-pane change; re-derivation found this second cluster. It is recorded so nobody re-derives 'exactly one thing changes' from a stale summary."
+      }
+    ],
+    "axis_arms_unchanged": true,
+    "axis_arms_evidence": "Every changed in-pane pixel falls inside one of the two clusters above. A moved or re-scaled axis arm would produce long streaks along the arm directions; there are none."
+  },
+
+  "interactive": {
+    "comment": "Hover was the channel that separated 'a real grab target' from 'a decoration'.",
+    "hover_px_when_on": 103,
+    "hover_bbox_x": [709, 720],
+    "hover_bbox_y": [559, 570],
+    "idle_color": [102, 255, 255],
+    "hover_color": [255, 229, 102],
+    "reverts_on_leave": true,
+    "noise_floor_idle_vs_idle_px": 0,
+    "hover_px_when_off": 0,
+    "hover_px_when_off_status": "reported_only",
+    "hover_px_when_off_note": "The capture reported 0 changed pixels when hovering the same point with the handle off. Its screenshots were NOT retained, so unlike every other figure in this block it could not be re-derived here. Treated as reported, not as re-verified."
+  },
+
+  "vacuous_probe": {
+    "comment": "RECORDED ON PURPOSE. A drag test was run first and could not answer grabbability. Do not re-run it, and do not add one like it to a test.",
+    "probe": "press on the centre-handle pixel vs press 375 px away in empty viewport space, with the handle on and off — four cells",
+    "committed_result_all_four_cells": [10.6, -13.0, 0.0],
+    "why_vacuous": "This tool free-moves the subject on ANY viewport drag, so 'the centre handle is grabbable' and 'the centre handle is inert' predict the SAME motion. Four bit-identical cells are not agreement between the hypotheses' predictions; they are a channel that cannot disagree.",
+    "what_worked_instead": "hover highlighting — see the interactive block"
+  },
+
+  "does_not_disturb": {
+    "comment": "Measured across the two configurations that differ in this flag, on two separate rigs (the single-item pivot rig and the three-item primary rig): the evaluated action-centre and axis packets are bit-identical.",
+    "action_center_identical": true,
+    "axis_frame_identical": true,
+    "axis_frame": { "right": [1.0, 0.0, 0.0], "up": [0.0, 1.0, 0.0], "fwd": [0.0, 0.0, 1.0], "axis_index": -1 }
+  },
+
+  "classification": {
+    "verdict": "match-on-the-observable",
+    "detail": "vibe3d reaches the SAME observable by a different mechanism. There is no per-configuration flag here and no item-specific transform configuration at all: one tool branches on whether the subject is items or mesh components, and the centre handle (gizmo part 3) is registered in both branches but reports visible=false in the item branch and visible=true in the component branch. That is exactly the reference's default-on / off-for-item-move pair, so the two observable facts ARE tested live. The axis-banks-undisturbed half is tested live too (the arm and plane parts stay visible in both branches).",
+    "not_tested_and_why": [
+      "The independent toggle does not exist here — the handle's state is bound to the subject type — so the reference's A/B of the ACTION CENTRE across one flag flip cannot be reproduced: vibe3d's two states have different subjects, and their centres legitimately differ (the item branch reads the item pivot, the component branch the geometry). Only the axis-bank half of 'does not disturb' is assertable.",
+      "The hover-highlight channel is not read over the test API at the pixel fidelity the reference capture used, so the 'it is a real grab target, not a decoration' fact is frozen here as data only."
+    ]
+  }
+}

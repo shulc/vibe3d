@@ -1,0 +1,56 @@
+{
+  "name": "item_acen_primary_of_three",
+  "description": "Frozen reference behaviour: with three items selected, the shared action centre follows the DISTINGUISHED (primary) item — not the first one selected, not the mean of the set, not the set's bounding-box centre, and not the extreme along any axis. The rig places the distinguished item BETWEEN the other two on X so that 'primary' is separable from 'last in scene order' and from 'the extreme one', which an earlier rig could not do.",
+  "source": "Frozen reference capture (headless, scripted). Rig rebuilt so the five candidate laws predict five distinct points.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "self-drive",
+    "captured_utc": "2026-08-08",
+    "harness": "private headless capture harness (scripts + per-case result JSON live in the private tree)",
+    "task": "0614 Ph0c",
+    "notes": "Seven consecutive evaluated frames, all identical, under two different transform configurations. Selection order is load-bearing: set on the first item, then ADD the second, then ADD the third, so the distinguished item is the LAST one added while sitting geometrically in the middle."
+  },
+  "tolerance": 1e-6,
+
+  "rig": {
+    "comment": "Three items, each carrying a unit cube so that every rejected candidate is genuinely computable from real geometry rather than degenerating to the origin.",
+    "items": [
+      { "label": "first_selected",  "pos": [0.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] },
+      { "label": "max_x",           "pos": [6.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] },
+      { "label": "primary",         "pos": [2.0, 0.0, 0.0], "pivot": [0.0, 0.0, 0.0] }
+    ],
+    "selection_order": ["set item 0", "add item 1", "add item 2"],
+    "primary_is": 2,
+    "vertices": [
+      [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+      [-0.5, -0.5,  0.5], [0.5, -0.5,  0.5], [0.5, 0.5,  0.5], [-0.5, 0.5,  0.5]
+    ],
+    "faces": [
+      [0, 1, 2, 3], [7, 6, 5, 4], [0, 4, 5, 1],
+      [2, 6, 7, 3], [0, 3, 7, 4], [1, 5, 6, 2]
+    ]
+  },
+
+  "expected": {
+    "action_center": [2.0, 0.0, 0.0],
+    "law": "the distinguished (primary) item's world pivot",
+    "frames_measured": 7,
+    "frames_unique": 1
+  },
+
+  "rejected": [
+    { "candidate": "first selected item",          "value": [0.0,               0.0, 0.0] },
+    { "candidate": "mean of the selected set",     "value": [2.6666666666666665, 0.0, 0.0] },
+    { "candidate": "bounding-box centre of the set", "value": [3.0,             0.0, 0.0] },
+    { "candidate": "the maximum-X item",           "value": [6.0,               0.0, 0.0] }
+  ],
+
+  "why_this_matters": "The primary sits at X=2, between 0 and 6. 'Midpoint of the set' would ALSO be a plausible reading of a centre that lands between the extremes — it is not, it is 3. Recording the four rejected numbers here is what stops a future reader re-deriving 'midpoint' from the single value 2.",
+
+  "classification": {
+    "verdict": "match",
+    "detail": "vibe3d's item-mode action centre reads the primary layer's world pivot and produces (2,0,0) on this rig — identical to the reference, and different from all four rejected candidates. This fixture is a LIVE test that must pass."
+  }
+}

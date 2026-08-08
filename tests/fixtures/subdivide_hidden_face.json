@@ -1,0 +1,121 @@
+{
+  "name": "subdivide_hidden_face",
+  "description": "Frozen reference behaviour: subdividing a cage that contains a hidden face never drops the hiding and never splits it across children — the hidden face comes through as exactly ONE hidden face, because it is EXCLUDED FROM THE OPERATION rather than merely 'preserved'. The polygon counts say so: 21, not 24 (five faces got four children each, the sixth was carried through untouched). Undo restores the geometry and the mark together as a single entry.",
+  "source": "Frozen reference capture (headless, scripted): one process per branch. Four selection branches plus a control that the mark is there at all, plus an undo leg driven at the top level.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "self-drive",
+    "captured_utc": "2026-08-08",
+    "harness": "private headless capture harness (case script + per-case result JSON live in the private tree)",
+    "task": "0632 Ph0",
+    "notes": "Four subdivision types were tried on a clean cage first; all four take 6 quads to 24, so the 21 below is not a type artefact. The undo leg had to be driven at the TOP level rather than from inside the case script, because an undo issued inside a script consumes the whole script — so it is the one row here with no per-case result JSON, only a transcript. Recorded as such."
+  },
+
+  "rig": {
+    "comment": "A one-segment cube: six quads, eight vertices. Every face is a quad, so a subdivision gives each face exactly four children and the branch counts separate cleanly.",
+    "polygons": 6,
+    "vertices": 8,
+    "hidden_face": 0,
+    "vertices_list": [
+      [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, 0.5, -0.5], [-0.5, 0.5, -0.5],
+      [-0.5, -0.5,  0.5], [0.5, -0.5,  0.5], [0.5, 0.5,  0.5], [-0.5, 0.5,  0.5]
+    ],
+    "faces": [
+      [0, 1, 2, 3], [7, 6, 5, 4], [0, 4, 5, 1],
+      [2, 6, 7, 3], [0, 3, 7, 4], [1, 5, 6, 2]
+    ]
+  },
+
+  "counts_that_separate_the_readings": {
+    "dropped": 0,
+    "preserved_and_subdivided": 4,
+    "preserved_as_one": 1,
+    "note": "A test that only asserts 'hiding did not get lost' passes under two of these three. Count."
+  },
+
+  "rows": [
+    {
+      "id": "control_no_bake",
+      "selection_at_bake": null,
+      "polygons_before": 6,
+      "polygons_after": 6,
+      "hidden_after": 1,
+      "role": "baseline — the mark is there before anything is baked"
+    },
+    {
+      "id": "nothing_selected",
+      "selection_at_bake": 0,
+      "polygons_before": 6,
+      "polygons_after": 21,
+      "hidden_after": 1,
+      "hidden_index_after": 20
+    },
+    {
+      "id": "all_selected",
+      "selection_at_bake": 5,
+      "select_all_yields": 5,
+      "select_all_note": "Selecting everything yields FIVE, not six — the hidden face cannot be selected at all. That is itself part of the mechanism.",
+      "polygons_before": 6,
+      "polygons_after": 21,
+      "hidden_after": 1,
+      "hidden_index_after": 20
+    },
+    {
+      "id": "only_the_hidden_face_selected",
+      "selection_at_bake": 1,
+      "polygons_before": 6,
+      "polygons_after": 6,
+      "hidden_after": 1,
+      "hidden_index_after": 0,
+      "role": "no-op — the only face named is the one the operation skips, so nothing happens"
+    },
+    {
+      "id": "one_visible_face_selected",
+      "selection_at_bake": 1,
+      "polygons_before": 6,
+      "polygons_after": 9,
+      "hidden_after": 1,
+      "hidden_index_after": 5
+    }
+  ],
+
+  "undo": {
+    "polygons_before_undo": 21,
+    "polygons_after_undo": 6,
+    "hidden_after_undo": 1,
+    "entries_consumed": 1,
+    "law": "one entry; geometry and mark are restored together, not as two separate steps",
+    "evidence_status": "transcript_only",
+    "evidence_note": "No per-case result JSON for this leg — see the provenance note on why it had to be driven at the top level."
+  },
+
+  "conclusion": {
+    "law": "Hidden faces are EXCLUDED FROM THE OPERATION, per component type. Never 0 hidden (dropped), never 4 (children of a subdivided hidden face) — always exactly 1.",
+    "arithmetic": "21 = 5 faces x 4 children + 1 untouched hidden face.",
+    "the_task_premise_this_kills": "The plan behind 0632 turned on a distinction between a WHOLE-mesh bake (which might rebuild the mesh wholesale and lose the mark) and a SELECTION-restricted bake (which might carry unmarked cage faces through intact). The reference does not distinguish them: both simply skip the hidden face, and both give 21."
+  },
+
+  "not_covered": {
+    "what": "the subpatch-freeze path",
+    "why": "That command aborts on a non-subpatch cage, so this capture never exercised it. Absent, not negative."
+  },
+
+  "classification": {
+    "verdict": "mixed",
+    "detail": "Two rows match live, one diverges, one is unrepresentable. vibe3d's subdivision has no hide awareness of its own: it carries the Hide bit onto whatever it produces, so a hidden face that IS refined hands the bit to all four children.",
+    "vibe3d_measured": {
+      "nothing_selected":   { "polygons_after": 24, "hidden_after": 4, "hidden_indices_after": [0, 1, 2, 3], "agrees_with_reference": false },
+      "all_selected":       { "polygons_after": 21, "hidden_after": 1, "hidden_index_after": 20, "select_all_yields": 5, "agrees_with_reference": true },
+      "one_visible_face_selected": { "polygons_after": 9, "hidden_after": 1, "hidden_index_after": 4, "agrees_with_reference": "counts yes, index no" },
+      "undo":               { "polygons_before_undo": 24, "polygons_after_undo": 6, "hidden_after_undo": 1, "entries_consumed": 1, "agrees_with_reference": "law yes, counts follow the diverging bake" }
+    },
+    "why_all_selected_matches": "Hiding a face clears its selected bit, so selecting everything yields five here too — exactly as in the reference — and the five-face selection then drives the selective branch, giving 21 with one hidden face at index 20. The agreement is real but it is REACHED by the selection mask, not by an exclusion rule; it disappears the moment nothing is selected.",
+    "why_one_visible_face_index_is_not_asserted": "Both engines end with 9 polygons and exactly 1 hidden; only the surviving face's INDEX differs (4 here, 5 there). That is output ordering, not semantics, so the index is recorded but not asserted.",
+    "unrepresentable_here": "'Only the hidden face selected' cannot be expressed: a hidden face cannot be selected, so the attempt yields an empty selection and degenerates into the nothing-selected branch.",
+    "expected_divergence": true,
+    "divergence_owner": "0632",
+    "retire_when": "0632 excludes hidden faces from the subdivision operand. At that point the nothing-selected branch becomes 21 / 1 hidden, the divergence assertion in the test flips to red, and the test must be converted into a live parity assertion. A red there means the gap CLOSED."
+  }
+}
