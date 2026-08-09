@@ -905,12 +905,28 @@ void drawViewportPropsPanel(EditorApp app) {
 // path /api/command uses — so undo/history/coalescing all work. The panel
 // NEVER mutates `document` directly. It is pure UI: no toolpipe, no mesh.
 //
-// Task 0615 Stage 6: the panel renders correctly WHEN a non-mesh item is
+// ~~Task 0615 Stage 6: the panel renders correctly WHEN a non-mesh item is
 // present (row marker, kind badge, delete-guard) — but there is still no
 // button/menu/command-argument through which a user can CREATE one in this
 // slice (the `.v3d` format cannot yet persist it; see
 // doc/nonmesh_item_types_plan.md §Stage 6). Only a test can put one in the
-// live document (the `/api/test/layer` injector, http_providers.d).
+// live document (the `/api/test/layer` injector, http_providers.d).~~
+//
+// SUPERSEDED (task 0612 Stage 7). The "+Plane" button below is the first
+// user-reachable creation route for a non-mesh kind, and the ban's stated
+// premise — that the format could not persist one — is gone: v8 writes and
+// reads a non-mesh item's type token, name, visibility, transform and links.
+// The premise is gone for the ENVELOPE only, and that limit is recorded where
+// it belongs (`commands/image_plane/commands.d`, `ImagePlaneAdd`): the
+// reader constructs a payload object for `hasMesh` and `hasImage` and for no
+// other capability, so a reloaded plane's own ten channels come back at their
+// defaults. Creating a plane is still worth doing — an unsaved plane is as
+// useful as an unsaved anything — but do not read this comment as saying the
+// round-trip is complete.
+//
+// Empty-kind items are still uncreatable, and deliberately: `ItemKind.Empty`
+// has no channels, no payload and nothing to draw, so a button for it would
+// add a row a user can do nothing with.
 //
 // Visibility mirrors Tool Properties: always shown in a normal run; in
 // --test it is HIDDEN by default (so it cannot capture viewport drags) and
@@ -930,6 +946,24 @@ void drawLayerListPanel(EditorApp app) {
             if (commandHandlerDelegate !is null)
                 commandHandlerDelegate("layer.add", "{}");
         }
+        ImGui.SameLine();
+        // ---- Add-plane button (task 0612 Stage 7) ----
+        // A second button rather than a kind argument on "Add": `layer.add`
+        // has no `kind` parameter at all, so nothing had to be blocked and
+        // nothing has to be unblocked — adding creation for a new kind is
+        // purely additive, and the two buttons make the two outcomes legible
+        // without a dropdown the user has to open to find out what Add does.
+        //
+        // No arguments: the command's defaults are a `front` plane with no
+        // image, which is the state the properties form below is for. The
+        // command folds the selection in, so the new plane is the item the
+        // form binds the moment it exists.
+        if (ImGui.SmallButton("+Plane")) {
+            if (commandHandlerDelegate !is null)
+                commandHandlerDelegate("imagePlane.add", "{}");
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Add a reference-image plane");
         ImGui.SameLine();
         // ---- Delete button ----
         // Targets `document.focusedItem` — the item-selection FOCUS, i.e.
@@ -1234,6 +1268,73 @@ void drawLayerListPanel(EditorApp app) {
                                     // takes the focus.
                                     /*layerIndex=*/to!string(
                                         document.indexOf(propsTarget)));
+                }
+            }
+        }
+
+        // ---- Image-plane clip picker (task 0612 Stage 7) ----
+        //
+        // OUTSIDE the forms block on purpose, and computing its own bound
+        // item: the link is the one piece of a plane's state that cannot ride
+        // the generic form (a `Param` is a typed pointer to a scalar; a link
+        // names a `Layer` OBJECT), so gating it on `g_formsPanelEnabled` /
+        // `formById("layer.props")` would make the only way to give a plane
+        // an image disappear with the config file.
+        //
+        // WHAT IS DRAWN here and what is DECIDED elsewhere: every assertable
+        // thing about this picker — which rows it offers, what each row is
+        // labelled, which row is marked, and above all the `Document.layers`
+        // index each row dispatches — is `image_plane.d`'s
+        // `planeImageChoices`, behind in-module tests. An ImGui body cannot
+        // be driven headlessly, so what is left here is the loop and the
+        // dispatch, following `ui/image_rows.d`'s split exactly.
+        {
+            import image_plane : planeImageChoices, imagePlaneSource,
+                                 ImagePlaneSource;
+            auto planeTarget = itemPropsTarget(&document());
+            if (planeTarget !is null && planeTarget.hasImagePlane) {
+                ImGui.Separator();
+                auto choices = planeImageChoices(document(), planeTarget);
+                string preview = "(none)";
+                foreach (ref e; choices) if (e.current) preview = e.label;
+                immutable planeIdx = document.indexOf(planeTarget);
+                ImGui.SetNextItemWidth(160);
+                if (ImGui.BeginCombo("Image", preview)) {
+                    foreach (ref e; choices) {
+                        // PushID on the LAYER INDEX, not the loop counter: two
+                        // clips may legitimately share a display name (the
+                        // list renames the row, never the file), and two
+                        // identically-labelled Selectables in one combo share
+                        // an ImGui id — clicking either would activate the
+                        // first.
+                        ImGui.PushID(e.layerIndex);
+                        if (ImGui.Selectable(e.label, e.current) && !e.current
+                            && commandHandlerDelegate !is null)
+                            commandHandlerDelegate("imagePlane.setImage",
+                                `{"index":` ~ to!string(planeIdx)
+                                ~ `,"image":` ~ to!string(e.layerIndex) ~ `}`);
+                        if (e.current) ImGui.SetItemDefaultFocus();
+                        ImGui.PopID();
+                    }
+                    ImGui.EndCombo();
+                }
+                // The source state in words. A plane whose link is broken
+                // draws NOTHING in the viewport (a declared divergence — we
+                // have no item glyph), so without this line the user's only
+                // evidence is an empty viewport, which reads the same for
+                // "wrong projection", "hidden" and "the file is gone".
+                immutable src = imagePlaneSource(document(), planeTarget);
+                final switch (src) {
+                    case ImagePlaneSource.Unbound:
+                        ImGui.TextDisabled("%s", "no image"); break;
+                    case ImagePlaneSource.Dangling:
+                        ImGui.TextDisabled("%s", "image removed"); break;
+                    case ImagePlaneSource.Missing:
+                        ImGui.TextDisabled("%s", "file not found"); break;
+                    case ImagePlaneSource.Ready:
+                        if (!planeTarget.visible)
+                            ImGui.TextDisabled("%s", "hidden");
+                        break;
                 }
             }
         }

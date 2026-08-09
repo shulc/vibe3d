@@ -1,9 +1,10 @@
 module commands.image_plane.commands;
 
 // ---------------------------------------------------------------------------
-// Task 0612 Stage 3 — the reference-image plane's commands.
+// Task 0612 Stage 3/7 — the reference-image plane's commands.
 //
-//   imagePlane.setImage index image   Model — point a plane at an image clip
+//   imagePlane.add     name image projection   Model — create a plane
+//   imagePlane.setImage index image            Model — point it at a clip
 //
 // This is the tree's FIRST PRODUCTION `setLink` CALLER. The link mechanism
 // shipped a task ago with no producer at all: every slot name in the tree so
@@ -36,10 +37,231 @@ import mesh;
 import view;
 import editmode;
 import params     : Param;
-import document   : Document, Layer, ItemKind, kindInfo;
+import document   : Document, Layer, ItemKind, ImagePlaneData, kindInfo;
+import seltype    : SelMode;
 import image_plane : kImageLinkSlot;
 import change_bus : noteLayerChange, LayerChange;
 import log        : logWarn;
+
+// ---------------------------------------------------------------------------
+// imagePlane.add — create a reference-image plane item.
+//
+// THE ROUTE THAT MAKES THE FEATURE EXIST. Until this command, a plane could
+// only be put in a live document by `POST /api/test/layer`, the test-only
+// injector — the draw pass, the placement law and the link were all correct
+// and all unreachable. This is the producer.
+//
+// WHY THE CREATION BAN THIS LIFTS DOES NOT APPLY. Task 0615 shipped its
+// non-mesh kind with no creation route on a stated premise: nothing
+// serialised a non-mesh item, so a created one would be gone after a save.
+// v8 (task 0616) writes and reads the item — its `"type"` token, its name,
+// its visibility, its twelve transform components and its link slots all
+// round-trip. What does NOT round-trip is the plane's OWN payload object:
+// `io/native.d` constructs a payload for `hasMesh` and for `hasImage` and
+// for nothing else, so a reloaded plane comes back with a null
+// `ImagePlaneData` and `layer_params.d`'s bundle silently falls back to the
+// base one — the ten channels read their defaults. That is a schema-side
+// finding recorded against the format stage, not a reason to withhold the
+// item: an unsaved plane is exactly as useful as an unsaved anything, and
+// the item itself survives.
+//
+// UNDO CLASS — Model (the base default): this creates document content.
+//
+// SELECTION IS FOLDED IN, and that is a deliberate split from `image.load`
+// one module over, which pointedly does NOT fold it. The two differ on the
+// axis their own comments name: an image clip is a document RESOURCE with
+// no place in the scene, so there is no "make it active" to perform; a plane
+// is a SCENE ITEM, and `layer.add` — the other scene-item creator — makes
+// the item it created the active one inside the same Model command. Creating
+// a plane and then having to find it in the list to edit its channels is the
+// behaviour that split would buy, and one Ctrl+Z undoing "the plane I just
+// made appeared and got selected" is the behaviour a user expects from Add.
+// ---------------------------------------------------------------------------
+
+final class ImagePlaneAdd : Command {
+    private Document* doc;
+    private string nameArg;                    // "" → auto "Plane N"
+    private int    imageArg = -1;              // -1 → created unbound
+    private string projectionArg = "front";
+
+    // Held BY OBJECT across undo and re-appended on redo, for the reason
+    // `ImageLoad.apply` spells out: a link names the target `Layer` OBJECT,
+    // so a redo that minted a fresh item would leave every link that
+    // survived the undo pointing at a non-member — permanently `Dangling`,
+    // with a visually identical row sitting right there. A plane is on the
+    // consumer side of that relation today, but `Document.referrersOf` is a
+    // sweep over items, and nothing stops a future consumer naming a plane.
+    private Layer created_;
+    private Layer target_;               ///< the clip resolved from `image`
+    private bool[Layer] prevSelected;    ///< full prior selection, by identity
+    private Layer prevPrimary;
+    private Layer prevFocus;
+    private bool  applied;
+    private string refusal_;
+
+    this(Mesh* m, ref View v, EditMode em, Document* d) {
+        super(m, v, em);
+        this.doc = d;
+    }
+
+    override string name()  const { return "imagePlane.add"; }
+    override string label() const { return "Add Image Plane"; }
+
+    override Param[] params() {
+        return [
+            Param.string_("name", "Name", &nameArg, ""),
+            // Optional at creation: a plane with no image is a legal,
+            // observable state (`Unbound`, §4.5) and the panel's Add button
+            // has no clip to offer before the user picks one.
+            Param.int_("image", "Image", &imageArg, -1),
+            // The SAME closed token set as the channel's own declaration in
+            // `layer_params.d`. Declared as `enum_` rather than `string_` so
+            // `injectParamsInto` rejects an unknown token at the wire edge —
+            // otherwise `projection:frnt` would create a plane whose channel
+            // holds a value no viewport can ever match, and the failure
+            // would present as "my reference image never appears".
+            Param.enum_("projection", "Projection", &projectionArg,
+                        [["top",    "Top"],
+                         ["bottom", "Bottom"],
+                         ["front",  "Front"],
+                         ["back",   "Back"],
+                         ["right",  "Right"],
+                         ["left",   "Left"]],
+                        "front"),
+        ];
+    }
+
+    /// The created item, for a caller that wants it back (tests, and a panel
+    /// that wants to name the new row). Null until a successful apply.
+    Layer created() { return created_; }
+
+    override bool apply() {
+        refusal_ = "";
+
+        // Same total-redo guard as `ImageLoad.apply`: not reachable through
+        // the history stack, but `apply()` is a public method and refusing is
+        // the honest answer to "do the thing that is already done".
+        if (created_ !is null && doc.isMember(created_)) {
+            refuse("already applied — the item is in the document");
+            return false;
+        }
+
+        if (created_ is null) {
+            if (imageArg >= 0) {
+                target_ = resolveClip(imageArg);
+                if (target_ is null) return false;   // refusal already set
+            }
+            auto l = new Layer;
+            l.kind    = ItemKind.ImagePlane;
+            l.visible = true;
+            // The payload is constructed HERE and not lazily: `layer_params
+            // .d`'s bundle binds its ten `Param` pointers straight into this
+            // object, and its documented fallback for a null payload is the
+            // BASE bundle — i.e. a plane created without one would present
+            // as an item with no channels at all rather than as an error.
+            l.imagePlaneRef() = new ImagePlaneData();
+            l.imagePlaneRef().projection = projectionArg;
+            l.name = nameArg.length ? nameArg : autoName();
+            if (target_ !is null) l.setLink(kImageLinkSlot, target_);
+            created_ = l;
+        }
+
+        // Snapshot the prior selection BEFORE the mutator collapses it, by
+        // OBJECT identity (the `LayerDuplicate` / `LayerDelete` pattern) so a
+        // multi-selection is restored exactly and not flattened to a
+        // set-of-one by the undo.
+        prevPrimary  = doc.primary;
+        prevFocus    = doc.focusedItem;
+        prevSelected = null;
+        foreach (l; doc.layers) prevSelected[l] = l.selected;
+
+        doc.layers ~= created_;
+        // SET-of-one. `exclusiveSelect` (which this routes to) SPARES the
+        // mesh primary — a plane is never `canBePrimary`, so this makes it
+        // the item-selection FOCUS and leaves the mesh edit target alone.
+        // That is exactly what the properties form binds (`itemPropsTarget`),
+        // which is what makes the new plane's channels editable the moment
+        // it exists.
+        doc.selectItem(created_, SelMode.Set);
+        applied = true;
+        // Structural add. No `fireSwitchIfChanged`: the MESH edit target
+        // cannot have moved (a plane is never `canBePrimary`), so there is no
+        // switch for the hook to observe — the reason `registration.d` wires
+        // this command without an `onActiveLayerChanged` delegate at all.
+        noteLayerChange(LayerChange.Added);
+        return true;
+    }
+
+    override bool revert() {
+        if (!applied || created_ is null) return false;
+        immutable size_t i = doc.indexOf(created_);
+        if (i == doc.layers.length) return false;   // already gone
+
+        // Move the selection off the item through the MUTATOR before the
+        // splice, so `focusedItem` can never be left naming a non-member.
+        if (created_.selected) doc.selectItem(created_, SelMode.Remove);
+        doc.layers = doc.layers[0 .. i] ~ doc.layers[i + 1 .. $];
+
+        // Restore the exact prior selection set, then the prior primary, then
+        // the prior FOCUS. The third step is the one `LayerDuplicate.revert`
+        // does not need and this command does: `setPrimary` homes the focus
+        // onto the primary, which is right when the prior focus WAS the
+        // primary (every all-mesh document) and wrong when it was a non-mesh
+        // item — the state this very task makes ordinary.
+        foreach (l; doc.layers) {
+            auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
+            l.selected  = wasSel;
+        }
+        if (prevPrimary !is null && doc.isMember(prevPrimary)) {
+            debug assert(kindInfo(prevPrimary.kind).canBePrimary,
+                "ImagePlaneAdd.revert: prevPrimary must be canBePrimary");
+            doc.setPrimary(prevPrimary);
+        }
+        if (prevFocus !is null && prevFocus !is prevPrimary
+            && doc.isMember(prevFocus))
+            doc.selectItem(prevFocus, SelMode.Add);
+
+        applied = false;
+        noteLayerChange(LayerChange.Removed);
+        return true;
+    }
+
+    override string refusalReason() const { return refusal_; }
+
+    /// "Plane N", numbered over the planes that already exist rather than
+    /// over `layers.length` — `layer.add`'s "Layer N" counts the whole list,
+    /// which on a document holding meshes, clips and planes produces names
+    /// that jump. Not unique by construction (a rename or a delete can
+    /// collide it) and not required to be: nothing addresses an item by name.
+    private string autoName() {
+        import std.conv : to;
+        size_t n = 0;
+        foreach (l; doc.layers) if (l.hasImagePlane) ++n;
+        return "Plane " ~ to!string(n + 1);
+    }
+
+    /// Resolve an index to an image clip WITH a payload, or null. Same rule
+    /// as `ImagePlaneSetImage.resolveClip` below and the same reason: no
+    /// default-to-active (which the document invariant makes a MESH) and no
+    /// clamp (which would silently retarget an off-by-one at the last row).
+    private Layer resolveClip(int raw) {
+        immutable size_t i = cast(size_t) raw;
+        if (i >= doc.layers.length) { refuse("`image` out of range"); return null; }
+        auto l = doc.layers[i];
+        if (!l.hasImage || l.imageOrNull() is null) {
+            refuse("layer " ~ istr(raw) ~ " is not a loaded image item");
+            return null;
+        }
+        return l;
+    }
+
+    private static string istr(int v) { import std.conv : to; return v.to!string; }
+
+    private void refuse(string why) {
+        refusal_ = why;
+        logWarn("imagePlane", "imagePlane.add refused: " ~ why);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // imagePlane.setImage — bind (or clear) a plane's image link.

@@ -399,8 +399,18 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 // The authored components (pos/rot/scl/pivot) let a test assert a
                 // round-trip; the composed `matrix` (column-major float[16]) lets
                 // the analytic golden fixture assert the composed result against an
-                // INDEPENDENT hand formula. Pure JSON-shape addition (the data
-                // provider already runs the snapshot on the main thread).
+                // INDEPENDENT hand formula. Pure JSON-shape addition ~~(the data
+                // provider already runs the snapshot on the main thread)~~.
+                //
+                // That parenthetical was FALSE when it was written and is TRUE
+                // now, which is the worst order for a justification to be read
+                // in (task 0612 Stage 6, the stale-comment sweep). `/api/model`
+                // was the marshalled one; this provider was served straight
+                // from the HTTP thread until Stage 3 gave it `layersBridge` —
+                // for a different reason (the `links[].target` resolve is a
+                // nested `indexOf` walk over an array the main thread splices).
+                // So: the claim holds, but it is Stage 3 that makes it hold,
+                // not the P4 addition it was attached to.
                 const x = l.xform;
                 float[16] m = x.composedMatrix();
                 auto xb = appender!string();

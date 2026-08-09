@@ -3,12 +3,20 @@ module image_plane;
 // ---------------------------------------------------------------------------
 // Task 0612 — the reference-image plane, as a pure module.
 //
-// Stage 3 ships the SOURCE half: which clip a plane names, and what to say
-// when that answer is unusable. The placement law (`resolvePlacement`) and the
-// live-path collection the pixel cache reconciles against land here in a later
-// stage; this module is deliberately their home too, so the plane's rules sit
+// Everything that decides what a plane IS, as opposed to how it is drawn:
+//
+//   * the SOURCE half (Stage 3) — which clip a plane names, and what to say
+//     when that answer is unusable;
+//   * the PLACEMENT law (Stage 4) — `resolvePlacement`, the six-axis table,
+//     and the live-path collection the pixel cache reconciles against
+//     (~~"land here in a later stage"~~ — they landed);
+//   * the PICKER contents (Stage 7) — which clips a plane's image combo
+//     offers and which `layers[]` index each row dispatches.
+//
+// This module is deliberately the home of all of it, so the plane's rules sit
 // in one place rather than being spread across the panel, the command and the
-// document.
+// document — and so the parts a headless test can reach are the parts that
+// decide anything.
 //
 // No GL and no ImGui here, on purpose: this module is gated by
 // `dub test --config=modeling`, which is where the assertions that matter can
@@ -100,6 +108,68 @@ ImagePlaneSource imagePlaneSource(const ref Document doc, const(Layer) plane) {
     auto img = clip is null ? null : clip.imageOrNull();
     if (img is null || img.missing) return ImagePlaneSource.Missing;
     return ImagePlaneSource.Ready;
+}
+
+// ---------------------------------------------------------------------------
+// Stage 7 — what the plane's image picker offers.
+//
+// The picker is a combo box in the item-properties area, and the ONE thing it
+// can get wrong is not visible on screen: the clips are a FILTERED subset of
+// `Document.layers`, so the row's position in the combo is not the index the
+// command takes. A picker that dispatched its own list position would bind the
+// wrong clip on any document where a mesh or a plane sits before a clip — i.e.
+// on every real document, since the mesh primary is always item 0. Building
+// the list here rather than inside the ImGui body is what lets that be
+// asserted at all: an ImGui body cannot be driven headlessly, so everything
+// assertable about the picker lives in this pure function and what is left in
+// the panel is a loop over its result.
+// ---------------------------------------------------------------------------
+
+/// One entry in a plane's image picker.
+struct PlaneImageChoice {
+    /// Index into `Document.layers` — NOT the position of this entry in the
+    /// returned array. `-1` is the "no image" entry, which is what
+    /// `imagePlane.setImage image:-1` clears the slot with.
+    int    layerIndex;
+    /// What the row reads. The clip item's display name, or "(none)".
+    string label;
+    /// True on the entry the plane is bound to right now — exactly one entry
+    /// carries it (the "(none)" row when the link is `Unset`, and no entry at
+    /// all when the link is `Dangling`, which is a state no clip in the list
+    /// can represent).
+    bool   current;
+}
+
+/// The picker's contents for `plane`, against `doc`.
+///
+/// Always leads with the "no image" entry: clearing a link has to be
+/// reachable, and a picker whose first row was a clip would make "unbind"
+/// impossible without deleting the clip.
+///
+/// Matching is by OBJECT identity against the link target, never by path and
+/// never by name — the two decoys the link model's own comment names. Two
+/// clips on one file, or two clips renamed alike, are two distinct rows here
+/// and only the bound one is `current`.
+PlaneImageChoice[] planeImageChoices(const ref Document doc, const(Layer) plane) {
+    PlaneImageChoice[] out_;
+    if (plane is null || !plane.hasImagePlane) return out_;
+
+    // `targetUnchecked` rather than `resolve`: a DANGLING link names an
+    // object that is no longer a member, and resolving it would answer null —
+    // the same answer as `Unset`. The distinction does not change what the
+    // picker offers, but it does change which row is marked, and marking
+    // "(none)" for a dangling link would tell the user their choice was never
+    // made rather than that it was lost.
+    auto bound = plane.link(kImageLinkSlot).targetUnchecked();
+
+    out_ ~= PlaneImageChoice(-1, "(none)", bound is null);
+    foreach (i, l; doc.layers) {
+        if (!l.hasImage) continue;
+        out_ ~= PlaneImageChoice(cast(int) i,
+                                 l.name.length ? l.name : "(unnamed)",
+                                 l is bound);
+    }
+    return out_;
 }
 
 // ===========================================================================
@@ -605,6 +675,102 @@ unittest {
         seen[t] = true;
     }
     assert(seen.length == 4, "four states, four tokens");
+}
+
+// ---------------------------------------------------------------------------
+// Stage 7 — the image picker's contents.
+//
+// The fixture is built here rather than reusing `planeFixture` for one
+// specific reason: there the three clips sit at layer indices 1, 2, 3 and
+// would land at picker positions 1, 2, 3 — so the bug this test exists to
+// catch (dispatching the picker POSITION instead of the layer index) would
+// produce the right answer by coincidence and the test would be inert. The
+// non-clip rows below are interleaved so no clip's layer index equals its
+// picker position.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+    import std.format : format;
+
+    auto doc = Document.bootstrap(makeCube());     // 0: mesh
+
+    Layer clip(string name) {
+        auto l = new Layer;
+        l.name = name;
+        l.kind = ItemKind.Image;
+        l.imageRef() = new ImageData();
+        l.imageRef().storedPath = "sheet.png";     // all three share one path
+        l.imageRef().width = 5; l.imageRef().height = 7;
+        return l;
+    }
+    Layer bareplane(string name) {
+        auto l = new Layer;
+        l.name = name;
+        l.kind = ItemKind.ImagePlane;
+        l.imagePlaneRef() = new ImagePlaneData();
+        return l;
+    }
+
+    auto decoy = bareplane("other plane");
+    auto meshB = new Layer; meshB.name = "mesh B"; meshB.meshRef() = makeCube();
+    auto a = clip("A"), b = clip("B"), c = clip("C");
+    auto plane = bareplane("front");
+    doc.layers ~= decoy;   // 1  — a plane, not a clip: never an entry
+    doc.layers ~= a;       // 2
+    doc.layers ~= meshB;   // 3  — a mesh: never an entry
+    doc.layers ~= b;       // 4  <- the one we bind, the MIDDLE clip
+    doc.layers ~= c;       // 5
+    doc.layers ~= plane;   // 6
+
+    auto ch = planeImageChoices(doc, plane);
+    assert(ch.length == 4,
+        format("one 'no image' row plus one row per CLIP — read %d", ch.length));
+    assert(ch[0].layerIndex == -1 && ch[0].label == "(none)",
+        "the clear-the-link row leads, or unbinding is unreachable");
+
+    // The load-bearing three: a picker row's `layerIndex` is its index in
+    // `Document.layers`, never its position in this array.
+    assert(ch[1].layerIndex == 2,
+        format("clip A is layer 2, picker row 1 — read %d", ch[1].layerIndex));
+    assert(ch[2].layerIndex == 4,
+        format("clip B is layer 4, picker row 2 — read %d", ch[2].layerIndex));
+    assert(ch[3].layerIndex == 5,
+        format("clip C is layer 5, picker row 3 — read %d", ch[3].layerIndex));
+    assert(ch[1].label == "A" && ch[2].label == "B" && ch[3].label == "C",
+        "rows are labelled by the clip's own name, in `layers` order");
+
+    // Unbound: the "(none)" row is the marked one, and no clip is.
+    assert(ch[0].current, "an unbound plane is currently showing no image");
+    assert(!ch[1].current && !ch[2].current && !ch[3].current,
+        "and no clip row is marked");
+
+    // Bound to the MIDDLE clip. The two decoys carry the SAME file path, so a
+    // path-keyed `current` test marks all three; an object-keyed one marks B.
+    plane.setLink(kImageLinkSlot, b);
+    ch = planeImageChoices(doc, plane);
+    size_t marked = 0;
+    foreach (e; ch) if (e.current) ++marked;
+    assert(marked == 1, format("exactly one row is current — read %d", marked));
+    assert(ch[2].current,
+        "and it is the row for the clip the link NAMES, not one of the two "
+        ~ "decoys sharing its path");
+
+    // Dangling: the clip is spliced out. No row can represent it, so nothing
+    // is marked — including "(none)", which would say the choice was never
+    // made rather than that it was lost.
+    doc.layers = doc.layers[0 .. 4] ~ doc.layers[5 .. $];
+    ch = planeImageChoices(doc, plane);
+    assert(ch.length == 3, format("two clips left plus '(none)' — read %d", ch.length));
+    marked = 0;
+    foreach (e; ch) if (e.current) ++marked;
+    assert(marked == 0,
+        format("a dangling link marks nothing, not '(none)' — read %d marked", marked));
+
+    // Asking a non-plane offers nothing at all (an empty picker, not a
+    // picker showing every clip against an item that cannot hold one).
+    assert(planeImageChoices(doc, doc.layers[0]).length == 0,
+        "a mesh has no image picker");
+    assert(planeImageChoices(doc, null).length == 0, "and neither has null");
 }
 
 // ---------------------------------------------------------------------------

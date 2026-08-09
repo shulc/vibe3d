@@ -118,9 +118,13 @@ final class LayerPropsProvider : ParamProvider {
     /// `colorspace` / `useAlpha`) is deliberately NOT gated on a
     /// capability bit — the plan's rev-2 conclusion (Bend #3): a bit used
     /// by exactly one kind is a kind check wearing a hat, and the next
-    /// resource kind this chain adds (the not-yet-written reference-image
-    /// item, task 0612) needs a THIRD bundle that fits neither `hasXform`'s
-    /// nor an image-shaped bit. Dispatch is an explicit `final switch
+    /// resource kind this chain adds (the reference-image item, task 0612 —
+    /// ~~not yet written~~ **written, and it is the `ItemKind.ImagePlane`
+    /// arm below**) needs a THIRD bundle that fits neither `hasXform`'s
+    /// nor an image-shaped bit. That prediction is now a measured fact
+    /// rather than a forecast: the plane's ten channels share no capability
+    /// with the image kind's three, and the `final switch` is what made the
+    /// omission impossible to ship. Dispatch is an explicit `final switch
     /// (layer_.kind)`, so a future `ItemKind` is a COMPILE ERROR at this
     /// switch instead of a silently empty bundle — the same forcing-
     /// function shape as the `static assert`s in `document.d`. Scaling
@@ -496,6 +500,61 @@ unittest {
     assert(sawColorspace,
         "the image's per-kind channels are reachable through the bound "
         ~ "provider — they are not through the primary's");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0612 Stage 7: the same binding, for the kind whose channels the whole
+// task exists to expose — and the FIRST kind that carries a transform AND a
+// per-kind payload at once.
+//
+// That combination is what this adds over the image case above. An image is
+// `hasXform == false`, so its provider is base + payload; a mesh is
+// payload-less, so its provider is base + xform. Only a plane exercises both
+// bundles in one `params()` call, and the plausible wrong implementation is
+// the copy-paste one: the plane's arm nested inside the image arm's
+// `if (img !is null)`, which is silently empty for every plane — the bundle
+// drops to 14 params, and the first assertion to fire is the `projection`
+// name check below (D aborts a module at its first `AssertError`, so the
+// count line at the end never gets to speak).
+// ---------------------------------------------------------------------------
+unittest {
+    import document : Document, ItemKind, ImagePlaneData;
+    import mesh     : makeCube;
+    import seltype  : SelMode;
+    import std.conv : to;
+
+    auto doc = Document.bootstrap(makeCube());
+    auto plane = new Layer;
+    plane.name = "the plane";
+    plane.kind = ItemKind.ImagePlane;
+    plane.imagePlaneRef() = new ImagePlaneData();
+    doc.layers ~= plane;
+    doc.selectItem(plane, SelMode.Set);
+
+    assert(doc.primary is doc.layers[0] && doc.focusedItem is plane,
+        "vacuity guard: a plane can never become the primary, so the focus "
+        ~ "and the primary really are different objects here");
+    auto bound = itemPropsTarget(&doc);
+    assert(bound is plane, "the properties form binds the plane");
+
+    auto ps = (new LayerPropsProvider(bound)).params();
+    bool has(string n) { foreach (p; ps) if (p.name == n) return true; return false; }
+
+    // All ten authored channels, named one by one. A count alone would pass
+    // on ten of the WRONG params.
+    foreach (n; ["projection", "showInPerspective", "pixelSize", "keepAspect",
+                 "brightness", "contrast", "transparency", "invert",
+                 "flipHorizontal", "smooth"])
+        assert(has(n), "the plane's `" ~ n ~ "` channel is reachable through "
+                     ~ "the form the panel binds");
+    // And the transform bundle is there TOO — the plane is placed with the
+    // ordinary item transform, so losing these would be losing the feature.
+    foreach (n; ["pos.x", "rot.y", "scl.z", "pivot.x"])
+        assert(has(n), "the plane's `" ~ n ~ "` transform component is "
+                     ~ "reachable alongside its channels");
+    assert(ps.length == 24,
+        "name + visible + 12 transform + 10 channels — read "
+        ~ to!string(ps.length));
 }
 
 // ---------------------------------------------------------------------------

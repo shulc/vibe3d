@@ -91,9 +91,14 @@ string bmpAt(string name, int w, int h) {
 string jsonStr(string s) { return JSONValue(s).toString(); }
 
 /// Build [mesh, clip1, clip2, clip3, plane] and return the plane's index.
-/// The plane arrives through the test-only injector: Stage 3 deliberately
-/// ships NO user-reachable creation route (that is Stage 7), so this is the
-/// only way to get one, exactly as tasks 0615 and 0616 did for their kinds.
+///
+/// The plane arrives through the test-only injector. That was a necessity
+/// when this file was written — Stage 3 deliberately shipped no user-reachable
+/// creation route — and is now a CHOICE: `imagePlane.add` (Stage 7) exists,
+/// and `tests/test_image_plane_create.d` drives it. Keeping the injector here
+/// is deliberate: these assertions are about the LINK model, and a fixture
+/// built by the same command whose behaviour a sibling file is pinning would
+/// make one bug able to turn both files green together.
 size_t buildFixture() {
     resetCube();
     auto file = bmpAt("sheet.bmp", 5, 7);

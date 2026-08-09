@@ -999,7 +999,9 @@ void registerCommands(EditorApp app) {
         // MESH edit target (a plane is never `canBePrimary`), so there is no
         // switch for the hook to observe.
         {
-            import commands.image_plane.commands : ImagePlaneSetImage;
+            import commands.image_plane.commands : ImagePlaneAdd, ImagePlaneSetImage;
+            reg.commandFactories["imagePlane.add"] = () => cast(Command)
+                new ImagePlaneAdd(&mesh(), cameraView, editMode, &document());
             reg.commandFactories["imagePlane.setImage"] = () => cast(Command)
                 new ImagePlaneSetImage(&mesh(), cameraView, editMode, &document());
         }

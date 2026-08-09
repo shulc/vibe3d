@@ -862,9 +862,17 @@ final class Layer {
     ItemXform xform;
     // Task 0082 — single-level item-parent reference. Nullable; null = no parent.
     // The Layer class (stable heap identity, GC-traced) makes this ref
-    // reorder/delete-renumber-safe. Not persisted to .v3d in this task —
-    // save/reload drops the parent link silently. One level only: Parent mode
+    // reorder/delete-renumber-safe. ~~Not persisted to .v3d in this task —
+    // save/reload drops the parent link silently.~~ One level only: Parent mode
     // reads `l.parent` directly (no ancestor-chain walk).
+    //
+    // CORRECTED (task 0612 Stage 6, the stale-comment sweep). The
+    // non-persistence half stopped being true at v8: `io/native.d` writes
+    // `parent` as an index into the fully written `layers[]` and resolves it
+    // back to the object in a second pass, and its own round-trip unittest
+    // asserts the restored reference by identity with the message *"the parent
+    // link now persists — a v7 codec reads null here"*. The two other things
+    // this comment says are unchanged and still load-bearing.
     Layer parent;
 
     /// True iff this item owns a geometry payload — a CAPABILITY read off
@@ -1058,13 +1066,25 @@ final class Layer {
 /// (task 0615 Stage 6) by `commands/layer/commands.d`'s `LayerDelete`, which
 /// now decides the delete-time successor by OBJECT IDENTITY and calls
 /// `rehomePrimary` when the deleted layer was itself the primary (L1) —
-/// `rehomePrimary`'s first production caller. `io/native.d`'s `.v3d` loader
+/// `rehomePrimary`'s first production caller. ~~`io/native.d`'s `.v3d` loader
 /// still raw-writes `document.primary = parsed[primaryIndex]` before any
 /// mutator runs (L3) — currently harmless because the v7 reader can only ever
 /// produce mesh-kind layers (Stage 8/v8, which would let a non-mesh `"type"`
 /// reach that raw write, is deferred to task 0616 by owner decision). A
 /// caller reaching `Document` only through that one remaining site could
-/// still violate the invariants below once a non-mesh layer becomes loadable.
+/// still violate the invariants below once a non-mesh layer becomes
+/// loadable.~~
+///
+/// CLOSED (task 0612 Stage 6, the stale-comment sweep) — and it was closed by
+/// the very change this paragraph feared. v8 does let a non-mesh `"type"`
+/// reach the loader, and rather than leaving the raw write reachable from
+/// there, `io/native.d` deleted it: the loader now checks the file's
+/// `primaryIndex` against `canBePrimary`, rehomes onto a mesh-kind item and
+/// warns if the file names one that is not, then installs the selection
+/// through `setActive` / `selectItem` / `setPrimary` — the same mutators as
+/// every other caller. Its own comment records the removal at the site. So
+/// the mutator list above is the WHOLE enforcement surface, with no remaining
+/// exception; there is no site left that can violate the invariants below.
 ///   * `layers.length >= 1` and `activeIndex < layers.length`.
 ///   * `primary !is null`; `primary` ∈ `layers`; `primary is layers[activeIndex]`;
 ///     `primary` always `canBePrimary` (today: always mesh-kind) — at least
