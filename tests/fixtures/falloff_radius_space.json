@@ -1,0 +1,847 @@
+{
+ "description": "Which space a world-unit falloff's metric is evaluated in when the edited layer carries a non-identity item transform. The two self-consistent readings are: (a) LAYER-LOCAL -- the vertex is compared against the falloff handles exactly as both are stored, so the region of influence stretches with the layer and becomes an ellipsoid in world; (b) WORLD -- the vertex is lifted by the layer's item matrix first and the handles are world coordinates, so the region stays a sphere in world and looks squashed in the layer's own units. Each case below predicts different weights under the two readings; `weights` is the measured answer and `weightsIfLayerLocal` is the reading the measurement rejected.",
+ "task": "0644",
+ "capturedBy": "committed translate under a falloff, weight recovered from the per-vertex displacement as w = d . T / |T|^2 with T taken from the falloff-free control of the same item transform; every displacement was verified parallel to T (largest off-axis residual 4.0e-8)",
+ "units": {
+  "vertices": "the layer's own coordinates, as stored",
+  "rot": "degrees, applied as the item's euler channels",
+  "matrix": "column-major 4x4, p_world = M * p_local",
+  "falloff.center/size/start/end": "the values as typed into the falloff's own fields",
+  "weights": "dimensionless, 0..1"
+ },
+ "stand": {
+  "vertexNames": [
+   "A",
+   "B",
+   "C",
+   "D",
+   "E",
+   "F",
+   "G",
+   "H"
+  ],
+  "vertices": [
+   [
+    0.0,
+    0.0,
+    0.0
+   ],
+   [
+    0.30000001192092896,
+    0.0,
+    0.0
+   ],
+   [
+    0.44999998807907104,
+    0.0,
+    0.0
+   ],
+   [
+    0.0,
+    0.30000001192092896,
+    0.0
+   ],
+   [
+    0.0,
+    1.100000023841858,
+    0.0
+   ],
+   [
+    0.0,
+    0.0,
+    0.11999999731779099
+   ],
+   [
+    0.0,
+    0.0,
+    0.2199999988079071
+   ],
+   [
+    0.10000000149011612,
+    0.75,
+    0.05999999865889549
+   ]
+  ],
+  "why": [
+   "one vertex sits exactly at the falloff centre, so its weight is 1 under both readings and can normalise the recovered weights",
+   "three vertices lie on each of the three axes alone, so each axis of the non-uniform scale is read independently",
+   "the scale (2, 0.5, 4) differs on all three axes and none of them is 1, so no pair of candidate readings can alias",
+   "one vertex is outside the unit sphere in layer coordinates but inside it in world coordinates, which turns the question into an in-or-out answer rather than a numeric fit"
+  ]
+ },
+ "law": "WORLD. For every world-unit falloff kind measured, the weight is computed on the vertex transformed by the layer's full item matrix (translation, rotation and scale alike), against falloff handle values that are themselves world coordinates. A radius is therefore in world units: it stays a sphere in world and becomes an ellipsoid in the layer's own coordinates.",
+ "alsoMeasured": "the numeric translate offset fed to the transform tool is a WORLD offset: under scale (2,0.5,4) the requested (0.7,0.5,0.3) landed as the local (0.35,1.0,0.075), and under a 90-degree Z rotation as (0.5,-0.7,0.3). Recorded, not asserted here -- it belongs to the transform-space question, not this one.",
+ "cases": [
+  {
+   "name": "ctrl_identity_radial",
+   "note": "control: identity item transform, so both readings coincide -- this case only proves the measurement chain recovers weights exactly",
+   "item": {
+    "pos": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rot": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scl": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "matrix": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "falloff": {
+    "kind": "radial",
+    "center": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "size": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "shape": "linear"
+   },
+   "localOffset": [
+    0.699999988079,
+    0.5,
+    0.300000011921
+   ],
+   "weights": [
+    1.0,
+    0.700000011,
+    0.550000001,
+    0.699999968,
+    0.0,
+    0.880000003,
+    0.779999998,
+    0.240987505
+   ],
+   "weightsIfLayerLocal": [
+    1.0,
+    0.699999988,
+    0.550000012,
+    0.699999988,
+    0.0,
+    0.880000003,
+    0.780000001,
+    0.240987484
+   ],
+   "maxSeparation": 0.0,
+   "rmsVsWorld": 1.384e-08,
+   "rmsVsLayerLocal": 1.384e-08
+  },
+  {
+   "name": "ctrl_identity_linear",
+   "note": "control: identity item transform, second falloff kind",
+   "item": {
+    "pos": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rot": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scl": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "matrix": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "falloff": {
+    "kind": "linear",
+    "start": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "end": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "shape": "linear"
+   },
+   "localOffset": [
+    0.699999988079,
+    0.5,
+    0.300000011921
+   ],
+   "weights": [
+    1.0,
+    1.0,
+    1.0,
+    0.699999968,
+    0.0,
+    1.000000003,
+    0.999999989,
+    0.250000008
+   ],
+   "weightsIfLayerLocal": [
+    1.0,
+    1.0,
+    1.0,
+    0.699999988,
+    0.0,
+    1.0,
+    1.0,
+    0.25
+   ],
+   "maxSeparation": 0.0,
+   "rmsVsWorld": 8.431e-09,
+   "rmsVsLayerLocal": 8.431e-09
+  },
+  {
+   "name": "scaled_nofalloff",
+   "note": "control: no falloff at all, so every vertex takes the full offset; this case supplies the offset the weighted cases are divided by",
+   "item": {
+    "pos": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rot": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scl": [
+     2.0,
+     0.5,
+     4.0
+    ]
+   },
+   "matrix": [
+    2.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    4.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "falloff": null,
+   "localOffset": [
+    0.34999999404,
+    1.0,
+    0.07500000298
+   ],
+   "weights": [
+    1.0,
+    0.999999991,
+    0.999999991,
+    0.999999947,
+    0.999999894,
+    1.0,
+    1.000000001,
+    0.999999998
+   ],
+   "weightsIfLayerLocal": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "maxSeparation": 0.0,
+   "rmsVsWorld": 4.203e-08,
+   "rmsVsLayerLocal": 4.203e-08
+  },
+  {
+   "name": "moved_nofalloff",
+   "note": "control: no falloff, translation-only item",
+   "item": {
+    "pos": [
+     5.0,
+     -2.0,
+     3.0
+    ],
+    "rot": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scl": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "matrix": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    5.0,
+    -2.0,
+    3.0,
+    1.0
+   ],
+   "falloff": null,
+   "localOffset": [
+    0.699999809265,
+    0.5,
+    0.299999952316
+   ],
+   "weights": [
+    1.0,
+    1.000000151,
+    0.999999849,
+    0.999999964,
+    1.0,
+    0.99999996,
+    1.000000011,
+    0.999999898
+   ],
+   "weightsIfLayerLocal": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "maxSeparation": 0.0,
+   "rmsVsWorld": 8.581e-08,
+   "rmsVsLayerLocal": 8.581e-08
+  },
+  {
+   "name": "rot_nofalloff",
+   "note": "control: no falloff, rotation-only item",
+   "item": {
+    "pos": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rot": [
+     0.0,
+     0.0,
+     90.0
+    ],
+    "scl": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "matrix": [
+    6.123233995736766e-17,
+    1.0,
+    0.0,
+    0.0,
+    -1.0,
+    6.123233995736766e-17,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "falloff": null,
+   "localOffset": [
+    0.5,
+    -0.699999988079,
+    0.300000011921
+   ],
+   "weights": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.000000003,
+    0.999999989,
+    1.000000015
+   ],
+   "weightsIfLayerLocal": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+   ],
+   "maxSeparation": 0.0,
+   "rmsVsWorld": 6.545e-09,
+   "rmsVsLayerLocal": 6.545e-09
+  },
+  {
+   "name": "scaled_radial",
+   "note": "the question: non-uniform scale differing on all three axes, isotropic radius, centre at the item origin (so the centre is the same point in both spaces and only the vertex lift is under test)",
+   "item": {
+    "pos": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rot": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scl": [
+     2.0,
+     0.5,
+     4.0
+    ]
+   },
+   "matrix": [
+    2.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    4.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "falloff": {
+    "kind": "radial",
+    "center": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "size": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "shape": "linear"
+   },
+   "localOffset": [
+    0.34999999404,
+    1.0,
+    0.07500000298
+   ],
+   "weights": [
+    1.0,
+    0.399999975,
+    0.10000002,
+    0.849999965,
+    0.449999937,
+    0.519999983,
+    0.120000004,
+    0.511916999
+   ],
+   "weightsIfLayerLocal": [
+    1.0,
+    0.699999988,
+    0.550000012,
+    0.699999988,
+    0.0,
+    0.880000003,
+    0.780000001,
+    0.240987484
+   ],
+   "maxSeparation": 0.659999996,
+   "rmsVsWorld": 2.388e-08,
+   "rmsVsLayerLocal": 0.3801
+  },
+  {
+   "name": "scaled_radial_cenoff",
+   "note": "the centre is moved off the item origin, which separates 'the centre is read in the same space as the vertex' from the mixed readings",
+   "item": {
+    "pos": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rot": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scl": [
+     2.0,
+     0.5,
+     4.0
+    ]
+   },
+   "matrix": [
+    2.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    4.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "falloff": {
+    "kind": "radial",
+    "center": [
+     0.5,
+     0.0,
+     0.0
+    ],
+    "size": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "shape": "linear"
+   },
+   "localOffset": [
+    0.34999999404,
+    1.0,
+    0.07500000298
+   ],
+   "weights": [
+    0.5,
+    0.89999998,
+    0.600000016,
+    0.477984669,
+    0.256696579,
+    0.306891081,
+    0.0,
+    0.463134058
+   ],
+   "weightsIfLayerLocal": [
+    0.5,
+    0.800000012,
+    0.949999988,
+    0.416904804,
+    0.0,
+    0.485801595,
+    0.453739989,
+    0.147884985
+   ],
+   "maxSeparation": 0.453739989,
+   "rmsVsWorld": 1.785e-08,
+   "rmsVsLayerLocal": 0.2597
+  },
+  {
+   "name": "scaled_linear",
+   "note": "a second, independent falloff kind under the same scale -- if the law were a quirk of one kind's arithmetic this case would disagree",
+   "item": {
+    "pos": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rot": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scl": [
+     2.0,
+     0.5,
+     4.0
+    ]
+   },
+   "matrix": [
+    2.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    4.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "falloff": {
+    "kind": "linear",
+    "start": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "end": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "shape": "linear"
+   },
+   "localOffset": [
+    0.34999999404,
+    1.0,
+    0.07500000298
+   ],
+   "weights": [
+    1.0,
+    0.999999991,
+    0.999999991,
+    0.849999965,
+    0.449999937,
+    1.0,
+    1.000000001,
+    0.624999999
+   ],
+   "weightsIfLayerLocal": [
+    1.0,
+    1.0,
+    1.0,
+    0.699999988,
+    0.0,
+    1.0,
+    1.0,
+    0.25
+   ],
+   "maxSeparation": 0.449999988,
+   "rmsVsWorld": 2.13e-08,
+   "rmsVsLayerLocal": 0.2138
+  },
+  {
+   "name": "moved_radial",
+   "note": "translation-only item: the layer-local reading predicts the identity weights, the world reading puts every vertex outside a unit sphere so nothing moves at all -- a binary separator worth 1.0 of weight",
+   "item": {
+    "pos": [
+     5.0,
+     -2.0,
+     3.0
+    ],
+    "rot": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "scl": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "matrix": [
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    5.0,
+    -2.0,
+    3.0,
+    1.0
+   ],
+   "falloff": {
+    "kind": "radial",
+    "center": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "size": [
+     1.0,
+     1.0,
+     1.0
+    ],
+    "shape": "linear"
+   },
+   "localOffset": [
+    0.699999809265,
+    0.5,
+    0.299999952316
+   ],
+   "weights": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "weightsIfLayerLocal": [
+    1.0,
+    0.699999988,
+    0.550000012,
+    0.699999988,
+    0.0,
+    0.880000003,
+    0.780000001,
+    0.240987484
+   ],
+   "maxSeparation": 1.0,
+   "rmsVsWorld": 0.0,
+   "rmsVsLayerLocal": 0.6822
+  },
+  {
+   "name": "rot_radial_aniso",
+   "note": "rotation-only item with an ANISOTROPIC radius: a sphere is blind to rotation, an ellipsoid is not, so this case asks whether the ellipsoid's axes are the world axes or the layer's own",
+   "item": {
+    "pos": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "rot": [
+     0.0,
+     0.0,
+     90.0
+    ],
+    "scl": [
+     1.0,
+     1.0,
+     1.0
+    ]
+   },
+   "matrix": [
+    6.123233995736766e-17,
+    1.0,
+    0.0,
+    0.0,
+    -1.0,
+    6.123233995736766e-17,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    1.0
+   ],
+   "falloff": {
+    "kind": "radial",
+    "center": [
+     0.0,
+     0.0,
+     0.0
+    ],
+    "size": [
+     0.5,
+     2.0,
+     2.0
+    ],
+    "shape": "linear"
+   },
+   "localOffset": [
+    0.5,
+    -0.699999988079,
+    0.300000011921
+   ],
+   "weights": [
+    1.0,
+    0.849999984,
+    0.775000019,
+    0.399999976,
+    0.0,
+    0.940000003,
+    0.889999979,
+    0.0
+   ],
+   "weightsIfLayerLocal": [
+    1.0,
+    0.399999976,
+    0.100000024,
+    0.849999994,
+    0.449999988,
+    0.940000001,
+    0.890000001,
+    0.573942491
+   ],
+   "maxSeparation": 0.674999982,
+   "rmsVsWorld": 9.567e-09,
+   "rmsVsLayerLocal": 0.4172
+  }
+ ]
+}

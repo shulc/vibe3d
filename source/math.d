@@ -1549,10 +1549,35 @@ unittest { // projectionSpace: forward projection agrees with pre-transforming t
 struct AimViewport {
     @disable this();                 // no accessible default construction
     private Viewport vp_;            // module-private: only math.d can fill it
-    private this(Viewport v) @safe pure nothrow @nogc { vp_ = v; }
+    private ModelSpace ms_;          // the space `vp_` was composed FROM
+    private this(Viewport v, ModelSpace m) @safe pure nothrow @nogc {
+        vp_ = v; ms_ = m;
+    }
     /// The composed viewport, for handing to `projectToWindow*`.
     @property ref const(Viewport) vp() const return @safe pure nothrow @nogc {
         return vp_;
+    }
+    /// The `ModelSpace` this aim space was built from — i.e. the item
+    /// transform of the geometry whose LOCAL coordinates are meant to be
+    /// projected through `vp`.
+    ///
+    /// **Task 0659.** Kept alongside the composed viewport because the
+    /// composition is lossy in the direction we need: `proj·view·M` cannot
+    /// be taken apart again to recover `M`, yet a caller holding an aim
+    /// space and a local vertex frequently needs that vertex's WORLD
+    /// coordinate — falloff is the case that forced this (its weight is a
+    /// world-space quantity, measured; see doc/tasks/…/0644-evidence).
+    /// Carrying `ms` here means the caller states the layer ONCE, at the
+    /// same `aimSpace(vp, ms)` call that already names it, and both the
+    /// pixel-space and the world-space readings of the same vertex come
+    /// out of one argument that cannot disagree with itself.
+    @property ref const(ModelSpace) space() const return @safe pure nothrow @nogc {
+        return ms_;
+    }
+    /// The world coordinate of a LOCAL point in this aim space's layer.
+    /// Convenience for `space.toWorldPoint(p)`; identity-cheap.
+    Vec3 toWorld(Vec3 localP) const @safe pure nothrow @nogc {
+        return ms_.isIdentity ? localP : ms_.toWorldPoint(localP);
     }
 }
 
@@ -1562,7 +1587,26 @@ struct AimViewport {
 /// included. A stack copy plus (off the identity path) one `matMul4`: cheap
 /// once per query, unacceptable per vertex — hoist it out of O(V) loops.
 AimViewport aimSpace(const ref Viewport vp, const ModelSpace ms) @safe pure nothrow @nogc {
-    return AimViewport(projectionSpace(vp, ms));
+    return AimViewport(projectionSpace(vp, ms), ms);
+}
+
+unittest { // AimViewport.toWorld agrees with the ModelSpace it was built from,
+           // and the identity fast path is not a different answer.
+    import std.math : isClose;
+    Viewport vp;
+    ModelSpace ms;
+    rotNonUniformSpace(ms);
+    auto aim = aimSpace(vp, ms);
+    Vec3 p = Vec3(0.3f, -1.25f, 2.0f);
+    Vec3 a = aim.toWorld(p);
+    Vec3 b = ms.toWorldPoint(p);
+    assert(isClose(a.x, b.x) && isClose(a.y, b.y) && isClose(a.z, b.z),
+           "AimViewport.toWorld must equal its ModelSpace's toWorldPoint");
+    // Identity: toWorld is the identity map, not merely close to it.
+    auto aimId = aimSpace(vp, ModelSpace.world());
+    Vec3 c = aimId.toWorld(p);
+    assert(c.x == p.x && c.y == p.y && c.z == p.z,
+           "identity aim space must return the point unchanged");
 }
 
 unittest { // aimSpace adds a type, not a behaviour: field-identical to projectionSpace.

@@ -31,7 +31,9 @@ import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
 /// Per-vertex falloff weight at position `pos` — the vertex's CURRENT
 /// coordinate as it is stored in `mesh.vertices[]`, i.e. LOCAL to its
 /// layer. (Tools should pass the live position so a multi-frame drag
-/// sees the falloff move with the vertex.)
+/// sees the falloff move with the vertex.) `vp` names the layer, so
+/// this function can put that coordinate into whichever space each
+/// falloff kind actually answers in.
 ///
 /// **Task 0619 — the space, corrected.** This doc used to say `pos` was
 /// the vertex's *world* coord. It never was: every production caller
@@ -41,9 +43,7 @@ import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
 /// coordinate through the plain world viewport, so on a layer with a
 /// non-trivial `ItemXform` the disc/polygon selected the vertices that
 /// would have been under the cursor at IDENTITY, not the ones drawn
-/// there. The other eight compare `pos` against packet fields that are
-/// in the same (local) space, so they were self-consistent and are
-/// untouched here.
+/// there.
 ///
 /// The fix is in the TYPE: the projection now arrives as an
 /// `AimViewport`, which cannot be produced without naming a
@@ -53,6 +53,39 @@ import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
 /// paid ONCE per query by the caller, never per vertex: this function
 /// is called inside every deform kernel's inner loop, so `aimSpace`
 /// must be hoisted above it (see the callers).
+///
+/// **Task 0659 — the other eight, MEASURED.** 0619 went on to say the
+/// remaining eight kinds "compare `pos` against packet fields that are
+/// in the same (local) space, so they were self-consistent". Half of
+/// that was true and half of it was wrong, and the wrong half is the
+/// part that mattered:
+///
+///   * SELF-CONSISTENT they were not. `start` / `end` / `center` /
+///     `pickedRadius` are written by handle drags and by ACEN, both of
+///     which produce WORLD values, and `falloff_render.d` draws them
+///     through the plain world viewport. Only `autoSize` wrote them
+///     local. Two writers, two spaces, one field set — task 0646.
+///   * The right space is WORLD, and that is no longer a preference.
+///     It was captured over ten cells: the weight is computed on the
+///     vertex lifted by the layer's FULL item matrix — translation,
+///     rotation and scale alike — against handle values that are
+///     themselves world coordinates. rms 2.4e-8 against that reading,
+///     0.380 against the layer-local one. So a radius is in world
+///     units: the region of influence stays a SPHERE in world and is
+///     an ellipsoid in the layer's own coordinates, its axes the WORLD
+///     axes. Three further facts came with it: the handles are read in
+///     the same space as the vertex (both mixed readings die on an
+///     off-origin centre); the whole matrix is used and not just its
+///     scale part (a translation-only item moved NOTHING, where
+///     layer-local predicted the identity weights); and the ellipsoid
+///     is not carried around by the layer's rotation.
+///
+/// So `pos` is lifted ONCE here and the eight world-space kinds read
+/// the lifted point. Screen and Lasso keep the LOCAL point, because
+/// their answer is in pixels and `vp` has the layer already composed
+/// into it — lifting for them would apply the item transform twice.
+/// The frozen capture lives in the task evidence and is replayed by
+/// `tests/fixtures/falloff_radius_space.json`.
 ///
 /// `vertIdx` is reserved for types that key on the vertex index
 /// (Element, Vertex Map).
@@ -74,26 +107,45 @@ float evaluateFalloff(const ref FalloffPacket cfg,
                       const ref AimViewport vp)
 {
     if (!cfg.enabled) return 1.0f;
+    // One lift for the whole packet, Composite recursion included — the
+    // eight world-space kinds all want the same point, and `toWorld` is
+    // an affine apply we should not pay per contributor.
+    return evaluateFalloffAt(cfg, pos, vp.toWorld(pos), vertIdx, vp);
+}
+
+/// The dispatch, with BOTH readings of the vertex in hand: `posLocal` as
+/// stored, `posWorld` lifted by the layer's item matrix. Each kind takes
+/// the one its fields are expressed in — see `evaluateFalloff`'s doc for
+/// why that split is where it is, and which measurement fixed it.
+private float evaluateFalloffAt(const ref FalloffPacket cfg,
+                                Vec3 posLocal, Vec3 posWorld,
+                                int  vertIdx,
+                                const ref AimViewport vp)
+{
+    if (!cfg.enabled) return 1.0f;
 
     final switch (cfg.type) {
         case FalloffType.None:
             return 1.0f;
         case FalloffType.Linear:
-            return linearWeight(cfg, pos);
+            return linearWeight(cfg, posWorld);
         case FalloffType.Radial:
-            return radialWeight(cfg, pos);
+            return radialWeight(cfg, posWorld);
+        // Screen / Lasso answer in WINDOW PIXELS and `vp` already has the
+        // layer composed into it, so these two take the LOCAL point. Handing
+        // them `posWorld` would apply the item transform twice.
         case FalloffType.Screen:
-            return screenWeight(cfg, pos, vp);
+            return screenWeight(cfg, posLocal, vp);
         case FalloffType.Lasso:
-            return lassoWeight(cfg, pos, vp);
+            return lassoWeight(cfg, posLocal, vp);
         case FalloffType.Cylinder:
-            return cylinderWeight(cfg, pos);
+            return cylinderWeight(cfg, posWorld);
         case FalloffType.Element:
-            return elementWeight(cfg, pos, vertIdx);
+            return elementWeight(cfg, posWorld, vertIdx);
         case FalloffType.Selection:
             return selectionWeight(cfg, vertIdx);
         case FalloffType.Composite:
-            return compositeWeight(cfg, pos, vertIdx, vp);
+            return compositeWeight(cfg, posLocal, posWorld, vertIdx, vp);
         case FalloffType.VertexMap:
             return vertexMapWeight(cfg, vertIdx);
     }
@@ -125,12 +177,18 @@ float applyMix(FalloffMix mix, float a, float b) {
 /// degenerates to full influence (1.0) — matching the "no constraint"
 /// contract every other falloff uses for its degenerate case.
 private float compositeWeight(const ref FalloffPacket cfg,
-                              Vec3 pos, int vertIdx, const ref AimViewport vp)
+                              Vec3 posLocal, Vec3 posWorld,
+                              int vertIdx, const ref AimViewport vp)
 {
     if (cfg.contributors.length == 0) return 1.0f;
-    float accum = clamp01(evaluateFalloff(cfg.contributors[0], pos, vertIdx, vp));
+    // Contributors are flat (never themselves Composite) and every one of
+    // them lives on the SAME vertex, so both readings are passed straight
+    // down rather than re-lifted per contributor.
+    float accum = clamp01(
+        evaluateFalloffAt(cfg.contributors[0], posLocal, posWorld, vertIdx, vp));
     foreach (i; 1 .. cfg.contributors.length) {
-        float w = clamp01(evaluateFalloff(cfg.contributors[i], pos, vertIdx, vp));
+        float w = clamp01(
+            evaluateFalloffAt(cfg.contributors[i], posLocal, posWorld, vertIdx, vp));
         accum = applyMix(cfg.contributors[i].mix, accum, w);
     }
     return clamp01(accum);

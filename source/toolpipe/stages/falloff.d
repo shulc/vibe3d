@@ -91,16 +91,28 @@ private static immutable IntEnumEntry[] shapeEntries = [
 //   `center`       : "x,y,z" — see the SPACE note below
 //   `size`         : "x,y,z" per-axis ellipsoid radii
 //
-//   SPACE NOTE (task 0619). `start`/`end`/`center`/`size` are read against
-//   `pos`, which every production caller of `evaluateFalloff` fills from
-//   `mesh.vertices[i]` — LOCAL to the layer. `autoSize` fills them from the
-//   selection bbox, which is local too, so that path is self-consistent. The
-//   FalloffGizmo drag and the RMB gestures fill them from `screenAxisDelta` /
-//   ray-plane hits, which are genuinely WORLD — a real mixed-space defect in
-//   the falloff GIZMO family, out of task 0619's scope (its subject is aiming
-//   at mesh geometry through the cursor) and not fixed by pretending here.
+//   SPACE NOTE (task 0619, RESOLVED by 0659). `start`/`end`/`center`/`size`
+//   are WORLD coordinates, and so are `pickedCenter` / `pickedRadius`.
+//
+//   This note used to record a genuine fork: `evaluateFalloff` read these
+//   fields against a LOCAL vertex and `autoSize` filled them from the LOCAL
+//   selection bbox, while the FalloffGizmo drag and the RMB gestures filled
+//   them from `screenAxisDelta` / ray-plane hits, which are WORLD — and
+//   `falloff_render.d` drew them through the world viewport. Two writers,
+//   two spaces, one field set (that was task 0646).
+//
+//   The fork is closed in favour of world, and by measurement rather than by
+//   taste: the weight is computed on the vertex lifted by the layer's full
+//   item matrix, against handles that are themselves world coordinates
+//   (rms 2.4e-8, against 0.380 for the layer-local reading). So the reads
+//   were lifted, not the writes folded down — `evaluateFalloff` lifts the
+//   vertex and `autoSize` now fits the WORLD bbox. See
+//   `falloff.evaluateFalloff`'s doc comment for the full statement of the
+//   law and tests/fixtures/falloff_radius_space.json for the frozen capture.
+//
 //   `screenCx/Cy/screenSize` and the lasso polygon are window pixels and are
-//   compared against a projection that now carries the item transform.
+//   compared against a projection that carries the item transform; those two
+//   kinds are the reason a LOCAL vertex is still threaded through at all.
 //   `screenCx`     : float, window pixels
 //   `screenCy`     : float, window pixels
 //   `screenSize`   : float, window pixels
@@ -363,26 +375,31 @@ class FalloffStage : Stage, Operator {
         pkt.enabled = (type != FalloffType.None);
         // Sphere centre tracks ACEN.center. ACEN runs before us.
         //
-        // SPACE (task 0649). ACEN publishes a WORLD point; this field is
-        // consumed by `falloff.evaluateFalloff` as `pos - cfg.pickedCenter`
-        // where `pos` is a raw `mesh.vertices` entry — the layer's own
-        // coordinates. So it is carried back into that space here, which
-        // leaves the falloff sphere exactly where it has always been (a
-        // no-op at the identity item transform) and keeps its radius in mesh
-        // units rather than turning it into a world ellipsoid under an item
-        // scale. Neither reading is measured; this one is the one that
-        // changes nothing.
+        // SPACE (task 0649, CORRECTED by task 0659). ACEN publishes a WORLD
+        // point, and this used to be carried back into the layer's own
+        // coordinates with `primaryModelSpace().toLocalPoint(acen.center)`.
+        // The stated reason was that it kept the falloff radius in mesh units
+        // "rather than turning it into a world ellipsoid under an item scale",
+        // and the comment was honest that neither reading was measured and
+        // that this was the one that changed nothing.
         //
-        // Consequence, stated rather than left to be discovered: the falloff
-        // OVERLAY (`falloff_render.d`, which draws `cfg.pickedCenter`) keeps
-        // drawing in mesh space, so on a transformed layer it separates from
-        // the gizmo, which now draws in world. That is the tool-overlay-space
-        // seam (0619 §2 / 0631), not this one, and it is deliberately not
-        // opened here.
-        if (auto acen = vts.get!ActionCenterPacket()) {
-            import document : primaryModelSpace;
-            pkt.pickedCenter = primaryModelSpace().toLocalPoint(acen.center);
-        }
+        // It has since been measured, and it is the reading that was wrong.
+        // The weight is a WORLD-space quantity: the vertex is lifted by the
+        // layer's full item matrix and compared against handle values that
+        // are themselves world coordinates, so the sphere stays a sphere in
+        // world and IS an ellipsoid in mesh units under an item scale — the
+        // outcome the fold was written to avoid. rms 2.4e-8 for that reading
+        // against 0.380 for this one, over ten cells; on a translation-only
+        // item the separation is a clean 1.0. See `falloff.evaluateFalloff`'s
+        // doc and tests/fixtures/falloff_radius_space.json.
+        //
+        // So the world point is published as it arrives. The consequence the
+        // old comment flagged — the overlay drawing in mesh space while the
+        // gizmo drew in world — disappears with the fold: `falloff_render.d`
+        // projects `pickedCenter` through the plain world viewport, which is
+        // now the space the field is actually in (task 0646).
+        if (auto acen = vts.get!ActionCenterPacket())
+            pkt.pickedCenter = acen.center;
         // Single resolver for the three element-falloff derived buffers
         // (ring / connect-mask / anchor positions) — see
         // resolveElementBuffers()'s doc for the dependency order and
@@ -798,17 +815,12 @@ class FalloffStage : Stage, Operator {
     /// buttons in Tool Properties.
     void autoSizeAxis(int axis) {
         if (mesh_ is null || editMode_ is null) return;
+        Vec3 bbMinLocal, bbMaxLocal;
+        if (!selectionBBoxLocal(bbMinLocal, bbMaxLocal)) return;
+        // WORLD box, same law as autoSize() — `axis` names a WORLD axis and
+        // `start`/`end` are world coordinates (task 0659).
         Vec3 bbMin, bbMax;
-        bool seen;
-        final switch (*editMode_) {
-            case EditMode.Vertices:
-                mesh_.selectionBBoxMinMaxVertices(bbMin, bbMax, seen); break;
-            case EditMode.Edges:
-                mesh_.selectionBBoxMinMaxEdges   (bbMin, bbMax, seen); break;
-            case EditMode.Polygons:
-                mesh_.selectionBBoxMinMaxFaces   (bbMin, bbMax, seen); break;
-        }
-        if (!seen) return;
+        worldBBox(primaryModelSpace(), bbMinLocal, bbMaxLocal, bbMin, bbMax);
         Vec3 bbCenter = (bbMin + bbMax) * 0.5f;
         Vec3 bbHalf   = (bbMax - bbMin) * 0.5f;
         Vec3 n = (axis == 0) ? Vec3(1, 0, 0)
@@ -983,7 +995,7 @@ class FalloffStage : Stage, Operator {
         return r;
     }
 
-    // Resolve `anchorRing` vertex indices to their live LOCAL positions into
+    // Resolve `anchorRing` vertex indices to their live WORLD positions into
     // `anchorPos_` (parallel to anchorRing). Out-of-range indices are
     // skipped, so the two arrays may differ in length after a topology edit
     // left a stale ring — that is benign: elementWeight only cares about the
@@ -991,6 +1003,15 @@ class FalloffStage : Stage, Operator {
     // and the anchorRing→weight-1.0 short-circuit keys on indices separately.
     // When the mesh is unavailable or the ring is empty, anchorPos_ is empty
     // and elementWeight falls back to the pickedCenter point distance.
+    //
+    // SPACE (task 0659). These used to be raw `m.vertices[vi]` — the layer's
+    // own coordinates — while `elementWeight`'s doc in falloff.d already
+    // described them as "the world positions of the picked verts". The doc
+    // was the accurate half: `elementWeight` measures the vertex against them
+    // and the vertex is now lifted to world, and the radius they are divided
+    // by (`pickedRadius`) is a world distance written by a world plane-drag
+    // (falloff_handles.d). So they are lifted here, at the one place they are
+    // produced, and the comment that was aspirational becomes true.
     void resolveAnchorPos() {
         anchorPos_.length = 0;
         // For Edge-Loops, resolve positions from the ordered loop ring so
@@ -1001,8 +1022,11 @@ class FalloffStage : Stage, Operator {
         Mesh* m = mesh_;
         if (m is null) return;
         const size_t nV = m.vertices.length;
+        const auto ms = primaryModelSpace();
         foreach (vi; ring)
-            if (cast(size_t)vi < nV) anchorPos_ ~= m.vertices[vi];
+            if (cast(size_t)vi < nV)
+                anchorPos_ ~= ms.isIdentity ? m.vertices[vi]
+                                            : ms.toWorldPoint(m.vertices[vi]);
     }
 
     // Edge-Loops ring resolver. When `connect == EdgeLoops`:
@@ -1361,13 +1385,10 @@ private:
         return lastWpNormal_;
     }
 
-    // Pre-fit Linear / Radial / Screen / Lasso to the current selection
-    // bbox, so the user gets an immediately useful starting point on
-    // type switch. Each type uses what it needs from the bbox; the
-    // others' attrs are left alone.
-    void autoSize() {
-        if (mesh_ is null || editMode_ is null) return;
-        Vec3 bbMin, bbMax;
+    // The selection bbox in the layer's OWN coordinates, as `mesh.vertices`
+    // stores them. Both auto-size entry points start here; what they do with
+    // it differs by space (see `worldBBox` and autoSize's SPACE note).
+    private bool selectionBBoxLocal(out Vec3 bbMin, out Vec3 bbMax) {
         bool seen;
         final switch (*editMode_) {
             case EditMode.Vertices:
@@ -1377,7 +1398,55 @@ private:
             case EditMode.Polygons:
                 mesh_.selectionBBoxMinMaxFaces   (bbMin, bbMax, seen); break;
         }
-        if (!seen) return;
+        return seen;
+    }
+
+    // The world-space AABB of a local bbox: the axis-aligned bound of its
+    // eight transformed corners.
+    //
+    // Task 0659. Exact for the translation/scale part (a corner of the local
+    // box IS a corner of the world box), and for a rotated item it is the
+    // enclosing world-axis box — which is the right shape to hand these
+    // fields, because the falloff's own extent is world-axis-aligned too
+    // (`size` is a per-WORLD-axis radius; the ellipsoid does not rotate with
+    // the layer, measured). Fitting a tighter oriented box would produce
+    // radii the kernel has no way to honour.
+    private static void worldBBox(const ModelSpace ms, Vec3 mn, Vec3 mx,
+                                  out Vec3 wmn, out Vec3 wmx) {
+        if (ms.isIdentity) { wmn = mn; wmx = mx; return; }
+        bool first = true;
+        foreach (i; 0 .. 8) {
+            Vec3 c = ms.toWorldPoint(Vec3((i & 1) ? mx.x : mn.x,
+                                          (i & 2) ? mx.y : mn.y,
+                                          (i & 4) ? mx.z : mn.z));
+            if (first) { wmn = c; wmx = c; first = false; continue; }
+            if (c.x < wmn.x) wmn.x = c.x;  if (c.x > wmx.x) wmx.x = c.x;
+            if (c.y < wmn.y) wmn.y = c.y;  if (c.y > wmx.y) wmx.y = c.y;
+            if (c.z < wmn.z) wmn.z = c.z;  if (c.z > wmx.z) wmx.z = c.z;
+        }
+    }
+
+    // Pre-fit Linear / Radial / Screen / Lasso to the current selection
+    // bbox, so the user gets an immediately useful starting point on
+    // type switch. Each type uses what it needs from the bbox; the
+    // others' attrs are left alone.
+    //
+    // SPACE (task 0659). `bbCenter`/`bbHalf` are WORLD. They used to be the
+    // raw local bbox, which made this the one writer of `start`/`end`/
+    // `center`/`size`/`pickedRadius` that disagreed with the others — the
+    // handle drags and ACEN write those fields in world, and
+    // `falloff_render.d` draws them through the world viewport. Since the
+    // weight is now measured in world too, an auto-size that fitted the
+    // local box would place the region of influence off the geometry it was
+    // fitted to on any transformed layer. The Screen branch is the exception
+    // and deliberately keeps the LOCAL box: it projects through an aim space
+    // that already carries the item matrix.
+    void autoSize() {
+        if (mesh_ is null || editMode_ is null) return;
+        Vec3 bbMinLocal, bbMaxLocal;
+        if (!selectionBBoxLocal(bbMinLocal, bbMaxLocal)) return;
+        Vec3 bbMin, bbMax;
+        worldBBox(primaryModelSpace(), bbMinLocal, bbMaxLocal, bbMin, bbMax);
         Vec3 bbCenter = (bbMin + bbMax) * 0.5f;
         Vec3 bbHalf   = (bbMax - bbMin) * 0.5f;
 
@@ -1427,16 +1496,22 @@ private:
                 // projection fails or no live viewport has been
                 // captured yet.
                 if (!lastVpValid_) break;
-                // Task 0619, aiming kind **Pixel** (§1.1). `bbMin`/`bbMax`
-                // come from `mesh_.selectionBBoxMinMax*`, which scan raw
-                // `mesh.vertices[]` — LOCAL coordinates. Projecting them
-                // through the plain world `lastVp_` placed the auto-sized
-                // disc where the selection would sit under an IDENTITY item
-                // transform, so on a transformed layer the disc appeared off
-                // the geometry it was sized from. Compose the primary's
-                // matrix into the viewport once for the whole branch (the
-                // centroid plus eight corners) and keep projecting the local
-                // points, which is exact.
+                // Task 0619, aiming kind **Pixel** (§1.1). `bbMinLocal` /
+                // `bbMaxLocal` come from `mesh_.selectionBBoxMinMax*`, which
+                // scan raw `mesh.vertices[]` — LOCAL coordinates. Projecting
+                // them through the plain world `lastVp_` placed the
+                // auto-sized disc where the selection would sit under an
+                // IDENTITY item transform, so on a transformed layer the disc
+                // appeared off the geometry it was sized from. Compose the
+                // primary's matrix into the viewport once for the whole
+                // branch (the centroid plus eight corners) and keep
+                // projecting the local points, which is exact.
+                //
+                // Task 0659: this branch is why the LOCAL box is still in
+                // scope. Every other branch reads the world `bbCenter` /
+                // `bbHalf` above; Screen must not, or the item transform
+                // would be applied twice — once by `worldBBox`, once by the
+                // aim space.
                 //
                 // This has to move in lockstep with `screenWeight`
                 // (`falloff.d`): the disc's centre/radius and the per-vertex
@@ -1444,17 +1519,18 @@ private:
                 // auto-sized disc would enclose a different vertex set than
                 // the one it was fitted to.
                 const auto aim = aimSpace(lastVp_, primaryModelSpace());
+                Vec3 bbCenterLocal = (bbMinLocal + bbMaxLocal) * 0.5f;
                 float cx, cy, ndcZ;
-                if (!projectToWindowFull(bbCenter, aim.vp, cx, cy, ndcZ))
+                if (!projectToWindowFull(bbCenterLocal, aim.vp, cx, cy, ndcZ))
                     break;
                 screenCx = cx;
                 screenCy = cy;
                 float maxR = 0.0f;
                 foreach (i; 0 .. 8) {
                     Vec3 corner = Vec3(
-                        (i & 1) ? bbMax.x : bbMin.x,
-                        (i & 2) ? bbMax.y : bbMin.y,
-                        (i & 4) ? bbMax.z : bbMin.z,
+                        (i & 1) ? bbMaxLocal.x : bbMinLocal.x,
+                        (i & 2) ? bbMaxLocal.y : bbMinLocal.y,
+                        (i & 4) ? bbMaxLocal.z : bbMinLocal.z,
                     );
                     float kx, ky, knz;
                     if (!projectToWindowFull(corner, aim.vp, kx, ky, knz))
