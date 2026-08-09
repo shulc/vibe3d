@@ -483,6 +483,21 @@ struct ModelSpace {
             mInv[2]*worldDir.x + mInv[6]*worldDir.y + mInv[10]*worldDir.z,
         );
     }
+    /// Local-space DIRECTION -> world-space direction: the LINEAR part of
+    /// `m` only (no translation), the exact dual of `toLocalDir`. Like it,
+    /// deliberately NOT normalized — a caller that needs a unit direction
+    /// normalizes it itself, and one that is carrying a length (an edge
+    /// vector, a ray parameter) needs it left alone.
+    ///
+    /// This is for a DIRECTION — a difference of two points. A NORMAL is not
+    /// a direction under a non-uniform scale: use `toWorldNormal`.
+    Vec3 toWorldDir(Vec3 localDir) const @safe pure nothrow @nogc {
+        return Vec3(
+            m[0]*localDir.x + m[4]*localDir.y + m[ 8]*localDir.z,
+            m[1]*localDir.x + m[5]*localDir.y + m[ 9]*localDir.z,
+            m[2]*localDir.x + m[6]*localDir.y + m[10]*localDir.z,
+        );
+    }
     /// Local-space NORMAL -> world-space normal: `(M^-1)^T` applied to
     /// `nLocal` — the standard normal-transform rule (normals do NOT
     /// transform the same way points/directions do under a non-uniform
@@ -542,6 +557,45 @@ struct ModelSpace {
             m[4]*nWorld.x + m[5]*nWorld.y + m[ 6]*nWorld.z,
             m[8]*nWorld.x + m[9]*nWorld.y + m[10]*nWorld.z,
         );
+    }
+
+    /// Carry a WORLD-space affine map `F` into this space: the local map that
+    /// does, to local coordinates, exactly what `F` does to the world ones.
+    ///
+    ///     conjugate(F) == L4^-1 . F . L4
+    ///
+    /// where `L4` is `m` with its TRANSLATION COLUMN ZEROED (the linear part
+    /// alone) and `L4^-1` is `mInv` likewise. The zeroing is the whole trick,
+    /// and it is not an approximation: for `A(x) = L x + p`, the composite
+    /// `A^-1 . W . A` where `W(x) = c + F(x - c)` works out to
+    ///
+    ///     x |-> c' + (L^-1 F_lin L)(x - c') + L^-1 F_t,      c' = A^-1(c)
+    ///
+    /// i.e. the PIVOT takes the full affine inverse (`toLocalPoint`) while the
+    /// map itself takes the linear one on both sides. Feeding the full `m` /
+    /// `mInv` here instead would apply the item translation twice — once in
+    /// the pivot and once inside the matrix — and a translate-only item
+    /// transform would move the geometry by `2*pos` instead of leaving it
+    /// where it was.
+    ///
+    /// The companion conversion is `toLocalPoint(centreWorld)`; the two are
+    /// used together or not at all.
+    ///
+    /// Blend note: a per-vertex weight `w` applied as a LERP toward identity
+    /// commutes with this conjugation exactly — `L4^-1 . ((1-w)I + wF) . L4
+    /// == (1-w)I + w(L4^-1 F L4)` — so conjugating the composed matrix once,
+    /// before the per-vertex blend, is equivalent to conjugating every
+    /// blended result. That equivalence is what makes this a ONE-PLACE
+    /// conversion. It does NOT hold for a non-linear blend (a slerp) under a
+    /// non-similarity `L`; there the conjugated form stays exact at `w == 0`
+    /// and `w == 1` and is a declared reading in between.
+    float[16] conjugate(const float[16] f) const @safe pure nothrow @nogc {
+        if (isIdentity || !invertible) return f;
+        float[16] lin    = m;
+        float[16] linInv = mInv;
+        lin[12] = 0;    lin[13] = 0;    lin[14] = 0;
+        linInv[12] = 0; linInv[13] = 0; linInv[14] = 0;
+        return matMul4(linInv, matMul4(f, lin));
     }
 }
 
@@ -661,6 +715,83 @@ unittest { // toLocalNormal != toLocalDir under non-uniform scale (the negative
     assert(rd.length < 1e-5f,
         "under a pure rotation toLocalNormal and toLocalDir must coincide — "
         ~ "this is why the discriminating fixture needs a non-uniform scale");
+}
+
+unittest { // conjugate() + toLocalPoint() reproduce "do it in world, write it
+    // in local", to the last bit, for an arbitrary invertible space.
+    //
+    // The ONE claim: for any world-space map `W(x) = c + F(x - c)`, applying
+    // W in world and converting back must equal applying the conjugated map
+    // about the converted centre, in local. This is the identity the transform
+    // apply path rests on, so it is asserted against an INDEPENDENT
+    // construction (round-trip through world) rather than against itself.
+    ModelSpace ms;
+    rotNonUniformSpace(ms);
+    ms.m[12] = 5.0f; ms.m[13] = -2.0f; ms.m[14] = 3.0f;    // + a translation
+    // mInv's translation column = -L^-1 * p
+    Vec3 lp = Vec3(
+        ms.mInv[0]*5.0f + ms.mInv[4]*(-2.0f) + ms.mInv[ 8]*3.0f,
+        ms.mInv[1]*5.0f + ms.mInv[5]*(-2.0f) + ms.mInv[ 9]*3.0f,
+        ms.mInv[2]*5.0f + ms.mInv[6]*(-2.0f) + ms.mInv[10]*3.0f);
+    ms.mInv[12] = -lp.x; ms.mInv[13] = -lp.y; ms.mInv[14] = -lp.z;
+
+    // A world map with BOTH a linear part and a translation part, so a
+    // conjugation that drops either term is caught.
+    float[16] F = matMul4(pivotScaleMatrix(Vec3(0,0,0), 1.3f, 0.7f, 2.1f),
+                          translationMatrix(Vec3(0.9f, -1.4f, 0.5f)));
+    Vec3 cWorld = Vec3(-0.4f, 2.45f, -0.23f);
+
+    Vec3 vLocal = Vec3(1.2f, 1.1f, -1.8f);
+    // Truth: local -> world, apply about the world centre, world -> local.
+    Vec3 truth = ms.toLocalPoint(
+        cWorld + applyAffine(F, ms.toWorldPoint(vLocal) - cWorld));
+    // Under test: the one-place conversion.
+    Vec3 cLocal = ms.toLocalPoint(cWorld);
+    Vec3 got    = cLocal + applyAffine(ms.conjugate(F), vLocal - cLocal);
+    assert((got - truth).length < 1e-4f,
+        "conjugate(F) about toLocalPoint(c) must equal the world-space map "
+        ~ "carried back into local space");
+
+    // ANTI-VACUITY, the exact mistake the doc comment names: conjugating with
+    // the FULL m / mInv (translation column left in) instead of their linear
+    // parts. It must read a DIFFERENT point here, or this fixture proves
+    // nothing about which of the two matrices the conjugation uses.
+    float[16] wrong = matMul4(ms.mInv, matMul4(F, ms.m));
+    Vec3 gotWrong   = cLocal + applyAffine(wrong, vLocal - cLocal);
+    assert((gotWrong - truth).length > 1e-2f,
+        "fixture is vacuous: the full-affine conjugation lands on the same "
+        ~ "point, so this cannot tell the two apart");
+
+    // The identity space is a pass-through, bit for bit — the fast path every
+    // existing rig takes.
+    auto id = ModelSpace.world();
+    auto passthrough = id.conjugate(F);
+    foreach (i; 0 .. 16) assert(passthrough[i] == F[i],
+        "an identity ModelSpace must return the matrix untouched");
+}
+
+unittest { // conjugate() commutes with the lerp-toward-identity blend — the
+    // property that lets the apply path conjugate ONCE, before the per-vertex
+    // falloff weight is applied, instead of per vertex.
+    ModelSpace ms;
+    rotNonUniformSpace(ms);
+    float[16] F = matMul4(pivotScaleMatrix(Vec3(0,0,0), 1.3f, 0.7f, 2.1f),
+                          translationMatrix(Vec3(0.9f, -1.4f, 0.5f)));
+    enum float w = 0.375f;
+    float[16] blendedThenConjugated;
+    foreach (i; 0 .. 16)
+        blendedThenConjugated[i] = (1.0f - w) * identityMatrix[i] + w * F[i];
+    blendedThenConjugated = ms.conjugate(blendedThenConjugated);
+
+    float[16] cj = ms.conjugate(F);
+    float[16] conjugatedThenBlended;
+    foreach (i; 0 .. 16)
+        conjugatedThenBlended[i] = (1.0f - w) * identityMatrix[i] + w * cj[i];
+
+    foreach (i; 0 .. 16)
+        assert(isClose(blendedThenConjugated[i], conjugatedThenBlended[i],
+                       1e-4f, 1e-5f),
+            "conjugation must commute with the matrix lerp toward identity");
 }
 
 unittest { // The LOCAL front-facing test agrees DIRECTLY (no XOR, no
