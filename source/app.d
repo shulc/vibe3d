@@ -134,6 +134,7 @@ private enum int kToolPropsTabSnapping  = 1;
 private __gshared int g_toolPropsTab = kToolPropsTabMain;
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.image_list      : UiImageListCommand, g_imageListShown;
+import commands.ui.channels        : UiChannelsCommand, g_channelsShown;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 version (WithAI)
 import commands.ui.copilot_panel : g_copilotPanelShown;
@@ -5790,6 +5791,23 @@ void main(string[] args) {
                     // stays about geometry.
                     ImGui.DockBuilderDockWindow("Images",             rightId);
                     ImGui.DockBuilderDockWindow("Tool Properties",    rightId);
+                    // Task 0637: Channels is a sibling TAB of Tool Properties,
+                    // and that IS the tab strip — several windows in one dock
+                    // node grow an ImGui tab bar by themselves, so nothing is
+                    // hand-built (this build's binding has no `BeginTabBar`;
+                    // see the tool-properties strip below). Which of the two
+                    // sits in front, and whether the user splits them apart
+                    // instead, is then their layout, persisted by the same
+                    // versioned ini as every other panel. Docked AFTER Tool
+                    // Properties so a fresh profile opens on the curated form
+                    // and finds the exhaustive list one tab over.
+                    //
+                    // `kLayoutIniVersion` deliberately NOT bumped: an existing
+                    // ini has no entry for this window, so it opens floating
+                    // there until docked by hand — the same trade the Images
+                    // panel took, and cheaper than resetting everyone's layout
+                    // for one window.
+                    ImGui.DockBuilderDockWindow("Channels",           rightId);
                     ImGui.DockBuilderDockWindow("Viewport Properties",rightId);
                     ImGui.DockBuilderDockWindow("Tab bar",            topId);
                     ImGui.DockBuilderDockWindow("Status line",        botId);
@@ -5953,6 +5971,18 @@ void main(string[] args) {
         if (!command.g_testMode || g_imageListShown) {
             import ui.panels : drawImageListPanel;
             drawImageListPanel(app);
+        }
+
+        // ---- Channels (dockable; task 0637) ----
+        // Every channel of the focused item, uncurated — the surface that lets
+        // the properties form stay curated without a channel becoming
+        // unreachable. Same imgui-determinism rule as the two panels above:
+        // hidden by default in --test, opt-in via `ui.channels show`, so a
+        // third window cannot start swallowing the synthetic viewport drags
+        // every existing test drives.
+        if (!command.g_testMode || g_channelsShown) {
+            import ui.panels : drawChannelsPanel;
+            drawChannelsPanel(app);
         }
 
         // ---- Viewport Properties (floating) ----

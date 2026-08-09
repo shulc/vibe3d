@@ -1693,6 +1693,133 @@ void drawImageListPanel(EditorApp app) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Channels (task 0637) — EVERY channel of the focused item, uncurated.
+//
+// The second editing surface. The properties form beside it is CURATED: it
+// draws the rows `config/forms/layer_props.yaml` names, and that is the right
+// shape for a form somebody designed. It is only allowed to be curated because
+// this panel exists — without a generic surface, every per-kind section would
+// have to carry every channel or the channel would be reachable from nowhere,
+// which is precisely what happened to the ten image-plane channels task 0612
+// declared (`ui/channel_rows.d`'s intro tells that story in full).
+//
+// WHAT IS DRAWN here and what is DECIDED elsewhere: every assertable thing —
+// which rows exist, what each is labelled, which item each row's `layer.attr`
+// addresses, which rows are greyed — is `ui/channel_rows.d`, behind in-module
+// tests. An ImGui body cannot be driven headlessly, so what is left here is the
+// header, the memo and one `formsPanel.draw` call. Same split as
+// `ui/image_rows.d` and the image-plane clip picker above.
+//
+// NO TAB STRIP IS BUILT. Docking gives it for free: several windows docked into
+// one node grow an ImGui tab bar by themselves (app.d already docks Layers +
+// Images + Tool Properties + Viewport Properties into one node for exactly
+// that), so Properties-beside-Channels is the user's layout choice, persisted
+// through the same versioned layout ini every other panel uses. That also
+// keeps this clear of the fact that this build's ImGui binding exposes no
+// `BeginTabBar` (app.d's tool-properties strip is hand-built for that reason) —
+// docking tabs are a different mechanism and this build plainly has them.
+//
+// DELIBERATELY NOT GATED on `g_formsPanelEnabled` / a `formById` lookup. The
+// form here is SYNTHESISED from the live `params()`, not loaded from
+// config/forms, so gating it on the YAML kill-switch would make the only
+// exhaustive surface disappear together with the config file — the same
+// argument the clip picker above makes for sitting outside that block.
+//
+// Every write dispatches `layer.attr <index> <attr> <value>` through the SAME
+// interactive dispatch the properties form uses, so undo class, coalescing and
+// the change-bus publication are the command's, not this panel's. The panel
+// never mutates `document` directly.
+//
+// Visibility mirrors Layers / Images: always drawn in a normal run; in --test
+// HIDDEN by default (so it cannot swallow a synthetic viewport drag) until
+// `ui.channels show`.
+void drawChannelsPanel(EditorApp app) {
+    with (app) {
+    import ui.channel_rows : ChannelsKey, ChannelsModel, ChannelsProvider,
+                             channelsModel, kNoItemText;
+    import layer_params    : itemPropsTarget;
+
+    // Cached across frames: the provider (so its blocked set is not rebuilt per
+    // frame) and the built rows (so 24 command strings are not rebuilt per
+    // frame). Function-local statics rather than EditorApp fields — nothing
+    // outside this body reads them and the panel is main-thread-only, the same
+    // convention the Images panel's confirm state uses.
+    static ChannelsProvider prov;
+    static ChannelsModel    model;
+
+    // BALANCED ON EVERY EXIT, INCLUDING A THROWN ONE: `commandHandlerDelegate`
+    // and the interactive dispatch below both route through `applyOrRefire`,
+    // and a refused `layer.attr` (a readonly attr, an out-of-domain value)
+    // throws from inside the draw. `scope(exit)` keeps ImGui's window and style
+    // stacks from being left one deep, whose symptom would otherwise surface a
+    // frame later with no connection to the throw.
+    pushPanelChromeStyle();
+    scope(exit) popPanelChromeStyle();
+    scope(exit) ImGui.End();
+    if (ImGui.Begin("Channels")) {
+        // Binds the item-selection FOCUS, never `document.primary` — an image
+        // plane can never BE the primary, so a primary-bound panel would show
+        // none of the channels this one exists for. Reached through the shared
+        // `itemPropsTarget` so this surface and the properties form can never
+        // disagree about which item is being edited.
+        auto item = itemPropsTarget(&document());
+        if (item is null) {
+            ImGui.TextDisabled("%s", kNoItemText);
+        } else {
+            // Rebuild only on a key change (see `ChannelsModel.key`). A focus
+            // move rebinds from scratch; otherwise the one per-frame `params()`
+            // — the same allocation the renderer's own snapshot makes — catches
+            // an index shift or a payload appearing on an item that had none.
+            if (prov is null || model.key.item !is item) {
+                prov  = new ChannelsProvider(item);
+                model = channelsModel(&document());
+            } else {
+                auto k = ChannelsKey(item, document.indexOf(item),
+                                     prov.params().length);
+                if (k != model.key) {
+                    prov.rebind(item);
+                    model = channelsModel(&document());
+                }
+            }
+
+            // Header: whose channels these are. `%s` rather than passing the
+            // name as the format string — it is user text (same reason the
+            // Layers panel's kind badge does).
+            ImGui.TextUnformatted(model.title);
+            ImGui.SameLine();
+            ImGui.TextDisabled("%s", model.kindText);
+            ImGui.Separator();
+
+            // The base provider's own mid-gesture transform interlock, driven
+            // exactly as the Layers panel drives it: while a transform tool is
+            // up over a GEOMETRY selection, the item transform is a second,
+            // invisible writer and its rows grey out. Under `SelType.Item` the
+            // gizmo's only write target IS these rows, so it must not arm —
+            // the narrowing lives in `setTransformGuard`, read live from the
+            // authority rather than cached.
+            prov.base.setTransformGuard(
+                (cast(TransformTool)activeTool) !is null,
+                currentSelType(selTypeOrder));
+
+            // The SAME renderer the properties form uses, so a row here is
+            // resolved, drawn and written back by exactly one implementation.
+            // `layerIndex` is empty on purpose: these lines were synthesised
+            // with the live index already in them, so there is nothing for
+            // `rebindBindingTarget` to overwrite.
+            formsPanel.draw(model.form, prov,
+                            commandHandlerDelegate,
+                            formsInteractiveDispatch,
+                            /*activeToolId=*/"",
+                            /*stageId=*/"",
+                            /*layerIndex=*/"");
+        }
+    }
+    // `ImGui.End()` + `popPanelChromeStyle()` are the two `scope(exit)`s
+    // registered above.
+    }
+}
+
 // =============================================================================
 // Phase 5 -- CTX popup-cluster + side/status, moved TOGETHER (they are
 // mutually coupled: dispatchAction is called from renderFalloffStackItems/
