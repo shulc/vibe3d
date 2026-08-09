@@ -56,14 +56,16 @@ import log        : logWarn;
 // serialised a non-mesh item, so a created one would be gone after a save.
 // v8 (task 0616) writes and reads the item — its `"type"` token, its name,
 // its visibility, its twelve transform components and its link slots all
-// round-trip. What does NOT round-trip is the plane's OWN payload object:
-// `io/native.d` constructs a payload for `hasMesh` and for `hasImage` and
-// for nothing else, so a reloaded plane comes back with a null
-// `ImagePlaneData` and `layer_params.d`'s bundle silently falls back to the
-// base one — the ten channels read their defaults. That is a schema-side
-// finding recorded against the format stage, not a reason to withhold the
-// item: an unsaved plane is exactly as useful as an unsaved anything, and
-// the item itself survives.
+// round-trip. ~~What does NOT round-trip is the plane's OWN payload object …
+// the ten channels read their defaults.~~
+//
+// CLOSED (task 0612 Stage 9), and the finding was worth stating here: the
+// reader's payload block does two jobs — it reads a block off the wire AND it
+// constructs the object the channel injection binds into — and it had an arm
+// for `hasMesh`, an arm for `hasImage` and nothing else. The plane needs only
+// the second job, which is why an analysis that asked "does this kind need a
+// block in the file?" answered correctly (no) and still shipped a hole. The
+// arm exists now; `kV3dFormatVersion` never moved off 8.
 //
 // UNDO CLASS — Model (the base default): this creates document content.
 //

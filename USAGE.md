@@ -329,6 +329,84 @@ What hiding does, precisely:
 | Rotate around camera axis | Drag outer arc |
 | Snap to 15° | Ctrl + drag |
 
+## Reference images
+
+A **reference-image plane** puts a drawing or a photograph into the scene as a
+flat, axis-aligned quad you model against — the front and side views of a
+character, a blueprint, a scale reference. It is an ordinary item in the Layers
+panel with its own transform, so it is placed with the ordinary Move / Rotate /
+Scale gizmo in item mode; there is no separate dialog.
+
+**Its world size is your model's scale, and that is the point of the feature.**
+The plane's extent is the image's pixel dimensions times **Pixel Size** (metres
+per pixel, default `0.01`). A 512 × 256 image at the default is 5.12 m × 2.56 m
+— so if you know the reference is a person 1.8 m tall, set Pixel Size until the
+plane measures 1.8 m and everything you model against it comes out life-size.
+Get this right before you start and the model needs no rescaling afterwards.
+
+To set one up:
+
+1. **Load the image.** `Load...` in the **Images** panel. The image is a
+   document resource of its own — several planes can share one.
+2. **Add the plane.** `+Plane` in the Layers panel makes a `front` plane with
+   no image yet.
+3. **Point it at an image.** The **Image** dropdown in the item properties
+   lists every loaded image; pick one.
+4. **Place it.** Select the plane's row and use `W` / `E` / `R`. The panel's
+   numeric fields and the gizmo show the same values.
+
+The plane's own channels:
+
+| Channel | Default | What it does |
+|---|---|---|
+| **Projection** | Front | Which axis the plane faces: Top, Bottom, Front, Back, Left, Right. |
+| **Show in Perspective** | on | Whether it is drawn in perspective views as well as in its own orthographic one. |
+| **Pixel Size** | 0.01 | Metres per image pixel — the scale control described above. |
+| **Keep Aspect** | on | See below; it changes *which* size law applies. |
+| **Brightness** / **Contrast** / **Transparency** | 0 | Make a faint pencil drawing readable, or fade the plane back behind the wireframe. |
+| **Invert** | off | Flip the colours, so a dark drawing on a dark background becomes visible. |
+| **Flip Horizontal** | off | Mirror the image. Only the picture flips — the plane does not move. |
+| **Smooth** | off | Interpolate between pixels instead of showing them as blocks. |
+
+**A plane is only drawn in the view its Projection names**, plus perspective
+views if Show in Perspective is on. A `front` plane is not drawn in a `back`
+view — it is not mirrored into the opposite direction — and not in `top` or
+`left` either. If you cannot see a plane you just made, that is the first thing
+to check.
+
+**Two things about it are worth knowing before they look like bugs.**
+
+**With Keep Aspect on — the default — dragging one scale axis does not resize
+the plane.** The plane takes the *smaller* of the two scale factors and applies
+it to both, so raising one axis alone changes nothing at all and half the scale
+gizmo appears inert. This is intended: it is what keeps the image from being
+stretched out of proportion. Turn Keep Aspect **off** when you actually want to
+stretch a reference to fit something — then the two axes act independently, and
+the base size becomes the image *height* on both axes rather than its pixel
+dimensions.
+
+**A plane with no usable image draws nothing at all** — no placeholder, no
+outline, just empty space where you expected a picture. The reason is always
+one of four, and the item properties panel names which: *no image* (nothing
+picked yet), *image removed* (the image it pointed at was deleted from the
+document), *file not found* (the file has moved or been renamed; the item keeps
+its path and finds it again once it is back), or *hidden* (the layer's own
+visibility is off).
+
+What a reference plane deliberately does **not** do:
+
+- **It is never picked in the viewport.** Clicking through it selects the
+  geometry behind it; a rectangle drag over it selects the vertices behind it.
+  Select it from its row in the Layers panel.
+- **It is not geometry.** It is not exported to OBJ / glTF / FBX / LWO, it is
+  not framed by Fit, it contributes no snap points except its own pivot, and no
+  mesh operation sees it.
+- **There is no auto-fit** — no one-click "size this plane to the model". Set
+  Pixel Size, or scale it by hand.
+- **There is no "ignore the image size" mode.** The extent always comes from
+  the image's pixels; the scale multiplies it.
+- **A one-axis scale under Keep Aspect does nothing**, as above.
+
 ## Files & formats
 
 Vibe3D's native format is **`.v3d`** (JSON). Use File → New / Open / Save /

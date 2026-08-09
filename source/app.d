@@ -3258,11 +3258,20 @@ void main(string[] args) {
         // (currentCenter()/currentBasis() → listAttrs(), falloff_handles.d,
         // mid-drag reads from transform.d/xfrm_transform.d). The SAME
         // authority buildToolVts uses below for the per-frame SubjectPacket.
+        // Task 0612 Stage 8 (§7.1): the gizmo centre and the item basis bind
+        // the ITEM TRANSFORM TARGET, not `document.primary`. On an all-mesh
+        // document the two are the same object (proof on
+        // `Document.itemTransformTarget`), so every measured L2 centre is
+        // preserved bit-for-bit; they differ only once a mesh-less item holds
+        // the focus, which is the state that did not exist when L2 was
+        // measured. The SET (`registration.d`'s `itemTransformTargets`) reads
+        // the same funnel — narrowing one without the other would centre the
+        // gizmo on a layer it refuses to move (§7.2 consequence 1).
         g_pipeCtx.pipeline.add(new ActionCenterStage(() => &mesh(), &editMode,
-                                                       () => document.primary,
+                                                       () => document.itemTransformTarget(),
                                                        () => currentSelType(selTypeOrder)));
         g_pipeCtx.pipeline.add(new AxisStage(() => &mesh(), &editMode,
-                                              () => document.primary,
+                                              () => document.itemTransformTarget(),
                                               () => currentSelType(selTypeOrder)));
         g_pipeCtx.pipeline.add(new FalloffStage(() => &mesh(), &editMode));
         import toolpipe.stages.path : PathStage;

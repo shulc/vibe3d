@@ -136,8 +136,29 @@ unittest {
 // cache is empty — the plan's laziness claim, and the assertion that goes red
 // the day something starts decoding at load time.
 // ---------------------------------------------------------------------------
+// FIXED (task 0612 Stage 9): the decode half of this case was an ABSOLUTE
+// assertion (`decodes == 0`) against a counter the cache deliberately does NOT
+// reset — `decodes_` "counts what this PROCESS has decoded" and survives
+// `/api/reset` on purpose, so that "N frames of orbit produce one decode" can
+// be asserted across a reset at all. `run_test.d` runs many tests against ONE
+// app process, so the absolute form was really claiming "no test scheduled
+// before this one on this worker ever decoded anything" — which stopped being
+// true the moment Stage 5 landed a test that draws a bound plane.
+//
+// It was latent, not new: `./run_test.d --no-build -j 1 test_image_plane_draw
+// test_image_cache_api` reproduces it against the Stage-5 commit with nothing
+// from Stage 8 or 9 involved. The green `-j 8` runs in between were the
+// shuffle keeping the two apart, not a proof. Adding a third decoding test
+// made the collision likely enough to surface.
+//
+// The DELTA is the claim this case was always making — "loading clips that
+// nothing links to decodes nothing" — and it is order-independent. The
+// residency halves stay absolute, correctly: `reconcile` against a document
+// with no plane frees everything, so those really are zero whatever ran first.
 unittest {
     resetCube();
+    immutable long decodesBefore = getJson("/api/images")["cache"]["decodes"].integer;
+
     loadImage(bmpAt("a.bmp", 3, 2));
     loadImage(bmpAt("b.bmp", 5, 7));
     loadImage(bmpAt("c.bmp", 11, 4));
@@ -147,7 +168,8 @@ unittest {
         "three clips, no consumer: nothing is resident — a decode-at-load "
         ~ "implementation reads 3");
     assert(c["residentBytes"].integer == 0, "and no bytes are held");
-    assert(c["decodes"].integer == 0,
-        "and the decoder has not been called once — Stage 1 ships the cache "
-        ~ "with NO caller");
+    assert(c["decodes"].integer == decodesBefore,
+        "and loading three clips called the decoder ZERO more times — a "
+        ~ "decode-at-load implementation adds 3. before=" ~ decodesBefore.to!string
+        ~ " after=" ~ c["decodes"].integer.to!string);
 }

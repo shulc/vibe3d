@@ -451,9 +451,17 @@ final class LayerPropsProvider : ParamProvider {
 /// The sibling affordance added in the same change already gets this right
 /// (`ui/image_rows.d`'s `imageRemoveTarget` refuses an out-of-range index);
 /// this is the other half of one rule.
+/// TASK 0612 STAGE 8 — this rule was PROMOTED, not copied. It now lives on
+/// `Document.itemTransformTarget()` and this function delegates, because the
+/// gizmo centre (`actcenter.d`), the item basis (`axis.d`) and the moving set
+/// (`registration.d`) needed the same answer and were reading
+/// `document.primary` instead. Panel and gizmo showing the same thing is a
+/// property task 0614 shipped; keeping a second copy of the rule here is how
+/// it would have stopped being true. The doc comment above still describes the
+/// rule — the implementation is one call away.
 Layer itemPropsTarget(Document* doc) {
     if (doc is null) return null;
-    return doc.isMember(doc.focusedItem) ? doc.focusedItem : doc.primary;
+    return doc.itemTransformTarget();
 }
 
 // ---------------------------------------------------------------------------

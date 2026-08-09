@@ -9,7 +9,8 @@ import mesh;
 import math;
 import document : Document, Layer, ItemXform, sanitizeItemXform,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
-                  ItemKind, ImageData, kindInfo, kindFromToken, tokenOf;
+                  ItemKind, ImageData, ImagePlaneData,
+                  kindInfo, kindFromToken, tokenOf;
 import layer_params : LayerPropsProvider;
 import params   : Param, paramToJson, injectParamsInto;
 import io.image_path : storePathFor, resolveStoredPath, refreshImageMeta;
@@ -781,6 +782,19 @@ bool readV3d(string path, ref Document document)
             // (an image item's `colorspace` / `useAlpha` live on `ImageData`),
             // so the payload has to exist first or the provider falls back to
             // the base bundle and those channels are silently dropped.
+            //
+            // TWO JOBS, ONE `if` — the trap task 0612 Stage 9 walked into.
+            // This block reads a payload BLOCK off the wire and it CONSTRUCTS
+            // the object the channel injection binds into. A kind that needs
+            // only the second job still needs an arm here, and the plan that
+            // asked "does the plane need a payload block in the file?"
+            // answered the first question correctly (no) and skipped the
+            // second. Measured before the fix: the writer emitted all ten of
+            // the image plane's channels, the reader restored the envelope and
+            // every transform component, and every channel came back at its
+            // DEFAULT because `imagePlaneOrNull()` was null. If you add a
+            // payload-bearing kind, the question is not "what does it write",
+            // it is "what does the injection need to already exist".
             if (kindInfo(kind).hasMesh) {
                 auto mp = "mesh" in lj;
                 if (mp is null || mp.type != JSONType.object) {
@@ -816,6 +830,17 @@ bool readV3d(string path, ref Document document)
                         ~ "the item keeps its path and is marked missing",
                         li, img.storedPath));
             }
+            // The image plane has NO payload block in the format — its ten
+            // channels ride the generic `channels` object, which is why the
+            // v8 schema needed no version step for this kind and
+            // `kV3dFormatVersion` is still 8. What it does need is the
+            // payload OBJECT, constructed here so the injection a few lines
+            // down has somewhere to bind. Default-constructed and then
+            // overwritten by the file's channels: a channel the file omits
+            // keeps `ImagePlaneData`'s own default, which is the same rule
+            // every other channel already follows.
+            if (kindInfo(kind).hasImagePlane)
+                layer.imagePlaneRef() = new ImagePlaneData();
 
             // --- channels ---------------------------------------------------
             // Defaults FIRST, so a channel the file omits keeps a sensible

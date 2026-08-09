@@ -1210,14 +1210,105 @@ struct Document {
     /// which is the entire point of the item being placed with the ordinary
     /// transform tools.
     void selectedItemsInto(ref Layer[] outBuf) {
-        static bool moves(const(Layer) l) {
-            return l !is null && l.selected && kindInfo(l.kind).hasXform;
-        }
         size_t n = 0;
-        foreach (l; layers) if (moves(l)) ++n;
+        foreach (l; layers) if (movesWithGizmo(l)) ++n;
         if (outBuf.length != n) outBuf.length = n;
         size_t i = 0;
-        foreach (l; layers) if (moves(l)) outBuf[i++] = l;
+        foreach (l; layers) if (movesWithGizmo(l)) outBuf[i++] = l;
+    }
+
+    /// The capability predicate `selectedItemsInto` and `itemTransformTargets`
+    /// share: a selected item whose KIND declares an `ItemXform`. Hoisted out
+    /// of `selectedItemsInto`'s body (where it was a local `static`) so the
+    /// narrowed set below cannot drift from the wide one — the two differ by
+    /// exactly one term, and that term is visible in one place.
+    static bool movesWithGizmo(const(Layer) l) {
+        return l !is null && l.selected && kindInfo(l.kind).hasXform;
+    }
+
+    /// The single ITEM-TRANSFORM TARGET — the item the gizmo centres on, the
+    /// item the properties form binds, and the item the moving set is narrowed
+    /// around. Task 0612 Stage 8 (§7.1).
+    ///
+    /// One rule in one place. Before this existed there were two: the
+    /// properties form followed `focusedItem` (`layer_params.d`'s
+    /// `itemPropsTarget`, task 0616 Ph4) while `ActionCenterStage` and
+    /// `AxisStage` were wired straight to `document.primary` — so selecting a
+    /// mesh-less item put the gizmo on the MESH's pivot while the panel showed
+    /// the plane's numbers. `itemPropsTarget` now delegates here; so do
+    /// `actcenter.d`'s and `axis.d`'s `primarySrc_` bindings in `app.d`.
+    ///
+    /// NEUTRAL ON AN ALL-MESH DOCUMENT, as a proof and not a hope: every
+    /// mesh-kind selection route leaves `focusedItem is primary` —
+    /// `exclusiveSelect` sets both when the target `canBePrimary`,
+    /// `selectItem`'s Add arm sets both, `setPrimary` sets both. The two can
+    /// disagree only once a `canBePrimary == false` kind is selected, which is
+    /// a state that did not exist when the gizmo-centre law (L2) was measured.
+    ///
+    /// `isMember` rather than a null check: `focusedItem` can go STALE
+    /// (non-null, no longer in `layers`) while a loader replaces `layers` by
+    /// direct field assignment — see `isMember`'s own comment.
+    /// NOT `const`: it hands back a MUTABLE `Layer` (the caller writes
+    /// `xform` through it), and a `const` overload would have to cast the
+    /// constness off its own fields to do that — a hole, not a convenience.
+    /// Every consumer already holds a mutable `Document`.
+    Layer itemTransformTarget() {
+        return isMember(focusedItem) ? focusedItem : primary;
+    }
+
+    /// The item-transform MOVING SET, task 0612 Stage 8 — `selectedItemsInto`
+    /// narrowed by approximation **D** (plan §7.2).
+    ///
+    /// D in one line: **drop `primary` from the set when it is not the
+    /// transform target.** Everything else about the set is unchanged.
+    ///
+    /// WHY THERE IS ANYTHING TO DROP. `Document` forces its mesh edit target
+    /// to stay selected (`exclusiveSelect` leaves the selected set
+    /// `{target} ∪ {primary-after}`), so selecting a mesh-less item alone is
+    /// not representable: the set is `{plane, mesh}` and an ungated moving set
+    /// drags the model along with the reference image. The reference engine
+    /// has no such problem to patch — its edit target is a latched reference
+    /// that is not a member of the item selection, so there is nothing forcing
+    /// the mesh into the set in the first place. We approximate that
+    /// observable by SUBTRACTING the forced member instead of by unlatching
+    /// the pointer, which is a document-model change (model M) with its own
+    /// task.
+    ///
+    /// THE ONE DECLARED DIVERGENCE, and it is asserted, not merely written
+    /// down: select a mesh, then ctrl-ADD a plane, and the mesh stops moving
+    /// (the reference moves both). It UNDER-moves, which one ctrl-click on the
+    /// mesh recovers; the alternative available without model M over-moves,
+    /// silently writing an `ItemXform` onto the character on the COMMON path.
+    /// Wrong on the rare path beats wrong on the common one. `tests/
+    /// test_item_transform_focus.d`'s T-X6 pins it so model M's task flips it
+    /// deliberately rather than discovering it.
+    ///
+    /// THE CENTRE AND THE SET COME FROM THE SAME FUNNEL. `ActionCenterStage`
+    /// keeps its own single-item source (the shared centre follows the target,
+    /// not the set midpoint — L2, measured), and both now read
+    /// `itemTransformTarget()`. Narrowing the set without moving the centre
+    /// would leave the gizmo sitting on a layer it refuses to move.
+    void itemTransformTargets(ref Layer[] outBuf) {
+        auto target = itemTransformTarget();
+        immutable bool narrowed = target !is primary;
+        bool keep(const(Layer) l) {
+            return movesWithGizmo(l) && !(narrowed && l is primary);
+        }
+        size_t n = 0;
+        foreach (l; layers) if (keep(l)) ++n;
+        if (outBuf.length != n) outBuf.length = n;
+        size_t i = 0;
+        foreach (l; layers) if (keep(l)) outBuf[i++] = l;
+    }
+
+    /// Is `l` in the moving set? The derived per-layer bool `/api/layers`
+    /// reports as `transformTarget` (§7.2 consequence 2: the Layers panel will
+    /// highlight a layer that does not move, and the fix is to make that
+    /// observable rather than to hide it). No stored state — this is
+    /// `itemTransformTargets` membership, spelled without the buffer.
+    bool isTransformTarget(const(Layer) l) {
+        if (!movesWithGizmo(l)) return false;
+        return !(itemTransformTarget() !is primary && l is primary);
     }
 
     /// Foreground / background DERIVATION (Stage 2b: the SOLE source of truth).
@@ -2619,6 +2710,110 @@ unittest {
     // it does not touch the selection. Collapsing the two would make the
     // Layers panel and the moving set disagree about what the user picked.
     assert(clip.selected, "the clip stays selected; only the moving set narrows");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0612 Stage 8 — `itemTransformTarget` / `itemTransformTargets`, the walk
+// of every reachable focus-vs-primary state (plan §7.2's table, driven through
+// the REAL mutators rather than by writing the two pointers by hand — the
+// whole claim is that the mutators keep them in lockstep on an all-mesh
+// document, and a hand-written state could not have refuted it).
+//
+// WRONG IMPLEMENTATIONS THIS DISCRIMINATES AGAINST
+//   * the pre-Stage-8 code — no narrowing at all. Reads 2 in the "plane
+//     selected alone" row where the correct answer is 1, and names the MESH
+//     as the target where the correct answer is the plane.
+//   * "narrow to exactly the focus" (the tempting one-liner). Reads 1 in the
+//     multi-mesh row, where two meshes must both move — that is the row that
+//     kills it, and it is why the table has a ctrl-add-mesh step.
+//   * "drop the primary whenever anything else is selected". Reads 1 in the
+//     multi-mesh row too, for a different reason: there focus IS primary.
+//
+// The mesh-only rows are the CONTROL. They are the entire neutrality proof
+// for changing what four call sites bind, so they are asserted first and
+// their answers are the pre-Stage-8 answers, unchanged.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+    Document doc;
+    auto meshA = new Layer;  meshA.name = "A";
+    auto meshB = new Layer;  meshB.name = "B";
+    auto plane = new Layer;  plane.name = "P"; plane.kind = ItemKind.ImagePlane;
+    auto plane2 = new Layer; plane2.name = "P2"; plane2.kind = ItemKind.ImagePlane;
+    doc.layers = [meshA, meshB, plane, plane2];
+    doc.primary = meshA; doc.focusedItem = meshA; meshA.selected = true;
+
+    Layer[] buf;
+    string names() {
+        string s;
+        foreach (i, l; buf) { if (i) s ~= ","; s ~= l.name; }
+        return "{" ~ s ~ "}";
+    }
+
+    // --- CONTROL: an all-mesh document is bit-for-bit what it always was ---
+    doc.exclusiveSelect(meshA);
+    assert(doc.itemTransformTarget() is meshA && doc.itemTransformTarget() is doc.primary,
+        "all-mesh control: the target IS the primary, so every measured L2 "
+        ~ "centre is preserved");
+    doc.itemTransformTargets(buf);
+    assert(buf.length == 1 && buf[0] is meshA, "select mesh A ⇒ {A}, got " ~ names());
+
+    doc.selectItem(meshB, SelMode.Add);          // ctrl-add a second MESH
+    assert(doc.primary is meshB && doc.focusedItem is meshB,
+        "Add on a primary-eligible kind moves BOTH pointers — this is the "
+        ~ "lockstep the neutrality proof rests on");
+    doc.itemTransformTargets(buf);
+    assert(buf.length == 2 && buf[0] is meshA && buf[1] is meshB,
+        "MULTI-MESH DRAG IS UNTOUCHED: {A,B}. A 'narrow to the focus' "
+        ~ "implementation reads {B} here. got " ~ names());
+
+    // --- the whole point: the plane selected alone ------------------------
+    doc.selectItem(plane, SelMode.Set);
+    assert(doc.primary is meshA || doc.primary is meshB,
+        "vacuity guard: a plane can never become primary, so the mesh edit "
+        ~ "target is still a mesh — without this the next assertion could be "
+        ~ "passing because nothing is selected at all");
+    assert(plane.selected && doc.primary.selected,
+        "vacuity guard: the document invariant FORCES the mesh to stay "
+        ~ "selected — if it did not, there would be nothing for D to subtract "
+        ~ "and this whole approximation would be unnecessary");
+    assert(doc.itemTransformTarget() is plane,
+        "the target follows the FOCUS onto the plane — the pre-Stage-8 "
+        ~ "binding reads the mesh here, which is the gizmo sitting on the "
+        ~ "character while the panel shows the plane's numbers");
+    doc.itemTransformTargets(buf);
+    assert(buf.length == 1 && buf[0] is plane,
+        "select the plane ⇒ {P} ONLY. The ungated set reads {A-or-B,P} and "
+        ~ "drags the model with the reference image. got " ~ names());
+    assert(!doc.isTransformTarget(doc.primary) && doc.isTransformTarget(plane),
+        "…and the derived per-layer bool `/api/layers` reports agrees with "
+        ~ "the set it is derived from");
+
+    // --- ctrl-add the mesh back: recovery, and it is ONE click ------------
+    auto p = doc.primary;
+    doc.selectItem(p, SelMode.Add);
+    assert(doc.focusedItem is p, "Add re-homes the focus onto the mesh");
+    doc.itemTransformTargets(buf);
+    assert(buf.length == 2,
+        "ctrl-adding the mesh brings it back into the set — the divergence "
+        ~ "UNDER-moves and one ctrl-click recovers it. got " ~ names());
+
+    // --- two planes, mesh still forced in --------------------------------
+    doc.selectItem(plane, SelMode.Set);
+    doc.selectItem(plane2, SelMode.Add);
+    doc.itemTransformTargets(buf);
+    assert(buf.length == 2 && buf[0] is plane && buf[1] is plane2,
+        "P1 + P2 move together and the forced mesh does not — got " ~ names());
+
+    // --- ctrl-REMOVE the plane: the Remove arm re-homes focus -------------
+    doc.selectItem(plane2, SelMode.Remove);
+    doc.selectItem(plane,  SelMode.Remove);
+    assert(doc.focusedItem is doc.primary,
+        "Remove re-homes the focus to the primary, so the narrowing lifts "
+        ~ "by itself — no stored bit to go stale");
+    doc.itemTransformTargets(buf);
+    assert(buf.length == 1 && buf[0] is doc.primary,
+        "…and the set recovers to the mesh alone. got " ~ names());
 }
 
 // ---------------------------------------------------------------------------

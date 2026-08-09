@@ -916,13 +916,15 @@ void drawViewportPropsPanel(EditorApp app) {
 // user-reachable creation route for a non-mesh kind, and the ban's stated
 // premise — that the format could not persist one — is gone: v8 writes and
 // reads a non-mesh item's type token, name, visibility, transform and links.
-// The premise is gone for the ENVELOPE only, and that limit is recorded where
-// it belongs (`commands/image_plane/commands.d`, `ImagePlaneAdd`): the
-// reader constructs a payload object for `hasMesh` and `hasImage` and for no
-// other capability, so a reloaded plane's own ten channels come back at their
-// defaults. Creating a plane is still worth doing — an unsaved plane is as
-// useful as an unsaved anything — but do not read this comment as saying the
-// round-trip is complete.
+// ~~The premise is gone for the ENVELOPE only … the reader constructs a
+// payload object for `hasMesh` and `hasImage` and for no other capability, so
+// a reloaded plane's own ten channels come back at their defaults.~~
+//
+// CLOSED (task 0612 Stage 9). That was true when Stage 7 wrote it and is the
+// defect Stage 9 was for: the reader's payload block also constructs the
+// object the channel injection binds into, and it grew its `hasImagePlane`
+// arm. The round-trip is complete — envelope AND channels AND the clip link,
+// pinned by `tests/test_v3d_image_plane.d`, with `kV3dFormatVersion` still 8.
 //
 // Empty-kind items are still uncreatable, and deliberately: `ItemKind.Empty`
 // has no channels, no payload and nothing to draw, so a button for it would
@@ -1033,6 +1035,26 @@ void drawLayerListPanel(EditorApp app) {
                               : isFocusRow   ? "@"
                               : l.selected   ? "*" : " ";
             bool rowActive = isPrimaryRow || isFocusRow;
+            // Task 0612 Stage 8 (§7.2 consequence 2) — a SELECTED row that the
+            // item gizmo will NOT move is drawn dimmed. Reachable in exactly
+            // one state: the document invariant forces the mesh edit target to
+            // stay selected, so selecting a mesh-less item leaves the mesh in
+            // the set while approximation D drops it from the moving set. The
+            // row stays selected and stays clickable — only its marker greys,
+            // which is the difference between "this does not move" being
+            // visible and being something the user discovers by dragging.
+            immutable bool dimNonTarget = l.selected && !document.isTransformTarget(l);
+            //
+            // The literal shade, not `ImGuiCol.TextDisabled`: this binding's
+            // `ImGuiStyle` is opaque (no `Colors` array to read), and the
+            // panel runs on a LIGHT background with `ImGuiCol.Text` pushed to
+            // black at the top of this window — ImGui's own semi-transparent
+            // grey would read as washed out here. (0.235) is the same
+            // "disabled" shade the popup palette (`imgui_style.d`) and the
+            // undo counter below already use.
+            if (dimNonTarget)
+                ImGui.PushStyleColor(ImGuiCol.Text,
+                                     ImVec4(0.235f, 0.235f, 0.235f, 1.0f));
             if (ImGui.Selectable(marker, rowActive,
                                  ImGuiSelectableFlags.AllowItemOverlap,
                                  ImVec2(14, 0))) {
@@ -1040,6 +1062,7 @@ void drawLayerListPanel(EditorApp app) {
                     commandHandlerDelegate("layer.select",
                         `{"index":` ~ to!string(idx) ~ `,"mode":"set"}`);
             }
+            if (dimNonTarget) ImGui.PopStyleColor();
             ImGui.SameLine();
             // Kind badge (task 0615 Stage 6) — a dim wire token
             // ("mesh"/"empty") so a non-mesh row is legible in the panel even

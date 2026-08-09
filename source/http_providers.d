@@ -486,9 +486,20 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 string srcJson = "null";
                 if (l.hasImagePlane)
                     srcJson = JSONValue(sourceToken(imagePlaneSource(document, l))).toString();
+                // Task 0612 Stage 8 (§7.2 consequence 2) — DERIVED, no stored
+                // state: is this layer in the item-transform moving set?
+                //
+                // It exists because the narrowing is otherwise INVISIBLE. The
+                // Layers panel keeps rendering the mesh as selected (it IS
+                // selected — the document invariant forces it), while a Move
+                // gesture no longer touches it. `selected` alone can no longer
+                // answer "will the gizmo move this", so the answer is reported
+                // rather than left to be inferred from a diff.
+                immutable bool isXTarget = document.isTransformTarget(l);
                 a.put(format(
                     `{"index":%d,"name":%s,"type":%s,"visible":%s,"background":%s,` ~
                     `"active":%s,"selected":%s,"primary":%s,"focused":%s,` ~
+                    `"transformTarget":%s,` ~
                     `"vertexCount":%s,"faceCount":%s,` ~
                     `"mutationVersion":%s,"xform":%s,"parent":%d,` ~
                     `"links":%s,"imageSource":%s}`,
@@ -500,6 +511,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                     l.selected ? "true" : "false",
                     document.isPrimary(l) ? "true" : "false",
                     document.isFocused(l) ? "true" : "false",
+                    isXTarget ? "true" : "false",
                     vcJson, fcJson, mvJson, xb.data, parentIdx,
                     lb.data, srcJson));
             }
