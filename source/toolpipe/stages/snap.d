@@ -56,12 +56,14 @@ private static immutable IntEnumEntry[] snapModeEntries = [
 /// the tab entry and the section header can never say different things and
 /// can never drift apart from what a test pins.
 ///
-/// Load-bearing for the id collision this constant exists to make testable:
-/// the panel renders a stage's rows through `PropertyPanel.drawProvider`,
-/// which pushes NO id scope, so a row label and the title above it live in
-/// one ImGui id namespace. Any row whose label equals this string collides
-/// with the title — whichever form the title currently takes. The unittest
-/// at the bottom of this module is that assertion.
+/// It was once load-bearing for an ImGui id collision: the panel pushed no id
+/// scope, so a row label and the title above it shared one namespace and any
+/// row labelled with this string became the same widget as the title. Task
+/// 0640 gave every section and every row a scope of its own, so that is no
+/// longer true — what the unittest at the bottom of this module still pins is
+/// legibility (one name must not stand for two controls a user has to tell
+/// apart), plus the fact that the tab entry and the section header cannot
+/// drift, which is what single-sourcing the word buys.
 enum kSnapDisplayName = "Snapping";
 
 // ---------------------------------------------------------------------------
@@ -471,16 +473,16 @@ class SnapStage : Stage, Operator {
         Param[] ps;
         // MASTER TOGGLE. The wire name stays `enabled` — it is on the HTTP
         // surface and in tests, and renaming it would be a breaking change
-        // for zero gain. The LABEL is what had to move (task 0638): it used
-        // to read "Snapping", the same text as this section's own title, and
-        // `drawProvider` pushes no id scope, so title and row hashed to one
+        // for zero gain. The LABEL moved for task 0638: it used to read
+        // "Snapping", the same text as this section's own title, and back then
+        // the panel pushed no id scope anywhere, so title and row hashed to one
         // ImGui id and the widget the user clicked was decided by draw order.
         //
-        // Not "Enabled" either, which is what the constrain and path stages
-        // call their master toggles — those two ALREADY collide with each
-        // other whenever both sections are in the same column, and joining
-        // that collision to leave this one would be a lateral move. A label
-        // that names its own stage cannot collide with a sibling stage's.
+        // THAT CONSTRAINT IS GONE (task 0640): the panel now opens an id scope
+        // per section and per row, so a repeated label is legal — it costs
+        // nothing but the reader's ability to tell two controls apart. The
+        // label stays "Enable Snapping" because it reads better under a title
+        // that already says "Snapping", not because anything would break.
         ps ~= Param.bool_("enabled", "Enable Snapping", &enabled, false);
         ps ~= Param.intEnum_("snapMode", "Mode", cast(int*)&snapScope,
                              snapModeEntries, cast(int)SnapMode.Global);
@@ -1633,25 +1635,27 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// THE PANEL'S ID NAMESPACE IS FLAT, SO THE LABELS HAVE TO BE DISTINCT
-// (task 0638).
+// THIS SECTION'S LABELS ARE DISTINCT — FOR THE READER, NOT FOR ImGui
+// (task 0638, re-founded by task 0640).
 //
-// What this pins, and why it is a real measurement rather than a restatement
-// of the source: `PropertyPanel.drawProvider` walks `params()` and calls the
-// widget helper with each `Param.label` and NO `ImGui.PushID` around it, and
-// the title above the rows — the collapsing header in the section loop, or
-// the tab strip's entry, both of which are `kSnapDisplayName` — is emitted in
-// that same enclosing scope. ImGui hashes a widget's id from its label within
-// the current id scope, so two of these strings being equal is two widgets
-// being one widget: the click lands on whichever drew first and the other is
-// unreachable. That is the owner-reported defect, and it was live — the
-// master toggle shipped labelled "Snapping", the same text as the title.
+// The original reason was mechanical: the panel pushed no id scope anywhere,
+// so this section's title and every one of its rows hashed against ONE seed
+// and two equal strings were two widgets being one widget — the click landed
+// on whichever drew first and the other was unreachable. The master toggle
+// shipped labelled "Snapping", the same text as the title, and that was the
+// owner-reported defect.
 //
-// The ImGui half of that is not observable from a unittest (no context, no
-// frame, no window). The LABELS are, and they are the whole cause: given the
-// flat namespace, distinct labels is exactly the condition. So this asserts
-// the condition, not the symptom, and it says so rather than claiming to have
-// watched ImGui not complain.
+// That reason no longer holds. `PropertyPanel` now opens an id scope per
+// section (around the header as well as the body) and per row, keyed on the
+// stage id and the parameter's WIRE NAME — so identical labels are legal
+// anywhere in the column, and proving that is what
+// `tests/test_property_panel_id_scope.d` does against the live ids.
+//
+// What survives is a LEGIBILITY rule, and only for this one stage: a section
+// titled "Snapping" holding a row also labelled "Snapping", or two type
+// toggles both reading "Grid", is a control the user cannot name — a UI
+// defect, not an identity one. Do NOT read this as a rule about the column:
+// generalising it back is exactly the trap 0640 removed.
 //
 // The wire name is pinned in the same breath, in the opposite direction: the
 // LABEL had to move and the NAME must not, because `enabled` is the HTTP key
@@ -1674,16 +1678,17 @@ unittest {
     foreach (ref p; ps)
         assert(p.label != kSnapDisplayName,
             format("row '%s' is labelled \"%s\", the same text as the title "
-                 ~ "above it — one flat id scope, so the two widgets hash to "
-                 ~ "one id and one of them cannot be clicked",
-                   p.name, p.label));
+                 ~ "above it — legal to ImGui since task 0640, but the user "
+                 ~ "then has two controls with one name and no way to say "
+                 ~ "which is which", p.name, p.label));
 
     // --- 2. No two rows repeat each other either. --------------------------
     foreach (i, ref a; ps)
         foreach (ref b; ps[i + 1 .. $])
             assert(a.label != b.label,
                 format("rows '%s' and '%s' share the label \"%s\" — same "
-                     ~ "collision, one row deeper", a.name, b.name, a.label));
+                     ~ "unreadable pair, one row deeper", a.name, b.name,
+                       a.label));
 
     // --- 3. The wire name did NOT move with the label. ---------------------
     bool sawEnabled = false;

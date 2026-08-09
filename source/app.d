@@ -6409,6 +6409,13 @@ void main(string[] args) {
             // the user's own resize sticky in a normal run.
             ImGui.SetNextWindowSize(ImVec2(260, 520), ImGuiCond.FirstUseEver);
             if (ImGui.Begin("Tool Properties")) {
+                // Start/finish one recording of this column's id namespace
+                // (task 0640) — a no-op outside --test. Publishing at the end
+                // means a reader on the HTTP thread sees whole columns only.
+                import property_panel : beginToolPropsIdColumn,
+                                        endToolPropsIdColumn;
+                beginToolPropsIdColumn();
+                scope(exit) endToolPropsIdColumn();
                 // ---- Tabs (task 0544) ------------------------------------
                 // The panel had none: the active tool's properties and every
                 // pipe stage's section shared one column, and snapping was not
@@ -6437,10 +6444,13 @@ void main(string[] args) {
                 // Begin/End pairing to leave unbalanced if a page throws.
                 //
                 // The Snapping entry's TEXT is the stage's own display name,
-                // not a literal: tab and section header are the same word by
-                // construction, so the collision test in the snap stage —
-                // "no row inside the section repeats the section's title" —
-                // covers this strip too instead of assuming it matches.
+                // not a literal, so tab and section header are the same word by
+                // construction and cannot drift apart.
+                //
+                // The strip itself sits at the WINDOW's id scope — everything
+                // below it (the tool's rows, every section) is inside a scope
+                // of its own since task 0640, so an entry here can no longer
+                // collide with a row that happens to share its text.
                 if (kSnappingHasOwnTab) {
                     import toolpipe.stages.snap : kSnapDisplayName;
                     static immutable string[] kTabs = ["Main", kSnapDisplayName];
@@ -6474,6 +6484,13 @@ void main(string[] args) {
                     // the panel is open ONLY because a falloff is active (no tool),
                     // skip straight to the per-stage sections below.
                     if (activeTool !is null) {
+                    // The tool's own rows get an id scope of their own for the
+                    // same reason every stage section does (task 0640): they
+                    // share this window with the tab strip, the section headers
+                    // and every stage's rows, and a tool must be free to label
+                    // a row whatever fits without consulting that list.
+                    propertyPanel.pushScope(activeToolId);
+                    scope(exit) propertyPanel.popScope();
                     import forms : g_formsPanelEnabled, formsForTool;
                     auto matchingForms = g_formsPanelEnabled
                                        ? formsForTool(activeToolId) : null;
@@ -6541,10 +6558,15 @@ void main(string[] args) {
                             // Default-open so the extra stage sections (Action
                             // Center, Falloff, ...) are expanded without a
                             // click; the user can still collapse any of them.
-                            if (ImGui.CollapsingHeader(stage.displayName(),
-                                                       ImGuiTreeNodeFlags.DefaultOpen)) {
-                                drawStageBody(stage);
-                            }
+                            //
+                            // Header AND body go through drawSection so both
+                            // land inside the stage's id scope (task 0640) —
+                            // the header cannot be drawn here and the scope
+                            // opened inside the body, because CollapsingHeader
+                            // takes its id from its own label.
+                            propertyPanel.drawSection(
+                                stage.id(), stage.displayName(),
+                                () { drawStageBody(stage); });
                         }
                     }
                 } // if (inMain)
@@ -6574,7 +6596,12 @@ void main(string[] args) {
                         auto stage = cast(Stage)s;
                         if (stage is null) continue;
                         if (stage.taskCode() != TaskCode.Snap) continue;
-                        drawStageBody(stage);
+                        // Same id scope the section loop opens (task 0640), so
+                        // the page and the section put identical rows under
+                        // identical ids — the tab is a location, not a second
+                        // namespace.
+                        propertyPanel.drawScoped(stage.id(),
+                                                 () { drawStageBody(stage); });
                     }
                 }
             }

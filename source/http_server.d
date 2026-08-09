@@ -1748,6 +1748,30 @@ class HttpServer {
                                    e.msg.replace("\"", "\\\"") ~ "\"}";
                 }
             }
+        } else if (request.path == "/api/toolprops/ids" && request.method == "GET") {
+            // Task 0640 — the ImGui id namespace of the last Tool Properties
+            // column drawn: one entry per section header and two per row (the
+            // widget's id, and a probe of the row's id-stack seed).
+            //
+            // NOT marshaled, and it does not need to be: the panel publishes a
+            // finished column under a lock in one assignment, and this reads it
+            // back under the same lock. There is no live structure to walk on
+            // the wrong thread — unlike /api/tool/handles, whose registry is
+            // rebuilt from empty mid-draw.
+            //
+            // Empty `items` is the honest answer when the panel has not drawn
+            // (hidden by default under --test until `ui.toolProperties show`),
+            // when it is collapsed, or in a non-test run where nothing records.
+            response.headers["Content-Type"] = "application/json";
+            try {
+                import property_panel : toolPropsIdsJson;
+                response.statusCode = 200;
+                response.body = toolPropsIdsJson();
+            } catch (Exception e) {
+                response.statusCode = 500;
+                response.body = "{\"error\": \"Failed to retrieve tool props ids\", \"message\": \"" ~
+                               e.msg.replace("\"", "\\\"") ~ "\"}";
+            }
         } else if (request.path == "/api/layers" && request.method == "GET") {
             // Layer list. MARSHALED (task 0612 Stage 3) — it used to be served
             // straight from the HTTP thread on the grounds that "tests are
