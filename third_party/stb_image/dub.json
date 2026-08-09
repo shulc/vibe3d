@@ -11,13 +11,12 @@
 	"targetType": "sourceLibrary",
 	"importPaths": [],
 	"systemDependencies": "CMake, Ninja",
+	"_comment-prebuild": "These commands must be INCREMENTAL. This package is a `sourceLibrary`, so it has no artifact of its own and dub can never judge it up to date -- its preBuildCommands therefore run on every build that builds anything at all. The linux/osx lines used to begin with `rm -rf $..._PACKAGE_DIR/out`, which threw the previous result away and recompiled the translation unit every time: measured on this host, the cold C compile is 2.46s against 0.00s for a warm re-run, and because `out/libstb_image_vendor.a` is also this package's `lflags` input, deleting it made the CONSUMING executable stale too -- so a `dub build` with nothing whatsoever changed still relinked vibe3d, 7.9s instead of the 0.2s dub spends deciding there is nothing to do. Re-running `cmake -B` over an existing build directory is the supported incremental path (a changed `-D...` on the command line overwrites the cached entry; a build directory that cannot be reused -- e.g. the package was moved -- makes CMake fail loudly rather than silently produce a stale library), and `cmake -B` creates the directory itself, which is why there is no `mkdir` either. The windows lines never had the wipe; all three platforms now agree.",
 	"preBuildCommands-linux": [
-		"rm -rf $STB_IMAGE_VENDOR_PACKAGE_DIR/out && mkdir -p $STB_IMAGE_VENDOR_PACKAGE_DIR/out",
 		"cmake -B $STB_IMAGE_VENDOR_PACKAGE_DIR/out -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $STB_IMAGE_VENDOR_PACKAGE_DIR",
 		"cmake --build $STB_IMAGE_VENDOR_PACKAGE_DIR/out --config Release"
 	],
 	"preBuildCommands-osx": [
-		"rm -rf $STB_IMAGE_VENDOR_PACKAGE_DIR/out && mkdir -p $STB_IMAGE_VENDOR_PACKAGE_DIR/out",
 		"cmake -B $STB_IMAGE_VENDOR_PACKAGE_DIR/out -DCMAKE_GENERATOR=Ninja -DCMAKE_BUILD_TYPE=Release $STB_IMAGE_VENDOR_PACKAGE_DIR",
 		"cmake --build $STB_IMAGE_VENDOR_PACKAGE_DIR/out --config Release"
 	],
