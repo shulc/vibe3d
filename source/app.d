@@ -4736,9 +4736,16 @@ void main(string[] args) {
             if (pipeGizmoHost.tryClaimDown(btn, vpg, fp, pipeGizmoHost.ownPool()))
                 return;
         }
-        if (btn.button == SDL_BUTTON_LEFT && btn.clicks == 2 && activeTool is null) {
+        if (btn.button == SDL_BUTTON_LEFT && btn.clicks == 2 && activeTool is null
+            && viewportPickType(selTypeOrder) != SelType.Item) {
             // Double-click loop / connect — these mutate selection. Wrap as
             // an interactive edit so undo restores the prior selection.
+            //
+            // Item-inclusive gate (task 0655): this is a GEOMETRY pick site
+            // like every other, and it reached `editMode` — so under the item
+            // type a double-click grew the geometry selection the user could
+            // not even see. It falls through to the single-click handling
+            // below, where the 0643 item branch takes it.
             beginInteractiveSelEdit();
             if (editMode == EditMode.Edges)
                 new SelectLoop(&mesh(), cameraView, editMode).apply();
@@ -4922,7 +4929,17 @@ void main(string[] args) {
                 SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts, btn.x, btn.y, true, gest);
                 if (activeTool.onMouseButtonUp(btn, vts)) return;
             }
-            if (rmbPath.length >= 3) {
+            // The rubber-band is a VIEWPORT PICK, so it asks the ordering with
+            // the item-inclusive candidate set (task 0655) — the same query
+            // the click and the hover ask. Everything inside this block
+            // branches on `editMode`, which is a cache of that query asked
+            // WITHOUT items, so under the item type a lasso used to clear the
+            // geometry selection and rebuild it from whatever the band
+            // enclosed. There is no item rubber-band to run instead: the band
+            // is still drawn and still cleared below, it simply selects
+            // nothing.
+            if (rmbPath.length >= 3
+                && viewportPickType(selTypeOrder) != SelType.Item) {
                 // ---------------------------------------------------------
                 // Task 0617 Stage 3 (doc/picking_item_transform_plan.md):
                 // this block used to project RAW LOCAL vertices while Stage 1
@@ -5434,12 +5451,17 @@ void main(string[] args) {
         if (activeTool !is null && activeTool.isDragging()) return;
         hovered = -1;
         if (!viewportInputAllowed() || doingCameraDrag) return;
-        // No active tool → only the current editMode picks. With an
-        // active tool, defer to `wantsHoverForType` so tools like
-        // XfrmTransformTool (with falloff.element wired) can opt in to multi-type hover regardless
-        // of editMode (Stage 14.9).
+        // No active tool → ASK THE ORDERING, with the item-inclusive candidate
+        // set (task 0655). This line used to read `if (editMode != em) return;`
+        // and that was the defect in one line: `editMode` is a cache of the
+        // SAME query asked without `Item`, so it answers a geometry type even
+        // while items are the current selection type — and this hover picker
+        // then ran, lighting a vertex the user cannot select. With an active
+        // tool, defer to `wantsHoverForType` so tools like XfrmTransformTool
+        // (with falloff.element wired) can opt in to multi-type hover
+        // regardless of the current type (Stage 14.9).
         if (activeTool is null) {
-            if (editMode != em) return;
+            if (viewportPickType(selTypeOrder) != geometrySelType(em)) return;
         } else {
             if (!activeTool.wantsHoverForType(em)) return;
         }
@@ -5478,8 +5500,10 @@ void main(string[] args) {
         if (activeTool !is null && activeTool.isDragging()) return;  // freeze hover mid-drag
         hoveredFace = -1;
         if (!viewportInputAllowed() || doingCameraDrag) return;
+        // The face twin of the gate in `pickHover` — same query, same reason
+        // (task 0655).
         if (activeTool is null) {
-            if (editMode != EditMode.Polygons) return;
+            if (viewportPickType(selTypeOrder) != SelType.Polygon) return;
         } else {
             if (!activeTool.wantsHoverForType(EditMode.Polygons)) return;
         }
@@ -5580,15 +5604,29 @@ void main(string[] args) {
         int pickedVertex = -1;
         int pickedEdge = -1;
         int pickedFace = -1;
-        if (editMode == EditMode.Vertices) {
-            pickVertices(vp, false);
-            pickedVertex = hoveredVertex;
-        } else if (editMode == EditMode.Edges) {
-            pickEdges(vp, false);
-            pickedEdge = hoveredEdge;
-        } else if (editMode == EditMode.Polygons) {
-            pickFaces(vp, false);
-            pickedFace = hoveredFace;
+        // The ordering, item-inclusive (task 0655) — NOT `editMode`. The
+        // mouse-DOWN path already returns before this under the item type
+        // (the 0643 branch in handleMouseButtonDown), but this delegate is
+        // ALSO bound to mouse-MOTION during a select drag, and a drag that
+        // outlives a type flip would otherwise resume picking geometry from a
+        // cache that never mentions items. Under `SelType.Item` none of the
+        // three branches runs and the triple stays all -1, which
+        // `publishElementCandidates` already reads as "no element here".
+        final switch (viewportPickType(selTypeOrder)) {
+            case SelType.Vertex:
+                pickVertices(vp, false);
+                pickedVertex = hoveredVertex;
+                break;
+            case SelType.Edge:
+                pickEdges(vp, false);
+                pickedEdge = hoveredEdge;
+                break;
+            case SelType.Polygon:
+                pickFaces(vp, false);
+                pickedFace = hoveredFace;
+                break;
+            case SelType.Item:
+                break;
         }
         publishElementCandidates(mx, my, pickedVertex, pickedEdge, pickedFace);
         // Stash for the mouse-DOWN capture hook (cheap; the motion path runs

@@ -1,0 +1,555 @@
+// Task 0655 — the selection-type ORDERING is the gate for a viewport pick, and
+// `editMode` is not.
+//
+// ---------------------------------------------------------------------------
+// Why the obvious assertion here is worth nothing
+// ---------------------------------------------------------------------------
+// "In Items mode a vertex was not selected" is satisfied in full by an
+// implementation that switched geometry picking off entirely, in every mode,
+// and by one that clears the geometry selection on the way into Items. Both are
+// worse than the bug. So EVERY flow below asserts both sides of the same
+// gesture:
+//
+//   * under the item type the gesture must not change the geometry selection,
+//     AND the geometry selection that was already there must still be there
+//     (read back as a VALUE from /api/selection, not as "nothing happened");
+//   * the SAME gesture in a geometry type must change it — the control arm. An
+//     implementation that turned picking off reddens the control, not the item
+//     arm, which is the only way to tell the fix from the amputation.
+//
+// The drawing half gets the same treatment. "Not drawn" is asserted as a pixel
+// census that is ZERO for the selection colour while the item-highlight colour
+// at the very same pixels is NON-zero — so a frame that simply failed to render
+// cannot pass — and then the type is switched back and the census must return
+// to its full value.
+//
+// THREE ITEMS, not one. With one item "the item under the cursor" and "all of
+// them" are the same set, and this area has sprung that trap twice (0647 had to
+// rebuild its capture for it). Here the three earn their keep concretely: the
+// standing geometry selection lives on the MIDDLE item, and U4 clicks the two
+// OTHER items to move the primary away and back, so "the selection is still
+// there" is a claim about a selection that survived a primary round trip rather
+// than about a document that never moved.
+//
+// ---------------------------------------------------------------------------
+// What is deliberately NOT asserted here
+// ---------------------------------------------------------------------------
+// The per-frame HOVER pickers share the same one-line gate as the click and the
+// band, but under the item type their result is not observable from outside the
+// process: `/api/tool/state` publishes `hover.{vertex,edge,face}` only while a
+// tool is active (with no tool it serves `{}`), and with a tool active the gate
+// under test is bypassed for `wantsHoverForType`. Their only other surface is
+// the drawn frame, which the same task also stops drawing — so a pixel reading
+// there could not tell the pick gate from the draw gate. Named rather than
+// faked with a reading that cannot separate the two.
+//
+// ---------------------------------------------------------------------------
+// VERIFIED BY MUTATION — each applied to a green tree, built, run; the
+// assertion named is the one that fired, with the value it OBSERVED.
+// ---------------------------------------------------------------------------
+//   * the rubber band goes back to `editMode` (the item-inclusive gate on the
+//     lasso block removed)
+//       -> U2 "under the item type the band must leave the geometry selection
+//          alone — [0, 2, 4] became [1, 2, 3, 4, 5, 6, 7]".
+//   * the double-click loop/connect goes back to `editMode`
+//       -> U3 "under the item type a double-click must leave the geometry
+//          selection alone — [0, 2, 4] became [0, 1, 2, 3, 4, 5, 6, 7]".
+//   * the vertex-dot pass goes back to `editMode`
+//       -> U1(b) "under the item type the selected vertices must not be drawn —
+//          vertex 0's 5x5 patch still carries 25 selection-coloured pixels".
+//   * geometry picking switched off in EVERY type (the amputation that the
+//     one-sided assertion would have let through)
+//       -> U2's control "the same band in the vertex type must select — the
+//          selection is still [0, 2, 4]" and U3's control likewise.
+//   * the selection-feedback gate applied to drawing but the standing selection
+//     also cleared on the way into Items
+//       -> U1(b) "the geometry selection must SURVIVE the switch — [] ".
+import std.net.curl;
+import std.json;
+import std.format  : format;
+import std.math    : round;
+import std.algorithm : min, max, map;
+import std.array   : array;
+import core.thread : Thread;
+import core.time   : msecs;
+
+import drag_helpers : fetchCamera, viewportFromCamera, projectToWindow,
+                      playAndWait, DHVec3 = Vec3;
+
+void main() {}
+
+immutable baseUrl = "http://localhost:8080";
+
+// ---------------------------------------------------------------------------
+// HTTP
+// ---------------------------------------------------------------------------
+
+private JSONValue getJson(string path) {
+    return parseJSON(cast(string)get(baseUrl ~ path));
+}
+
+private void cmd(string body_) {
+    auto j = parseJSON(cast(string)post(baseUrl ~ "/api/command", body_));
+    assert(j["status"].str == "ok", "cmd `" ~ body_ ~ "` failed: " ~ j.toString);
+}
+
+/// Picks run on the event-playback thread and reads on the HTTP one; a frame
+/// between them is what makes the second see the first. The pixel probes need
+/// it twice over — a probe reads the last COMPLETED frame.
+private void settle() { Thread.sleep(450.msecs); }
+
+// ---------------------------------------------------------------------------
+// Reading the app's answer
+// ---------------------------------------------------------------------------
+
+/// The PRIMARY layer's selected vertices. `/api/selection` reads the primary's
+/// mesh, so this is a question about whichever layer is primary NOW — which is
+/// exactly why U4 makes the primary move and come back before reading it.
+private int[] selectedVertices() {
+    int[] outp;
+    foreach (v; getJson("/api/selection")["selectedVertices"].array)
+        outp ~= cast(int)v.integer;
+    return outp;
+}
+
+private string selType()  { return getJson("/api/selection")["selType"].str; }
+/// The derived geometry view. It must keep reading a geometry type under Items
+/// — that persistence is what makes 1/2/3 restore the previous mode, and it is
+/// also precisely why it is the wrong thing for a pick site to read.
+private string editModeName() { return getJson("/api/selection")["mode"].str; }
+private int primaryIndex() { return cast(int)getJson("/api/layers")["active"].integer; }
+
+private struct Px { int r, g, b; bool valid; }
+
+/// Probe a run of FBO pixels, chunked so the request line stays short.
+private Px[] probe(const int[2][] fboPts) {
+    Px[] outp;
+    for (size_t i = 0; i < fboPts.length; i += 60) {
+        auto slice = fboPts[i .. (i + 60 > fboPts.length ? fboPts.length : i + 60)];
+        string q = "/api/viewport/probe?cell=0&points=";
+        foreach (k, p; slice) {
+            if (k) q ~= ";";
+            q ~= format("%d,%d", p[0], p[1]);
+        }
+        auto j = getJson(q);
+        assert("error" !in j, "probe failed: " ~ j.toString);
+        // The --test single-rendered-cell trap: a probe at a never-filled FBO
+        // reads zeros, and "the selection colour is absent" would then pass for
+        // the wrong reason. Assert the flag rather than trusting the default.
+        assert(j["renders"].type == JSONType.true_,
+            "the probed cell is not rendered under --test; the reading is void");
+        foreach (e; j["points"].array) {
+            Px p;
+            if ("error" in e) { outp ~= p; continue; }
+            p.r = cast(int)e["r"].integer;
+            p.g = cast(int)e["g"].integer;
+            p.b = cast(int)e["b"].integer;
+            p.valid = true;
+            outp ~= p;
+        }
+    }
+    return outp;
+}
+
+/// The two colours this file reads back, EXACTLY. Both are written by a
+/// `glUniform3f` with no lighting, no blending and no anti-aliasing on the
+/// pass that carries them, and the FBO applies no gamma — so these are the
+/// literal bytes, and an exact compare is available where a tolerance would
+/// not be. It matters here more than usual: the two are both orange and only
+/// 41 apart in green, so a "looks orange" predicate would call the item
+/// highlight a selection dot and pass the very bug under test.
+private enum int[3] kSelectedVertexDot = [255, 127, 25];  // mesh_gpu.d: 1.0, 0.5, 0.1
+private enum int[3] kItemHighlight     = [255, 168, 41];  // viewport_scheme.d, selected item
+
+/// How many pixels of a 5x5 patch centred on `p` are exactly `want`.
+///
+/// A patch, not a pixel: the dot is a 10-px GL point, so a 5x5 window centred
+/// on the projected vertex is entirely inside it — the count is 25 or it is 0,
+/// with no third answer for a rounding disagreement to hide in.
+private int patchCount(int[2] p, int[3] want) {
+    int[2][] pts;
+    foreach (dy; -2 .. 3) foreach (dx; -2 .. 3) pts ~= [p[0] + dx, p[1] + dy];
+    int n = 0;
+    foreach (v; probe(pts))
+        if (v.valid && v.r == want[0] && v.g == want[1] && v.b == want[2]) ++n;
+    return n;
+}
+
+// ---------------------------------------------------------------------------
+// Gestures
+// ---------------------------------------------------------------------------
+
+private enum string kViewportLine =
+    `{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,` ~
+    `"fovY":0.785398}`;
+
+private struct Cell { int vx, vy, vw, vh; }
+
+private Cell cell() {
+    auto c = getJson("/api/camera");
+    return Cell(cast(int)c["vpX"].integer,  cast(int)c["vpY"].integer,
+                cast(int)c["width"].integer, cast(int)c["height"].integer);
+}
+
+private string header(Cell c) {
+    return format(kViewportLine, c.vx, c.vy, c.vw, c.vh) ~ "\n";
+}
+
+/// Park the pointer well clear of every item, so no vertex is HOVERED while
+/// the pixels are read. The hover colour is a third value and would otherwise
+/// turn one probed vertex into a silent exception to the census.
+private void parkPointer(Cell c) {
+    string log = header(c);
+    foreach (i; 0 .. 2)
+        log ~= format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,`
+                      ~ `"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n",
+                      30.0 + i * 30.0, c.vx + 12, c.vy + c.vh - 12);
+    playAndWait(log);
+    settle();
+}
+
+/// A full LMB click at a WINDOW pixel; `clicks` carries SDL's click counter, so
+/// `clicks = 2` is the double-click the loop/connect path keys on.
+private void clickAt(Cell c, int wx, int wy, int clicks = 1) {
+    string log = header(c);
+    foreach (i; 0 .. 3)
+        log ~= format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,`
+                      ~ `"xrel":0,"yrel":0,"state":0,"mod":0}` ~ "\n",
+                      30.0 + i * 10.0, wx, wy);
+    log ~= format(`{"t":80.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":%d,`
+                  ~ `"y":%d,"clicks":%d,"mod":0}` ~ "\n", wx, wy, clicks);
+    log ~= format(`{"t":120.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":%d,`
+                  ~ `"y":%d,"clicks":%d,"mod":0}` ~ "\n", wx, wy, clicks);
+    playAndWait(log);
+    settle();
+}
+
+/// An RMB rubber band around the rectangle `[x0,x1] x [y0,y1]`, traced corner
+/// to corner with intermediate motions so `rmbPath` is a real polygon and not
+/// four points the app could reject for being too short.
+private void bandAround(Cell c, int x0, int y0, int x1, int y1) {
+    immutable int[2][5] corners =
+        [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0 + 2]];
+    string log = header(c);
+    double t = 30.0;
+    log ~= format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,"xrel":0,`
+                  ~ `"yrel":0,"state":0,"mod":0}` ~ "\n",
+                  t, corners[0][0], corners[0][1]);
+    t += 30.0;
+    log ~= format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONDOWN","btn":3,"x":%d,`
+                  ~ `"y":%d,"clicks":1,"mod":0}` ~ "\n",
+                  t, corners[0][0], corners[0][1]);
+    t += 30.0;
+    int[2] prev = corners[0];
+    foreach (ci; 1 .. corners.length) {
+        immutable int[2] p = corners[ci];
+        foreach (k; 1 .. 7) {
+            immutable int x = prev[0] + cast(int)((p[0] - prev[0]) * k / 6.0);
+            immutable int y = prev[1] + cast(int)((p[1] - prev[1]) * k / 6.0);
+            log ~= format(`{"t":%.3f,"type":"SDL_MOUSEMOTION","x":%d,"y":%d,`
+                          ~ `"xrel":0,"yrel":0,"state":4,"mod":0}` ~ "\n", t, x, y);
+            t += 20.0;
+        }
+        prev = p;
+    }
+    log ~= format(`{"t":%.3f,"type":"SDL_MOUSEBUTTONUP","btn":3,"x":%d,"y":%d,`
+                  ~ `"clicks":1,"mod":0}` ~ "\n", t, prev[0], prev[1]);
+    playAndWait(log);
+    settle();
+}
+
+// ---------------------------------------------------------------------------
+// The rig
+// ---------------------------------------------------------------------------
+
+private struct Box {
+    int x0, y0, x1, y1;                 ///< WINDOW pixels
+    int cx() const { return (x0 + x1) / 2; }
+    int cy() const { return (y0 + y1) / 2; }
+    bool disjointFrom(const Box o) const {
+        return x1 < o.x0 || o.x1 < x0 || y1 < o.y0 || o.y1 < y0;
+    }
+}
+
+/// Three unit cubes spread along X, seen three-quarter on, with the MIDDLE one
+/// primary and a standing three-vertex selection on it.
+///
+/// The middle one is deliberate: `layer.duplicate` leaves the LAST layer
+/// primary, so index 1 is neither an end of the array nor the layer the
+/// document handed us — "the first", "the last" and "the one that was already
+/// primary" are three distinct wrong answers with three distinct readings.
+///
+/// The middle layer is left at the origin, so its local mesh coordinates are
+/// its world coordinates and the vertex projections below need no item
+/// transform composed into them.
+private enum int[] kStanding = [0, 2, 4];
+
+private void buildRig() {
+    auto r0 = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    assert(r0["status"].str == "ok", "/api/reset failed: " ~ r0.toString);
+    cmd(`{"id":"history.clear"}`);
+    cmd(`{"id":"layer.duplicate"}`);
+    cmd(`{"id":"layer.duplicate"}`);
+    cmd("layer.attr 0 pos.x -4");
+    cmd("layer.attr 2 pos.x 4");
+    post(baseUrl ~ "/api/camera?viewport=0", `{"distance":12.0}`);
+    cmd(`{"id":"layer.select","index":1,"mode":"set"}`);
+    // The standing geometry selection, made through a COMMAND rather than a
+    // click: the click path is one of the things under test, and a rig that
+    // built its own precondition with it could not then say anything about it.
+    cmd("select.typeFrom vertex");
+    cmd(format("select.element vertex set %(%d %)", kStanding));
+    settle();
+    assert(primaryIndex() == 1,
+        format("rig: the middle item must be primary — the app reports %d",
+               primaryIndex()));
+    assert(selectedVertices() == kStanding,
+        format("rig: the standing vertex selection must be %s — got %s",
+               kStanding, selectedVertices()));
+}
+
+/// Where each item's cube lands on screen, and where the primary's individual
+/// vertices land, computed from the live camera through the projection every
+/// drag test uses — so a different window size moves the probes with it and no
+/// pixel below is a magic number.
+private struct Rig {
+    Box[]    boxes;         ///< one per layer, WINDOW pixels
+    int[2][] vertFbo;       ///< the primary's 8 vertices, FBO pixels
+}
+
+private Rig readRig() {
+    auto layers = getJson("/api/layers")["layers"].array;
+    auto camS   = fetchCamera(baseUrl);
+    auto vp     = viewportFromCamera(camS);
+    auto verts  = getJson("/api/model")["vertices"].array;
+
+    Rig rig;
+    foreach (li, l; layers) {
+        auto pos = l["xform"]["pos"].array;
+        Box b;
+        b.x0 = int.max; b.y0 = int.max; b.x1 = int.min; b.y1 = int.min;
+        foreach (v; verts) {
+            auto world = DHVec3(
+                cast(float)(v.array[0].floating + pos[0].floating),
+                cast(float)(v.array[1].floating + pos[1].floating),
+                cast(float)(v.array[2].floating + pos[2].floating));
+            float px, py;
+            assert(projectToWindow(world, vp, px, py),
+                format("rig: item %d has a corner behind the camera", li));
+            immutable int fx = cast(int)round(px);
+            immutable int fy = cast(int)round(py);
+            b.x0 = min(b.x0, fx); b.x1 = max(b.x1, fx);
+            b.y0 = min(b.y0, fy); b.y1 = max(b.y1, fy);
+            if (li == 1) rig.vertFbo ~= [fx - camS.vpX, fy - camS.vpY];
+        }
+        rig.boxes ~= b;
+    }
+    return rig;
+}
+
+/// The rig decides something only if the three items are separable on screen
+/// and the primary's vertices sit far enough inside the cell for a 5x5 patch.
+private void assertRigSane(const ref Rig rig, Cell c) {
+    foreach (i; 0 .. rig.boxes.length)
+        foreach (j; i + 1 .. rig.boxes.length)
+            assert(rig.boxes[i].disjointFrom(rig.boxes[j]),
+                format("rig: items %d and %d overlap on screen — with "
+                       ~ "overlapping footprints 'the cursor is over that one "
+                       ~ "and not these two' is not a claim this rig can make",
+                       i, j));
+    foreach (vi, p; rig.vertFbo)
+        assert(p[0] >= 3 && p[1] >= 3 && p[0] < c.vw - 3 && p[1] < c.vh - 3,
+            format("rig: the primary's vertex %d projects to FBO (%d, %d), "
+                   ~ "too close to the %dx%d cell edge for a 5x5 patch",
+                   vi, p[0], p[1], c.vw, c.vh));
+}
+
+// ---------------------------------------------------------------------------
+// U1 — the standing geometry selection is KEPT under the item type and NOT
+//      DRAWN, and switching back shows the same selection, drawn again.
+//
+// The two halves are the whole point. "Not drawn" alone is satisfied by
+// clearing the selection on entry; "kept" alone is satisfied by drawing it
+// anyway. The census is taken three times over the SAME pixels so the third
+// reading is a return to the first, not a fresh claim.
+// ---------------------------------------------------------------------------
+unittest {
+    buildRig();
+    auto c   = cell();
+    auto rig = readRig();
+    assertRigSane(rig, c);
+    parkPointer(c);
+
+    // ---- (a) the baseline: in the vertex type the selected dots are there and
+    //      the unselected ones are not, so the census can tell them apart at
+    //      all. Vertex 1 is the control — an unselected corner of the same cube.
+    foreach (vi; kStanding)
+        assert(patchCount(rig.vertFbo[vi], kSelectedVertexDot) == 25,
+            format("baseline: in the vertex type the selected vertex %d must be "
+                   ~ "drawn as a selection dot — its 5x5 patch carries %d of 25 "
+                   ~ "selection-coloured pixels",
+                   vi, patchCount(rig.vertFbo[vi], kSelectedVertexDot)));
+    assert(patchCount(rig.vertFbo[1], kSelectedVertexDot) == 0,
+        format("baseline: vertex 1 is NOT selected, so its patch must carry no "
+               ~ "selection colour — it carries %d, which would make the census "
+               ~ "unable to distinguish selected from not",
+               patchCount(rig.vertFbo[1], kSelectedVertexDot)));
+
+    // ---- (b) under the item type: kept, and not drawn.
+    cmd("select.typeFrom item");
+    settle();
+    assert(selType() == "item", "the item door must make the item type current");
+    assert(editModeName() == "vertices",
+        format("the derived geometry view must still read the last geometry "
+               ~ "type — it reads %s. If it did not, the gate under test would "
+               ~ "be indistinguishable from reading it", editModeName()));
+    assert(selectedVertices() == kStanding,
+        format("the geometry selection must SURVIVE the switch into the item "
+               ~ "type — %s became %s", kStanding, selectedVertices()));
+    foreach (vi; kStanding) {
+        immutable int sel  = patchCount(rig.vertFbo[vi], kSelectedVertexDot);
+        immutable int item = patchCount(rig.vertFbo[vi], kItemHighlight);
+        assert(sel == 0,
+            format("under the item type the selected vertices must not be "
+                   ~ "drawn — vertex %d's 5x5 patch still carries %d "
+                   ~ "selection-coloured pixels", vi, sel));
+        // The same pixels must carry the ITEM highlight, which is what makes
+        // the zero above a statement about this pass rather than about a frame
+        // that never rendered.
+        assert(item > 0,
+            format("the frame must still be drawing the item at vertex %d's "
+                   ~ "pixels — its patch carries %d item-highlight pixels, so "
+                   ~ "the zero above says nothing", vi, item));
+    }
+
+    // ---- (c) back to the vertex type: the same selection, drawn again.
+    cmd("select.typeFrom vertex");
+    settle();
+    assert(selectedVertices() == kStanding,
+        format("coming back to the vertex type must show the SAME selection — "
+               ~ "%s became %s", kStanding, selectedVertices()));
+    foreach (vi; kStanding)
+        assert(patchCount(rig.vertFbo[vi], kSelectedVertexDot) == 25,
+            format("coming back must draw it again — vertex %d's patch carries "
+                   ~ "%d of 25 selection-coloured pixels",
+                   vi, patchCount(rig.vertFbo[vi], kSelectedVertexDot)));
+}
+
+// ---------------------------------------------------------------------------
+// U2 — the RUBBER BAND. A viewport pick that never went through the click
+//      branch 0643 added, so it is the site that shows the gate is the
+//      ordering rather than a special case bolted in front of one path.
+// ---------------------------------------------------------------------------
+unittest {
+    buildRig();
+    auto c   = cell();
+    auto rig = readRig();
+    assertRigSane(rig, c);
+    immutable Box mid = rig.boxes[1];
+    // A band comfortably around the middle cube only.
+    immutable int bx0 = mid.x0 - 27, bx1 = mid.x1 + 28;
+    immutable int by0 = mid.y0 - 22, by1 = mid.y1 + 29;
+
+    // ---- under the item type: the band changes nothing.
+    cmd("select.typeFrom item");
+    settle();
+    bandAround(c, bx0, by0, bx1, by1);
+    assert(selectedVertices() == kStanding,
+        format("under the item type the band must leave the geometry selection "
+               ~ "alone — %s became %s", kStanding, selectedVertices()));
+    assert(selType() == "item",
+        format("…and must not promote a geometry type either — the current "
+               ~ "type is now %s", selType()));
+
+    // ---- the CONTROL: the same band in the vertex type DOES select. Without
+    //      this arm, switching geometry picking off entirely passes the flow.
+    cmd("select.typeFrom vertex");
+    settle();
+    bandAround(c, bx0, by0, bx1, by1);
+    auto after = selectedVertices();
+    assert(after != kStanding && after.length > 0,
+        format("the same band in the vertex type must select — the selection is "
+               ~ "still %s, so the item-type arm above proves nothing", after));
+}
+
+// ---------------------------------------------------------------------------
+// U3 — the DOUBLE-CLICK (loop / connect). The third pick site, and the one
+//      whose mutation is largest: on a cube it takes a three-vertex selection
+//      to all eight.
+// ---------------------------------------------------------------------------
+unittest {
+    buildRig();
+    auto c   = cell();
+    auto rig = readRig();
+    assertRigSane(rig, c);
+
+    cmd("select.typeFrom item");
+    settle();
+    clickAt(c, rig.boxes[1].cx, rig.boxes[1].cy, /*clicks=*/2);
+    assert(selectedVertices() == kStanding,
+        format("under the item type a double-click must leave the geometry "
+               ~ "selection alone — %s became %s",
+               kStanding, selectedVertices()));
+
+    // The control, same gesture, geometry type: connect expands to the whole
+    // connected component.
+    cmd("select.typeFrom vertex");
+    settle();
+    clickAt(c, rig.boxes[1].cx, rig.boxes[1].cy, /*clicks=*/2);
+    assert(selectedVertices().length == 8,
+        format("the same double-click in the vertex type must expand the "
+               ~ "selection to the connected component — got %s",
+               selectedVertices()));
+}
+
+// ---------------------------------------------------------------------------
+// U4 — the selection survives a PRIMARY ROUND TRIP under the item type.
+//
+// This is where three items stop being decoration. Clicking item 0 moves the
+// primary off the layer that holds the geometry selection; clicking item 1
+// brings it back. `/api/selection` reads the PRIMARY's mesh, so "still there"
+// is only a real claim once the primary has actually left and returned — and
+// the intermediate reading (item 0's own, empty selection) is asserted too, so
+// a document that never moved the primary cannot pass this flow either.
+// ---------------------------------------------------------------------------
+unittest {
+    buildRig();
+    auto c   = cell();
+    auto rig = readRig();
+    assertRigSane(rig, c);
+
+    cmd("select.typeFrom item");
+    settle();
+
+    clickAt(c, rig.boxes[0].cx, rig.boxes[0].cy);
+    assert(primaryIndex() == 0,
+        format("the click on item 0 must make it primary — the app reports %d",
+               primaryIndex()));
+    assert(selectedVertices().length == 0,
+        format("item 0 carries no geometry selection of its own — reading %s "
+               ~ "here would mean /api/selection is not following the primary",
+               selectedVertices()));
+
+    clickAt(c, rig.boxes[2].cx, rig.boxes[2].cy);
+    assert(primaryIndex() == 2,
+        format("the click on item 2 must make it primary — the app reports %d",
+               primaryIndex()));
+
+    clickAt(c, rig.boxes[1].cx, rig.boxes[1].cy);
+    assert(primaryIndex() == 1,
+        format("the click back on item 1 must restore it as primary — the app "
+               ~ "reports %d", primaryIndex()));
+    assert(selectedVertices() == kStanding,
+        format("the middle item's geometry selection must have survived the "
+               ~ "whole round trip — %s became %s",
+               kStanding, selectedVertices()));
+
+    // …and it is drawn again the moment the geometry type comes back.
+    cmd("select.typeFrom vertex");
+    settle();
+    foreach (vi; kStanding)
+        assert(patchCount(rig.vertFbo[vi], kSelectedVertexDot) == 25,
+            format("after the round trip vertex %d must be drawn selected "
+                   ~ "again — its patch carries %d of 25",
+                   vi, patchCount(rig.vertFbo[vi], kSelectedVertexDot)));
+}

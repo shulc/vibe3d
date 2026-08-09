@@ -13,12 +13,18 @@ import editmode : EditMode;
 // front (keeping the rest in relative order) — the analog of a typed
 // recent-ordering service's per-type "touch".
 //
-// `EditMode` survives as the geometry-type VIEW and stays the picking/draw
-// authority: when the current type is a geometry type, `editMode` mirrors it;
-// when the current type is `Item`, `editMode` retains the most-recent geometry
-// type (`mostRecentGeometryType`) so geometry picking/drawing always has a
-// defined mode. Stage 1 never makes `Item` current — it lands in the enum +
-// ordering as forward-compatible shape, exercised only by the unittests.
+// `EditMode` survives as the geometry-type VIEW: when the current type is a
+// geometry type, `editMode` mirrors it; when the current type is `Item`,
+// `editMode` retains the most-recent geometry type (`mostRecentGeometryType`)
+// so a component-only consumer always has a defined mode.
+//
+// TASK 0655 — WHAT `editMode` IS *NOT* THE AUTHORITY FOR. It used to gate the
+// viewport pick as well, and that was a defect with a precise shape: `editMode`
+// is a materialized cache of `resolve(geometryTypes)`, i.e. of the query asked
+// WITHOUT `Item`, so consulting it in a pick site asks a question whose answer
+// cannot mention items. A pick site now calls `viewportPickType` — the same
+// ordering asked WITH `Item` in the candidate set — and so declines to pick
+// geometry while items are current. See `SelTypeOrder.resolve`.
 //
 // `editMode` is a MATERIALIZED VIEW of `selTypeOrder.mostRecentGeometry`:
 // it is written by exactly ONE writer path — `setEditModeFromOrder()` in
@@ -104,10 +110,71 @@ struct SelTypeOrder {
     /// order front-to-back. Used to derive `editMode` while `Item` is current
     /// (so geometry picking keeps a defined mode under item selection). Always
     /// well-defined — the three geometry types are always present in the order.
+    ///
+    /// This is `resolve(geometryTypes)` — the candidate-set query below asked
+    /// with the COMPONENT-ONLY set. Written that way, not as a second scan, so
+    /// there is one walk of the ordering and `editMode` is visibly one caller
+    /// of it rather than a parallel rule (task 0655).
     SelType mostRecentGeometry() const pure nothrow @safe @nogc {
-        foreach (t; order) if (isGeometryType(t)) return t;
-        return SelType.Vertex; // unreachable (all three are always present)
+        return resolve(geometryTypes[]);
     }
+
+    /// **The candidate-set query** (task 0655). Walk the ordering
+    /// most-recent-first and return the first type that is in `candidates`.
+    ///
+    /// THE DIRECTION OF THE WALK IS THE WHOLE CONTENT OF THIS FUNCTION, and the
+    /// other direction is a real, plausible implementation: walking the
+    /// CANDIDATE array and returning its first entry that appears in the
+    /// ordering. The two disagree exactly where it matters — with the ordering
+    /// at `[Item, Vertex, …]`, candidates `[Vertex, Edge, Polygon, Item]`
+    /// answer `Item` under the walk written here and `Vertex` under the other
+    /// one, which is precisely the bug this task exists to remove. The measured
+    /// answer is `Item` (see the task file), so the ordering is what is walked.
+    ///
+    /// There is NO separate "type for hit-testing": there is this one ordering
+    /// and each caller's own candidate set. A viewport pick passes a set that
+    /// INCLUDES `Item` (`viewportPickTypes`) and so declines to pick geometry
+    /// while items are current; a component-only consumer (`select.loop`,
+    /// `select.more`, the element commands) passes `geometryTypes` and keeps
+    /// getting a geometry answer whatever is at the front.
+    ///
+    /// `candidates` is never empty in practice; an empty set has no defined
+    /// answer, so it falls back to the front of the ordering rather than
+    /// inventing a type.
+    SelType resolve(scope const(SelType)[] candidates) const pure nothrow @safe @nogc {
+        foreach (t; order) {
+            foreach (c; candidates) if (c == t) return t;
+        }
+        return order[0];
+    }
+}
+
+/// The candidate set every VIEWPORT PICK entry point passes: the three geometry
+/// types AND `Item`. One shared constant rather than a literal per call site,
+/// because a site that quietly dropped `Item` from its own literal would go back
+/// to picking geometry under the item type and nothing would say so.
+immutable SelType[4] viewportPickTypes =
+    [SelType.Vertex, SelType.Edge, SelType.Polygon, SelType.Item];
+
+/// The COMPONENT-ONLY candidate set — the same query without `Item`. This is
+/// what `editMode` is derived from, and what a consumer that can only act on
+/// geometry passes.
+immutable SelType[3] geometryTypes =
+    [SelType.Vertex, SelType.Edge, SelType.Polygon];
+
+/// The type a VIEWPORT PICK resolves to: the ordering asked with the
+/// item-inclusive candidate set. Under the item type this is `SelType.Item`,
+/// which is how a pick site declines to run the geometry path — as opposed to
+/// reading `editMode`, which deliberately still remembers a geometry type.
+SelType viewportPickType(ref const SelTypeOrder o) pure nothrow @safe @nogc {
+    return o.resolve(viewportPickTypes[]);
+}
+
+/// The type a COMPONENT-ONLY consumer resolves to — identical to
+/// `mostRecentGeometryType`, spelled as the query so the two sets sit
+/// side by side at their call sites.
+SelType geometryPickType(ref const SelTypeOrder o) pure nothrow @safe @nogc {
+    return o.resolve(geometryTypes[]);
 }
 
 // Free-function facade over a SelTypeOrder reference, matching the plan's
@@ -218,6 +285,58 @@ unittest {
     assert(touchSelType(o, SelType.Vertex));
     assert(o.current == SelType.Vertex);
     assert(mostRecentGeometryType(o) == SelType.Vertex);
+}
+
+// The candidate-set query (task 0655). THE ONE READING that matters is the
+// simultaneous pair: at a single instant, the item-inclusive set and the
+// component-only set must give DIFFERENT answers. A single call proves nothing
+// — an implementation that ignores `candidates` entirely and returns `order[0]`
+// passes any item-inclusive assertion on its own, and one that ignores the
+// ordering and returns `candidates[0]` passes any component-only assertion on
+// its own. Only the pair refutes both.
+unittest {
+    SelTypeOrder o;
+    touchSelType(o, SelType.Polygon);   // most-recent geometry := Polygon
+    touchSelType(o, SelType.Item);      // …then Item goes to the front
+    assert(o.order == [SelType.Item, SelType.Polygon, SelType.Vertex, SelType.Edge]);
+
+    // The pair, at one instant.
+    assert(viewportPickType(o) == SelType.Item,
+        "the item-inclusive candidate set must answer Item");
+    assert(geometryPickType(o) == SelType.Polygon,
+        "the component-only set must answer the most-recent GEOMETRY type");
+
+    // Walking the CANDIDATE array instead of the ordering is the plausible
+    // wrong implementation: it would answer Vertex here (the first entry of
+    // `viewportPickTypes` that is present in the ordering) instead of Item.
+    assert(viewportPickType(o) != SelType.Vertex);
+
+    // `editMode`'s derivation is literally this query with the component-only
+    // set — so the two cannot drift into two rules.
+    assert(mostRecentGeometryType(o) == geometryPickType(o));
+
+    // Back to a geometry type: both sets now agree, which is the ordinary case
+    // and the reason a single-set assertion is worth nothing.
+    touchSelType(o, SelType.Edge);
+    assert(viewportPickType(o) == SelType.Edge);
+    assert(geometryPickType(o) == SelType.Edge);
+}
+
+// `resolve` honours an arbitrary caller set, not just the two named ones — a
+// single-element set answers that element whatever the ordering says, because
+// the walk stops at the first ordering entry the set contains.
+unittest {
+    SelTypeOrder o;                      // [Vertex, Edge, Polygon, Item]
+    assert(o.resolve([SelType.Polygon]) == SelType.Polygon);
+    assert(o.resolve([SelType.Item, SelType.Edge]) == SelType.Edge,
+        "Edge is ahead of Item in this ordering, so Edge wins");
+    touchSelType(o, SelType.Item);       // [Item, Vertex, Edge, Polygon]
+    assert(o.resolve([SelType.Item, SelType.Edge]) == SelType.Item,
+        "the same candidate set answers differently once Item is promoted — "
+        ~ "the ordering is what decides, not the set's own order");
+    // Empty set: no defined answer, falls back to the front rather than
+    // inventing a type or reading out of bounds.
+    assert(o.resolve([]) == o.current);
 }
 
 // isGeometryType classifies the four types.

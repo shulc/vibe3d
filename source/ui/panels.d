@@ -3364,6 +3364,30 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         setItemSnapFrames(itemFrames);
     }
 
+    // ---- Which selection type this cell draws FEEDBACK for (task 0655) -----
+    //
+    // The SAME query the viewport pick asks — the ordering with the
+    // item-inclusive candidate set — and it is the same query on purpose:
+    // "which elements can this click select" and "which elements does this
+    // frame show as selected" are one question, and the two answers drifting
+    // apart is exactly the state that was measured as a divergence.
+    //
+    // NOT `editMode`, which the three gates below used to read. `editMode` is
+    // that query asked WITHOUT `Item`, so under the item type it still names a
+    // geometry type — and the passes kept painting orange vertex dots, the
+    // checker overlay and selected-edge colour for a geometry selection the
+    // click could no longer reach. Measured against the reference: under the
+    // item type a standing geometry selection is KEPT (it is still in
+    // `/api/selection`) and NOT DRAWN. Keeping it is the mesh's business and
+    // nothing here touches it; not drawing it is this line.
+    //
+    // The item-highlight pass further down asks `currentSelType` directly.
+    // That is the same answer by construction — with all four types always in
+    // the ordering, the item-inclusive resolve IS the front — and it is left
+    // spelled its own way because it is asking a different question ("is the
+    // item type current"), not gating an element pass.
+    immutable SelType selFeedbackType = viewportPickType(selTypeOrder);
+
     // ---- Faces (Blinn-Phong, or a flat fill) ----
     // Gated on the plan's SHADING group. `drawFaces == false` means no face
     // pass AT ALL — not a depth-only one: a lines-only style has to be
@@ -3396,7 +3420,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
                               && hoveredFace >= 0;
-            if (editMode == EditMode.Polygons) {
+            if (selFeedbackType == SelType.Polygon) {
                 gpu.drawFacesHighlighted(litShader, hoveredFace, mesh.selectedFaces);
             } else if (toolFaceHover) {
                 gpu.drawFacesHighlighted(litShader, hoveredFace, (bool[]).init);
@@ -3411,7 +3435,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     }
 
     // Checkerboard overlay for selected faces (Polygons mode).
-    if (editMode == EditMode.Polygons) {
+    if (selFeedbackType == SelType.Polygon) {
         if (mesh.hasAnySelectedFaces()) {
             auto zOv = g_perf.scope_(Cat.drawOverlays);
             checkerShader.useProgram(meshModel, vp, 1.0f, 0.5f, 0.1f);
@@ -3435,7 +3459,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         activePlan.drawWire, shader.locAlpha, activePlan.wireAlpha);
     {
         auto zEdges = g_perf.scope_(Cat.drawEdges);
-        if (editMode == EditMode.Edges) {
+        if (selFeedbackType == SelType.Edge) {
             // A tool can pre-highlight the WHOLE ring it will act on: Loop
             // Slice shows the ring its cut will land on (via wantsEdgeLoop-
             // Hover + rebuildLoopHoverMask). And while that tool DRAGS, the
@@ -3468,7 +3492,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             }
             gpu.drawEdges(shader.locColor, hovForDraw, mesh.selectedEdges, loopMask,
                           baseWire);
-        } else if (editMode == EditMode.Polygons) {
+        } else if (selFeedbackType == SelType.Polygon) {
             if (faceSelEdgesPrevSel != mesh.selectedFaces) {
                 faceSelEdgesPrevSel = mesh.selectedFaces.dup;
                 if (faceSelEdgesCache.length != mesh.edges.length)
@@ -3658,10 +3682,13 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
 
     // ---- Vertex dots ----
     // `drawVerts` is a FORCING term from the surface style (a lines-only
-    // style draws vertices as well as edges). The edit-mode gate below is a
-    // separate, unmodelled axis and keeps working exactly as before; the two
-    // are OR-ed. Today no style forces it, so this reads as it always did.
-    if (activePlan.drawVerts || editMode == EditMode.Vertices) {
+    // style draws vertices as well as edges). The selection-type gate beside
+    // it is a separate, unmodelled axis; the two are OR-ed. Today no style
+    // forces it, so this reads as it always did — except under the item type,
+    // where the dots (and with them the orange SELECTED dots) now go away.
+    // That is the pass the reference's per-vertex colour census measured as
+    // absent, and it is the visible half of "kept but not drawn".
+    if (activePlan.drawVerts || selFeedbackType == SelType.Vertex) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
         gpu.drawVertices(shader.locColor, hoveredVertex, mesh.selectedVertices);
     } else if (showVertHover && hoveredVertex >= 0) {
