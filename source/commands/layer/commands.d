@@ -60,7 +60,7 @@ private abstract class LayerCommandBase : Command {
         this.onSwitch = onSwitch;
     }
 
-    /// Install the item-select-type hook (app.d's switchToItemType). Kept off
+    /// Install the item-select-type hook (app.d's promoteItemType). Kept off
     /// the constructor so the 7 command ctors + the registration stay stable;
     /// app.d sets it on the LayerSelect factory only (the lone item-select
     /// command). Returns `this` for fluent registration.

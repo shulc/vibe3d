@@ -207,6 +207,7 @@ Alt-click for granular options.
 | Vertices mode | `1` |
 | Edges mode | `2` |
 | Polygons mode | `3` |
+| Items mode | `5` |
 | Cycle mode | `Space` |
 | Move / Rotate / Scale | `W` / `E` / `R` |
 | Transform (T+R+S) | `Y` |
@@ -232,6 +233,35 @@ Alt-click for granular options.
 | Loop / Ring | `L` / Alt + `L` |
 | Between | Shift + `G` |
 | Drop selection | `Esc` |
+
+#### Items mode
+
+`5` (or the **Items** button on the status line) switches the selection type to
+**Items** — you are selecting whole items (layers, image planes) rather than
+geometry inside one. It is a peer of Vertices / Edges / Polygons, not a fourth
+"edit mode": the geometry mode you were in is remembered, so `1`/`2`/`3` put you
+back exactly where you were.
+
+Items mode is what decides **what a transform edits**:
+
+* In Vertices / Edges / Polygons, Move / Rotate / Scale deform the mesh —
+  they move vertices.
+* In Items, the same tools edit the item's own **transform channels**
+  (`pos` / `rot` / `scl`, the ones the Properties and Channels panels show as
+  numbers). The mesh rides along; its local coordinates are untouched.
+
+So "move the whole object" and "move the geometry inside the object" are the
+same gizmo in two modes, and the status line always says which one you are in.
+The gizmo sits on the item's own pivot, its handles are world-aligned, and a
+whole drag is one undo step — the same step you get from typing the number into
+the panel.
+
+Selecting an item in the Items panel also makes Items the current type (it always
+has). What `5` adds is the ability to switch **into** the mode without touching
+the selection.
+
+Clicking in the viewport still picks geometry in Items mode — viewport item
+picking is not implemented yet.
 
 ### Visibility (hiding geometry)
 

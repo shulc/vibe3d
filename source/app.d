@@ -2449,11 +2449,49 @@ void main(string[] args) {
     // change on the bus; tool-drop on a genuine primary change is handled by
     // onActiveLayerChanged (fired by the command's fireSwitchIfChanged), so this
     // hook does NOT drop the tool itself.
-    void switchToItemType() {
+    //
+    // Task 0642 renamed this to `promoteItemType` (it was `switchToItemType`) so it
+    // pairs with `promoteGeometryType` above: BOTH are the "a selection
+    // command changed the type as a side effect" path, and neither drops the
+    // tool. The deliberate DOOR into item mode is `switchItemType` below —
+    // the `switchGeometryType` analogue. Two verbs, one distinction, spelled
+    // the same way on both sides of the geometry/item line.
+    void promoteItemType() {
         import change_bus : noteCurrentType;
         const flipped = selTypeOrder.touch(SelType.Item);
         if (flipped)
             noteCurrentType(SelType.Item);
+    }
+
+    // -------------------------------------------------------------------------
+    // Task 0642: the DELIBERATE door into item mode — the item analogue of
+    // `switchGeometryType`, driven by the status-line Items button, the Items
+    // key, and `select.typeFrom item`. `SelType.Item` was already reachable,
+    // but only as a SIDE EFFECT of selecting a layer; this is the way in that
+    // does not require touching the item selection at all.
+    //
+    // Same front-flip contract as switchGeometryType, with one difference that
+    // is structural rather than a choice:
+    //   * `editMode` is NOT written. `EditMode` has three values and is the
+    //     geometry VIEW; under `SelType.Item` it deliberately retains the
+    //     most-recent geometry type so picking/drawing keep a defined mode
+    //     (seltype.d; asserted on the /api/selection boundary). Switching to
+    //     Items must therefore leave it exactly where it was — that is also
+    //     what makes 1/2/3 afterwards restore the SAME geometry type rather
+    //     than an arbitrary one, since the recent-ordering still remembers it.
+    //   * A flip DOES drop the active tool, matching switchGeometryType's B2
+    //     rule: pressing a MODE key/button is an interaction-mode change. (The
+    //     promote path above deliberately does not — a selection is not a mode
+    //     change. Unmeasured against the reference: its input map spells this
+    //     door as the same command family as 1/2/3, so we make the door behave
+    //     like the other doors rather than inventing a third rule.)
+    void switchItemType() {
+        import change_bus : noteCurrentType;
+        const flipped = selTypeOrder.touch(SelType.Item);
+        if (flipped) {
+            setActiveTool(null);          // tool-drop on a front-flip (B2)
+            noteCurrentType(SelType.Item);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -3471,7 +3509,8 @@ void main(string[] args) {
     app.topoPenRemoveVertexEditFactory = topoPenRemoveVertexEditFactory;
 
     app.setActiveTool        = cast(void delegate(Tool))&setActiveTool;
-    app.switchToItemType     = cast(void delegate())&switchToItemType;
+    app.promoteItemType      = cast(void delegate())&promoteItemType;
+    app.switchItemType       = cast(void delegate())&switchItemType;
     app.promoteGeometryType  = cast(void delegate(EditMode))&promoteGeometryType;
     app.switchGeometryType   = cast(void delegate(EditMode))&switchGeometryType;
     app.onActiveLayerChanged = onActiveLayerChanged;
@@ -4307,14 +4346,21 @@ void main(string[] args) {
                 return;
             }
             if (auto id = canon in shortcuts.editModeByCanon) {
-                // Route keys 1/2/3 through the selection-type funnel: it
-                // promotes the SelType, sets editMode in lockstep, and drops the
-                // active tool ONLY on a front-flip (pressing the key for the
-                // mode you are already in does NOT drop the tool — Stage 1 B2).
+                // Route the selection-type keys through the selection-type
+                // funnel: it promotes the SelType, sets editMode in lockstep,
+                // and drops the active tool ONLY on a front-flip (pressing the
+                // key for the mode you are already in does NOT drop the tool —
+                // Stage 1 B2).
+                //
+                // `items` (task 0642) takes the OTHER funnel — `switchItemType`
+                // — because there is no EditMode to set in lockstep: EditMode
+                // is the geometry view and must keep its remembered value under
+                // SelType.Item. Same front-flip contract otherwise.
                 final switch (*id) {
                     case "vertices": switchGeometryType(EditMode.Vertices); break;
                     case "edges":    switchGeometryType(EditMode.Edges);    break;
                     case "polygons": switchGeometryType(EditMode.Polygons); break;
+                    case "items":    switchItemType();                      break;
                 }
                 return;
             }

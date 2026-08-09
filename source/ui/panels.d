@@ -2734,6 +2734,7 @@ void drawStatusBar(EditorApp app) {
                     if      (action.id == "select.vertex")  editModeId = "vertices";
                     else if (action.id == "select.edge")    editModeId = "edges";
                     else if (action.id == "select.polygon") editModeId = "polygons";
+                    else if (action.id == "select.item")    editModeId = "items";
                 } else if (action.kind == ActionKind.script
                            && action.scriptLines.length > 0) {
                     auto parsed = parseArgstring(action.scriptLines[0]);
@@ -2748,6 +2749,7 @@ void drawStatusBar(EditorApp app) {
                         if      (t == "vertex")  editModeId = "vertices";
                         else if (t == "edge")    editModeId = "edges";
                         else if (t == "polygon") editModeId = "polygons";
+                        else if (t == "item")    editModeId = "items";
                     }
                 }
                 string sc;
@@ -2760,13 +2762,27 @@ void drawStatusBar(EditorApp app) {
                 // Snap reflecting `snap/enabled`). Otherwise fall
                 // back to: editmode match, or popup action's own
                 // `checked:`.
+                // Task 0642: the pressed state of a selection-type button asks
+                // the CURRENT SELECTION TYPE, not the derived `editMode`. The
+                // two answer differently exactly when it matters: under
+                // `SelType.Item` the geometry view RETAINS the most-recent
+                // geometry type (seltype.d), so an editMode-based highlight
+                // would light Polygons AND Items at once and there would be no
+                // on-screen difference between "in item mode" and "in polygon
+                // mode". The reference's own type-query command is specified
+                // the same way — it reports 1 iff the queried type is the
+                // CURRENT one, with the rest of the list only tested for
+                // recency — which is precisely `selTypeOrder`.
                 bool on;
                 if (btn.checked.present) {
                     on = popupItemChecked(btn.checked);
                 } else {
-                    on = (editModeId == "vertices" && editMode == EditMode.Vertices)
-                      || (editModeId == "edges"    && editMode == EditMode.Edges)
-                      || (editModeId == "polygons" && editMode == EditMode.Polygons)
+                    import seltype : currentSelType, SelType;
+                    const curType = currentSelType(selTypeOrder);
+                    on = (editModeId == "vertices" && curType == SelType.Vertex)
+                      || (editModeId == "edges"    && curType == SelType.Edge)
+                      || (editModeId == "polygons" && curType == SelType.Polygon)
+                      || (editModeId == "items"    && curType == SelType.Item)
                       || (action.kind == ActionKind.popup
                           && action.checked.present
                           && popupItemChecked(action.checked));
@@ -3606,7 +3622,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
 //                               guard + confirmation modal")
 //   drawCommandHistoryPanel  -- was app.d ~6304-6651 ("Command History")
 // The ONLY body edits vs the pre-move text are Edit-class-2 address-of
-// sites (precedent: registration.d's &switchToItemType): ImGui's
+// sites (precedent: registration.d's &promoteItemType): ImGui's
 // SliderInt/SliderFloat/Checkbox take a raw pointer, and `&prop` on a
 // @property ref field yields the property FUNCTION's address, so the 8
 // widget calls read the `namePtr` storage field directly:

@@ -55,3 +55,8 @@ editmodes:
   vertices: "1"
   edges:    "2"
   polygons: "3"
+  # Items is the FIFTH key, not the fourth. The reference binds top-row
+  # 1..7 to its seven selection types in a fixed order, and 4 belongs to
+  # the material-tag type, which we do not have (see the task card). Taking
+  # 4 now would mean renumbering the day that type lands, so 4 stays free.
+  items:    "5"       # ref: 5

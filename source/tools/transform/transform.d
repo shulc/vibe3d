@@ -133,7 +133,7 @@ protected:
     // SubjectPacket.selType at its Vertex default unconditionally, while
     // app.d's buildToolVts (the RENDER path — the gizmo you see) correctly
     // read the live app state. Item-select does not drop the active tool
-    // (app.d's switchToItemType), so the two paths could — and did —
+    // (app.d's promoteItemType), so the two paths could — and did —
     // disagree on the subject for the SAME gesture: the gizmo drawn at the
     // item's world pivot, the drag applied about the geometry centroid.
     SelType delegate() selTypeSrc_;

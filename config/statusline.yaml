@@ -16,6 +16,18 @@ groups:
         alt:
           label: "Convert P"
           action: { kind: script, lines: ["select.convert polygon"] }
+  # Items is its OWN group so the inter-group gap renders the separator the
+  # reference draws between the geometry types and the non-geometry ones.
+  #
+  # No `alt` here, deliberately. The three above carry "Convert" — geometry
+  # types convert into one another (a face selection becomes its vertices).
+  # There is no geometry->item conversion to offer, and copying the shape of
+  # a neighbouring button for symmetry's sake would put a control there that
+  # cannot mean anything.
+  - title: itemmode
+    buttons:
+      - label: Items
+        action: { kind: command, id: select.item }
   - title: toolpipe
     buttons:
       # reference-style Action Center pulldown. Mirrors the action-centers

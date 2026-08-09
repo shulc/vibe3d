@@ -13,7 +13,7 @@ module registration;
 // The only line-level edits versus the original app.d text are the
 // documented Edit-class 1 (`&x` -> `&x()` on the four address-taken
 // pointer-backed locals: gpu/editMode/document) and Edit-class 2
-// (`&switchToItemType` -> `switchToItemType`, the one address-taken hook).
+// (`&promoteItemType` -> `promoteItemType`, the one address-taken hook).
 //
 // Phase 0 (this commit): skeleton only -- both functions are empty stubs,
 // not called anywhere yet. `dub build` glob-compiles source/ regardless of
@@ -914,8 +914,8 @@ void registerTools(EditorApp app) {
 /// resetAllPipeStages, the hook delegates, ...) resolves through the ctx
 /// instead of a main()-local of the same name. The only line-level edits
 /// versus the original text are Edit-class 1 (`&x` -> `&x()`, 19 &document
-/// + 10 &editMode sites) and Edit-class 2 (`&switchToItemType` ->
-/// `switchToItemType`, the one address-taken hook -- see task doc).
+/// + 10 &editMode sites) and Edit-class 2 (`&promoteItemType` ->
+/// `promoteItemType`, the one address-taken hook -- see task doc).
 void registerCommands(EditorApp app) {
     with (app) {
     with (ai3dRefs) {
@@ -968,7 +968,7 @@ void registerCommands(EditorApp app) {
             new LayerReorder(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged);
         reg.commandFactories["layer.select"] = () => cast(Command)
             (new LayerSelect(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged))
-                .setItemSelectHook(switchToItemType);
+                .setItemSelectHook(promoteItemType);
         reg.commandFactories["layer.rename"] = () => cast(Command)
             new LayerRename(&mesh(), cameraView, editMode, &document(), onActiveLayerChanged);
         reg.commandFactories["layer.setVisible"] = () => cast(Command)
@@ -1183,18 +1183,32 @@ void registerCommands(EditorApp app) {
     reg.commandFactories["select.fill.insideLoop"] = () => cast(Command)
         (new SelectFillInsideLoop(&mesh(), cameraView, editMode, &editMode()))
             .setPromoteHook((EditMode m) => promoteGeometryType(m));
+    // The wire vocabulary is FOUR tokens (task 0642): vertex / edge / polygon
+    // route through the geometry funnel; `item` routes through the item door
+    // (`switchItemType`), which leaves `editMode` alone by construction. Every
+    // factory below gets BOTH hooks so the token decides the path, not the
+    // factory — `select.typeFrom item` and the dedicated `select.item` id are
+    // the same command reaching the same door.
     reg.commandFactories["select.typeFrom"]  = () => cast(Command)
-        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(),
-                                  (EditMode m) => switchGeometryType(m));
+        (new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(),
+                                  (EditMode m) => switchGeometryType(m)))
+            .setItemHook(switchItemType);
     reg.commandFactories["select.vertex"]    = () => cast(Command)
-        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "vertex",
-                                  (EditMode m) => switchGeometryType(m));
+        (new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "vertex",
+                                  (EditMode m) => switchGeometryType(m)))
+            .setItemHook(switchItemType);
     reg.commandFactories["select.edge"]      = () => cast(Command)
-        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "edge",
-                                  (EditMode m) => switchGeometryType(m));
+        (new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "edge",
+                                  (EditMode m) => switchGeometryType(m)))
+            .setItemHook(switchItemType);
     reg.commandFactories["select.polygon"]   = () => cast(Command)
-        new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "polygon",
-                                  (EditMode m) => switchGeometryType(m));
+        (new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "polygon",
+                                  (EditMode m) => switchGeometryType(m)))
+            .setItemHook(switchItemType);
+    reg.commandFactories["select.item"]      = () => cast(Command)
+        (new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "item",
+                                  (EditMode m) => switchGeometryType(m)))
+            .setItemHook(switchItemType);
     reg.commandFactories["select.drop"]      = () => cast(Command)
         new SelectDropCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["select.element"]   = () => cast(Command)

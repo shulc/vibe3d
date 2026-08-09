@@ -757,10 +757,14 @@ struct EditorApp {
 
     // ---- (г) hook delegates: nested functions in main(), captured via
     //      `&funcName`; called bare (verbatim) inside the spans except
-    //      switchToItemType, which is address-taken once (Edit-class 2:
-    //      &switchToItemType -> switchToItemType at the one call site) ----
+    //      promoteItemType, which is address-taken once (Edit-class 2:
+    //      &promoteItemType -> promoteItemType at the one call site) ----
     void delegate(Tool)         setActiveTool;
-    void delegate()             switchToItemType;
+    void delegate()             promoteItemType;
+    // Task 0642 — the deliberate item-mode door (`select.typeFrom item`, the
+    // Items status-line button, the Items key). Distinct from promoteItemType
+    // above: this one drops the active tool on a front-flip.
+    void delegate()             switchItemType;
     void delegate(EditMode)     promoteGeometryType;
     void delegate(EditMode)     switchGeometryType;
     void delegate(size_t, size_t) onActiveLayerChanged;
