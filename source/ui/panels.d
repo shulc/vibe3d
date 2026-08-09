@@ -886,20 +886,50 @@ void drawViewportPropsPanel(EditorApp app) {
 // Layers panel (layers Stage 4)
 // -------------------------------------------------------------------------
 //
-// Interactive layer manager. One row per `document.layers` that
-// `kindInfo(kind).isSceneItem` (task 0616 Stage 2) — a document RESOURCE
-// kind (e.g. an image) is skipped here; it lives only in its own panel:
-//   - a primary/selected indicator + name selectable → `layer.select`
-//     (plain click mode:set, ctrl-click mode:toggle)
-//   - the layer name (double-click to rename in place → `layer.rename`)
-//   - a "V" (visible) checkbox     → `layer.setVisible index:N value:b`
-//   - an "F" (foreground) checkbox → `layer.select index:N mode:add/remove`
-//     (foreground == selected; background is the derived complement)
-// plus an "Add" button (`layer.add`) and a "Delete" button
-// (`layer.delete index:N`, targeting the item-selection FOCUS — the row the
-// panel highlights, see `layerDeleteButtonState` — disabled when deleting it
-// would leave no layer able to be the mesh edit target; the command refuses
-// that regardless, this just greys the affordance).
+// Interactive item manager: a scene ROOT row naming the document, then one
+// indented row per `document.layers` that `kindInfo(kind).isSceneItem` (task
+// 0616 Stage 2) — a document RESOURCE kind (e.g. an image) is skipped here;
+// it lives only in its own panel.
+//
+// WHAT IS DRAWN HERE AND WHAT IS DECIDED ELSEWHERE (task 0639). Every
+// assertable thing about this list — which rows exist, in what order, at what
+// indent depth, what each row is named, which glyph it draws, its role in the
+// item selection, whether it is greyed, and the `Document.layers` index each
+// row dispatches against — is `ui/item_rows.d`'s `itemRowsInto`, behind
+// in-module tests. This body is layout and dispatch only, following
+// `ui/image_rows.d`'s split exactly, and for the reason that module states: an
+// ImGui panel body cannot be driven headlessly, so an assertion written
+// against it can only ever say "the function ran".
+//
+// Per row:
+//   - an EYE cell            → `layer.setVisible index:N value:b`
+//   - a ROLE cell            → `layer.select index:N mode:set|toggle`
+//     (filled diamond = mesh edit target, hollow = item-selection focus,
+//     dot = plain foreground membership, empty = derived background)
+//   - a TYPE glyph + the name selectable → `layer.select` / rename / reorder
+// plus an "Add Item" drop-down (`layer.add` / `imagePlane.add`, from
+// `kAddItemChoices`) and a "Delete" button (`layer.delete index:N`, targeting
+// the item-selection FOCUS — see `layerDeleteButtonState` — disabled when
+// deleting it would leave no layer able to be the mesh edit target; the
+// command refuses that regardless, this just greys the affordance).
+//
+// WHAT THE REFERENCE SHAPE HAS THAT THIS DOES NOT, and why (task 0639):
+//   * a THIRD narrow column. We hold two per-row states a cell can toggle —
+//     visibility and selection role — and nothing behind a third. A narrow
+//     empty column is decoration, and this panel is explicitly not allowed to
+//     draw one.
+//   * "Select" and "Filter" buttons. The screenshot shows that they exist and
+//     not what they do; a button whose behaviour is unknown ships as a dead
+//     affordance.
+//   * the TAB STRIP along the top. Those are sibling dockable panels, and
+//     ImGui makes co-docked windows into tabs by itself — this app already
+//     docks its viewports. Nothing to build, and emphatically NOT the
+//     hand-rolled `Selectable`+`SameLine` strip app.d uses for tool
+//     properties (this binding exposes no `BeginTabBar`): docking tabs are a
+//     different mechanism from the tab-bar widget.
+//   * per-ITEM collapse. Only the root collapses, because that is the only
+//     expansion state the row model holds; a triangle on a parent item would
+//     be a control with nothing behind it.
 //
 // EVERY interaction dispatches through commandHandlerDelegate — the same
 // path /api/command uses — so undo/history/coalescing all work. The panel
@@ -938,152 +968,313 @@ void drawLayerListPanel(EditorApp app) {
     import std.json : JSONValue;
     import std.conv : to;
     import std.string : fromStringz;
+    import ui.item_rows   : ItemRow, ItemGlyph, RowRole, itemRowsInto,
+                            isCurrentRole, kAddItemChoices;
+    import ui.item_glyphs : drawItemGlyph, drawEyeGlyph, drawRoleGlyph,
+                            drawDisclosure, kGlyphCellRatio,
+                            kGlyphRadiusRatio, kIndentRatio;
+    import io.doc_state   : currentDocPath, docDirty;
 
     pushPanelChromeStyle();
     // SetNextWindowPos/Size dropped — the dock slot controls position;
     // DockBuilderDockWindow("Layers", rightId) pre-assigns the window.
-    if (ImGui.Begin("Layers")) {
-        // ---- Add button ----
-        if (ImGui.SmallButton("Add")) {
-            if (commandHandlerDelegate !is null)
-                commandHandlerDelegate("layer.add", "{}");
+    //
+    // "Items###Layers" (task 0639): everything before "###" is the TITLE ImGui
+    // draws on the tab, everything after it is the ID ImGui hashes. The dock
+    // ini and app.d's three `DockBuilderDockWindow("Layers", …)` calls key off
+    // that id, so the visible name can change without orphaning a single
+    // user's saved layout — which a plain rename to `Begin("Items")` would do,
+    // silently, to everyone.
+    if (ImGui.Begin("Items###Layers")) {
+        // ---- Metrics -----------------------------------------------------
+        // Derived from the ROW HEIGHT rather than written as pixel constants:
+        // that height already carries the UI scale and the font swap between
+        // a normal run and --test, so the cells track both for free.
+        // `GetFontSize()` IS ImGui's text line height (`GetTextLineHeight`
+        // returns exactly that, and this binding does not expose the latter).
+        // Using it keeps every cell the same height as the name text, so the
+        // glyphs sit on the text's own baseline band rather than near it.
+        immutable float rowH    = ImGui.GetFontSize();
+        immutable float cellW   = rowH * kGlyphCellRatio;
+        immutable float gRad    = rowH * kGlyphRadiusRatio;
+        immutable float indentW = rowH * kIndentRatio;
+
+        // The panel runs on a LIGHT grey background (143,143,143) with
+        // ImGuiCol.Text pushed to black (pushPanelChromeStyle), so these are
+        // dark-on-light literals — ImGui's own semi-transparent greys read as
+        // washed out here, which is the same reason the old row marker used a
+        // literal shade. Packed by hand because this binding exposes no
+        // `GetColorU32`.
+        immutable uint inkCol  = IM_COL32(0,  0,  0,  255);  // ordinary row
+        immutable uint hintCol = IM_COL32(77, 77, 77, 255);  // column header
+        immutable uint offCol  = IM_COL32(97, 97, 97, 255);  // hidden / greyed
+
+        // ---- "Add Item" (one drop-down) + Delete -------------------------
+        // ONE button with a list, not one button per kind. With the plane
+        // creation route there were already two, and a button per future kind
+        // turns this row into a wall; the drop-down names each outcome in
+        // words instead.
+        {
+            immutable float availW  = ImGui.GetContentRegionAvail().x;
+            immutable float spacing = ImGui.GetStyle().ItemSpacing.x;
+            // The frame height, exactly: this binding has no `GetFrameHeight`,
+            // but `GetFrameHeightWithSpacing` is that plus ItemSpacing.y and
+            // both terms are reachable.
+            immutable float frameH  = ImGui.GetFrameHeightWithSpacing()
+                                    - ImGui.GetStyle().ItemSpacing.y;
+            immutable float arrowW  = frameH;                 // a square button
+            // Deliberately an OVER-estimate of the Delete button's own width:
+            // `ImGuiStyle` exposes only ItemSpacing here, so FramePadding.x
+            // cannot be read, and one frame height is comfortably more than
+            // the two paddings it stands in for. Over-estimating only makes
+            // "Add Item" a few pixels narrower; under-estimating would wrap
+            // the row.
+            immutable float delW = ImGui.CalcTextSize("Delete").x + frameH;
+            float addW = availW - arrowW - delW - spacing * 2.0f;
+            immutable float addMin = rowH * 3.0f;
+            if (addW < addMin) addW = addMin;   // never collapse to nothing
+
+            // Both halves open the same menu: the label is not a separate
+            // "add the default kind" action, because there is no default kind
+            // — a button whose click did something different from its own
+            // arrow is exactly the ambiguity the single menu removes.
+            //
+            // The arrow is a bare button with a triangle drawn over its rect:
+            // this binding has no `ArrowButton`, and drawing it ourselves also
+            // keeps it the same triangle the root row's disclosure uses.
+            bool openMenu = false;
+            if (ImGui.Button("Add Item", ImVec2(addW, 0.0f))) openMenu = true;
+            ImGui.SameLine(0.0f, 0.0f);
+            if (ImGui.Button("##additem_open", ImVec2(arrowW, 0.0f)))
+                openMenu = true;
+            {
+                immutable ImVec2 amin = ImGui.GetItemRectMin();
+                immutable ImVec2 amax = ImGui.GetItemRectMax();
+                drawDisclosure(ImGui.GetWindowDrawList(),
+                    ImVec2((amin.x + amax.x) * 0.5f, (amin.y + amax.y) * 0.5f),
+                    gRad, /*expanded=*/true, inkCol);
+            }
+            if (openMenu) ImGui.OpenPopup("##additem_menu");
+
+            ImGui.SameLine();
+            // ---- Delete button ----
+            // Targets `document.focusedItem` — the item-selection FOCUS, i.e.
+            // the row the panel highlights as current — NOT
+            // `document.activeIndex`/`primary`. Task 0615 Stage 6 review round
+            // 2, BLOCKER 2: a non-mesh row can be the focus without ever
+            // becoming primary (§L2), and the old code always dispatched
+            // against the primary regardless of which row was highlighted — so
+            // clicking a highlighted non-mesh row and pressing Delete silently
+            // deleted the (different, unhighlighted) primary instead.
+            // `layerDeleteButtonState` (commands/layer/commands.d) is the SAME
+            // function driving both the enabled/disabled guard AND the
+            // dispatched index, so the two can never disagree the way the
+            // primary-vs-focus split did.
+            auto delState = layerDeleteButtonState(&document());
+            ImGui.BeginDisabled(!delState.enabled);
+            if (ImGui.Button("Delete")) {
+                if (delState.enabled && commandHandlerDelegate !is null)
+                    commandHandlerDelegate("layer.delete",
+                        `{"index":` ~ to!string(delState.index) ~ `}`);
+            }
+            ImGui.EndDisabled();
+
+            // The entries, their labels and above all the command ids they
+            // dispatch are `ui/item_rows.d`'s `kAddItemChoices`, whose tests
+            // compare each id against the command class's own `name()` — a
+            // typo in a dispatch string is otherwise a button that silently
+            // does nothing.
+            if (ImGui.BeginPopup("##additem_menu")) {
+                foreach (ci, c; kAddItemChoices) {
+                    ImGui.PushID(cast(int) ci);
+                    if (ImGui.Selectable(c.label)) {
+                        if (commandHandlerDelegate !is null)
+                            commandHandlerDelegate(c.command, c.args);
+                    }
+                    // `SetTooltip(string)` in this binding formats through
+                    // "%.*s", so a runtime string is safe here — it is not
+                    // being passed as a format.
+                    if (c.tooltip.length && ImGui.IsItemHovered())
+                        ImGui.SetTooltip(c.tooltip);
+                    ImGui.PopID();
+                }
+                ImGui.EndPopup();
+            }
         }
-        ImGui.SameLine();
-        // ---- Add-plane button (task 0612 Stage 7) ----
-        // A second button rather than a kind argument on "Add": `layer.add`
-        // has no `kind` parameter at all, so nothing had to be blocked and
-        // nothing has to be unblocked — adding creation for a new kind is
-        // purely additive, and the two buttons make the two outcomes legible
-        // without a dropdown the user has to open to find out what Add does.
-        //
-        // No arguments: the command's defaults are a `front` plane with no
-        // image, which is the state the properties form below is for. The
-        // command folds the selection in, so the new plane is the item the
-        // form binds the moment it exists.
-        if (ImGui.SmallButton("+Plane")) {
-            if (commandHandlerDelegate !is null)
-                commandHandlerDelegate("imagePlane.add", "{}");
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Add a reference-image plane");
-        ImGui.SameLine();
-        // ---- Delete button ----
-        // Targets `document.focusedItem` — the item-selection FOCUS, i.e.
-        // the row the panel highlights as active (the ">" primary marker OR
-        // the "@" focus marker below) — NOT `document.activeIndex`/`primary`.
-        // Task 0615 Stage 6 review round 2, BLOCKER 2: a non-mesh row can be
-        // the focus without ever becoming primary (§L2), and the old code
-        // always dispatched against the primary regardless of which row was
-        // highlighted — so clicking a highlighted non-mesh row and pressing
-        // Delete silently deleted the (different, unhighlighted) primary
-        // instead. `layerDeleteButtonState` (commands/layer/commands.d) is
-        // the SAME function driving both the enabled/disabled guard AND the
-        // dispatched index, so the two can never disagree with each other
-        // the way the primary-vs-focus split did.
-        auto delState = layerDeleteButtonState(&document());
-        ImGui.BeginDisabled(!delState.enabled);
-        if (ImGui.SmallButton("Delete")) {
-            if (delState.enabled && commandHandlerDelegate !is null)
-                commandHandlerDelegate("layer.delete",
-                    `{"index":` ~ to!string(delState.index) ~ `}`);
-        }
-        ImGui.EndDisabled();
 
         ImGui.Separator();
 
-        // ---- One row per layer ----
-        foreach (i; 0 .. document.layers.length) {
-            auto l = document.layers[i];
-            // Task 0616 Stage 2 (SHOULD-FIX 2, review round 4): `isSceneItem`
-            // is the capability that says "belongs in this list" — a
-            // document RESOURCE kind (e.g. an image) has no transform and
-            // nothing to see in the viewport, so it lives only in its own
-            // panel (a later stage), never this one. Skip BEFORE `PushID` /
-            // any row chrome, mirroring the `drawsGeometry` gates elsewhere
-            // in this file that skip before their own per-row work starts.
-            // `document.layers`' indices stay untouched (a hidden row is
-            // skipped, not removed), so every `idx`-keyed command dispatch
-            // below still targets the right layer.
-            if (!kindInfo(l.kind).isSceneItem) continue;
-            int idx = cast(int)i;
-            ImGui.PushID(idx);
+        // ---- Column headers ----------------------------------------------
+        // TWO icon columns and a Name, because two is how many per-row states
+        // this panel actually holds a control for. The reference shape has a
+        // third; we have nothing behind it, and a narrow empty column is
+        // decoration. Each header draws the SAME glyph its column does, so the
+        // header says what the column means rather than abbreviating it.
+        {
+            auto hdl = ImGui.GetWindowDrawList();
+            immutable ImVec2 hp = ImGui.GetCursorScreenPos();
+            drawEyeGlyph(hdl, ImVec2(hp.x + cellW * 0.5f, hp.y + rowH * 0.5f),
+                         gRad, /*visible=*/true, hintCol);
+            drawRoleGlyph(hdl, ImVec2(hp.x + cellW * 1.5f, hp.y + rowH * 0.5f),
+                          gRad, RowRole.Primary, hintCol);
+            ImGui.Dummy(ImVec2(cellW * 2.0f, rowH));
+            ImGui.SameLine(0.0f, 0.0f);
+            ImGui.TextDisabled("Name");
+        }
+        ImGui.Separator();
 
-            // Primary / focus / selection indicator + exclusive-select handle
-            // (Stage 4; extended task 0615 Stage 6 for the focus/primary
-            // split — §Q2). `primary` is the single MESH EDIT TARGET;
-            // `focusedItem` is the item-selection FOCUS (item transform /
-            // property panel / item ops) and may be ANY kind — the two
-            // coincide except when the current focus is on a non-mesh item
-            // (a non-mesh layer can never become primary). The marker shows
-            // all three states at a glance:
-            //   ">"  primary (the mesh edit target; always selected + visible)
-            //   "@"  focused (item-selection focus) but NOT primary — only
-            //        reachable via a non-mesh item, since on an all-mesh
-            //        document focus and primary always coincide
-            //   "*"  selected (foreground) but neither primary nor focus
-            //   " "  deselected (derived background)
-            // Clicking this handle is an EXCLUSIVE select (`mode:set`):
-            // it makes this the sole selected layer, the focus, AND the
-            // primary IF this layer can be one (a non-mesh row becomes focus
-            // only — the mesh edit target is untouched; §L2). The command
-            // compares object identity, so re-clicking the primary/focus row
-            // is a no-op switch; guard against re-dispatching every frame the
-            // row is held. Multi-select lives on the name (ctrl-click).
-            bool isPrimaryRow = document.isPrimary(l);
-            bool isFocusRow   = document.focusedItem is l;
-            immutable marker = isPrimaryRow ? ">"
-                              : isFocusRow   ? "@"
-                              : l.selected   ? "*" : " ";
-            bool rowActive = isPrimaryRow || isFocusRow;
-            // Task 0612 Stage 8 (§7.2 consequence 2) — a SELECTED row that the
-            // item gizmo will NOT move is drawn dimmed. Reachable in exactly
-            // one state: the document invariant forces the mesh edit target to
-            // stay selected, so selecting a mesh-less item leaves the mesh in
-            // the set while approximation D drops it from the moving set. The
-            // row stays selected and stays clickable — only its marker greys,
-            // which is the difference between "this does not move" being
-            // visible and being something the user discovers by dragging.
-            immutable bool dimNonTarget = l.selected && !document.isTransformTarget(l);
-            //
-            // The literal shade, not `ImGuiCol.TextDisabled`: this binding's
-            // `ImGuiStyle` is opaque (no `Colors` array to read), and the
-            // panel runs on a LIGHT background with `ImGuiCol.Text` pushed to
-            // black at the top of this window — ImGui's own semi-transparent
-            // grey would read as washed out here. (0.235) is the same
-            // "disabled" shade the popup palette (`imgui_style.d`) and the
-            // undo counter below already use.
-            if (dimNonTarget)
-                ImGui.PushStyleColor(ImGuiCol.Text,
-                                     ImVec4(0.235f, 0.235f, 0.235f, 1.0f));
-            if (ImGui.Selectable(marker, rowActive,
-                                 ImGuiSelectableFlags.AllowItemOverlap,
-                                 ImVec2(14, 0))) {
-                if (!rowActive && commandHandlerDelegate !is null)
-                    commandHandlerDelegate("layer.select",
-                        `{"index":` ~ to!string(idx) ~ `,"mode":"set"}`);
+        // ---- Rows ---------------------------------------------------------
+        // WHAT is listed, in WHAT order, at WHAT depth and under WHAT name is
+        // `itemRowsInto` — see this function's header comment. Below is
+        // placement and dispatch only.
+        //
+        // One static buffer, refilled in place each frame (the
+        // `Document.selectedItemsInto` idiom), so a per-frame draw does not
+        // churn an array.
+        static ItemRow[] rowBuf;
+        static bool rootExpanded = true;
+        itemRowsInto(&document(), currentDocPath(), docDirty(),
+                     rootExpanded, rowBuf);
+
+        immutable float contentW = ImGui.GetContentRegionAvail().x;
+        auto dl = ImGui.GetWindowDrawList();
+
+        foreach (ri, ref r; rowBuf) {
+            ImGui.PushID(cast(int) ri);
+            immutable ImVec2 rowP0 = ImGui.GetCursorScreenPos();
+            immutable ImVec2 rowP1 = ImVec2(rowP0.x + contentW, rowP0.y + rowH);
+
+            // ---- Row background ----
+            // The WHOLE row, drawn into the window list before any cell, so
+            // the highlight spans the icon columns too rather than starting at
+            // the name. Two shades for two different facts: a member of the
+            // foreground set, and the single row every panel binds.
+            if (isCurrentRole(r.role))
+                dl.AddRectFilled(rowP0, rowP1, IM_COL32(88, 88, 96, 255));
+            else if (r.role == RowRole.Selected)
+                dl.AddRectFilled(rowP0, rowP1, IM_COL32(120, 120, 120, 255));
+
+            // ---- Row ink ----
+            // The current row is drawn in an ACCENT colour as well as on a
+            // highlight — which is the half of "selected" the old plain
+            // `Selectable` did not carry. A greyed row (selected, but the item
+            // gizmo will not move it) keeps saying so THROUGH the accent
+            // rather than losing one of the two facts: the combination is not
+            // hypothetical, it is exactly the state where the mesh edit target
+            // stays selected while a mesh-less item holds the focus.
+            uint txtCol;
+            if (isCurrentRole(r.role))
+                txtCol = r.dimmed ? IM_COL32(158, 120,  74, 255)   // muted accent
+                                  : IM_COL32(255, 176,  75, 255);  // accent
+            else
+                txtCol = r.dimmed ? offCol : inkCol;
+
+            // ---- Eye cell ----
+            // Absent, not disabled, where there is nothing to toggle (the
+            // root): a control that cannot be clicked is the dead ornament
+            // this panel is not allowed to draw.
+            if (r.canToggleVisible) {
+                if (ImGui.InvisibleButton("##vis", ImVec2(cellW, rowH))) {
+                    if (commandHandlerDelegate !is null)
+                        commandHandlerDelegate("layer.setVisible",
+                            `{"index":` ~ to!string(r.index) ~ `,"value":`
+                            ~ (r.visible ? "false" : "true") ~ `}`);
+                }
+                drawEyeGlyph(dl,
+                    ImVec2(rowP0.x + cellW * 0.5f, rowP0.y + rowH * 0.5f),
+                    gRad, r.visible, r.visible ? txtCol : offCol);
+            } else {
+                ImGui.Dummy(ImVec2(cellW, rowH));
             }
-            if (dimNonTarget) ImGui.PopStyleColor();
-            ImGui.SameLine();
-            // Kind badge (task 0615 Stage 6) — a dim wire token
-            // ("mesh"/"empty") so a non-mesh row is legible in the panel even
-            // before any dedicated icon exists. Purely informational: no
-            // interaction, no dispatch.
-            //
-            // NIT (review round 2): `TextDisabled` is printf-style
-            // (`ImGui::TextDisabled(const char* fmt, ...)`); passing a
-            // runtime string directly as `fmt` is a documented crash class
-            // in this codebase (a token containing `%` would be
-            // misinterpreted as a format specifier). `tokenOf` only ever
-            // returns one of the fixed literals in `kItemKindTable`
-            // (document.d) today, so this was safe in practice, but pass it
-            // as a `%s` arg — the same pattern already used two call sites
-            // below (`ImGui.TextDisabled("%s", it.label);`) — so it stays
-            // safe if a future kind's token ever contains one.
-            ImGui.TextDisabled("%s", tokenOf(l.kind));
-            ImGui.SameLine();
+            ImGui.SameLine(0.0f, 0.0f);
 
-            // Name — double-click to rename in place.
-            if (layerRenameIndex == idx) {
+            // ---- Role cell ----
+            // Replaces BOTH the old ">"/"@"/"*" text marker AND the "F"
+            // checkbox beside it, and NOTHING a user could read is lost.
+            //
+            // "F" reported `Document.foreground(l)`, i.e. `visible &&
+            // selected` — one checkbox CONFLATING two independent facts, so a
+            // cleared box could mean "not selected" or "hidden" and the user
+            // could not tell which. The two facts now have a column each: the
+            // eye is `visible`, this cell is `selected` (with which KIND of
+            // selected as a bonus the checkbox never carried), and
+            // "foreground" is their conjunction, read straight off the row.
+            //
+            // Both dispatches survive too — plain click is the exclusive
+            // select the marker was, ctrl-click is `mode:toggle`, whose two
+            // outcomes are exactly the checkbox's `mode:add` / `mode:remove`.
+            //
+            // The command compares object identity, so re-clicking the current
+            // row is a no-op switch; guard against re-dispatching every frame
+            // the row is held. Ctrl-click always dispatches (it must be able
+            // to deselect the current row too).
+            if (!r.isRoot) {
+                if (ImGui.InvisibleButton("##role", ImVec2(cellW, rowH))) {
+                    if (commandHandlerDelegate !is null
+                        && (io.KeyCtrl || !isCurrentRole(r.role)))
+                        commandHandlerDelegate("layer.select",
+                            `{"index":` ~ to!string(r.index) ~ `,"mode":`
+                            ~ (io.KeyCtrl ? `"toggle"` : `"set"`) ~ `}`);
+                }
+                drawRoleGlyph(dl,
+                    ImVec2(rowP0.x + cellW * 1.5f, rowP0.y + rowH * 0.5f),
+                    gRad, r.role, txtCol);
+            } else {
+                ImGui.Dummy(ImVec2(cellW, rowH));
+            }
+            ImGui.SameLine(0.0f, 0.0f);
+
+            // ---- Indent ----
+            if (r.depth > 0) {
+                ImGui.Dummy(ImVec2(indentW * r.depth, rowH));
+                ImGui.SameLine(0.0f, 0.0f);
+            }
+
+            // ---- Disclosure slot ----
+            // Always RESERVED, drawn only on the root. Reserved because the
+            // type glyphs are what the eye follows down the list, and letting
+            // a childless row reclaim the triangle's width would leave the
+            // glyph column ragged.
+            {
+                immutable ImVec2 dp = ImGui.GetCursorScreenPos();
+                if (r.isRoot) {
+                    if (ImGui.InvisibleButton("##disc", ImVec2(cellW, rowH)))
+                        rootExpanded = !rootExpanded;
+                    drawDisclosure(dl,
+                        ImVec2(dp.x + cellW * 0.5f, dp.y + rowH * 0.5f),
+                        gRad, rootExpanded, txtCol);
+                } else {
+                    ImGui.Dummy(ImVec2(cellW, rowH));
+                }
+                ImGui.SameLine(0.0f, 0.0f);
+            }
+
+            // ---- Type glyph ----
+            {
+                immutable ImVec2 gp = ImGui.GetCursorScreenPos();
+                ImGui.Dummy(ImVec2(cellW, rowH));
+                drawItemGlyph(dl,
+                    ImVec2(gp.x + cellW * 0.5f, gp.y + rowH * 0.5f),
+                    gRad, r.glyph, txtCol);
+                ImGui.SameLine(0.0f, 0.0f);
+            }
+
+            // ---- Name ----
+            immutable bool renaming = !r.isRoot && layerRenameIndex >= 0
+                && cast(size_t) layerRenameIndex == r.index;
+            // The accent is for a row being READ; a row being EDITED reverts to
+            // ink. The rename field sits on the pale beige FrameBg this chrome
+            // pushes, and the accent orange on that is barely legible — the
+            // colour that says "this is the current row" would be paid for by
+            // not being able to see what you are typing.
+            ImGui.PushStyleColor(ImGuiCol.Text, renaming ? inkCol : txtCol);
+            if (r.isRoot) {
+                // Not a Selectable: the root names the FILE, and there is no
+                // scene item behind it to select, rename or reorder. Clicking
+                // it does nothing, which is honest; the triangle beside it is
+                // what the row is for.
+                ImGui.TextUnformatted(r.name);
+            } else if (renaming) {
                 // Inline edit: Enter (or focus loss) commits, Esc cancels.
                 if (ImGui.IsWindowAppearing() || !ImGui.IsAnyItemActive())
                     ImGui.SetKeyboardFocusHere();
@@ -1092,58 +1283,57 @@ void drawLayerListPanel(EditorApp app) {
                                   ImGuiInputTextFlags.EnterReturnsTrue);
                 bool cancel = ImGui.IsKeyPressed(ImGuiKey.Escape);
                 // Commit on Enter or when the field loses focus (click away).
-                if (!commit && !cancel
-                    && ImGui.IsItemDeactivatedAfterEdit())
+                if (!commit && !cancel && ImGui.IsItemDeactivatedAfterEdit())
                     commit = true;
                 if (commit) {
                     string newName =
                         cast(string) fromStringz(layerRenameBuf.ptr).dup;
                     if (newName.length && commandHandlerDelegate !is null)
                         commandHandlerDelegate("layer.rename",
-                            `{"index":` ~ to!string(idx) ~ `,"name":`
+                            `{"index":` ~ to!string(r.index) ~ `,"name":`
                             ~ JSONValue(newName).toString() ~ `}`);
                     layerRenameIndex = -1;
                 } else if (cancel || ImGui.IsItemDeactivated()) {
                     layerRenameIndex = -1;
                 }
             } else {
-                // Plain label — also the multi-select target (Stage 4).
-                // It is highlighted when the layer is in the foreground
-                // (selected) set, so the panel reflects the whole set, not
-                // just the primary. Click semantics:
+                // The name is the multi-select target, the rename opener and
+                // the drag-to-reorder handle. `selected` is passed FALSE: the
+                // row background above already carries selection, and letting
+                // the Selectable draw its own Header colour on top would paint
+                // a second, differently-sized highlight inside the first. What
+                // it still contributes is HOVER feedback.
                 //   plain click → `layer.select mode:set`    (exclusive
                 //                 select + make primary)
-                //   ctrl-click  → `layer.select mode:toggle` (add/remove
-                //                 this layer from the foreground set;
-                //                 removing the primary promotes another)
-                // Double-click still opens the inline rename editor; the
-                // label is also the drag-to-reorder handle (below). Every
-                // path dispatches a `layer.*` command — no direct document
-                // mutation — so it is undoable + headless-identical.
+                //   ctrl-click  → `layer.select mode:toggle` (add/remove this
+                //                 layer from the foreground set; removing the
+                //                 primary promotes another)
                 bool nameClicked =
-                    ImGui.Selectable(l.name.length ? l.name : "(unnamed)",
-                                     l.selected,
+                    ImGui.Selectable(r.name, false,
                                      ImGuiSelectableFlags.AllowDoubleClick,
-                                     ImVec2(140, 0));
+                                     ImVec2(0, rowH));
                 bool dbl = ImGui.IsItemHovered()
                     && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left);
                 if (nameClicked && !dbl && commandHandlerDelegate !is null) {
                     // io.KeyCtrl is the frame's merged Ctrl-modifier state
                     // (matches every other modifier read in the app).
                     immutable mode = io.KeyCtrl ? `"toggle"` : `"set"`;
-                    // Plain click on the already-primary row is a no-op
+                    // Plain click on the already-current row is a no-op
                     // switch; skip it so a single-select drag-press doesn't
-                    // re-dispatch every frame. Ctrl-click always dispatches
-                    // (it must be able to deselect the primary too).
-                    if (io.KeyCtrl || !document.isPrimary(l))
+                    // re-dispatch every frame.
+                    if (io.KeyCtrl || !document.isPrimary(r.layer))
                         commandHandlerDelegate("layer.select",
-                            `{"index":` ~ to!string(idx) ~ `,"mode":`
+                            `{"index":` ~ to!string(r.index) ~ `,"mode":`
                             ~ mode ~ `}`);
                 }
                 if (dbl) {
-                    layerRenameIndex = idx;
+                    layerRenameIndex = cast(int) r.index;
                     layerRenameBuf[] = 0;
-                    auto src = l.name;
+                    // The RAW name, never the displayed one: seeding the
+                    // editor with the "(unnamed)" placeholder means Enter
+                    // renames the item to that literal, after which "no name"
+                    // cannot be recovered (see `ItemRow.renameSeed`).
+                    auto src = r.renameSeed;
                     size_t n = src.length < layerRenameBuf.length - 1
                              ? src.length : layerRenameBuf.length - 1;
                     layerRenameBuf[0 .. n] = src[0 .. n];
@@ -1156,24 +1346,28 @@ void drawLayerListPanel(EditorApp app) {
                 // dragged layer lands at THIS row's index — the others shift
                 // to fill. The neutral payload type "VIBE3D_LAYER_ROW" (16
                 // chars, under the 32-char d_imgui limit) tags the drag so
-                // only layer rows accept it.
+                // only item rows accept it.
+                //
+                // Addressed by `r.index`, the DOCUMENT index, which is why the
+                // row model carries it: the list hides resource items and
+                // prepends a root, so a row's ordinal is not its layer.
                 //
                 // `to`-index semantics: the layer.reorder command splices the
                 // source layer OUT of the array, then splices it back IN at
-                // index `to` of the POST-REMOVAL array. With `to = idx`, the
-                // dragged row always lands at the target row's index for BOTH
-                // up- and down-drags (verified against the splice path in
+                // index `to` of the POST-REMOVAL array. With `to = r.index`,
+                // the dragged row always lands at the target row's index for
+                // BOTH up- and down-drags (verified against the splice path in
                 // commands/layer/commands.d::moveLayer and the test_layers.d
                 // reorder cases: from:2 to:0 on [A,B,C] -> [C,A,B];
                 // from:0 to:2 -> [B,C,A]). No from<to adjustment is needed:
                 // on a down-drag the source's removal already shifts the
-                // target up by one, so inserting at `idx` lands the dragged
-                // row exactly at the target's old visual slot.
+                // target up by one, so inserting at `r.index` lands the
+                // dragged row exactly at the target's old slot.
                 if (ImGui.BeginDragDropSource(ImGuiDragDropFlags.None)) {
-                    int srcIdx = idx;
+                    int srcIdx = cast(int) r.index;
                     ImGui.SetDragDropPayload("VIBE3D_LAYER_ROW",
                                              &srcIdx, srcIdx.sizeof);
-                    ImGui.Text(l.name.length ? l.name : "(unnamed)");
+                    ImGui.Text(r.name);
                     ImGui.EndDragDropSource();
                 }
                 if (ImGui.BeginDragDropTarget()) {
@@ -1183,39 +1377,16 @@ void drawLayerListPanel(EditorApp app) {
                         && payload.Data !is null
                         && payload.DataSize == cast(int)int.sizeof) {
                         int fromIdx = *cast(const(int)*) payload.Data;
-                        if (fromIdx != idx && commandHandlerDelegate !is null)
+                        if (fromIdx != cast(int) r.index
+                            && commandHandlerDelegate !is null)
                             commandHandlerDelegate("layer.reorder",
                                 `{"from":` ~ to!string(fromIdx)
-                                ~ `,"to":` ~ to!string(idx) ~ `}`);
+                                ~ `,"to":` ~ to!string(r.index) ~ `}`);
                     }
                     ImGui.EndDragDropTarget();
                 }
             }
-
-            // Visible checkbox.
-            ImGui.SameLine();
-            bool vis = l.visible;
-            if (ImGui.Checkbox("V", &vis)) {
-                if (commandHandlerDelegate !is null)
-                    commandHandlerDelegate("layer.setVisible",
-                        `{"index":` ~ to!string(idx) ~ `,"value":`
-                        ~ (vis ? "true" : "false") ~ `}`);
-            }
-            // Foreground indicator (Stage 2b). The old "B" (background)
-            // checkbox collapsed into the derived selection model: a layer is
-            // FOREGROUND iff it is selected. The checkbox shows foreground
-            // membership and dispatches the item-selection mutator —
-            // check ⇒ `layer.select mode:add` (select), uncheck ⇒
-            // `mode:remove` (deselect ⇒ derived background). No more separate
-            // background flag; `layer.setVisible` still owns visibility.
-            ImGui.SameLine();
-            bool fg = document.foreground(l);
-            if (ImGui.Checkbox("F", &fg)) {
-                if (commandHandlerDelegate !is null)
-                    commandHandlerDelegate("layer.select",
-                        `{"index":` ~ to!string(idx) ~ `,"mode":`
-                        ~ (fg ? `"add"` : `"remove"`) ~ `}`);
-            }
+            ImGui.PopStyleColor();
 
             ImGui.PopID();
         }
