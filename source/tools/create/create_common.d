@@ -1,6 +1,6 @@
 module tools.create.create_common;
 
-import math : Vec3, Viewport, dot;
+import math : Vec3, Viewport, dot, isOrtho, rayPlaneIntersect, screenPointToRay;
 import std.math : abs;
 
 import toolpipe.pipeline       : g_pipeCtx;
@@ -238,6 +238,129 @@ void pickWorkplaneGizmoBasis(const ref Viewport vp,
     }
     auto bp = pickMostFacingPlane(vp);
     ax = bp.axis1; ay = bp.normal; az = bp.axis2;
+}
+
+// ---------------------------------------------------------------------------
+// The cursor ray, in a workplane frame's LOCAL space — ORTHO-AWARE.
+//
+// This exists as ONE shared helper because the four Create-tool families
+// (box / pen / vertex_place / the PrimitiveCreateTool hierarchy) each carried
+// their own `localEye()` + `localRay()` pair built from `vp.eye` and
+// `screenRay`, and that pair is the PERSPECTIVE law: one common apex, with the
+// direction fanning out from it. It is the only construction of a cursor ray
+// left in the tree that does not go through `math.screenPointToRay`, which has
+// carried the orthographic arm all along.
+//
+// Under an orthographic projection the rays are PARALLEL — each starts at its
+// own point on the image plane and they all share the view forward. Feeding a
+// plane the perspective pencil instead scales the answer: the ray leaves the
+// eye and only reaches the construction plane after travelling the camera
+// DISTANCE, so the in-plane offset it accumulates is the click's offset times
+// that distance. Measured on a distance-3 camera (task 0661 Ph0): a click
+// intended for 0.4 world units right of the focus created geometry 1.206 units
+// right of it, in EVERY one of the six axis presets — Top and Bottom included.
+//
+// The two entry points below take the plane test with them so no call site can
+// pair an apex with a parallel ray again: `workplaneCursorPlaneHit` is the one
+// the tools call, and the ray form is exposed for the rare site that wants the
+// ray itself.
+// ---------------------------------------------------------------------------
+
+/// The cursor ray at pixel (sx, sy), expressed in `frame`'s LOCAL space.
+///
+/// `frame` is rigid (orthonormal basis + translation), so the transformed
+/// direction stays unit length and the ray parameter keeps meaning a world
+/// distance.
+void workplaneCursorRay(in WorkplaneFrame frame, const ref Viewport vp,
+                        float sx, float sy,
+                        out Vec3 orgLocal, out Vec3 dirLocal)
+{
+    Vec3 o, d;
+    screenPointToRay(sx, sy, vp, o, d);
+    orgLocal = transformPoint(frame.toLocal, o);
+    dirLocal = transformDir (frame.toLocal, d);
+}
+
+/// Intersect the cursor ray at pixel (sx, sy) with a plane stated in `frame`'s
+/// LOCAL space. Returns false on the same parallel-ray condition
+/// `rayPlaneIntersect` refuses on.
+///
+/// In an axis-locked orthographic view against the camera-facing plane this is
+/// algebraically the ported law's no-ray arm
+/// (`tools.transform.relocate_plane.posToPrincipalPlane`): the ortho ray
+/// origin IS the unprojected click, the direction is the plane normal, so the
+/// intersection changes exactly the one coordinate along the view axis and
+/// leaves the other two at the click. The unittest below asserts that equality
+/// rather than asserting it in prose.
+bool workplaneCursorPlaneHit(in WorkplaneFrame frame, const ref Viewport vp,
+                             float sx, float sy,
+                             Vec3 planeOrigin, Vec3 planeNormal,
+                             out Vec3 hitLocal)
+{
+    Vec3 o, d;
+    workplaneCursorRay(frame, vp, sx, sy, o, d);
+    return rayPlaneIntersect(o, d, planeOrigin, planeNormal, hitLocal);
+}
+
+/// Where a click lands on the ACTIVE construction plane, in WORLD space.
+///
+/// TOTAL — there is no "could not", and that is the point. The call sites this
+/// replaces were written `if (screenToWorkPlane(...)) handle.setPos(hit);`
+/// with no else, so a refusal kept the previous value and the click was simply
+/// not registered. A boolean nobody is forced to read turns "cannot" into
+/// "unchanged", which is indistinguishable from success at the only place a
+/// user can see it.
+///
+/// The plane FOLLOWS THE VIEW, which is the other half of the same defect: the
+/// plane those call sites projected onto was the fixed world floor (Y = 0,
+/// normal (0,1,0)), which a horizontal view's ray is exactly parallel to — so
+/// all four horizontal axis presets refused, every time, in silence.
+///
+/// The law is `XfrmTransformTool.computeClickRelocateHitRaw`'s Auto/None
+/// branch, read from there rather than re-derived:
+///   * auto     -> the camera-most-facing principal world axis as the normal,
+///                 anchored at the camera FOCUS;
+///   * pinned   -> the stage's full frame (rotation and origin both), because
+///                 collapsing it onto a principal axis would discard the
+///                 user's rotation without telling them.
+/// `currentWorkplaneFrame` is deliberately the accessor used (not
+/// `pickWorkplaneFrame`): it reads the stage directly and never calls
+/// `pipeline.evaluate`, so this stays safe to call from a mouse handler that
+/// is itself inside a pipeline walk.
+///
+/// Lives beside the other workplane accessors rather than in a create-only
+/// module by accident: the construction plane is global state
+/// (`WorkplaneStage`), and non-create callers (the command-wrapper click
+/// handle, the radial-array centre) want exactly the same answer the
+/// Create-tools drop geometry on.
+Vec3 screenToConstructionPlane(float sx, float sy, const ref Viewport vp)
+{
+    WorkplaneFrame wf = currentWorkplaneFrame();
+    Vec3 planeOrigin = wf.isAuto ? vp.focus : wf.origin;
+    Vec3 planeNormal = wf.isAuto ? pickMostFacingPlane(vp).normal : wf.normal;
+
+    Vec3 o, d;
+    screenPointToRay(sx, sy, vp, o, d);
+
+    Vec3 hit;
+    if (rayPlaneIntersect(o, d, planeOrigin, planeNormal, hit))
+        return hit;
+
+    // The only reachable refusal: a user-PINNED plane seen edge-on. Swap in
+    // the camera-perpendicular plane through the same origin — task 0226's
+    // fix, the same swap `computeClickRelocateHitRaw` makes for the same
+    // configuration. The cursor ray meets that plane at |dot| >= cos(halfFov)
+    // (== 1 under ortho), so this second test cannot refuse and the function
+    // is total.
+    Vec3 camBack = Vec3(vp.view[2], vp.view[6], vp.view[10]);
+    if (rayPlaneIntersect(o, d, planeOrigin, camBack, hit))
+        return hit;
+
+    // Unreachable: `camBack` is the ray direction itself under ortho and
+    // within one half-FOV of it under perspective. Returning the plane origin
+    // (the point under the cursor at screen centre) is a defined answer, not
+    // a silent retention of whatever the caller had before.
+    return planeOrigin;
 }
 
 /// Build a frame from explicit basis + origin. Useful for tools that
@@ -532,6 +655,173 @@ unittest {
     assert(abs(pw.x - 5.0f)  < 1e-5f);
     assert(abs(pw.y - (-2)) < 1e-5f);
     assert(abs(pw.z - 3.0f) < 1e-5f);
+}
+
+// ---------------------------------------------------------------------------
+// workplaneCursorPlaneHit — the ortho arm, and the equality that makes it the
+// ported law rather than a second opinion (task 0661).
+//
+// Rig: the Front axis preset. Camera at (0,0,dist) looking down -Z, ortho,
+// construction plane = the camera-facing principal plane (normal +Z) through
+// the focus. `frame` is identity-basis-with-normal-Z so local == world here,
+// which keeps the assertions readable in world coordinates.
+// ---------------------------------------------------------------------------
+private Viewport frontOrthoViewport(float dist, Vec3 focus) {
+    import math : orthographicMatrix;
+    import std.math : tan, PI;
+    Viewport vp;
+    vp.width = 640; vp.height = 480;
+    vp.x = 0; vp.y = 0;
+    vp.focus = focus;
+    vp.eye = Vec3(focus.x, focus.y, focus.z + dist);
+    // Front basis: right=+X, up=+Y, back=+Z. View matrix rows are the basis
+    // vectors (column-major m[row + col*4]).
+    vp.view = [
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        -focus.x, -focus.y, -(focus.z + dist), 1,
+    ];
+    float halfH = dist * tan(cast(float)(PI / 8.0));
+    vp.proj = orthographicMatrix(halfH, cast(float)vp.width / vp.height, 0.1f, 100.0f);
+    return vp;
+}
+
+unittest { // ortho: the in-plane answer is the click, NOT the click times distance
+    import std.math : abs, tan, PI;
+
+    immutable float dist = 3.0f;
+    immutable Vec3  focus = Vec3(0, 0, 0);
+    auto vp = frontOrthoViewport(dist, focus);
+    assert(isOrtho(vp), "rig premise: the Front preset is orthographic");
+
+    // Pick a pixel that unprojects to a known world point on the plane.
+    float halfH  = dist * tan(cast(float)(PI / 8.0));
+    float aspect = cast(float)vp.width / vp.height;
+    immutable Vec3 want = Vec3(0.4f, 0.3f, 0.0f);   // right 0.4, up 0.3 of focus
+    float ndcX = want.x / (halfH * aspect);
+    float ndcY = want.y / halfH;
+    float px = (ndcX * 0.5f + 0.5f) * vp.width;
+    float py = (1.0f - (ndcY * 0.5f + 0.5f)) * vp.height;
+
+    auto f = frameFromBasis(Vec3(0, 0, 1), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                            focus, true);
+    // Plane normal in LOCAL space is +Y by construction (toWorld's middle
+    // column is the frame normal), and the plane passes through local origin.
+    Vec3 hitLocal;
+    assert(workplaneCursorPlaneHit(f, vp, px, py, Vec3(0, 0, 0), Vec3(0, 1, 0),
+                                   hitLocal),
+           "an axis-facing plane can never be parallel to its own view ray");
+    Vec3 got = transformPoint(f.toWorld, hitLocal);
+
+    assert(abs(got.x - want.x) < 1e-4f && abs(got.y - want.y) < 1e-4f,
+           "ortho click must land AT the pixel it was taken from; the "
+           ~ "perspective pencil lands at distance times that offset");
+    assert(abs(got.z - focus.z) < 1e-5f, "and on the plane");
+}
+
+unittest { // ortho: identical to the ported law's no-ray arm, term for term
+    import std.math : abs, tan, PI;
+    import tools.transform.relocate_plane : posToPrincipalPlane;
+    import math : screenPointToRay, lockedViewAxis;
+
+    immutable float dist = 4.5f;
+    immutable Vec3  focus = Vec3(0.7f, 0.5f, 2.0f);
+    auto vp = frontOrthoViewport(dist, focus);
+    assert(lockedViewAxis(vp) == 2,
+           "rig premise: a Front ortho view is axis-locked on Z");
+
+    auto f = frameFromBasis(Vec3(0, 0, 1), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                            focus, true);
+
+    foreach (px; [40.0f, 200.0f, 320.0f, 610.0f]) {
+        foreach (py; [15.0f, 190.0f, 240.0f, 470.0f]) {
+            Vec3 hitLocal;
+            assert(workplaneCursorPlaneHit(f, vp, px, py, Vec3(0, 0, 0),
+                                           Vec3(0, 1, 0), hitLocal));
+            Vec3 mine = transformPoint(f.toWorld, hitLocal);
+
+            // The ported law, driven from the same ray.
+            Vec3 o, d;
+            screenPointToRay(px, py, vp, o, d);
+            Vec3 theirs;
+            assert(posToPrincipalPlane(vp, o, d, 2, vp.focus, false, 0.0f, theirs));
+
+            assert(abs(mine.x - theirs.x) < 1e-5f
+                && abs(mine.y - theirs.y) < 1e-5f
+                && abs(mine.z - theirs.z) < 1e-5f,
+                "the ortho arm must BE the ported law's no-ray arm, not a "
+                ~ "second opinion that happens to agree at the centre pixel");
+        }
+    }
+}
+
+unittest { // perspective is untouched: the ray still leaves the eye
+    import std.math : abs;
+    import math : perspectiveMatrix, screenRay;
+
+    Viewport vp;
+    vp.width = 640; vp.height = 480;
+    vp.focus = Vec3(0, 0, 0);
+    vp.eye   = Vec3(0, 0, 3);
+    vp.view  = [1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, -3, 1];
+    vp.proj  = perspectiveMatrix(0.785398f, 640.0f / 480.0f, 0.1f, 100.0f);
+    assert(!isOrtho(vp), "rig premise: this arm must be perspective");
+
+    auto f = frameFromBasis(Vec3(0, 0, 1), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                            Vec3(0, 0, 0), true);
+    Vec3 hitLocal;
+    assert(workplaneCursorPlaneHit(f, vp, 500.0f, 120.0f, Vec3(0, 0, 0),
+                                   Vec3(0, 1, 0), hitLocal));
+    Vec3 mine = transformPoint(f.toWorld, hitLocal);
+
+    // What the pre-0661 pair computed, spelled out.
+    Vec3 oldEye = transformPoint(f.toLocal, vp.eye);
+    Vec3 oldRay = transformDir (f.toLocal, screenRay(500.0f, 120.0f, vp));
+    Vec3 oldHit;
+    assert(rayPlaneIntersect(oldEye, oldRay, Vec3(0, 0, 0), Vec3(0, 1, 0), oldHit));
+    Vec3 old = transformPoint(f.toWorld, oldHit);
+
+    assert(abs(mine.x - old.x) < 1e-5f && abs(mine.y - old.y) < 1e-5f
+        && abs(mine.z - old.z) < 1e-5f,
+        "the perspective arm must be byte-for-byte the behaviour it replaces");
+}
+
+unittest { // screenToConstructionPlane is TOTAL where the old floor plane refused
+    import std.math : abs;
+    import math : screenPointToRay;
+
+    immutable float dist  = 3.0f;
+    // The focus is deliberately OFF the world origin on all three axes. With
+    // it at the origin this test cannot tell the view-following plane from
+    // the world floor: the camera-perpendicular fallback below would rescue
+    // the floor case and land on z = 0, which is also the right answer. The
+    // displaced focus is what makes the DEPTH a discriminator.
+    immutable Vec3  focus = Vec3(0.7f, 0.5f, 2.0f);
+    auto vp = frontOrthoViewport(dist, focus);
+
+    // The premise of the whole task, asserted rather than stated in prose:
+    // the fixed world floor (Y = 0, normal (0,1,0)) that the deleted
+    // `math.screenToWorkPlane` defaulted to is EXACTLY parallel to a Front
+    // view's ray, so a projection onto it refuses. This is the shape of that
+    // call, spelled out.
+    Vec3 rayO, rayD, floorHit;
+    screenPointToRay(500.0f, 120.0f, vp, rayO, rayD);
+    assert(!rayPlaneIntersect(rayO, rayD, Vec3(0, 0, 0), Vec3(0, 1, 0), floorHit),
+           "premise: the Y=0 floor is degenerate in a horizontal view");
+
+    // No `g_pipeCtx` in a unittest, so `currentWorkplaneFrame` returns the
+    // auto identity and the auto branch runs — the one this defect lived in.
+    Vec3 got = screenToConstructionPlane(500.0f, 120.0f, vp);
+    assert(abs(got.z - focus.z) < 1e-5f,
+           "the plane follows the view AND is anchored at the camera focus: "
+           ~ "a Front view lands on Z = focus.z, not Z = 0");
+    // ...and in-plane it is the point under the cursor, which under ortho is
+    // the unprojected click itself.
+    assert(abs(got.x - rayO.x) < 1e-5f && abs(got.y - rayO.y) < 1e-5f,
+           "in-plane, an ortho click lands where it was made");
+    assert(abs(got.x - focus.x) > 1e-3f || abs(got.y - focus.y) > 1e-3f,
+           "rig premise: the pixel must be off-centre, or nothing is measured");
 }
 
 // frameIsLeftHanded — determinant sign for pickMostFacingPlane's three

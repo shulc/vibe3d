@@ -18,6 +18,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
+import tools.create.create_common : screenToConstructionPlane;
 
 import std.math : sin, cos, atan2, PI;
 
@@ -296,11 +297,16 @@ public:
 
         // Off-handle click: reposition the rotation center (reference
         // gesture "reposition-center" — see the class doc comment).
-        Vec3 hit;
-        if (screenToWorkPlane(cast(float)e.x, cast(float)e.y, cachedVp, hit)) {
-            center_ = hit;
-            rebuildPreview();
-        }
+        //
+        // The plane FOLLOWS THE VIEW and the projection cannot refuse (task
+        // 0661). This was `if (screenToWorkPlane(...)) { center_ = hit; }`
+        // against the fixed world floor: in Front / Back / Left / Right the
+        // ray is parallel to that floor, so the call returned false and the
+        // missing `else` turned it into "the centre stayed put" — a click the
+        // user made and the tool never registered.
+        center_ = screenToConstructionPlane(cast(float)e.x, cast(float)e.y,
+                                            cachedVp);
+        rebuildPreview();
         return true;
     }
 

@@ -11,7 +11,8 @@ import display_sync : refreshDisplay;
 import tool   : Tool;
 import edit_session : RefireClient;
 import params : Param;
-import math   : Vec3, Viewport, screenToWorkPlane;
+import math   : Vec3, Viewport;
+import tools.create.create_common : screenToConstructionPlane;
 import shader : Shader;
 import handler : ClickPointHandler;
 import command_history : CommandHistory;
@@ -401,16 +402,23 @@ abstract class CommandWrapperTool : Tool, RefireClient {
         dragStartY = e.y;
         dragging = true;
 
-        // Project click pixel onto workplane (Y=0) and place the
-        // handle there. Clicking in the 3D viewport sets the tool into
-        // interactive mode and draws its handle at the click point.
-        // Handle visibility is gated on `dragging`, so it appears here
-        // and disappears on LMB-up.
-        if (viewRef !is null && clickHandle !is null) {
-            Vec3 hit;
-            if (screenToWorkPlane(cast(float)e.x, cast(float)e.y, cachedVp, hit))
-                clickHandle.setPos(hit);
-        }
+        // Project the click pixel onto the ACTIVE construction plane and put
+        // the handle there. Clicking in the 3D viewport sets the tool into
+        // interactive mode and draws its handle at the click point. Handle
+        // visibility is gated on `dragging`, so it appears here and
+        // disappears on LMB-up.
+        //
+        // This used to read `if (screenToWorkPlane(...)) setPos(hit);` against
+        // the fixed world floor (Y = 0). Two defects in one line, task 0661:
+        // the floor does not follow the view, so in any horizontal view the
+        // click ray is exactly parallel to it and there is no intersection;
+        // and the refusal had no `else`, so "could not" became "kept the
+        // previous position" — the click looked registered and was not.
+        // `screenToConstructionPlane` is TOTAL and the plane follows the view,
+        // so there is no boolean left to drop.
+        if (viewRef !is null && clickHandle !is null)
+            clickHandle.setPos(screenToConstructionPlane(
+                cast(float)e.x, cast(float)e.y, cachedVp));
         return true;
     }
 

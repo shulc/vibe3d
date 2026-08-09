@@ -21,7 +21,8 @@ import tools.create.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
                               currentWorkplaneFrame, mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
-                              frameIsLeftHanded, reverseFaceWinding;
+                              frameIsLeftHanded, reverseFaceWinding,
+                              workplaneCursorPlaneHit;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
@@ -2123,8 +2124,7 @@ public:
             baseAnchor = baseCentroid();
             setupHeightPlane();
             Vec3 hhit;
-            bool hhitOk = rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                            hpOrigin, hpn, hhit);
+            bool hhitOk = localCursorPlane(e.x, e.y, hpOrigin, hpn, hhit);
             if (heightHHitIdx == 1) {
                 // Top handle: non-incremental drag; anchor so current height is preserved.
                 heightDragStart = hhitOk
@@ -2156,8 +2156,7 @@ public:
         if (state == BoxState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                   Vec3(0,0,0), planeNormal, hit))
+            if (!localCursorPlane(e.x, e.y, Vec3(0,0,0), planeNormal, hit))
                 return false;
             // Snap the click to the closest pipeline-enabled target.
             // hit is rewritten in place when a candidate falls within
@@ -2198,9 +2197,7 @@ public:
             if (ctrlAtClick) {
                 baseAnchor = boxCenter();
                 Vec3 hit;
-                if (!rayPlaneIntersect(localEye(),
-                                       localRay(e.x, e.y),
-                                       baseAnchor, planeNormal, hit))
+                if (!localCursorPlane(e.x, e.y, baseAnchor, planeNormal, hit))
                     return false;
                 Vec3  d = hit - baseAnchor;
                 float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
@@ -2220,8 +2217,7 @@ public:
             setupHeightPlane();
             baseAnchor = baseCentroid();
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  hpOrigin, hpn, hit))
+            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
                 heightDragStart = hit;
             else
                 heightDragStart = hpOrigin;
@@ -2361,8 +2357,7 @@ public:
         // heightH drag in HeightSet (re-drag without changing state)
         if (heightHDragIdx >= 0 && state == BoxState.HeightSet) {
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  hpOrigin, hpn, hit))
+            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
             {
                 if (heightHDragIdx == 1) {
                     // Top handle (non-incremental). Top follows cursor, base
@@ -2426,8 +2421,7 @@ public:
 
         if (state == BoxState.DrawingBase) {
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  basePlaneOrigin, planeNormal, hit))
+            if (localCursorPlane(e.x, e.y, basePlaneOrigin, planeNormal, hit))
             {
                 // Snap the dragged base-corner to the closest snap
                 // target. Falls through to raw `hit` when no snap fires.
@@ -2457,9 +2451,7 @@ public:
             // Center stays put.
             if (dragUniform) {
                 Vec3 hit;
-                if (rayPlaneIntersect(localEye(),
-                                      localRay(e.x, e.y),
-                                      baseAnchor, planeNormal, hit))
+                if (localCursorPlane(e.x, e.y, baseAnchor, planeNormal, hit))
                 {
                     // Snap the cursor's plane hit; cube radius then
                     // becomes the distance from baseAnchor to the
@@ -2480,8 +2472,7 @@ public:
                 return true;
             }
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  hpOrigin, hpn, hit))
+            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
             {
                 // Snap the height-drag hit too — useful for matching
                 // box top/bottom to an existing vertex's height.
@@ -3095,11 +3086,22 @@ private:
     // hit-test against world-space projection. These wrappers do the
     // single-point transform between the two spaces.
 
+    // Where the camera IS, in local coords. Only `setupHeightPlane` wants
+    // this — a point, not a ray — so it keeps the plain eye under both
+    // projections. Every cursor RAY goes through `localCursorPlane` instead:
+    // pairing this apex with a screen direction is the perspective law, and
+    // in an ortho cell it scales the answer by the camera distance (0661).
     Vec3 localEye() const {
         return transformPoint(frame.toLocal, cachedVp.eye);
     }
-    Vec3 localRay(int x, int y) const {
-        return transformDir(frame.toLocal, screenRay(x, y, cachedVp));
+    /// The cursor ray at pixel (x, y) against a plane in LOCAL coords.
+    /// Ortho-aware — see `create_common.workplaneCursorPlaneHit`.
+    bool localCursorPlane(int x, int y, Vec3 planeOrigin, Vec3 planeNormal,
+                          out Vec3 hitLocal) const
+    {
+        return workplaneCursorPlaneHit(frame, cachedVp,
+                                       cast(float)x, cast(float)y,
+                                       planeOrigin, planeNormal, hitLocal);
     }
     Vec3 toWorldP(Vec3 p)  const { return transformPoint(frame.toWorld, p); }
     Vec3 toWorldD(Vec3 d)  const { return transformDir  (frame.toWorld, d); }

@@ -197,8 +197,7 @@ public:
         if (state == TorusState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                   Vec3(0, 0, 0), planeNormal, hit))
+            if (!localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
                 return false;
             lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
@@ -217,8 +216,7 @@ public:
         if (state == TorusState.MajorSet) {
             setupHeightPlane();
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  hpOrigin, hpn, hit))
+            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
                 heightDragStart = hit;
             else
                 heightDragStart = hpOrigin;
@@ -262,8 +260,7 @@ public:
 
         if (state == TorusState.DrawingMajor) {
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  Vec3(0, 0, 0), planeNormal, hit))
+            if (localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);
@@ -280,8 +277,7 @@ public:
         }
         if (state == TorusState.DrawingMinor) {
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  hpOrigin, hpn, hit))
+            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);

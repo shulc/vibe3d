@@ -75,7 +75,8 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame, currentWorkplaneFrame,
                               mostFacingAxis, transformPoint, transformDir, snapLocalHit,
-                              frameIsLeftHanded, reverseFaceWinding;
+                              frameIsLeftHanded, reverseFaceWinding,
+                              workplaneCursorPlaneHit;
 import editmode : EditMode;
 import snap : SnapResult;
 import snap_render : drawSnapOverlay, publishLastSnap, clearLastSnap;
@@ -394,9 +395,20 @@ protected:
     }
 
     // ---- Local <-> world helpers (workplane refactor) ---------------------
+    // Where the camera IS, in local coords. Only `setupHeightPlane` wants
+    // this — a point, not a ray. Every cursor RAY goes through
+    // `localCursorPlane` instead: pairing this apex with a screen direction
+    // is the perspective law, and in an ortho cell it scales the answer by
+    // the camera distance (task 0661).
     Vec3 localEye() const { return transformPoint(frame.toLocal, cachedVp.eye); }
-    Vec3 localRay(int x, int y) const {
-        return transformDir(frame.toLocal, screenRay(x, y, cachedVp));
+    /// The cursor ray at pixel (x, y) against a plane in LOCAL coords.
+    /// Ortho-aware — see `create_common.workplaneCursorPlaneHit`.
+    bool localCursorPlane(int x, int y, Vec3 planeOrigin, Vec3 planeNormal,
+                          out Vec3 hitLocal) const
+    {
+        return workplaneCursorPlaneHit(frame, cachedVp,
+                                       cast(float)x, cast(float)y,
+                                       planeOrigin, planeNormal, hitLocal);
     }
     Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
     Vec3 toWorldD(Vec3 d) const { return transformDir  (frame.toWorld, d); }
@@ -524,10 +536,9 @@ protected:
     // the next click would anchor the primitive.
     void updateIdleSnap(int mx, int my) {
         WorkplaneFrame f = pickWorkplaneFrame(cachedVp);
-        Vec3 lEye = transformPoint(f.toLocal, cachedVp.eye);
-        Vec3 lRay = transformDir  (f.toLocal, screenRay(mx, my, cachedVp));
         Vec3 hit;
-        if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), Vec3(0, 1, 0), hit)) {
+        if (workplaneCursorPlaneHit(f, cachedVp, cast(float)mx, cast(float)my,
+                                    Vec3(0, 0, 0), Vec3(0, 1, 0), hit)) {
             lastSnap = snapLocalHit(hit, f, mx, my, cachedVp, *mesh, EditMode.Vertices);
             publishLastSnap(lastSnap);
         } else {
@@ -796,8 +807,7 @@ public:
         if (state == RadialState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                   Vec3(0, 0, 0), planeNormal, hit))
+            if (!localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
                 return false;
             // Snap the click anchor to the closest pipeline-enabled target.
             lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
@@ -817,9 +827,7 @@ public:
             if (ctrlAtClick) {
                 baseAnchor = center();
                 Vec3 hit;
-                if (!rayPlaneIntersect(localEye(),
-                                       localRay(e.x, e.y),
-                                       baseAnchor, planeNormal, hit))
+                if (!localCursorPlane(e.x, e.y, baseAnchor, planeNormal, hit))
                     return false;
                 Vec3  d = hit - baseAnchor;
                 float r = sqrt(d.x * d.x + d.y * d.y + d.z * d.z);
@@ -834,8 +842,7 @@ public:
             setupHeightPlane();
             baseAnchor = center();
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  hpOrigin, hpn, hit))
+            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
                 heightDragStart = hit;
             else
                 heightDragStart = hpOrigin;
@@ -888,8 +895,7 @@ public:
 
         if (state == RadialState.DrawingBase) {
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  Vec3(0, 0, 0), planeNormal, hit))
+            if (localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);
@@ -904,9 +910,7 @@ public:
         if (state == RadialState.DrawingHeight) {
             if (dragUniform) {
                 Vec3 hit;
-                if (rayPlaneIntersect(localEye(),
-                                      localRay(e.x, e.y),
-                                      baseAnchor, planeNormal, hit))
+                if (localCursorPlane(e.x, e.y, baseAnchor, planeNormal, hit))
                 {
                     lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                              *mesh, EditMode.Vertices);
@@ -924,8 +928,7 @@ public:
                 return true;
             }
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  hpOrigin, hpn, hit))
+            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices);

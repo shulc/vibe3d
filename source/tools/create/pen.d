@@ -21,7 +21,8 @@ import tools.create.create_common : pickWorkplane, BuildPlane,
                               pickWorkplaneFrame, WorkplaneFrame,
                               mostFacingAxis,
                               transformPoint, transformDir, snapLocalHit,
-                              currentSnapPacket;
+                              currentSnapPacket,
+                              workplaneCursorRay, workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType;
 import editmode : EditMode;
 import snap : SnapResult;
@@ -271,8 +272,7 @@ public:
         if (state == PenState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                   Vec3(0, 0, 0), planeNormal, hit))
+            if (!localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
                 return true;
             // Snap the click position to the closest pipeline-enabled
             // snap target (vertex / edge / face / grid). guideBits are
@@ -313,8 +313,7 @@ public:
 
         // Click on empty plane.
         Vec3 hit;
-        if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                               Vec3(0, 0, 0), planeNormal, hit))
+        if (!localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
             return true;
 
         // Snap the placed vertex: discrete targets first (guideBits excluded
@@ -380,10 +379,9 @@ public:
             // PenTool uses the camera-most-facing axis of the LIVE frame,
             // which collapses to (0,1,0) in identity-frame auto-mode.
             Vec3 pn = state == PenState.Drawing ? planeNormal : Vec3(0, 1, 0);
-            Vec3 lEye = transformPoint(f.toLocal, cachedVp.eye);
-            Vec3 lRay = transformDir  (f.toLocal, screenRay(e.x, e.y, cachedVp));
             Vec3 hit;
-            if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), pn, hit)) {
+            if (workplaneCursorPlaneHit(f, cachedVp, cast(float)e.x, cast(float)e.y,
+                                        Vec3(0, 0, 0), pn, hit)) {
                 lastSnap = snapLocalHit(hit, f, e.x, e.y, cachedVp,
                                          *mesh, EditMode.Vertices, [], guideBits);
                 // Guide follows same discrete>guide merge rule. When Drawing,
@@ -415,8 +413,7 @@ public:
         if (dragVertIdx < 0 || dragVertIdx >= cast(int)vertices_.length)
             return true;
         Vec3 hit;
-        if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                              Vec3(0, 0, 0), planeNormal, hit))
+        if (localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
         {
             // Snap the dragged vertex's new position — same discrete>guide
             // merge rule as the click paths. guideBits excluded from
@@ -589,9 +586,20 @@ private:
     }
 
     // ---- Local ↔ world helpers (workplane refactor) ---------------------
-    Vec3 localEye() const { return transformPoint(frame.toLocal, cachedVp.eye); }
-    Vec3 localRay(int x, int y) const {
-        return transformDir(frame.toLocal, screenRay(x, y, cachedVp));
+    /// The cursor ray at pixel (x, y) in LOCAL coords. Ortho-aware — see
+    /// `create_common.workplaneCursorRay`. The old `localEye()`/`localRay()`
+    /// pair this replaces was the perspective law (one apex, fanning
+    /// direction) and produced hits scaled by the camera distance in an ortho
+    /// cell (task 0661).
+    void localCursor(int x, int y, out Vec3 org, out Vec3 dir) const {
+        workplaneCursorRay(frame, cachedVp, cast(float)x, cast(float)y, org, dir);
+    }
+    bool localCursorPlane(int x, int y, Vec3 planeOrigin, Vec3 planeNormal,
+                          out Vec3 hitLocal) const
+    {
+        return workplaneCursorPlaneHit(frame, cachedVp,
+                                       cast(float)x, cast(float)y,
+                                       planeOrigin, planeNormal, hitLocal);
     }
     Vec3 toWorldP(Vec3 p) const { return transformPoint(frame.toWorld, p); }
     Vec3 toLocalP(Vec3 p) const { return transformPoint(frame.toLocal, p); }
@@ -826,6 +834,13 @@ private:
         bool  found    = false;
         Vec3  bestP;
 
+        // The cursor ray, built ONCE and ortho-aware. Every guide below is a
+        // closest-approach between a local guide LINE and this ray, so an
+        // ortho cell that handed them the perspective pencil put the guide
+        // point at the wrong place along the line (task 0661).
+        Vec3 curO, curD;
+        localCursor(sx, sy, curO, curD);
+
         // Project a LOCAL candidate point to screen; return pixel distance to
         // (sx,sy). Returns float.infinity for behind-camera points.
         float screenDist(Vec3 pL) {
@@ -864,7 +879,7 @@ private:
         // Requires ≥2 prior vertices.
         if ((cfg.enabledTypes & SnapType.StraightLine) && segValid)
             consider(closestPointOnLineToRay(anchorL, segL,
-                                              localEye(), localRay(sx, sy)));
+                                              curO, curD));
 
         // worldAxis (Pen-scoped): X/Y/Z axes through the PRIOR vertex.
         // Requires only ≥1 prior vertex (anchorL already set).
@@ -880,7 +895,7 @@ private:
                 Vec3 axL = transformDir(frame.toLocal, ax);
                 if (abs(dot(axL, planeNormal)) > 0.9f) continue;   // skip the plane-normal axis
                 consider(closestPointOnLineToRay(anchorL, axL,
-                                                  localEye(), localRay(sx, sy)));
+                                                  curO, curD));
             }
         }
 
@@ -893,7 +908,7 @@ private:
             if (perpL.length > 1e-6f) {
                 perpL = normalize(perpL);
                 consider(closestPointOnLineToRay(anchorL, perpL,
-                                                  localEye(), localRay(sx, sy)));
+                                                  curO, curD));
             }
         }
 

@@ -239,8 +239,7 @@ public:
         if (state == TubeState.Idle) {
             choosePlane(cachedVp);
             Vec3 hit;
-            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                   Vec3(0, 0, 0), planeNormal, hit))
+            if (!localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
                 return false;
             lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                     *mesh, EditMode.Vertices);
@@ -261,8 +260,7 @@ public:
             setupHeightPlane();
             baseAnchor = center();
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  hpOrigin, hpn, hit))
+            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
                 heightDragStart = hit;
             else
                 heightDragStart = hpOrigin;
@@ -274,8 +272,7 @@ public:
         if (state == TubeState.HeightSet) {
             // Third drag: inner radius on the base plane.
             Vec3 hit;
-            if (!rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                   center(), planeNormal, hit))
+            if (!localCursorPlane(e.x, e.y, center(), planeNormal, hit))
                 return false;
             state = TubeState.DrawingInner;
             updateInnerRadiusFromHit(hit);
@@ -317,8 +314,7 @@ public:
 
         if (state == TubeState.DrawingOuter) {
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  Vec3(0, 0, 0), planeNormal, hit))
+            if (localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                         *mesh, EditMode.Vertices);
@@ -339,8 +335,7 @@ public:
         }
         if (state == TubeState.DrawingHeight) {
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  hpOrigin, hpn, hit))
+            if (localCursorPlane(e.x, e.y, hpOrigin, hpn, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                         *mesh, EditMode.Vertices);
@@ -358,8 +353,7 @@ public:
         }
         if (state == TubeState.DrawingInner) {
             Vec3 hit;
-            if (rayPlaneIntersect(localEye(), localRay(e.x, e.y),
-                                  center(), planeNormal, hit))
+            if (localCursorPlane(e.x, e.y, center(), planeNormal, hit))
             {
                 lastSnap = snapLocalHit(hit, frame, e.x, e.y, cachedVp,
                                         *mesh, EditMode.Vertices);

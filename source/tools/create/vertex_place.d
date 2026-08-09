@@ -14,7 +14,8 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import tools.create.create_common : pickWorkplaneFrame, WorkplaneFrame,
                               mostFacingAxis,
-                              transformPoint, transformDir, snapLocalHit;
+                              transformPoint, transformDir, snapLocalHit,
+                              workplaneCursorPlaneHit;
 import toolpipe.packets : SnapType;
 import editmode : EditMode;
 import snap : SnapResult;
@@ -133,8 +134,7 @@ public:
         // Unproject click to local workplane coords.  The plane passes through
         // the frame origin (LOCAL 0) — same anchor as pen.d:267-268.
         Vec3 hit;
-        if (!rayPlaneIntersect(localEye_(), localRay_(e.x, e.y),
-                               Vec3(0, 0, 0), planeNormal_, hit))
+        if (!localCursorPlane(e.x, e.y, Vec3(0, 0, 0), planeNormal_, hit))
             return true;   // ray parallel to plane — ignore
 
         // Discrete snap (pen guide bits excluded so only mesh-element targets
@@ -197,10 +197,9 @@ public:
                 case 2: pn = Vec3(0, 0, 1); break;
             }
         }
-        Vec3 lEye = transformPoint(f.toLocal, cachedVp_.eye);
-        Vec3 lRay = transformDir(f.toLocal, screenRay(e.x, e.y, cachedVp_));
         Vec3 hit;
-        if (rayPlaneIntersect(lEye, lRay, Vec3(0, 0, 0), pn, hit)) {
+        if (workplaneCursorPlaneHit(f, cachedVp_, cast(float)e.x, cast(float)e.y,
+                                    Vec3(0, 0, 0), pn, hit)) {
             lastSnap_ = snapLocalHit(hit, f, e.x, e.y, cachedVp_,
                                       *mesh, EditMode.Vertices, [], guideBits_);
             publishLastSnap(lastSnap_);
@@ -225,10 +224,16 @@ private:
         }
     }
 
-    Vec3 localEye_() const {
-        return transformPoint(frame_.toLocal, cachedVp_.eye);
-    }
-    Vec3 localRay_(int x, int y) const {
-        return transformDir(frame_.toLocal, screenRay(x, y, cachedVp_));
+    /// The cursor ray at pixel (x, y) against a plane in LOCAL coords.
+    /// Ortho-aware — see `create_common.workplaneCursorPlaneHit`. The
+    /// `localEye_()`/`localRay_()` pair this replaces was the perspective law
+    /// and put the placed vertex at the camera distance times the intended
+    /// offset in every ortho cell (task 0661).
+    bool localCursorPlane(int x, int y, Vec3 planeOrigin, Vec3 planeNormal,
+                          out Vec3 hitLocal) const
+    {
+        return workplaneCursorPlaneHit(frame_, cachedVp_,
+                                       cast(float)x, cast(float)y,
+                                       planeOrigin, planeNormal, hitLocal);
     }
 }

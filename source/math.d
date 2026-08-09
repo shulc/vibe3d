@@ -2992,24 +2992,29 @@ unittest {
     assert(eq(hit.x, 0.2f) && eq(hit.y, 0));
 }
 
-// Project a screen pixel onto the Work Plane in world space.
-// Default Work Plane is the X-Z plane at world Y = `planeY` (0 = floor).
-// The Work Plane is used by `actr.auto` to relocate the action center on
-// click-away. Returns false if the click ray is parallel to the plane.
+// `screenToWorkPlane` WAS HERE AND IS DELETED (task 0661). It projected a
+// pixel onto the world FLOOR — the X-Z plane at Y = planeY, normal (0,1,0) —
+// with the plane handed in as two DEFAULTED parameters, and returned false
+// when the ray was parallel to it.
 //
-// `planeNormal` lets the caller use a tilted Work Plane (e.g. screen-
-// aligned through gizmo); current tools use the default Y-up plane.
-// See the action-center parity plan Phase 1.
-bool screenToWorkPlane(float sx, float sy, const ref Viewport vp,
-                       out Vec3 worldHit,
-                       float planeY = 0.0f,
-                       Vec3  planeNormal = Vec3(0, 1, 0))
-{
-    Vec3 swpOrig, dir;
-    screenPointToRay(sx, sy, vp, swpOrig, dir);
-    return rayPlaneIntersect(swpOrig, dir,
-                             Vec3(0, planeY, 0), planeNormal, worldHit);
-}
+// Both of its callers were written `if (screenToWorkPlane(...)) setIt(hit);`
+// with no else, and neither ever passed a normal, so:
+//
+//   * the plane did not follow the view. In Front / Back / Left / Right the
+//     camera looks horizontally and the click ray lies exactly IN the floor,
+//     so there was no intersection at all;
+//   * and the refusal was silent — "could not" arrived as "kept the previous
+//     value", which is indistinguishable from success at the only place the
+//     user can see it.
+//
+// The replacement is `tools.create.create_common.screenToConstructionPlane`:
+// it reads the plane from `WorkplaneStage` (camera-most-facing principal axis
+// through the camera focus in auto mode, the user's full frame when pinned),
+// and it is TOTAL — it returns a Vec3, so there is no boolean left to drop.
+//
+// Nothing is left here rather than a fixed version, deliberately: a helper
+// whose DEFAULT argument is the degenerate plane is a trap that re-arms the
+// moment someone calls it with the defaults again.
 
 // Safe normalize — returns (0,1,0) for near-zero vectors.
 Vec3 safeNormalize(Vec3 v) @safe pure nothrow @nogc {
