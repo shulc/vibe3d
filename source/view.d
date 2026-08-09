@@ -15,6 +15,43 @@ enum ProjKind { Perspective, Ortho }
 /// Camera and Perspective both use the free spherical camera.
 enum ViewPreset { Perspective, Top, Bottom, Front, Back, Left, Right, Camera }
 
+/// The SCREEN BASIS of an axis-locked preset: which world direction points
+/// right, and which points up, when a cell renders that preset.
+///
+/// Returns `false` for `Perspective` / `Camera`, which name no axis — an
+/// ortho cell on either keeps its free orbit, and there is no basis to hand
+/// back. **The two `out` parameters are then UNTOUCHED, i.e. `Vec3.init`,
+/// whose components are NaN** (`float.init`), so a caller that ignores the
+/// return value gets a silently poisoned basis rather than a zero. Check it.
+///
+/// Lifted out of `View.effectiveOrientation` (task 0612 §4.3), which is its
+/// first caller and stays behaviourally identical — this is the code that
+/// decides where an ortho cell actually looks from, so anything that has to
+/// agree with the camera about "which way is up in the Front view" must read
+/// the SAME table. The second caller is `image_plane.resolvePlacement`: a
+/// reference-image plane's two half-extent vectors are `right` and `up`
+/// scaled, and a hand-written second copy of this table would be one sign
+/// error away from a mirrored reference image that still looks plausible.
+bool presetBasis(ViewPreset p, out Vec3 right, out Vec3 up) @safe pure nothrow @nogc {
+    final switch (p) {
+        case ViewPreset.Top:
+            right = Vec3( 1, 0, 0); up = Vec3(0, 0,-1); return true;
+        case ViewPreset.Bottom:
+            right = Vec3( 1, 0, 0); up = Vec3(0, 0, 1); return true;
+        case ViewPreset.Front:
+            right = Vec3( 1, 0, 0); up = Vec3(0, 1, 0); return true;
+        case ViewPreset.Back:
+            right = Vec3(-1, 0, 0); up = Vec3(0, 1, 0); return true;
+        case ViewPreset.Right:
+            right = Vec3( 0, 0,-1); up = Vec3(0, 1, 0); return true;
+        case ViewPreset.Left:
+            right = Vec3( 0, 0, 1); up = Vec3(0, 1, 0); return true;
+        case ViewPreset.Perspective:
+        case ViewPreset.Camera:
+            return false;
+    }
+}
+
 /// Serialise a camera orientation as a nine-element JSON array, LOSSLESSLY.
 ///
 /// `%.9g` is not decoration: nine significant decimal digits is the round-trip
@@ -523,24 +560,9 @@ class View {
     private Orientation effectiveOrientation(Orientation o) const {
         if (projKind != ProjKind.Ortho) return o;
         Vec3 right, up;
-        final switch (viewPreset) {
-            case ViewPreset.Top:
-                right = Vec3( 1, 0, 0); up = Vec3(0, 0,-1); break;
-            case ViewPreset.Bottom:
-                right = Vec3( 1, 0, 0); up = Vec3(0, 0, 1); break;
-            case ViewPreset.Front:
-                right = Vec3( 1, 0, 0); up = Vec3(0, 1, 0); break;
-            case ViewPreset.Back:
-                right = Vec3(-1, 0, 0); up = Vec3(0, 1, 0); break;
-            case ViewPreset.Right:
-                right = Vec3( 0, 0,-1); up = Vec3(0, 1, 0); break;
-            case ViewPreset.Left:
-                right = Vec3( 0, 0, 1); up = Vec3(0, 1, 0); break;
-            case ViewPreset.Perspective:
-            case ViewPreset.Camera:
-                // An ortho cell that is not axis-locked keeps the free orbit.
-                return o;
-        }
+        // An ortho cell that is not axis-locked (`Perspective` / `Camera`)
+        // keeps the free orbit — that is exactly the `false` answer.
+        if (!presetBasis(viewPreset, right, up)) return o;
         Orientation preset = Orientation.fromBasis(right, up, cross(right, up));
         immutable float r = o.roll;
         if (r == 0.0f) return preset;

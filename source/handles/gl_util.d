@@ -33,6 +33,19 @@ private struct FillState {
 private FillState g_fill;
 
 // ---------------------------------------------------------------------------
+// Reference-image plane shader state (task 0612) — set once from app.d via
+// initImagePlaneProgram(). Its own program: the first `sampler2D` in the
+// build, with a second vertex attribute (the texture coordinate) no other
+// pass has.
+// ---------------------------------------------------------------------------
+private struct ImagePlaneState {
+    GLuint prog;
+    GLint  locView, locProj, locTex;
+    GLint  locBrightness, locContrast, locTransparency, locInvert;
+}
+private ImagePlaneState g_imagePlane;
+
+// ---------------------------------------------------------------------------
 // Global gizmo scale — shared by MoveHandler, RotateHandler, ScaleHandler.
 // Change via setGizmoPixels() at runtime. The unit is screen pixels (the
 // target on-screen length of the main gizmo arm) and the result is
@@ -1402,6 +1415,151 @@ void drawWorldQuad(Vec3[4] corners, const ref Viewport vp,
         glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
         g_fc.draw(DrawPass.handles, 4);
         glBindVertexArray(0);
+        glUseProgram(restoreProgram);
+    }
+}
+
+// Register the reference-image-plane program (compiled in app.d from
+// shader.imagePlaneVertSrc / imagePlaneFragSrc), mirroring initFillProgram.
+// Backs drawImagePlane.
+//
+// `u_tex` is bound to texture unit 0 ONCE, here, rather than on every draw:
+// a sampler uniform is program state, the draw always binds its texture to
+// unit 0, and re-writing it per frame would be a uniform whose value can
+// never differ between calls.
+void initImagePlaneProgram(GLuint prog) {
+    g_imagePlane.prog            = prog;
+    g_imagePlane.locView         = glGetUniformLocation(prog, "u_view");
+    g_imagePlane.locProj         = glGetUniformLocation(prog, "u_proj");
+    g_imagePlane.locTex          = glGetUniformLocation(prog, "u_tex");
+    g_imagePlane.locBrightness   = glGetUniformLocation(prog, "u_brightness");
+    g_imagePlane.locContrast     = glGetUniformLocation(prog, "u_contrast");
+    g_imagePlane.locTransparency = glGetUniformLocation(prog, "u_transparency");
+    g_imagePlane.locInvert       = glGetUniformLocation(prog, "u_invert");
+    GLint prevProg;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
+    glUseProgram(prog);
+    if (g_imagePlane.locTex >= 0) glUniform1i(g_imagePlane.locTex, 0);
+    glUseProgram(cast(GLuint) prevProg);
+}
+
+// Lazily-built dynamic VAO for drawImagePlane's 4 textured world corners.
+private GLuint g_planeVao, g_planeVbo;
+private bool   g_planeReady;
+
+/// Draw one reference-image plane: the quad `center ± halfU ± halfV`, textured
+/// with `tex`, graded by the three look scalars, as a `GL_TRIANGLE_FAN`.
+///
+/// STATE DISCIPLINE, and each line of it is load-bearing:
+///
+/// * **`glDisable(GL_DEPTH_TEST)`**, restored after. Disabling the test also
+///   suppresses depth WRITES, so this pass leaves the depth buffer exactly as
+///   the FBO clear left it and every later pass wins regardless of world
+///   position. That is the point: the walkthrough puts the reference image on
+///   the mid-line at X=0 and models symmetric geometry straddling it — under
+///   ordinary depth testing half the model would be swallowed by the picture
+///   behind it. `glDepthMask(GL_FALSE)` — the other house idiom, used by the
+///   slice preview — keeps the depth TEST on, which is right for a translucent
+///   plane that must be occluded by the geometry it cuts and exactly wrong
+///   for a backdrop.
+/// * **`glBlendFuncSeparate(..., GL_ZERO, GL_ONE)`**, not `glBlendFunc`. The
+///   cell renders into an FBO whose alpha is a real attachment that ImGui
+///   composites; a naive `glBlendFunc` with `transparency > 0` eats the
+///   cell's alpha and makes the whole viewport translucent. Same reasoning,
+///   same fix as `mesh_gpu.d`'s translucent passes.
+/// * **culling off**, restored. The plane is two-sided: a `front` reference
+///   seen from behind in a perspective cell still draws. (Whether the
+///   reference editor culls it is unmeasured — the capture's perspective
+///   camera was in front of the plane — so this is our choice, stated.)
+/// * **the filter comes from the plane's `smooth` channel**, set on the bound
+///   texture per draw. The texture object is shared by every plane on the
+///   same file, so two planes disagreeing about `smooth` would each set it
+///   before their own draw; the redundancy is deliberate and cheap, and the
+///   alternative (baking the filter at upload time) would make the channel
+///   silently ignored for the second consumer of a shared file.
+void drawImagePlane(Vec3 center, Vec3 halfU, Vec3 halfV,
+                    bool flipU, bool invert, bool smooth,
+                    float brightness, float contrast, float transparency,
+                    GLuint tex, const ref Viewport vp, GLuint restoreProgram)
+{
+    version(unittest) {
+        // No GL context under -unittest. The corner geometry this would upload
+        // is `image_plane.resolvePlacement`'s output, which is asserted there
+        // as numbers — deliberately, because a pixel is the END of this
+        // pipeline and a mismatch in it localises nothing.
+    } else {
+        if (tex == 0) return;   // not resident: skip. NEVER decode from a draw.
+        if (!g_planeReady) {
+            glGenVertexArrays(1, &g_planeVao);
+            glGenBuffers(1, &g_planeVbo);
+            glBindVertexArray(g_planeVao);
+            glBindBuffer(GL_ARRAY_BUFFER, g_planeVbo);
+            glBufferData(GL_ARRAY_BUFFER, 20 * float.sizeof, null, GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * float.sizeof, cast(void*)0);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * float.sizeof,
+                                  cast(void*)(3 * float.sizeof));
+            glEnableVertexAttribArray(1);
+            glBindVertexArray(0);
+            g_planeReady = true;
+        }
+
+        // Fan order: -U-V, +U-V, +U+V, -U+V. The texture's row 0 is the
+        // image's TOP row (that is how the decoder hands it over and how it is
+        // uploaded), so v = 0 is the top and the -V corners take v = 1.
+        //
+        // `flipU` swaps the u coordinates and leaves the CORNERS alone. Doing
+        // it the other way — negating `halfU` — would mirror the plane's
+        // PLACEMENT as well as its pixels, moving the image to the other side
+        // of the item's centre instead of mirroring it in place.
+        immutable float u0 = flipU ? 1.0f : 0.0f;
+        immutable float u1 = flipU ? 0.0f : 1.0f;
+        Vec3 c0 = center - halfU - halfV;
+        Vec3 c1 = center + halfU - halfV;
+        Vec3 c2 = center + halfU + halfV;
+        Vec3 c3 = center - halfU + halfV;
+        float[20] data = [
+            c0.x, c0.y, c0.z, u0, 1.0f,
+            c1.x, c1.y, c1.z, u1, 1.0f,
+            c2.x, c2.y, c2.z, u1, 0.0f,
+            c3.x, c3.y, c3.z, u0, 0.0f,
+        ];
+        glBindBuffer(GL_ARRAY_BUFFER, g_planeVbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, data.sizeof, data.ptr);
+
+        immutable bool hadCull  = glIsEnabled(GL_CULL_FACE) == GL_TRUE;
+        immutable bool hadDepth = glIsEnabled(GL_DEPTH_TEST) == GL_TRUE;
+        immutable bool hadBlend = glIsEnabled(GL_BLEND) == GL_TRUE;
+        if (hadCull) glDisable(GL_CULL_FACE);
+        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_BLEND);
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
+
+        glUseProgram(g_imagePlane.prog);
+        glUniformMatrix4fv(g_imagePlane.locView, 1, GL_FALSE, vp.view.ptr);
+        glUniformMatrix4fv(g_imagePlane.locProj, 1, GL_FALSE, vp.proj.ptr);
+        glUniform1f(g_imagePlane.locBrightness,   brightness);
+        glUniform1f(g_imagePlane.locContrast,     contrast);
+        glUniform1f(g_imagePlane.locTransparency, transparency);
+        glUniform1f(g_imagePlane.locInvert,       invert ? 1.0f : 0.0f);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        immutable GLint filt = smooth ? GL_LINEAR : GL_NEAREST;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt);
+
+        glBindVertexArray(g_planeVao);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+        g_fc.draw(DrawPass.imagePlane, 4);
+        glBindVertexArray(0);
+        glBindTexture(GL_TEXTURE_2D, 0);
+
+        // Restore: the blend func back to the house default, then the three
+        // enables to whatever the caller had.
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        if (!hadBlend) glDisable(GL_BLEND);
+        if (hadDepth)  glEnable(GL_DEPTH_TEST);
+        if (hadCull)   glEnable(GL_CULL_FACE);
         glUseProgram(restoreProgram);
     }
 }

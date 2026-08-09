@@ -488,6 +488,24 @@ class HttpServer {
     private alias ImagesDataProvider = string delegate();
     private ImagesDataProvider imagesDataProvider;
 
+    // ----- /api/imageplane provider (task 0612 Stage 4) --------------------
+    // GET /api/imageplane?index=N&cell=K — the resolved placement of plane
+    // layer N in viewport cell K.
+    //
+    // KEYED ON THE CELL, NOT ON A PRESET, and that is the difference between
+    // an assertion and a tautology: an earlier draft took `&view=front`, i.e.
+    // handed the endpoint the very preset whose resolution the test wanted to
+    // check. `cell=K` follows `/api/viewport/probe?cell=N`; the provider
+    // resolves `(viewPreset, projKind)` from `vpm.views[K].camera` itself, so
+    // "which cell shows which plane" is something the response can get wrong.
+    //
+    // MARSHALED (the /api/tool/handles precedent): forming one response reads
+    // a `Layer`, its link, the link TARGET's image payload and a viewport
+    // cell — four objects that must agree with each other, while the main
+    // thread is free to splice the layer array between two of the reads.
+    private alias ImagePlaneProvider = string delegate(int index, int cell);
+    private ImagePlaneProvider imagePlaneProvider;
+
     // ----- /api/undo/status provider ---------------------------------------
     // Returns JSON {state, lockout, canUndo, canRedo}. Read-only snapshot of
     // the history service — runs on the HTTP thread like historyProvider.
@@ -627,6 +645,12 @@ class HttpServer {
     struct LayersReq  { }
     struct LayersResp { string result; string error; }
     private MainThreadBridge!(LayersReq, LayersResp) layersBridge;
+
+    // Task 0612 Stage 4 — /api/imageplane. Its OWN bridge instance, same rule
+    // as every other one.
+    struct PlaneReq  { int index; int cell; }
+    struct PlaneResp { string result; string error; }
+    private MainThreadBridge!(PlaneReq, PlaneResp) planeBridge;
 
     struct RefireReq  { string action; }
     struct RefireResp { string error; }
@@ -1004,6 +1028,20 @@ class HttpServer {
                 }
             });
 
+        planeBridge = new MainThreadBridge!(PlaneReq, PlaneResp)(this,
+            (ref PlaneReq req, ref PlaneResp resp) {
+                if (imagePlaneProvider is null) {
+                    resp.error = "image-plane provider not set";
+                } else {
+                    try {
+                        resp.result = imagePlaneProvider(req.index, req.cell);
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
         refireBridge = new MainThreadBridge!(RefireReq, RefireResp)(this,
             (ref RefireReq req, ref RefireResp resp) {
                 if (refireHandler is null) {
@@ -1203,6 +1241,13 @@ class HttpServer {
     /// (task 0612 Stage 1). Marshaled; see the provider alias for why.
     public void setImagesDataProvider(ImagesDataProvider provider) {
         this.imagesDataProvider = provider;
+    }
+
+    /// GET /api/imageplane?index=N&cell=K — the resolved placement of image
+    /// plane N in cell K (task 0612 Stage 4). Marshaled; see the provider
+    /// alias for why, and for why it is keyed on a CELL.
+    public void setImagePlaneProvider(ImagePlaneProvider provider) {
+        this.imagePlaneProvider = provider;
     }
 
     public void setTestMode(bool enabled) { testMode = enabled; }
@@ -2101,6 +2146,30 @@ class HttpServer {
                     response.statusCode = 500;
                     response.body = `{"error":"`
                                     ~ imagesBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                }
+            }
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path.startsWith("/api/imageplane") && request.method == "GET") {
+            // Task 0612 Stage 4 — one plane's resolved placement in one cell.
+            // (No prefix collision with `/api/images` above: the two paths
+            // differ at the tenth character, `p` vs `s`.)
+            if (imagePlaneProvider is null) {
+                response.statusCode = 500;
+                response.body = `{"error":"image-plane provider not set"}`;
+            } else {
+                planeBridge.req.index  = parseQueryInt(request.path, "index", -1);
+                planeBridge.req.cell   = parseQueryInt(request.path, "cell",  -1);
+                planeBridge.resp.result = "";
+                planeBridge.resp.error  = "";
+                if (!planeBridge.submitAndWait())
+                    planeBridge.resp.error = "timeout waiting for main thread";
+                if (planeBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = planeBridge.resp.result;
+                } else {
+                    response.statusCode = 500;
+                    response.body = `{"error":"`
+                                    ~ planeBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";

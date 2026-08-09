@@ -740,6 +740,11 @@ enum DrawPass {
     verts,        // vertex dots
     bgFaces,      // background-layer surface
     bgEdges,      // background-layer wireframe
+    imagePlane,   // reference-image plane (task 0612) — its own slot rather
+                  // than `bgFaces`, because it is not a mesh pass: it draws
+                  // BEFORE the grid, textured, with the depth test off, and
+                  // folding it into a mesh counter would make "the background
+                  // layers stopped drawing" unreadable
     grid,         // ground grid + axis lines
     symmetry,     // symmetry-plane overlay
     handles,      // tool gizmo / handle shapes

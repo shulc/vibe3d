@@ -1552,6 +1552,15 @@ void main(string[] args) {
     scope(exit) glDeleteProgram(fillProgram);
     initFillProgram(fillProgram);
 
+    // Reference-image plane program (task 0612) — the first `sampler2D` in the
+    // build. Its own vertex source too: it needs a texture-coordinate
+    // attribute no other pass has. Deliberately NOT seeded through
+    // `seedSharedFragUniforms`: it is not built from `fragmentShaderSrc`, and
+    // every uniform it has is written on every draw.
+    GLuint imagePlaneProgram = createProgram(imagePlaneVertSrc, imagePlaneFragSrc);
+    scope(exit) glDeleteProgram(imagePlaneProgram);
+    initImagePlaneProgram(imagePlaneProgram);
+
     CheckerShader checkerShader = new CheckerShader();
     GridShader gridShader = new GridShader();
 
@@ -7731,6 +7740,8 @@ void main(string[] args) {
         // pre-task-0206 behaviour.
         {
             import viewport : DirtyKey, overlayDrawOrder;
+            import image_cache : imagePixelCache;
+            import image_plane : collectLivePlanePaths, imagePlaneDigest;
             import tools.transform.xfrm_transform : XfrmTransformTool;
             import tools.common.command_wrapper : CommandWrapperTool;
 
@@ -7808,6 +7819,33 @@ void main(string[] args) {
                     }
                 }
             }
+
+            // Task 0612 — pixel-cache residency, ONCE per frame, BEFORE the
+            // cell loop.
+            //
+            // Not inside the loop, and above all not inside the draw: the
+            // per-cell dirty skip below means a clean frame runs no draw at
+            // all, so residency driven from the draw would free a texture on
+            // the first still frame and re-decode it from disk on the next
+            // camera move — a stb decode per frame during an orbit, while
+            // reporting a perfectly healthy residency count. Reconciling
+            // against the DOCUMENT's live link set instead makes residency a
+            // function of what the document names, which no render decision
+            // can perturb. `cache.lookup` in the draw cannot load, by
+            // construction.
+            //
+            // The digest is computed here for the same reason `toolMat` and
+            // the overlay stamps are: it is view-independent, so every cell's
+            // key gets the same value, and computing it per cell would be
+            // three redundant walks of `layers`.
+            imagePixelCache().reconcile(collectLivePlanePaths(document));
+            // The digest feeds ONLY the interactive dirty-key compare, which
+            // `--test` never reaches (Single layout, and `needRender` is
+            // `k == activeId` there) — so it is skipped in that build, exactly
+            // like the packet-evaluating overlay stamps above. The reconcile
+            // above is NOT skipped: residency is real state a test asserts on.
+            immutable ulong _planeKey = testMode ? 0
+                : imagePlaneDigest(document, imagePixelCache().decodeCount());
 
             foreach (k; overlayDrawOrder(vpm.cellCount, overlayOwner)) {
                 Viewport3D _cv = vpm.views[k];
@@ -7905,6 +7943,13 @@ void main(string[] args) {
                         // against a resolution change (see DirtyKey doc).
                         _newKey.planActive   = resolveDrawPlan(_cv.display, false);
                         _newKey.planBackdrop = resolveDrawPlan(_cv.display, true);
+                        // Task 0612: the reference-image term. Shared, like
+                        // `toolMat` and the overlay stamps — plane state is
+                        // view-independent, and WHICH cell shows a plane is a
+                        // function of that cell's preset, which moves its
+                        // camera and is therefore already carried by
+                        // view/proj above.
+                        _newKey.imagePlaneKey = _planeKey;
                         if (_newKey != _cv.lastKey) {
                             needRender      = true;
                             _cv.lastKey     = _newKey;

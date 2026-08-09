@@ -2483,6 +2483,79 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     glClearColor(0.36f, 0.40f, 0.42f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+    // ---- Reference-image planes (task 0612) ------------------------------
+    //
+    // FIRST, immediately after the clear and BEFORE the grid below: the grid,
+    // the symmetry plane, the background layers and the primary all draw over
+    // it, which is what "behind the geometry" means.
+    //
+    // The draw contains NO placement logic. `resolvePlacement` is a pure
+    // function of the plane's channels, the linked clip's pixel dimensions and
+    // the item transform, and it also answers whether THIS cell shows THIS
+    // plane — so this loop is a lookup and a submission, and the geometry is
+    // asserted as numbers in `image_plane.d` rather than as pixels here.
+    //
+    // The cache is only ever LOOKED UP here. It cannot decode from a draw, by
+    // construction (`lookup` has no load path), which is what stops the
+    // per-cell dirty skip from turning into a decode-per-frame loop. A `Ready`
+    // placement whose path is somehow not resident draws nothing this frame —
+    // a state the once-per-frame `reconcile` in `app.d` makes unreachable, and
+    // which must be treated as "skip", never as "decode now".
+    //
+    // Ordered far-to-near by view-space depth of the centre, so several planes
+    // in one perspective cell composite in the right order under
+    // `transparency`. With the depth test off, submission order IS the
+    // ordering, so this is not optional the moment there is more than one.
+    {
+        import image_plane : resolvePlacement, imagePlaneSource, kImageLinkSlot,
+                             ImagePlaneSource, ImagePlanePlacement;
+        import image_cache : imagePixelCache;
+        import io.image_path : resolveStoredPath;
+        import io.doc_state  : currentDocPath;
+        import handles.gl_util : drawImagePlane;
+        import view : ProjKind;
+        import std.algorithm : sort;
+
+        static struct Drawable { float depth; ImagePlanePlacement pl; }
+        Drawable[] drawables;
+        foreach (lyr; document.layers) {
+            if (lyr is null || !lyr.hasImagePlane) continue;
+            immutable src = imagePlaneSource(document, lyr);
+            int cw = 0, chh = 0;
+            string abs;
+            if (src == ImagePlaneSource.Ready) {
+                auto clip = lyr.link(kImageLinkSlot).resolve(document);
+                auto img  = clip.imageOrNull();
+                cw = img.width; chh = img.height;
+                abs = resolveStoredPath(img.storedPath, currentDocPath());
+            }
+            auto pl = resolvePlacement(lyr.imagePlaneOrNull(), lyr.visible,
+                                       cw, chh, src, abs,
+                                       v.camera.viewPreset,
+                                       v.camera.projKind == ProjKind.Ortho,
+                                       lyr.xform);
+            if (!pl.drawn) continue;
+            // View-space Z of the centre; more negative = further away under
+            // the GL convention, so ascending sort is far-to-near.
+            immutable Vec3 c = pl.center;
+            immutable float z = vp.view[2]*c.x + vp.view[6]*c.y
+                              + vp.view[10]*c.z + vp.view[14];
+            drawables ~= Drawable(z, pl);
+        }
+        if (drawables.length > 1)
+            drawables.sort!((a, b) => a.depth < b.depth);
+        foreach (d; drawables) {
+            immutable uint tex = imagePixelCache().lookup(d.pl.sourcePath);
+            drawImagePlane(d.pl.center, d.pl.halfU, d.pl.halfV,
+                           d.pl.flipU, d.pl.invert, d.pl.smooth,
+                           d.pl.brightness, d.pl.contrast, d.pl.transparency,
+                           // restore to NO program: the very next statement
+                           // below is `shader.useProgram(...)`, which binds
+                           // the one this pass would otherwise have to guess.
+                           tex, vp, 0);
+        }
+    }
+
     // Per-item (per-layer) transform — RENDER-ONLY (channels P4). Feed-site #1.
     // NOTE (task 0617): `document.primaryModelSpace()`, the ModelSpace picking
     // resolves against, folds ONLY `itemMatrix` — not the `tt.gpuMatrix` fold

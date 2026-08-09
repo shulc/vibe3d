@@ -108,6 +108,70 @@ immutable string fillFragSrc = q{
     }
 };
 
+// ---------------------------------------------------------------------------
+// Reference-image plane (task 0612) — THE FIRST `sampler2D` IN THIS CODEBASE.
+//
+// Nothing in `source/` sampled a 2D texture before this pair; the only other
+// samplers are the `samplerBuffer` family in `subpatch_osd.d`, which read a
+// buffer object rather than an image.
+//
+// Its OWN vertex source rather than `vertexShaderSrc` because it needs a
+// second attribute (the texture coordinate) that no other pass has, and its
+// OWN fragment source rather than `fragmentShaderSrc` because it samples
+// instead of taking a flat colour. Consequently it is NOT part of the shared
+// `fragmentShaderSrc` uniform contract and must NOT be seeded through
+// `seedSharedFragUniforms` — every uniform below is written on every draw,
+// which is the property that makes the seeding obligation not apply. (See
+// `kSharedFragNeutrals` for the bug that obligation exists to prevent: a
+// uniform added to the SHARED source that only one of its programs seeded.)
+//
+// Corners arrive in WORLD space, exactly like `drawWorldQuad`'s — the
+// placement law has already applied the item transform, so there is no model
+// matrix here and no second place for a transform to be applied twice.
+immutable string imagePlaneVertSrc = q{
+    #version 330 core
+    layout(location = 0) in vec3 aPos;
+    layout(location = 1) in vec2 aUV;
+    uniform mat4 u_view;
+    uniform mat4 u_proj;
+    out vec2 vUV;
+    void main() {
+        vUV = aUV;
+        gl_Position = u_proj * u_view * vec4(aPos, 1.0);
+    }
+};
+
+// The three look channels, applied in a FIXED order: invert, then contrast,
+// then brightness.
+//
+// The order is not arbitrary and must not be shuffled: contrast pivots about
+// mid-grey, so applying brightness first would move the pivot and make the
+// two channels interact — a brightened image would also lose contrast. Invert
+// comes first because it is a property of the SOURCE ("this is a pencil
+// drawing on white paper"), not a grade.
+//
+// `u_transparency` is the channel's own sense — 0 = opaque — so the alpha
+// written is `1 - u_transparency`. Naming it the other way round in the
+// shader would put a silent negation between the channel and its only
+// consumer.
+immutable string imagePlaneFragSrc = q{
+    #version 330 core
+    in  vec2 vUV;
+    out vec4 fragColor;
+    uniform sampler2D u_tex;
+    uniform float u_brightness;    // -1 .. +1, 0 = unchanged
+    uniform float u_contrast;      // -1 .. +1, 0 = unchanged
+    uniform float u_transparency;  //  0 .. 1,  0 = opaque
+    uniform float u_invert;        // 0 or 1
+    void main() {
+        vec3 c = texture(u_tex, vUV).rgb;
+        c = mix(c, vec3(1.0) - c, u_invert);
+        c = (c - vec3(0.5)) * (1.0 + u_contrast) + vec3(0.5);
+        c = c + vec3(u_brightness);
+        fragColor = vec4(clamp(c, 0.0, 1.0), 1.0 - u_transparency);
+    }
+};
+
 // Lit shaders — Blinn-Phong with flat per-face normals.
 //
 // Material Groups (MG3): a 64-slot std140 UBO carries per-mesh surface

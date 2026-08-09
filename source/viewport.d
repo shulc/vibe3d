@@ -217,6 +217,39 @@ struct DirtyKey {
     // the same neutrality argument as every term above.
     DrawPlan  planActive;
     DrawPlan  planBackdrop;
+
+    // Task 0612 — the reference-image plane term.
+    //
+    // WHY IT NEEDS ONE AT ALL. The plane is deliberately NOT a `DrawPlan`
+    // field (`display_state.d`'s standing rule: the grid, the workplane and
+    // the reference image are each their OWN axis), so the `planActive` /
+    // `planBackdrop` terms above cannot carry it, and none of the other terms
+    // move when a plane's channel, transform, link or texture changes.
+    // Without this field a `pixelSize` edit would do nothing until the mouse
+    // moved — the exact symptom this file already documents five times
+    // (`toolMat` :132, the overlay terms :144, `gpuUploadVer` :161,
+    // `overlayHot` :174, the display term above).
+    //
+    // WHY A DIGEST AND NOT A BUMPED COUNTER. A counter has to be incremented
+    // at every write site — plane channels, the item transform, link set and
+    // clear, a clip's path change, a texture upload — and item-transform
+    // writes in particular go through `layer_params.d`'s generic `Param`
+    // pointers, which are raw `float*` stores with no hook to bump from. A
+    // digest FOLDED FROM WHAT THE PASS READS cannot miss a write the way a
+    // hand-kept list of bump sites can; it is the same argument the display
+    // term above makes for storing resolved plans instead of the state they
+    // came from.
+    //
+    // SHARED, not per-cell: plane state is view-independent, so the render
+    // loop stamps the same value into every cell's key (exactly like
+    // `toolMat` and the overlay terms). WHICH cell shows a plane is a
+    // function of that cell's preset, and a preset change moves its camera —
+    // i.e. `view`/`proj` above already carry it.
+    //
+    // `= 0` is CTFE-constant and inert in --test, where the Single layout
+    // never reaches the compare — the same neutrality argument as every term
+    // above.
+    ulong     imagePlaneKey = 0;
 }
 
 unittest {
@@ -418,6 +451,31 @@ unittest {
         "a cell showing an unshaded fill must not alias a shaded cell — "
         ~ "no new key TERM was added for this style, so this is the assertion "
         ~ "that the plan-derived key really did cover it");
+}
+
+// T-D1 (task 0612) — the reference-image term discriminates on its own.
+//
+// Wrong implementation: no term added at all — the plane is not a `DrawPlan`
+// field, so nothing else in this struct moves when a plane's channel,
+// transform, link or texture changes. Reads: two EQUAL keys, and the
+// user-visible symptom is a `pixelSize` edit that does nothing until the mouse
+// moves, i.e. a feature that ships not repainting.
+//
+// This half asserts only the FIELD. The other half — that the value stamped
+// into it actually moves when the plane does — is `image_plane.d`'s digest
+// unittest, and it is the one that catches a term added but under-covered.
+// Splitting them is deliberate: a field test alone is exactly the shape that
+// passed four times in this file's history while a render input stayed stale.
+unittest {
+    DirtyKey a, b;
+    a.fboW = 640; b.fboW = 640;
+    a.fboH = 480; b.fboH = 480;
+    assert(a == b, "sanity: identical keys must compare equal");
+    b.imagePlaneKey = 0x9E3779B97F4A7C15UL;
+    assert(a != b,
+        "keys differing only in imagePlaneKey must compare unequal — a "
+        ~ "reference image is a render input like any other, and it reaches no "
+        ~ "DrawPlan");
 }
 
 // ---------------------------------------------------------------------------

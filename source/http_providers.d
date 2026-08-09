@@ -505,15 +505,18 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         // cannot know they were true at the same instant. This provider runs
         // on the main thread (`imagesBridge`), so the pair is consistent.
         //
-        // NOT YET DOING: plan §8 also asks this handler to run
-        // `cache.reconcile(...)` before reading the counters, so a test does
-        // not race the frame loop. That needs the live-path set, which is
-        // derived from plane→clip links — Stage 4's `collectLivePlanePaths`,
-        // and there is no plane kind yet. Until then nothing calls
-        // `reconcile` at all, so the counters are honestly zero rather than
-        // stale, and adding a reconcile against an empty set here would be a
-        // call that could only ever free things. The JIT recompute lands with
-        // the stage that has something to compute (T-C5).
+        // SYNCHRONISATION (task 0612 Stage 5, plan §8). A `POST /api/command`
+        // returns once the command has run on the main thread, but `reconcile`
+        // runs in the FRAME loop, which may not have ticked before the
+        // following `GET /api/images` is served — so a residency assertion
+        // written the obvious way races the renderer and fails intermittently
+        // in whichever direction the scheduler picks. Marshalling alone does
+        // not fix it (the bridge ticks in the event phase), so this handler
+        // runs `reconcile` ITSELF before reading the counters. It is
+        // idempotent, main-thread, and there is precedent for exactly this
+        // JIT recompute for an HTTP reader: `buildItemFrame`'s doc comment
+        // names "the render-thread per-frame install and the HTTP-thread JIT
+        // install" as the two callers of one function.
         httpServer.setImagesDataProvider(() {
             import std.array  : appender;
             import std.format : format;
@@ -521,6 +524,9 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             import io.image_path : resolveStoredPath;
             import io.doc_state  : currentDocPath;
             import image_cache   : imagePixelCache;
+            import image_plane   : collectLivePlanePaths;
+
+            imagePixelCache().reconcile(collectLivePlanePaths(document));
 
             auto a = appender!string();
             a.put(`{"images":[`);
@@ -545,6 +551,90 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 imagePixelCache().residentBytes(),
                 imagePixelCache().decodeCount()));
             return a.data;
+        });
+        // GET /api/imageplane?index=N&cell=K — the resolved placement of one
+        // image plane in one viewport cell (task 0612 Stage 4, plan §8).
+        //
+        // WHY THE CELL IS AN INDEX AND NOT A PRESET. The interesting question
+        // this endpoint answers is "which cell draws which plane", and you
+        // cannot detect which preset a cell resolves to through an endpoint
+        // you HAND the preset to. So the caller names a cell and the two
+        // camera facts are read HERE, from `views[K].camera` — which is the
+        // correct source follow or no follow: `resolveFollow` resolves only
+        // focus / distance / orientation, never `projKind` / `viewPreset`.
+        //
+        // `cellPreset` / `cellOrtho` are echoed back for the same reason a
+        // test asserts its own fixture: a viewport-match assertion against a
+        // cell that is not configured the way the test believes is inert, and
+        // these two fields are how it finds out.
+        httpServer.setImagePlaneProvider((int index, int cell) {
+            import std.array  : appender;
+            import std.format : format;
+            import std.json   : JSONValue;
+            import std.conv   : to;
+            import image_plane : resolvePlacement, imagePlaneSource, sourceToken,
+                                 kImageLinkSlot, ImagePlaneSource;
+            import io.image_path : resolveStoredPath;
+            import io.doc_state  : currentDocPath;
+            import view : ProjKind;
+
+            if (index < 0 || index >= cast(int) document.layers.length)
+                return `{"error":"no layer ` ~ index.to!string ~ `"}`;
+            auto lyr = document.layers[index];
+            // A typed refusal, not an empty placement: "layer 3 is a mesh" and
+            // "layer 3 is a plane showing nothing" are different answers, and a
+            // caller with only this response could not tell them apart if both
+            // came back as zeros.
+            if (!lyr.hasImagePlane) {
+                import document : tokenOf;
+                return `{"error":"layer ` ~ index.to!string
+                     ~ ` is not an image plane (kind ` ~ tokenOf(lyr.kind) ~ `)"}`;
+            }
+            if (cell < 0 || cell >= vpm.cellCount)
+                return `{"error":"no viewport cell ` ~ cell.to!string ~ `"}`;
+
+            // The clip's pixel dimensions come from the LINKED clip's payload
+            // — the one place the disk's answer lives. They stay 0 unless the
+            // source is Ready, which is what makes a broken plane's extent
+            // empty without a second rule saying so.
+            const src = imagePlaneSource(document, lyr);
+            int cw = 0, ch = 0;
+            string abs;
+            if (src == ImagePlaneSource.Ready) {
+                auto clip = lyr.link(kImageLinkSlot).resolve(document);
+                auto img  = clip.imageOrNull();
+                cw  = img.width;
+                ch  = img.height;
+                abs = resolveStoredPath(img.storedPath, currentDocPath());
+            }
+
+            auto camera   = vpm.views[cell].camera;
+            const preset  = camera.viewPreset;
+            const isOrtho = camera.projKind == ProjKind.Ortho;
+            auto pl = resolvePlacement(lyr.imagePlaneOrNull(), lyr.visible,
+                                       cw, ch, src, abs,
+                                       preset, isOrtho, lyr.xform);
+
+            string vec(Vec3 v) {
+                return format("[%.6f,%.6f,%.6f]", v.x, v.y, v.z);
+            }
+            return format(
+                `{"index":%d,"cell":%d,"cellPreset":%s,"cellOrtho":%s,`
+                ~ `"drawn":%s,"source":%s,"clipWidth":%d,"clipHeight":%d,`
+                ~ `"center":%s,"halfU":%s,"halfV":%s,`
+                ~ `"flipU":%s,"invert":%s,"smooth":%s,`
+                ~ `"brightness":%.6f,"contrast":%.6f,"transparency":%.6f,`
+                ~ `"sourcePath":%s}`,
+                index, cell, JSONValue(preset.to!string).toString(),
+                isOrtho ? "true" : "false",
+                pl.drawn ? "true" : "false",
+                JSONValue(sourceToken(pl.source)).toString(), cw, ch,
+                vec(pl.center), vec(pl.halfU), vec(pl.halfV),
+                pl.flipU  ? "true" : "false",
+                pl.invert ? "true" : "false",
+                pl.smooth ? "true" : "false",
+                pl.brightness, pl.contrast, pl.transparency,
+                JSONValue(pl.sourcePath).toString());
         });
         httpServer.setCameraDataProvider((int vpIdx) {
             int _idx = (vpIdx >= 0 && vpIdx < vpm.cellCount) ? vpIdx : vpm.activeId;
