@@ -176,6 +176,13 @@ void restoreSharedInstance() {
 
 unittest {
     post(baseUrl ~ "/api/reset", "");
+    // Leave the shared instance as found, however this ends — a visible Tool
+    // Properties window swallows the synthetic viewport drags other tests
+    // depend on, and a stacked falloff bleeds into any test that reads the
+    // WGHT stage. Armed BEFORE the rig, so a command that throws half-way
+    // through building it still gets cleaned up. (A `try` cannot live inside a
+    // `scope(exit)` body in D, so the restore is a function.)
+    scope(exit) restoreSharedInstance();
 
     // ---- the rig ----------------------------------------------------------
     // Two stages whose rows share a LABEL: `constrain` is registered enabled
@@ -192,12 +199,6 @@ unittest {
     cmd("falloff.linear");
     cmd("falloff.add linear");
     cmd("ui.toolProperties show");
-    // Leave the shared instance as found: a visible Tool Properties window
-    // swallows the synthetic viewport drags other tests depend on, and a
-    // stacked falloff bleeds into any test that reads the WGHT stage.
-    // (A `try` cannot live inside a `scope(exit)` body in D, so the restore
-    // is a function.)
-    scope(exit) restoreSharedInstance();
 
     auto ids = awaitIds(x => has(x, "row", "constrain", "enabled")
                           && has(x, "row", "path", "enabled")
