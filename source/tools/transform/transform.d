@@ -1001,17 +1001,22 @@ protected:
         return aimSpace(cachedVp, primaryModelSpace());
     }
 
-    /// Per-vertex weight evaluated at an explicit world position. Used
-    /// by absolute-from-baseline paths (MoveTool's re-apply-from-
+    /// Per-vertex weight evaluated at an explicit position. Used by
+    /// absolute-from-baseline paths (MoveTool's re-apply-from-
     /// editBefore loop) so the weight stays anchored to the pre-edit
     /// vert position — otherwise verts on the falloff boundary would
     /// drift through the field as they move under the transform.
-    /// Task 0619 — the name is a leftover and is wrong: `evaluateFalloff`
-    /// takes the vertex coordinate as it is STORED, i.e. local to the layer,
-    /// and the one path this was written for (MoveTool's re-apply from
-    /// `editBefore`) held exactly that. It currently has **no callers**
-    /// tree-wide; it is converted rather than deleted so the next caller
-    /// inherits the corrected contract instead of the old lie.
+    /// Task 0619 — the name was a leftover and said "world": what
+    /// `evaluateFalloff` takes is the vertex coordinate as it is STORED,
+    /// i.e. local to the layer, and the one path this was written for
+    /// (MoveTool's re-apply from `editBefore`) held exactly that. It
+    /// currently has **no callers** tree-wide; it is converted rather than
+    /// deleted so the next caller inherits the corrected contract instead of
+    /// the old lie.
+    /// Task 0659 — that contract is unchanged, and is now load-bearing in
+    /// both directions: `aim` carries the layer, so `evaluateFalloff` lifts
+    /// this LOCAL point into world itself. Handing it an already-world point
+    /// would transform it twice on any non-identity layer.
     protected float falloffWeightAt(Vec3 localPos, int vi,
                                     const ref AimViewport aim) {
         if (!dragFalloff.enabled) return 1.0f;

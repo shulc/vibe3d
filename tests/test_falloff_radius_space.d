@@ -86,6 +86,23 @@
 //        → "vertex E: it is drawn INSIDE the overlay (world ellipsoid
 //           distance 0.550000) but it did not move (weight 0.000000000)."
 //
+//   5. The element-centre claim of §4c, isolated the same way, under
+//      mutation 1:
+//        → "vertex B: element weight 0.700000000, expected 0.999999976 from
+//           the WORLD action centre (the folded-to-local centre would give
+//           0.699999976)."
+//      The parenthetical is the whole story: with the vertex unlifted, the
+//      drag lands on the folded reading even though the drag path never
+//      folded anything — mixing one world end with one local end reproduces
+//      the fold exactly.
+//
+//   6. AN INERT MUTATION, recorded because it is the useful one.  Restoring
+//      the `toLocalPoint` fold on `FalloffStage.evaluate`'s published
+//      `pkt.pickedCenter` leaves every cell here GREEN.  That is not a hole
+//      in §4c so much as a fact about the code: `pickedCenter` has two
+//      producers, and the drag path uses the OTHER one (see §4c).  The fold
+//      was only ever visible in the overlay, which no headless test can see.
+//
 import std.net.curl;
 import std.json;
 import std.conv   : to;
@@ -493,6 +510,108 @@ unittest {
                    names[i].str, drawnInside ? "INSIDE" : "outside", dWorld,
                    moved ? "MOVED" : "did not move", got[i]));
     }
+}
+
+// ==========================================================================
+// 4c. THE ELEMENT SPHERE'S CENTRE IS READ WHERE ACEN WRITES IT.
+//
+//     A CONSISTENCY guard, not a measured cell — say so plainly: the capture
+//     covered the radial and linear kinds, so the numbers below are DERIVED
+//     from the law those cells fixed ("the handles are read in the same space
+//     as the vertex"), not independently observed.  It extends that law to
+//     the element kind, whose centre comes from ACEN rather than from a typed
+//     handle.
+//
+//     WHAT IT DOES NOT COVER, because a mutation proved it: `pickedCenter`
+//     has TWO producers.  The drag path — the one this test exercises, and
+//     the one a user feels — takes ACEN's centre RAW in
+//     `TransformTool.captureFalloffForDrag` (transform.d), world, never
+//     folded.
+//     `FalloffStage.evaluate` publishes its own copy, and THAT one used to be
+//     folded to layer-local; its only consumer is the OVERLAY
+//     (falloff_render.d), which draws it through the world viewport.  So the
+//     fold's whole effect was to separate the drawn sphere from the sphere
+//     that moves geometry, on any transformed layer — exactly the seam 0646
+//     names, and exactly what the old comment predicted would happen.
+//     Restoring the fold does NOT turn this cell red (verified), because the
+//     overlay has no headless probe; the fold's removal is carried by the
+//     rendering path, which nothing here can see.  Stated rather than left
+//     for someone to discover by breaking it and seeing green.
+//
+//     The centre is placed EXPLICITLY as a world point rather than left to
+//     ACEN's own mode, so the assertion is about the space the field is read
+//     in and not about how ACEN chooses a centre (that is 0649's subject).
+// ==========================================================================
+unittest {
+    auto fx    = fixture();
+    auto kase  = caseNamed("scaled_radial");   // reused for its item transform
+    auto M     = arrOf(kase["matrix"]);
+    auto names = fx["stand"]["vertexNames"].array;
+
+    enum double[3] worldCentre = [0.6, 0.0, 0.0];
+    enum double    radius      = 1.0;
+
+    double[3] toWorld(double[3] p) {
+        double[3] q;
+        foreach (r; 0 .. 3)
+            q[r] = M[0*4+r]*p[0] + M[1*4+r]*p[1] + M[2*4+r]*p[2] + M[12+r];
+        return q;
+    }
+
+    buildStand(kase);
+    auto before = modelVertices();
+    cmd("tool.set move");
+    cmd("tool.pipe.attr falloff type element");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd(format(`tool.pipe.attr actionCenter userPlacedCenter "%.10g,%.10g,%.10g"`,
+               worldCentre[0], worldCentre[1], worldCentre[2]));
+    cmd(format("tool.pipe.attr falloff dist %.10g", radius));
+    cmd(format("tool.attr move TX %.10g", requestedOffset[0]));
+    cmd(format("tool.attr move TY %.10g", requestedOffset[1]));
+    cmd(format("tool.attr move TZ %.10g", requestedOffset[2]));
+    cmd("tool.doApply");
+    auto after = modelVertices();
+
+    // T from the falloff-free control at the SAME item transform, exactly as
+    // the scored cells do.
+    auto ctrl = runCase(caseNamed("scaled_nofalloff"));
+    double[] T = ctrl[0].dup;
+    double t2 = dot3(T, T);
+    assert(t2 > 1e-9, "control produced a zero offset");
+
+    // The two readings of the centre, and the gap between them on this stand.
+    double[3] foldedCentre;               // what toLocalPoint would have given
+    foreach (k; 0 .. 3) foldedCentre[k] = worldCentre[k] / [2.0, 0.5, 4.0][k];
+    double wExpected(double[3] q, double[3] cen) {
+        double s = 0;
+        foreach (k; 0 .. 3) { double u = q[k] - cen[k]; s += u*u; }
+        double t = sqrt(s) / radius;
+        return (t >= 1.0) ? 0.0 : 1.0 - t;
+    }
+
+    double[] mine, folded, got;
+    foreach (i, v; fx["stand"]["vertices"].array) {
+        auto q = toWorld(vec3Of(v));
+        mine   ~= wExpected(q, worldCentre);
+        folded ~= wExpected(q, foldedCentre);
+        double[] d = [after[i][0] - before[i][0],
+                      after[i][1] - before[i][1],
+                      after[i][2] - before[i][2]];
+        got ~= dot3(d, T) / t2;
+    }
+
+    // --- anti-vacuity: the fold must actually change the answer here ---
+    assert(maxAbs(mine, folded) > 0.1,
+        format("the removed fold makes no difference on this stand (max %.6f) "
+               ~ "— the guard would pass with the fold restored",
+               maxAbs(mine, folded)));
+
+    foreach (i; 0 .. got.length)
+        assert(fabs(got[i] - mine[i]) < 1e-3,
+            format("vertex %s: element weight %.9f, expected %.9f from the "
+                   ~ "WORLD action centre (the folded-to-local centre would "
+                   ~ "give %.9f)",
+                   names[i].str, got[i], mine[i], folded[i]));
 }
 
 // ==========================================================================
