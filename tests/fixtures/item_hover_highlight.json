@@ -1,0 +1,219 @@
+{
+  "name": "item_hover_highlight",
+  "description": "Frozen reference behaviour for HOVER FEEDBACK while the current selection type is Item. Four facts: the highlighted unit is the WHOLE item under the cursor (never the polygon under the cursor); what is painted is the item's EDGES, one pixel wide, with the surface left untouched; the painted pixel set is bit-identical to the one the selected-item look paints, so coverage is shared and only the colour differs; and the colour is a three-state function of (selected, hovered) with the selected+hovered state DERIVED from the selection colour rather than being a fourth independent constant.",
+  "source": "Frozen reference capture (isolated headless session, scripted): a five-item orthographic rig, cursor placed by injected pointer motion, every figure a pixel read on retained screenshots. Screen positions were derived by frame differencing (largest connected component) plus a two-axis least-squares fit, never by a camera model.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "self-drive",
+    "captured_utc": "2026-08-09",
+    "harness": "private headless capture harness (driver, in-editor probe, offline analyser, manifest and retained screenshots live in the private tree)",
+    "task": "0647",
+    "notes": "Colours are single exact modal values over 956 of 956 painted pixels — no anti-aliasing and no alpha, so there is nothing averaged here. The colour SOURCE was established by a preference lever, not by matching against a shipped table: each candidate scheme colour was driven onto its own RGB axis and the capture re-run, so the paint names its own source. The default-scheme numbers and the lever numbers are both recorded below and must agree with each other."
+  },
+
+  "conditions": {
+    "comment": "Ambient state for every figure below.",
+    "selection_type": "item",
+    "view": "orthographic front, 40 px per world metre",
+    "line_width_px": 1,
+    "antialiased": false,
+    "color_scheme": "shipped default"
+  },
+
+  "unit": {
+    "comment": "The trap this rig was built for: with one item in the scene, 'the item under the cursor is lit' and 'every item is lit' render identically. Three separated items settle it, and a second probe on a DIFFERENT polygon of the same item settles the sub-item question.",
+    "highlighted_unit": "whole_item",
+    "evidence": {
+      "hover_item_b_painted_px": 956,
+      "hover_item_b_other_items_painted_px": 0,
+      "hover_a_different_polygon_of_the_same_item_painted_px": 956,
+      "hover_a_different_polygon_paints_the_identical_pixel_set": true
+    }
+  },
+
+  "paint": {
+    "comment": "Which pixels the highlight covers. A face-interior probe separates a surface tint from an edge draw; an interior-edge probe separates an edge draw from a silhouette-only outline. Both were taken; neither was reasoned about.",
+    "target": "edges",
+    "surface_filled": false,
+    "covers_interior_edges": true,
+    "covers_boundary_edges": true,
+    "silhouette_only": false,
+    "evidence": {
+      "face_interior_probe_box_px": 1600,
+      "face_interior_probe_changed_px": 0,
+      "interior_edge_changed_px": 307,
+      "boundary_edge_changed_px": 649,
+      "total_changed_px": 956,
+      "expected_full_wireframe_px": 960,
+      "expected_full_wireframe_note": "a 2x2 grid at 160 px per side: 4*160 boundary + 2*160 interior, one pixel wide",
+      "scanline_hits_across_the_top_row_x": [632, 712, 792]
+    }
+  },
+
+  "coverage_shared_with_selection": {
+    "comment": "The strongest form of 'it is drawn like the selected item': not the same COUNT, the same PIXELS.",
+    "identical_pixel_set": true,
+    "symmetric_difference_px": 0,
+    "hover_px": 956,
+    "selected_px": 956
+  },
+
+  "colors": {
+    "comment": "RGB 0-255 as read from the framebuffer, and the normalised value each is exactly equal to. hover_equals_selection is the question this capture existed to answer.",
+    "hover_equals_selection": false,
+    "hovered_unselected": {
+      "rgb": [140, 181, 199],
+      "normalised": [0.549, 0.710, 0.780],
+      "source": "prehighlight_color",
+      "pixels_at_this_exact_value": 956
+    },
+    "selected_not_hovered": {
+      "rgb": [255, 168, 41],
+      "normalised": [1.0, 0.659, 0.161],
+      "source": "selection_color",
+      "pixels_at_this_exact_value": 956
+    },
+    "selected_and_hovered": {
+      "rgb": [255, 194, 66],
+      "normalised": [1.0, 0.761, 0.259],
+      "source": "derived_from_selection_color",
+      "pixels_at_this_exact_value": 956
+    },
+    "reference_values_in_the_same_frames": {
+      "comment": "Recorded so a future run can tell a changed highlight from a changed scheme.",
+      "viewport_backdrop": [92, 102, 107],
+      "idle_mesh_surface": [137, 137, 137],
+      "idle_mesh_wireframe": [112, 112, 112]
+    }
+  },
+
+  "selected_and_hovered_law": {
+    "comment": "The third colour is not an independent constant and not a blend toward the pre-highlight colour. It is the selection colour brightened by a fixed amount per channel and clamped. Confirmed against TWO different selection colours, six channels, all within one 8-bit step — a single base colour could not have distinguished a brighten from a blend.",
+    "rule": "clamp(selection_color + 0.1, 0, 1)",
+    "checks": [
+      {
+        "selection_color": [1.0, 0.66, 0.16],
+        "predicted_rgb": [255, 194, 66],
+        "measured_rgb": [255, 194, 66]
+      },
+      {
+        "selection_color": [1.0, 0.0, 0.0],
+        "predicted_rgb": [255, 26, 26],
+        "measured_rgb": [255, 25, 25],
+        "note": "one 8-bit step, consistent with a truncating float-to-byte conversion"
+      }
+    ],
+    "refuted_alternatives": [
+      {
+        "rule": "50% blend of selection_color toward prehighlight_color",
+        "predicted_rgb": [198, 175, 120],
+        "measured_rgb": [255, 194, 66]
+      },
+      {
+        "rule": "additive 13% of prehighlight_color",
+        "predicted_rgb": [255, 192, 67],
+        "measured_rgb": [255, 194, 66],
+        "note": "close on this base colour, but it predicts a prehighlight-tinted result on the red base and the red base measured a pure brighten"
+      }
+    ]
+  },
+
+  "color_source_lever": {
+    "comment": "Each candidate scheme colour was driven onto its own RGB axis and the identical capture re-run. The paint then names its own source, which no amount of matching an RGB against a table can do. This also rules two candidates OUT by their total absence.",
+    "hover_follows": "prehighlight_color",
+    "selection_follows": "selection_color",
+    "observations": [
+      {"driven": "selection_color",     "to": [1, 0, 0], "selected_item_painted": [255, 0, 0]},
+      {"driven": "prehighlight_color",  "to": [0, 0, 1], "hovered_item_painted": [0, 0, 255]},
+      {"driven": "face_prehighlight_color", "to": [1, 0, 1], "appeared": false,
+       "conclusion": "item-mode hover uses the GENERIC pre-highlight colour, not the face-specific one"},
+      {"driven": "selection_fill_color", "to": [0, 1, 0], "appeared": false,
+       "conclusion": "nothing is filled, consistent with the zero-pixel face-interior probe"}
+    ]
+  },
+
+  "cases": {
+    "comment": "One row per swept condition. painted_px is measured inside that item's own footprint; a zero is as much a measurement as a non-zero.",
+    "hover_unselected_item": {
+      "hovered": "B", "selected": [],
+      "painted": {"B": {"px": 956, "rgb": [140, 181, 199]}},
+      "unpainted": ["A", "C"]
+    },
+    "hover_a_second_polygon_of_the_same_item": {
+      "hovered": "B", "selected": [],
+      "painted": {"B": {"px": 956, "rgb": [140, 181, 199]}},
+      "identical_pixel_set_to_the_first_probe": true
+    },
+    "hover_the_item_that_is_already_selected": {
+      "hovered": "B", "selected": ["B"],
+      "painted": {"B": {"px": 956, "rgb": [255, 194, 66]}},
+      "adds_no_pixels_over_the_selected_look": true
+    },
+    "hover_a_background_visible_unselected_layer": {
+      "hovered": "A", "selected": ["B"],
+      "painted": {"A": {"px": 956, "rgb": [140, 181, 199]},
+                  "B": {"px": 956, "rgb": [255, 168, 41]}},
+      "note": "a background layer pre-highlights normally; the foreground item keeps its selection colour"
+    },
+    "hover_one_of_several_selected_items": {
+      "hovered": "B", "selected": ["A", "B", "C"],
+      "painted": {"A": {"px": 956, "rgb": [255, 168, 41]},
+                  "B": {"px": 956, "rgb": [255, 194, 66]},
+                  "C": {"px": 956, "rgb": [255, 168, 41]}}
+    },
+    "cursor_over_empty_space": {
+      "hovered": null, "selected": [],
+      "painted": {},
+      "changed_px": 0,
+      "note": "measured in the gap BETWEEN two items, not off the edge of the view; and returning to the parking pixel restored the frame to zero difference three separate times, so the state is transient, not latched"
+    },
+    "several_items_along_the_ray": {
+      "comment": "An occluder strictly inside the occludee's footprint and 3 m closer to the camera. Exactly one item highlights and it is the front-most; the editor's own click picker independently returns that same item for that pixel.",
+      "hover_the_front_item": {
+        "painted": {"front": {"px": 431, "rgb": [140, 181, 199]}},
+        "back_item_painted_px": 0,
+        "click_at_the_same_pixel_selects": "front"
+      },
+      "hover_the_back_item_where_it_is_exposed": {
+        "painted": {"back": {"px": 799, "rgb": [140, 181, 199]}},
+        "front_item_painted_px": 0,
+        "click_at_the_same_pixel_selects": "back"
+      }
+    },
+    "image_plane_item_with_no_mesh": {
+      "comment": "An item that has no geometry at all still participates, by the same law and with the same three colours. Its border is TWO pixels wide, unlike a mesh's one-pixel edges, and its image area is never tinted.",
+      "highlights": true,
+      "target": "rectangular_border",
+      "border_width_px": 2,
+      "image_area_filled": false,
+      "hovered_unselected": {"px": 1632, "rgb": [140, 181, 199]},
+      "selected_not_hovered": {"px": 1632, "rgb": [255, 168, 41]},
+      "selected_and_hovered": {"px": 1632, "rgb": [255, 194, 66]},
+      "click_selects_it": true
+    }
+  },
+
+  "secondary_cue_outside_the_viewport": {
+    "comment": "Found by a whole-frame diff rather than a pane-clipped one, which is a superset test: this is the ONLY other thing that moved. It is chrome, not the highlight, but a port that reproduces the highlight and not this is knowingly incomplete.",
+    "element": "input_hint_strip_along_the_bottom_of_the_window",
+    "changed_px": 3448,
+    "over_empty_viewport": "offers the viewport-level inputs (pick, viewport context menu)",
+    "over_any_item": "offers the item-level inputs (item context menu, area select, item properties)",
+    "names_the_item": false,
+    "identical_across_different_hovered_items": true,
+    "identical_across_different_hovered_items_evidence_px": 0
+  },
+
+  "controls": {
+    "comment": "Every one of these ran before the figures above were trusted. Without them a zero is indistinguishable from a broken probe.",
+    "frame_is_live_changed_px": 50626,
+    "cursor_not_in_framebuffer_changed_px": 0,
+    "cursor_not_in_framebuffer_note": "the two parkings are different empty pixels; the screenshot channel does not composite the cursor, so no figure above can be the cursor bitmap",
+    "aim_self_check_passed": "12/12",
+    "aim_confirmed_by_the_editors_own_picker": "7/7",
+    "reversibility_changed_px": 0,
+    "world_to_screen_fit_residual_px": 1.27
+  }
+}

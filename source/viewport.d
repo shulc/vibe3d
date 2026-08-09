@@ -250,6 +250,37 @@ struct DirtyKey {
     // never reaches the compare — the same neutrality argument as every term
     // above.
     ulong     imagePlaneKey = 0;
+
+    // Task 0647 — the item-highlight term.
+    //
+    // WHY NONE OF THE TERMS ABOVE CARRY IT. Item-mode hover paints the whole
+    // item under the cursor, and the three hover fields above are ELEMENT
+    // indices into the primary layer — they stay at -1 for the entire life of
+    // an item-mode hover, because no vertex, edge or face is being hovered.
+    // `selEpoch` is bumped by mesh-mark changes and does not move when an ITEM
+    // is selected; `meshMutVer` does not move for a selection of any kind.
+    // So without this field, moving the pointer from one item to another under
+    // the Item selection type changes what the pass draws and changes no key —
+    // the sixth instance of the bug this file already documents five times
+    // (`toolMat` :132, the overlay terms :144, `gpuUploadVer` :161,
+    // `overlayHot` :174, the display term, `imagePlaneKey`).
+    //
+    // A DIGEST, for the `imagePlaneKey` reason: it is folded from exactly what
+    // the highlight pass reads — the selection type, the hovered index, and
+    // each layer's (visible, drawsGeometry, selected) triple — so a future
+    // input that reaches the pass is caught without an edit here, and one that
+    // does not reach the pass correctly triggers no re-render. Notably it
+    // covers item SELECTION too, which nothing else on this struct does.
+    //
+    // SHARED, not per-cell: which items are lit is view-independent. WHICH
+    // cell the pointer is in is not, but the pointer only ever hovers one cell
+    // and the highlight it produces is drawn in all of them, exactly like the
+    // overlay terms.
+    //
+    // `= 0` is CTFE-constant and inert in --test, where the Single layout
+    // never reaches the compare — the same neutrality argument as every term
+    // above.
+    ulong     itemHighlightKey = 0;
 }
 
 unittest {
@@ -295,6 +326,27 @@ unittest {
     b.falloffCenter = [0.0f, 0.0f, 0.0f];
     b.falloffRadius = 3.0f;
     assert(a != b, "keys differing only in falloffRadius must compare unequal");
+}
+
+unittest {
+    // Task 0647: the item-highlight term must discriminate ON ITS OWN. The
+    // three hover fields stay at -1 for the whole of an item-mode hover (no
+    // element is hovered) and `selEpoch` does not move when an ITEM is
+    // selected, so without this the pointer crossing from one item to another
+    // would change what is drawn and change no key.
+    DirtyKey a, b;
+    a.fboW = 640; b.fboW = 640;
+    a.fboH = 480; b.fboH = 480;
+    a.hovV = -1;  b.hovV = -1;
+    a.hovE = -1;  b.hovE = -1;
+    a.hovF = -1;  b.hovF = -1;
+    assert(a == b, "sanity: identical keys must compare equal");
+
+    b.itemHighlightKey = 0x1234_5678_9abc_def0UL;
+    assert(a != b,
+        "keys differing only in itemHighlightKey must compare unequal — with "
+        ~ "every element-hover field pinned at -1, which is what an item-mode "
+        ~ "hover actually looks like");
 }
 
 unittest {

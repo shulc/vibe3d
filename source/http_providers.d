@@ -386,8 +386,17 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             import std.json   : JSONValue;
             import document   : Document, tokenOf, LinkState;  // Document.background (derived, 2b)
             import image_plane : imagePlaneSource, sourceToken;
+            import hover_state : g_hoveredItem;
             auto a = appender!string();
-            a.put(format(`{"active":%d,"layers":[`, document.activeIndex));
+            // `hoveredItem` (task 0647) — the item under the cursor, or -1.
+            // Exposed HERE, beside `active`, because it is an index into this
+            // same `layers` array and reading it anywhere else would make a
+            // caller pair two responses that the main thread can splice
+            // between. It is the one observable that separates "the ray found
+            // the wrong item" from "the ray was right and the paint is wrong",
+            // which no pixel can answer on its own.
+            a.put(format(`{"active":%d,"hoveredItem":%d,"layers":[`,
+                         document.activeIndex, g_hoveredItem));
             foreach (i, l; document.layers) {
                 if (i > 0) a.put(",");
                 // `background` is now DERIVED (Stage 2b): visible && !selected —

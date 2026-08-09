@@ -3522,6 +3522,81 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         }
     }
 
+    // ---- Item highlight (task 0647) ----
+    //
+    // Under the Item selection type the unit of both selection and hover is the
+    // WHOLE item, so the feedback changes scale with it: the item under the
+    // cursor has its entire wireframe repainted, and so does every selected
+    // item. All of it MEASURED (doc fixture `tests/fixtures/
+    // item_hover_highlight.json`) — and the parts that were measured are the
+    // parts a plausible wrong implementation gets wrong:
+    //
+    //   * the UNIT is the item, not the polygon under the cursor. A second
+    //     probe on a different polygon of the same item painted the identical
+    //     pixel set.
+    //   * what is painted is EDGES. A probe 1x1 m deep inside a face changed
+    //     0 of 1600 pixels, so this is not a surface tint; interior edges DID
+    //     paint (307 px of 956), so it is not a silhouette either.
+    //   * the COLOUR is a three-state function of (selected, hovered), and the
+    //     hover colour is NOT the selection colour — that was the question the
+    //     capture existed to answer. `itemHighlightColor` owns the law.
+    //
+    // WHY HERE, after the edges pass and before the vertex dots: this pass
+    // paints OVER the base wireframe, which must already be down, and under
+    // the gizmo, which must stay on top. Every layer is drawn in this one
+    // place rather than each in its own pass — a background layer highlighted
+    // back in the backdrop loop would be painted over by the primary's own
+    // depth-writing face pass, which runs after it.
+    //
+    // The gate is `currentSelType`, not `editMode`: `editMode` still reads
+    // whatever geometry type was last used (that is what makes 1/2/3 restore
+    // it), so an implementation gated on it would light items in Vertices mode.
+    {
+        import seltype          : currentSelType, SelType;
+        import document         : kindInfo;
+        import viewport_scheme  : itemHighlight, itemHighlightColor, ItemHighlight;
+        import hover_state      : g_hoveredItem;
+
+        if (currentSelType(selTypeOrder) == SelType.Item) {
+            auto zItem = g_perf.scope_(Cat.drawOverlays);
+            foreach (li, lyr; document.layers) {
+                if (lyr is null || !lyr.visible) continue;
+                // Same capability bit the item ray picks against
+                // (`item_pick.d`), so nothing can be hovered that cannot be
+                // painted, or painted that cannot be hovered.
+                if (!kindInfo(lyr.kind).drawsGeometry) continue;
+
+                immutable ItemHighlight state =
+                    itemHighlight(lyr.selected, cast(int)li == g_hoveredItem);
+                if (state == ItemHighlight.none) continue;
+                immutable Vec3 c = itemHighlightColor(state);
+
+                // The primary draws through the SAME GpuMesh and the SAME
+                // model matrix the passes above used — `meshModel`, which
+                // folds a live tool matrix, so a highlighted item being
+                // dragged stays on its geometry instead of trailing it.
+                // Background layers use the buffers the backdrop loop
+                // uploaded; a visible non-primary geometry layer always has an
+                // entry there (its gate is the same three conditions as this
+                // loop's, minus selection), so a missing one means the two
+                // gates have drifted and skipping is the safe read.
+                if (document.isPrimary(lyr)) {
+                    shader.useProgram(meshModel, vp);
+                    gpu.drawItemHighlight(shader.locColor, c.x, c.y, c.z);
+                } else if (auto bg = lyr in bgGpuByLayer) {
+                    // Named, not inlined: `useProgram` takes the matrix by
+                    // `ref const`, so the composed rvalue needs a home.
+                    float[16] itemModel = lyr.xform.composedMatrix();
+                    shader.useProgram(itemModel, vp);
+                    (*bg).gpu.drawItemHighlight(shader.locColor, c.x, c.y, c.z);
+                }
+            }
+            // Leave the program bound to the primary's matrix: everything
+            // downstream (vertex dots, tool overlays) was written expecting it.
+            shader.useProgram(meshModel, vp);
+        }
+    }
+
     // ---- Vertex dots ----
     // `drawVerts` is a FORCING term from the surface style (a lines-only
     // style draws vertices as well as edges). The edit-mode gate below is a

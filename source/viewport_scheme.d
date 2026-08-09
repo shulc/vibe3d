@@ -30,7 +30,7 @@
 module viewport_scheme;
 
 import math : Vec3;
-import std.algorithm.comparison : max;
+import std.algorithm.comparison : max, min;
 
 version (unittest) import std.math : abs;
 
@@ -46,6 +46,7 @@ enum SchemeColor {
     // --- viewport ---
     backdrop,      /// empty-viewport background
     selection,     /// selected MESH geometry. NEVER a handle — see kHandleActive
+    preHighlight,  /// the thing under the pointer, before any click commits to it
     // --- axes ---
     axisX,
     axisY,
@@ -82,6 +83,7 @@ private enum size_t kSchemeColorCount = SchemeColor.max + 1;
 immutable Vec3[kSchemeColorCount] kSchemeDefaults = [
     SchemeColor.backdrop:     Vec3(0.36f, 0.40f, 0.45f),
     SchemeColor.selection:    Vec3(1.00f, 0.66f, 0.16f),
+    SchemeColor.preHighlight: Vec3(0.549f, 0.710f, 0.780f),
 
     SchemeColor.axisX:        Vec3(0.90f, 0.20f, 0.20f),
     SchemeColor.axisY:        Vec3(0.20f, 0.80f, 0.20f),
@@ -281,6 +283,92 @@ Vec3 planeRingColor(Vec3 axis, HandlePaint paint) @safe pure nothrow @nogc {
 }
 
 // ---------------------------------------------------------------------------
+// THE item colour law
+// ---------------------------------------------------------------------------
+
+/// How far the hovered-AND-selected shade sits ABOVE the selection colour.
+///
+/// MEASURED, and measured as an OFFSET rather than as a third colour: the
+/// capture drove the selection colour onto two different values and read the
+/// hovered-selected paint back both times, and both landed on
+/// `selection + 0.1` per channel to within one 8-bit step. A 50% blend toward
+/// the pre-highlight colour and an additive 13% of the pre-highlight colour
+/// were both refuted by the second base colour — on a red selection they
+/// predict a blue-tinted result and the paint measured a pure brighten.
+///
+/// This is why `itemHighlightColor` derives instead of storing (255, 194, 66):
+/// a stored triple is instantly wrong the moment the selection colour is
+/// re-themed, and wrong in the way nothing catches — it would still draw, still
+/// be a plausible orange, and simply stop being "the selected item, lit".
+enum float kItemHoverBrighten = 0.1f;
+
+/// What an ITEM is doing, for the purpose of choosing the colour its wireframe
+/// is painted in while the current selection type is Item.
+///
+/// FOUR states, and the fourth is not a convenience: hovering an item that is
+/// already selected is its own paint, measurably different from both of the
+/// states it sits between. A law with three states could only make it agree
+/// with `selected` (losing the hover cue exactly where the user is about to
+/// click) or with `hovered` (losing the selection cue), and both were measured
+/// false.
+///
+/// `none` is a real member rather than a null colour: most items in a document
+/// are neither, and a caller has to be able to say so without inventing a
+/// sentinel colour that a paint pass could accidentally draw.
+enum ItemHighlight {
+    none,             /// neither selected nor under the pointer — not painted
+    hovered,          /// under the pointer, not selected
+    selected,         /// selected, pointer elsewhere
+    selectedHovered,  /// selected AND under the pointer
+}
+
+/// The state of an item, from the two booleans that decide it.
+///
+/// Trivial, and a function anyway — the two call sites (the draw pass and its
+/// test) must not each write their own `?:` chain, which is how a "hovered and
+/// selected paints as merely selected" bug gets into one of them alone.
+ItemHighlight itemHighlight(bool selected, bool hovered) @safe pure nothrow @nogc {
+    if (selected) return hovered ? ItemHighlight.selectedHovered : ItemHighlight.selected;
+    return hovered ? ItemHighlight.hovered : ItemHighlight.none;
+}
+
+/// An item's highlight colour, given what it is doing.
+///
+/// MEASURED (task 0647). Two rows are scheme lookups and the third is derived:
+///
+///   hovered          -> the GENERIC pre-highlight colour. Established by a
+///                       preference lever, not by matching a number against a
+///                       table: each candidate scheme colour was driven onto
+///                       its own RGB axis and the capture re-run, and the paint
+///                       followed the generic pre-highlight row. The
+///                       FACE-specific pre-highlight (our light blue face tint)
+///                       was driven to magenta and never appeared, so the two
+///                       must not be collapsed into one row however close they
+///                       look.
+///   selected         -> the selection colour, unchanged.
+///   selectedHovered  -> `clamp(selection + kItemHoverBrighten, 0, 1)`.
+///
+/// `none` is a caller bug, not a fourth colour: an item that is neither
+/// selected nor hovered is not painted at all, and a function that answered
+/// some colour for it would let a pass draw over every item in the document.
+Vec3 itemHighlightColor(ItemHighlight h) @safe pure nothrow @nogc {
+    final switch (h) {
+        case ItemHighlight.none:
+            assert(false, "itemHighlightColor: `none` is not painted — the "
+                          ~ "caller must skip it, not ask for its colour");
+        case ItemHighlight.hovered:
+            return schemeColor(SchemeColor.preHighlight);
+        case ItemHighlight.selected:
+            return schemeColor(SchemeColor.selection);
+        case ItemHighlight.selectedHovered:
+            immutable Vec3 s = schemeColor(SchemeColor.selection);
+            return Vec3(min(1.0f, max(0.0f, s.x + kItemHoverBrighten)),
+                        min(1.0f, max(0.0f, s.y + kItemHoverBrighten)),
+                        min(1.0f, max(0.0f, s.z + kItemHoverBrighten)));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -328,6 +416,8 @@ unittest {
         Row(SchemeColor.handleUnsnap, 0.9f,  0.7f,  1.0f,  "unsnapped cursor marker"),
         Row(SchemeColor.backdrop,     0.36f, 0.40f, 0.45f, "viewport backdrop"),
         Row(SchemeColor.selection,    1.0f,  0.66f, 0.16f, "MESH selection — never a handle"),
+        Row(SchemeColor.preHighlight, 0.549f, 0.710f, 0.780f,
+            "the thing under the pointer — NOT the face-specific tint (0.5, 0.71, 0.79)"),
     ];
     // dfmt on
     foreach (p; pinned) {
@@ -400,6 +490,68 @@ unittest {
         assert(planeRingColor(a, HandlePaint.hover) == active);
         assert(planeRingColor(a, HandlePaint.grabbed) == a);
     }
+}
+
+/// The item law: four states, three colours, and the third one is DERIVED.
+///
+/// The expected side of the third row is written as the expression, not as the
+/// triple it evaluates to — same discipline as `rotateBackingDiscColor`'s test,
+/// and for the same reason: the triple is what a literal would freeze, and
+/// freezing it is the bug the derivation exists to prevent. The 8-bit values
+/// the shipped scheme lands on are stated separately, as a statement about
+/// THIS scheme.
+unittest {
+    const sel  = schemeColor(SchemeColor.selection);
+    const pre  = schemeColor(SchemeColor.preHighlight);
+
+    // The two booleans map onto the four states, and nothing collapses.
+    assert(itemHighlight(false, false) == ItemHighlight.none);
+    assert(itemHighlight(false, true)  == ItemHighlight.hovered);
+    assert(itemHighlight(true,  false) == ItemHighlight.selected);
+    assert(itemHighlight(true,  true)  == ItemHighlight.selectedHovered);
+
+    // Row 1 and row 2 are lookups, and they are DIFFERENT lookups. This is the
+    // question the capture existed to answer — "hover just draws it as
+    // selected" was a live hypothesis and it is false.
+    assert(itemHighlightColor(ItemHighlight.hovered)  == pre);
+    assert(itemHighlightColor(ItemHighlight.selected) == sel);
+    assert(pre != sel);
+
+    // Row 3, as the relationship rather than as a value.
+    const sh = itemHighlightColor(ItemHighlight.selectedHovered);
+    assert(sh.x == min(1.0f, sel.x + kItemHoverBrighten));
+    assert(sh.y == min(1.0f, sel.y + kItemHoverBrighten));
+    assert(sh.z == min(1.0f, sel.z + kItemHoverBrighten));
+
+    // …and it is a THIRD colour, not either of the two it sits between. A
+    // three-state implementation passes every assertion above except these.
+    assert(sh != sel);
+    assert(sh != pre);
+
+    // The clamp. The shipped selection colour saturates its red channel, so
+    // this is exercised by the real scheme and not only in principle: 1.0 + 0.1
+    // must read back as 1.0, not 1.1 — a value that would silently truncate on
+    // its way to the framebuffer and hide the missing clamp.
+    assert(sel.x == 1.0f && sh.x == 1.0f);
+
+    // What the shipped scheme lands on, in the units the capture recorded.
+    // Byte conversion is round-to-nearest, matching the framebuffer's.
+    static int toByte(float f) {
+        immutable v = cast(int)(f * 255.0f + 0.5f);
+        return v < 0 ? 0 : (v > 255 ? 255 : v);
+    }
+    assert(toByte(pre.x) == 140 && toByte(pre.y) == 181 && toByte(pre.z) == 199);
+    assert(toByte(sel.x) == 255 && toByte(sel.y) == 168 && toByte(sel.z) == 41);
+    assert(toByte(sh.x)  == 255 && toByte(sh.y)  == 194 && toByte(sh.z)  == 66);
+
+    // The generic pre-highlight row is NOT the face-specific tint that
+    // `mesh_gpu.drawFacesHighlighted` paints a hovered polygon with. The
+    // capture drove the face row onto magenta and no item-mode hover paint
+    // ever turned magenta, so an implementation that reused the face literal
+    // here would be reading the wrong preference. They differ by 12 counts on
+    // red and 3 on blue, which is nothing to the eye and everything to a lever.
+    immutable Vec3 facePreHighlight = Vec3(0.5f, 0.71f, 0.79f);
+    assert(pre != facePreHighlight);
 }
 
 /// Axis lookup agrees with the table, and plane fills track their outline.

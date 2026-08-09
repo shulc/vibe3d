@@ -1116,6 +1116,43 @@ struct GpuMesh {
         glBindVertexArray(0);
     }
 
+    // Draw the WHOLE mesh's wireframe in one flat colour — the item-level
+    // highlight (task 0647).
+    //
+    // Deliberately NOT a call into `drawEdges` with an all-true mask. Three
+    // things differ and each one is measured:
+    //
+    //   * the COVERAGE is the whole cage, with no selection or hover set to
+    //     partition it, so there is nothing for the batching scan to do;
+    //   * the COLOUR is the caller's, not one of the two literals `drawEdges`
+    //     holds — item state has three colours and geometry state has two, and
+    //     folding them into one function is how the item's derived
+    //     hovered-selected shade would end up as a fourth literal in here;
+    //   * the BASE (grey) pass must not run. In item mode this pass is drawn
+    //     OVER a wireframe that has already been laid down, and re-issuing the
+    //     grey underneath it would be pure waste.
+    //
+    // Interior edges are included, not just the silhouette: the reference
+    // paints a hovered item's interior edges (measured — 307 of the 956 pixels
+    // it painted were on edges that are not on the outline), so a silhouette
+    // extraction here would be a different, wrong shape.
+    //
+    // Depth test OFF, matching the selection/hover passes in `drawEdges`: an
+    // item's highlight reads as feedback about the ITEM, and feedback that is
+    // occluded by the item's own front faces would answer a question nobody
+    // asked. (The reference rig measured flat grids, where the two conventions
+    // are indistinguishable, so this half follows the house convention rather
+    // than a measurement.)
+    void drawItemHighlight(GLint locColor, float r, float g, float b) {
+        if (edgeVertCount <= 0) return;
+        glBindVertexArray(edgeVao);
+        glDisable(GL_DEPTH_TEST);
+        glUniform3f(locColor, r, g, b);
+        dcArrays(DrawPass.edges, GL_LINES, 0, edgeVertCount);
+        glEnable(GL_DEPTH_TEST);
+        glBindVertexArray(0);
+    }
+
     // Draw vertex dots (call AFTER picking so hovered/selected state is current)
     /// `hovered` and `selected` are CAGE-indexed. In cage mode the VBO
     /// is also cage-indexed (vertOriginGpu is the identity), so a slot

@@ -40,6 +40,7 @@ import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot, 
 import io.assimp_runtime : initAssimp, shutdownAssimp;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
+import item_pick : ItemRayPicker, ItemHit;
 import viewgrid : g_viewGrid, viewGridSize, viewGridSubStep, viewWorldPerPixel,
                   kGridMaskMin, kGridMaskMax, kGridHalfCells, gridRungs,
                   viewGridFadeRadius;
@@ -1675,6 +1676,12 @@ void main(string[] args) {
     // gpu_select.d:31 uses. Default ON; VIBE3D_FACE_PICK=gpu falls back to
     // the GPU face re-render (oracle for A/B equivalence testing).
     BvhPick bvhPick = new BvhPick();
+    // Item-level ray picker (task 0647) — "which ITEM is under the cursor",
+    // over EVERY visible geometry layer including the primary. Held next to
+    // `bvhPick` and separate from it: `bvhPick` is the primary layer's tree and
+    // is keyed on that one mesh, so pointing it at a second layer would thrash
+    // the cache it exists to be.
+    ItemRayPicker itemPicker = new ItemRayPicker();
     bool useBvhFacePick;
     {
         import std.process : environment;
@@ -5419,6 +5426,43 @@ void main(string[] args) {
                                 hoveredFace, /*deselect=*/true);
     }
 
+    // Which ITEM is under the cursor (task 0647). Runs only while the current
+    // selection type is Item — that is the whole gate, and it is the same gate
+    // the highlight pass reads.
+    //
+    // WHY IT IS NOT `pickHover` WITH A FOURTH MODE. The three element pickers
+    // share a body because they differ only in a SelectMode/EditMode pair and a
+    // radius; this one differs in every part that matters. It ranges over the
+    // layer array rather than the primary's elements, it uses a CPU ray rather
+    // than the GPU ID buffer (the ID buffer is rendered from the primary's VBO
+    // alone, so it cannot see another layer at all), and its answer is a
+    // document index rather than an element index.
+    //
+    // THE CLEAR COMES BEFORE EVERY EARLY RETURN BUT ONE, so that "the cursor
+    // moved off the item" and "the cursor moved onto empty space" are the same,
+    // non-latching state — measured: returning to a parking pixel restored a
+    // zero-difference frame every time, so nothing here may hold the previous
+    // answer.
+    //
+    // The one exception is a live DRAG, which freezes the hover exactly as the
+    // element pickers freeze theirs: the item the gesture started on is the one
+    // it must keep for its whole duration. That freeze is itself conditional on
+    // Item still being the current type — a type flip during a drag must not
+    // leave a stale item index visible to `/api/layers`.
+    void pickItems(ref Viewport vp, bool doingCameraDrag) {
+        import hover_state : g_hoveredItem;
+        immutable bool isItem = currentSelType(selTypeOrder) == SelType.Item;
+        if (isItem && activeTool !is null && activeTool.isDragging()) return;
+        g_hoveredItem = -1;
+        if (!isItem) return;
+        if (!viewportInputAllowed() || doingCameraDrag) return;
+
+        int mx, my;
+        queryMouse(mx, my);
+        immutable ItemHit h = itemPicker.pickItemAt(document, mx, my, vp);
+        if (h.hit) g_hoveredItem = h.layerIndex;
+    }
+
     // Bind the picker delegate forward-declared at handleMouseMotion's
     // scope. queryMouse() pulls from the global override which the event
     // player updates in batch (per tickEventPlayer call); the override is
@@ -6923,6 +6967,11 @@ void main(string[] args) {
         }
 
         pickFaces(vp, doingCameraDrag);
+
+        // Item hover (task 0647). Last of the four, and outside every
+        // editMode branch above: the item ray is asked on EVERY frame under
+        // the Item selection type, whatever the remembered geometry type is.
+        pickItems(vp, doingCameraDrag);
         }
         int pickedVertex = hoveredVertex;
         int pickedEdge = hoveredEdge;
@@ -8082,6 +8131,32 @@ void main(string[] args) {
                         _newKey.hovV       = _hovK ? hoveredVertex : -1;
                         _newKey.hovE       = _hovK ? hoveredEdge   : -1;
                         _newKey.hovF       = _hovK ? hoveredFace   : -1;
+                        // Task 0647 — see DirtyKey.itemHighlightKey for why
+                        // none of the three fields above can carry this. NOT
+                        // gated on `_hovK`: the item under the pointer is lit
+                        // in EVERY cell, not only the one the pointer is in,
+                        // so a cell that gated this term would freeze with a
+                        // stale highlight the moment the pointer left it.
+                        {
+                            import hover_state : g_hoveredItem;
+                            import document    : kindInfo;
+                            ulong _ih = 0xcbf2_9ce4_8422_2325UL;
+                            void _fold(ulong v) {
+                                _ih ^= v;
+                                _ih *= 0x0000_0100_0000_01b3UL;
+                            }
+                            _fold(cast(ulong)currentSelType(selTypeOrder));
+                            // +1 so the "nothing hovered" -1 folds a value
+                            // rather than every bit of a sign-extended ulong.
+                            _fold(cast(ulong)(g_hoveredItem + 1));
+                            foreach (_lyr; document.layers) {
+                                if (_lyr is null) { _fold(0xFFUL); continue; }
+                                _fold((_lyr.visible  ? 1UL : 0UL)
+                                    | (_lyr.selected ? 2UL : 0UL)
+                                    | (kindInfo(_lyr.kind).drawsGeometry ? 4UL : 0UL));
+                            }
+                            _newKey.itemHighlightKey = _ih;
+                        }
                         _newKey.fboW       = _cv.fbo.w;
                         _newKey.fboH       = _cv.fbo.h;
                         // Live tool matrix (see DirtyKey.toolMat doc): keeps
