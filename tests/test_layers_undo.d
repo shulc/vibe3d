@@ -409,6 +409,19 @@ unittest {
     cmd("layer.select index:0");                              // A active (cube)
     clearHistory();
 
+    // Back to a GEOMETRY selection type before clicking (task 0643). The
+    // `layer.select`s above each promote `SelType.Item`, and under Item a
+    // viewport click selects an ITEM, not geometry — so without this the
+    // recorded log would re-select a layer and the pick below would measure
+    // nothing. `mode` alone cannot catch that: it reports `editMode`, the
+    // remembered GEOMETRY view, which reads "vertices" under Item too. This
+    // flow is about the pick CACHES, not about the selection type, so it says
+    // which type it wants instead of inheriting one.
+    cmd("select.vertex");
+    assert(getSelection()["selType"].str == "vertex",
+        "precondition: a geometry type is current before the interactive pick, "
+        ~ "got " ~ getSelection()["selType"].str);
+
     // Interactive vertex pick on the now-active layer. The recorded log selects
     // two cube vertices. A clean result proves the global pick caches resized /
     // refreshed against the ACTIVE mesh, never reading a colliding background

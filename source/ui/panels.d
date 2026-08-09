@@ -2998,11 +2998,8 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     // `transparency`. With the depth test off, submission order IS the
     // ordering, so this is not optional the moment there is more than one.
     {
-        import image_plane : resolvePlacement, imagePlaneSource, kImageLinkSlot,
-                             ImagePlaneSource, ImagePlanePlacement;
+        import image_plane : resolvePlacementFor, ImagePlanePlacement;
         import image_cache : imagePixelCache;
-        import io.image_path : resolveStoredPath;
-        import io.doc_state  : currentDocPath;
         import handles.gl_util : drawImagePlane;
         import view : ProjKind;
         import std.algorithm : sort;
@@ -3011,20 +3008,12 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         Drawable[] drawables;
         foreach (lyr; document.layers) {
             if (lyr is null || !lyr.hasImagePlane) continue;
-            immutable src = imagePlaneSource(document, lyr);
-            int cw = 0, chh = 0;
-            string abs;
-            if (src == ImagePlaneSource.Ready) {
-                auto clip = lyr.link(kImageLinkSlot).resolve(document);
-                auto img  = clip.imageOrNull();
-                cw = img.width; chh = img.height;
-                abs = resolveStoredPath(img.storedPath, currentDocPath());
-            }
-            auto pl = resolvePlacement(lyr.imagePlaneOrNull(), lyr.visible,
-                                       cw, chh, src, abs,
-                                       v.camera.viewPreset,
-                                       v.camera.projKind == ProjKind.Ortho,
-                                       lyr.xform);
+            // The clip lookup + the pure law, in one call (task 0643's
+            // extraction): the item ray asks the identical question, and two
+            // spellings of it could hit-test a quad this pass never drew.
+            auto pl = resolvePlacementFor(document, lyr,
+                                          v.camera.viewPreset,
+                                          v.camera.projKind == ProjKind.Ortho);
             if (!pl.drawn) continue;
             // View-space Z of the centre; more negative = further away under
             // the GL convention, so ascending sort is far-to-near.
@@ -3556,19 +3545,58 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         import document         : kindInfo;
         import viewport_scheme  : itemHighlight, itemHighlightColor, ItemHighlight;
         import hover_state      : g_hoveredItem;
+        import image_plane      : resolvePlacementFor;
+        import handles.gl_util  : drawWorldSegment;
+        import view             : ProjKind;
 
         if (currentSelType(selTypeOrder) == SelType.Item) {
             auto zItem = g_perf.scope_(Cat.drawOverlays);
             foreach (li, lyr; document.layers) {
                 if (lyr is null || !lyr.visible) continue;
+
+                // One colour law for every kind of item — computed before the
+                // kind branch precisely so the two cannot drift into two rules.
+                immutable ItemHighlight state =
+                    itemHighlight(lyr.selected, cast(int)li == g_hoveredItem);
+                if (state == ItemHighlight.none) continue;
+
+                // An IMAGE PLANE is highlighted by its BORDER, because it has
+                // no wireframe to repaint — measured (`doc/tasks/0647-evidence/`):
+                // the reference paints a plane's rectangular border, 2 px wide,
+                // in the same three colours as a mesh's edges, and never tints
+                // the image itself. Handled before the `drawsGeometry` gate
+                // below, which a plane fails by construction: task 0643 made
+                // planes pickable, so leaving them out here would produce an
+                // item that can be hovered and selected with no cue at all.
+                if (lyr.hasImagePlane) {
+                    auto pl = resolvePlacementFor(document, lyr,
+                                                  v.camera.viewPreset,
+                                                  v.camera.projKind == ProjKind.Ortho);
+                    if (!pl.drawn) continue;   // same gate the plane draw used
+                    immutable Vec3 pc = itemHighlightColor(state);
+                    // A FIXED-SIZE array, so the corner pairs live on the stack:
+                    // a `[[a,b], …]` slice literal here would allocate on the GC
+                    // every frame a backdrop is lit.
+                    immutable Vec3[2][4] segs = [
+                        [pl.center - pl.halfU - pl.halfV, pl.center + pl.halfU - pl.halfV],
+                        [pl.center + pl.halfU - pl.halfV, pl.center + pl.halfU + pl.halfV],
+                        [pl.center + pl.halfU + pl.halfV, pl.center - pl.halfU + pl.halfV],
+                        [pl.center - pl.halfU + pl.halfV, pl.center - pl.halfU - pl.halfV],
+                    ];
+                    // `smooth = false`: this colour is READ BACK as an exact
+                    // value by the item tests, and an anti-aliased edge carries
+                    // a blend of it rather than it.
+                    foreach (seg; segs)
+                        drawWorldSegment(seg[0], seg[1], vp, pc, 2.0f,
+                                         shader.program, 1.0f, /*smooth=*/false);
+                    continue;
+                }
+
                 // Same capability bit the item ray picks against
                 // (`item_pick.d`), so nothing can be hovered that cannot be
                 // painted, or painted that cannot be hovered.
                 if (!kindInfo(lyr.kind).drawsGeometry) continue;
 
-                immutable ItemHighlight state =
-                    itemHighlight(lyr.selected, cast(int)li == g_hoveredItem);
-                if (state == ItemHighlight.none) continue;
                 immutable Vec3 c = itemHighlightColor(state);
 
                 // The primary draws through the SAME GpuMesh and the SAME

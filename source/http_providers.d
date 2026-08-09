@@ -605,10 +605,8 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             import std.format : format;
             import std.json   : JSONValue;
             import std.conv   : to;
-            import image_plane : resolvePlacement, imagePlaneSource, sourceToken,
-                                 kImageLinkSlot, ImagePlaneSource;
-            import io.image_path : resolveStoredPath;
-            import io.doc_state  : currentDocPath;
+            import image_plane : resolvePlacementFor, imagePlaneSource,
+                                 sourceToken, kImageLinkSlot, ImagePlaneSource;
             import view : ProjKind;
 
             if (index < 0 || index >= cast(int) document.layers.length)
@@ -629,24 +627,24 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             // The clip's pixel dimensions come from the LINKED clip's payload
             // — the one place the disk's answer lives. They stay 0 unless the
             // source is Ready, which is what makes a broken plane's extent
-            // empty without a second rule saying so.
+            // empty without a second rule saying so. That walk now lives in
+            // `resolvePlacementFor` (task 0643), shared with the draw pass and
+            // the item ray; the two dimensions are still reported below, read
+            // back from the same clip so the response says which numbers the
+            // law was given.
             const src = imagePlaneSource(document, lyr);
             int cw = 0, ch = 0;
-            string abs;
             if (src == ImagePlaneSource.Ready) {
                 auto clip = lyr.link(kImageLinkSlot).resolve(document);
                 auto img  = clip.imageOrNull();
                 cw  = img.width;
                 ch  = img.height;
-                abs = resolveStoredPath(img.storedPath, currentDocPath());
             }
 
             auto camera   = vpm.views[cell].camera;
             const preset  = camera.viewPreset;
             const isOrtho = camera.projKind == ProjKind.Ortho;
-            auto pl = resolvePlacement(lyr.imagePlaneOrNull(), lyr.visible,
-                                       cw, ch, src, abs,
-                                       preset, isOrtho, lyr.xform);
+            auto pl = resolvePlacementFor(document, lyr, preset, isOrtho);
 
             string vec(Vec3 v) {
                 return format("[%.6f,%.6f,%.6f]", v.x, v.y, v.z);

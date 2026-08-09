@@ -435,6 +435,196 @@ ImagePlanePlacement resolvePlacement(const ImagePlaneData p,
     return r;
 }
 
+/// Does the world ray `org + t*dir` strike the placement's quad, and at what
+/// `t`? (task 0643)
+///
+/// ── WHAT COUNTS AS A HIT: THE WHOLE RECTANGLE ────────────────────────────
+///
+/// A plane carries an image, and an image can be transparent, so there are two
+/// candidate rules: the whole quad is solid, or only its opaque pixels are.
+/// **This implements the whole quad**, and the choice is recorded rather than
+/// assumed:
+///
+///   * The reference's measured hover paint (`doc/tasks/0647-evidence/`) is the
+///     plane's BORDER, 2 px, and the image area is never tinted. So the paint
+///     carries no information about the interior at all — a transparent pixel
+///     and an opaque one look identical in that measurement, and no capture
+///     since has separated them.
+///   * With the question open, the whole quad is the SIMPLER rule and the one
+///     consistent with the rest of picking: a mesh face is struck regardless of
+///     what its material does with the pixel, and a plane's quad is that plane's
+///     only face.
+///   * It is also the rule that cannot surprise. Under "opaque pixels only", a
+///     backdrop whose subject is a small dark figure on a cleared background
+///     becomes almost entirely unclickable, and the user has no way to see why.
+///
+/// CHANGING IT is one branch, here: the `u` / `v` computed below are the quad's
+/// own coordinates in [-1, 1], which is one add and one halve away from the
+/// draw's [0, 1] texture parameterisation (`(u + 1) / 2`, and `v` flipped, since
+/// the texture's row 0 is the image's TOP — see `drawImagePlane`'s fan order).
+/// Sample the image there and reject on alpha. Nothing outside this function
+/// encodes the rule, which is why it returns a `t` rather than leaving the
+/// caller to do its own inside-test.
+///
+/// `dir` is deliberately NOT normalised, matching `BvhPick.pickSurfaceRay`: the
+/// returned `t` is in the same parameterisation as a mesh hit's, so the two can
+/// be compared without either side knowing how the other built its ray.
+bool rayHitsPlaneQuad(const ref ImagePlanePlacement pl, Vec3 org, Vec3 dir,
+                      out float t) @safe pure nothrow @nogc
+{
+    import std.math : abs, isFinite;
+
+    t = float.infinity;
+    // The normal comes from the two half-extents, so a plane whose extent
+    // collapsed (no image, or a zero scale) has no normal and cannot be hit —
+    // which is the same answer `drawn == false` gives, by a different route.
+    immutable Vec3 n = cross(pl.halfU, pl.halfV);
+    immutable float nLen2 = dot(n, n);
+    if (!(nLen2 > 1e-20f)) return false;
+
+    immutable float denom = dot(n, dir);
+    if (abs(denom) < 1e-12f) return false;          // ray parallel to the plane
+
+    immutable float tHit = dot(n, pl.center - org) / denom;
+    // A strict positive: a plane exactly at the eye, or behind it, is not
+    // under the cursor. `isFinite` is not implied by the guards above — a
+    // huge `denom` ratio can still overflow.
+    if (!isFinite(tHit) || tHit <= 1e-6f) return false;
+
+    // `halfU` and `halfV` are orthogonal by construction (`resolvePlacement`
+    // rotates two perpendicular preset-basis vectors by a rigid matrix), so
+    // projecting onto each independently IS the exact quad parameterisation
+    // and needs no 2x2 solve.
+    immutable Vec3  w  = (org + dir * tHit) - pl.center;
+    immutable float u2 = dot(pl.halfU, pl.halfU);
+    immutable float v2 = dot(pl.halfV, pl.halfV);
+    if (!(u2 > 1e-20f) || !(v2 > 1e-20f)) return false;
+    immutable float u = dot(w, pl.halfU) / u2;      // [-1, 1] inside
+    immutable float v = dot(w, pl.halfV) / v2;
+    if (abs(u) > 1.0f || abs(v) > 1.0f) return false;
+
+    t = tHit;
+    return true;
+}
+
+// rayHitsPlaneQuad — the boundary is the assertion.
+//
+// "The ray hits the quad" is trivially satisfied by a routine that returns true
+// for any ray pointing roughly that way, so every case below is placed AT an
+// edge the law must draw: just inside and just outside the same corner, the
+// half-extent boundary itself, and the sign of `t`.
+unittest {
+    import std.math : abs, isFinite;
+
+    // A 2x1 quad in the z = 5 plane, centred on the origin's line of sight.
+    ImagePlanePlacement pl;
+    pl.center = Vec3(0, 0, 5);
+    pl.halfU  = Vec3(1, 0, 0);
+    pl.halfV  = Vec3(0, 0.5f, 0);
+
+    float t;
+    // (1) Dead centre. `dir` is a UNIT vector here, so t is the world distance.
+    assert(rayHitsPlaneQuad(pl, Vec3(0, 0, 0), Vec3(0, 0, 1), t));
+    assert(abs(t - 5.0f) < 1e-5f, "t must be the world distance for a unit dir");
+
+    // (2) The U boundary, from both sides. 0.95 of the half-extent is inside;
+    //     1.05 is outside. Without both, "inside" could be any test at all.
+    assert( rayHitsPlaneQuad(pl, Vec3(0.95f, 0, 0), Vec3(0, 0, 1), t));
+    assert(!rayHitsPlaneQuad(pl, Vec3(1.05f, 0, 0), Vec3(0, 0, 1), t));
+    //     …and the V boundary, which is a DIFFERENT half-extent (0.5, not 1.0).
+    //     A quad tested against one extent on both axes passes the U pair and
+    //     fails this one.
+    assert( rayHitsPlaneQuad(pl, Vec3(0, 0.45f, 0), Vec3(0, 0, 1), t));
+    assert(!rayHitsPlaneQuad(pl, Vec3(0, 0.55f, 0), Vec3(0, 0, 1), t));
+
+    // (3) Behind the eye. Same geometry, ray reversed: the quad is at t = -5,
+    //     and a negative t is not "under the cursor".
+    assert(!rayHitsPlaneQuad(pl, Vec3(0, 0, 0), Vec3(0, 0, -1), t));
+
+    // (4) Parallel: the ray runs in the plane's own span and never meets it.
+    assert(!rayHitsPlaneQuad(pl, Vec3(0, 0, 0), Vec3(1, 0, 0), t));
+
+    // (5) THE CROSS-KIND COMPARISON PREMISE. `t` is expressed in units of the
+    //     GIVEN `dir`, not of world distance — that is what lets a plane hit be
+    //     compared against a mesh hit built from the same unnormalised screen
+    //     ray. Halving the direction must double t.
+    float tHalf;
+    assert(rayHitsPlaneQuad(pl, Vec3(0, 0, 0), Vec3(0, 0, 0.5f), tHalf));
+    assert(abs(tHalf - 10.0f) < 1e-5f,
+        "t is in units of dir; a half-length dir must report twice the t");
+
+    // (6) A degenerate quad (no extent on one axis) has no interior to hit.
+    ImagePlanePlacement flat = pl;
+    flat.halfU = Vec3(0, 0, 0);
+    assert(!rayHitsPlaneQuad(flat, Vec3(0, 0, 0), Vec3(0, 0, 1), t));
+
+    // (7) A default-constructed placement — the answer for "this layer is not a
+    //     plane" — is never hit, from any direction.
+    ImagePlanePlacement empty;
+    assert(!rayHitsPlaneQuad(empty, Vec3(0, 0, 0), Vec3(0, 0, 1), t));
+    assert(!rayHitsPlaneQuad(empty, Vec3(0, 0, 0), Vec3(0, 1, 0), t));
+
+    // (8) A ROTATED quad, so the test is not secretly axis-aligned arithmetic.
+    //     Same quad turned 45 degrees about Y: its half-U now runs diagonally,
+    //     so a point 0.9 along the DIAGONAL is inside and 0.9 along world X is
+    //     not (0.9 world-X is 1.27 along the diagonal).
+    immutable float s = 0.70710678f;
+    ImagePlanePlacement rot;
+    rot.center = Vec3(0, 0, 5);
+    rot.halfU  = Vec3(s, 0, s);
+    rot.halfV  = Vec3(0, 0.5f, 0);
+    assert(rayHitsPlaneQuad(rot, Vec3(0.9f * s, 0, 0), Vec3(0, 0, 1), t));
+    assert(!rayHitsPlaneQuad(rot, Vec3(0.9f, 0, 0), Vec3(0, 0, 1), t));
+}
+
+/// `resolvePlacement` for a plane that lives in a DOCUMENT — the twelve lines
+/// of link-walking that stand between "layer 3" and the pure law.
+///
+/// Extracted (task 0643) because there were two identical copies of it — the
+/// draw pass and the `/api/image-plane` reporter — and the item ray needed a
+/// third. Three copies of "where do the clip's pixel dimensions come from" is
+/// three chances for the picker to hit-test a quad the draw pass never drew,
+/// which is precisely the disagreement item picking may not have.
+///
+/// Returns a default (`drawn == false`, `source == Unbound`) placement for a
+/// layer that is not a plane at all, so a caller sweeping every layer needs no
+/// second predicate — but `hasImagePlane` remains the cheaper gate and callers
+/// that have it already should keep using it.
+///
+/// COST, named because two of the three callers are per-frame: a `Ready` plane
+/// whose stored path is RELATIVE costs `resolveStoredPath` up to two `exists()`
+/// stats. The draw pass has always paid that once per plane per cell per frame;
+/// the item ray adds one more, and only when the ray missed every mesh. If a
+/// document with many planes ever makes this show up in a frame profile, the
+/// fix is to memoise the resolved path against the clip, not to give the picker
+/// its own copy of the walk — the whole point of this function is that the
+/// three callers cannot disagree about which quad exists.
+ImagePlanePlacement resolvePlacementFor(ref Document doc, Layer lyr,
+                                        ViewPreset cellPreset, bool cellOrtho)
+{
+    import io.image_path : resolveStoredPath;
+    import io.doc_state  : currentDocPath;
+
+    ImagePlanePlacement none;
+    if (lyr is null || !lyr.hasImagePlane) return none;
+
+    // The clip's pixel dimensions come from the LINKED clip's payload — the
+    // one place the disk's answer lives. They stay 0 unless the source is
+    // Ready, which is what makes a broken plane's extent empty without a
+    // second rule saying so.
+    immutable src = imagePlaneSource(doc, lyr);
+    int cw = 0, ch = 0;
+    string abs;
+    if (src == ImagePlaneSource.Ready) {
+        auto clip = lyr.link(kImageLinkSlot).resolve(doc);
+        auto img  = clip.imageOrNull();
+        cw = img.width; ch = img.height;
+        abs = resolveStoredPath(img.storedPath, currentDocPath());
+    }
+    return resolvePlacement(lyr.imagePlaneOrNull(), lyr.visible,
+                            cw, ch, src, abs, cellPreset, cellOrtho, lyr.xform);
+}
+
 /// Every absolute file path a live plane→clip link names, for the pixel
 /// cache to reconcile residency against.
 ///

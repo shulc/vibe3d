@@ -103,6 +103,30 @@ double[3] vertexAt(int layer, int idx) {
     return [v[0].floating, v[1].floating, v[2].floating];
 }
 
+/// Play a recorded GEOMETRY-pick log, having first made sure a geometry
+/// selection type is current (task 0643).
+///
+/// Every `layer.select` promotes `SelType.Item`, and since 0643 a viewport
+/// click under Item selects an ITEM instead of picking geometry — so a log
+/// replayed straight after a layer switch would re-select a layer and the
+/// assertions below it would measure nothing. `mode` cannot catch that on its
+/// own: it reports `editMode`, the remembered GEOMETRY view, which still reads
+/// "vertices" under Item.
+///
+/// The flows in this file are about the pick CACHES and the undo COALESCING
+/// boundary, not about the selection type, so they say which type they want
+/// rather than inheriting whatever the last command left. Note for the
+/// coalescing flow in particular: this adds no new undo BARRIER that was not
+/// already there — the `layer.select` it follows is itself a recorded
+/// non-selection entry, so `compareOp` already saw a `Different` top.
+void playGeometryPick(string logPath) {
+    cmd("select.vertex");
+    assert(getSelection()["selType"].str == "vertex",
+        "precondition: a geometry type must be current before an interactive "
+        ~ "geometry pick — got " ~ getSelection()["selType"].str);
+    playEvents(logPath);
+}
+
 void playEvents(string logPath) {
     auto events = cast(const(void)[])read(logPath);
     auto r = parseJSON(cast(string)post(baseUrl ~ "/api/play-events", events));
@@ -488,7 +512,7 @@ unittest {
     cmd("layer.select index:1");       // B active (resize caches to 554v)
     cmd("layer.select index:0");       // A active (resize caches back to 8v)
     clearHistory();
-    playEvents("tests/events/selection_points.log");
+    playGeometryPick("tests/events/selection_points.log");
     auto sel = getSelection();
     assert(sel["mode"].str == "vertices", "pick mode on A");
     assert(sel["selectedVertices"].array.length == 2,
@@ -509,7 +533,7 @@ unittest {
     clearHistory();
 
     // Interactive selection on A.
-    playEvents("tests/events/selection_points.log");
+    playGeometryPick("tests/events/selection_points.log");
     auto selA = getSelection()["selectedVertices"].array;
     assert(selA.length == 2, "A interactive selection (got "
         ~ selA.length.to!string ~ ")");
@@ -520,7 +544,7 @@ unittest {
 
     // Interactive selection on B. With B's distinct mesh + the barrier, this
     // must record a SEPARATE selection_edit entry, never merge with A's.
-    playEvents("tests/events/selection_points.log");
+    playGeometryPick("tests/events/selection_points.log");
     assert(getSelection()["selectedVertices"].array.length == 2,
         "B interactive selection");
     assert(countUndo("mesh.selection_edit") == 2,
@@ -546,7 +570,7 @@ unittest { // undo-of-layer.select variant: an older selection entry resurfacing
     clearHistory();
 
     // Selection on A (entry 1).
-    playEvents("tests/events/selection_points.log");
+    playGeometryPick("tests/events/selection_points.log");
     assert(countUndo("mesh.selection_edit") == 1);
 
     cmd("layer.select index:1");       // B active (entry 2, UI)
@@ -559,7 +583,7 @@ unittest { // undo-of-layer.select variant: an older selection entry resurfacing
     // DIFFERENT layer merging with A's resurfaced entry. Re-select B and select
     // there: it must be a fresh entry, not a merge.
     cmd("layer.select index:1");       // B active again (new UI entry)
-    playEvents("tests/events/selection_points.log");  // selection on B
+    playGeometryPick("tests/events/selection_points.log");  // selection on B
     // A's entry + B's entry are distinct; selecting on B never merged into A's.
     assert(countUndo("mesh.selection_edit") == 2,
         "B's selection must not merge with A's resurfaced entry (got "

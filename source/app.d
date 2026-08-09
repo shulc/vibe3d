@@ -4531,6 +4531,15 @@ void main(string[] args) {
     // delegate is bound.
     void delegate(int mx, int my) doSelectPickAt;
 
+    // The ITEM-selection-type counterpart of doSelectPickAt (task 0643):
+    // resolve the item under the cursor and select it through `layer.select`.
+    // Forward-declared for the same reason as its neighbour — the mouse-DOWN
+    // handler below captures it, and the ray it uses is defined further down.
+    // `ctrl` / `shift` arrive as booleans rather than being re-read from
+    // SDL_GetModState() inside: the press handler has already cooked them, and
+    // a second read could disagree with the one that chose this branch.
+    void delegate(int mx, int my, bool ctrl, bool shift) doItemSelectPickAt;
+
     // Last element triple resolved by doSelectPickAt, stashed so the mouse-DOWN
     // dispatch path can capture an interaction-log record (task 0027) WITHOUT
     // re-running the pick — and without the shared delegate body (also bound to
@@ -4712,6 +4721,39 @@ void main(string[] args) {
             bool alt   = (mods & KMOD_ALT)   != 0;
             bool shift = (mods & KMOD_SHIFT)  != 0;
             bool anyToolActive = activeTool !is null;
+
+            // ---- ITEM selection type: the click picks an ITEM (task 0643) ---
+            //
+            // BEFORE `beginInteractiveSelEdit` and before the clear/pick
+            // branches below, and every word of that ordering is load-bearing:
+            //
+            //   * it returns before the bare-LMB "clear the selection for the
+            //     current mode" branch, so clicking under Items does not wipe a
+            //     geometry selection the user still has. There is no item
+            //     analogue to wipe either — the document invariant is "at least
+            //     one item selected", so a miss is simply nothing.
+            //   * it returns before `doSelectPickAt`, and therefore before
+            //     `commitInteractiveSelEdit` can build a `MeshSelectionEdit`
+            //     whose promote hook would push the GEOMETRY type back to the
+            //     front of the recent ordering. That is the recorded R3 trap:
+            //     a mis-click silently turning the item mode into vertex mode.
+            //     The guard is structural (we never reach the code) rather than
+            //     a flag checked inside it.
+            //
+            // Alt chords are camera (orbit / pan / zoom) and keep first
+            // refusal; an active tool keeps its own, exactly as the geometry
+            // select path does — with a tool up, none of the Select drag modes
+            // are entered either, so this branch is gated the same way its
+            // neighbour is rather than in a new way.
+            if (!anyToolActive && !alt
+                && currentSelType(selTypeOrder) == SelType.Item
+                && doItemSelectPickAt !is null) {
+                doItemSelectPickAt(btn.x, btn.y, ctrl, shift);
+                lastMouseX = btn.x;
+                lastMouseY = btn.y;
+                dragMode = DragMode.None;   // no rubber-band select under Items
+                return;
+            }
 
             // Capture pre-LMB selection snapshot now — BEFORE the bare-LMB
             // clear-selection branch below could mutate. If LMB ends up
@@ -5449,6 +5491,24 @@ void main(string[] args) {
     // it must keep for its whole duration. That freeze is itself conditional on
     // Item still being the current type — a type flip during a drag must not
     // leave a stale item index visible to `/api/layers`.
+    //
+    // Declared ABOVE `pickItems` because a nested function is not visible
+    // before its definition: `pickItems` calls it.
+    //
+    // The item ray, with the ACTIVE cell's projection identity attached
+    // (task 0643). An image plane is drawn only in the cell whose preset it
+    // names, so "which item is under this pixel" is not answerable without the
+    // cell — and the hover path and the click path must ask it the same way,
+    // which is why this is one function rather than two call sites that each
+    // remember to pass the pair. `vp` is the active cell's snapshot at both,
+    // so `activeCamera()` is the camera it was taken from.
+    ItemHit pickItemUnderCursor(int mx, int my, ref Viewport vp) {
+        import view : ProjKind;
+        return itemPicker.pickItemAt(document, mx, my, vp,
+                                     vpm.activeCamera().viewPreset,
+                                     vpm.activeCamera().projKind == ProjKind.Ortho);
+    }
+
     void pickItems(ref Viewport vp, bool doingCameraDrag) {
         import hover_state : g_hoveredItem;
         immutable bool isItem = currentSelType(selTypeOrder) == SelType.Item;
@@ -5459,7 +5519,7 @@ void main(string[] args) {
 
         int mx, my;
         queryMouse(mx, my);
-        immutable ItemHit h = itemPicker.pickItemAt(document, mx, my, vp);
+        immutable ItemHit h = pickItemUnderCursor(mx, my, vp);
         if (h.hit) g_hoveredItem = h.layerIndex;
     }
 
@@ -5491,6 +5551,51 @@ void main(string[] args) {
         aiLastPickedVertex = pickedVertex;
         aiLastPickedEdge   = pickedEdge;
         aiLastPickedFace   = pickedFace;
+    };
+
+    // Item click-select (task 0643) — the Items-mode counterpart of the
+    // delegate above, bound here for the same reason.
+    //
+    // The MUTATION IS `layer.select`, never a direct `document.selectItem`.
+    // That command already holds the set invariants, the primary move, the
+    // `SelType.Item` promotion and a UI-class undo entry that restores the whole
+    // prior selection; a bespoke write here would be a second, weaker copy of
+    // all four, and the first one to drift would do it silently.
+    //
+    // Modifier -> mode mirrors the geometry select path exactly (ctrl removes,
+    // shift adds, bare sets), so the chords a user already knows keep meaning
+    // the same thing when the selection type changes under them. `toggle`,
+    // which the command also offers, is deliberately NOT bound to a viewport
+    // chord: the geometry path has no toggle chord to mirror, and inventing one
+    // here would make the two paths disagree. It stays reachable from the item
+    // list, where ctrl-click has always meant toggle.
+    doItemSelectPickAt = (int mx, int my, bool ctrl, bool shift) {
+        if (!viewportInputAllowed()) return;
+        setOverrideMouse(mx, my);
+        Viewport vp = vpm.activeSnapshot();
+        immutable ItemHit h = pickItemUnderCursor(mx, my, vp);
+        // A MISS DOES NOTHING. Not "clear the item selection" — that state is
+        // unrepresentable (at least one item is always selected) — and not
+        // "clear the geometry selection" either, which is what the branch this
+        // one replaces would have done.
+        if (!h.hit) return;
+        // Already the SOLE selection: a bare `set` on it would push a UI-undo
+        // entry that reverts to the state it came from, so clicking the one
+        // selected item twice would cost the user an Esc-less undo step that
+        // does nothing visible. All three conditions are needed — with two
+        // items selected, a bare click on the primary genuinely collapses the
+        // set to one and must go through.
+        {
+            size_t selCount = 0;
+            foreach (l; document.layers) if (l !is null && l.selected) ++selCount;
+            if (!ctrl && !shift && selCount == 1
+                && document.isPrimary(document.layers[h.layerIndex]))
+                return;
+        }
+        import std.format : format;
+        immutable string mode = ctrl ? "remove" : (shift ? "add" : "set");
+        runCommandWithArgs("layer.select",
+                           format("index:%d mode:%s", h.layerIndex, mode));
     };
 
     // Synchronously re-run the GPU ID-buffer hover pick at (mx, my) and

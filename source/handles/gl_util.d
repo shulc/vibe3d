@@ -1338,9 +1338,16 @@ private bool   g_segReady;
 /// program (screen-constant pixel `width`), then restore `restoreProgram`.
 /// Maps the unit segment onto a→b with the same model-matrix trick Arrow's
 /// shaft uses, so no per-frame VBO churn is needed.
+///
+/// `smooth` is forwarded to the thick-line program and defaults to TRUE, which
+/// is what every pre-existing caller got: a gizmo line is anti-aliased. A
+/// caller that draws a line whose exact pixel VALUE is meaningful — the item
+/// highlight, which paints a measured colour and is read back as one — passes
+/// false, because an anti-aliased edge blends the colour with whatever is
+/// behind it and there is then no pixel that carries the uniform.
 void drawWorldSegment(Vec3 a, Vec3 b, const ref Viewport vp,
                       Vec3 color, float width, GLuint restoreProgram,
-                      float alpha = 1.0f)
+                      float alpha = 1.0f, bool smooth = true)
 {
     if (!g_segReady) {
         g_segVao = buildVao3f([0f,0f,0f,  0f,0f,1f], g_segVbo);
@@ -1354,7 +1361,7 @@ void drawWorldSegment(Vec3 a, Vec3 b, const ref Viewport vp,
     localFrame(fwd, right, up);
     auto model = modelMatrix(right, up, fwd, Vec3(1, 1, len), a);
     drawThickLines(g_segVao, 2, GL_LINES, model, vp, color, width,
-                   restoreProgram, alpha);
+                   restoreProgram, alpha, smooth);
 }
 
 // Register the translucent-fill program (compiled in app.d from

@@ -260,8 +260,38 @@ Selecting an item in the Items panel also makes Items the current type (it alway
 has). What `5` adds is the ability to switch **into** the mode without touching
 the selection.
 
-Clicking in the viewport still picks geometry in Items mode — viewport item
-picking is not implemented yet.
+##### Clicking an item in the viewport
+
+In Items mode, clicking in the viewport selects the item under the cursor —
+including a **backdrop image plane**, which has no geometry to click but is
+picked by its rectangle. The item under the cursor also pre-highlights as you
+move over it, so you can see what a click will take before you take it.
+
+| Action | Chord |
+|---|---|
+| Select the item under the cursor (replacing the selection) | `LMB` |
+| Add it to the selection | `Shift`+`LMB` |
+| Remove it from the selection | `Ctrl`+`LMB` |
+
+The same chords as geometry selection, and the same rules apply as everywhere
+else in Items mode:
+
+* **The item you can see wins.** Where several meshes overlap, the click takes
+  the one nearest the camera. A backdrop always loses to a mesh over it, even
+  when the backdrop is nearer — backdrops are drawn behind everything, so the
+  mesh is what that pixel actually shows.
+* **Clicking empty space does nothing.** It does not clear the item selection
+  (one item is always selected), and — unlike a geometry mode — it does not
+  clear your vertex / edge / polygon selection either. Switch back with
+  `1`/`2`/`3` and your geometry selection is exactly where you left it.
+* Selecting a backdrop or another item that carries no mesh does not change
+  which mesh the modelling tools edit. That stays on the last mesh item you
+  selected.
+
+**Worth knowing:** clicking a row in the Items panel also switches you to Items
+mode — it always has — so the very next viewport click selects an item too. If
+you meant to go back to editing points, press `1`/`2`/`3` first; the geometry
+type you were in is remembered, and so is the geometry you had selected.
 
 ### Visibility (hiding geometry)
 

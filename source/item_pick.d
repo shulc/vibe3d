@@ -16,21 +16,28 @@
 /// picker returns that same item for that pixel. So this keeps a single global
 /// `t` across all sources rather than a per-source answer the caller ranks.
 ///
-/// SCOPE, stated because the gap is real and must not be discovered later.
-/// This resolves MESH items only. An item with no geometry — the reference
-/// image plane — is skipped here and is NOT hovered, because a plane's hit
-/// test is a ray-versus-quad question plus a decision about what counts as a
-/// hit (the whole rectangle, or only its opaque pixels) that task 0643 owns.
-/// The reference DOES highlight a plane, by the same law and the same three
-/// colours, so this module is knowingly incomplete on that axis — see
-/// `pickItemAt`'s doc comment for what a caller may and may not conclude from
-/// a miss.
+/// SCOPE (task 0643 closed the gap this used to declare). Two kinds of item
+/// are resolved: MESH items, through the BVH, and IMAGE PLANES, through a
+/// ray-versus-quad test. A plane carries no geometry, so a BVH cannot reach it;
+/// `image_plane.rayHitsPlaneQuad` owns both the intersection and the decision
+/// about what counts as a hit inside a bare rectangle, and that decision is
+/// documented there rather than here.
+///
+/// THE TWO KINDS ARE RANKED, NOT MERGED, and the rank is read off our own draw
+/// order rather than invented. `drawImagePlane` disables the depth TEST, which
+/// also suppresses depth WRITES, and it runs first — so "every later pass wins
+/// regardless of world position" (its own words). Geometry is therefore painted
+/// over a plane even when the plane is nearer the eye, and a picker that let the
+/// nearer plane win would highlight an item the user cannot see at that pixel.
+/// So: any mesh hit beats any plane hit; within a kind, nearest `t` wins.
 module item_pick;
 
-import bvh_pick : BvhPick, SurfaceHit;
-import document : Document, Layer, kindInfo;
-import math     : Vec3, ModelSpace, Viewport;
-import mesh     : Mesh;
+import bvh_pick   : BvhPick, SurfaceHit;
+import document   : Document, Layer, kindInfo;
+import image_plane : rayHitsPlaneQuad, resolvePlacementFor, ImagePlanePlacement;
+import math       : Vec3, ModelSpace, Viewport, screenPointToRay;
+import mesh       : Mesh;
+import view       : ViewPreset;
 
 /// What the item ray found.
 ///
@@ -62,13 +69,15 @@ final class ItemRayPicker {
     /// The visible item whose surface the ray through window pixel (mx, my)
     /// strikes FIRST.
     ///
-    /// Skips: hidden items (nothing invisible is hoverable), and items that
-    /// carry no geometry. The second skip is the scope gap named in the module
-    /// comment — a miss therefore means "no MESH item is under the cursor",
-    /// which is not the same statement as "no item is under the cursor" on a
-    /// document containing an image plane. Callers must not report the stronger
-    /// one.
-    ItemHit pickItemAt(ref Document doc, int mx, int my, const ref Viewport vp) {
+    /// Skips hidden items — nothing invisible is hoverable — and, for planes,
+    /// anything the SAME `drawn` predicate the draw pass reads says this cell
+    /// does not show. `cellPreset` / `cellOrtho` are that predicate's other two
+    /// inputs: a `front` backdrop is drawn in the front cell and not in the top
+    /// one, so it must be pickable in exactly the cell it is visible in and no
+    /// other. Passing the wrong cell's preset makes a plane hoverable where
+    /// nothing is painted, which is why they are parameters and not a lookup.
+    ItemHit pickItemAt(ref Document doc, int mx, int my, const ref Viewport vp,
+                       ViewPreset cellPreset, bool cellOrtho) {
         // Prune first, so a long-lived picker over a document that keeps
         // replacing its layers does not accumulate trees for dead meshes. Done
         // per call rather than on a change signal: the cost is one pass over a
@@ -118,6 +127,36 @@ final class ItemRayPicker {
             best.hit        = true;
             best.layerIndex = cast(int)i;
             best.t          = sh.t;
+        }
+        // A mesh hit ENDS it — see the module comment's ranking note. Returning
+        // here rather than folding the plane loop into the same `t` compare is
+        // the whole implementation of "geometry paints over a backdrop", and
+        // doing it as an early return means the rule cannot be lost to a later
+        // edit of the compare.
+        if (best.hit) return best;
+
+        // Planes. The ray is built ONCE, with the same pixel-centre convention
+        // `BvhPick.pickSurface` uses (`mx + 0.5`), so a plane and a mesh are
+        // asked about the same line through space — and `dir` is left
+        // unnormalised for the same reason it is there: `t` then means the same
+        // thing on both sides.
+        Vec3 org, dir;
+        screenPointToRay(mx + 0.5f, my + 0.5f, vp, org, dir);
+        foreach (i, lyr; doc.layers) {
+            if (lyr is null || !lyr.hasImagePlane) continue;
+            // `drawn` folds visibility, a usable image AND this cell's preset —
+            // one predicate, shared with the draw pass, so "pickable" and
+            // "painted" cannot drift apart.
+            immutable ImagePlanePlacement pl =
+                resolvePlacementFor(doc, lyr, cellPreset, cellOrtho);
+            if (!pl.drawn) continue;
+
+            float t;
+            if (!rayHitsPlaneQuad(pl, org, dir, t)) continue;
+            if (t >= best.t) continue;
+            best.hit        = true;
+            best.layerIndex = cast(int)i;
+            best.t          = t;
         }
         return best;
     }
