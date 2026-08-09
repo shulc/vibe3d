@@ -1,20 +1,21 @@
 module io.image_decode;
 
-// Thin wrapper around the vendored single-header image decoder
-// (third_party/stb_image). Nothing outside this module (and its unittests)
-// calls into the decoder directly -- everything else in the editor reaches
-// pixels through this file. It is not called from anywhere yet: this is the
-// decoder stage only (task 0616), landing ahead of any consumer, the same
-// way third_party/nfde landed ahead of the file-load command that first used
-// it (task 0431).
+// Thin wrapper around the single-header image decoder, which lives in the
+// `d-stb-image` shim (task 0662; it was vendored under third_party/stb_image
+// when it landed in task 0616). Nothing outside this module (and its
+// unittests) calls into the decoder directly -- everything else in the editor
+// reaches pixels through this file. It is not called from anywhere yet: this
+// is the decoder stage only, landing ahead of any consumer, the same way
+// third_party/nfde landed ahead of the file-load command that first used it
+// (task 0431).
 //
 // File I/O is deliberately NOT this module's job: callers read the file's
 // bytes (typically `std.file.read`) and pass the buffer in. Two reasons,
-// both load-bearing (see third_party/stb_image/PATCHES.md): the decoder is
-// compiled with STBI_NO_STDIO, whose fopen()-based file path cannot open a
-// non-ASCII path on Windows; and a missing file becomes a real D exception
-// raised by the caller's own `std.file.read`, not a decoder-internal fopen()
-// failure that degrades to a bare null.
+// both load-bearing (see the shim's PATCHES.md): the decoder is compiled with
+// STBI_NO_STDIO, whose fopen()-based file path cannot open a non-ASCII path
+// on Windows; and a missing file becomes a real D exception raised by the
+// caller's own `std.file.read`, not a decoder-internal fopen() failure that
+// degrades to a bare null.
 
 import std.string : fromStringz;
 import std.format : format;
@@ -24,17 +25,17 @@ import log : logWarn;
 private void imgWarn(string msg) nothrow { try logWarn("io", "image: " ~ msg); catch (Exception) {} }
 
 // ---------------------------------------------------------------------------
-// extern(C) surface of the vendored decoder. STBI_NO_STDIO
-// (third_party/stb_image/stb_image_impl.c) removes the file-path overloads
-// from the compiled library entirely, so only the *_from_memory entry points
-// are declared here -- there is nothing to link against for the others.
+// extern(C) surface of the decoder. It is declared by the shim
+// (d-stb-image, source/stb_image/c.d) rather than here, because the shim is
+// what chooses which entry points exist: STBI_NO_STDIO removes the file-path
+// overloads from the compiled library entirely, so only the *_from_memory
+// ones are declared over there -- there is nothing to link against for the
+// others, and the binding stopping where the compiled library stops is what
+// turns "called a file-path overload" into a link error instead of a runtime
+// surprise.
 // ---------------------------------------------------------------------------
-private extern (C) nothrow @nogc {
-    int stbi_info_from_memory(const(ubyte)* buffer, int len, int* x, int* y, int* comp);
-    ubyte* stbi_load_from_memory(const(ubyte)* buffer, int len, int* x, int* y, int* comp, int req_comp);
-    void stbi_image_free(void* retval_from_stbi_load);
-    const(char)* stbi_failure_reason();
-}
+import stb_image.c : stbi_info_from_memory, stbi_load_from_memory,
+    stbi_image_free, stbi_failure_reason, STBI_MAX_DIMENSIONS_COMPILED;
 
 /// Header-only metadata: dimensions and the channel count present in the
 /// SOURCE file (1 = gray, 2 = gray+alpha, 3 = RGB, 4 = RGBA). Produced by
@@ -86,9 +87,12 @@ struct DecodedImage {
 // allocation: image width/height, read from a file this process did not
 // write.
 //
-// Layer 1 lives in the decoder itself (STBI_MAX_DIMENSIONS, compiled into
-// third_party/stb_image via stb_image_impl.c) -- MAX_IMAGE_DIM below must be
-// kept in sync with that define.
+// Layer 1 lives in the decoder itself (STBI_MAX_DIMENSIONS, compiled in by
+// the d-stb-image shim's csrc/stb_image_impl.c). MAX_IMAGE_DIM below no
+// longer re-types that number: the shim mirrors it as
+// STBI_MAX_DIMENSIONS_COMPILED and this names that, so the two cannot drift
+// across the repository boundary -- which was the drift that had no way of
+// being noticed here.
 //
 // Layer 2 is dimensionsInBounds(), run after the header is read and before
 // any pixel decode. It is the layer that survives a re-vendor that forgets
@@ -102,7 +106,11 @@ struct DecodedImage {
 // header in this module's unittests, not against the decoder's
 // documentation.
 // ---------------------------------------------------------------------------
-enum MAX_IMAGE_DIM = 16_384;
+// Naming the shim's mirror rather than repeating 16_384 removes the
+// cross-repository sync duty, NOT layer 2. A shim that raised its cap would
+// raise this with it, and the byte budget below is what would still refuse
+// the resulting allocation.
+enum MAX_IMAGE_DIM = STBI_MAX_DIMENSIONS_COMPILED;
 enum size_t MAX_IMAGE_BYTES = 256UL * 1024 * 1024; // 256 MiB of decoded RGBA
 
 private bool dimensionsInBounds(int w, int h) {
@@ -329,7 +337,7 @@ unittest {
 // A second format, to catch a botched restricted-format compile define
 // (e.g. a typo'd STBI_ONLY_TGA) independently of the PNG path above. TGA
 // needs no compression or CRC, just a header: 32bpp, top-left origin (image
-// descriptor bit 0x20), BGRA pixel storage -- confirmed against the vendored
+// descriptor bit 0x20), BGRA pixel storage -- confirmed against the shim's
 // decoder offline before this file was written.
 unittest {
     const px = sixDistinctPixels();
@@ -377,7 +385,7 @@ unittest {
 // cap) cannot by construction: a header whose width AND height each sit at
 // or under the decoder's own STBI_MAX_DIMENSIONS, but whose product still
 // implies a pixel buffer far past this wrapper's byte budget. Confirmed
-// offline that the vendored decoder's own header parse accepts 16384x16384
+// offline that the shim's decoder's own header parse accepts 16384x16384
 // outright (its cap is a strict per-axis ">", not a product check) -- so if
 // the check below were ever deleted, this exact input would sail past
 // imageInfo and into a ~1 GiB stbi_load_from_memory allocation.
@@ -427,11 +435,14 @@ unittest {
 // through the wrapper would also prove nothing about layer 1.
 //
 // Break-and-restore: temporarily removing `#define STBI_MAX_DIMENSIONS
-// 16384` from third_party/stb_image/stb_image_impl.c (falling back to the
-// header's own default of `1 << 24`) and rebuilding the vendored static lib
-// makes stbi_info_from_memory ACCEPT this exact header (reports width ==
+// 16384` from the d-stb-image shim's csrc/stb_image_impl.c (falling back to
+// the header's own default of `1 << 24`) and rebuilding its static lib makes
+// stbi_info_from_memory ACCEPT this exact header (reports width ==
 // MAX_IMAGE_DIM + 1000, height == 4) -- i.e. the assertion below fails
-// without the cap, and passes again once the define is restored.
+// without the cap, and passes again once the define is restored. Note that
+// MAX_IMAGE_DIM here is the shim's own mirrored constant, so it does NOT
+// move when the define is deleted; the input stays the same and only the
+// decoder's answer changes, which is what makes this discriminating.
 unittest {
     enum w = MAX_IMAGE_DIM + 1_000; // past the per-axis cap...
     enum h = 4;                     // ...but tiny, so img_x*img_n*img_y is
