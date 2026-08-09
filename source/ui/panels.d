@@ -223,7 +223,7 @@ import commands.tool.set      : ToolSetCommand;
 import commands.tool.attr     : ToolAttrCommand;
 import commands.layer.commands : LayerAttr, layerDeleteButtonState;
 import ui.image_rows : ImageRow, imageRowsInto, imageRemoveTarget,
-                       imageRemoveConfirmText, elideEnd, kNoImagesText;
+                       imageRemoveConfirmText, elidedPathText, kNoImagesText;
 import commands.tool.do_apply : ToolDoApplyCommand;
 import commands.tool.reset    : ToolResetCommand;
 import commands.tool.pipe     : ToolPipeAttrCommand;
@@ -1830,9 +1830,9 @@ void drawImageListPanel(EditorApp app) {
                 //     void SetTooltip(string s)    { igSetTooltip  ("%.*s", cast(int) s.length, s.ptr); }
                 //
                 // — non-template, exactly one string parameter, and the format
-                // string is the binding's own literal. `elideEnd(...)` and
-                // `pathTooltip` are ARGUMENTS to `%.*s`, never the format, so
-                // a path holding `%20i` or `%s` (a browser download, a shell
+                // string is the binding's own literal. `elidedPathText(...)`
+                // and `pathTooltip` are ARGUMENTS to `%.*s`, never the format,
+                // so a path holding `%20i` or `%s` (a browser download, a shell
                 // artefact) is drawn literally. The printf-style overloads in
                 // this binding all take an explicit format PLUS typed args
                 // (`(string fmt, string)`, `(string fmt, int)`, `(string fmt,
@@ -1843,8 +1843,18 @@ void drawImageListPanel(EditorApp app) {
                 // crash — so the swap must re-check this block. That is also
                 // why the columns above use `TextUnformatted`, which has no
                 // format-string form to regress into under any binding.
+                //
+                // `elidedPathText`, not `elideEnd`: the cut is memoised on the
+                // item, keyed on (this row's text, this budget). It is a cache
+                // in front of `elideEnd` and returns exactly what it returns —
+                // the only difference is that a frame in which neither the
+                // path nor the panel's width moved does not allocate. The
+                // budget above is the second key; it changes on a RESIZE and
+                // at no other time, which is what makes the memo worth having
+                // (task 0635 — and see that function for why the earlier "this
+                // costs nothing" measurement was reading a call nobody made).
                 if (r.pathText.length)
-                    ImGui.TextDisabled(elideEnd(r.pathText, budget));
+                    ImGui.TextDisabled(elidedPathText(r, budget));
                 else
                     ImGui.TextDisabled("(no file)");
                 // The tooltip is always the ABSOLUTE path — measured: relative

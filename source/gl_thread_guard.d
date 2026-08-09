@@ -27,6 +27,15 @@
 // ever does come from there, the guard to add is the same call, not a
 // different mechanism.
 //
+// A THIRD FUNNEL, AND IT IS NOT ABOUT GL (task 0635): `imageRowText`, the
+// three clip-row memo writers in `ui/image_rows.d` + `io/image_path.d`. What
+// this guard actually asserts is "the thread that owns the frame", and GL was
+// simply the first thing that cared; a per-item cache filled from the draw
+// path cares for the same reason, since a second writer would tear a `string`
+// field rather than a driver call. It is on the frame PATH but not paid per
+// frame — the call sits inside the cache-miss branch, so it is once per input
+// change, which is the same "once per object" shape as the two above.
+//
 // COST. One relaxed atomic load of a pointer plus one TLS read, on paths that
 // are already making a driver round-trip. Left always-on rather than under
 // `debug`: the fault it converts is just as fatal in a release build, and

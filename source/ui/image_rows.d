@@ -45,26 +45,52 @@ module ui.image_rows;
 // plan's R13 enumerates. A model field that could never be filled would be a
 // promise this phase cannot keep; the slot is Stage 12's, deliberately last.
 //
-// COST — MEASURED (task 0635), and the earlier estimate here was wrong by a
-// factor of five, which is worth stating rather than quietly correcting. This
-// comment used to say "the two formatted strings per row are the only per-row
-// allocation". Two strings is what the SOURCE reads like; what it costs is
-// what the two functions behind them allocate on the way to producing them.
-// Over 600 frames on a document of 1 mesh + 20 clips, paths one directory
-// below the document:
+// COST — MEASURED (task 0635), and this comment has now been wrong TWICE, in
+// two different ways that are both worth keeping on the record because the
+// second one was caused by fixing the first.
 //
-//   whole row build       5120 bytes/frame
-//     the path text       4160  (81%)  — `storePathFor`: two normalisations,
-//                                        a `dirName`, a `relativePath`
-//     the dimensions      960   (19%)  — two `to!string` + a concatenation
-//     `elideEnd`          0            — measured, both cutting and not
+// Wrong the first time by a FACTOR OF FIVE: it used to say "the two formatted
+// strings per row are the only per-row allocation". Two strings is what the
+// SOURCE reads like; what it costs is what the functions behind them allocate
+// on the way to producing them.
 //
-// At 60 fps with the panel open that was ≈300 KiB/s, ≈17.6 MiB/min of GC
-// churn on the UI thread, growing with the number of rows. Both figures are
-// now memoised on the item (`RowTextMemo`, `document.d`): a frame in which
-// nothing changed allocates nothing at all, so the remaining per-frame cost
-// no longer scales with the row count. `elideEnd` is NOT memoised — zero is
-// zero, and a cache in front of it would be pure liability.
+// Wrong the second time by an INERT ZERO, which is worse, because it read like
+// a measurement. The replacement text said `elideEnd 0 — measured, both
+// cutting and not`, and concluded a cache in front of it "would be pure
+// liability". The harness behind that number drove `imageRowsInto`, and
+// `imageRowsInto` does not call `elideEnd`: the PANEL does, once per row,
+// immediately after the row build (`ui/panels.d`, line 2 of the name cell).
+// So the cutting and the non-cutting build both read 0 for the same reason —
+// neither ran the function — and re-running the harness reproduced the zero
+// and looked like corroboration.
+//
+// A FRAME IS THEREFORE TWO STEPS, NOT ONE, and both now start in this module
+// so that one measurement covers the lot: `imageRowsInto` (the row build, and
+// the two renderings under it) and `elidedPathText` (the cut, which the panel
+// used to reach past this module to make). The figures, each taken through a
+// call that reaches the function it is a figure for:
+//
+//   the row build     5120 bytes/frame   — 600 frames, 1 mesh + 20 clips,
+//                                          paths one directory below the doc
+//     the path text   4160  (81%)  — `storePathFor`: two normalisations,
+//                                    a `dirName`, a `relativePath`
+//     the dimensions  960   (19%)  — two `to!string` + a concatenation
+//
+//   `elideEnd`        48 bytes PER CUTTING ROW at the panel's floor budget
+//                     of 8, 80 at its default of 16 — an `appender` and its
+//                     buffer. Measured by calling it directly on the three
+//                     fixture row texts ("alpha.bmp", "tex/bravo.bmp",
+//                     "../charlie.bmp") built at runtime so nothing folds:
+//                     144 bytes/frame for those three rows at budget 8.
+//                     A path SHORTER than the budget really is 0 — that
+//                     branch returns its argument — which is precisely why a
+//                     fixture that does not cut proves nothing here.
+//
+// At 60 fps with the panel open the row build alone was ≈300 KiB/s, ≈17.6
+// MiB/min of GC churn on the UI thread, growing with the number of rows. All
+// three figures are now memoised on the item (`RowTextMemo`, `document.d`): a
+// frame in which neither the document nor the panel width changed allocates
+// nothing at all, so the per-frame cost no longer scales with the row count.
 //
 // `imageRowsInto` fills the caller's buffer in place (the
 // `Document.referrersOf` / `selectedItemsInto` idiom) so a panel holding one
@@ -190,6 +216,8 @@ string dimensionsText(int width, int height, bool missing) {
 /// The key is the three inputs, which are `refreshImageMeta`'s three outputs;
 /// see `RowTextMemo` in `document.d` for why the cache is keyed on them rather
 /// than cleared by whoever writes them.
+///
+/// IT WRITES, and the guard says which thread may. See `imageRowsInto`.
 string dimensionsTextFor(ImageData img) {
     if (img is null) return "";
     if (img.rowText.dimsValid
@@ -197,6 +225,9 @@ string dimensionsTextFor(ImageData img) {
         && img.rowText.dimsH == img.height
         && img.rowText.dimsMissing == img.missing)
         return img.rowText.dimsText;
+
+    import gl_thread_guard : glThreadGuard;
+    glThreadGuard("imageRowText");
 
     const text = dimensionsText(img.width, img.height, img.missing);
     img.rowText.dimsText    = text;
@@ -282,15 +313,104 @@ private string elideUndecodable(string s, size_t maxChars) {
     return s[0 .. cut] ~ "�";
 }
 
+/// The path line exactly as the panel draws it: THIS row's text, cut to the
+/// budget the panel derived from the width it has — memoised on the item
+/// (task 0635).
+///
+/// WHY IT IS HERE AND NOT INLINE IN THE PANEL. Two reasons, and the second is
+/// the one that matters.
+///
+///   * The cut is per row per FRAME, like the two renderings above it, and it
+///     allocates for exactly the rows that get cut — an `appender` and its
+///     buffer. MEASURED through this call path (the fixture's three row texts,
+///     built at runtime so nothing constant-folds): 48 bytes per cutting row
+///     at the panel's floor budget of 8 — 144 bytes/frame for three rows —
+///     and 80 at its default of 16. A row whose path is SHORTER than the
+///     budget costs 0, because `elideEnd` returns its argument on that branch.
+///   * A number nobody can reach is a number nobody can check. `elideEnd`
+///     used to be called only from `ui/panels.d`, so the harness that
+///     measured "the row build" never ran it, read 0, and this module's header
+///     wrote that zero down as a measurement — with and without the cut, which
+///     is what made it look corroborated. Moving the call here puts it on the
+///     same path R11 measures, so the byte assertion covers the whole of what
+///     a frame does rather than the part that happened to be reachable.
+///
+/// THE KEY IS `(pathText, budget)`. The text side is already memoised
+/// (`storePathForItem`), so on a steady frame it is the same string — the
+/// comparison is a byte compare that allocates nothing either way. The budget
+/// is not a field of anything: the panel computes it from the content width
+/// available on the frame it is drawing, floored at 8, so it changes when the
+/// window is resized and at no other time. Both halves are therefore stable
+/// across the frames this is meant to make free, and a resize costs one
+/// recompute per row — the same price the old code paid every frame.
+///
+/// `img` is the memo's home and may be null (a payload-null image item, see
+/// `isImageRow`); that case falls through to the bare function, which for the
+/// empty path text it carries is the no-allocation branch anyway.
+///
+/// IT WRITES, and the guard says which thread may. See `imageRowsInto`.
+string elidedPathText(ImageData img, string pathText, size_t maxChars) {
+    if (img is null) return elideEnd(pathText, maxChars);
+    if (img.rowText.elideValid
+        && img.rowText.elideBudget == maxChars
+        && img.rowText.elideSource == pathText)
+        return img.rowText.elideText;
+
+    import gl_thread_guard : glThreadGuard;
+    glThreadGuard("imageRowText");
+
+    const text = elideEnd(pathText, maxChars);
+    img.rowText.elideText   = text;
+    img.rowText.elideSource = pathText;
+    img.rowText.elideBudget = maxChars;
+    img.rowText.elideValid  = true;
+    return text;
+}
+
+/// `elidedPathText` addressed by ROW, which is how the panel holds it.
+///
+/// The row's `layer` is the handle (identity, per Ph3) and the payload hangs
+/// off it, so the panel does not have to reach through `imageOrNull` at the
+/// draw site and cannot pass one row's text with another row's memo.
+string elidedPathText(ref ImageRow r, size_t maxChars) {
+    return elidedPathText(r.layer is null ? null : r.layer.imageOrNull(),
+                          r.pathText, maxChars);
+}
+
 /// Fill `outBuf` with one `ImageRow` per image item, in `document.layers`
 /// order — creation order, because the measured list has no sort and no
 /// reorder command, and because that is the order every other view of
 /// `layers` already uses.
 ///
 /// `docPath` is the anchor the row's path text is relativised against, and it
-/// is a PARAMETER rather than a `currentDocPath()` call so this function is
-/// pure with respect to global state and a test can move the document without
-/// moving the process. The panel passes `currentDocPath()`.
+/// is a PARAMETER rather than a `currentDocPath()` call: it READS no global
+/// state, so a test can move the document without moving the process. The
+/// panel passes `currentDocPath()`.
+///
+/// IT IS NOT, HOWEVER, A PURE READ OF THE DOCUMENT — this comment said "pure
+/// with respect to global state" and that was only ever true of the reading
+/// half. Since task 0635 the three text helpers below fill a memo ON THE ITEM
+/// when they miss, so building the rows WRITES to `ImageData.rowText` for
+/// every item whose inputs moved since the last frame. What that write is and
+/// is not:
+///
+///   * it carries no information — `RowTextMemo` is a rendering of fields that
+///     already exist, nothing serialises it, nothing copies it across a
+///     duplicate, and discarding it can only cost time. So it bumps no
+///     mutation version and raises no dirty flag, deliberately: a redraw is
+///     not an edit and must not make the document look edited.
+///   * it is NOT thread-safe, and the functions are public. Two threads
+///     filling one slot would tear a `string` (pointer and length are written
+///     separately), and a reader could see the new pointer with the old
+///     length. Today the only caller is this function and its only caller is
+///     the clip panel on the UI thread — so the write is guarded rather than
+///     locked: each of `storePathForItem` / `dimensionsTextFor` /
+///     `elidedPathText` calls `glThreadGuard("imageRowText")` on the MISS
+///     branch, which turns a future HTTP-thread caller into a named error at
+///     the offending call instead of a torn read somewhere else. The guard
+///     costs one atomic load and one TLS read, and only when a slot is
+///     actually being filled — never on the steady frame this exists to make
+///     free. (It is inert under `dub test`, which never marks a main thread.)
 ///
 /// The row text is `storePathFor(storedPath, docPath)` — the SAME function
 /// `writeV3d` stores with, not a second rule that happens to agree. A user who
@@ -1038,51 +1158,91 @@ unittest {
 }
 
 // ===========================================================================
-// Task 0635 — the row-text MEMO. Three tests, and the split between them is
+// Task 0635 — the row-text MEMO. Four tests, and the split between them is
 // the whole design of this section.
 //
 // THE ASSERTION HAS TO BE ABOUT BYTES, because correctness is not evidence
 // here. Every assertion in R1..R10 above passes with no cache whatsoever —
 // they check WHAT the row says, and a memo that is never consulted says the
-// same thing. So R11 measures GC bytes across two consecutive builds of an
+// same thing. So R11 measures GC bytes across two consecutive FRAMES of an
 // unchanged document, which is the only reading that can tell "memoised" from
 // "recomputed and identical".
+//
+// AND IT HAS TO MEASURE THE WHOLE FRAME. R11's first cut measured
+// `imageRowsInto` and stopped, which is only part of what a frame does: the
+// panel then cuts each row's path to the width it has. A green R11 therefore
+// implied a property — "an open panel does not allocate per row" — that did
+// not hold, and the module header stated `elideEnd`'s cost as a measured ZERO
+// which was really the reading of a function the harness never called. R11 now
+// takes FOUR readings, build and cut separately, so each term has its own
+// vacuity guard and its own zero, and neither can hide inside the other.
 //
 // AND THE BYTE TEST HAS TO BE PAIRED WITH INVALIDATION, because it is blind in
 // exactly the opposite direction: a cache that is filled once and NEVER
 // invalidated passes R11 perfectly while showing a stale path for the rest of
-// the session. R12 and R13 are that half — one per input.
+// the session. R12, R13 and R14 are that half — one per input.
 //
-// Both invalidation tests need MORE THAN ONE clip, and clips whose texts
+// All three invalidation tests need MORE THAN ONE clip, and clips whose texts
 // DIFFER, or "the row followed the change" cannot be told from "the rows were
 // the same string anyway". The seven-item fixture already has three images at
 // three different anchors, which is why it is reused rather than replaced.
 // ===========================================================================
 
+/// The budget R11 measures at, and the panel's own FLOOR (`ui/panels.d`:
+/// `budget = b < 8 ? 8 : b`).
+///
+/// EIGHT RATHER THAN THE DEFAULT SIXTEEN, and the choice is the whole point of
+/// the extension. This fixture's three row texts are 9, 13 and 14 code points,
+/// so at 16 not one of them is long enough to cut, `elideEnd` returns its
+/// ARGUMENT, and the reading is 0 whether the function is memoised, correct,
+/// or deleted. That is the inert measurement that put a false zero in this
+/// module's header. At 8 all three cut. The last assertion in R11 pins both
+/// halves of that so it cannot quietly stop being true.
+version (unittest) private enum size_t kMeasureBudget = 8;
+
 // ---------------------------------------------------------------------------
 // R11 — a frame in which nothing changed allocates NOTHING.
 //
-// Discriminating, and this is the assertion the task exists for: the second
-// build of an unchanged document must allocate ZERO bytes. Not "less" — zero
-// is the only reading that proves the cost stopped scaling with the row count,
-// and "materially less" would still pass an implementation that memoised the
-// path and left the dimensions cell rebuilding once per row per frame (which
-// is precisely the half-measure on offer: the path was 81% of the bytes).
+// A FRAME IS TWO STEPS, and this test measures both: `imageRowsInto` builds
+// the rows, then the panel cuts each row's path text to the width it has
+// (`elidedPathText`, once per row, `ui/panels.d` line 2 of the name cell).
+// Measuring only the first is how the module header came to state `elideEnd`'s
+// cost as a measured zero — the harness never called it, so the cutting and
+// the non-cutting build agreed, and the agreement read as corroboration.
 //
-// The vacuity guard is the first reading: the COLD build must allocate
-// something, or "the warm build allocated nothing" would be a statement about
-// a function that never allocates at all and the test would prove nothing.
+// FOUR READINGS, not two, so the two terms cannot hide inside each other: a
+// broken path memo and a broken elide memo would otherwise both surface as one
+// number, and at this fixture's size they even collide (144 bytes either way).
+// Each term gets its own vacuity guard — the COLD reading must be non-zero, or
+// "the warm one was zero" is a statement about a function that never allocates
+// — and its own exact zero.
 //
-// BREAK-VERIFIED, and the second figure is the argument for `== 0`: against a
-// cold build of 1216 bytes for these three rows, disabling the path memo reads
-// a warm 1072 and disabling the dimensions memo reads a warm 144. A "warm is
-// materially less than cold" threshold passes that second one comfortably —
-// 144 against 1216 is an 88% cut — while leaving a per-row allocation on every
-// frame, which is the exact property this task is about.
+// ZERO, NOT "MATERIALLY LESS". Zero is the only reading that proves the cost
+// stopped scaling with the row count. Three of the four break checks below
+// leave a warm reading a ratio threshold would accept: 144 against a cold 1216
+// is an 88% cut, and still an allocation per row per frame.
+//
+// BREAK-VERIFIED — five wrong implementations, each read through this test.
+// The last two are the ones the four-reading split buys: one that this test
+// deliberately does NOT catch, and one aimed at the test itself.
+//
+//   * path memo disabled          warm build 1072 (cold 1216)
+//   * dimensions memo disabled    warm build  144
+//   * elide memo disabled         warm cut    144 (cold cut 144)
+//   * elide memo keyed on the
+//     text only, not the budget   R11 GREEN — see R14, which is why that
+//                                 test exists as well as this one
+//   * `kMeasureBudget` moved to
+//     the panel's DEFAULT of 16   cold cut 0 — the vacuity guard fires. This
+//                                 is the mutation that reproduces the original
+//                                 bug: a budget nothing reaches makes every
+//                                 elide reading zero, and a zero nobody can
+//                                 make non-zero is not a measurement.
 // ---------------------------------------------------------------------------
 unittest {
     import core.memory : GC;
     import std.conv    : to;
+    import std.range   : walkLength;
 
     auto f = makeRowFixture("rows_memo_bytes");
 
@@ -1100,24 +1260,53 @@ unittest {
     ImageRow[] rows;
     rows.length = nImages;
 
+    // Held so the cut cannot be optimised away as a dead result. Assigning a
+    // slice allocates nothing, so it is not part of any reading below.
+    string line;
+
+    // The four readings are taken with the two steps spelled out rather than
+    // wrapped in a nested function: a delegate over these locals can put a
+    // closure allocation inside the very first window.
     immutable a = GC.stats().allocatedInCurrentThread;
     imageRowsInto(&f.doc, f.docPath, rows);
     immutable b = GC.stats().allocatedInCurrentThread;
-    imageRowsInto(&f.doc, f.docPath, rows);
+    foreach (ref r; rows) line = elidedPathText(r, kMeasureBudget);
     immutable c = GC.stats().allocatedInCurrentThread;
+    imageRowsInto(&f.doc, f.docPath, rows);
+    immutable d = GC.stats().allocatedInCurrentThread;
+    foreach (ref r; rows) line = elidedPathText(r, kMeasureBudget);
+    immutable e = GC.stats().allocatedInCurrentThread;
 
-    immutable cold = b - a;
-    immutable warm = c - b;
+    immutable coldBuild = b - a;
+    immutable coldCut   = c - b;
+    immutable warmBuild = d - c;
+    immutable warmCut   = e - d;
 
-    assert(cold > 0,
-        "vacuity guard: the FIRST build must allocate, or 'the second built "
-        ~ "nothing' says nothing about a cache. Got " ~ to!string(cold)
-        ~ " bytes");
-    assert(warm == 0,
-        "a frame in which nothing changed must allocate nothing: the row text "
-        ~ "is memoised on the item. Cold build " ~ to!string(cold)
-        ~ " bytes, warm build " ~ to!string(warm) ~ " bytes for "
-        ~ to!string(nImages) ~ " rows");
+    immutable readings = " (cold build " ~ to!string(coldBuild)
+                       ~ ", cold cut "   ~ to!string(coldCut)
+                       ~ ", warm build " ~ to!string(warmBuild)
+                       ~ ", warm cut "   ~ to!string(warmCut)
+                       ~ " bytes for "   ~ to!string(nImages) ~ " rows)";
+
+    assert(coldBuild > 0,
+        "vacuity guard: the FIRST row build must allocate, or 'the second "
+        ~ "built nothing' says nothing about a cache." ~ readings);
+    assert(coldCut > 0,
+        "vacuity guard: the FIRST cut must allocate too. A budget this "
+        ~ "fixture's paths do not reach makes `elideEnd` return its argument, "
+        ~ "and then the warm zero below is a fact about the fixture rather "
+        ~ "than about the memo — which is exactly the inert reading this "
+        ~ "extension exists to close." ~ readings);
+
+    assert(warmBuild == 0,
+        "a frame in which nothing changed must build the rows without "
+        ~ "allocating: the path and dimensions text are memoised on the item."
+        ~ readings);
+    assert(warmCut == 0,
+        "…and must cut them without allocating either. `elideEnd` allocates "
+        ~ "an appender per CUTTING row — 48 bytes at this budget, 144 for "
+        ~ "these three — so an unmemoised cut leaves the per-row-per-frame "
+        ~ "cost the task exists to remove." ~ readings);
 
     // …and the memo changed the COST, not the ANSWER.
     assert(rows[0].pathText == "alpha.bmp" && rows[0].dimensions == "3 x 2",
@@ -1126,6 +1315,29 @@ unittest {
         "row 1 still reads what R2/R4 pin");
     assert(rows[2].pathText == "../charlie.bmp" && rows[2].dimensions == "11 x 13",
         "row 2 still reads what R2/R4 pin");
+    assert(elidedPathText(rows[1], kMeasureBudget) == "tex/bra…",
+        "…and the cut still reads what `elideEnd` returns; got '"
+        ~ elidedPathText(rows[1], kMeasureBudget) ~ "'");
+
+    // THE FIXTURE REALLY CUTS, both ways round. Without the first half the
+    // `coldCut > 0` guard above could be satisfied by one long row while the
+    // others were free; without the second, nobody reading this test would
+    // know that measuring at the panel's DEFAULT budget instead of its floor
+    // silently turns the whole thing inert.
+    foreach (i, ref r; rows) {
+        immutable got = elideEnd(r.pathText, kMeasureBudget);
+        assert(got != r.pathText,
+            "fixture: row " ~ to!string(i) ~ " ('" ~ r.pathText ~ "') must be "
+            ~ "longer than the budget, or its cut allocates nothing and the "
+            ~ "measurement above is inert");
+        assert(walkLength(got) == kMeasureBudget,
+            "…and cut to exactly the budget; got '" ~ got ~ "'");
+        assert(elideEnd(r.pathText, 16) == r.pathText,
+            "fixture: at the panel's DEFAULT budget of 16 this row does NOT "
+            ~ "cut — which is why R11 measures at the floor of 8. Measuring "
+            ~ "at 16 reads zero for a memoised, an unmemoised and a deleted "
+            ~ "implementation alike; got '" ~ elideEnd(r.pathText, 16) ~ "'");
+    }
 
     // THE BORN SLOT IS NOT AN ANSWER. A never-computed memo keys as
     // `(0, 0, false)` — the same key a payload that genuinely measures zero
@@ -1290,5 +1502,96 @@ unittest {
         && rows[2].pathText == a2,
         "the rows re-anchor back; got '" ~ rows[0].pathText ~ "', '"
         ~ rows[1].pathText ~ "', '" ~ rows[2].pathText ~ "'");
+}
+
+// ---------------------------------------------------------------------------
+// R14 — the CUT's two inputs move, and the line follows.
+//
+// R11 proves the elided line is memoised; this proves the memo is still a
+// cache and not a snapshot. Two inputs, and a plausible implementation gets
+// each one wrong on its own:
+//
+//   * THE BUDGET. It is not a field of anything — the panel derives it from
+//     the content width it has on the frame it is drawing, so it moves when
+//     the window is resized. A memo keyed on the row TEXT alone is the obvious
+//     shape ("the width hardly ever changes"), it passes R11 in full, and it
+//     pins the first width the panel was ever drawn at for the rest of the
+//     session: widen the panel and the paths stay chopped.
+//   * THE TEXT. A memo keyed on the budget alone survives every resize and
+//     shows the previous file's path after a replace.
+//
+// Discriminating, and this is why the budget pair is 8 and 16 rather than two
+// arbitrary numbers: at 8 all three of this fixture's paths cut, at 16 none of
+// them do. So the two answers differ on EVERY row, in both directions — a
+// budget-blind memo warmed at 8 reads a chopped 'alpha.b…' where 'alpha.bmp'
+// is due, and one warmed at 16 reads the whole path where a cut is due. A pair
+// that cut at both widths would still discriminate, but a pair that cut at
+// NEITHER (say 40 and 60) would read the same string either way and prove
+// nothing at all — the inert shape this section is full of warnings about.
+//
+// The OTHER two rows are asserted unchanged at each step, so a single memo
+// shared by all items rather than one per item reads differently.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+
+    auto f = makeRowFixture("rows_memo_cut");
+    ImageRow[] rows;
+    imageRowsInto(&f.doc, f.docPath, rows);
+
+    // --- warm at the floor budget, where all three cut ----------------------
+    assert(elidedPathText(rows[0], 8) == "alpha.b…", "control, row 0: got '"
+        ~ elidedPathText(rows[0], 8) ~ "'");
+    assert(elidedPathText(rows[1], 8) == "tex/bra…", "control, row 1: got '"
+        ~ elidedPathText(rows[1], 8) ~ "'");
+    assert(elidedPathText(rows[2], 8) == "../char…", "control, row 2: got '"
+        ~ elidedPathText(rows[2], 8) ~ "'");
+
+    // --- the panel is widened: the budget moves and nothing else ------------
+    assert(elidedPathText(rows[0], 16) == "alpha.bmp",
+        "a wider panel shows the whole path. A memo keyed on the row text "
+        ~ "alone answers from the budget it was warmed at and reads "
+        ~ "'alpha.b…' here — chopped for the rest of the session; got '"
+        ~ elidedPathText(rows[0], 16) ~ "'");
+    assert(elidedPathText(rows[1], 16) == "tex/bravo.bmp",
+        "…and so does row 1; got '" ~ elidedPathText(rows[1], 16) ~ "'");
+    assert(elidedPathText(rows[2], 16) == "../charlie.bmp",
+        "…and row 2; got '" ~ elidedPathText(rows[2], 16) ~ "'");
+
+    // …and narrowed again. Restoring the original three cuts separates a memo
+    // that re-checks its budget from one that merely overwrote itself with the
+    // last thing it was asked for.
+    assert(elidedPathText(rows[0], 8) == "alpha.b…"
+        && elidedPathText(rows[1], 8) == "tex/bra…"
+        && elidedPathText(rows[2], 8) == "../char…",
+        "narrowing the panel cuts them again");
+
+    // --- the row TEXT moves under an unchanged budget -----------------------
+    immutable newPath = buildPath(f.dir, "scene", "other", "renamed.bmp");
+    writeTestBmp(newPath, 9, 4);
+
+    auto rep = new ImageReplace(f.doc.activeMesh(), f.view, EditMode.Vertices,
+                                &f.doc, null);
+    {
+        auto ps = rep.params();
+        auto pj = parseJSON(`{"index":` ~ to!string(f.doc.indexOf(f.bravo))
+                            ~ `,"path":` ~ jsonString(newPath) ~ `}`);
+        injectParamsInto(ps, pj);
+    }
+    assert(rep.apply(), "fixture: image.replace must apply");
+
+    imageRowsInto(&f.doc, f.docPath, rows);
+    assert(rows[1].pathText == "other/renamed.bmp",
+        "precondition (R12's ground): the row text followed the replace, or "
+        ~ "the cut below has nothing new to cut; got '"
+        ~ rows[1].pathText ~ "'");
+    assert(elidedPathText(rows[1], 8) == "other/r…",
+        "the drawn line follows the row text. A memo keyed on the BUDGET "
+        ~ "alone reads the previous file's 'tex/bra…' here; got '"
+        ~ elidedPathText(rows[1], 8) ~ "'");
+    assert(elidedPathText(rows[0], 8) == "alpha.b…"
+        && elidedPathText(rows[2], 8) == "../char…",
+        "one item's change moves one item: a single memo shared by every row "
+        ~ "would drag its neighbours along");
 }
 

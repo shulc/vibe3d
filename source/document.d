@@ -627,13 +627,26 @@ final class ImageData {
 /// Task 0635 — cached RENDERINGS of `ImageData`'s fields, for the clip list's
 /// draw path.
 ///
-/// WHY: `ui/image_rows.d`'s `imageRowsInto` runs once per frame while the
-/// panel is open and rebuilt every row's text from scratch. MEASURED over 600
-/// frames on 1 mesh + 20 clips: 5120 bytes/frame for the whole row build, of
-/// which 4160 (81%) was the document-relative path and 960 the dimensions
-/// cell — ≈300 KiB/s of GC churn on the UI thread, growing with the number of
-/// rows. Both renderings are pure functions of inputs that do not change
-/// between frames, which is the whole reason this is memoisable at all.
+/// WHY: the clip list rebuilt every row's text from scratch, once per row on
+/// every frame the panel was open. MEASURED over 600 frames on 1 mesh + 20
+/// clips: 5120 bytes/frame for `imageRowsInto` alone, of which 4160 (81%) was
+/// the document-relative path and 960 the dimensions cell — ≈300 KiB/s of GC
+/// churn on the UI thread, growing with the number of rows. All three
+/// renderings are pure functions of inputs that do not change between frames,
+/// which is the whole reason this is memoisable at all.
+///
+/// THE ELIDED LINE IS THE SLOT THAT WAS MISSING, and it is here because the
+/// first cut of this struct left it out on a measurement that could not see
+/// it — an inert zero, in the shape this task exists to stop. The header
+/// of `ui/image_rows.d` said `elideEnd` cost zero; the harness behind that
+/// number drove `imageRowsInto`, which does not call `elideEnd` at all — the
+/// panel does, one call per row, straight after the row build. Both the
+/// cutting and the non-cutting variant therefore read the same 0 and the
+/// re-measurement looked like corroboration. Measured through a call that
+/// really reaches it, `elideEnd` allocates 48 bytes per cutting row at the
+/// panel's floor budget of 8 and 80 at its default 16; only a path SHORTER
+/// than the budget costs nothing, because that is the branch that returns its
+/// argument. See `elidedPathText` for the figures and the call path.
 ///
 /// A THIRD CATEGORY, and the distinction is the point. The authored fields are
 /// what the document SAYS; the derived fields are what the disk ANSWERED;
@@ -668,7 +681,15 @@ final class ImageData {
 /// the filesystem nowhere: it is `buildNormalizedPath` + `relativePath` over
 /// two strings, and that is the property this whole struct rests on.
 ///
-/// The two `…Valid` flags model "no entry yet", which is a different state
+/// WRITTEN FROM THE DRAW PATH, AND ONLY FROM IT. Every slot is filled by the
+/// function that reads it, on a MISS, which makes those three functions
+/// mutators of the document however read-only they look from the call site.
+/// The clip panel is their only caller and it runs on the UI thread, but they
+/// are public, so each one guards its write with `glThreadGuard` — the miss is
+/// a cold branch, so the check is paid per input change rather than per frame.
+/// See `ui/image_rows.d`'s `imageRowsInto` for the full statement.
+///
+/// The three `…Valid` flags model "no entry yet", which is a different state
 /// from "an entry whose value is the empty string" and cannot be inferred from
 /// the key. `dimsValid` is the one that demonstrably earns its byte: a born
 /// slot keys as `(0, 0, false)`, and a payload really carrying that
@@ -686,6 +707,19 @@ struct RowTextMemo {
     int    dimsW, dimsH;  ///< the measurement it was computed from
     bool   dimsMissing;   ///< …and the third input, which empties the cell
     bool   dimsValid;     ///< false until the first computation
+
+    // --- the elided path line: `ui.image_rows.elidedPathText` ---
+    //
+    // The BUDGET is the second input and it is not a field of anything: the
+    // panel derives it from the width available on the frame it is drawing
+    // (`avail / charWidth`, floored at 8), so it moves when the window is
+    // resized and at no other time. That is why it is keyed and not hooked,
+    // for the same reason the document path is — there is nowhere to hang a
+    // notification.
+    string elideText;     ///< the memoised value
+    string elideSource;   ///< the row text it was computed from
+    size_t elideBudget;   ///< …and the code-point budget it was cut to
+    bool   elideValid;    ///< false until the first computation
 }
 
 /// A reference-image plane's payload (task 0612). A class reference, for the

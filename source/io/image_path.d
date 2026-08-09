@@ -197,12 +197,17 @@ string storePathFor(string absolute, string docPath) {
 /// `storedPath` is absolute in memory by the storage rule at the top of this
 /// module, and the CWD does not move between two frames of one panel, so the
 /// key is complete for every reachable state.)
+///
+/// IT WRITES, and the guard says which thread may. See `imageRowsInto`.
 string storePathForItem(ImageData img, string docPath) {
     if (img is null) return "";
     if (img.rowText.storeValid
         && img.rowText.storeSource == img.storedPath
         && img.rowText.storeAnchor == docPath)
         return img.rowText.storeText;
+
+    import gl_thread_guard : glThreadGuard;
+    glThreadGuard("imageRowText");
 
     const text = storePathFor(img.storedPath, docPath);
     img.rowText.storeText   = text;
