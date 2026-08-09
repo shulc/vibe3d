@@ -128,10 +128,50 @@ import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesSh
 // tool's properties plus every pipe stage's collapsible section, exactly the
 // single column this panel has always been); 1 = "Snapping". Module scope
 // because the panel is rebuilt from scratch every frame and the choice has to
-// outlive the frame that made it.
+// outlive the frame that made it. Inert while `kSnappingHasOwnTab` is false —
+// there is only one page then, and it is Main.
 private enum int kToolPropsTabMain      = 0;
 private enum int kToolPropsTabSnapping  = 1;
 private __gshared int g_toolPropsTab = kToolPropsTabMain;
+
+// ---------------------------------------------------------------------------
+// LAYOUT SWITCH — does snapping get a TAB of its own, or a collapsing section
+// in the Main column like every other pipe stage? (task 0638)
+//
+// One boolean drives BOTH halves: the tab strip below, and the per-stage
+// section loop's `taskCode() == Snap` exception. Flip it and snapping moves;
+// nothing else has to change, and neither arm can rot, because both are
+// ordinary `if` branches the compiler type-checks either way.
+//
+// WHY IT IS A SWITCH AND NOT A DECISION. Two records disagree.
+//
+//   * The tab was added deliberately (task 0544) and the reasoning below
+//     cites the owner's report AND the reference's shipped layout config.
+//   * The owner now reports the opposite: snapping should be a collapsible
+//     section like the others.
+//
+// Re-reading the reference's config settles the CONFIG half, and it does not
+// support the tab. The four peer container sheets are real — but they are the
+// four children of ONE sheet, each entered as a reference control carrying a
+// "starts collapsed / starts open" attribute (all four set to open). That
+// attribute belongs to a COLLAPSIBLE GROUP, not to a tab; four such children
+// render as four collapsing sections stacked in a single column, which is
+// exactly what our per-stage loop already draws. Nowhere in the shipped
+// configs is the snapping container exported as a panel or a tab of its own:
+// it appears only in the properties config, and every layout that surfaces
+// tool properties surfaces the one parent sheet. So "four peers" was read
+// correctly as structure and wrongly as presentation.
+//
+// What that leaves for the owner is a taste question this switch does not
+// prejudge: our column is not the reference's column (in the reference the
+// snapping section holds a single button that opens the real form as a
+// popover, and the whole section is gated on snapping being active), so
+// "the config says section" is an argument, not an order. Flip the switch to
+// `false` to move snapping into the column; the tab strip then has one entry
+// and removes itself, and the section loop stops making an exception for it.
+// Once the owner has answered, DELETE the losing arm rather than leaving this
+// comment to be re-litigated a third time.
+private enum bool kSnappingHasOwnTab = true;
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.image_list      : UiImageListCommand, g_imageListShown;
 import commands.ui.channels        : UiChannelsCommand, g_channelsShown;
@@ -6096,29 +6136,33 @@ void main(string[] args) {
                 // the master toggle, the type set and the two pixel ranges that
                 // decide whether a drag sticks had no panel at all.
                 //
-                // It has a schema now, and it gets a TAB rather than one more
-                // collapsing header, because two independent sources say the
-                // same thing. The owner reports snapping as its own tab from
-                // using the reference; the reference's own layout config says
-                // it structurally — `toolprops:general` is four PEER container
-                // sheets, labelled "Tool Properties (Main)" / "(Action
-                // Centres)" / "(Falloffs)" / "(Snapping)", and snapping is one
-                // of the four, not a member of the first.
+                // It has a schema now. WHETHER that schema draws on a tab of
+                // its own or as one more collapsing header in the column is
+                // the `kSnappingHasOwnTab` switch at the top of this module —
+                // read the note there before changing anything here; it
+                // records what the reference's layout config actually says
+                // (re-read for task 0638) and why the earlier reading of it
+                // does not survive.
                 //
-                // We ship two of those four. Everything that was in the column
-                // stays in the column, in its old order, under "Main" —
-                // promoting the action-centre and falloff sections to peers of
-                // their own is a change to a surface that already works, and
-                // this is not that change. The only thing that moves is the
-                // thing that had nowhere to be.
+                // Everything that was in the column stays in the column, in
+                // its old order, under "Main" — promoting the action-centre
+                // and falloff sections to pages of their own is a change to a
+                // surface that already works, and this is not that change.
                 //
                 // Built from Selectable + SameLine rather than a tab-bar
                 // widget: the ImGui binding this build links exposes no
                 // BeginTabBar/BeginTabItem. Same behaviour — a strip of
                 // mutually exclusive pages, one visible at a time — and no
                 // Begin/End pairing to leave unbalanced if a page throws.
-                {
-                    static immutable string[] kTabs = ["Main", "Snapping"];
+                //
+                // The Snapping entry's TEXT is the stage's own display name,
+                // not a literal: tab and section header are the same word by
+                // construction, so the collision test in the snap stage —
+                // "no row inside the section repeats the section's title" —
+                // covers this strip too instead of assuming it matches.
+                if (kSnappingHasOwnTab) {
+                    import toolpipe.stages.snap : kSnapDisplayName;
+                    static immutable string[] kTabs = ["Main", kSnapDisplayName];
                     foreach (i, name; kTabs) {
                         if (i) ImGui.SameLine();
                         immutable float w = ImGui.CalcTextSize(name).x + 16.0f;
@@ -6128,8 +6172,14 @@ void main(string[] args) {
                             g_toolPropsTab = cast(int)i;
                     }
                     ImGui.Separator();
+                } else {
+                    // One page, so no strip. Pin the page so a stale choice
+                    // left over from a build that HAD the tab cannot hide the
+                    // whole panel behind a page that no longer renders.
+                    g_toolPropsTab = kToolPropsTabMain;
                 }
-                immutable bool inMain = g_toolPropsTab != kToolPropsTabSnapping;
+                immutable bool inMain = !kSnappingHasOwnTab
+                                     || g_toolPropsTab != kToolPropsTabSnapping;
                 if (inMain) {
                     // Config-driven forms (Phase 4/5): when the forms panel is
                     // enabled (default; disable with VIBE3D_FORMS=0) AND a loaded form matches the active
@@ -6187,8 +6237,8 @@ void main(string[] args) {
                     // active tool's properties — data-driven composition
                     // where the same Tool Properties window
                     // surfaces both the active tool AND the stages that
-                    // modulate it (Workplane, ACEN, AXIS, Falloff — Snap is a
-                    // tab of its own, skipped below).
+                    // modulate it (Workplane, ACEN, AXIS, Falloff — plus Snap
+                    // unless it is holding a tab, see the exception below).
                     // Stages without a schema (e.g. NopStage placeholders,
                     // or older stages that haven't been migrated yet)
                     // collapse to nothing.
@@ -6198,10 +6248,14 @@ void main(string[] args) {
                             auto stage = cast(Stage)s;
                             if (stage is null) continue;
                             if (stage.params().length == 0) continue;
-                            // Snapping renders on its own tab (see below), not as
-                            // one more header in this column — so it is skipped
-                            // here rather than appearing in both places.
-                            if (stage.taskCode() == TaskCode.Snap)
+                            // The OTHER half of `kSnappingHasOwnTab`. While the
+                            // tab exists, snapping is drawn there (below) and
+                            // skipped here rather than appearing in both places;
+                            // clear the switch and this exception lifts, snapping
+                            // becomes an ordinary header in this loop, and the
+                            // second draw path below goes cold in the same move.
+                            if (kSnappingHasOwnTab
+                                && stage.taskCode() == TaskCode.Snap)
                                 continue;
                             // Default-open so the extra stage sections (Action
                             // Center, Falloff, ...) are expanded without a
@@ -6215,6 +6269,13 @@ void main(string[] args) {
                 } // if (inMain)
 
                 // ---- Snapping ---------------------------------------------
+                // THE SECOND DRAW PATH, and it exists only because of the tab.
+                // `inMain` is unconditionally true when `kSnappingHasOwnTab`
+                // is false, so clearing the switch makes this block dead and
+                // it should be deleted along with the loop exception above —
+                // one stage body drawn by two paths is a drift hazard that is
+                // worth carrying only while the tab is.
+                //
                 // Drawn through `drawStageBody`, the same path the per-stage
                 // sections take, so the rows, their write path and their HTTP
                 // twins are the section's — only the location differs.

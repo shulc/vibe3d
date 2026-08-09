@@ -50,6 +50,20 @@ private static immutable IntEnumEntry[] snapModeEntries = [
     IntEnumEntry(cast(int)SnapMode.Item,      "item",      "Item"),
 ];
 
+/// The ONE place the word that titles the snapping surface is written
+/// (task 0638). `displayName()` returns it — so it titles the collapsing
+/// section — and the Tool Properties tab strip in app.d reads it too, so
+/// the tab entry and the section header can never say different things and
+/// can never drift apart from what a test pins.
+///
+/// Load-bearing for the id collision this constant exists to make testable:
+/// the panel renders a stage's rows through `PropertyPanel.drawProvider`,
+/// which pushes NO id scope, so a row label and the title above it live in
+/// one ImGui id namespace. Any row whose label equals this string collides
+/// with the title — whichever form the title currently takes. The unittest
+/// at the bottom of this module is that assertion.
+enum kSnapDisplayName = "Snapping";
+
 // ---------------------------------------------------------------------------
 // SnapStage — Phase 7.3 of doc/phase7_plan.md / doc/snap_plan.md.
 // Sits at ordinal 0x40 (between WORK 0x30 and ACEN 0x60).
@@ -417,7 +431,7 @@ class SnapStage : Stage, Operator {
     override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Snap; }
     override string   id()       const                          { return "snap"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordSnap; }
-    override string   displayName() const                       { return "Snapping"; }
+    override string   displayName() const                       { return kSnapDisplayName; }
 
     // ------------------------------------------------------------------
     // Tool Properties schema.
@@ -455,7 +469,19 @@ class SnapStage : Stage, Operator {
             _typeMirror[i] = (enabledTypes & row.bit) != 0;
 
         Param[] ps;
-        ps ~= Param.bool_("enabled", "Snapping", &enabled, false);
+        // MASTER TOGGLE. The wire name stays `enabled` — it is on the HTTP
+        // surface and in tests, and renaming it would be a breaking change
+        // for zero gain. The LABEL is what had to move (task 0638): it used
+        // to read "Snapping", the same text as this section's own title, and
+        // `drawProvider` pushes no id scope, so title and row hashed to one
+        // ImGui id and the widget the user clicked was decided by draw order.
+        //
+        // Not "Enabled" either, which is what the constrain and path stages
+        // call their master toggles — those two ALREADY collide with each
+        // other whenever both sections are in the same column, and joining
+        // that collision to leave this one would be a lateral move. A label
+        // that names its own stage cannot collide with a sibling stage's.
+        ps ~= Param.bool_("enabled", "Enable Snapping", &enabled, false);
         ps ~= Param.intEnum_("snapMode", "Mode", cast(int*)&snapScope,
                              snapModeEntries, cast(int)SnapMode.Global);
         foreach (i, ref row; snapTypeRows)
@@ -1604,4 +1630,73 @@ unittest {
         assert(!st.enabled && !st.hasPushedEnabled(""),
             "an empty owner must not arm and must not claim the slot");
     }
+}
+
+// ---------------------------------------------------------------------------
+// THE PANEL'S ID NAMESPACE IS FLAT, SO THE LABELS HAVE TO BE DISTINCT
+// (task 0638).
+//
+// What this pins, and why it is a real measurement rather than a restatement
+// of the source: `PropertyPanel.drawProvider` walks `params()` and calls the
+// widget helper with each `Param.label` and NO `ImGui.PushID` around it, and
+// the title above the rows — the collapsing header in the section loop, or
+// the tab strip's entry, both of which are `kSnapDisplayName` — is emitted in
+// that same enclosing scope. ImGui hashes a widget's id from its label within
+// the current id scope, so two of these strings being equal is two widgets
+// being one widget: the click lands on whichever drew first and the other is
+// unreachable. That is the owner-reported defect, and it was live — the
+// master toggle shipped labelled "Snapping", the same text as the title.
+//
+// The ImGui half of that is not observable from a unittest (no context, no
+// frame, no window). The LABELS are, and they are the whole cause: given the
+// flat namespace, distinct labels is exactly the condition. So this asserts
+// the condition, not the symptom, and it says so rather than claiming to have
+// watched ImGui not complain.
+//
+// The wire name is pinned in the same breath, in the opposite direction: the
+// LABEL had to move and the NAME must not, because `enabled` is the HTTP key
+// (`tool.pipe.attr snap enabled …`) and the status-line state path. A "fix"
+// that renamed the param would break both while making this file look tidier.
+// ---------------------------------------------------------------------------
+unittest {
+    auto st = new SnapStage();
+
+    // The title is the shared constant — the section header and the tab entry
+    // both read it, so pinning rows against it pins rows against both.
+    assert(st.displayName() == kSnapDisplayName,
+        format("the section title must be the single-sourced constant, got %s",
+               st.displayName()));
+
+    auto ps = st.params();
+    assert(ps.length > 1, "setup: the stage must expose a schema to collide with");
+
+    // --- 1. No row repeats the title it is drawn under. --------------------
+    foreach (ref p; ps)
+        assert(p.label != kSnapDisplayName,
+            format("row '%s' is labelled \"%s\", the same text as the title "
+                 ~ "above it — one flat id scope, so the two widgets hash to "
+                 ~ "one id and one of them cannot be clicked",
+                   p.name, p.label));
+
+    // --- 2. No two rows repeat each other either. --------------------------
+    foreach (i, ref a; ps)
+        foreach (ref b; ps[i + 1 .. $])
+            assert(a.label != b.label,
+                format("rows '%s' and '%s' share the label \"%s\" — same "
+                     ~ "collision, one row deeper", a.name, b.name, a.label));
+
+    // --- 3. The wire name did NOT move with the label. ---------------------
+    bool sawEnabled = false;
+    foreach (ref p; ps) {
+        if (p.name != "enabled") continue;
+        sawEnabled = true;
+        assert(p.kind == Param.Kind.Bool,
+            "the master toggle stays a bool on the wire");
+        assert(p.label != "enabled" && p.label.length > 0,
+            "and it keeps a human label, not its own wire key");
+    }
+    assert(sawEnabled,
+        "the master toggle's wire key must still be `enabled` — it is the "
+        ~ "HTTP surface and the status-line state path, and only the LABEL "
+        ~ "was ever in question");
 }
