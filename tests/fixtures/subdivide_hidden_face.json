@@ -103,19 +103,21 @@
   },
 
   "classification": {
-    "verdict": "mixed",
-    "detail": "Two rows match live, one diverges, one is unrepresentable. vibe3d's subdivision has no hide awareness of its own: it carries the Hide bit onto whatever it produces, so a hidden face that IS refined hands the bit to all four children.",
+    "verdict": "parity on every representable row",
+    "detail": "Task 0632 landed on 2026-08-09 and the operand divergence is CLOSED: vibe3d now excludes hidden faces from the subdivision operand, so all four engine branches answer 21 / exactly 1 hidden, matching the reference down to the surviving face's index (20). What remains is one output-ORDERING difference on the one-visible-face row (surviving index 4 here, 5 there) and one row that cannot be expressed here at all — both recorded below with their reasons rather than folded into the parity claim.",
     "vibe3d_measured": {
-      "nothing_selected":   { "polygons_after": 24, "hidden_after": 4, "hidden_indices_after": [0, 1, 2, 3], "agrees_with_reference": false },
+      "comment": "Re-measured 2026-08-09 against the landed 0632. Every number here is what a live vibe3d answers today; the rows that changed when 0632 landed are marked `closed_by`.",
+      "nothing_selected":   { "polygons_after": 21, "hidden_after": 1, "hidden_indices_after": [20], "agrees_with_reference": true, "closed_by": "0632", "was_while_open": { "polygons_after": 24, "hidden_after": 4, "hidden_indices_after": [0, 1, 2, 3] } },
       "all_selected":       { "polygons_after": 21, "hidden_after": 1, "hidden_index_after": 20, "select_all_yields": 5, "agrees_with_reference": true },
       "one_visible_face_selected": { "polygons_after": 9, "hidden_after": 1, "hidden_index_after": 4, "agrees_with_reference": "counts yes, index no" },
-      "undo":               { "polygons_before_undo": 24, "polygons_after_undo": 6, "hidden_after_undo": 1, "entries_consumed": 1, "agrees_with_reference": "law yes, counts follow the diverging bake" }
+      "undo":               { "polygons_before_undo": 21, "polygons_after_undo": 6, "hidden_after_undo": 1, "entries_consumed": 1, "agrees_with_reference": true, "closed_by": "0632", "was_while_open": { "polygons_before_undo": 24 } }
     },
-    "why_all_selected_matches": "Hiding a face clears its selected bit, so selecting everything yields five here too — exactly as in the reference — and the five-face selection then drives the selective branch, giving 21 with one hidden face at index 20. The agreement is real but it is REACHED by the selection mask, not by an exclusion rule; it disappears the moment nothing is selected.",
-    "why_one_visible_face_index_is_pinned_to_ours": "Both engines end with 9 polygons and exactly 1 hidden; only the surviving face's INDEX differs (4 here, 5 there). That is output ordering, not semantics, so the REFERENCE's index is not a parity requirement — but OURS is still pinned, at 4, as an ordering-regression guard. Two different claims that an earlier wording ran together by saying the index was 'not asserted': the row's `hidden_index_after` (5) is not asserted, `vibe3d_measured.one_visible_face_selected.hidden_index_after` (4) is.",
-    "unrepresentable_here": "'Only the hidden face selected' cannot be expressed: a hidden face cannot be selected, so the attempt yields an empty selection and degenerates into the nothing-selected branch.",
-    "expected_divergence": true,
+    "why_all_selected_matches": "It matched even BEFORE 0632, and not for the reference's reason: hiding a face clears its selected bit, so selecting everything yields five here too, and the five-face selection then drove the selective branch to 21 / 1. That agreement was reached by the SELECTION MASK, and it disappeared the moment nothing was selected. Since 0632 the row is over-determined — mask and exclusion rule now agree — which is why the nothing-selected row, where only the exclusion rule can produce 21, is the one that actually tests the law.",
+    "why_one_visible_face_index_is_pinned_to_ours": "Both engines end with 9 polygons and exactly 1 hidden; only the surviving face's INDEX differs (4 here, 5 there). That is output ordering, not semantics, so the REFERENCE's index is not a parity requirement — but OURS is still pinned, at 4, as an ordering-regression guard. Two different claims that an earlier wording ran together by saying the index was 'not asserted': the row's `hidden_index_after` (5) is not asserted, `vibe3d_measured.one_visible_face_selected.hidden_index_after` (4) is. Re-measured after 0632: still 4 here and 5 there, so this difference is untouched by the operand fix and stays a stated difference rather than a silently updated number.",
+    "unrepresentable_here": "'Only the hidden face selected' cannot be expressed: a hidden face cannot be selected, so the attempt yields an empty selection and degenerates into the nothing-selected branch. Re-measured after 0632, that degenerate branch reads 21 / 1 where the reference's own row is a 6 / 1 no-op — so this row still differs, and it differs because the SELECTION is inexpressible, not because the operand law does.",
+    "expected_divergence": false,
     "divergence_owner": "0632",
-    "retire_when": "0632 excludes hidden faces from the subdivision operand. At that point the nothing-selected branch becomes 21 / 1 hidden, the divergence assertion in the test flips to red, and the test must be converted into a live parity assertion. A red there means the gap CLOSED."
+    "closed_on": "2026-08-09",
+    "retire_when": "RETIRED. 0632 landed (`subdivide: hidden faces leave the operand, and the mark survives the rebuild`) and excluded hidden faces from the subdivision operand; the nothing-selected branch went to 21 / 1 hidden at index 20 and the marker assertion fired exactly as designed, reading `DIVERGENCE CLOSED`. `expected_divergence` is now false and the row is a live parity assertion. Flipping this back to true is NOT a way to silence a regression: the marker branch then demands a disagreement we no longer have and fails just as loudly."
   }
 }

@@ -3,15 +3,32 @@
 // FROM THE OPERATION rather than merely preserved (21 polygons, not 24).
 // Fixture: tests/fixtures/subdivide_hidden_face.json.
 //
-// MIXED VERDICT. Two rows match live, one diverges, one is unrepresentable.
-// vibe3d's subdivision has no hide awareness of its own: it carries the hide
-// bit onto whatever it produces, so a hidden face that IS refined hands the
-// bit to all four children. Task 0632 owns the gap. The divergence is marked
-// with the same self-retiring contract as the reference-diff suites'
-// `expected_fail`: a disagreement is tolerated, an AGREEMENT is a failure
-// that says the marker should be removed. Flipping
-// `classification.expected_divergence` to false in the fixture switches the
-// diverging row over to demanding parity.
+// MARKER RETIRED 2026-08-09 — the divergence closed and this file now demands
+// parity. Task 0632 landed ("subdivide: hidden faces leave the operand, and
+// the mark survives the rebuild"): hidden faces are excluded from the
+// subdivision operand and the mark survives the rebuild, so the nothing-
+// selected branch went from 24 polygons / 4 hidden to 21 / 1 at index 20.
+// The marker fired exactly as it was built to — a disagreement was tolerated,
+// the AGREEMENT was the failure, and it reported itself as `DIVERGENCE
+// CLOSED` rather than as a breakage. `classification.expected_divergence` is
+// now false and the row is a live parity assertion.
+//
+// The retirement is not a licence to stop checking. Flipping the flag back to
+// true does NOT silence a regression: the marker branch then demands a
+// disagreement we no longer have, and fails just as loudly as the parity
+// branch would. Both branches are live and both are exercised by the flag.
+//
+// WHAT STILL LEGITIMATELY DIFFERS, AND WHY IT IS SAID RATHER THAN UPDATED
+// -----------------------------------------------------------------------
+//   * one-visible-face row: the surviving hidden face's INDEX is 4 here and 5
+//     in the reference. Re-measured after 0632 and unchanged — output
+//     ordering, not semantics. The REFERENCE's index is therefore not a
+//     parity requirement; OURS is pinned at 4 as an ordering-regression
+//     guard.
+//   * "only the hidden face selected" is unrepresentable here: a hidden face
+//     cannot be selected, so the attempt degenerates into the nothing-
+//     selected branch (21 / 1) where the reference's own row is a 6 / 1
+//     no-op. The SELECTION is inexpressible; the operand law is not.
 //
 // WHAT WRONG IMPLEMENTATION EACH ASSERTION DISCRIMINATES AGAINST
 // ---------------------------------------------------------------
@@ -20,13 +37,13 @@
 //     children reads 4. The fixture freezes all three numbers because a test
 //     asserting only "hiding did not get lost" passes under two of them.
 //   * one-visible-face row: same three-way split at a different polygon
-//     count (9). The surviving face's index is 4 here and 5 in the
-//     reference — output ordering, not semantics — so the REFERENCE's index
-//     is not a parity requirement, but OURS is pinned at 4 as an
-//     ordering-regression guard.
-//   * nothing-selected row: an implementation that excludes hidden faces
-//     from the operand — i.e. the 0632 fix — reads 21 polygons / 1 hidden
-//     where today's reads 24 / 4.
+//     count (9).
+//   * nothing-selected row: THE row that tests the law. It is the only branch
+//     where nothing but the exclusion rule can produce 21 — the all-selected
+//     row reached 21 by the selection mask even before 0632. An
+//     implementation that hands the operand to the kernel unmasked reads
+//     24 / 4 (the pre-0632 reading); one that rebuilds the mesh and loses the
+//     mark reads 21 / 0.
 //   * undo row: an undo that restores the geometry but not the mark reads 6
 //     polygons with 0 hidden.
 
@@ -129,6 +146,43 @@ unittest {
                "the three readings must predict three different hidden counts");
     }
 
+    // ---- the marker flag must be a BOOLEAN ----------------------------------
+    // `expected_divergence` selects which contract the nothing-selected row
+    // runs under, and it is read as `.type == JSONType.true_`. Anything that is
+    // not a JSON boolean — `"false"`, `0`, a typo'd key left behind — reads as
+    // "not true" and would silently select a branch nobody chose. Since the
+    // marker is now RETIRED that branch is the parity one, so the failure mode
+    // is quiet rather than loud: exactly the reason to check the type itself.
+    {
+        auto flag = cls["expected_divergence"];
+        assert(flag.type == JSONType.true_ || flag.type == JSONType.false_,
+               format("classification.expected_divergence must be a JSON boolean, got %s "
+                      ~ "(%s) — a non-boolean reads as \"not true\" and silently selects "
+                      ~ "the parity branch", flag.toString, flag.type));
+    }
+
+    // ---- the retirement is recorded in BOTH places, or in neither -----------
+    // With the marker retired, `vibe3d_measured.nothing_selected` stops driving
+    // any assertion below: the parity branch compares against the REFERENCE
+    // row. That is precisely how frozen data rots. Tie the two together so the
+    // recorded measurement has to keep saying what the live assertion demands.
+    {
+        auto refRow = rowById(fx, "nothing_selected");
+        auto mine   = ours["nothing_selected"];
+        immutable bool marked = cls["expected_divergence"].type == JSONType.true_;
+        immutable bool same   = mine["polygons_after"].integer == refRow["polygons_after"].integer
+                             && mine["hidden_after"].integer   == refRow["hidden_after"].integer;
+        assert(marked != same,
+               format("the marker flag and the recorded measurement disagree: "
+                      ~ "expected_divergence is %s but vibe3d_measured.nothing_selected "
+                      ~ "reads %d/%d against the reference's %d/%d. A marked divergence "
+                      ~ "must record DIFFERENT numbers and a retired one must record the "
+                      ~ "SAME ones — otherwise the fixture keeps a stale reading nothing "
+                      ~ "checks.",
+                      marked, mine["polygons_after"].integer, mine["hidden_after"].integer,
+                      refRow["polygons_after"].integer, refRow["hidden_after"].integer));
+    }
+
     // ---- AGREEMENT ROW 1: everything selected -------------------------------
     // Live parity, index included. Also pins the count-of-selected fact: the
     // hidden face cannot be selected, so "select everything" yields five.
@@ -186,7 +240,9 @@ unittest {
                       row["hidden_index_after"].integer, sIdx(s.hidden)));
     }
 
-    // ---- DIVERGING ROW: nothing selected ------------------------------------
+    // ---- THE LAW ROW (marker retired): nothing selected ---------------------
+    // The only branch where nothing but the exclusion rule can reach 21 — the
+    // all-selected row reached it through the selection mask even before 0632.
     {
         auto row  = rowById(fx, "nothing_selected");
         auto mine = ours["nothing_selected"];
@@ -203,6 +259,13 @@ unittest {
         immutable size_t refHidden = cast(size_t) row["hidden_after"].integer;
 
         if (expectDivergence) {
+            // RETIRED BRANCH, kept live. It is unreachable in a green tree —
+            // re-arming the flag makes (a) and (b) mutually unsatisfiable, since
+            // `vibe3d_measured.nothing_selected` now records the reference's own
+            // numbers — so re-arming cannot be used to silence a regression. The
+            // pre-0632 readings it used to pin live on in the fixture's
+            // `was_while_open`.
+            //
             // (a) the marker, checked FIRST — red when the gap CLOSES, so a
             // convergence reports as a convergence rather than as a regression.
             assert(!(s.polys == refPolys && s.hidden.length == refHidden),
@@ -223,10 +286,27 @@ unittest {
                           ~ "(the hidden parent's four children each inherit the bit)",
                           sIdx(s.hidden), mine["hidden_indices_after"].toString));
         } else {
-            assert(s.polys == refPolys && s.hidden.length == refHidden,
-                   format("nothing-selected bake: %d polygons / %d hidden, want the "
-                          ~ "reference's %d / %d (expected_divergence is false, so parity "
-                          ~ "is required)", s.polys, s.hidden.length, refPolys, refHidden));
+            // MARKER RETIRED — parity, and parity down to the surviving face's
+            // INDEX. The counts alone do not separate "the hidden face was left
+            // out of the operand" from "the hidden face was refined and three of
+            // its four children lost the bit": both read 21 / 1. The index does
+            // — an untouched face carried through last lands at 20.
+            assert(s.polys == refPolys,
+                   format("nothing-selected bake: %d polygons, want the reference's %d "
+                          ~ "(expected_divergence is false, so parity is required). 24 "
+                          ~ "would mean the hidden face was handed to the kernel as part "
+                          ~ "of the operand again.", s.polys, refPolys));
+            assert(s.hidden.length == refHidden,
+                   format("nothing-selected bake: %d hidden, want the reference's %d. 0 "
+                          ~ "would mean the rebuild dropped the mark, 4 that the hidden "
+                          ~ "face was refined and every child inherited the bit.",
+                          s.hidden.length, refHidden));
+            assert(s.hidden == [cast(int) row["hidden_index_after"].integer],
+                   format("nothing-selected bake: hidden %s, want the reference's [%d] — "
+                          ~ "the excluded face is carried through after the refined ones, "
+                          ~ "so it lands last. A matching COUNT at a different index would "
+                          ~ "mean some other face ended up marked.",
+                          sIdx(s.hidden), row["hidden_index_after"].integer));
         }
 
         // ---- UNDO: one entry, geometry AND mark restored together -----------
@@ -234,6 +314,14 @@ unittest {
         // what is frozen, the counts follow the branch.
         {
             auto u = fx["undo"];
+            // What the undo is undoing. Frozen on OUR side because it follows
+            // whichever bake the branch above produced (21 since 0632, 24 while
+            // the marker stood) — asserted so that number cannot go stale
+            // unnoticed the way it did when 0632 landed.
+            assert(s.polys == cast(size_t) ours["undo"]["polygons_before_undo"].integer,
+                   format("undo: the bake being undone left %d polygons, but the fixture "
+                          ~ "freezes %d as vibe3d's pre-undo count",
+                          s.polys, ours["undo"]["polygons_before_undo"].integer));
             postOk("/api/undo", "");
             auto a = snap();
             assert(a.polys == cast(size_t) u["polygons_after_undo"].integer,

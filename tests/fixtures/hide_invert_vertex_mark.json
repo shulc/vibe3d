@@ -142,8 +142,8 @@
   },
 
   "classification": {
-    "verdict": "divergence",
-    "detail": "vibe3d's hide-invert is a plain polygon flip that ignores the selection type entirely, and its vertex plane is re-derived TOTALLY from the polygon plane after every mutation — so it has no stale window at all. The divergence shows up first and most cleanly in the polygon set: after the same prefix the reference hides the nine grid polygons while vibe3d hides eight (it flips the two originally-hidden polygons back to visible instead of flipping the vertex plane and propagating upward).",
+    "verdict": "one divergence closed, one permanent",
+    "detail": "Since 0628 landed (2026-08-09) vibe3d's hide-invert is COMPONENT-TYPED: in vertex mode it flips the vertex plane the selection type names and propagates upward, so the post-invert polygon set matches the reference's nine grid polygons. What remains — permanently, by decision — is that our vertex plane is re-derived TOTALLY from the polygon plane after every mutation, so we have no stale window at all: the probe vertex reads 1 under its now-hidden polygon where the reference reads 0 off a stale entry. The two divergences below moved in opposite directions exactly as the fixture predicted they would.",
     "vibe3d_measured": {
       "comment": "The AGREEMENT rows only. The post-invert row is not here: it is where the two engines part, so it lives in `divergences` below — one frozen number, one owner, one status, rather than a second copy that can drift.",
       "after_hide": { "hidden_polygons": [0, 9], "probe_vertex_hidden": 1, "agrees_with_reference": true },
@@ -154,13 +154,16 @@
       "comment": "TWO divergences live in this one prefix and they have OPPOSITE futures, so they carry separate statuses. One is a gap that is being closed; the other is a deliberate design decision that must never be closed. A single expected/not-expected flag covering both would, on the day the first closes, either retire the second along with it or refuse to retire either.",
 
       "invert_face_set": {
-        "what": "After the same prefix the reference hides the nine grid polygons; vibe3d hides eight. vibe3d's invert is a plain polygon flip that ignores the selection type, so it flips the two originally-hidden polygons back to VISIBLE instead of flipping the vertex plane the type names and propagating upward.",
-        "status": "open",
+        "what": "While this was open, the reference hid the nine grid polygons after the prefix and vibe3d hid eight: our invert was a plain polygon flip that ignored the selection type, so it flipped the two originally-hidden polygons back to VISIBLE instead of flipping the vertex plane the type names and propagating upward. CLOSED by 0628 — the invert now flips the plane the selection type names, and the face set matches.",
+        "status": "closed",
         "owner": "0628",
+        "closed_on": "2026-08-09",
         "reference_after_invert": [0, 1, 2, 3, 4, 5, 6, 7, 8],
-        "vibe3d_after_invert": [1, 2, 3, 4, 5, 6, 7, 8],
+        "vibe3d_after_invert": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+        "vibe3d_after_invert_while_open": [1, 2, 3, 4, 5, 6, 7, 8],
         "closes_when": "0628 makes the invert component-typed. vibe3d's post-invert hidden set then becomes the reference's, and the marker assertion in the test goes red. A red THERE means the gap CLOSED, not that something broke.",
-        "retire_by": "setting `status` to \"closed\" — AND re-freezing `vertex_plane_derivation.vibe3d_probe_after_invert` to the value the closed face set implies. Those are one change, not two independent ones: the probe below reads 0 today only BECAUSE this gap is open and polygon 0 is left visible. The test cross-checks the two frozen rows against vibe3d's own derivation law, so editing one without the other fails loudly instead of freezing a contradiction."
+        "closed_how": "0628 landed as `hide: the invert flips the plane the selection names, with no model change needed`. The marker fired exactly as built. Notably it did NOT require the model change the task predicted: because the vertex plane is a pure function of the face plane, `flip the vertices and propagate up` is a closed transformation OF the face plane, so the typed invert is expressible with our derivation left TOTAL — which is why the face set converged while `vertex_plane_derivation` below did not.",
+        "retire_by": "setting `status` to \"closed\" — AND re-freezing `vertex_plane_derivation.vibe3d_probe_after_invert` to the value the closed face set implies. Those are one change, not two independent ones: the probe read 0 only WHILE this gap was open and polygon 0 was left visible. The test cross-checks the two frozen rows against vibe3d's own derivation law, so editing one without the other fails loudly instead of freezing a contradiction. Done on 2026-08-09: the probe moved 0 → 1 in the same edit."
       },
 
       "vertex_plane_derivation": {
@@ -168,9 +171,22 @@
         "status": "permanent",
         "kind": "deliberate design decision, not a gap",
         "reference_probe_after_invert": 0,
-        "vibe3d_probe_after_invert": 0,
-        "the_two_numbers_agree_today_by_accident": "Both read 0 right now for unrelated reasons. The reference's 0 is a STALE entry sitting under a HIDDEN polygon 0; vibe3d's 0 is a correct derivation under a VISIBLE polygon 0. When `invert_face_set` closes, polygon 0 becomes hidden here too and the totally-derived probe reads 1 while the reference stays 0 — the same law, finally visible as a different number. So this row's agreement is not evidence that the laws agree, and its future disagreement will not be evidence that something broke.",
-        "never_close": "This entry has no open/closed toggle and must not acquire one. Reproducing the stale read means threading a touched-set through the derivation that rides EVERY geometry-mutating commit, in order to ship a value a user would file as a bug; undo already serves the round trip. A future reader must not 'fix' vibe3d's total derivation to chase the reference's 0."
+        "vibe3d_probe_after_invert": 1,
+        "the_two_numbers_agreed_by_accident_until_2026_08_09": "They used to both read 0, for unrelated reasons: the reference's 0 was a STALE entry sitting under a HIDDEN polygon 0, vibe3d's 0 was a correct derivation under a VISIBLE polygon 0. The fixture predicted that closing `invert_face_set` would make polygon 0 hidden here too and push the totally-derived probe to 1 while the reference stayed 0. That is exactly what happened on 2026-08-09. The former agreement was never evidence that the laws agreed, and this disagreement is not evidence that anything broke — it is the same law, finally visible as a different number.",
+        "never_close": "This entry has no open/closed toggle and must not acquire one. Reproducing the stale read means threading a touched-set through the derivation that rides EVERY geometry-mutating commit, in order to ship a value a user would file as a bug; undo already serves the round trip. A future reader must not 'fix' vibe3d's total derivation to chase the reference's 0.",
+
+        "consequence_involution": {
+          "what": "Our vertex-mode invert is NOT its own inverse. Press it twice from the prefix state and the hidden set does not come back: [0,9] → [0..8] → [9]. Re-deriving the vertex plane after the first press destroys the distinction the flipped plane carried, so the second press has different input than the round trip needs. In POLYGON mode the invert is still an involution: [0,9] → [1..8] → [0,9].",
+          "why_it_is_here": "It is not an independent finding — it is the SAME total-vs-incremental decision above, observed one press later. The reference's staleness is precisely what would make its round trip work.",
+          "why_it_is_NOT_a_third_divergence": "A divergence row in this fixture carries a frozen `reference_*` number, and there is no capture behind a reference double-invert: the 0628 Ph0 capture ran seven triggers after ONE invert and never pressed it twice. Writing a reference value here would mean INFERRING a measurement from the frozen law and filing it as observed. Recorded instead as a one-sided, vibe3d-only consequence — absent on the reference side, not negative. Same discipline as `not_covered` in the sibling subdivide fixture.",
+          "vibe3d_vertex_mode": { "after_hide": [0, 9], "after_invert_1": [0, 1, 2, 3, 4, 5, 6, 7, 8], "after_invert_2": [9], "is_involution": false },
+          "vibe3d_polygon_mode": { "after_hide": [0, 9], "after_invert_1": [1, 2, 3, 4, 5, 6, 7, 8], "after_invert_2": [0, 9], "is_involution": true },
+          "reference_side": "not captured",
+          "measured_utc": "2026-08-09",
+          "measured_how": "vibe3d-only, driven over the same HTTP prefix this fixture already drives — no reference engine involved, so these two rows are live-checkable rather than frozen prose.",
+          "guards_what": "The polygon-mode row is the contrast that makes the vertex-mode row mean something: without it, 'not an involution' would be indistinguishable from 'the invert is simply broken'. Together they also give `never_close` teeth — an implementation that acquired the reference's stale window to chase its 0 would very likely make the vertex-mode double press an involution again, and this row would go red.",
+          "undo_is_unaffected": "Undo remains the exact round trip; the second press is not how a user returns."
+        }
       }
     }
   }
