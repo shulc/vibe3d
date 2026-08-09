@@ -550,11 +550,15 @@ private:
     // Reconstructing this stand offline from the world points reproduces the
     // reference's own box ROWS to ~1e-6 in all five of 0648's item
     // transforms, which is the evidence that the reference's box is the box
-    // of the WORLD points. Two residual divergences are NOT closed here and
-    // are recorded in the task log rather than fitted: the covariance
-    // DIVISOR (`toolpipe.obbox` deliberately drops the reference's 1/(2n),
-    // which the same reconstruction says is observable at ~1e-3 on a rotated
-    // stand), and the box-row-to-packet-slot TAIL in `axisFrameFromBox`,
+    // of the WORLD points. That reconstruction ALSO measured the covariance
+    // divisor, which was left open here and is now closed by task 0658:
+    // `toolpipe.obbox` divides by `2n` and scales the first moments by the
+    // same factor, which is worth ~3e-3 on the rotated stands and ~8e-5 at
+    // identity. `tests/test_obb_covariance_divisor.d` asserts the
+    // reproduction on all five.
+    //
+    // ONE residual divergence is still NOT closed here and is recorded rather
+    // than fitted: the box-row-to-packet-slot TAIL in `axisFrameFromBox`,
     // which is unread on the reference side and which 0648's numbers do not
     // settle either.
     bool computeSelectionBboxBasis(out Vec3 right, out Vec3 up, out Vec3 fwd) const {

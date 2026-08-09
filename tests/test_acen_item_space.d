@@ -43,14 +43,19 @@
 //
 // The basis assertion is on the FRAME, not on the slot assignment: it asserts
 // that the reference's `right` and `up` directions are the two in-plane axes
-// we publish, without asserting WHICH of our two slots each landed in.  Two
-// things are unsettled and both are recorded rather than fitted:
+// we publish, without asserting WHICH of our two slots each landed in.  One
+// thing remains unsettled and is recorded rather than fitted: which box row
+// becomes the packet's `right`.  The reference's tail is not read
+// (`toolpipe.obbox.axisFrameFromBox` says so in its own header), and the
+// frozen numbers do not decide it either.
 //
-//   * which box row becomes the packet's `right` — the reference's tail is not
-//     read (`toolpipe.obbox.axisFrameFromBox` says so in its own header), and
-//     the frozen numbers do not decide it either;
-//   * the covariance divisor (`toolpipe.obbox.obbFromPoints` deliberately
-//     drops the reference's, which is worth ~1e-3 on a rotated stand).
+// The other item that used to stand here — the covariance DIVISOR — was
+// closed by task 0658, and the tolerance below is deliberately NOT tightened
+// to chase it.  This test is about the SPACE the box is built in; the divisor
+// is arithmetic inside the box and is asserted at 1e-5, two orders tighter,
+// by `tests/test_obb_covariance_divisor.d`.  Conflating the two would make a
+// failure here ambiguous between "the frame moved to the wrong space" and
+// "a digit of the covariance moved".
 //
 // So the tolerance below is 2e-3, and it is not slack: the two readings this
 // test separates are ~68 degrees apart (measured: 0.895 vs 0.99993 on the

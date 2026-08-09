@@ -35,18 +35,47 @@
 //                post-processing is ONE conditional negation of all nine
 //                entries, gated on `dot(m[argmin extent], ref) < 0`.
 //
-// A correction worth carrying, because the shorthand for this law is
-// "covariance about the bbox centre, NOT about the mean" and that shorthand
-// is misleading: the reference accumulates the six second moments and the
-// three FIRST moments about the bbox centre and then forms
-// `Cxx = Sxx*s - mx*mx`, which algebraically cancels the origin and leaves the
-// ordinary covariance ABOUT THE MEAN. The bbox centre is a numerical origin,
-// not the point the moments are taken about. The one thing that WOULD have
-// made the two differ is the reference's `1/(2n)` divisor, which mis-scales
-// the mean-subtraction term relative to the second-moment term — and that is
-// exactly the part deliberately not inherited (see `obbFromPoints`). The
-// consequence is a property worth testing: the frame is invariant under
-// translation of the point set.
+// THE DIVISOR, and why it is not the scalar it looks like (task 0658).
+//
+// The shorthand for this law is "covariance about the bbox centre, NOT about
+// the mean", and it is misleading twice over. The reference accumulates the
+// six second moments `S` and the three FIRST moments `M` about the bbox
+// centre, scales BOTH by one `s`, and then forms
+//
+//     C = s*S - (s*M)(s*M)^T
+//
+// The bbox centre is a numerical origin, not the point the moments are taken
+// about: the first-moment subtraction cancels it. What does NOT cancel is the
+// divisor, because `s` multiplies `M` BEFORE the square — the subtracted
+// rank-1 term carries `s^2` where the second-moment term carries `s`. With
+// `mu = mean - aabbCentre` and the reference's `s = 1/(2n)`:
+//
+//     C = S/(2n) - mu*mu^T/4 = (1/2) * [ Cov + (1/2) mu*mu^T ]
+//
+// so the reference's matrix is the ordinary covariance about the mean PLUS
+// half of `mu mu^T` — equivalently, the moments about the point
+// `q = mean - mu/sqrt(2)`, which sits 70.71% of the way from the mean toward
+// the bbox centre. Three consequences, and the first is the whole reason this
+// took its own task:
+//
+//   * `1/n` and `1/(2n)` differ by a positive SCALAR only when `mu` is zero,
+//     i.e. only when the mean and the bbox centre coincide. Eigenvectors are
+//     invariant under a scalar, so on any centrally symmetric subject — every
+//     square, cube, regular n-gon, lattice and rod this port was built and
+//     tested on — the divisor is INVISIBLE. That is how it hid. Off centre it
+//     is a rank-1 perturbation and it rotates the eigenvectors outright.
+//   * Applying HALF the formula (the divisor without the first-moment
+//     scaling, or the reverse) gives a THIRD matrix that neither engine
+//     computes. The two parts are one law; see the four-way `unittest` below,
+//     which separates all of them on one subject.
+//   * On a subject whose plane is TILTED the axis-aligned bbox centre leaves
+//     that plane, so `mu` picks up an out-of-plane component and the box's
+//     THIRD row — the normal itself — moves with it. On an axis-aligned plane
+//     it cannot, and only the in-plane rows move. Both were measured against
+//     the reference's own recorded frames (`tests/test_obb_covariance_divisor.d`).
+//
+// Translation invariance survives all of it, because `mu` is a difference of
+// two points that translate together — a property worth testing, and tested.
 //
 // `ref` is the normalised sum of the selection's polygon normals when it has
 // polygons, and `normalize(boxCentre - aabbCentre)` when it does not.
@@ -89,6 +118,14 @@ enum double EPS_DEGENERATE = 1e-6;
 
 /// Below this the whole covariance is noise and no direction is meaningful.
 enum double EPS_COVARIANCE = 1e-24;
+
+/// The moment divisor is `1 / (MOMENT_PASSES * n)`, not `1 / n`: the
+/// reference's point counter is incremented on BOTH of its enumeration passes
+/// and never reset between them, so it divides by twice the point count. Read
+/// statically, and confirmed against its recorded frames on five stands — see
+/// the header for why this is not the no-op a scalar divisor would be, and
+/// `tests/test_obb_covariance_divisor.d` for the measurement.
+enum double MOMENT_PASSES = 2.0;
 
 /// Cyclic Jacobi sweep cap. Numerical Recipes uses 50; a symmetric 3x3
 /// converges in three or four.
@@ -375,13 +412,18 @@ ObbFrame obbFromPoints(const(Vec3)[] pts, Vec3 refDir) @safe pure nothrow
         sxy += dx * dy; sxz += dx * dz; syz += dy * dz;
         mx1 += dx; my1 += dy; mz1 += dz;
     }
-    // The reference's divisor is 1/(2n) — its point counter is incremented on
-    // both enumeration passes and never reset. That halves the whole matrix
-    // uniformly and cannot move an eigenVECTOR, so it is deliberately NOT
-    // replicated; on an off-centre set it would additionally mis-scale the
-    // mean-subtraction term by 4x relative to the second moment, which is a
-    // bug we have no reason to inherit.
-    double s = 1.0 / cast(double)pts.length;
+    // ONE `s` scales both the second moments and the first moments, and it is
+    // `1/(2n)`. Those are not two decisions: the reference computes exactly
+    // this, and applying either half alone produces a matrix neither engine
+    // has (header, and the four-way `unittest` below).
+    //
+    // It looks like a uniform halving that no eigenvector could see, and on a
+    // centrally symmetric subject it is exactly that. It is not one in
+    // general: `s` multiplies the first moments BEFORE they are squared, so
+    // the subtracted rank-1 term ends up scaled by `s^2` against the second
+    // moments' `s`, leaving `C = (1/2)[Cov + (1/2) mu mu^T]` with
+    // `mu = mean - aabbCentre`. See the header.
+    double s = 1.0 / (MOMENT_PASSES * cast(double)pts.length);
     sxx *= s; syy *= s; szz *= s; sxy *= s; sxz *= s; syz *= s;
     mx1 *= s; my1 *= s; mz1 *= s;
     double[3][3] c;
@@ -727,30 +769,122 @@ unittest { // translation invariance
            "the box CENTRE must translate with the subject: " ~ sv(b.center));
 }
 
-unittest { // the moments are about the MEAN, not about the bbox centre
-    // The shorthand for this law — "covariance about the bbox centre, NOT
-    // about the mean" — is misleading, and this is where that matters. The
-    // reference accumulates about the bbox centre and then subtracts the FIRST
-    // moments, which cancels the origin: what comes out is the covariance
-    // about the MEAN. On a centrally symmetric subject the two coincide and
-    // nothing can tell them apart, so the subject here is deliberately
-    // lopsided — a right triangle whose bbox centre (1.5, 0.5) and mean
-    // (1, 2/3) are different points.
+unittest { // THE DIVISOR AND THE SUBTRACTION ARE ONE LAW — all four readings split
+    // This subject separates every candidate implementation of the moment
+    // step, which is the only reason it is worth having: a right triangle
+    // whose bbox centre (1.5, 0.5) and mean (1, 2/3) are DIFFERENT points, so
+    // `mu = mean - aabbCentre` is nonzero and the divisor stops being a
+    // scalar. On anything centrally symmetric all four readings below collapse
+    // onto one answer and this test would assert nothing.
     //
-    //   about the mean:       C = [[2.0000, 0.33333], [0.33333, 0.22222]]
-    //                         -> principal axis at 10.278 deg
-    //   about the bbox centre: C = [[2.2500, 0.25000], [0.25000, 0.25000]]
-    //                         -> principal axis at  7.018 deg
+    // The four, as the principal in-plane axis they answer:
     //
-    // Half a degree would be arguable; three and a quarter is not.
+    //   A  s = 1/n   on both          10.278 deg   ordinary covariance about
+    //                                              the MEAN. What this port
+    //                                              computed before task 0658,
+    //                                              and the reading a reviewer
+    //                                              is most likely to "restore"
+    //                                              as the textbook one.
+    //   B  s = 1/(2n) on both          8.581 deg   THE REFERENCE. Asserted.
+    //   C  s = 1/(2n) on the second
+    //      moments, 1/n on the first  14.089 deg   the half-applied form — a
+    //                                              behaviour NEITHER engine
+    //                                              has. It overshoots past A
+    //                                              in the opposite direction,
+    //                                              because it subtracts mu*mu^T
+    //                                              at DOUBLE weight instead of
+    //                                              half.
+    //   D  no first-moment subtraction 7.018 deg   moments genuinely about the
+    //                                              bbox centre.
+    //
+    // The tolerance below is 1e-4 on the direction; the nearest wrong reading
+    // (D) is 0.0165 away and A is 0.0049 away, so the margin over the closest
+    // one is fifty-fold. Which of B's two neighbours is closer is not an
+    // accident worth relying on, hence both are named in the message.
     Vec3[] tri = [Vec3(0, 0, 0), Vec3(3, 1, 0), Vec3(0, 1, 0)];
     auto box = obbFromPoints(tri, Vec3(0, 0, 1));
-    assert(nr(box.m[0], Vec3(0.983964f, 0.178411f, 0), 1e-4f),
-           "the principal axis must be the one about the MEAN, "
-           ~ "(0.98396, 0.17841, 0); got " ~ sv(box.m[0])
-           ~ ". (0.99251, 0.12219, 0) is the answer with the first-moment "
-           ~ "subtraction dropped, i.e. moments genuinely about the bbox "
-           ~ "centre.");
+    assert(nr(box.m[0], Vec3(0.988806f, 0.149207f, 0), 1e-4f),
+           "the principal axis must be the reference's — 8.581 deg, "
+           ~ "(0.98881, 0.14921, 0); got " ~ sv(box.m[0])
+           ~ ". The three wrong readings are named by their answer: "
+           ~ "(0.98395, 0.17843, 0) = 10.278 deg is s = 1/n on both moments, "
+           ~ "the ordinary covariance about the mean; "
+           ~ "(0.96992, 0.24343, 0) = 14.089 deg is the divisor applied to the "
+           ~ "SECOND moments only, which is half a law and belongs to no "
+           ~ "engine; (0.99251, 0.12219, 0) = 7.018 deg is the first-moment "
+           ~ "subtraction dropped entirely. See this module's header.");
+}
+
+unittest { // translation invariance survives the divisor — mu is a DIFFERENCE
+    // `C = (1/2)[Cov + (1/2) mu mu^T]` is translation-invariant because both
+    // terms are: `mu = mean - aabbCentre` is a difference of two points that
+    // translate together. This is the same claim the symmetric-subject
+    // translation test above makes, but on a subject where `mu != 0`, so the
+    // added rank-1 term is actually exercised rather than being zero.
+    Vec3[] tri = [Vec3(0, 0, 0), Vec3(3, 1, 0), Vec3(0, 1, 0)];
+    Vec3[] moved;
+    foreach (p; tri) moved ~= p + Vec3(-4.5f, 12.25f, 6.75f);
+    auto a = obbFromPoints(tri,   Vec3(0, 0, 1));
+    auto b = obbFromPoints(moved, Vec3(0, 0, 1));
+    foreach (i; 0 .. 3)
+        assert(nr(a.m[i], b.m[i]),
+               format("row %d of an OFF-CENTRE subject moved under a pure "
+                      ~ "translation: %s vs %s. The rank-1 term the divisor "
+                      ~ "adds must be built from mean MINUS bbox centre; a "
+                      ~ "port that built it from the mean alone would fail "
+                      ~ "exactly here and nowhere else.",
+                      i, sv(a.m[i]), sv(b.m[i])));
+}
+
+unittest { // the divisor changes an OUTCOME, not only a number
+    // The rotation the previous test measures is continuous, and a reader can
+    // fairly ask whether the divisor ever changes anything CATEGORICAL. It
+    // does: the added `(1/2) mu mu^T` is positive semidefinite ALONG mu, so it
+    // raises the variance in that direction only, and when it is aimed at the
+    // shorter of two close in-plane axes it lifts that eigenvalue past the
+    // other and the rows swap ORDER.
+    //
+    // This subject is a rectangle mirror-symmetric in X — so both readings
+    // answer exact world axes and no rotation can be confused for the swap —
+    // with a small notch on one Z edge that drags the mean off the bbox centre
+    // along Z. Half-width 1.16 against half-depth 1.0 makes X the longer axis
+    // by variance under `1/n`; the notch's mu points along Z and the divisor's
+    // rank-1 term hands the lead to Z.
+    //
+    // The swap also drives the row order and the EXTENT order apart, and that
+    // is asserted second because it is the sharper statement: after the swap
+    // row 0 is the SHORTER axis (Z spans 2.0, X spans 2.32). No ordering
+    // derived from the extents could ever produce that, so it pins "the rows
+    // are ordered by EIGENVALUE" — the law this module's header states — in a
+    // way the symmetric rigs cannot, since on those two orders coincide.
+    //
+    // NOTE, and it is why this is a `unittest` on the BOX and not a test on
+    // the published frame: `axisFrameFromBox` elects `right` by |x| across
+    // rows 0 and 1, which is itself invariant under swapping them. So this
+    // categorical change is observable in `ObbFrame` and is INVISIBLE
+    // downstream. The divisor's effect that IS visible downstream is the
+    // rotation, measured against the reference in
+    // `tests/test_obb_covariance_divisor.d`.
+    enum float AX = 1.16f, NOTCH = 0.15f;
+    Vec3[] notched = [
+        Vec3(-AX, 0, -1.0f), Vec3(AX, 0, -1.0f), Vec3(AX, 0, 1.0f),
+        Vec3(-AX, 0, 1.0f),  Vec3(0, 0, 1.0f),   Vec3(0, 0, 1.0f - NOTCH),
+    ];
+    auto box = obbFromPoints(notched, Vec3(0, 1, 0));
+    assert(nr(box.m[0], Vec3(0, 0, 1)) && nr(box.m[1], Vec3(1, 0, 0)),
+           "row 0 must be world Z — the divisor's rank-1 term lifts the Z "
+           ~ "variance past the X one on this subject. Got " ~ sm(box)
+           ~ ". Rows (1,0,0) / (0,0,1) are the ORDER the plain 1/n covariance "
+           ~ "answers here, i.e. the divisor reverted. Nothing else can "
+           ~ "produce that swap: the subject is mirror-symmetric in X, so both "
+           ~ "readings give exact world axes and only their ORDER differs.");
+    assert(box.size[0] < box.size[1],
+           format("after the swap the LEADING row must be the SHORTER axis — "
+                  ~ "Z spans 2.0 against X's 2.32 — so the extents must come "
+                  ~ "out (2, 2.32); got (%g, %g). (2.32, 2) is the plain 1/n "
+                  ~ "order, and it is also the order any extent-driven sort "
+                  ~ "would answer. This pins that the rows are ordered by "
+                  ~ "EIGENVALUE and not by span.", box.size[0], box.size[1]));
 }
 
 unittest { // THE REFUSAL — an isotropic lattice answers world axes, not 45deg
