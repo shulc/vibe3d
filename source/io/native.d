@@ -621,7 +621,19 @@ bool writeV3d(ref const Document document, string path)
         return false;
     }
 
-    doc["primaryLayer"] = JSONValue(cast(long) document.activeIndex);
+    // TASK 0654 — `primaryLayer: -1` means "the item selection is empty".
+    //
+    // The key's domain widens; the schema version does NOT bump (v8 "is meant
+    // to stay 8" — see the version constant). This is a value inside an
+    // existing key, and the reader's own contract is to stay tolerant within a
+    // version. Every layer's `selected` is already written per-item, so the
+    // empty set is representable without -1; -1 is what distinguishes it from
+    // "selection lost" — a reader seeing all-false `selected` with
+    // `primaryLayer: 0` cannot tell an emptied document from a malformed one,
+    // and would repair the second by selecting layer 0, i.e. by silently
+    // undoing the first.
+    doc["primaryLayer"] = JSONValue(document.hasEditTarget()
+        ? cast(long) document.activeIndex : -1L);
     // `focusedItem` is a document invariant (always a member), but a Document
     // caught mid-assembly by a direct field write may not satisfy it yet, and
     // writing `layers.length` as an index would be a reject on the way back in.
@@ -948,15 +960,22 @@ bool readV3d(string path, ref Document document)
             }
         }
 
-        // --- primaryLayer: clamped into range, then CORRECTED by kind -------
+        // --- primaryLayer: -1 → EMPTY selection; else clamped + kind-corrected
+        //
+        // TASK 0654: a NEGATIVE `primaryLayer` is not a malformed index any
+        // more, it is the empty item selection. It used to be clamped to 0,
+        // which is exactly the substitution this task exists to remove — and
+        // the clamp is kept for a too-LARGE index, which really is a caller
+        // naming a layer badly.
         size_t primaryIndex = 0;
+        bool   emptySelection = false;
         if (auto pp = "primaryLayer" in doc) {
             long a = 0;
             if (pp.type == JSONType.integer)        a = pp.integer;
             else if (pp.type == JSONType.uinteger)  a = cast(long) pp.uinteger;
-            if (a < 0)                          a = 0;
+            if (a < 0)                          emptySelection = true;
             if (a >= cast(long) parsed.length)  a = cast(long) parsed.length - 1;
-            primaryIndex = cast(size_t) a;
+            if (!emptySelection) primaryIndex = cast(size_t) a;
         }
         // Decision 5. v7's reader could only ever produce mesh-kind layers, so
         // the raw write of `document.primary` that used to live below was
@@ -968,7 +987,20 @@ bool readV3d(string path, ref Document document)
         // consumer of `layers` would then be reasoning about a document the
         // type system says cannot exist. Reject that one; the caller's
         // document is untouched (nothing has been swapped yet).
-        if (!kindInfo(parsed[primaryIndex].kind).canBePrimary) {
+        // Task 0654: skipped when the file declares an EMPTY selection — there
+        // is no primary to kind-check, and the "no `canBePrimary` item at all"
+        // rejection below still has to run, because that document is
+        // unrepresentable regardless of what is selected in it.
+        if (emptySelection) {
+            bool any = false;
+            foreach (l; parsed) if (kindInfo(l.kind).canBePrimary) { any = true; break; }
+            if (!any) {
+                v3dReject("no item in this document can be the mesh edit "
+                    ~ "target — a document must contain at least one item that "
+                    ~ "`canBePrimary`, and this one contains none");
+                return false;
+            }
+        } else if (!kindInfo(parsed[primaryIndex].kind).canBePrimary) {
             size_t rehome = parsed.length;
             foreach (i, l; parsed)
                 if (kindInfo(l.kind).canBePrimary) { rehome = i; break; }
@@ -1010,6 +1042,23 @@ bool readV3d(string path, ref Document document)
         // the raw `document.primary = parsed[primaryIndex]` that used to sit
         // here (and that `document.d` flagged as the last remaining L3
         // violation) is gone with it.
+        // TASK 0654 — `primaryLayer: -1` restores the EMPTY selection, and it
+        // does so by running the mutator, not by leaving the fields at their
+        // parsed defaults: `document` is the app's LIVE document (`FileLoad`
+        // hands it by `ref`), so `primary`/`focusedItem` still point at the
+        // PREVIOUS document's layers and would be stale, not empty.
+        //
+        // The per-layer `selected` bits are deliberately NOT re-applied here:
+        // by the biconditional, `primaryLayer: -1` and a selected layer cannot
+        // both be true, and the file's own `selected` is the less specific of
+        // the two (a writer that emitted -1 emitted all-false with it).
+        if (emptySelection) {
+            document.clearItemSelection();
+            v3dInfo(format("document ready: %d item(s), no item selected",
+                            document.layers.length));
+            return true;
+        }
+
         document.setActive(primaryIndex);
         // Force the primary visible if the file marked it hidden (an
         // inconsistent file can't leave the edit target invisible). Decision 7:
@@ -1074,6 +1123,16 @@ bool readV3d(string path, ref Mesh mesh)
     Document tmp;
     if (!readV3d(path, tmp))
         return false;
+    // Task 0654: a file saved with an empty item selection has no ACTIVE layer
+    // for this overload to flatten. Refuse — the alternative is to hand back
+    // layer 0 under the name "the active layer", which is a different mesh than
+    // the one asked for and indistinguishable from success at the call site.
+    // `mesh` is left untouched, matching this overload's stated contract.
+    if (!tmp.hasEditTarget()) {
+        v3dWarn(format("%s was saved with no item selected, so it has no "
+            ~ "active layer to read a single mesh from", path));
+        return false;
+    }
     mesh = tmp.activeMeshRef();
     return true;
 }

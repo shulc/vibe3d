@@ -15,6 +15,28 @@ import mesh_edit_delta : MeshEditScope;
 // unreachable in a normal build/run.
 __gshared bool g_testMode = false;
 
+// Task 0654 — "does the document have a mesh edit target right now?", as a
+// resolver rather than a `Document` import.
+//
+// `command.d` deliberately does not know about `document.d` (this module is
+// imported by every command, including ones a headless test constructs over a
+// bare `Mesh` with no Document in sight). app.d installs this at init, exactly
+// as it installs `display_sync.activeMeshResolver` and
+// `document.primaryModelSpaceResolver`.
+//
+// NULL means "assume there is a target" — the pre-0654 behaviour, which is the
+// right default for the direct-construction test path (the caller passed the
+// mesh it wants written, and there is no selection to consult).
+__gshared bool delegate() g_editTargetResolver;
+
+// The one-clause reason a command names when it refuses for want of an edit
+// target. Kept BYTE-IDENTICAL to `document.kNoEditTargetReason` by the
+// `static assert` in that module's unittest — `command.d` cannot import
+// `document.d` (see `g_editTargetResolver`), so the string is duplicated and
+// the equality is asserted rather than assumed.
+enum string kNoEditTargetReason =
+    "no item is selected: there is no mesh edit target";
+
 // ---------------------------------------------------------------------------
 // Command — base class for every user-visible action.
 //
@@ -109,6 +131,29 @@ class Command {
         import operator        : Operator, VectorStack;
         import toolpipe.packets : SubjectPacket;
         if (auto op = cast(Operator)this) {
+            // TASK 0654 — THE mesh-write refusal, for every Operator command at
+            // once. An empty item selection means there is no mesh edit target,
+            // and an operator kernel has nothing to write to. Refusing HERE
+            // rather than in ~200 kernels is what makes the rule impossible to
+            // forget in the next one: every mesh-mutating command in the build
+            // reaches its kernel through this branch.
+            //
+            // Gated on the RESOLVER, not on `mesh is null`: the command
+            // factories bind `&app.mesh()`, which is a pointer to the empty
+            // read-only stand-in (`document.noEditTargetMesh`) rather than null,
+            // so the pointer alone cannot tell "no target" from "empty mesh" —
+            // and an empty mesh is a perfectly legal edit target that must keep
+            // working (`layer.add` then `mesh.*` on the fresh layer).
+            //
+            // Uninstalled resolver (headless unit tests that construct a
+            // command directly over a local `Mesh`) means "there is a target":
+            // those callers own the mesh they passed and never went through a
+            // Document at all.
+            if (g_editTargetResolver !is null && !g_editTargetResolver()) {
+                baseRefusal_ = kNoEditTargetReason;
+                return false;
+            }
+            baseRefusal_ = "";
             VectorStack vts;
             SubjectPacket subj;
             subj.mesh     = mesh;
@@ -169,7 +214,15 @@ class Command {
     // owes the reason a reset at the top of apply(): the value must describe
     // the LATEST call, since a command object can be applied more than once
     // (redo, re-dispatch).
-    string refusalReason() const { return ""; }
+    // Task 0654: the BASE apply() has a refusal of its own now (no edit
+    // target), so the default is no longer the empty string but whatever the
+    // base recorded on the latest call. Commands that override apply() never
+    // reach the base branch, so this stays "" for them unless they also
+    // override this method; commands that override BOTH keep their own reason,
+    // which is correct — they did not go through the base refusal either.
+    protected string baseRefusal_;
+
+    string refusalReason() const { return baseRefusal_; }
 
     // Classify the command. BASE default is CmdFlags.Model — most
     // commands alter scene state and are therefore undoable. Read-only /

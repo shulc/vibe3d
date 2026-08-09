@@ -117,13 +117,37 @@ unittest { // mode:remove of the primary moves primary to a remaining member.
         "promoted primary is selected");
 }
 
-unittest { // mode:remove of the LAST selected is a no-op (>=1 invariant).
+unittest { // mode:remove of the LAST selected EMPTIES the selection (task 0654).
+    //
+    // INTENT CHANGE, not a repaired test. This case asserted the opposite —
+    // "cannot deselect the last selected layer" — because the ≥1-selected
+    // invariant made the empty set unrepresentable. Task 0653 measured the
+    // reference emptying on exactly this action and the owner decided we follow
+    // it, so 0654 retired the invariant; the old assertion pinned behaviour
+    // that was deliberately removed.
     threeLayers();                           // only A selected, A primary
-    cmd("layer.select index:0 mode:remove"); // try to remove the sole selected
+    cmd("layer.select index:0 mode:remove"); // remove the sole selected
     auto s = selState();
-    assert(s.selectedCount == 1, "cannot deselect the last selected layer");
-    assert(s.primaryIndex == 0, "primary unchanged on last-selected remove");
-    assert(isSelected(0));
+    assert(s.selectedCount == 0,
+        "removing the last selected layer empties the item selection (0654)");
+    assert(s.primaryIndex == -1,
+        "…and drops the primary with it — a layer still reporting primary here "
+        ~ "would be an edit target latched behind an empty selection");
+    assert(!isSelected(0));
+}
+
+unittest { // mode:clear empties the whole set in one step (task 0654).
+    threeLayers();
+    cmd("layer.select index:1 mode:add");    // A,B selected; B primary
+    assert(selState().selectedCount == 2, "precondition: two selected");
+    cmd("layer.select mode:clear");
+    auto s = selState();
+    assert(s.selectedCount == 0, "clear empties the set");
+    assert(s.primaryIndex == -1, "…and leaves no primary");
+    // Not a trap: selecting again installs a primary.
+    cmd("layer.select index:2 mode:set");
+    assert(selState().selectedCount == 1 && selState().primaryIndex == 2,
+        "a select out of the empty state installs a primary again");
 }
 
 unittest { // mode:toggle flips selection on/off.

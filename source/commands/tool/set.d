@@ -49,6 +49,25 @@ class ToolSetCommand : Command {
         }
         if (toolId_.length == 0)
             throw new Exception("tool.set: no tool id specified");
+        // TASK 0654 — a tool cannot be armed with an empty item selection.
+        //
+        // Every tool factory binds `Mesh*` off the app's edit target at ARM
+        // time, and with nothing selected that resolves to the read-only empty
+        // stand-in. A deform tool armed over it would drag nothing (harmless
+        // but mute); a primitive-CREATE tool would build a whole cube into it
+        // and the user would see nothing appear, with no reason given. Both are
+        // the "silently does the wrong thing" failure, so arming refuses and
+        // says why. Turning a tool OFF is unaffected (the `turnOff_` arm above
+        // returns before this).
+        //
+        // The item-mode transform tools are covered by the same refusal and
+        // lose nothing by it: the item moving set is `selected` items, which is
+        // empty here too, so an armed gizmo would have nothing to move either.
+        if (g_editTargetResolver !is null && !g_editTargetResolver()) {
+            baseRefusal_ = kNoEditTargetReason;
+            return false;
+        }
+        baseRefusal_ = "";
         toolHost.activate(toolId_);
         // Inject any named params into the freshly-activated tool.
         if (namedArgs_.type == JSONType.object && namedArgs_.object.length > 0) {

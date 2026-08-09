@@ -342,7 +342,17 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         // /api/model?layer=N — N<0 (default) → active layer; otherwise clamp
         // into range. Same detailed JSON shape, just a different source layer.
         httpServer.setLayerModelProvider((int layer) {
-            import document : tokenOf;
+            import document : tokenOf, kNoEditTargetReason;
+            // Task 0654: `layer=-1` (the default) means "the active layer",
+            // and with an empty item selection there is none. REFUSE by name.
+            // The clamp below is for an explicit out-of-range index and must
+            // not be allowed to answer this one: clamping the absent-sentinel
+            // would return layer 0's geometry under the name "the active
+            // layer", which is indistinguishable from success to a caller —
+            // and is precisely the silent substitution this state exists to
+            // make impossible.
+            if (layer < 0 && !document.hasEditTarget())
+                return `{"error":"` ~ kNoEditTargetReason ~ `"}`;
             size_t idx = layer < 0 ? document.activeIndex : cast(size_t)layer;
             if (idx >= document.layers.length) idx = document.layers.length - 1;
             auto lyr = document.layers[idx];
@@ -395,8 +405,15 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             // between. It is the one observable that separates "the ray found
             // the wrong item" from "the ray was right and the paint is wrong",
             // which no pixel can answer on its own.
+            // Task 0654: `active` is -1 when the item selection is empty. Not
+            // `layers.length` (the in-process absent-sentinel) — over the wire
+            // the field sits beside `hoveredItem`, which already spells
+            // "nothing" as -1, and a reader that treats an index it does not
+            // recognise as valid is likelier to index with `layers.length`
+            // than with -1.
             a.put(format(`{"active":%d,"hoveredItem":%d,"layers":[`,
-                         document.activeIndex, g_hoveredItem));
+                         document.hasEditTarget() ? cast(long) document.activeIndex : -1L,
+                         g_hoveredItem));
             foreach (i, l; document.layers) {
                 if (i > 0) a.put(",");
                 // `background` is now DERIVED (Stage 2b): visible && !selected —
@@ -518,7 +535,12 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                     JSONValue(tokenOf(l.kind)).toString(),
                     l.visible ? "true" : "false",
                     Document.background(l) ? "true" : "false",
-                    i == document.activeIndex ? "true" : "false",
+                    // Task 0654: false for EVERY row when nothing is selected
+                    // — `activeIndex` is then `layers.length`, which matches no
+                    // `i`, so this already reads correctly; spelled through
+                    // `hasEditTarget` so it stays correct if the sentinel moves.
+                    (document.hasEditTarget() && i == document.activeIndex)
+                        ? "true" : "false",
                     l.selected ? "true" : "false",
                     document.isPrimary(l) ? "true" : "false",
                     document.isFocused(l) ? "true" : "false",

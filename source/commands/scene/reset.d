@@ -33,6 +33,9 @@ class SceneReset : Command {
     private Layer[]          prevLayers;
     private size_t           prevActiveIndex;
     private bool             docCollapsed;   // true when we replaced the layer list
+    // Task 0654: the item selection was EMPTY at fire time and apply() re-homed
+    // a primary so it had a mesh to write. revert() owes the empty state back.
+    private bool             prevSelectionEmpty;
     // The kept active layer's original metadata (apply overwrites it to the
     // default "Layer 1"/visible; revert restores these). Foreground/background
     // is derived from selection (Stage 2b) — `setActive` re-asserts the kept
@@ -102,6 +105,32 @@ class SceneReset : Command {
     }
 
     override bool apply() {
+        // TASK 0654 — a reset from an EMPTY item selection.
+        //
+        // This command (and `file.new`, which is the same class) is the "start
+        // over" verb, so refusing it for want of an edit target would leave a
+        // user who clicked empty space with no way to clear the scene. Its
+        // defined post-state is one selected layer, so re-establishing a
+        // primary is not a substitution — it is the operation.
+        //
+        // It must happen BEFORE `MeshSnapshot.capture(*mesh)`: the fire-time
+        // `mesh` pointer aliases `document.noEditTargetMesh` while the
+        // selection is empty, and both the snapshot and the `*mesh = …` write
+        // below would otherwise land in the read-only stand-in — the one write
+        // this task promises never arrives there.
+        //
+        // `rehomePrimary(0)` is the document's own promotion algorithm for
+        // "find a layer that can be the edit target", the same one a structural
+        // mutation runs; null from it means a document with no `canBePrimary`
+        // item at all, which is unrepresentable, so that one really does refuse.
+        prevSelectionEmpty = document !is null && document.layers.length > 0
+                          && !document.hasEditTarget();
+        if (prevSelectionEmpty) {
+            auto rehomed = document.rehomePrimary(0);
+            if (rehomed is null) return false;
+            document.setPrimary(rehomed);
+            mesh = document.activeMesh();
+        }
         snap         = MeshSnapshot.capture(*mesh);
         prevEditMode = *editModePtr;
         captured     = true;
@@ -249,6 +278,11 @@ class SceneReset : Command {
             // Restore primary/selected/activeIndex in lockstep (setActive
             // clamps the index into range).
             document.setActive(prevActiveIndex);
+            // Task 0654: apply() re-homed a primary onto an empty selection so
+            // it had somewhere to write. Undo owes that back — otherwise
+            // Ctrl+Z after a reset leaves an item selected that the user never
+            // picked. LAST, so it overrides the `setActive` above.
+            if (prevSelectionEmpty) document.clearItemSelection();
         }
         // Camera/viewport state isn't snapshotted — undoing a reset doesn't
         // restore the camera, only the mesh. The viewport reset is delegated

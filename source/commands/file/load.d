@@ -37,6 +37,11 @@ class FileLoad : Command {
     // the prior document state captured before the swap.
     private Layer[]          prevLayers;
     private size_t           prevActiveIndex;
+    // Task 0654: the item selection was EMPTY at fire time. `prevActiveIndex`
+    // cannot carry that — it is the absent-sentinel, which `setActive` CLAMPS
+    // into a real layer — so the fact is stored beside it and revert() reads
+    // this one first.
+    private bool             prevSelectionEmpty;
     private bool             docSnapped;     // true when prevLayers was captured
     private bool             multiLayer;     // true for a layered (multi-part) interchange import
     private FileLoadMode     mode = FileLoadMode.open;
@@ -142,6 +147,7 @@ class FileLoad : Command {
             // so capturing here is safe even when the load rejects).
             prevLayers      = document.layers.dup;   // shallow: Layer refs preserved
             prevActiveIndex = document.activeIndex;
+            prevSelectionEmpty = !document.hasEditTarget();   // task 0654
             docSnapped      = true;
             ok = readV3d(path, *document);
             if (!ok) {
@@ -179,6 +185,7 @@ class FileLoad : Command {
                 multiLayer      = true;
                 prevLayers      = document.layers.dup;   // shallow: Layer refs kept
                 prevActiveIndex = document.activeIndex;
+                prevSelectionEmpty = !document.hasEditTarget();   // task 0654
                 docSnapped      = true;
                 *document       = toLayers(sc);
                 // toLayers sets primary/selected/activeIndex in lockstep;
@@ -225,6 +232,16 @@ class FileLoad : Command {
         // only the ACTIVE mesh gets noteChange below.
         Mesh* active = docSnapped ? document.activeMesh() : mesh;
 
+        // Task 0654: a `.v3d` saved with an empty item selection loads with no
+        // primary, so there is no ACTIVE mesh to sync or to note a change on.
+        // The load still SUCCEEDED — the document is exactly what the file
+        // says — so this returns true rather than refusing; the per-layer
+        // change publication below is what tells the caches to rebuild.
+        if (active is null) {
+            if (docSnapped) noteLayerChange(LayerChangeAll);
+            return true;
+        }
+
         // The reader rebuilt the mesh on a fresh struct (Mesh.init) and applied
         // subpatch flags; grow selection arrays to match but don't clear
         // isSubpatch.
@@ -253,8 +270,12 @@ class FileLoad : Command {
             // Restore primary/selected/activeIndex in lockstep BEFORE reading
             // activeMesh() (setActive clamps the index into range).
             document.setActive(prevActiveIndex);
+            // Task 0654: undo back INTO an empty selection. `setActive` above
+            // would have clamped the absent-sentinel into layer $-1 and
+            // selected it, so the empty state is restored explicitly and last.
+            if (prevSelectionEmpty) document.clearItemSelection();
             auto active = document.activeMesh();
-            active.noteChange(MeshChangeAll);
+            if (active !is null) active.noteChange(MeshChangeAll);
             // Undo restores the prior layer list — another whole-document change.
             noteLayerChange(LayerChangeAll);
             return true;

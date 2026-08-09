@@ -66,6 +66,14 @@
 //     bare-LMB branch does)
 //       -> U3 "a click on empty space must not touch the geometry selection
 //          either — [1] became []".
+//   * a miss does NOTHING (the pre-0654 branch)
+//       -> U3 "a click on empty space EMPTIES the item selection — selected
+//          [2]".
+//   * a miss empties the SET but leaves `primary` latched (the forbidden
+//     third state)
+//       -> U3 "…and leaves NO primary — /api/layers reports active 2".
+//   * the miss branch ignores the modifiers
+//       -> U3 "a CTRL-click on empty space removes nothing — selected []".
 //   * `mode` fixed to "set" (the modifiers ignored)
 //       -> U2 "shift-click ADDS to the item set — got [0], want [0, 1]".
 //   * the plane tier skipped (planes not pickable — the state 0647 left)
@@ -452,22 +460,37 @@ unittest {
         format("removing the primary promotes a remaining member — got %d",
                primaryIndex()));
 
-    // …and the invariant: the LAST selected item cannot be removed. The
-    // document guarantees at least one selected item, so this ctrl-click is a
-    // refused no-op rather than an empty selection.
+    // …and the LAST selected item CAN be removed (task 0654).
+    //
+    // INTENT CHANGE. This step used to assert the opposite — "removing the only
+    // selected item is refused (the document keeps at least one selected)" —
+    // because the ≥1-selected invariant made the empty set unrepresentable.
+    // 0653 measured the reference doing exactly this, the owner decided we
+    // follow it, and 0654 retired the invariant. The old assertion pinned a
+    // constraint that no longer exists.
     clickAt(c, boxes[1].cx, boxes[1].cy, kModCtrl);
-    assert(selectedItems() == [1],
-        format("removing the only selected item is refused (the document keeps "
-               ~ "at least one selected) — got %s", selectedItems()));
+    assert(selectedItems() == [],
+        format("ctrl-clicking the only selected item EMPTIES the item "
+               ~ "selection — got %s. [1] is the retired refusal.",
+               selectedItems()));
+    assert(primaryIndex() == -1,
+        format("…and there is then no primary — /api/layers reports active %d. "
+               ~ "0 is the substitution this must never make: a real layer "
+               ~ "silently promoted into an emptied selection.", primaryIndex()));
 }
 
 // ---------------------------------------------------------------------------
-// U3 — a click on empty space changes NOTHING.
+// U3 — a click on empty space EMPTIES the item selection (task 0654), and
+// still does not touch the geometry selection.
 //
-// Two different nothings, and they are different claims: the item selection
-// does not move (there is no representable "no item selected" state to fall
-// into), and the GEOMETRY selection is not cleared — which is exactly what the
-// bare-LMB branch this path pre-empts would have done.
+// INTENT CHANGE. This case used to assert that a miss changed nothing, and
+// said why: "there is no representable 'no item selected' state to fall into".
+// That premise is what 0654 removed — 0653 measured the reference emptying on a
+// miss and the owner decided we follow it — so the do-nothing claim is now
+// pinning the absence of the feature. The SECOND claim is unchanged and still
+// load-bearing: emptying the ITEM selection must not drag the GEOMETRY
+// selection with it, which is exactly what falling through to the bare-LMB
+// branch would do.
 // ---------------------------------------------------------------------------
 unittest {
     buildRig();
@@ -496,15 +519,42 @@ unittest {
         format("the gap between two items is empty space — the app reports "
                ~ "item %d there, so this flow is not clicking on nothing",
                hoveredItem()));
-    assert(primaryIndex() == 2 && selectedItems() == [2],
-        format("a click on empty space must leave the item selection alone — "
-               ~ "primary %d, selected %s", primaryIndex(), selectedItems()));
+    assert(selectedItems() == [],
+        format("a click on empty space EMPTIES the item selection — selected "
+               ~ "%s. [2] is the retired do-nothing branch.", selectedItems()));
+    assert(primaryIndex() == -1,
+        format("…and leaves NO primary — /api/layers reports active %d. 2 is "
+               ~ "'the primary stayed latched while the set emptied' (the "
+               ~ "forbidden third state); 0 is 'layer 0 was substituted'.",
+               primaryIndex()));
+    assert(selType() == "item", "…and the type stays Item");
+
+    // The GEOMETRY selection survived the emptying. It has to be read back
+    // through item 2: `/api/selection`'s `selectedFaces` reports the FOREGROUND
+    // mesh's selection, and with nothing selected there is no foreground mesh —
+    // so an empty reading here would be ambiguous between "the clear ran" and
+    // "there is nothing to report". Re-selecting the item first makes the
+    // reading about the stored selection and nothing else.
+    cmd(`{"id":"layer.select","index":2,"mode":"set"}`);
+    settle();
     assert(selectedFaces() == faces,
         format("a click on empty space must not touch the geometry selection "
                ~ "either — %s became %s. That clear is what the bare-LMB "
                ~ "branch does in a geometry mode, and it must not happen under "
                ~ "Items.", faces, selectedFaces()));
-    assert(selType() == "item", "…and the type stays Item");
+
+    // A MODIFIED miss does not empty. Ctrl/shift are set-editing chords, so a
+    // mis-aimed ctrl-click must not destroy the set the user is building.
+    // (Item 2 is selected again, from the read-back just above.)
+    clickAt(c, gapX, boxes[1].cy, kModCtrl);
+    assert(selectedItems() == [2],
+        format("a CTRL-click on empty space removes nothing — selected %s. "
+               ~ "[] means the miss branch ignored the modifiers.",
+               selectedItems()));
+    clickAt(c, gapX, boxes[1].cy, kModShift);
+    assert(selectedItems() == [2],
+        format("a SHIFT-click on empty space adds nothing — selected %s",
+               selectedItems()));
 }
 
 // ---------------------------------------------------------------------------
@@ -724,11 +774,23 @@ unittest {
     assert(hoveredItem() == -1,
         format("the point 1.4 half-extents out is off the rectangle — the app "
                ~ "reports item %d under it", hoveredItem()));
-    assert(!itemSelected(2) && focusedItem() == 0,
-        format("a click outside the backdrop's rectangle selects nothing — "
-               ~ "backdrop selected %s, focused %d. The plane's EXTENT is part "
-               ~ "of the hit test, not just its infinite surface.",
-               itemSelected(2), focusedItem()));
+    // The claim under test is the EXTENT: the backdrop must not be selected by
+    // a click that is on its infinite surface but off its rectangle.
+    assert(!itemSelected(2),
+        format("a click outside the backdrop's rectangle must not select it — "
+               ~ "backdrop selected %s. The plane's EXTENT is part of the hit "
+               ~ "test, not just its infinite surface.", itemSelected(2)));
+    // …and, task 0654, the miss EMPTIES the selection rather than leaving the
+    // previous focus standing. This half used to read `focusedItem() == 0` —
+    // an intent change, not a repair: a viewport miss in Items mode now clears
+    // the item selection (0653 measured the reference doing it; the ≥1-selected
+    // invariant that made "nothing selected" unrepresentable is gone). The
+    // extent claim above is unaffected either way, which is why it is now its
+    // own assertion.
+    assert(focusedItem() == -1,
+        format("…and a miss empties the item selection — focused %d. 0 is the "
+               ~ "retired do-nothing branch leaving the prior focus standing.",
+               focusedItem()));
 }
 
 // (c) a mesh wins over a NEARER backdrop, because geometry is painted over it.

@@ -1191,21 +1191,92 @@ final class Layer {
 /// every other caller. Its own comment records the removal at the site. So
 /// the mutator list above is the WHOLE enforcement surface, with no remaining
 /// exception; there is no site left that can violate the invariants below.
-///   * `layers.length >= 1` and `activeIndex < layers.length`.
-///   * `primary !is null`; `primary` ∈ `layers`; `primary is layers[activeIndex]`;
+///   * `layers.length >= 1`.
+///   * `primary` ∈ `layers` when non-null; `primary is layers[activeIndex]`;
 ///     `primary` always `canBePrimary` (today: always mesh-kind) — at least
 ///     one mesh-kind layer always exists (task 0615, §Q2).
-///   * `primary.selected` is always true; at least one layer is always
-///     selected (a SET-of-one by default; multi-foreground is representable).
-///   * `focusedItem !is null`; `focusedItem` ∈ `layers`; `focusedItem.selected`.
+///   * `focusedItem` ∈ `layers` when non-null; `focusedItem.selected`.
 ///     `focusedItem` may be ANY kind — it is the item-selection FOCUS (item
 ///     transform / property panel / item ops), distinct from `primary` (the
 ///     MESH EDIT TARGET) only once a non-mesh item is selected (task 0615).
+///
+/// TASK 0654 RETIRED THE "AT LEAST ONE SELECTED" INVARIANT. It used to read
+/// "`primary.selected` is always true; at least one layer is always selected"
+/// and "`primary !is null`" / "`focusedItem !is null`" — three clauses that
+/// were never asserted, only MAINTAINED by the mutators below. An empty item
+/// selection is legal now (measured, task 0653: a viewport miss in item mode
+/// empties the selection, and removing the last selected item empties it too),
+/// so what remains is a BICONDITIONAL, and it is the whole model:
+///
+///     primary is null  ⟺  focusedItem is null  ⟺  no layer is selected
+///
+/// There is deliberately NO third state where the selection is empty but some
+/// layer is still latched as the edit target. `foreground(l) == visible &&
+/// selected` is the sole derivation of foreground/background, so a primary
+/// that is not selected would render as BACKGROUND — a dimmed, read-only,
+/// non-snappable layer that the toolpipe nevertheless writes to. That is not a
+/// representable state for the draw path, and it is a hidden selection for the
+/// user: the gizmo would act on an item nothing on screen marks. Empty means
+/// empty; every consumer that needs an edit target must ask for one and take
+/// the refusal (`hasEditTarget`, `activeMesh() is null`, `activeMeshRef()`
+/// throwing) rather than be handed a substitute.
+
+/// Thrown by `Document.activeMeshRef()` when the item selection is empty
+/// (task 0654). Its own type, not a bare `Exception`, so a caller that WANTS to
+/// tolerate the empty state can catch exactly this and nothing else.
+class NoEditTargetException : Exception {
+    this(string msg, string file = __FILE__, size_t line = __LINE__) {
+        super(msg, file, line);
+    }
+}
+
+/// The one-clause reason every consumer names when it refuses for want of an
+/// edit target (task 0654). Declared ONCE so the command layer, the tool
+/// layer and the HTTP surface cannot drift into three different wordings that
+/// a test would then have to match three ways.
+enum string kNoEditTargetReason =
+    "no item is selected: there is no mesh edit target";
+
+// `command.d` declares the same string (it cannot import this module — see
+// `command.g_editTargetResolver`). Two literals that must stay identical are a
+// latent divergence unless something checks, so this is the check: a test that
+// asserts the HTTP refusal against `document.kNoEditTargetReason` would
+// otherwise pass while a command answered something else entirely.
+static assert(kNoEditTargetReason == imported!"command".kNoEditTargetReason,
+    "document.kNoEditTargetReason and command.kNoEditTargetReason must be "
+    ~ "byte-identical — the refusal is one sentence, not two");
+
+private __gshared Mesh g_noEditTargetMesh;
+
+/// The READ-ONLY empty stand-in the per-frame READ paths see when there is no
+/// edit target (task 0654): the viewport draw, the screen-space caches, the
+/// picking projections — everything that must produce a frame rather than an
+/// exception. It has no vertices, edges or faces, so every loop over it does
+/// nothing, which is the truth of the state: with nothing selected there is no
+/// foreground geometry.
+///
+/// IT IS NOT A SUBSTITUTE EDIT TARGET, and the difference is the whole point of
+/// this task. Layer 0 would be a substitute — a real layer, silently edited.
+/// This is a detached mesh that belongs to no layer and no document, so a write
+/// that reached it could corrupt nothing; and no write is supposed to reach it,
+/// because every WRITE funnel refuses first:
+///
+///   * `Command.apply()`'s Operator branch — every mesh-mutating command —
+///     refuses with `kNoEditTargetReason` before its kernel runs.
+///   * tool ACTIVATION refuses, so no tool ever binds a `Mesh*` off this.
+///
+/// `tests/test_empty_item_selection.d` asserts it stays empty after a refused
+/// command, which is how "no write reaches it" stays true rather than merely
+/// intended.
+ref Mesh noEditTargetMesh() { return g_noEditTargetMesh; }
+
 struct Document {
     Layer[] layers;            ///< flat list; always length >= 1
     Layer   primary;           ///< the MESH EDIT TARGET — component tools and
                                ///< commands bind `Mesh*` off this; always
                                ///< `canBePrimary` (today: always mesh-kind).
+                               ///< NULL exactly when the item selection is
+                               ///< empty (task 0654).
     // Task 0615 Stage 2: splits the role `primary` used to conflate. `primary`
     // is the mesh edit target; `focusedItem` is the item-selection focus (item
     // transform, property panel, item ops) and may be ANY kind. On an
@@ -1219,25 +1290,68 @@ struct Document {
     /// field and no assignment LHS; every former writer routes through
     /// `setActive` / `selectItem` / `setPrimary` (which move `primary`). Because
     /// it follows the primary by IDENTITY, reorder/delete renumbering can never
-    /// drift it. Returns 0 when `primary` is not found (degenerate; should never
-    /// happen given the invariants).
+    /// drift it.
     ///
-    /// NIT (review round 2): cross-reference — `indexOf` is the same
-    /// identity scan over `layers`, but its absent-sentinel is
-    /// `layers.length`, not `0`. Do not treat the two as interchangeable.
+    /// ABSENT-SENTINEL IS `layers.length`, NOT `0` (task 0654 CHANGED this).
+    /// It used to answer `0` when `primary` was not found, which was defensible
+    /// only while "not found" was unreachable. Now that an empty selection is
+    /// legal, `0` would be the single most damaging answer in the file: it
+    /// names a REAL layer, so `resolveIndex(-1)` would silently edit
+    /// `layers[0]`, `/api/layers` would mark it active and `.v3d` would save it
+    /// as the primary — the exact "silently substitutes layer 0" failure this
+    /// task exists to exclude. `layers.length` is out of range for every
+    /// consumer, so a consumer that forgot to ask `hasEditTarget()` gets a
+    /// bounds error rather than someone else's geometry.
+    ///
+    /// This makes the sentinel agree with `indexOf`'s, which the NIT below used
+    /// to warn were different. They are the same scan and now the same sentinel.
     size_t activeIndex() const {
         foreach (i, l; layers) if (l is primary) return i;
-        return 0;
+        return layers.length;
     }
 
-    /// The active (foreground) layer object — i.e. the primary.
+    /// Is there a mesh edit target at all? (task 0654) The question every
+    /// consumer of `activeMesh` / `activeMeshRef` / `activeIndex` has to ask
+    /// first, and the non-throwing way to ask it. `false` exactly when the item
+    /// selection is empty.
+    bool hasEditTarget() const { return primary !is null; }
+
+    /// How many items are selected. `0` is legal (task 0654).
+    size_t selectedItemCount() const {
+        size_t n = 0;
+        foreach (l; layers) if (l !is null && l.selected) ++n;
+        return n;
+    }
+
+    /// The active (foreground) layer object — i.e. the primary. NULL when the
+    /// item selection is empty (task 0654).
     Layer     active()        { return primary; }
-    /// Pointer to the primary layer's mesh (interior pointer, GC-traced).
-    /// `primary` is always `hasMesh` (the document invariant, §Q2) — the
-    /// `debug` assert in `meshRef()` is the dev-only backstop for that.
-    Mesh*     activeMesh()    { return &primary.meshRef(); }
-    /// Reference to the primary layer's mesh.
-    ref Mesh  activeMeshRef() { return primary.meshRef(); }
+
+    /// Pointer to the primary layer's mesh (interior pointer, GC-traced), or
+    /// **null when there is no edit target** (task 0654).
+    ///
+    /// This is the BINDING accessor: commands and tools capture the `Mesh*` at
+    /// fire/arm time, and null is the one value a pointer can carry that no
+    /// caller can mistake for a layer. A caller that binds it unchecked and
+    /// writes through it faults immediately instead of editing a layer the user
+    /// did not select.
+    Mesh*     activeMesh()    { return primary is null ? null : &primary.meshRef(); }
+
+    /// Reference to the primary layer's mesh. **Throws `NoEditTargetException`
+    /// when the item selection is empty** (task 0654).
+    ///
+    /// A `ref` return has no null, so "there is no answer" cannot be encoded in
+    /// the value — the refusal has to be the control flow. Throwing is the
+    /// DEFINED refusal the empty state demands: loud, named, and impossible to
+    /// mistake for a layer. Callers on a path that must not throw (the frame
+    /// draw, the per-frame caches) ask `hasEditTarget()` first and use
+    /// `noEditTargetMesh()`; callers that genuinely require a target let it
+    /// propagate.
+    ref Mesh  activeMeshRef() {
+        if (primary is null) throw new NoEditTargetException(
+            "no item is selected: there is no mesh edit target");
+        return primary.meshRef();
+    }
 
     /// True iff `l` is the primary (the single edit target).
     bool isPrimary(const(Layer) l) const { return l is primary; }
@@ -1541,11 +1655,23 @@ struct Document {
                 if (!l.selected) break;       // not selected → nothing to do
                 if (l is primary) {
                     // Removing the primary: promote the most-recent remaining
-                    // selected+visible+canBePrimary layer. If none exists,
-                    // this would leave no valid primary → refuse (no-op).
+                    // selected+visible+canBePrimary layer.
+                    //
+                    // TASK 0654 — when there is none, this used to REFUSE (a
+                    // silent no-op), which is what made ctrl-clicking the last
+                    // selected item do nothing. Measured (0653): the reference
+                    // empties the selection. So the no-candidate arm now
+                    // deselects `l` and drops the primary AND the focus to
+                    // null together — the biconditional in this struct's doc
+                    // comment. `l.selected` is cleared FIRST so the state is
+                    // never "deselected but still primary" even transiently.
                     auto promote = anotherPrimaryCandidate(l);
-                    if (promote is null) break;   // last-selected remove = no-op
                     l.selected = false;
+                    if (promote is null) {
+                        primary     = null;
+                        focusedItem = null;
+                        break;
+                    }
                     primary = promote;
                     if (focusedItem is l) focusedItem = promote;
                 } else {
@@ -1564,7 +1690,15 @@ struct Document {
                         // `setPrimary` do) — it only refuses to hand a stale
                         // value to `focusedItem`, falling back read-only to
                         // `rehomePrimary`.
-                        Layer fallback = isMember(primary) ? primary : rehomePrimary(0);
+                        //
+                        // TASK 0654 — the `rehomePrimary` repair is for a
+                        // STALE primary (non-null, no longer a member). A
+                        // primary that is legitimately NULL is the empty
+                        // selection, and rehoming there would SELECT a layer
+                        // the user never picked, out of a remove. The two
+                        // cases are told apart by nullness, not by membership.
+                        Layer fallback = isMember(primary) ? primary
+                                       : (primary !is null ? rehomePrimary(0) : null);
                         if (fallback !is null) fallback.selected = true;
                         focusedItem = fallback;
                     }
@@ -1577,6 +1711,24 @@ struct Document {
                 return;
         }
         // primary remains the mesh edit target; activeIndex derives from it.
+    }
+
+    /// Empty the item selection (task 0654) — the mutator behind
+    /// `layer.select mode:clear` and the viewport miss in Items mode.
+    ///
+    /// Deselects EVERY layer and drops `primary` + `focusedItem` to null
+    /// together, which is the only shape the biconditional allows. Idempotent:
+    /// clearing an already-empty selection is a no-op, not an error.
+    ///
+    /// Deliberately NOT expressed as "Remove every selected layer in turn":
+    /// that would run the promotion arm once per layer, moving the primary
+    /// through a chain of intermediate layers before landing on null, and each
+    /// hop fires the caller's switch hook (GPU re-upload, tool drop, cache
+    /// invalidation). One transition, not N.
+    void clearItemSelection() {
+        foreach (l; layers) if (l !is null) l.selected = false;
+        primary     = null;
+        focusedItem = null;
     }
 
     /// Promote an already-selected layer to primary (the mesh edit target)
@@ -1855,8 +2007,14 @@ unittest {
 /// it firing.
 private void assertDocInvariants(ref Document d) {
     assert(d.layers.length >= 1, "layers.length >= 1");
-    assert(d.primary !is null, "primary non-null");
-    assert(d.focusedItem !is null, "focusedItem non-null (task 0615)");
+    // TASK 0654 — the three clauses that used to sit here ("primary non-null",
+    // "focusedItem non-null", "at least one layer is always selected") are
+    // replaced by the BICONDITIONAL. The oracle no longer forbids the empty
+    // state; it forbids every HALFWAY state around it, which is the part that
+    // is actually load-bearing now.
+    immutable bool empty = d.primary is null;
+    assert((d.focusedItem is null) == empty,
+        "primary and focusedItem are null together or not at all (task 0654)");
     bool primaryInLayers = false;
     bool focusedInLayers = false;
     bool anyCanBePrimary = false;
@@ -1875,11 +2033,17 @@ private void assertDocInvariants(ref Document d) {
         assert(!(Document.foreground(l) && Document.background(l)),
             "foreground and background are mutually exclusive");
     }
-    assert(primaryInLayers, "primary is a member of layers");
-    assert(focusedInLayers, "focusedItem is a member of layers (task 0615)");
-    assert(d.primary.selected, "primary is selected");
-    assert(d.focusedItem.selected,
+    assert(empty || primaryInLayers, "primary is a member of layers");
+    assert(empty || focusedInLayers, "focusedItem is a member of layers (task 0615)");
+    assert(empty || d.primary.selected, "primary is selected");
+    assert(empty || d.focusedItem.selected,
         "focusedItem is selected (task 0615; relaxed from Stage 2's focusedItem is primary)");
+    // The other direction of the biconditional: no primary ⟺ nothing selected.
+    // Without this the oracle would accept "empty primary, layers still
+    // selected" — a state in which the panel shows a selection the gizmo and
+    // the toolpipe cannot see.
+    assert(empty == (selCount == 0),
+        "primary is null exactly when nothing is selected (task 0654)");
     // NIT: `anyCanBePrimary` is already implied by `primaryInLayers` + the
     // `canBePrimary` assertion just below (primary is itself a layer that
     // can be primary), so it cannot currently fail independently. Kept
@@ -1895,13 +2059,15 @@ private void assertDocInvariants(ref Document d) {
     // silently decouple a `hasMesh`-keyed oracle from the invariant it is
     // meant to guard.
     assert(anyCanBePrimary, "at least one layer can be primary (document invariant, task 0615)");
-    assert(kindInfo(d.primary.kind).canBePrimary, "primary can always be primary (task 0615, §Q2)");
-    // NIT: similarly implied by `primaryInLayers` + `d.primary.selected`
-    // above (the primary itself is a selected member of `layers`) — kept as
-    // documentation, not as independent coverage.
-    assert(selCount >= 1, "at least one layer is always selected");
-    // activeIndex (derived) tracks the primary by identity.
-    assert(d.layers[d.activeIndex] is d.primary, "activeIndex points at primary");
+    assert(empty || kindInfo(d.primary.kind).canBePrimary,
+        "primary can always be primary (task 0615, §Q2)");
+    // activeIndex (derived) tracks the primary by identity — and answers the
+    // OUT-OF-RANGE sentinel, never `0`, when there is no primary (task 0654).
+    if (empty)
+        assert(d.activeIndex == d.layers.length,
+            "activeIndex is the absent-sentinel when there is no primary (task 0654)");
+    else
+        assert(d.layers[d.activeIndex] is d.primary, "activeIndex points at primary");
 }
 
 // Build a 3-layer document A/B/C, A primary+selected (SET-of-one), for the
@@ -1998,13 +2164,54 @@ unittest {  // S3: selectItem(Remove) must re-home focus ONLY when the
     assert(doc.focusedItem is empty, "focus untouched by an unrelated remove");
 }
 
-unittest {  // mode:remove of the LAST selected is a no-op (≥1 invariant).
+unittest {  // mode:remove of the LAST selected EMPTIES the selection (task 0654).
+    // INTENT CHANGE, not a repaired test. This case used to assert the exact
+    // opposite ("cannot deselect the last selected layer") because the ≥1
+    // invariant made emptying unrepresentable. 0653 measured the reference —
+    // ctrl-clicking the last selected item empties — and the owner decided we
+    // follow it, so the old assertion is now pinning behaviour we deliberately
+    // removed. The whole point of the task is that this line flips.
     auto doc = threeLayerDoc();
     auto a = doc.layers[0];
     doc.selectItem(a, SelMode.Remove);         // A is the only selected
     assertDocInvariants(doc);
-    assert(a.selected, "cannot deselect the last selected layer");
-    assert(doc.primary is a, "primary unchanged on last-selected remove");
+    assert(!a.selected, "removing the last selected layer deselects it (task 0654)");
+    assert(doc.primary is null, "and drops the primary with it");
+    assert(doc.focusedItem is null, "and the focus, together (the biconditional)");
+    assert(doc.selectedItemCount() == 0, "the item selection is empty");
+    assert(!doc.hasEditTarget(), "so there is no mesh edit target");
+    // The absent-sentinel, spelled out: a consumer that indexes `layers` with
+    // this gets a bounds error, not layer 0's geometry.
+    assert(doc.activeIndex == doc.layers.length,
+        "activeIndex is the absent-sentinel, NOT 0");
+    assert(doc.activeMesh() is null, "activeMesh() refuses by returning null");
+    bool threw = false;
+    try { doc.activeMeshRef(); } catch (NoEditTargetException) { threw = true; }
+    assert(threw, "activeMeshRef() refuses by throwing NoEditTargetException");
+}
+
+unittest {  // clearItemSelection empties in one transition and is idempotent.
+    auto doc = threeLayerDoc();
+    doc.selectItem(doc.layers[1], SelMode.Add);   // {A, B}, B primary
+    assert(doc.selectedItemCount() == 2, "precondition: two selected");
+    doc.clearItemSelection();
+    assertDocInvariants(doc);
+    assert(doc.selectedItemCount() == 0 && doc.primary is null
+        && doc.focusedItem is null, "clear empties the whole set at once");
+    doc.clearItemSelection();                     // idempotent
+    assertDocInvariants(doc);
+    assert(doc.selectedItemCount() == 0, "clearing an empty selection is a no-op");
+    // Every visible layer is now BACKGROUND — the derived rule, checked here
+    // rather than only in the draw code, because "everything went dark" would
+    // be this predicate answering false for all three.
+    foreach (l; doc.layers)
+        assert(Document.background(l) && !Document.foreground(l),
+            "an empty selection makes every visible layer background");
+    // Selecting again recovers a primary — the empty state is not a trap.
+    doc.selectItem(doc.layers[2], SelMode.Set);
+    assertDocInvariants(doc);
+    assert(doc.primary is doc.layers[2] && doc.hasEditTarget(),
+        "a select out of the empty state installs a primary again");
 }
 
 unittest {  // mode:toggle flips selection (remove ↔ add).

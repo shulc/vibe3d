@@ -150,7 +150,11 @@ final class Ai3dImportResult : Command {
 
         restoreSelection(preSelected, prePrimary, preActiveIndex);
         auto active = doc.activeMesh();
-        active.noteChange(MeshChangeAll);
+        // Task 0654: the pre-import selection may have been EMPTY, in which
+        // case restoreSelection put it back that way and there is no active
+        // mesh to note a change on. The layer-list change published below is
+        // what rebuilds the caches.
+        if (active !is null) active.noteChange(MeshChangeAll);
         noteLayerChange(LayerChange.Removed);
         fireSwitchIfChanged(prevLayer, prevIndex);
         return true;
@@ -161,8 +165,14 @@ final class Ai3dImportResult : Command {
             auto wasSelected = (l in selected) ? selected[l] : false;
             l.selected = wasSelected;
         }
+        // Task 0654: a null `primary` in the snapshot MEANS the item selection
+        // was empty (the document biconditional), so restore it empty. The
+        // `setActive(fallbackIndex)` this replaces would clamp the
+        // absent-sentinel index into a real layer and select it.
         if (primary !is null)
             doc.setPrimary(primary);
+        else if (fallbackIndex >= doc.layers.length)
+            doc.clearItemSelection();
         else
             doc.setActive(fallbackIndex);
     }

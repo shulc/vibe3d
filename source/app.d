@@ -1629,9 +1629,31 @@ void main(string[] args) {
     // fire time) — see the seam conversions below. Exactly ONE layer ever
     // exists in 0b (no layer.* commands until Stage 2), so this is provably
     // byte-neutral with the prior global mesh.
-    import document : Document, primaryModelSpaceResolver, primaryModelSpace;
+    import document : Document, primaryModelSpaceResolver, primaryModelSpace,
+                      noEditTargetMesh;
     Document document = Document.bootstrap(makeCube());
-    ref Mesh mesh() { return document.activeMeshRef(); }
+    // Task 0654 — the empty item selection is legal, and then there is NO edit
+    // target. `Document.activeMeshRef()` refuses by throwing, which is right for
+    // a caller that requires one; this accessor is read by the frame draw and
+    // the per-frame caches, which must produce a frame instead. So it resolves
+    // to the empty read-only stand-in, whose zero vertices/edges/faces are the
+    // truth of the state: with nothing selected there is no foreground geometry.
+    //
+    // This is NOT a substitute edit target — no write is supposed to arrive
+    // here. `Command.apply()`'s Operator branch (via `g_editTargetResolver`,
+    // installed below) and tool activation both refuse first, and
+    // `test_empty_item_selection.d` asserts the stand-in stays empty afterwards.
+    ref Mesh mesh() {
+        return document.hasEditTarget() ? document.activeMeshRef()
+                                        : noEditTargetMesh();
+    }
+    // The command layer's half of the same rule. `command.d` cannot import
+    // `document.d` (it is imported by headless tests that hold a bare `Mesh`),
+    // so the question is asked through a resolver, as with the two below.
+    {
+        import command : g_editTargetResolver;
+        g_editTargetResolver = () => document.hasEditTarget();
+    }
     // Task 0617 — install the primary-layer ModelSpace resolver (mirrors
     // `activeMeshResolver` right below): every picking entry point that
     // needs "the current primary layer's transform" but has no `Document`
@@ -1639,7 +1661,15 @@ void main(string[] args) {
     // tools/edit/topology_pen.d's TopologyPenTool) resolves it through
     // `primaryModelSpace()` rather than a duplicated formula. app.d's own
     // call sites below use the same free function — one accessor, not two.
-    primaryModelSpaceResolver = () => document.primary.xform.modelSpace();
+    // Task 0654 — with an empty item selection there is no primary and so no
+    // item transform to resolve against. WORLD (identity) is the answer, not a
+    // crash and not layer 0's frame: picking is a READ, its 66 call sites take
+    // a `ModelSpace` by value with nothing to null-check, and with no
+    // foreground geometry there is nothing for a non-identity space to map.
+    // It is also exactly what `primaryModelSpace()` already answers when the
+    // resolver is uninstalled, so the two no-target paths agree.
+    primaryModelSpaceResolver = () => document.hasEditTarget()
+        ? document.primary.xform.modelSpace() : ModelSpace.world();
     writefln("Mesh: %d verts, %d edges, %d faces",
              mesh.vertices.length, mesh.edges.length, mesh.faces.length);
 
@@ -2842,7 +2872,14 @@ void main(string[] args) {
         // 2. explicit coalesce barrier on the history.
         history.breakCoalescing();
         // 3. GPU re-upload + pick-cache resize/invalidate against the NEW mesh.
-        auto active = document.activeMesh();
+        //    Task 0654: "the new mesh" can be NO mesh — this hook also fires on
+        //    the transition INTO an empty item selection, where the primary
+        //    went away rather than moved. The stand-in is empty, so uploading
+        //    it clears the GPU buffers and sizes every pick cache to zero,
+        //    which is what the frame after an emptying select must draw. It is
+        //    a READ of the stand-in, so the no-write rule is intact.
+        Mesh* active = document.activeMesh();
+        if (active is null) active = &mesh();
         gpu.upload(*active);
         vertexCache.resize(active.vertices.length); vertexCache.invalidate();
         edgeCache.resize(active.edges.length);      edgeCache.invalidate();
@@ -3776,6 +3813,14 @@ void main(string[] args) {
         if (activeToolId == id) {
             setActiveTool(null);
             activeToolId = "";
+        } else if (!document.hasEditTarget()) {
+            // TASK 0654 — the interactive half of `tool.set`'s refusal (see
+            // `commands/tool/set.d` for the reasoning). Every tool factory
+            // below binds `Mesh*` off the edit target, and with an empty item
+            // selection there is none. Dropping a tool stays possible (the
+            // same-id arm above ran first); only ARMING one refuses.
+            import document : kNoEditTargetReason;
+            logWarn("tool", "'" ~ id ~ "' not armed: " ~ kNoEditTargetReason);
         } else {
             // Switching tools: reset tool-driven pipe stages BEFORE
             // the new preset's preActivate writes its own settings.
@@ -5574,11 +5619,26 @@ void main(string[] args) {
         setOverrideMouse(mx, my);
         Viewport vp = vpm.activeSnapshot();
         immutable ItemHit h = pickItemUnderCursor(mx, my, vp);
-        // A MISS DOES NOTHING. Not "clear the item selection" — that state is
-        // unrepresentable (at least one item is always selected) — and not
-        // "clear the geometry selection" either, which is what the branch this
-        // one replaces would have done.
-        if (!h.hit) return;
+        // A MISS EMPTIES THE ITEM SELECTION (task 0654).
+        //
+        // 0643 made a miss do NOTHING, for one stated reason: "that state is
+        // unrepresentable (at least one item is always selected)". The
+        // reference was then measured (0653) and empties on a miss; the owner
+        // decided we follow it, and 0654 removed the invariant that was the
+        // whole basis of the do-nothing branch. So this is not a preference
+        // reversal — the premise 0643 named is simply gone.
+        //
+        // The MODIFIED chords do not empty. Ctrl/shift are set-EDITING chords:
+        // ctrl-clicking empty space means "remove nothing", shift-clicking it
+        // means "add nothing". Emptying there would make a mis-aimed
+        // ctrl-click destroy a set the user was building, and the geometry
+        // select path treats a modified miss the same way.
+        if (!h.hit) {
+            if (ctrl || shift) return;
+            if (document.selectedItemCount() == 0) return;  // already empty
+            runCommandWithArgs("layer.select", "mode:clear");
+            return;
+        }
         // Already the SOLE selection: a bare `set` on it would push a UI-undo
         // entry that reverts to the state it came from, so clicking the one
         // selected item twice would cost the user an Esc-less undo step that

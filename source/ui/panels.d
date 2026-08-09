@@ -1467,7 +1467,19 @@ void drawLayerListPanel(EditorApp app) {
                     // bound layer, so the rebind keeps it correct.
                     static LayerPropsProvider layerProv;
                     auto propsTarget = itemPropsTarget(&document());
-                    if (propsTarget is null) propsTarget = document.primary;
+                    // TASK 0654 — the properties form shows NOTHING when no
+                    // item is selected. The `propsTarget = document.primary`
+                    // fallback this replaces was written when a null target was
+                    // unreachable; with an empty selection the primary is null
+                    // too, so it repaired nothing and only hid the case.
+                    //
+                    // Drawing a disabled line rather than nothing at all: the
+                    // panel is a docked tab with a header, and an empty body
+                    // reads as a rendering fault. The label states the reason,
+                    // which is the same answer every other consumer gives.
+                    if (propsTarget is null) {
+                        ImGui.TextDisabled("No item selected");
+                    } else {
                     if (layerProv is null)
                         layerProv = new LayerPropsProvider(propsTarget);
                     else
@@ -1505,6 +1517,7 @@ void drawLayerListPanel(EditorApp app) {
                                     // takes the focus.
                                     /*layerIndex=*/to!string(
                                         document.indexOf(propsTarget)));
+                    }   // task 0654: end of the has-a-target arm
                 }
             }
         }
@@ -3041,7 +3054,14 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     // resolves against, folds ONLY `itemMatrix` — not the `tt.gpuMatrix` fold
     // below. Currently fine because picking isn't exercised mid-drag; see
     // `primaryModelSpace()`'s doc comment in document.d if that ever changes.
-    float[16] itemMatrix = document.primary.xform.composedMatrix();
+    // Task 0654 — with an empty item selection there is no primary and no
+    // foreground geometry: `app.mesh` resolves to the empty stand-in, so the
+    // pass below submits zero triangles and the matrix only has to be
+    // well-formed. IDENTITY, never layer 0's transform — borrowing an
+    // unrelated item's frame here would place the (empty) foreground somewhere
+    // arbitrary the moment anything is selected again mid-frame.
+    float[16] itemMatrix = document.hasEditTarget()
+        ? document.primary.xform.composedMatrix() : identityMatrix;
     float[16] meshModel  = itemMatrix;
     {
         TransformTool tt = cast(TransformTool)activeTool;
@@ -3196,7 +3216,18 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     glDisable(GL_BLEND);
 
     // ---- Background layers ----
-    if (document.layers.length > 1) {
+    //
+    // TASK 0654 — the `> 1` fast path is now `> 1 || no edit target`, and that
+    // second clause is the difference between "everything is background" and
+    // "everything went dark". Background is DERIVED (`visible && !selected`),
+    // so an empty selection makes every visible layer background; the per-layer
+    // `isPrimary` skip below already lets them all through. But on a
+    // SINGLE-layer document the old gate short-circuited before the loop, and
+    // that one layer would then have been drawn by neither pass — the
+    // foreground pass skips it (it is not the primary; there is no primary) and
+    // this pass never ran. The user clicks empty space and their model
+    // vanishes. It must dim, not disappear.
+    if (document.layers.length > 1 || !document.hasEditTarget()) {
         import std.math : isNaN;
         Layer[] toDrop;
         foreach (lyr, bg; bgGpuByLayer) {

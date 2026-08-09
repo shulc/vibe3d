@@ -70,12 +70,36 @@ private abstract class LayerCommandBase : Command {
     }
 
     // Resolve an `index` param (default -1 → active layer), clamped into range.
+    //
+    // TASK 0654: `doc.activeIndex` answers the ABSENT-SENTINEL (`layers.length`)
+    // when the item selection is empty, and this function passes that through
+    // deliberately — it does NOT clamp the default the way it clamps an
+    // explicit out-of-range index. An explicit `index:99` is a caller naming a
+    // layer badly, which clamping has always forgiven; `index:-1` with nothing
+    // selected is a caller asking for a layer that does not exist, and
+    // clamping it would silently edit `layers[$-1]`.
+    //
+    // EVERY caller must therefore range-check the result and refuse with
+    // `kNoDefaultLayerReason`. The check is left at the call sites rather than
+    // folded in here because the refusal needs each command's own `return
+    // false` — there is no value this function could return that means "stop".
     protected size_t resolveIndex(int raw) const {
         if (raw < 0) return doc.activeIndex;
         size_t i = cast(size_t)raw;
         if (i >= doc.layers.length) i = doc.layers.length - 1;
         return i;
     }
+
+    /// Why an index-defaulted layer command refuses when the item selection is
+    /// empty (task 0654). Distinct wording from `command.kNoEditTargetReason`
+    /// on purpose: that one is about a MESH to write to, this one is about
+    /// which ITEM `index:-1` names. A caller that passes an explicit index gets
+    /// neither.
+    protected enum string kNoDefaultLayerReason =
+        "no item is selected: `index:-1` names no layer";
+
+    protected string refusal_;
+    override string refusalReason() const { return refusal_; }
 
     // Fire the switch hook iff the active LAYER OBJECT changed (not merely its
     // index — a delete below the active layer shifts the index but keeps the
@@ -207,6 +231,10 @@ final class LayerDuplicate : LayerCommandBase {
 
         // Source: default -1 → primary; explicit index for test/scripted paths.
         size_t srcIdx = resolveIndex(indexArg);
+        // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
+        // rather than index, and never clamp a missing default into a real
+        // layer (see `resolveIndex`).
+        if (srcIdx >= doc.layers.length) { refusal_ = kNoDefaultLayerReason; return false; }
         auto src = doc.layers[srcIdx];
 
         // Build the clone — deep-copy the source mesh in place into a fresh
@@ -603,6 +631,10 @@ final class LayerDelete : LayerCommandBase {
 
     override bool apply() {
         removedIndex    = resolveIndex(indexArg);
+        // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
+        // rather than index, and never clamp a missing default into a real
+        // layer (see `resolveIndex`).
+        if (removedIndex >= doc.layers.length) { refusal_ = kNoDefaultLayerReason; return false; }
         prevActiveIndex = doc.activeIndex;
         removed         = doc.layers[removedIndex];   // class ref kept for revert
         auto prevLayer  = doc.active();
@@ -759,7 +791,8 @@ final class LayerSelect : LayerCommandBase {
         return [ Param.int_("index", "Index", &indexArg, 0),
                  Param.enum_("mode", "Mode", &modeArg,
                      [["set","Set"], ["add","Add"],
-                      ["remove","Remove"], ["toggle","Toggle"]], "set") ];
+                      ["remove","Remove"], ["toggle","Toggle"],
+                      ["clear","Clear"]], "set") ];
     }
 
     override bool apply() {
@@ -770,7 +803,33 @@ final class LayerSelect : LayerCommandBase {
         prevSelected = null;
         foreach (l; doc.layers) prevSelected[l] = l.selected;
 
+        // `mode:clear` (task 0654) — empty the item selection. It is the one
+        // mode that names no target, so it resolves no index; passing one is
+        // not an error, it is simply unread.
+        //
+        // It is a MODE of this command rather than a `layer.selectNone` of its
+        // own because everything around the mutation is identical: the same
+        // prior-set snapshot, the same UI-class undo entry that restores it,
+        // the same switch hook, the same `SelType.Item` promotion. A second
+        // command would be a second copy of all four, and the first one to
+        // drift would do it silently.
+        if (modeArg == "clear") {
+            doc.clearItemSelection();
+            applied = true;
+            fireSwitchIfChanged(prevPrimary, prevActiveIndex);
+            noteItemSelectionChange();
+            if (onItemSelect !is null) onItemSelect();
+            return true;
+        }
+
         size_t idx = resolveIndex(indexArg);
+        // Task 0654: `resolveIndex(-1)` answers the ABSENT-SENTINEL when there
+        // is no primary. Refuse rather than let it index — the alternative is
+        // the silent layer-0 edit this task exists to exclude.
+        if (idx >= doc.layers.length) {
+            refusal_ = kNoDefaultLayerReason;
+            return false;
+        }
         auto target = doc.layers[idx];
         const mode  = selModeFromToken(modeArg);
 
@@ -806,7 +865,18 @@ final class LayerSelect : LayerCommandBase {
                 "LayerSelect.revert: prevPrimary must be canBePrimary (R5)");
             doc.setPrimary(prevPrimary);
         } else {
-            doc.setActive(prevActiveIndex);
+            // TASK 0654 — a null `prevPrimary` now MEANS something: by the
+            // biconditional it is the empty selection, and undoing back into it
+            // must land there. The `setActive(prevActiveIndex)` this replaces
+            // would take the absent-sentinel index, CLAMP it to the last layer
+            // and select it — an undo that leaves a layer selected that the
+            // user never picked, which is the whole failure mode this task is
+            // about, arriving through the undo stack instead of a click.
+            //
+            // The `foreach` above already restored every `selected` bit from
+            // the snapshot (all false here); `clearItemSelection` is what drops
+            // `primary`/`focusedItem` with them.
+            doc.clearItemSelection();
         }
         fireSwitchIfChanged(prevLayer, prevIdx);
         noteItemSelectionChange();
@@ -844,6 +914,10 @@ final class LayerRename : LayerCommandBase {
 
     override bool apply() {
         target   = resolveIndex(indexArg);
+        // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
+        // rather than index, and never clamp a missing default into a real
+        // layer (see `resolveIndex`).
+        if (target >= doc.layers.length) { refusal_ = kNoDefaultLayerReason; return false; }
         prevName = doc.layers[target].name;
         doc.layers[target].name = nameArg;
         applied  = true;
@@ -892,6 +966,10 @@ final class LayerSetVisible : LayerCommandBase {
 
     override bool apply() {
         target  = resolveIndex(indexArg);
+        // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
+        // rather than index, and never clamp a missing default into a real
+        // layer (see `resolveIndex`).
+        if (target >= doc.layers.length) { refusal_ = kNoDefaultLayerReason; return false; }
         prevVal = doc.layers[target].visible;
         prevPrimaryObj   = doc.active();
         size_t prevIdx   = doc.activeIndex;
@@ -1015,6 +1093,10 @@ final class LayerAttr : LayerCommandBase {
             throw new Exception("layer.attr: no layers");
 
         target_      = resolveIndex(indexArg);
+        // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
+        // rather than index, and never clamp a missing default into a real
+        // layer (see `resolveIndex`).
+        if (target_ >= doc.layers.length) { refusal_ = kNoDefaultLayerReason; return false; }
         auto layer   = doc.layers[target_];
         auto prov    = new LayerPropsProvider(layer);
         auto ps      = prov.params();
@@ -1187,6 +1269,10 @@ final class LayerParent : LayerCommandBase {
     override bool apply() {
         if (doc.layers.length == 0) return false;
         childIdx_   = resolveIndex(childArg);
+        // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
+        // rather than index, and never clamp a missing default into a real
+        // layer (see `resolveIndex`).
+        if (childIdx_ >= doc.layers.length) { refusal_ = kNoDefaultLayerReason; return false; }
         auto child  = doc.layers[childIdx_];
         prevParent_ = child.parent;
 
