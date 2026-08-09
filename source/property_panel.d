@@ -258,8 +258,7 @@ void endToolPropsIdColumn() {
 /// GET /api/toolprops/ids payload — the id namespace of the last complete
 /// Tool Properties column.
 string toolPropsIdsJson() {
-    import std.json  : JSONValue;
-    import std.array : appender;
+    import std.json : JSONValue;
     PanelIdEntry[] snap;
     synchronized (g_panelIdsMx)
         snap = g_panelIdsPublished.dup;
