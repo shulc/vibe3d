@@ -25,7 +25,7 @@ import std.math : PI, fabs, sqrt;
 
 import math : Vec3, Viewport, identityMatrix, translationMatrix,
               pivotRotationMatrix, pivotScaleMatrixBasis, normalize, lookAt,
-              perspectiveMatrix;
+              perspectiveMatrix, AimViewport, aimSpace, ModelSpace;
 import mesh : Mesh;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
 import tools.transform.transform : TransformTool;
@@ -64,15 +64,17 @@ private void assertClose(const(Vec3)[] a, const(Vec3)[] b, string ctx) {
     }
 }
 
-// A viewport (needed by evaluateFalloff signatures; falloff cases below use a
-// Linear falloff whose weight is purely world-space, so the camera is benign).
-private Viewport testViewport() {
+// The aim space the kernels take (task 0619). These cases use a Linear
+// falloff, whose weight is a 3D distance and never projects, so the identity
+// transform is the honest ModelSpace here rather than a placeholder — a
+// non-identity one would change nothing that this file asserts.
+private AimViewport testViewport() {
     Viewport vp;
     vp.view   = lookAt(Vec3(0,0,5), Vec3(0,0,0), Vec3(0,1,0));
     vp.proj   = perspectiveMatrix(PI/2, 1.0f, 0.1f, 100.0f);
     vp.width  = 800;
     vp.height = 800;
-    return vp;
+    return aimSpace(vp, ModelSpace.world());
 }
 
 // Falloff with explicit per-vertex precomputed weights, via the Selection type

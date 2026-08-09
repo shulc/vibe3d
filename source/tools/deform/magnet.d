@@ -280,8 +280,12 @@ private:
         fp.anchorPos    = [center_];
         fp.anchorRing   = [cast(uint)pickedVi];
 
-        Viewport nullVp;   // Element falloff ignores viewport
-        bool displaced = applyMagnet(mesh, indices, target_, strength_, fp, nullVp,
+        // The packet just above pins `FalloffType.Element`, which never
+        // projects — but the aim space is a required parameter (task 0619),
+        // so build the real one from this tool's own world viewport rather
+        // than reach for an identity that would be a placeholder.
+        const auto aim = aimSpace(vpWorld_, primaryModelSpace());
+        bool displaced = applyMagnet(mesh, indices, target_, strength_, fp, aim,
                                      touchedIdx_, touchedPrev_);
         built = displaced;
         if (displaced) mesh.commitChange(MeshEditScope.Position);

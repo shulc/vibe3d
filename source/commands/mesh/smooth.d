@@ -4,7 +4,8 @@ import command;
 import mesh;
 import view;
 import editmode;
-import math : Vec3, Viewport;
+import math : Vec3, Viewport, AimViewport, aimSpace;
+import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
@@ -122,10 +123,15 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         if (subj is null) return false;
         if (auto fp = vts.get!FalloffPacket())
             this.falloff_ = *fp;
-        return this.applyKernel();
+        // Task 0619: the real viewport is right here on the subject
+        // packet. This command can be handed the LIVE falloff packet
+        // below, which may be a Screen/Lasso type, so it needs a real
+        // aim space — it used to declare an empty `Viewport` instead.
+        const auto aim = aimSpace(subj.viewport, primaryModelSpace());
+        return this.applyKernel(aim);
     }
 
-    private bool applyKernel() {
+    private bool applyKernel(const ref AimViewport aim) {
         if (iter_ <= 0 || strn_ <= 0.0f) return true;  // no-op apply
 
         // DoS backstop (task 0365 P1): `iter` scales the Laplacian pass
@@ -290,13 +296,12 @@ class MeshSmooth : Command, Operator, IFalloffAware {
         // Same way the transform × falloff stage attenuates any
         // deformation — weight 1.0 keeps the full smooth, weight
         // 0.0 leaves the vert at its original. No-op when falloff is
-        // disabled. `Viewport` is unused for non-screen falloff types
-        // (linear / radial / cylinder / element) — pass an empty one
-        // so the same call site works headlessly. Falloff is applied
-        // BEFORE the preserve-volume pass so the tangent-plane
-        // projection sees the weighted result.
+        // disabled. Task 0619: the empty `Viewport` that used to be declared
+        // here is gone — see jitter.d for why "cursorless" was wrong. The aim
+        // space arrives as a parameter. Falloff is applied BEFORE the
+        // preserve-volume pass so the tangent-plane projection sees the
+        // weighted result.
         if (falloff_.enabled) {
-            Viewport vp;
             foreach (i, vi; touchedIdx) {
                 if (vi >= mesh.vertices.length) continue;
                 Vec3 sm = mesh.vertices[vi];
@@ -306,7 +311,7 @@ class MeshSmooth : Command, Operator, IFalloffAware {
                 // shape", not the moving target. The transform×falloff
                 // convention evaluates at the pre-smooth snapshot
                 // positions[].
-                float w = evaluateFalloff(falloff_, orig, cast(int)vi, vp);
+                float w = evaluateFalloff(falloff_, orig, cast(int)vi, aim);
                 mesh.vertices[vi].x = orig.x + (sm.x - orig.x) * w;
                 mesh.vertices[vi].y = orig.y + (sm.y - orig.y) * w;
                 mesh.vertices[vi].z = orig.z + (sm.z - orig.z) * w;

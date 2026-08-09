@@ -260,12 +260,30 @@ public:
         cachedReady_ = false;
     }
 
-    /// Update `baseSide` from a world-space anchor point — typically
+    /// Update `baseSide` from an anchor point **in the same space as
+    /// `mesh.vertices[]`** — i.e. LOCAL to the layer, not world — typically
     /// the centroid of the element the user
     /// just clicked while symmetry was active. Off-plane anchors set
     /// `baseSide` to the side they land on; on-plane anchors leave the
     /// existing `baseSide` untouched (the user clicked something
     /// straddling the plane; previous anchor stays canonical).
+    ///
+    /// **Task 0619 — this comment used to say "world-space anchor point",
+    /// and that was wrong.** It was inventoried as a defect to fix (convert
+    /// the three `symmetry_pick.d` call sites with `ms.toWorldPoint`) and the
+    /// investigation refuted it: `baseSide` is only ever compared against
+    /// `SymmetryPacket.vertSign` (`symmetry.d` `applySymmetryMirror` and its
+    /// sibling), and `vertSign` is computed in `rebuildPairing` /
+    /// `rebuildPairingTopological` from raw `mesh.vertices[i]` against this
+    /// same plane. The whole symmetry subsystem — the pairing search,
+    /// `mirrorPosition`, `isOnPlane`, the appliers — is `ItemXform`-unaware,
+    /// so the plane is de facto LAYER-LOCAL. Converting the anchor alone
+    /// would compare a world point against a local plane and invert the
+    /// mirror pairs on any layer whose transform moves geometry across it.
+    ///
+    /// If item-transform-aware symmetry is ever wanted, the seam is the
+    /// PLANE (`currentPlane` / `evaluate`), not the anchor, and it moves the
+    /// whole subsystem at once. Do not "fix" this call site in isolation.
     void anchorAt(Vec3 pos) {
         // Resolve the current plane the same way `evaluate` does so a
         // caller invoking `anchorAt` between evaluates picks up the

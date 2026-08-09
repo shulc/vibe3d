@@ -152,8 +152,10 @@ public:
         // isn't moving at all) — feeds the overshoot guard below.
         Vec3[] vel = new Vec3[](mesh.vertices.length);
         foreach (i; 0 .. vel.length) vel[i] = Vec3(0, 0, 0);
+        // Task 0619: hoisted — see bend.d.
+        const auto aim = dragAimSpace();
         foreach (vi; vertexIndicesToProcess) {
-            float w = falloffWeight(vi);
+            float w = falloffWeight(vi, aim);
             if (w == 0.0f) continue;
             vel[vi] = vn[vi] * w;
         }

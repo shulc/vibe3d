@@ -4,7 +4,8 @@ import command;
 import mesh;
 import view;
 import editmode;
-import math : Vec3, Viewport;
+import math : Vec3, Viewport, AimViewport, aimSpace;
+import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, ElementConnect, SubjectPacket;
@@ -72,7 +73,10 @@ public:
         if (subj is null) return false;
         if (auto fp = vts.get!FalloffPacket())
             setFalloff(*fp);
-        return applyKernel();
+        // Task 0619: the injected packet above can be Screen/Lasso, and the
+        // subject packet carries the viewport it must be projected with.
+        const auto aim = aimSpace(subj.viewport, primaryModelSpace());
+        return applyKernel(aim);
     }
 
     override bool revert() {
@@ -85,7 +89,7 @@ public:
     }
 
 private:
-    bool applyKernel() {
+    bool applyKernel(const ref AimViewport aim) {
         if (strength_ <= 0.0f) return false;
         // `dist` is an EXPLICIT command param (a real spatial radius),
         // not the interactive tool-pipe's "not yet picked" sentinel.
@@ -133,8 +137,7 @@ private:
                 fp.anchorRing = [cast(uint)anchor_];
         }
 
-        Viewport vp;   // Element falloff ignores viewport
-        applyMagnet(mesh, indices, target_, strength_, fp, vp,
+        applyMagnet(mesh, indices, target_, strength_, fp, aim,
                     touchedIdx_, touchedPrev_);
 
         if (touchedIdx_.length == 0) return false;

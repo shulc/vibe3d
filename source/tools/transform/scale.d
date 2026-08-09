@@ -1415,7 +1415,7 @@ private:
                                  activationCenter,
                                  handler.axisX, handler.axisY, handler.axisZ,
                                  scaleAccum,
-                                 dragFalloff, cachedVp,
+                                 dragFalloff, dragAimSpace(),
                                  queryClusterPivots(vts), queryClusterAxes(vts),
                                  dragSymmetry, toProcess);
     }

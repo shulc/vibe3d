@@ -4,7 +4,8 @@ import command;
 import mesh;
 import view;
 import editmode;
-import math : Vec3, Viewport;
+import math : Vec3, Viewport, AimViewport, aimSpace;
+import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
@@ -85,7 +86,12 @@ class MeshJitter : Command, Operator, IFalloffAware {
         if (subj is null) return false;
         if (auto fp = vts.get!FalloffPacket())
             this.falloff_ = *fp;
-        return this.applyKernel();
+        // Task 0619: the real viewport is right here on the subject
+        // packet. This command can be handed the LIVE falloff packet
+        // below, which may be a Screen/Lasso type, so it needs a real
+        // aim space — it used to declare an empty `Viewport` instead.
+        const auto aim = aimSpace(subj.viewport, primaryModelSpace());
+        return this.applyKernel(aim);
     }
 
     override bool paramEnabled(string name) const {
@@ -95,7 +101,7 @@ class MeshJitter : Command, Operator, IFalloffAware {
         return true;
     }
 
-    private bool applyKernel() {
+    private bool applyKernel(const ref AimViewport aim) {
         // Build affected-vertex mask the same way MeshTransform / MeshQuantize do.
         //
         // Perf (task 0388): `mesh.selectedX` is a @property that rebuilds a
@@ -114,7 +120,12 @@ class MeshJitter : Command, Operator, IFalloffAware {
 
         touchedIdx.length  = 0;
         touchedPrev.length = 0;
-        Viewport vp;   // unused for non-screen falloff types
+        // Task 0619: the empty `Viewport vp;` that used to sit here is gone.
+        // It was NOT harmless-because-unreachable: `parseFalloffJson` rejects
+        // the two pixel-based types, but this command is also an `Operator`,
+        // and `evaluate(vts)` above copies the LIVE packet — which can be
+        // Screen or Lasso — over `falloff_`. The aim space now arrives as a
+        // parameter, built once from the subject packet's real viewport.
         foreach (i; 0 .. mesh.vertices.length) {
             // Drain THREE rolls per vert regardless of mask so the seed
             // sequence stays stable when the user changes selection
@@ -133,7 +144,7 @@ class MeshJitter : Command, Operator, IFalloffAware {
             // each call). enableX/Y/Z gates the per-axis write; RNG
             // rolls stay unconditional.
             float fw = falloff_.enabled
-                ? evaluateFalloff(falloff_, mesh.vertices[i], cast(int)i, vp)
+                ? evaluateFalloff(falloff_, mesh.vertices[i], cast(int)i, aim)
                 : 1.0f;
             if (enableX_) mesh.vertices[i].x += u * rangeX_ * fw;
             if (enableY_) mesh.vertices[i].y += v * rangeY_ * fw;

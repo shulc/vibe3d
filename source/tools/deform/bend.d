@@ -121,10 +121,13 @@ public:
         float totalAngle = headlessAngleDeg * cast(float)(PI / 180.0);
 
         // Apply per-vert rotation. phi = totalAngle · (s / halfExt) · weight.
+        // Task 0619: one aim-space composition for the whole loop, never
+        // one per vertex (a Screen/Lasso falloff projects through it).
+        const auto aim = dragAimSpace();
         foreach (vi; vertexIndicesToProcess) {
             Vec3 d = mesh.vertices[vi] - pivot;
             float s = d.x*spine.x + d.y*spine.y + d.z*spine.z;
-            float w = falloffWeight(vi);
+            float w = falloffWeight(vi, aim);
             if (w == 0.0f) continue;
             float phi = totalAngle * (s / halfExt) * w;
             auto m = pivotRotationMatrix(pivot, bendAx, phi);

@@ -99,8 +99,10 @@ public:
         toProcess[] = false;
 
         bool any = false;
+        // Task 0619: hoisted — see bend.d.
+        const auto aim = dragAimSpace();
         foreach (i, vi; chain.verts) {
-            float w = headlessWeight * falloffWeight(cast(int)vi);
+            float w = headlessWeight * falloffWeight(cast(int)vi, aim);
             if (w == 0.0f) continue;
             mesh.vertices[vi] = lerp3(source[i], aligned[i], w);
             toProcess[vi] = true;

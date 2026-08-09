@@ -4,7 +4,8 @@ import command;
 import mesh;
 import view;
 import editmode;
-import math : Vec3, Viewport;
+import math : Vec3, Viewport, AimViewport, aimSpace;
+import document : primaryModelSpace;
 import params : Param;
 import change_bus : MeshEditScope;
 import toolpipe.packets : FalloffPacket, SubjectPacket;
@@ -66,10 +67,15 @@ class MeshQuantize : Command, Operator, IFalloffAware {
         if (subj is null) return false;
         if (auto fp = vts.get!FalloffPacket())
             this.falloff_ = *fp;
-        return this.applyKernel();
+        // Task 0619: the real viewport is right here on the subject
+        // packet. This command can be handed the LIVE falloff packet
+        // below, which may be a Screen/Lasso type, so it needs a real
+        // aim space — it used to declare an empty `Viewport` instead.
+        const auto aim = aimSpace(subj.viewport, primaryModelSpace());
+        return this.applyKernel(aim);
     }
 
-    private bool applyKernel() {
+    private bool applyKernel(const ref AimViewport aim) {
         if (stepX_ <= 0 || stepY_ <= 0 || stepZ_ <= 0) return false;
 
         // Build affected-vertex mask the same way MeshTransform does.
@@ -84,7 +90,7 @@ class MeshQuantize : Command, Operator, IFalloffAware {
 
         touchedIdx.length  = 0;
         touchedPrev.length = 0;
-        Viewport vp;   // unused for non-screen falloff
+        // Task 0619: cursorless — see jitter.d. No viewport, by design.
         foreach (i; 0 .. mesh.vertices.length) {
             if (!vmask[i]) continue;
             touchedIdx  ~= cast(uint)i;
@@ -106,7 +112,7 @@ class MeshQuantize : Command, Operator, IFalloffAware {
             // so the per-vert weight is deterministic regardless of
             // step granularity.
             float fw = falloff_.enabled
-                ? evaluateFalloff(falloff_, mesh.vertices[i], cast(int)i, vp)
+                ? evaluateFalloff(falloff_, mesh.vertices[i], cast(int)i, aim)
                 : 1.0f;
             Vec3 orig = mesh.vertices[i];
             mesh.vertices[i].x = orig.x + (qx - orig.x) * fw;

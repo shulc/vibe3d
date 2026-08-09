@@ -173,6 +173,36 @@ const(Mesh)* snapSource(int slot) {
     }
 }
 
+/// The `ModelSpace` of the layer `snapSource(slot)` came from — the transform
+/// that decides where that source's LOCAL `vertices[]` are actually DRAWN
+/// (task 0619). Reads `g_snapSourceSpaces`, the parallel array filled by the
+/// same `setBackgroundSnapSources` call that installs `g_snapSources`, so the
+/// mesh and its space can never drift apart.
+///
+/// Deliberately a `bool` + `out` rather than a plain `ModelSpace` return: the
+/// two misses (slot 0, which is the ACTIVE mesh and is not held here, and an
+/// out-of-range slot) have no space to report, and inventing an identity for
+/// them would be exactly the placeholder this task bans — a caller that
+/// silently projected a background layer's local vertices through the identity
+/// is the defect being fixed, not a fallback. `false` means "no space here",
+/// and every caller must then take the same fail-soft path it already takes
+/// for `snapSource(slot) is null`.
+///
+/// NOTE `out ModelSpace` resets `ms` to `ModelSpace.init` (whose matrices are
+/// float.init == NaN, NOT the identity) before the body runs, so a caller that
+/// ignores the `false` and projects anyway gets NaN pixels rather than a
+/// plausible-but-wrong position. That is intentional: a wrong answer here
+/// should be loud.
+bool snapSourceSpace(int slot, out ModelSpace ms) {
+    if (slot <= 0) return false;
+    synchronized (g_vgridMutex) {
+        size_t i = cast(size_t)(slot - 1);
+        if (i >= g_snapSourceSpaces.length) return false;
+        ms = g_snapSourceSpaces[i];
+        return true;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Item snap frames (Stage 3). One frame per visible layer, INCLUDING the
 // active/primary layer (item snapping deliberately snaps to the active item's

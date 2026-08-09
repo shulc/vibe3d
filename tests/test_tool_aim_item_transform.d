@@ -1851,3 +1851,348 @@ unittest { // P5: Add Loop's ratio elects on the DRAWN rail
         format("Add Loop tracked the IDENTITY-pose election %.4f (saturating: t_local is "
                ~ "%.4f, at the [0,1] clamp)", got, tLocal));
 }
+
+// ===========================================================================
+// VERIFIED BY MUTATION. Each wrong implementation below was applied to the
+// green tree, built, and run; the observed failure is recorded beside it, and
+// the tree was restored and re-run green afterwards.
+//
+//   F1 — `http_providers.d`'s weights block composed `ModelSpace.world()`
+//        instead of `primaryModelSpace()` (the pre-0619 law for this path).
+//        RED: `weights=[0,0,0,0, 0.761, 0.588, 0.772, 0.628]` — the two sets
+//        exactly SWAPPED: the four targets dropped to zero and the four
+//        decoys, which sit at the targets' identity-pose pixels, took the
+//        weight. Not "a bit off": the other set entirely.
+//
+//   F2 — `TransformTool.dragAimSpace()` composed `ModelSpace.world()`.
+//        RED: `moved=[0, 0, 0, 0, 1.896, 1.419, 1.850, 1.552]` — the drag
+//        deformed the decoys and left the targets untouched. This is the
+//        mutation F1 CANNOT see: the reporting block and the deform kernel
+//        compose their aim spaces separately.
+//
+//   F3 — `FalloffStage.autoSize`'s Screen branch composed
+//        `ModelSpace.world()` while `screenWeight` stayed correct (the HALF
+//        conversion). RED: `weights=[0,0,0,0,0,0,0,0]` — the auto-sized disc
+//        was placed on the identity-pose selection while the weights were
+//        measured on the drawn one, so nothing at all was weighted.
+// ===========================================================================
+
+// ===========================================================================
+// F1 — Screen falloff, aiming kind **Pixel** (§1.1).
+//
+// THE PAIR THIS CASE ASSERTS, and the wrong implementation it separates:
+//
+//   correct law  project `M * v_local` — the screen disc weights the vertices
+//                it is DRAWN over
+//   wrong  law   project `v_local` through the WORLD viewport  <- pre-0619
+//
+// The fixture makes the two laws select **disjoint** vertex sets, not merely
+// overlapping ones (the plan's F1 requirement — a transform that leaves the
+// two footprints overlapping proves nothing). Two quads:
+//
+//   TGT   quads 0-3. The geometry a user aiming at the drawn disc means to
+//         weight.
+//   DEC   quads 4-7, planted at the LOCAL coordinates `M * TGT[i]`. Their
+//         identity-pose projections therefore land exactly where TGT's DRAWN
+//         projections land, so the WRONG law weights THEM and not TGT.
+//
+// The observable is `/api/toolpipe/eval`'s `falloffWeights` block — one
+// weight per vertex, in mesh vertex order. It is the per-vertex value the
+// deform kernels multiply by, so this is the quantity itself and not a proxy.
+//
+// Anti-vacuity, asserted before any weight is read:
+//   * TGT's drawn and identity pixels differ by > 20 px;
+//   * every TGT vertex is INSIDE the disc under the correct law;
+//   * every TGT vertex is OUTSIDE it under the wrong law, and every DEC
+//     vertex is the other way round.
+// If any of that stops holding the case fails loudly instead of going quiet.
+// ===========================================================================
+
+enum Vec3 F1_POS = Vec3( 2.50f, -1.20f,  0.80f);
+enum Vec3 F1_ROT = Vec3(10.0f,  35.0f,  -6.0f);
+enum Vec3 F1_SCL = Vec3( 1.50f,  1.00f,  0.70f);
+
+// A small, deliberately skew quad — no two corners share a coordinate, so it
+// cannot map onto itself under the transform above.
+enum Vec3[4] F1_TGT = [
+    Vec3(-0.95f,  0.22f, -0.58f),
+    Vec3(-0.73f,  0.30f, -0.50f),
+    Vec3(-0.81f,  0.08f, -0.39f),
+    Vec3(-1.00f,  0.00f, -0.53f),
+];
+
+enum float F1_RADIUS_PX = 35.0f;
+
+/// Weight-carrying vertices, by index, from a `falloffWeights` array.
+bool[] f1Carrying(JSONValue ev, size_t n) {
+    assert("falloffWeights" in ev,
+        "/api/toolpipe/eval has no falloffWeights block — the screen falloff "
+        ~ "never reached the stage: " ~ ev.toString);
+    auto ws = ev["falloffWeights"].array;
+    assert(ws.length == n,
+        format("falloffWeights has %d entries, mesh has %d vertices",
+               ws.length, n));
+    bool[] r;
+    r.length = n;
+    foreach (i, w; ws) r[i] = (cast(double) w.floating) > 1e-6;
+    return r;
+}
+
+unittest { // F1: the screen disc weights the vertices it is DRAWN over
+    resetScene();
+
+    float[16] M = composed(F1_POS, F1_ROT, F1_SCL);
+
+    // TGT then DEC; DEC's local coordinate is TGT's drawn position.
+    Vec3[] verts;
+    foreach (v; F1_TGT) verts ~= v;
+    foreach (v; F1_TGT) verts ~= transformPoint(M, v);
+    int[][] faces = [[0, 1, 2, 3], [4, 5, 6, 7]];
+    loadMesh(verts, faces);
+
+    // /api/load-mesh may reframe, so the transform and camera go on after it.
+    setXform(0, F1_POS, F1_ROT, F1_SCL);
+    setCamera(0.55f, 0.30f, 13.0f);
+
+    auto cam = fetchCam();
+    auto vp  = buildViewport(cam);
+
+    // The disc is centred on the DRAWN centroid of TGT.
+    float cx = 0, cy = 0;
+    foreach (v; F1_TGT) {
+        float px, py;
+        assert(projectOnScreen(transformPoint(M, v), vp, px, py),
+            "fixture: every drawn target corner must be on screen");
+        cx += px * 0.25f; cy += py * 0.25f;
+    }
+
+    // --- anti-vacuity, all before a single weight is read -----------------
+    foreach (i, v; F1_TGT) {
+        float dx, dy, ix, iy;
+        assert(projectOnScreen(transformPoint(M, v), vp, dx, dy));
+        assert(projectOnScreen(v, vp, ix, iy),
+            "fixture: the identity-pose corner must also be on screen, or the "
+            ~ "wrong law would merely fail to project and measure nothing");
+        assert(dist(dx, dy, ix, iy) > 20.0,
+            format("vacuous fixture: target %d projects to the same pixel "
+                   ~ "under both laws (%.1f px apart)", i, dist(dx, dy, ix, iy)));
+        assert(dist(dx, dy, cx, cy) < F1_RADIUS_PX,
+            format("fixture: drawn target %d is %.1f px from the disc centre, "
+                   ~ "outside the %.0f px radius", i, dist(dx, dy, cx, cy),
+                   F1_RADIUS_PX));
+        assert(dist(ix, iy, cx, cy) > F1_RADIUS_PX,
+            format("vacuous fixture: identity-pose target %d is INSIDE the "
+                   ~ "disc (%.1f px), so both laws would weight it", i,
+                   dist(ix, iy, cx, cy)));
+    }
+    foreach (i, v; F1_TGT) {
+        Vec3 dec = transformPoint(M, v);       // the decoy's LOCAL coordinate
+        float dx, dy, ix, iy;
+        assert(projectOnScreen(transformPoint(M, dec), vp, dx, dy),
+            "fixture: every drawn decoy corner must be on screen");
+        assert(projectOnScreen(dec, vp, ix, iy));
+        assert(dist(ix, iy, cx, cy) < F1_RADIUS_PX,
+            format("fixture: identity-pose decoy %d is %.1f px out — the wrong "
+                   ~ "law must weight the decoys, or the case only proves the "
+                   ~ "targets are weighted and not that the OTHER set is not",
+                   i, dist(ix, iy, cx, cy)));
+        assert(dist(dx, dy, cx, cy) > F1_RADIUS_PX,
+            format("vacuous fixture: drawn decoy %d is INSIDE the disc "
+                   ~ "(%.1f px)", i, dist(dx, dy, cx, cy)));
+    }
+
+    // --- drive ------------------------------------------------------------
+    cmd("tool.set move");
+    cmd("tool.pipe.attr falloff type screen");
+    cmd(format("tool.pipe.attr falloff screenCx %.4f", cx));
+    cmd(format("tool.pipe.attr falloff screenCy %.4f", cy));
+    cmd(format("tool.pipe.attr falloff screenSize %.4f", F1_RADIUS_PX));
+    Thread.sleep(dur!"msecs"(150));
+
+    auto ev = getJson("/api/toolpipe/eval");
+    auto carrying = f1Carrying(ev, verts.length);
+    cmd("tool.set move off");
+
+    // --- the pair ---------------------------------------------------------
+    foreach (i; 0 .. 4)
+        assert(carrying[i],
+            format("target vertex %d carries no weight — the disc weighted the "
+                   ~ "IDENTITY-pose footprint. weights=%s",
+                   i, ev["falloffWeights"].toString));
+    foreach (i; 4 .. 8)
+        assert(!carrying[i],
+            format("decoy vertex %d carries weight — it sits at the target's "
+                   ~ "identity-pose pixel, so the disc is still projecting "
+                   ~ "through the world viewport. weights=%s",
+                   i, ev["falloffWeights"].toString));
+}
+
+// ===========================================================================
+// F2 — Screen falloff through the DEFORM KERNEL, not the reporting block.
+//
+// F1 above reads `/api/toolpipe/eval`'s `falloffWeights`, which is precise
+// but is produced by its own aim-space composition (`http_providers.d`). The
+// weight the geometry actually moves by is composed somewhere else — the
+// transform tool's `dragAimSpace()`, handed to `xform_kernels`. A conversion
+// that fixed one and not the other would pass F1 and still deform the wrong
+// vertices, so this case drives a real drag and reads GEOMETRY.
+//
+// Same fixture and the same pair: the drawn footprint and the identity-pose
+// footprint are DISJOINT vertex sets, so a wrong implementation does not move
+// the targets by a smaller amount — it moves the OTHER four instead.
+//
+// The press pixel doubles as the disc centre: MoveTool re-centres the screen
+// falloff at the click (`screenFalloffSetCenter`), so no `screenCx/Cy` is set
+// here and the case exercises the click-driven path a user takes.
+// ===========================================================================
+unittest { // F2: the drag moves the vertices the disc is DRAWN over
+    resetScene();
+
+    float[16] M = composed(F1_POS, F1_ROT, F1_SCL);
+    Vec3[] verts;
+    foreach (v; F1_TGT) verts ~= v;
+    foreach (v; F1_TGT) verts ~= transformPoint(M, v);
+    loadMesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]]);
+
+    setXform(0, F1_POS, F1_ROT, F1_SCL);
+    setCamera(0.55f, 0.30f, 13.0f);
+
+    auto cam = fetchCam();
+    auto vp  = buildViewport(cam);
+
+    float cx = 0, cy = 0;
+    foreach (v; F1_TGT) {
+        float px, py;
+        assert(projectOnScreen(transformPoint(M, v), vp, px, py));
+        cx += px * 0.25f; cy += py * 0.25f;
+    }
+
+    // The fixture guards are F1's; re-assert only the one that makes THIS
+    // case's pair meaningful — that the two footprints are disjoint.
+    foreach (i, v; F1_TGT) {
+        float dx, dy, ix, iy;
+        assert(projectOnScreen(transformPoint(M, v), vp, dx, dy));
+        assert(projectOnScreen(v, vp, ix, iy));
+        assert(dist(dx, dy, cx, cy) < F1_RADIUS_PX
+            && dist(ix, iy, cx, cy) > F1_RADIUS_PX,
+            format("vacuous fixture: target %d is not cleanly inside-drawn / "
+                   ~ "outside-identity (drawn %.1f px, identity %.1f px, "
+                   ~ "radius %.0f)", i, dist(dx, dy, cx, cy),
+                   dist(ix, iy, cx, cy), F1_RADIUS_PX));
+    }
+
+    cmd("tool.set move");
+    cmd("tool.pipe.attr falloff type screen");
+    cmd(format("tool.pipe.attr falloff screenSize %.4f", F1_RADIUS_PX));
+    Thread.sleep(dur!"msecs"(120));
+
+    auto before = fetchVerts();
+    assert(before.length == 8, "fixture: eight vertices");
+
+    // Press ON the drawn centroid (which sets the disc centre), drag away.
+    playAndWait(buildDragLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                             cast(int) cx, cast(int) cy,
+                             cast(int) cx + 90, cast(int) cy - 40, 12));
+    Thread.sleep(dur!"msecs"(200));
+    auto after = fetchVerts();
+    cmd("tool.set move off");
+
+    assert(after.length == before.length, "the drag must not change the count");
+
+    double[] moved;
+    moved.length = before.length;
+    foreach (i; 0 .. before.length) moved[i] = (after[i] - before[i]).length;
+
+    string report = format("moved=%s", moved);
+    foreach (i; 0 .. 4)
+        assert(moved[i] > 1e-3,
+            format("target vertex %d did not move — the screen disc weighted "
+                   ~ "the IDENTITY-pose footprint. %s", i, report));
+    foreach (i; 4 .. 8)
+        assert(moved[i] < 1e-4,
+            format("decoy vertex %d moved — it sits at a target's identity-pose "
+                   ~ "pixel, so the disc is still projecting through the world "
+                   ~ "viewport. %s", i, report));
+}
+
+// ===========================================================================
+// F3 — the AUTO-SIZED screen disc lands on the drawn selection.
+//
+// `FalloffStage.autoSize` places the screen disc on the selection's bounding
+// box when the falloff type is switched to Screen: it projects the bbox
+// centroid and the eight corners to get `screenCx/Cy` and `screenSize`. The
+// bbox comes from `mesh.selectionBBoxMinMax*`, which scans raw LOCAL vertices.
+//
+// WHY THIS NEEDS ITS OWN CASE, and why F1/F2 cannot cover it: if `autoSize`
+// and `screenWeight` are BOTH wrong, their two errors cancel — the disc is
+// centred on the identity-pose selection and the weights are measured there
+// too, so the selection still comes out weighted. The defect this case can
+// see is the HALF conversion: `screenWeight` fixed (F1/F2 force that) while
+// `autoSize` still projects through the world viewport. Then the disc is
+// placed at the identity-pose centroid while the weights are measured at the
+// drawn positions, and the auto-sized selection gets NOTHING.
+//
+// Discriminating input: the selection's drawn and identity-pose centroids are
+// further apart than the disc's own auto-derived radius — asserted below
+// rather than assumed, because a small transform would let the mis-placed
+// disc still cover the selection and the case would go vacuous.
+// ===========================================================================
+unittest { // F3: auto-size centres the disc on the DRAWN selection
+    resetScene();
+
+    float[16] M = composed(F1_POS, F1_ROT, F1_SCL);
+    Vec3[] verts;
+    foreach (v; F1_TGT) verts ~= v;
+    foreach (v; F1_TGT) verts ~= transformPoint(M, v);
+    loadMesh(verts, [[0, 1, 2, 3], [4, 5, 6, 7]]);
+
+    setXform(0, F1_POS, F1_ROT, F1_SCL);
+    setCamera(0.55f, 0.30f, 13.0f);
+
+    auto cam = fetchCam();
+    auto vp  = buildViewport(cam);
+
+    // Drawn and identity-pose centroids of the TGT quad, plus the drawn
+    // radius auto-size would derive from it.
+    float dcx = 0, dcy = 0, icx = 0, icy = 0;
+    foreach (v; F1_TGT) {
+        float dx, dy, ix, iy;
+        assert(projectOnScreen(transformPoint(M, v), vp, dx, dy));
+        assert(projectOnScreen(v, vp, ix, iy));
+        dcx += dx * 0.25f; dcy += dy * 0.25f;
+        icx += ix * 0.25f; icy += iy * 0.25f;
+    }
+    double drawnR = 0;
+    foreach (v; F1_TGT) {
+        float dx, dy;
+        assert(projectOnScreen(transformPoint(M, v), vp, dx, dy));
+        auto d = dist(dx, dy, dcx, dcy);
+        if (d > drawnR) drawnR = d;
+    }
+    assert(dist(dcx, dcy, icx, icy) > drawnR * 2.0,
+        format("vacuous fixture: the drawn and identity-pose centroids are "
+               ~ "%.1f px apart but the auto-sized radius is ~%.1f px — a disc "
+               ~ "placed on the wrong one would still cover the selection",
+               dist(dcx, dcy, icx, icy), drawnR));
+
+    // Select ONLY the target quad's vertices, so the bbox auto-size reads is
+    // theirs and not the whole mesh's.
+    selectIndices("vertices", [0, 1, 2, 3]);
+    cmd("tool.set move");
+    Thread.sleep(dur!"msecs"(150));     // let the pipe publish a viewport
+
+    // Switching the type is what triggers autoSize; no screenCx/Cy/Size here.
+    cmd("tool.pipe.attr falloff type screen");
+    Thread.sleep(dur!"msecs"(150));
+
+    auto ev = getJson("/api/toolpipe/eval");
+    auto carrying = f1Carrying(ev, verts.length);
+    cmd("tool.set move off");
+
+    foreach (i; 0 .. 4)
+        assert(carrying[i],
+            format("selected vertex %d carries no weight after auto-size — the "
+                   ~ "disc was placed on the IDENTITY-pose selection while the "
+                   ~ "weights are measured on the drawn one. weights=%s",
+                   i, ev["falloffWeights"].toString));
+}

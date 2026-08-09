@@ -29,7 +29,8 @@ import std.stdio;
 import std.json;
 import std.math : fabs, PI, sqrt;
 
-import math : Vec3, Viewport, identityMatrix, lookAt, perspectiveMatrix;
+import math : Vec3, Viewport, identityMatrix, lookAt, perspectiveMatrix,
+              AimViewport, aimSpace, ModelSpace;
 import mesh : Mesh;
 import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket;
 import tools.transform.transform : TransformTool;
@@ -40,12 +41,14 @@ void main() {}
 
 // --- helpers ---------------------------------------------------------------
 
-private Viewport testViewport() {
+// Task 0619: the kernels take the AIM space. This fixture's falloff is
+// Linear (a 3D distance, never projected), so identity is honest here.
+private AimViewport testViewport() {
     Viewport vp;
     vp.view   = lookAt(Vec3(0,0,5), Vec3(0,0,0), Vec3(0,1,0));
     vp.proj   = perspectiveMatrix(PI/2, 1.0f, 0.1f, 100.0f);
     vp.width  = 800; vp.height = 800;
-    return vp;
+    return aimSpace(vp, ModelSpace.world());
 }
 private SymmetryPacket noSymmetry() { SymmetryPacket s; s.enabled = false; return s; }
 private TransformTool.ClusterPivots noCP() { TransformTool.ClusterPivots cp; return cp; }

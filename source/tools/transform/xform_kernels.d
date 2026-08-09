@@ -21,7 +21,7 @@ module tools.transform.xform_kernels;
 // "snapshot at drag start" invariant the tools already maintain via
 // captureFalloffForDrag / captureSymmetryForDrag.
 
-import math    : Vec3, Viewport, dot, cross;
+import math    : Vec3, Viewport, dot, cross, AimViewport;
 import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
                  matMul4, identityMatrix;
 import mesh    : Mesh;
@@ -78,7 +78,12 @@ void applyTranslateIncremental(
     const(int)[] indices,
     Vec3 delta,
     const ref FalloffPacket dragFalloff,
-    const ref Viewport vp,
+    const AimViewport vp,          // task 0619: the AIM space. BY VALUE, and
+                                   // deliberately: the copy is one per kernel
+                                   // call while the falloff loop below is O(V),
+                                   // and it lets the caller write
+                                   // `dragAimSpace()` inline instead of hoisting
+                                   // a named local it could forget to refresh.
     const ref SymmetryPacket dragSymmetry,
     bool[] toProcess)
 {
@@ -194,7 +199,12 @@ void applyRotateIncremental(
     int dragAxisIdx,
     float angleRad,
     const ref FalloffPacket dragFalloff,
-    const ref Viewport vp,
+    const AimViewport vp,          // task 0619: the AIM space. BY VALUE, and
+                                   // deliberately: the copy is one per kernel
+                                   // call while the falloff loop below is O(V),
+                                   // and it lets the caller write
+                                   // `dragAimSpace()` inline instead of hoisting
+                                   // a named local it could forget to refresh.
     TransformTool.ClusterPivots clusterPivots,
     TransformTool.ClusterAxes clusterAxes,
     const ref SymmetryPacket dragSymmetry,
@@ -235,7 +245,12 @@ void applyRotateFromOrig(
     Vec3 axisZFallback,
     Vec3 angleAccum,
     const ref FalloffPacket dragFalloff,
-    const ref Viewport vp,
+    const AimViewport vp,          // task 0619: the AIM space. BY VALUE, and
+                                   // deliberately: the copy is one per kernel
+                                   // call while the falloff loop below is O(V),
+                                   // and it lets the caller write
+                                   // `dragAimSpace()` inline instead of hoisting
+                                   // a named local it could forget to refresh.
     TransformTool.ClusterPivots clusterPivots,
     TransformTool.ClusterAxes clusterAxes,
     const ref SymmetryPacket dragSymmetry,
@@ -300,7 +315,12 @@ void applyScaleFromActivation(
     Vec3 axisZFallback,
     Vec3 scaleAccum,
     const ref FalloffPacket dragFalloff,
-    const ref Viewport vp,
+    const AimViewport vp,          // task 0619: the AIM space. BY VALUE, and
+                                   // deliberately: the copy is one per kernel
+                                   // call while the falloff loop below is O(V),
+                                   // and it lets the caller write
+                                   // `dragAimSpace()` inline instead of hoisting
+                                   // a named local it could forget to refresh.
     TransformTool.ClusterPivots clusterPivots,
     TransformTool.ClusterAxes clusterAxes,
     const ref SymmetryPacket dragSymmetry,
@@ -513,7 +533,12 @@ void applyXformMatrix(
     Vec3 anchor,
     BlendMode mode,
     const ref FalloffPacket dragFalloff,
-    const ref Viewport vp,
+    const AimViewport vp,          // task 0619: the AIM space. BY VALUE, and
+                                   // deliberately: the copy is one per kernel
+                                   // call while the falloff loop below is O(V),
+                                   // and it lets the caller write
+                                   // `dragAimSpace()` inline instead of hoisting
+                                   // a named local it could forget to refresh.
     TransformTool.ClusterPivots clusterPivots,
     TransformTool.ClusterAxes clusterAxes,
     float[16][] clusterM,

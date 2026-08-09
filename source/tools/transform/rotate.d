@@ -1465,7 +1465,7 @@ private:
                             handler.center,
                             handler.axisX, handler.axisY, handler.axisZ,
                             angleAccum,
-                            dragFalloff, cachedVp,
+                            dragFalloff, dragAimSpace(),
                             queryClusterPivots(vts), queryClusterAxes(vts),
                             dragSymmetry, toProcess);
     }
@@ -1493,7 +1493,7 @@ private:
         int axisIdx = (dragAxis >= 0 && dragAxis <= 2) ? dragAxis : -1;
         applyRotateIncremental(mesh, vertexIndicesToProcess,
                                handler.center, axisVec, axisIdx, angle,
-                               dragFalloff, cachedVp,
+                               dragFalloff, dragAimSpace(),
                                queryClusterPivots(vts), queryClusterAxes(vts),
                                dragSymmetry, toProcess);
         needsGpuUpdate = true;

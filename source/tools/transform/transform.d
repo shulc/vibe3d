@@ -4,7 +4,7 @@ import operator : VectorStack;
 import mesh;
 import editmode;
 import seltype : SelType;
-import math : Vec3, Viewport;
+import math : Vec3, Viewport, AimViewport, aimSpace;
 import change_bus : MeshEditScope;
 import command : Command;
 import command_history : CommandHistory;
@@ -983,10 +983,22 @@ protected:
     /// 1.0 when falloff is disabled — same convention as the snap.d
     /// short-circuit. Callers can blindly multiply per-vertex deltas
     /// by this without checking dragFalloff.enabled themselves.
-    protected float falloffWeight(int vi) {
+    /// Task 0619: `aim` is the AIM space — `aimSpace(cachedVp, ms)` — and is
+    /// a REQUIRED parameter rather than something built in here, because
+    /// every caller is an O(V) loop and `aimSpace` composes a 4x4. Build it
+    /// once above the loop (`dragAimSpace()` below) and pass it down.
+    protected float falloffWeight(int vi, const ref AimViewport aim) {
         if (!dragFalloff.enabled) return 1.0f;
         if (vi < 0 || vi >= cast(int)mesh.vertices.length) return 1.0f;
-        return evaluateFalloff(dragFalloff, mesh.vertices[vi], vi, cachedVp);
+        return evaluateFalloff(dragFalloff, mesh.vertices[vi], vi, aim);
+    }
+
+    /// The aim space for THIS tool's cached viewport and the primary layer's
+    /// transform — the one composition every per-vertex falloff loop in a
+    /// TransformTool subclass should hoist. Read fresh (there is no
+    /// invalidation signal for `ItemXform`; 0617 §2.4 proved none exists).
+    protected AimViewport dragAimSpace() {
+        return aimSpace(cachedVp, primaryModelSpace());
     }
 
     /// Per-vertex weight evaluated at an explicit world position. Used
@@ -994,9 +1006,16 @@ protected:
     /// editBefore loop) so the weight stays anchored to the pre-edit
     /// vert position — otherwise verts on the falloff boundary would
     /// drift through the field as they move under the transform.
-    protected float falloffWeightAt(Vec3 worldPos, int vi) {
+    /// Task 0619 — the name is a leftover and is wrong: `evaluateFalloff`
+    /// takes the vertex coordinate as it is STORED, i.e. local to the layer,
+    /// and the one path this was written for (MoveTool's re-apply from
+    /// `editBefore`) held exactly that. It currently has **no callers**
+    /// tree-wide; it is converted rather than deleted so the next caller
+    /// inherits the corrected contract instead of the old lie.
+    protected float falloffWeightAt(Vec3 localPos, int vi,
+                                    const ref AimViewport aim) {
         if (!dragFalloff.enabled) return 1.0f;
-        return evaluateFalloff(dragFalloff, worldPos, vi, cachedVp);
+        return evaluateFalloff(dragFalloff, localPos, vi, aim);
     }
 
     /// Hoisted to `source/falloff.d` as a free function so

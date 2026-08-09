@@ -21,7 +21,7 @@
 
 import std.math : isClose;
 
-import math : Vec3, Viewport;
+import math : Vec3, Viewport, aimSpace, ModelSpace;
 import toolpipe.pipeline : Pipeline;
 import toolpipe.stages.falloff : FalloffStage;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
@@ -69,7 +69,11 @@ unittest {
     assert(pub.contributors.length == 0,
            "single falloff carries no contributors");
 
-    Viewport vp;
+    Viewport vpW;
+    // Task 0619: `evaluateFalloff` takes the AIM space. Every packet below
+    // is Linear/Radial, which never projects, so identity is the honest
+    // value — and it is only writable from a test.
+    auto vp = aimSpace(vpW, ModelSpace.world());
     // Linear weight 0.75 at y=0.25 — same as the lone stage with no combiner.
     assert(isClose(evaluateFalloff(*pub, Vec3(0, 0.25f, 0), 0, vp), 0.75f));
 }
@@ -113,7 +117,11 @@ unittest {
     assert(pub.contributors[1].mix == FalloffMix.Subtract,
            "each contributor carries its own mix");
 
-    Viewport vp;
+    Viewport vpW;
+    // Task 0619: `evaluateFalloff` takes the AIM space. Every packet below
+    // is Linear/Radial, which never projects, so identity is the honest
+    // value — and it is only writable from a test.
+    auto vp = aimSpace(vpW, ModelSpace.world());
     // Sample x=0.5: primary→0.75, extra→0.5. Subtract: 0.75 - 0.5 = 0.25.
     Vec3 sample = Vec3(0.5f, 0, 0);
     assert(isClose(evaluateFalloff(*pub, sample, 0, vp), 0.25f),
@@ -165,7 +173,11 @@ unittest {
         assert(ct.type != FalloffType.Composite,
                "contributors are never themselves Composite (flattened)");
 
-    Viewport vp;
+    Viewport vpW;
+    // Task 0619: `evaluateFalloff` takes the AIM space. Every packet below
+    // is Linear/Radial, which never projects, so identity is the honest
+    // value — and it is only writable from a test.
+    auto vp = aimSpace(vpW, ModelSpace.world());
     // Sample x=0.5: Linear (y=0 → weight 1.0); Radial size1 → 0.5;
     // Radial size2 → 0.75. accum = 1.0; Max(1.0, 0.5)=1.0; Min(1.0, 0.75)=0.75.
     Vec3 sample = Vec3(0.5f, 0, 0);

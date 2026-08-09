@@ -4329,7 +4329,7 @@ noBankConsumed:
                 applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
                                  pivot, identityMatrix, Vec3(0, 0, 0),
                                  blendModeForMeasure(),
-                                 noFo, cachedVp, cp, ap, clusterM,
+                                 noFo, dragAimSpace(), cp, ap, clusterM,
                                  dragSymmetry, toProcess);
             } else {
                 // Global basis: delta = bX·TX + bY·TY + bZ·TZ; weight at the
@@ -4341,7 +4341,7 @@ noBankConsumed:
                 applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
                                  pivot, translationMatrix(delta), Vec3(0, 0, 0),
                                  blendModeForMeasure(),
-                                 dragFalloff, cachedVp, cp, ap, null,
+                                 dragFalloff, dragAimSpace(), cp, ap, null,
                                  dragSymmetry, toProcess);
             }
         }
@@ -4400,7 +4400,7 @@ noBankConsumed:
                                          activation, pivot,
                                          bX, bY, bZ,
                                          run.s,
-                                         dragFalloff, cachedVp,
+                                         dragFalloff, dragAimSpace(),
                                          cp, ap, dragSymmetry, toProcess,
                                          baseline);
             } else {
@@ -4429,7 +4429,7 @@ noBankConsumed:
                                      run.s.z),
                                  Vec3(0, 0, 0),
                                  blendModeForMeasure(),
-                                 dragFalloff, cachedVp, cp, ap, clusterM,
+                                 dragFalloff, dragAimSpace(), cp, ap, clusterM,
                                  dragSymmetry, toProcess,
                                  /*weightVerts=*/ baseline);
             }
@@ -5931,7 +5931,7 @@ private:
                            : blendModeForMeasure();
         applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
                          lastFoldAnchor,
-                         foldMode, dragFalloff, cachedVp, cp, ap,
+                         foldMode, dragFalloff, dragAimSpace(), cp, ap,
                          clusterM, noSym, toProcess, /*weightVerts=*/ baseline);
 
         // MIRROR pass — fixed-base position-copy symmetry. The fold carries
@@ -6007,7 +6007,7 @@ private:
                              pivotRotationMatrix(Vec3(0, 0, 0), axis, angleRad),
                              Vec3(0, 0, 0),
                              blendModeForMeasure(),
-                             dragFalloff, cachedVp, cp, ap, clusterM,
+                             dragFalloff, dragAimSpace(), cp, ap, clusterM,
                              dragSymmetry, toProcess);
         } else {
             // Global / view-ring: single origin-fixing rotation about `axis`.
@@ -6016,7 +6016,7 @@ private:
                              pivotRotationMatrix(Vec3(0, 0, 0), axis, angleRad),
                              Vec3(0, 0, 0),
                              blendModeForMeasure(),
-                             dragFalloff, cachedVp, cp, ap, null,
+                             dragFalloff, dragAimSpace(), cp, ap, null,
                              dragSymmetry, toProcess);
         }
     }

@@ -5,7 +5,8 @@ import std.json;
 import std.math      : sqrt;
 
 import math : Vec3, Viewport, projectToWindowFull, dot, cross,
-              pointInPolygon2D, closestOnSegment2DSquared;
+              pointInPolygon2D, closestOnSegment2DSquared,
+              AimViewport, aimSpace, ModelSpace;
 import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
                           ElementConnect;
 
@@ -27,17 +28,50 @@ import toolpipe.packets : FalloffPacket, FalloffType, FalloffShape, FalloffMix,
 //   7.5e — Lasso
 // ---------------------------------------------------------------------------
 
-/// Per-vertex falloff weight at world position `pos` (which is the
-/// vertex's CURRENT world coord; tools should pass the live position
-/// so a multi-frame drag sees the falloff move with the vertex).
+/// Per-vertex falloff weight at position `pos` — the vertex's CURRENT
+/// coordinate as it is stored in `mesh.vertices[]`, i.e. LOCAL to its
+/// layer. (Tools should pass the live position so a multi-frame drag
+/// sees the falloff move with the vertex.)
 ///
-/// `vertIdx` is reserved for future types that key on the vertex index
-/// (Element, Vertex Map). `vp` provides the projection for screen-
-/// space types.
+/// **Task 0619 — the space, corrected.** This doc used to say `pos` was
+/// the vertex's *world* coord. It never was: every production caller
+/// passes `mesh.vertices[i]` or a snapshot of it, which is local. That
+/// mattered for exactly two of the ten types — Screen and Lasso, the
+/// only ones that answer in WINDOW PIXELS. They projected the local
+/// coordinate through the plain world viewport, so on a layer with a
+/// non-trivial `ItemXform` the disc/polygon selected the vertices that
+/// would have been under the cursor at IDENTITY, not the ones drawn
+/// there. The other eight compare `pos` against packet fields that are
+/// in the same (local) space, so they were self-consistent and are
+/// untouched here.
+///
+/// The fix is in the TYPE: the projection now arrives as an
+/// `AimViewport`, which cannot be produced without naming a
+/// `ModelSpace` (`aimSpace(vp, ms)`), so handing this function a world
+/// viewport is a compile error rather than a silently misplaced disc.
+/// Composing is exact — `proj·(view·M)·v == proj·view·(M·v)` — and is
+/// paid ONCE per query by the caller, never per vertex: this function
+/// is called inside every deform kernel's inner loop, so `aimSpace`
+/// must be hoisted above it (see the callers).
+///
+/// `vertIdx` is reserved for types that key on the vertex index
+/// (Element, Vertex Map).
+///
+/// **There is deliberately no "cursorless" overload.** Four callers looked
+/// like they needed one — `mesh.jitter` / `mesh.quantize` / `mesh.smooth` and
+/// `applyMagnet` each declared a default-constructed `Viewport` with a
+/// comment saying it was unused. They were not cursorless: all four are also
+/// `Operator`s whose `evaluate(vts)` injects the LIVE `FalloffPacket`, which
+/// can be Screen or Lasso, and the same `evaluate` already holds the real
+/// viewport on the `SubjectPacket`. The placeholders existed because nobody
+/// plumbed it through, not because there was nothing to plumb. Each now
+/// passes `aimSpace(subj.viewport, primaryModelSpace())`, so a pixel falloff
+/// applied through one of those commands weights the geometry it is drawn
+/// over instead of projecting through an all-zero matrix.
 float evaluateFalloff(const ref FalloffPacket cfg,
                       Vec3 pos,
                       int  vertIdx,
-                      const ref Viewport vp)
+                      const ref AimViewport vp)
 {
     if (!cfg.enabled) return 1.0f;
 
@@ -91,7 +125,7 @@ float applyMix(FalloffMix mix, float a, float b) {
 /// degenerates to full influence (1.0) — matching the "no constraint"
 /// contract every other falloff uses for its degenerate case.
 private float compositeWeight(const ref FalloffPacket cfg,
-                              Vec3 pos, int vertIdx, const ref Viewport vp)
+                              Vec3 pos, int vertIdx, const ref AimViewport vp)
 {
     if (cfg.contributors.length == 0) return 1.0f;
     float accum = clamp01(evaluateFalloff(cfg.contributors[0], pos, vertIdx, vp));
@@ -621,11 +655,15 @@ private float distPointPolygon(Vec3 p, const(Vec3)[] poly) {
 /// 1 - t at RMS ~0.02; smooth/easeIn fit far worse). So screen ignores
 /// `cfg.shape` and the Shape Preset row is hidden for the screen type
 /// (FalloffStage.params()).
+/// Aiming kind **Pixel** (task 0619 §1.1): `pos` is a LOCAL vertex
+/// coordinate and `vp` is the AIM space, so the projected pixel is where
+/// the vertex is DRAWN — which is what `screenCx/Cy` (a cursor pixel
+/// pushed by the click gesture) is measured against.
 private float screenWeight(const ref FalloffPacket cfg, Vec3 pos,
-                           const ref Viewport vp)
+                           const ref AimViewport vp)
 {
     float sx, sy, ndcZ;
-    if (!projectToWindowFull(pos, vp, sx, sy, ndcZ))
+    if (!projectToWindowFull(pos, vp.vp, sx, sy, ndcZ))
         return cfg.transparent ? 1.0f : 0.0f;
     float dx = sx - cfg.screenCx;
     float dy = sy - cfg.screenCy;
@@ -648,14 +686,17 @@ private float screenWeight(const ref FalloffPacket cfg, Vec3 pos,
 /// polygon arrays during the lasso input gesture. Verts behind the
 /// camera get weight = 0 unless `transparent` is set, mirroring the
 /// Screen falloff convention.
+/// Aiming kind **Pixel** (task 0619 §1.1) — same law as `screenWeight`:
+/// the lasso polygon is in window pixels, so the vertex must be
+/// projected through the AIM space to be compared against it.
 private float lassoWeight(const ref FalloffPacket cfg, Vec3 pos,
-                          const ref Viewport vp)
+                          const ref AimViewport vp)
 {
     if (cfg.lassoPolyX.length < 3
      || cfg.lassoPolyX.length != cfg.lassoPolyY.length)
         return 1.0f;     // unset / malformed lasso → no falloff
     float sx, sy, ndcZ;
-    if (!projectToWindowFull(pos, vp, sx, sy, ndcZ))
+    if (!projectToWindowFull(pos, vp.vp, sx, sy, ndcZ))
         return cfg.transparent ? 1.0f : 0.0f;
 
     bool inside = pointInPolygon2D(sx, sy,
@@ -764,7 +805,8 @@ unittest { // linear falloff: vert at start = 1, at end = 0
     p.shape   = FalloffShape.Linear;
     p.start   = Vec3(0, 0, 0);
     p.end     = Vec3(0, 1, 0);
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     assert(isClose(evaluateFalloff(p, Vec3(0, 0,    0), 0, vp), 1.0f));
     assert(isClose(evaluateFalloff(p, Vec3(0, 1,    0), 0, vp), 0.0f));
     assert(isClose(evaluateFalloff(p, Vec3(0, 0.25f, 0), 0, vp), 0.75f));
@@ -781,7 +823,8 @@ unittest { // disabled packet returns 1.0 regardless of type
     FalloffPacket p;
     p.enabled = false;
     p.type    = FalloffType.Linear;
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     assert(isClose(evaluateFalloff(p, Vec3(0, 1, 0), 0, vp), 1.0f));
 }
 
@@ -793,7 +836,8 @@ unittest { // radial falloff: center = 1, surface = 0, outside = 0
     p.shape   = FalloffShape.Linear;
     p.center  = Vec3(0, 0, 0);
     p.size    = Vec3(1, 1, 1);
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     assert(isClose(evaluateFalloff(p, Vec3(0,    0, 0), 0, vp), 1.0f));
     assert(isClose(evaluateFalloff(p, Vec3(1,    0, 0), 0, vp), 0.0f));
     assert(isClose(evaluateFalloff(p, Vec3(0.5f, 0, 0), 0, vp), 0.5f));
@@ -817,7 +861,8 @@ unittest { // default-flip guard: a falloff with NO explicit shape now
     p.type    = FalloffType.Radial;
     p.center  = Vec3(0, 0, 0);
     p.size    = Vec3(1, 1, 1);
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     // t=0.25 → linear 0.75 (a Smooth default would give ≈0.844 instead —
     // this distinguishes the two curves at the same t).
     assert(isClose(evaluateFalloff(p, Vec3(0.25f, 0, 0), 0, vp), 0.75f));
@@ -832,7 +877,8 @@ unittest { // element falloff: spherical linear decay around a single-vertex
     p.shape        = FalloffShape.Linear;
     p.pickedRadius = 0.5f;
     p.anchorPos    = [Vec3(0, 0, 0)];
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0),         0, vp), 1.0f));  // d=0
     assert(isClose(evaluateFalloff(p, Vec3(0.25f, 0, 0),     0, vp), 0.5f));  // d=0.25, t=0.5
     // d = sqrt(0.125) ≈ 0.35355 (t ≈ 0.7071) → w ≈ 0.292893 (= 1 - sqrt(2)/2).
@@ -865,7 +911,8 @@ unittest { // cylinder falloff: radial-perpendicular linear profile (axis-respon
     p.center  = Vec3(0, 0, 0);
     p.size    = Vec3(0.75f, 0.75f, 0.75f);
     p.normal  = Vec3(0, 1, 0);
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
 
     // On-axis: plen=0 → w=1.0
     assert(isClose(evaluateFalloff(p, Vec3(0, 0.5f, 0), 0, vp), 1.0f, tol));
@@ -900,7 +947,8 @@ unittest { // screen falloff: behind-camera handling
     p.screenCx   = 100;
     p.screenCy   = 100;
     p.screenSize = 50;
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     p.transparent = false;
     assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 0.0f));
     p.transparent = true;
@@ -918,11 +966,12 @@ unittest { // screen falloff: LINEAR profile (locks the curve; w = 1 - t)
     //   origin lands at px=100 and a point at x=Δ lands at px=100+Δ*100
     //   (screen-distance Δ*100 from the disc centre).
     import std.math : isClose;
-    Viewport vp;
-    vp.view   = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-    vp.proj   = vp.view;
-    vp.width  = 200;
-    vp.height = 200;
+    Viewport vpW;
+    vpW.view   = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    vpW.proj   = vpW.view;
+    vpW.width  = 200;
+    vpW.height = 200;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     FalloffPacket p;
     p.enabled    = true;
     p.type       = FalloffType.Screen;
@@ -944,7 +993,8 @@ unittest { // lasso: empty / unset polygon falls through to weight = 1
     p.enabled    = true;
     p.type       = FalloffType.Lasso;
     p.transparent = true;
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     // No polygon → no-op falloff (matches plan: "unset / malformed → 1").
     assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 1.0f));
 }
@@ -954,11 +1004,12 @@ unittest { // lasso: inside→1, outside→0, soft-border ramp via applyShape
     // Lasso = a screen-pixel square [50,150]². Inside→1, outside→0; with a
     // soft border the outside weight ramps in via the (verified) shape curve.
     import std.math : isClose;
-    Viewport vp;
-    vp.view   = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
-    vp.proj   = vp.view;
-    vp.width  = 200;
-    vp.height = 200;
+    Viewport vpW;
+    vpW.view   = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    vpW.proj   = vpW.view;
+    vpW.width  = 200;
+    vpW.height = 200;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     FalloffPacket p;
     p.enabled    = true;
     p.type       = FalloffType.Lasso;
@@ -983,7 +1034,8 @@ unittest { // Selection (D.7): empty packet → all verts weight = 1
     // selectionWeights left empty → "no constraint" path: every
     // vertIdx returns 1.0 regardless of position. Matches the
     // empty-selection-means-move-everything contract.
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0),    0, vp), 1.0f));
     assert(isClose(evaluateFalloff(p, Vec3(1, 2, 3),    7, vp), 1.0f));
 }
@@ -996,7 +1048,8 @@ unittest { // Selection (D.7): explicit weights array honored per-vert
     // 4 verts: 2 selected (weight 1.0), 2 at decay positions.
     float[] w = [1.0f, 1.0f, 0.5f, 0.0f];
     p.selectionWeights = w;
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     assert(isClose(evaluateFalloff(p, Vec3.init, 0, vp), 1.0f));
     assert(isClose(evaluateFalloff(p, Vec3.init, 1, vp), 1.0f));
     assert(isClose(evaluateFalloff(p, Vec3.init, 2, vp), 0.5f));
@@ -1011,13 +1064,15 @@ unittest { // Composite: empty contributor set → full influence
     FalloffPacket p;
     p.enabled = true;
     p.type    = FalloffType.Composite;
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     assert(isClose(evaluateFalloff(p, Vec3(0, 0, 0), 0, vp), 1.0f));
 }
 
 unittest { // Composite math: Linear × Radial under each Mix Mode
     import std.math : isClose;
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
 
     // Contributor A — Linear along +Y, weight 0.75 at y=0.25 (linear shape).
     FalloffPacket a;
@@ -1078,7 +1133,8 @@ unittest { // Composite math: Linear × Radial under each Mix Mode
 
 unittest { // Composite: single contributor == that contributor (byte-stable)
     import std.math : isClose;
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     FalloffPacket lin;
     lin.enabled = true;
     lin.type    = FalloffType.Linear;
@@ -1102,7 +1158,8 @@ unittest { // Composite: single contributor == that contributor (byte-stable)
 
 unittest { // Composite: three contributors fold left-to-right via per-elem mix
     import std.math : isClose;
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     // Three radial spheres of different sizes give three distinct weights
     // at one sample; we only need deterministic wᵢ to check the fold ORDER.
     FalloffPacket mk(float sz) {
@@ -1299,7 +1356,8 @@ unittest {
     assert(fp.enabled);
     assert(fp.type == FalloffType.Linear);
     assert(fp.shape == FalloffShape.Linear);
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
     assert(isClose(evaluateFalloff(fp, Vec3(0,  1, 0), 0, vp), 1.0f));
     assert(isClose(evaluateFalloff(fp, Vec3(0,  0, 0), 0, vp), 0.5f));
     assert(isClose(evaluateFalloff(fp, Vec3(0, -1, 0), 0, vp), 0.0f));
@@ -1310,7 +1368,8 @@ unittest { // vertexMapWeight: lookup + clamp + degenerate cases
     FalloffPacket fp;
     fp.enabled = true;
     fp.type    = FalloffType.VertexMap;
-    Viewport vp;
+    Viewport vpW;
+    auto vp = aimSpace(vpW, ModelSpace.world());
 
     // empty slice → full influence
     assert(isClose(evaluateFalloff(fp, Vec3(0, 0, 0), 0, vp), 1.0f));

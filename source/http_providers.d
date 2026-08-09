@@ -1472,9 +1472,17 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 if (auto fpp = vts.get!FalloffPacket()) {
                     if (fpp.enabled) {
                         buf.put(`,"falloffWeights":[`);
+                        // Task 0619: `subj.mesh.vertices` are LOCAL, so the
+                        // projection a Screen/Lasso weight does must carry the
+                        // primary layer's transform. Unlike the batch mesh
+                        // commands this block reads whatever packet the live
+                        // stage published, which CAN be a pixel type — so it
+                        // needs a real aim space, composed once for the whole
+                        // vertex loop rather than per vertex.
+                        const auto aim = aimSpace(subj.viewport, primaryModelSpace());
                         foreach (i, v; subj.mesh.vertices) {
                             if (i) buf.put(",");
-                            float w = evaluateFalloff(*fpp, v, cast(int) i, subj.viewport);
+                            float w = evaluateFalloff(*fpp, v, cast(int) i, aim);
                             // Honor the block's documented [0,1] contract for
                             // EVERY falloff type: Screen/Lasso weights project
                             // through the viewport (perspective divide can go

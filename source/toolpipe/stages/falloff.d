@@ -5,7 +5,8 @@ import std.conv      : to;
 import std.string    : split, strip;
 import std.math      : abs;
 
-import math : Vec3, Viewport, dot, projectToWindowFull;
+import math : Vec3, Viewport, dot, projectToWindowFull, aimSpace, ModelSpace;
+import document : primaryModelSpace;
 import std.math : sqrt;
 import mesh : Mesh, MapDomain, MeshCacheKey;
 import editmode : EditMode;
@@ -85,10 +86,21 @@ private static immutable IntEnumEntry[] shapeEntries = [
 // HTTP setAttr keys (full set; only `type none` is meaningful in 7.5a):
 //   `type`         : "none" / "linear" / "radial" / "screen" / "lasso"
 //   `shape`        : "linear" / "easeIn" / "easeOut" / "smooth" / "custom"
-//   `start`        : "x,y,z" world-space
-//   `end`          : "x,y,z" world-space
-//   `center`       : "x,y,z" world-space
+//   `start`        : "x,y,z" — see the SPACE note below
+//   `end`          : "x,y,z" — see the SPACE note below
+//   `center`       : "x,y,z" — see the SPACE note below
 //   `size`         : "x,y,z" per-axis ellipsoid radii
+//
+//   SPACE NOTE (task 0619). `start`/`end`/`center`/`size` are read against
+//   `pos`, which every production caller of `evaluateFalloff` fills from
+//   `mesh.vertices[i]` — LOCAL to the layer. `autoSize` fills them from the
+//   selection bbox, which is local too, so that path is self-consistent. The
+//   FalloffGizmo drag and the RMB gestures fill them from `screenAxisDelta` /
+//   ray-plane hits, which are genuinely WORLD — a real mixed-space defect in
+//   the falloff GIZMO family, out of task 0619's scope (its subject is aiming
+//   at mesh geometry through the cursor) and not fixed by pretending here.
+//   `screenCx/Cy/screenSize` and the lasso polygon are window pixels and are
+//   compared against a projection that now carries the item transform.
 //   `screenCx`     : float, window pixels
 //   `screenCy`     : float, window pixels
 //   `screenSize`   : float, window pixels
@@ -130,7 +142,12 @@ class FalloffStage : Stage, Operator {
     // every evaluate() from `anchorRing` + mesh edge-adjacency, see
     // resolveConnectMask), so it stays a direct stage field.
     bool[]         connectMask;
-    // Resolved world positions of `anchorRing`, parallel to it. Owned by
+    // Resolved positions of `anchorRing`, parallel to it — in the space
+    // `mesh.vertices[]` are stored in, i.e. LOCAL to the layer, NOT world
+    // (task 0619: this said "world" and `resolveAnchorPos` below has always
+    // copied raw `m.vertices[vi]`). That is self-consistent with
+    // `elementWeight`, which compares them against the same local `pos`.
+    // Owned by
     // the stage so the slice published on the packet (pkt.anchorPos) stays
     // valid for the whole pipe walk. Rebuilt every evaluate() from the live
     // mesh; out-of-range indices are skipped (so a stale ring after a
@@ -947,7 +964,7 @@ class FalloffStage : Stage, Operator {
         return r;
     }
 
-    // Resolve `anchorRing` vertex indices to their live world positions into
+    // Resolve `anchorRing` vertex indices to their live LOCAL positions into
     // `anchorPos_` (parallel to anchorRing). Out-of-range indices are
     // skipped, so the two arrays may differ in length after a topology edit
     // left a stale ring — that is benign: elementWeight only cares about the
@@ -1391,8 +1408,25 @@ private:
                 // projection fails or no live viewport has been
                 // captured yet.
                 if (!lastVpValid_) break;
+                // Task 0619, aiming kind **Pixel** (§1.1). `bbMin`/`bbMax`
+                // come from `mesh_.selectionBBoxMinMax*`, which scan raw
+                // `mesh.vertices[]` — LOCAL coordinates. Projecting them
+                // through the plain world `lastVp_` placed the auto-sized
+                // disc where the selection would sit under an IDENTITY item
+                // transform, so on a transformed layer the disc appeared off
+                // the geometry it was sized from. Compose the primary's
+                // matrix into the viewport once for the whole branch (the
+                // centroid plus eight corners) and keep projecting the local
+                // points, which is exact.
+                //
+                // This has to move in lockstep with `screenWeight`
+                // (`falloff.d`): the disc's centre/radius and the per-vertex
+                // weights must be measured through the SAME projection, or an
+                // auto-sized disc would enclose a different vertex set than
+                // the one it was fitted to.
+                const auto aim = aimSpace(lastVp_, primaryModelSpace());
                 float cx, cy, ndcZ;
-                if (!projectToWindowFull(bbCenter, lastVp_, cx, cy, ndcZ))
+                if (!projectToWindowFull(bbCenter, aim.vp, cx, cy, ndcZ))
                     break;
                 screenCx = cx;
                 screenCy = cy;
@@ -1404,7 +1438,7 @@ private:
                         (i & 4) ? bbMax.z : bbMin.z,
                     );
                     float kx, ky, knz;
-                    if (!projectToWindowFull(corner, lastVp_, kx, ky, knz))
+                    if (!projectToWindowFull(corner, aim.vp, kx, ky, knz))
                         continue;
                     float dx = kx - cx;
                     float dy = ky - cy;
@@ -1960,7 +1994,11 @@ unittest {
     // runs (see elementWeight's gate-then-distance order in source/falloff.d).
     fs.pickedRadius = 1.2f;
 
-    Viewport vp;
+    Viewport vpW;
+    // Element falloff never projects, so the identity aim is the honest
+    // value here — and `ModelSpace.world()` is only reachable from a
+    // unittest (task 0619 §2.3.3 bans it in production in these files).
+    auto vp = aimSpace(vpW, ModelSpace.world());
 
     // vertex / edge / face pick types, all anchored inside cube A.
     const(uint)[][] pickRings = [

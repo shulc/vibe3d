@@ -1,7 +1,7 @@
 module deform_magnet;
 
 import mesh : Mesh;
-import math : Vec3, Viewport;
+import math : Vec3, Viewport, AimViewport, aimSpace, ModelSpace;
 import falloff : evaluateFalloff;
 import toolpipe.packets : FalloffPacket;
 
@@ -28,7 +28,7 @@ Vec3 attractToPoint(Vec3 pos, Vec3 target, float weight, float strength) {
 /// Apply convergent-attraction deformation to the vertex subset `indices`.
 ///
 /// For each vertex i in `indices`:
-///   1. Evaluate weight w_i = evaluateFalloff(fp, pos_i, i, vp).
+///   1. Evaluate weight w_i = evaluateFalloff(fp, pos_i, i, aim).
 ///   2. If w_i > 0: pos_i' = attractToPoint(pos_i, target, w_i, strength).
 ///
 /// Post-conditions (always met, even on early-out):
@@ -38,9 +38,17 @@ Vec3 attractToPoint(Vec3 pos, Vec3 target, float weight, float strength) {
 ///     the undo delta.
 ///
 /// Returns true iff at least one vertex was displaced.
+/// Task 0619 — `aim` replaces what used to be a `Viewport` that both
+/// callers filled with a default-constructed value and a comment saying
+/// "Element falloff ignores viewport". That reasoning held for the
+/// interactive tool, which pins `fp.type = FalloffType.Element`, but NOT for
+/// `commands/mesh/magnet.d`: it is an `Operator`, and its `evaluate(vts)`
+/// copies the LIVE pipeline `FalloffPacket` over its own — which can be a
+/// Screen or Lasso type. So the projection genuinely is reachable here, and
+/// the aim space is a required parameter rather than an optional one.
 bool applyMagnet(Mesh* mesh, const(int)[] indices,
                  Vec3 target, float strength,
-                 const ref FalloffPacket fp, const ref Viewport vp,
+                 const ref FalloffPacket fp, const ref AimViewport aim,
                  ref uint[] touchedIdx, ref Vec3[] touchedPrev) {
     touchedIdx.length  = 0;
     touchedPrev.length = 0;
@@ -49,7 +57,7 @@ bool applyMagnet(Mesh* mesh, const(int)[] indices,
 
     foreach (i; indices) {
         if (i < 0 || cast(size_t)i >= mesh.vertices.length) continue;
-        float w = evaluateFalloff(fp, mesh.vertices[i], i, vp);
+        float w = evaluateFalloff(fp, mesh.vertices[i], i, aim);
         if (w <= 0.0f) continue;
         touchedIdx  ~= cast(uint)i;
         touchedPrev ~= mesh.vertices[i];
@@ -107,8 +115,11 @@ unittest {
 
     uint[] tidx;
     Vec3[] tprev;
-    Viewport vp;   // Element falloff ignores viewport
-    bool changed = applyMagnet(&m, allIdx, target, 1.0f, fp, vp, tidx, tprev);
+    // Element falloff never projects; identity is the honest aim here, and
+    // `ModelSpace.world()` is only reachable from a unittest.
+    Viewport vpW;
+    auto aim = aimSpace(vpW, ModelSpace.world());
+    bool changed = applyMagnet(&m, allIdx, target, 1.0f, fp, aim, tidx, tprev);
 
     assert(changed, "applyMagnet should displace at least one vertex");
 
