@@ -2,7 +2,8 @@ module toolpipe.stages.actcenter;
 
 import std.format : format;
 
-import math    : Vec3, Pin, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine;
+import math    : Vec3, Pin, Viewport, screenRay, screenPointToRay, rayPlaneIntersect, applyAffine,
+                 ModelSpace;
 import mesh    : Mesh, MeshCacheKey;
 import editmode : EditMode;
 import seltype : SelType;
@@ -562,11 +563,13 @@ public:
     /// Live centroid of `verts` (mesh positions), false when none resolve.
     private bool ringCentroid(const(uint)[] verts, out Vec3 c) const {
         if (mesh_ is null || verts.length == 0) return false;
+        auto ms  = itemSpace();
         Vec3 sum = Vec3(0, 0, 0);
         int  n   = 0;
         foreach (vi; verts) {
             if (vi >= mesh_.vertices.length) continue;   // stale index guard
-            sum += mesh_.vertices[vi];
+            sum += ms.isIdentity ? mesh_.vertices[vi]
+                                 : ms.toWorldPoint(mesh_.vertices[vi]);
             n++;
         }
         if (n == 0) return false;
@@ -910,6 +913,43 @@ public:
         return applyAffine(l.xform.composedMatrix(), l.xform.pivot);
     }
 
+    /// THE SPACE THIS STAGE PUBLISHES IN (task 0649).
+    ///
+    /// Every centre this stage hands out is a WORLD point. Four of the twelve
+    /// modes always were — `Origin` (the world origin), `Pivot` / `Parent`
+    /// (an item's world pivot) and every PIN (`userPin` / `softPin` /
+    /// `manualCenter` / `screenCenter`, all of them landed by a cursor ray).
+    /// The geometry-derived ones were not: they read raw `mesh_.vertices`,
+    /// which are the EDITED LAYER's own coordinates, and published the answer
+    /// unconverted. Measured (0648): under an item translated by (5,-2,3) the
+    /// reference's `select` centre reads (6.95,-0.9,1.7) and ours read
+    /// (1.95,1.1,-1.3) — the item translation, exactly.
+    ///
+    /// That split is why `origin` printed `(0,0,0)` on both engines and meant
+    /// two different points, and why the transform apply path — which reads
+    /// EVERY centre as if it were layer-local — moved geometry about the item
+    /// origin for `origin` and about `pos` for `pivot`, both wrong and in
+    /// opposite directions.
+    ///
+    /// So the geometry-derived producers carry their points through this
+    /// space, per point and BEFORE any min/max (see
+    /// `mesh.selectionBBoxCenterVertices` for why the order is load-bearing),
+    /// and the consumers that need layer coordinates convert back — one
+    /// place, `XfrmTransformTool.applyTRS`.
+    ///
+    /// SOURCE. `document.primaryModelSpace()` — the space of the mesh this
+    /// pipeline edits (`activeMeshRef` == `primary.mesh`), NOT `primary_()`.
+    /// The two differ once a mesh-less item holds the item-transform focus,
+    /// and there `primary_()` is the right answer for `Mode.Pivot` (the item
+    /// the gizmo would move) while THIS is the right answer for "what maps
+    /// `mesh_` into the world". Identity when the app resolver is not
+    /// installed, which is every stage-level unittest — so those stay
+    /// byte-identical.
+    private ModelSpace itemSpace() const {
+        import document : primaryModelSpace;
+        return primaryModelSpace();
+    }
+
 private:
 
     // `subjType` is the subject's SelType AT THE POINT OF USE — the caller's
@@ -1002,7 +1042,7 @@ private:
                 final switch (*editMode_) {
                     case EditMode.Vertices: return centroidWithGeometryFallback();
                     case EditMode.Edges:    return centroidWithGeometryFallback();
-                    case EditMode.Polygons: return mesh_.selectionBorderBBoxCenterFaces();
+                    case EditMode.Polygons: return mesh_.selectionBorderBBoxCenterFaces(itemSpace());
                 }
             case Mode.Pivot:
                 // center = primary item's pivot world position. See
@@ -1089,32 +1129,29 @@ private:
         computeLocalClustersFull(clusterCenters, clusterOf);
         if (_cachedClusterCnt <= 0)
             return centroidWithGeometryFallback();
-        // Average centroid of CLUSTER 0, replicating the per-mode single-pivot
-        // formula exactly (face mode averages face centroids; vert/edge modes
-        // average the cluster's verts).
-        Vec3 sum = Vec3(0, 0, 0);
-        int  n   = 0;
-        final switch (*editMode_) {
-            case EditMode.Polygons:
-                // Average of the centroids of faces in cluster 0.
-                foreach (fi, c; _cachedFaceClusterOf) {
-                    if (c != 0) continue;
-                    const(uint)[] face = mesh_.faces[fi];
-                    sum += face.length > 0 ? mesh_.faceCentroid(cast(uint)fi) : Vec3(0, 0, 0);
-                    n++;
-                }
-                break;
-            case EditMode.Edges:
-            case EditMode.Vertices:
-                // Average of the verts assigned to cluster 0.
-                foreach (vi, c; _cachedClusterOf) {
-                    if (c != 0) continue;
-                    sum += mesh_.vertices[vi];
-                    n++;
-                }
-                break;
-        }
-        return n > 0 ? sum / cast(float)n : centroidWithGeometryFallback();
+        // CLUSTER 0's BOUNDING-BOX MIDPOINT — not the average (task 0649, D8
+        // of the 0648 measurement).
+        //
+        // This arm used to average: face mode averaged face centroids, vert /
+        // edge mode averaged the cluster's verts. On the 0648 stand — an
+        // irregular quad, chosen so the two answers differ — the reference's
+        // `local` centre reads (1.95, 1.1, -1.3), the bbox mid, and ours read
+        // (1.925, 1.1, -1.3), the vertex mean. Measured at the IDENTITY item
+        // transform, so this divergence has nothing to do with the space
+        // change above; it rides along because it is the same line.
+        //
+        // It also makes this arm agree with `clusterBBoxCenter`, which the
+        // MULTI-cluster path right beside it has always used for the very same
+        // clusters (`computeLocalClustersFull`'s doc says "bounding-box
+        // midpoints (consistent with Phase 2's bbox-Select choice)") — so the
+        // single-cluster centre and cluster 0's published centre used to be
+        // two different points on the same partition.
+        // `clusterCenters` was filled by the call above and is exactly
+        // `clusterBBoxCenter(clusterOf, i)` per cluster; reading [0] rather
+        // than recomputing it is what makes "the same point" a fact rather
+        // than a claim two call sites have to keep true.
+        return clusterCenters.length > 0 ? clusterCenters[0]
+                                         : centroidWithGeometryFallback();
     }
 
     // Cheap rolling hash of the Select bit across the marks array relevant to
@@ -1133,12 +1170,14 @@ private:
     // clusterOf == cid). Mirrors mesh.selectionBBoxCenterFaces() but
     // restricted to one cluster.
     Vec3 clusterBBoxCenter(const(int)[] clusterOf, int cid) const {
+        const auto ms = itemSpace();   // world, see itemSpace()
         Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
         Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
         bool seen = false;
         foreach (vi, c; clusterOf) {
             if (c != cid) continue;
-            Vec3 v = mesh_.vertices[vi];
+            Vec3 v = ms.isIdentity ? mesh_.vertices[vi]
+                                   : ms.toWorldPoint(mesh_.vertices[vi]);
             if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
             if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
             if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
@@ -1281,14 +1320,21 @@ private:
     // which equals the regular selection centroid.
     Vec3 elementCenter() const {
         if (mesh_ is null) return Vec3(0, 0, 0);
+        // World, like every other centre this stage publishes — see
+        // itemSpace(). Element's LAW is out of 0649's scope; its SPACE is not.
+        const auto ms = itemSpace();
+        Vec3 vAt(size_t vi) const {
+            return ms.isIdentity ? mesh_.vertices[vi]
+                                 : ms.toWorldPoint(mesh_.vertices[vi]);
+        }
         Vec3 sum = Vec3(0, 0, 0);
         int  count = 0;
         final switch (*editMode_) {
             case EditMode.Vertices: {
                 bool any = mesh_.hasAnySelectedVertices();
-                foreach (i, v; mesh_.vertices) {
+                foreach (i; 0 .. mesh_.vertices.length) {
                     if (!any || mesh_.isVertexSelected(i)) {
-                        sum += v;
+                        sum += vAt(i);
                         count++;
                     }
                 }
@@ -1298,7 +1344,7 @@ private:
                 bool any = mesh_.hasAnySelectedEdges();
                 foreach (i, edge; mesh_.edges) {
                     if (any && !mesh_.isEdgeSelected(i)) continue;
-                    Vec3 mid = (mesh_.vertices[edge[0]] + mesh_.vertices[edge[1]]) * 0.5f;
+                    Vec3 mid = (vAt(edge[0]) + vAt(edge[1])) * 0.5f;
                     sum += mid;
                     count++;
                 }
@@ -1309,7 +1355,7 @@ private:
                 foreach (i, face; mesh_.faces) {
                     if (any && !mesh_.isFaceSelected(i)) continue;
                     Vec3 c = Vec3(0, 0, 0);
-                    foreach (vi; face) c += mesh_.vertices[vi];
+                    foreach (vi; face) c += vAt(vi);
                     if (face.length > 0) c = c / cast(float)face.length;
                     sum += c;
                     count++;
@@ -1362,10 +1408,12 @@ private:
         if (mesh_ is null) return Vec3(0, 0, 0);
         // mesh.selectionBBoxCenter* falls back to the whole geometry
         // when no selection bits are set ("no selection ⇒ all geometry").
+        // The item space goes IN, not onto the result — see itemSpace().
+        auto ms = itemSpace();
         final switch (*editMode_) {
-            case EditMode.Vertices: return mesh_.selectionBBoxCenterVertices();
-            case EditMode.Edges:    return mesh_.selectionBBoxCenterEdges();
-            case EditMode.Polygons: return mesh_.selectionBBoxCenterFaces();
+            case EditMode.Vertices: return mesh_.selectionBBoxCenterVertices(ms);
+            case EditMode.Edges:    return mesh_.selectionBBoxCenterEdges(ms);
+            case EditMode.Polygons: return mesh_.selectionBBoxCenterFaces(ms);
         }
     }
 
@@ -1381,6 +1429,7 @@ private:
         if (mesh_ is null || editMode_ is null) return false;
         if (sp.vertSign.length != mesh_.vertices.length) return false;
 
+        const auto ms = itemSpace();   // world, see itemSpace()
         Vec3 sum = Vec3(0, 0, 0);
         int  count = 0;
         bool[] visited = new bool[](mesh_.vertices.length);
@@ -1389,7 +1438,8 @@ private:
             if (vi >= visited.length || visited[vi]) return;
             visited[vi] = true;
             if (sp.vertSign[vi] != sp.baseSide) return;
-            sum   = sum + mesh_.vertices[vi];
+            sum   = sum + (ms.isIdentity ? mesh_.vertices[vi]
+                                         : ms.toWorldPoint(mesh_.vertices[vi]));
             count += 1;
         }
 
@@ -1425,10 +1475,16 @@ private:
             return centroidWithGeometryFallback();
         // For non-center sub-modes, walk the same vert set as the
         // centroid path and track per-axis min/max.
+        // Every point through the item space BEFORE the min/max — see
+        // itemSpace(). The sub-modes name sides of the box (top / left / ...)
+        // in WORLD axes, so taking the box in the layer's own coordinates
+        // named the wrong side the moment the layer was rotated.
+        const auto ms = itemSpace();
         Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
         Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
         bool any = false;
-        void touch(Vec3 v) {
+        void touch(Vec3 v0) {
+            Vec3 v = ms.isIdentity ? v0 : ms.toWorldPoint(v0);
             if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
             if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
             if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;

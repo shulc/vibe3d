@@ -362,8 +362,27 @@ class FalloffStage : Stage, Operator {
         pkt.config  = config;
         pkt.enabled = (type != FalloffType.None);
         // Sphere centre tracks ACEN.center. ACEN runs before us.
-        if (auto acen = vts.get!ActionCenterPacket())
-            pkt.pickedCenter = acen.center;
+        //
+        // SPACE (task 0649). ACEN publishes a WORLD point; this field is
+        // consumed by `falloff.evaluateFalloff` as `pos - cfg.pickedCenter`
+        // where `pos` is a raw `mesh.vertices` entry — the layer's own
+        // coordinates. So it is carried back into that space here, which
+        // leaves the falloff sphere exactly where it has always been (a
+        // no-op at the identity item transform) and keeps its radius in mesh
+        // units rather than turning it into a world ellipsoid under an item
+        // scale. Neither reading is measured; this one is the one that
+        // changes nothing.
+        //
+        // Consequence, stated rather than left to be discovered: the falloff
+        // OVERLAY (`falloff_render.d`, which draws `cfg.pickedCenter`) keeps
+        // drawing in mesh space, so on a transformed layer it separates from
+        // the gizmo, which now draws in world. That is the tool-overlay-space
+        // seam (0619 §2 / 0631), not this one, and it is deliberately not
+        // opened here.
+        if (auto acen = vts.get!ActionCenterPacket()) {
+            import document : primaryModelSpace;
+            pkt.pickedCenter = primaryModelSpace().toLocalPoint(acen.center);
+        }
         // Single resolver for the three element-falloff derived buffers
         // (ring / connect-mask / anchor positions) — see
         // resolveElementBuffers()'s doc for the dependency order and

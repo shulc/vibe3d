@@ -1,5 +1,6 @@
 module tools.edit.edge_extend;
 
+import document : primaryModelSpace;
 import bindbc.opengl;
 import bindbc.sdl;
 import operator : VectorStack;
@@ -437,7 +438,10 @@ public:
         // for a pure Move drag but harmless to freeze.
         dragBank       = picked;
         dragBaseOffset = offsetVec();
-        frozenPivot    = xfrm.actionCenter(vts);
+        // ACEN publishes in WORLD (task 0649); this pivot is conjugated
+        // against raw mesh vertices by the R/S banks below, so it is frozen in
+        // the layer's own coordinates.
+        frozenPivot    = primaryModelSpace().toLocalPoint(xfrm.actionCenter(vts));
         accumLocal_    = Vec3(0, 0, 0);   // fresh basis-local accumulator per drag
         return true;
     }

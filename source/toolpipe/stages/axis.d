@@ -4,7 +4,7 @@ import std.format : format;
 import std.math   : abs, sqrt;
 
 import math    : Vec3, Viewport, cross, dot, normalize, frameMatrix, frameMatrixInverse,
-                 applyAffine;
+                 applyAffine, ModelSpace;
 import mesh    : Mesh;
 import editmode : EditMode;
 import seltype : SelType;
@@ -248,6 +248,22 @@ private:
     // Task 0082: delegate supplying the primary Layer for Pivot/Parent modes.
     Layer delegate() primarySrc_;
     @property Layer primary_() const { return primarySrc_ ? primarySrc_() : null; }
+
+    /// THE SPACE THIS STAGE PUBLISHES IN (task 0649) — see
+    /// `ActionCenterStage.itemSpace()`, which this mirrors exactly and for the
+    /// same reason. The centre and the frame are one seam: a frame derived in
+    /// the layer's own coordinates paired with a centre in world coordinates
+    /// describes no pose at all.
+    ///
+    /// SOURCE is `document.primaryModelSpace()`, not `primary_()` — the space
+    /// that maps `mesh_` into the world, which is what a SELECTION-derived
+    /// frame needs. `Mode.Pivot` / `Mode.Parent` keep reading `primary_()`:
+    /// those publish an ITEM's own orientation, and the item in question is
+    /// the item-transform target, which is a different question.
+    ModelSpace itemSpace() const {
+        import document : primaryModelSpace;
+        return primaryModelSpace();
+    }
 
 public:
     this(Mesh* delegate() meshSrc = null, EditMode* editMode = null,
@@ -512,20 +528,41 @@ private:
     // which reference direction, and which of the four constructions the count
     // selects.
     //
-    // SPACE. Every term here is in the mesh's own coordinates, which is the
-    // space the whole transform pipe works in (`ActionCenterStage` takes its
-    // selection centres from raw mesh vertices too). The reference stores its
-    // enumerated positions already in WORLD space and applies the layer's 3x3
+    // SPACE (task 0649 — this is the paragraph that changed).
+    //
+    // Every term here is now in WORLD space. The reference stores its
+    // enumerated positions already in world space and applies the layer's 3x3
     // to the NORMALS only — an asymmetry a port must not flatten by
-    // transforming both. We transform neither, which keeps each term
-    // transformed exactly as often as it needs to be. A layer with a non-
-    // identity transform is a separate, pre-existing divergence of this whole
-    // stage and is deliberately not opened here.
+    // transforming BOTH THE SAME WAY. The previous revision preserved the
+    // asymmetry by transforming NEITHER, which is exact only while the layer
+    // transform is the identity, and that limitation is the one this stage's
+    // own comment declared "a separate, pre-existing divergence, deliberately
+    // not opened here". 0648 opened it: on a stand whose selected face has
+    // local extents (X 1.7, Z 1.2) and world extents (X 3.4, Z 3.6) under the
+    // item scale (2, 0.5, 3), the reference's `right` is Z-dominant (the
+    // WORLD extent order) and ours was X-dominant (the LOCAL one).
+    //
+    // So: POSITIONS through `toWorldPoint`, NORMALS through `toWorldNormal`
+    // (the inverse-transpose — a normal is not a direction under a
+    // non-uniform scale), which is each term transformed exactly as often as
+    // it needs to be, in a space that is no longer the identity.
+    //
+    // Reconstructing this stand offline from the world points reproduces the
+    // reference's own box ROWS to ~1e-6 in all five of 0648's item
+    // transforms, which is the evidence that the reference's box is the box
+    // of the WORLD points. Two residual divergences are NOT closed here and
+    // are recorded in the task log rather than fitted: the covariance
+    // DIVISOR (`toolpipe.obbox` deliberately drops the reference's 1/(2n),
+    // which the same reconstruction says is observable at ~1e-3 on a rotated
+    // stand), and the box-row-to-packet-slot TAIL in `axisFrameFromBox`,
+    // which is unread on the reference side and which 0648's numbers do not
+    // settle either.
     bool computeSelectionBboxBasis(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
         import toolpipe.obbox : ObbFrame, obbFromPoints, obbFromVertexNormal,
                                 obbFromEdge, axisFrameFromBox;
         if (mesh_ is null || editMode_ is null) return false;
 
+        const auto ms = itemSpace();
         Vec3[] pts;
         uint[] vids;
         bool[] visited = new bool[](mesh_.vertices.length);
@@ -533,7 +570,8 @@ private:
         void touchVert(uint vi) {
             if (visited[vi]) return;
             visited[vi] = true;
-            pts  ~= mesh_.vertices[vi];
+            pts  ~= ms.isIdentity ? mesh_.vertices[vi]
+                                  : ms.toWorldPoint(mesh_.vertices[vi]);
             vids ~= vi;
         }
         // The sign-fix reference direction. The reference sums POLYGON normals
@@ -547,7 +585,8 @@ private:
         // port and therefore keeps every shipped sign, and reduces to the read
         // verbatim in Polygons mode.
         void touchFaceNormal(uint fi) {
-            normalAcc = normalAcc + mesh_.faceNormal(fi);
+            Vec3 n = mesh_.faceNormal(fi);
+            normalAcc = normalAcc + (ms.isIdentity ? n : ms.toWorldNormal(n));
         }
         final switch (*editMode_) {
             case EditMode.Polygons:
@@ -615,7 +654,12 @@ private:
     // bound one. The two-point construction uses it as its second row; when
     // the pair does NOT bound a polygon edge the reference degrades to a world
     // basis vector instead, which is what `false` here selects.
+    /// The result is in the space `computeSelectionBboxBasis` enumerates in
+    /// (WORLD, task 0649) — the reference transforms exactly this term by the
+    /// layer's 3x3 while leaving the two-point arm's DIRECTION alone, and the
+    /// direction is already world here because `pts` are.
     private bool edgeAverageNormal(uint a, uint b, out Vec3 nrm) const {
+        const auto ms = itemSpace();
         Vec3 acc = Vec3(0, 0, 0);
         int n = 0;
         foreach (fi, face; mesh_.faces) {
@@ -623,7 +667,8 @@ private:
                 uint u = face[k];
                 uint v = face[(k + 1) % face.length];
                 if ((u == a && v == b) || (u == b && v == a)) {
-                    acc = acc + mesh_.faceNormal(cast(uint)fi);
+                    Vec3 fn = mesh_.faceNormal(cast(uint)fi);
+                    acc = acc + (ms.isIdentity ? fn : ms.toWorldNormal(fn));
                     ++n;
                     break;
                 }
@@ -645,13 +690,23 @@ private:
                              out Vec3 right, out Vec3 up, out Vec3 fwd) const {
         if (mesh_ is null || editMode_ is null) return false;
         if (clusterOf.length != mesh_.vertices.length) return false;
+        // SPACE (0649): the per-cluster frame is published in the same space
+        // as the per-cluster CENTRES (ActionCenterStage.clusterBBoxCenter) —
+        // WORLD. The two are consumed together by the fold's per-cluster arm,
+        // so converting one without the other would put each cluster's pivot
+        // and its axes in different spaces.
+        const auto ms = itemSpace();
+        Vec3 vertAt(size_t vi) const {
+            return ms.isIdentity ? mesh_.vertices[vi]
+                                 : ms.toWorldPoint(mesh_.vertices[vi]);
+        }
         float[3] mn = [float.infinity, float.infinity, float.infinity];
         float[3] mx = [-float.infinity, -float.infinity, -float.infinity];
         Vec3 normalAcc = Vec3(0, 0, 0);
         bool any = false;
         foreach (vi, c; clusterOf) {
             if (c != cid) continue;
-            Vec3 v = mesh_.vertices[vi];
+            Vec3 v = vertAt(vi);
             float[3] p = [v.x, v.y, v.z];
             foreach (k; 0 .. 3) {
                 if (p[k] < mn[k]) mn[k] = p[k];
@@ -682,8 +737,11 @@ private:
                         if (clusterOf[vi] == cid) { inCluster = true; break; }
                     }
                 }
-                if (inCluster)
-                    normalAcc = normalAcc + mesh_.faceNormal(cast(uint)fi);
+                if (inCluster) {
+                    Vec3 fn = mesh_.faceNormal(cast(uint)fi);
+                    normalAcc = normalAcc
+                              + (ms.isIdentity ? fn : ms.toWorldNormal(fn));
+                }
             }
         }
 
@@ -737,16 +795,18 @@ private:
                 int n = 0;
                 foreach (vi2, c2; clusterOf) {
                     if (c2 != cid) continue;
-                    meanY += mesh_.vertices[vi2].y;
-                    meanZ += mesh_.vertices[vi2].z;
+                    Vec3 pv = vertAt(vi2);
+                    meanY += pv.y;
+                    meanZ += pv.z;
                     n++;
                 }
                 if (n > 0) { meanY /= n; meanZ /= n; }
                 float covYY = 0, covZZ = 0, covYZ = 0;
                 foreach (vi2, c2; clusterOf) {
                     if (c2 != cid) continue;
-                    float dy = mesh_.vertices[vi2].y - meanY;
-                    float dz = mesh_.vertices[vi2].z - meanZ;
+                    Vec3 pv = vertAt(vi2);
+                    float dy = pv.y - meanY;
+                    float dz = pv.z - meanZ;
                     covYY += dy * dy;
                     covZZ += dz * dz;
                     covYZ += dy * dz;
@@ -814,6 +874,21 @@ private:
     // (caller falls back to Auto).
     bool computeElementBasis(out Vec3 right, out Vec3 up, out Vec3 fwd) const {
         if (mesh_ is null || editMode_ is null) return false;
+        // SPACE (0649): world, like every other frame this stage publishes.
+        // The element MODE's law is out of 0649's scope (the reference derives
+        // it from the pointer and 0648 scored it "not comparable"); its SPACE
+        // is not — a stage that published eleven world frames and one layer-
+        // local one would be exactly the half conversion the task refuses.
+        // Normals take the inverse-transpose, tangents the linear part.
+        const auto ms = itemSpace();
+        Vec3 nrmAt(uint fi) const {
+            Vec3 n = mesh_.faceNormal(fi);
+            return ms.isIdentity ? n : ms.toWorldNormal(n);
+        }
+        Vec3 dirOf(uint a, uint b) const {
+            Vec3 d = mesh_.vertices[b] - mesh_.vertices[a];
+            return ms.isIdentity ? d : ms.toWorldDir(d);
+        }
         Vec3 nUp;
         Vec3 nRight;
         bool got = false;
@@ -822,11 +897,11 @@ private:
                 if (!mesh_.hasAnySelectedFaces()) return false;
                 foreach (i, _; mesh_.faces) {
                     if (mesh_.isFaceSelected(i)) {
-                        nUp = mesh_.faceNormal(cast(uint)i);
+                        nUp = nrmAt(cast(uint)i);
                         // Tangent: first edge of the face, projected
                         // perpendicular to the face normal.
                         const uint[] face = mesh_.faces[i];
-                        Vec3 e0 = mesh_.vertices[face[1]] - mesh_.vertices[face[0]];
+                        Vec3 e0 = dirOf(face[0], face[1]);
                         Vec3 proj = e0 - nUp * dot(e0, nUp);
                         nRight = normalize(proj);
                         got = true;
@@ -839,7 +914,7 @@ private:
                 if (!mesh_.hasAnySelectedEdges()) return false;
                 foreach (i, edge; mesh_.edges) {
                     if (mesh_.isEdgeSelected(i)) {
-                        Vec3 t = mesh_.vertices[edge[1]] - mesh_.vertices[edge[0]];
+                        Vec3 t = dirOf(edge[0], edge[1]);
                         nRight = normalize(t);
                         // Up = workplane normal projected perpendicular to
                         // edge tangent. Falls back to world Z when the
@@ -876,7 +951,7 @@ private:
                     foreach (fi, face; mesh_.faces)
                         foreach (vj; face)
                             if (vj == vi) {
-                                acc += mesh_.faceNormal(cast(uint)fi);
+                                acc += nrmAt(cast(uint)fi);
                                 break;
                             }
                 }

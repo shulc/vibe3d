@@ -1,6 +1,6 @@
 {
   "name": "item_acen_pivot",
-  "description": "Frozen reference behaviour: with the selection type Item, the action centre is the item's world PIVOT — position + pivot — and NOT the geometry's world bounding-box centre, not the position alone, and not the world origin. The rig is built so all four candidates are DIFFERENT numbers; an earlier rig had pos = pivot = (0,0,0) and could not tell them apart.",
+  "description": "Frozen reference behaviour: with the selection type Item, the action centre is the item's world PIVOT \u2014 position + pivot \u2014 and NOT the geometry's world bounding-box centre, not the position alone, and not the world origin. The rig is built so all four candidates are DIFFERENT numbers; an earlier rig had pos = pivot = (0,0,0) and could not tell them apart.",
   "source": "Frozen reference capture (headless, scripted; no viewport drag). The rig was deliberately rebuilt so the four candidate laws predict four distinct points.",
   "provenance": {
     "schema": 1,
@@ -10,56 +10,180 @@
     "captured_utc": "2026-08-08",
     "harness": "private headless capture harness (scripts + per-case result JSON live in the private tree)",
     "task": "0614 Ph0c",
-    "notes": "Seven consecutive evaluated frames, all identical, under two different transform configurations. A sensitivity control was run in the same session: forcing the action centre to an explicit world-origin mode moved the measured point to (0,0,0), so the channel is live and the agreement is not an insensitive read. A second control candidate was attempted first and turned out to name a command that does not exist — a DEAD control, not an insensitive channel; it was re-run with a valid one."
+    "notes": "Seven consecutive evaluated frames, all identical, under two different transform configurations. A sensitivity control was run in the same session: forcing the action centre to an explicit world-origin mode moved the measured point to (0,0,0), so the channel is live and the agreement is not an insensitive read. A second control candidate was attempted first and turned out to name a command that does not exist \u2014 a DEAD control, not an insensitive channel; it was re-run with a valid one."
   },
-  "tolerance": 1e-6,
-
+  "tolerance": 1e-06,
   "rig": {
-    "comment": "One item. Its mesh is a unit cube whose LOCAL centre is (3,0,0) — displaced on purpose so the geometry-derived candidate cannot coincide with the pivot-derived one.",
+    "comment": "One item. Its mesh is a unit cube whose LOCAL centre is (3,0,0) \u2014 displaced on purpose so the geometry-derived candidate cannot coincide with the pivot-derived one.",
     "item": {
-      "pos": [0.0, 2.0, 0.0],
-      "pivot": [0.0, 0.0, 3.0],
-      "rot_deg": [0.0, 0.0, 0.0],
-      "scl": [1.0, 1.0, 1.0]
+      "pos": [
+        0.0,
+        2.0,
+        0.0
+      ],
+      "pivot": [
+        0.0,
+        0.0,
+        3.0
+      ],
+      "rot_deg": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scl": [
+        1.0,
+        1.0,
+        1.0
+      ]
     },
     "vertices": [
-      [2.5, -0.5, -0.5], [3.5, -0.5, -0.5], [3.5, 0.5, -0.5], [2.5, 0.5, -0.5],
-      [2.5, -0.5,  0.5], [3.5, -0.5,  0.5], [3.5, 0.5,  0.5], [2.5, 0.5,  0.5]
+      [
+        2.5,
+        -0.5,
+        -0.5
+      ],
+      [
+        3.5,
+        -0.5,
+        -0.5
+      ],
+      [
+        3.5,
+        0.5,
+        -0.5
+      ],
+      [
+        2.5,
+        0.5,
+        -0.5
+      ],
+      [
+        2.5,
+        -0.5,
+        0.5
+      ],
+      [
+        3.5,
+        -0.5,
+        0.5
+      ],
+      [
+        3.5,
+        0.5,
+        0.5
+      ],
+      [
+        2.5,
+        0.5,
+        0.5
+      ]
     ],
     "faces": [
-      [0, 1, 2, 3], [7, 6, 5, 4], [0, 4, 5, 1],
-      [2, 6, 7, 3], [0, 3, 7, 4], [1, 5, 6, 2]
+      [
+        0,
+        1,
+        2,
+        3
+      ],
+      [
+        7,
+        6,
+        5,
+        4
+      ],
+      [
+        0,
+        4,
+        5,
+        1
+      ],
+      [
+        2,
+        6,
+        7,
+        3
+      ],
+      [
+        0,
+        3,
+        7,
+        4
+      ],
+      [
+        1,
+        5,
+        6,
+        2
+      ]
     ],
-    "local_bbox_center": [3.0, 0.0, 0.0],
-    "world_bbox_center": [3.0, 2.0, 0.0]
+    "local_bbox_center": [
+      3.0,
+      0.0,
+      0.0
+    ],
+    "world_bbox_center": [
+      3.0,
+      2.0,
+      0.0
+    ]
   },
-
   "expected": {
-    "action_center": [0.0, 2.0, 3.0],
+    "action_center": [
+      0.0,
+      2.0,
+      3.0
+    ],
     "law": "pos + pivot (the item's world pivot)",
     "frames_measured": 7,
     "frames_unique": 1
   },
-
   "rejected": [
-    { "candidate": "item position alone",             "value": [0.0, 2.0, 0.0] },
-    { "candidate": "geometry world bounding-box centre", "value": [3.0, 2.0, 0.0] },
-    { "candidate": "world origin",                    "value": [0.0, 0.0, 0.0] }
+    {
+      "candidate": "item position alone",
+      "value": [
+        0.0,
+        2.0,
+        0.0
+      ]
+    },
+    {
+      "candidate": "geometry world bounding-box centre",
+      "value": [
+        3.0,
+        2.0,
+        0.0
+      ]
+    },
+    {
+      "candidate": "world origin",
+      "value": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    }
   ],
-
   "control": {
     "comment": "Sensitivity control from the same capture: with the action-centre mode forced to an explicit world-origin mode, the measured point MOVES. Without this the seven identical frames would not distinguish 'the law is pos+pivot' from 'this channel never changes'.",
     "action_center_mode": "origin",
-    "expected_action_center": [0.0, 0.0, 0.0]
+    "expected_action_center": [
+      0.0,
+      0.0,
+      0.0
+    ]
   },
-
   "vibe3d_sensitivity": {
-    "comment": "Not a reference measurement — a vibe3d-side vacuity guard. On this SAME rig and the SAME read, switching the subject from items to mesh components makes the rejected geometry-derived candidate actually appear, proving that branch is reachable and that the item answer is a real election rather than the only value this endpoint can produce. The item transform is render-only, so the component branch reads the mesh's own (undisplaced) coordinates.",
-    "component_mode_action_center": [3.0, 0.0, 0.0]
+    "comment": "Not a reference measurement -- a vibe3d-side vacuity guard. On this SAME rig and the SAME read, switching the subject from items to mesh components makes the rejected geometry-derived candidate actually appear, proving that branch is reachable and that the item answer is a real election rather than the only value this endpoint can produce. The value is the mesh's local bbox centre (3,0,0) carried through the item matrix, i.e. `rejected[geometry world bounding-box centre]` above, EXACTLY -- which makes this guard stronger than it was: the component branch now lands on a candidate the reference itself named and rejected.",
+    "component_mode_action_center": [
+      3.0,
+      2.0,
+      0.0
+    ],
+    "updated": "Task 0649. This field read (3,0,0) -- the mesh's own undisplaced coordinates -- on the premise, stated in the previous comment, that 'the item transform is render-only, so the component branch reads the mesh's own coordinates'. That premise is what 0649 removed: the geometry-derived action centre is published in WORLD space, so the component branch now reads (3,2,0). The guard's INTENT is unchanged and it still discriminates -- (3,2,0) differs from the item centre (0,2,3)."
   },
-
   "classification": {
     "verdict": "match",
-    "detail": "vibe3d's item-mode action centre reads pos + pivot and produces (0,2,3) on this rig — identical to the reference. This fixture is a LIVE test that must pass."
+    "detail": "vibe3d's item-mode action centre reads pos + pivot and produces (0,2,3) on this rig \u2014 identical to the reference. This fixture is a LIVE test that must pass."
   }
 }

@@ -1,5 +1,6 @@
 module tools.deform.bend;
 
+import document : primaryModelSpace;
 import bindbc.opengl;
 import operator : VectorStack;
 
@@ -106,8 +107,13 @@ public:
         bendAx.x *= bi; bendAx.y *= bi; bendAx.z *= bi;
 
         // Pivot = selection centroid via ACEN.
+        //
+        // ACEN publishes in WORLD (task 0649); every use below is against raw
+        // `mesh.vertices`, so the pivot is carried into the layer's own
+        // coordinates. `cachedCenter` keeps the WORLD value — it is what the
+        // handle/overlay reads, and those draw in world.
         cachedCenter = queryActionCenter(vts);
-        Vec3 pivot   = cachedCenter;
+        Vec3 pivot   = primaryModelSpace().toLocalPoint(cachedCenter);
 
         // Spine half-extent: max |dot(v - pivot, spine)| over masked verts.
         float halfExt = 0.0f;

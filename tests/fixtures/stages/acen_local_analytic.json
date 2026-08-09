@@ -2,7 +2,7 @@
   "schema": "stage_conformance.v1",
   "stage": "acen",
   "name": "acen_local_analytic",
-  "description": "ACEN stage-conformance, Mode.Local (task 0342 Phase 3): a single CONNECTED 3-face cluster (an L-shaped tri-quad region, deliberately NOT the full top-face rectangle) on a segments-2 cube's top face. Chosen specifically so Local's cluster-AVERAGE-of-face-centroids formula numerically DIVERGES from Select's bbox-center formula on the same selection -- proving the two modes are wired to distinct code paths rather than one silently reusing the other's result.",
+  "description": "ACEN stage-conformance, Mode.Local: a single CONNECTED 3-face cluster (an L-shaped tri-quad region, deliberately NOT the full top-face rectangle) on a segments-2 cube's top face. Pins that Local answers the CLUSTER's bounding-box midpoint -- not the whole mesh's, and not the whole selection's when the partition has more than one cluster.",
   "source": "Analytic -- hand-derived from vibe3d's own documented ActionCenterStage formula (source/toolpipe/stages/actcenter.d: Mode.Local averages the face centroids of the faces in cluster 0, cluster membership from the connected-component BFS over the selected faces), NOT captured from any reference editor (no live probe exists for this mode -- see the 0342 task log Phase 0 disposition: Local is idle-eval-equivalent and was already numerically verified fixed by an earlier commit). Cross-checked against a live vibe3d run at authoring time (GET /api/toolpipe/eval after the same mesh_build/selection/pipe_setup below returned actionCenter.center == [-0.083333, 0.5, -0.083333] and type==4, and actr.select on the IDENTICAL selection returned the bbox center [0, 0.5, 0] -- confirming the two formulas genuinely diverge on this selection rather than coincide.",
   "provenance": {
     "schema": 1,
@@ -12,14 +12,16 @@
     "captured_utc": "unknown",
     "harness": "hand-derived from source/toolpipe/stages/actcenter.d, cross-checked live at authoring time",
     "task": null,
-    "notes": "Mode.Local formula derivation; cross-checked against a live vibe3d run at authoring time (not a reference-editor capture)."
+    "notes": "Mode.Local formula derivation; cross-checked against a live vibe3d run at authoring time (not a reference-editor capture). UPDATED, task 0649: the golden was (-0.083333, 0.5, -0.083333), the cluster's AVERAGE of face centroids. A reference measurement on a stand built to separate the mean from the bounding-box mid (task 0648, divergence D8, at the IDENTITY item transform) reads the bounding-box mid, and this arm was changed to match; the golden is its recomputation on this rig. CONSEQUENCE for this fixture's original claim: it was chosen so that Local's average formula DIVERGED numerically from Select's bbox-centre formula on the same selection, 'proving the two modes are wired to distinct code paths'. That discriminator is now retired -- on a SINGLE cluster the two modes genuinely agree, which is also what the 0648 capture read on the reference. What still separates them is the PARTITION, and that is covered by the 2-cluster reference-parity fixture tests/fixtures/acen_local.json. This case is not vacuous on its own terms: an implementation that ignored the cluster partition and boxed the whole mesh would answer (0,0,0), not (0,0.5,0)."
   },
   "tolerance": 0.0001,
   "cases": [
     {
       "name": "local_cluster_l_shape_top_quadrant",
       "mesh_build": [
-        { "reset": true },
+        {
+          "reset": true
+        },
         {
           "endpoint": "command",
           "argstring": "prim.cube cenX:0 cenY:0 cenZ:0 sizeX:1 sizeY:1 sizeZ:1 segmentsX:2 segmentsY:2 segmentsZ:2 radius:0"
@@ -29,27 +31,83 @@
         "mode": "polygons",
         "coords": [
           [
-            [-0.5, 0.5, -0.5],
-            [-0.5, 0.5, 0.0],
-            [0.0,  0.5, 0.0],
-            [0.0,  0.5, -0.5]
+            [
+              -0.5,
+              0.5,
+              -0.5
+            ],
+            [
+              -0.5,
+              0.5,
+              0.0
+            ],
+            [
+              0.0,
+              0.5,
+              0.0
+            ],
+            [
+              0.0,
+              0.5,
+              -0.5
+            ]
           ],
           [
-            [0.0, 0.5, -0.5],
-            [0.0, 0.5, 0.0],
-            [0.5, 0.5, 0.0],
-            [0.5, 0.5, -0.5]
+            [
+              0.0,
+              0.5,
+              -0.5
+            ],
+            [
+              0.0,
+              0.5,
+              0.0
+            ],
+            [
+              0.5,
+              0.5,
+              0.0
+            ],
+            [
+              0.5,
+              0.5,
+              -0.5
+            ]
           ],
           [
-            [-0.5, 0.5, 0.0],
-            [-0.5, 0.5, 0.5],
-            [0.0,  0.5, 0.5],
-            [0.0,  0.5, 0.0]
+            [
+              -0.5,
+              0.5,
+              0.0
+            ],
+            [
+              -0.5,
+              0.5,
+              0.5
+            ],
+            [
+              0.0,
+              0.5,
+              0.5
+            ],
+            [
+              0.0,
+              0.5,
+              0.0
+            ]
           ]
         ]
       },
-      "pipe_setup": [ "actr.local" ],
-      "golden": { "center": [-0.083333, 0.5, -0.083333] }
+      "pipe_setup": [
+        "actr.local"
+      ],
+      "golden": {
+        "center": [
+          0.0,
+          0.5,
+          0.0
+        ]
+      }
     }
   ]
 }

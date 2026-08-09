@@ -78,7 +78,7 @@ import ai.interaction : AiInteractionPhase;
 import math : Vec3, Pin, Viewport, translationMatrix,
                pivotRotationMatrix, pivotScaleMatrixBasis, dot,
                identityMatrix, matMul4, wrapAboutPivot, wrapAboutPivotStable, eulerZYXFromMatrix,
-               frameMatrix, frameMatrixInverse;
+               frameMatrix, frameMatrixInverse, ModelSpace, normalize;
 import editmode : EditMode;
 import seltype : SelType;
 import mesh;
@@ -558,6 +558,15 @@ public:
     // XformState.r).
     float[16] lastFoldMatrix  = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
     Vec3      lastFoldPivot   = Vec3(0, 0, 0);
+    // The SAME pivot before the 0649 world -> layer conversion. `lastFoldPivot`
+    // is layer-space because its consumer is the GPU preview matrix, which the
+    // draw path folds UNDER the item matrix. Anything that hands the pivot back
+    // to a WORLD consumer — the ACEN display soft-pin, whose whole pin family is
+    // world — needs this one instead. They are the same point at the identity
+    // item transform and `pos` apart under a displaced layer, which is exactly
+    // how far the gizmo would settle away from the geometry if the wrong one
+    // were used.
+    Vec3      lastFoldPivotWorld = Vec3(0, 0, 0);
     Vec3      lastFoldAnchor  = Vec3(0, 0, 0);
 
     // View-ring rotate — the arbitrary-axis counterpart of `headlessRotate`.
@@ -4091,6 +4100,78 @@ noBankConsumed:
     //      kernel; pivotFor() already reads per-cluster centers.
     //   S: applyScaleFromActivation already handles per-cluster via
     //      axesFor() — no change needed.
+    // ======================================================================
+    // TASK 0649 — THE WORLD -> LAYER CONVERSION, AND WHY IT IS HERE
+    //
+    // The pipe publishes the action centre and the axis frame in WORLD space
+    // (see `ActionCenterStage.itemSpace()`). Everything that AIMS reads them
+    // there and is right to: the gizmo is drawn with the view/projection and
+    // no model matrix, the drag planes are hit by world cursor rays, the
+    // overlay and `/api/toolpipe` report world points. What is NOT in world
+    // space is `mesh.vertices` — those are the edited layer's own
+    // coordinates. So exactly one place has to convert, and this is it.
+    //
+    // THE CONVERSION IS NOT "MOVE THE PIVOT". A world map `W(x) = c + F(x-c)`
+    // carried into the layer's coordinates is
+    //     x |-> c' + (L^-1 F_lin L)(x - c') + L^-1 F_t,   c' = M^-1 c
+    // — the PIVOT takes the full affine inverse and the MATRIX takes the
+    // linear part on both sides (`ModelSpace.conjugate`, which carries its own
+    // derivation and an anti-vacuity unittest). Converting the pivot alone
+    // would be right only for a translate-only item transform; converting with
+    // the full `m`/`mInv` would apply the item translation twice.
+    //
+    // WHY THE MATRIX AND NOT THE BASIS VECTORS. The obvious cheaper move is to
+    // carry `bX/bY/bZ` through `toLocalDir` and leave the rest alone. That is
+    // exact only when the item's linear part is a similarity (rotation x
+    // uniform scale): `L^-1 B` is orthonormal only then, and the fold's scale
+    // factor `B diag(s) B^T` needs an orthonormal `B` to mean what it says.
+    // The 0648 stand carries the scale (2, 0.5, 3), so the cheaper move is
+    // wrong on the very rig this was measured against.
+    //
+    // WHY BEFORE THE PER-VERTEX BLEND. `blendToIdentity` is a lerp toward the
+    // identity, and conjugation commutes with it exactly (unittest in math.d),
+    // so conjugating the composed matrix ONCE is equivalent to conjugating
+    // every blended per-vertex result. `BlendMode.PolarQuat` (rotate-only soft
+    // presets) is a slerp and does not commute under a non-similarity `L`;
+    // there the conjugated form stays exact at w==0 and w==1 and is a declared
+    // reading between them. Stated, not hidden.
+    //
+    // The identity fast path costs nothing: `ModelSpace.conjugate` returns its
+    // argument untouched and `toLocalPoint` is `applyAffine(identity, p)`, so
+    // every existing rig is byte-identical.
+    // ======================================================================
+
+    /// The space `mesh.vertices` lives in, relative to the world the pipe
+    /// publishes in. Same source as the two stages use.
+    ModelSpace applyItemSpace() {
+        import document : primaryModelSpace;
+        return primaryModelSpace();
+    }
+
+    /// Per-cluster pivots, world -> layer. Returns a COPY: `cp.centers`
+    /// aliases the live `ActionCenterPacket`'s array, and writing through it
+    /// would convert the published packet in place — the next reader (the
+    /// gizmo, `/api/toolpipe`) would then see layer coordinates, and the one
+    /// after that would convert them a second time.
+    static TransformTool.ClusterPivots inItemFrame(
+            ModelSpace ms, TransformTool.ClusterPivots cp) {
+        if (ms.isIdentity || !ms.invertible || cp.centers.length == 0)
+            return cp;
+        TransformTool.ClusterPivots outCp;
+        outCp.clusterOf = cp.clusterOf;
+        outCp.centers   = cp.centers.dup;
+        foreach (ref c; outCp.centers) c = ms.toLocalPoint(c);
+        return outCp;
+    }
+
+    /// Per-cluster fold matrices, world -> layer. Also a copy, same reason.
+    static float[16][] inItemFrame(ModelSpace ms, float[16][] cm) {
+        if (ms.isIdentity || !ms.invertible || cm is null) return cm;
+        auto outM = cm.dup;
+        foreach (ref m; outM) m = ms.conjugate(m);
+        return outM;
+    }
+
     bool applyTRS(Vec3[] baseline, Vec3 viewAxis = Vec3(0, 0, 0),
                   float viewAngleDeg = 0,
                   bool samplePipeFromBaseline = false) {
@@ -4298,6 +4379,14 @@ noBankConsumed:
                                bool hasT, bool hasS,
                                Vec3 viewAxis, float viewAngleDeg) {
         import std.math : PI, fabs;
+        // WORLD -> LAYER (task 0649), applied per pass at each kernel call
+        // rather than once up front: the passes BUILD their matrices from the
+        // world basis, so the conversion has to happen after each build. The
+        // composition of conjugated maps is the conjugate of the composition,
+        // so a chain of per-pass conversions is the same map as one conversion
+        // of the whole chain — and each pass reads the previous pass's LAYER
+        // output from `mesh.vertices`, which is what makes the chain close.
+        const auto ims = applyItemSpace();
         // Each pass's matrix kernel takes an ORDINAL-parallel source buffer
         // (source[k] is the current position of vertex
         // vertexIndicesToProcess[k]) — see applyXformMatrix's array-layout
@@ -4327,9 +4416,12 @@ noBankConsumed:
                 }
                 FalloffPacket noFo;  noFo.enabled = false;   // w==1 exempt
                 applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                 pivot, identityMatrix, Vec3(0, 0, 0),
+                                 ims.toLocalPoint(pivot), identityMatrix,
+                                 Vec3(0, 0, 0),
                                  blendModeForMeasure(),
-                                 noFo, dragAimSpace(), cp, ap, clusterM,
+                                 noFo, dragAimSpace(),
+                                 inItemFrame(ims, cp), ap,
+                                 inItemFrame(ims, clusterM),
                                  dragSymmetry, toProcess);
             } else {
                 // Global basis: delta = bX·TX + bY·TY + bZ·TZ; weight at the
@@ -4339,9 +4431,12 @@ noBankConsumed:
                            + bY * run.t.y
                            + bZ * run.t.z;
                 applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                 pivot, translationMatrix(delta), Vec3(0, 0, 0),
+                                 ims.toLocalPoint(pivot),
+                                 ims.conjugate(translationMatrix(delta)),
+                                 Vec3(0, 0, 0),
                                  blendModeForMeasure(),
-                                 dragFalloff, dragAimSpace(), cp, ap, null,
+                                 dragFalloff, dragAimSpace(),
+                                 inItemFrame(ims, cp), ap, null,
                                  dragSymmetry, toProcess);
             }
         }
@@ -4395,13 +4490,32 @@ noBankConsumed:
                          ? dragFalloff.compoundPasses : 1.0f;
             if (fabs(passes - 1.0f) > 1e-4f) {
                 Vec3[] activation = mesh.vertices.dup;
-                // Per-vert weight at the pre-chain BASELINE position.
+                // THE ONE ARM WITH NO MATRIX FORM, and therefore the one
+                // place the 0649 conversion is not exact. `pow(s, passes)`
+                // has no matrix expression (F2), so this kernel takes a PIVOT
+                // and a BASIS rather than a matrix, and the basis has to be
+                // carried by `toLocalDir` instead of conjugated. That carry is
+                // exact when the item's linear part is a similarity and a
+                // declared approximation otherwise (the basis stops being
+                // orthonormal under a non-uniform item scale, and this kernel
+                // assumes it is). Reached only when `compoundPasses != 1`,
+                // which is published 1.0 everywhere in the current tree — so
+                // this arm is dormant, and it is converted at all so that the
+                // path is not left reading world coordinates against layer
+                // vertices, which is the half conversion the task refuses.
+                Vec3 nz(Vec3 v) {
+                    Vec3 d = ims.toLocalDir(v);
+                    return d.length > 1e-12f ? normalize(d) : v;
+                }
                 applyScaleFromActivation(mesh, vertexIndicesToProcess,
-                                         activation, pivot,
-                                         bX, bY, bZ,
+                                         activation, ims.toLocalPoint(pivot),
+                                         ims.isIdentity ? bX : nz(bX),
+                                         ims.isIdentity ? bY : nz(bY),
+                                         ims.isIdentity ? bZ : nz(bZ),
                                          run.s,
                                          dragFalloff, dragAimSpace(),
-                                         cp, ap, dragSymmetry, toProcess,
+                                         inItemFrame(ims, cp), ap,
+                                         dragSymmetry, toProcess,
                                          baseline);
             } else {
                 // Matrix path. Source = current scratch (post-T/R), gathered
@@ -4422,14 +4536,17 @@ noBankConsumed:
                             run.s.z);
                 }
                 applyXformMatrix(mesh, vertexIndicesToProcess, ordinalSrc(),
-                                 pivot,
-                                 pivotScaleMatrixBasis(Vec3(0, 0, 0),
-                                     bX, bY, bZ,
-                                     run.s.x, run.s.y,
-                                     run.s.z),
+                                 ims.toLocalPoint(pivot),
+                                 ims.conjugate(
+                                     pivotScaleMatrixBasis(Vec3(0, 0, 0),
+                                         bX, bY, bZ,
+                                         run.s.x, run.s.y,
+                                         run.s.z)),
                                  Vec3(0, 0, 0),
                                  blendModeForMeasure(),
-                                 dragFalloff, dragAimSpace(), cp, ap, clusterM,
+                                 dragFalloff, dragAimSpace(),
+                                 inItemFrame(ims, cp), ap,
+                                 inItemFrame(ims, clusterM),
                                  dragSymmetry, toProcess,
                                  /*weightVerts=*/ baseline);
             }
@@ -4505,8 +4622,11 @@ noBankConsumed:
         applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                  /*samplePipeFromBaseline=*/pureRotatePreset);
         if (acenAllowsClickRelocate()) {
+            // The pin family is WORLD (see `lastFoldPivotWorld`) — feeding the
+            // layer-space `lastFoldPivot` here would settle the gizmo `pos`
+            // away from the geometry on a displaced layer.
             if (auto ac = activeAcenStage())
-                ac.setSoftPlaced(lastFoldPivot);
+                ac.setSoftPlaced(lastFoldPivotWorld);
         }
     }
 
@@ -5839,8 +5959,23 @@ private:
                                  Vec3(0,0,0), Vec3(0,0,0), Vec3(0,0,0),
                                  sX, sY, sZ, tdX, tdY, tdZ);
 
+        // WORLD -> LAYER (task 0649). Everything above composed in the space
+        // the pipe publishes in; everything below writes `mesh.vertices`,
+        // which are the layer's own coordinates.
+        const auto ims  = applyItemSpace();
+        lastFoldPivotWorld = pivot;      // published BEFORE the conversion
+        M     = ims.conjugate(M);
+        pivot = ims.toLocalPoint(pivot);
+        cp    = inItemFrame(ims, cp);
+
         // MS-4.5 — publish the GLOBAL composed matrix + pivot for the GPU
         // fast-path to reuse (whole-mesh fast-path is never per-cluster).
+        // Published AFTER the conversion, deliberately: the draw path folds
+        // `matMul4(itemMatrix, tt.gpuMatrix)` (ui/panels.d), so `gpuMatrix`
+        // has to be the LAYER-space matrix — the same one the CPU kernel
+        // below applies. Publishing the world one here would apply the item
+        // transform twice on the GPU preview and once on the CPU, and the
+        // preview would disagree with the commit.
         lastFoldMatrix  = M;
         lastFoldPivot   = pivot;
         // lastFoldAnchor is published below, after `src` is built.
@@ -5861,6 +5996,9 @@ private:
                                            ap.right[cid], ap.up[cid], ap.fwd[cid],
                                            ap.right[cid], ap.up[cid], ap.fwd[cid],
                                            ap.right[cid], ap.up[cid], ap.fwd[cid]);
+            // Composed from the WORLD per-cluster axes, then carried across
+            // exactly like the global fold above.
+            clusterM = inItemFrame(ims, clusterM);
         }
 
         // Source = restored baseline gathered ordinal-parallel to the moving set;
@@ -5985,6 +6123,9 @@ private:
                          TransformTool.ClusterAxes ap,
                          Vec3[] delegate() srcGather)
     {
+        // WORLD -> LAYER, same conversion the live fold does (task 0649);
+        // `axis`, `pivot` and `cp` arrive in the space the pipe publishes in.
+        const auto ims = applyItemSpace();
         if (dragAxisIdx >= 0 && dragAxisIdx <= 2 && ap.active) {
             // Per-cluster rotate: one origin-fixing rotation matrix per cluster
             // about that cluster's axis. The kernel resolves the per-cluster
@@ -6003,20 +6144,25 @@ private:
                 clusterM[cid] = pivotRotationMatrix(Vec3(0, 0, 0), ca, angleRad);
             }
             applyXformMatrix(mesh, vertexIndicesToProcess, srcGather(),
-                             pivot,
-                             pivotRotationMatrix(Vec3(0, 0, 0), axis, angleRad),
+                             ims.toLocalPoint(pivot),
+                             ims.conjugate(
+                                 pivotRotationMatrix(Vec3(0,0,0), axis, angleRad)),
                              Vec3(0, 0, 0),
                              blendModeForMeasure(),
-                             dragFalloff, dragAimSpace(), cp, ap, clusterM,
+                             dragFalloff, dragAimSpace(),
+                             inItemFrame(ims, cp), ap,
+                             inItemFrame(ims, clusterM),
                              dragSymmetry, toProcess);
         } else {
             // Global / view-ring: single origin-fixing rotation about `axis`.
             applyXformMatrix(mesh, vertexIndicesToProcess, srcGather(),
-                             pivot,
-                             pivotRotationMatrix(Vec3(0, 0, 0), axis, angleRad),
+                             ims.toLocalPoint(pivot),
+                             ims.conjugate(
+                                 pivotRotationMatrix(Vec3(0,0,0), axis, angleRad)),
                              Vec3(0, 0, 0),
                              blendModeForMeasure(),
-                             dragFalloff, dragAimSpace(), cp, ap, null,
+                             dragFalloff, dragAimSpace(),
+                             inItemFrame(ims, cp), ap, null,
                              dragSymmetry, toProcess);
         }
     }

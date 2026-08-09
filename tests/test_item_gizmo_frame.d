@@ -171,13 +171,19 @@ unittest { // fresh reset: default selType is Vertex, item redirect must be iner
         "sanity: boot default selType must be vertex, got " ~ sel["selType"].str);
 
     auto f = readPipe();
-    // The cube's geometry centroid is now (3,0,0) in LOCAL coordinates (the
-    // item transform never touches mesh.vertices) — discriminates from BOTH
-    // the world origin (0,0,0) and the item's world pivot (1.5,0,0).
-    assert(vecEq(f.center, Vec3(3, 0, 0)),
+    // The cube's geometry centroid is (3,0,0) in the LAYER's own coordinates;
+    // the layer sits at pos.x = 1, so the published — WORLD — centre is
+    // (4,0,0). Task 0649: the geometry-derived action centre is published in
+    // world space, so this expectation moved from (3,0,0) to (4,0,0). What the
+    // case is FOR is unchanged, and it discriminates at least as well as it
+    // did: (4,0,0) differs from the item's world pivot (1.5,0,0) and from the
+    // world origin (0,0,0), which are the two things the item redirect would
+    // have answered had it fired.
+    assert(vecEq(f.center, Vec3(4, 0, 0)),
         "Vertex-current selection must read the geometry fallback, NOT the "
         ~ "item pivot — got " ~ show(f.center) ~ " (item pivot would be "
-        ~ "(1.5,0,0), world origin would be (0,0,0))");
+        ~ "(1.5,0,0), world origin would be (0,0,0); the geometry fallback is "
+        ~ "the layer-local centroid (3,0,0) carried into world by pos.x = 1)");
 }
 
 // -----------------------------------------------------------------------

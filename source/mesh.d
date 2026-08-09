@@ -8000,13 +8000,26 @@ struct Mesh {
     // asymmetric / clustered selections distinguish them. Phase 2 of the
     // action-center parity plan.
 
-    Vec3 selectionBBoxCenterVertices() const {
+    // SPACE (task 0649). `ms` is the layer's item transform, and every point
+    // is carried THROUGH it BEFORE the min/max. The order is the finding, not
+    // a detail: the reference takes the box of the transformed vertices, and
+    // the box of transformed points is NOT the transform of the box —
+    // measured 0.85 apart on a rotated stand (0648 D2). So a caller that
+    // wants a world-space answer must hand the space in HERE; transforming
+    // the returned point afterwards answers a different question.
+    //
+    // Defaulted to the identity, where every arm is byte-identical to the
+    // pre-0649 body (the `isIdentity` early-out in `toWorldPoint`'s caller
+    // below is not even needed — `applyAffine(identity, v) == v` exactly —
+    // but the branch is kept so the common path does no matrix work at all).
+    Vec3 selectionBBoxCenterVertices(ModelSpace ms = ModelSpace.init) const {
         bool any = hasAnySelectedVertices();
         Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
         Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
         bool seen = false;
-        foreach (i, v; vertices) {
+        foreach (i, v0; vertices) {
             if (any && !isVertexSelected(i)) continue;
+            Vec3 v = ms.isIdentity ? v0 : ms.toWorldPoint(v0);
             if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
             if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
             if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
@@ -8074,7 +8087,9 @@ struct Mesh {
         }
     }
 
-    Vec3 selectionBBoxCenterEdges() const {
+    /// `ms` — see `selectionBBoxCenterVertices` for why the space is applied
+    /// per point rather than to the result.
+    Vec3 selectionBBoxCenterEdges(ModelSpace ms = ModelSpace.init) const {
         bool any = hasAnySelectedEdges();
         bool[] vis = new bool[](vertices.length);
         Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
@@ -8085,7 +8100,8 @@ struct Mesh {
             foreach (vi; edge) {
                 if (vis[vi]) continue;
                 vis[vi] = true;
-                Vec3 v = vertices[vi];
+                Vec3 v = ms.isIdentity ? vertices[vi]
+                                       : ms.toWorldPoint(vertices[vi]);
                 if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
                 if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
                 if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
@@ -8095,7 +8111,9 @@ struct Mesh {
         return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
     }
 
-    Vec3 selectionBBoxCenterFaces() const {
+    /// `ms` — see `selectionBBoxCenterVertices` for why the space is applied
+    /// per point rather than to the result.
+    Vec3 selectionBBoxCenterFaces(ModelSpace ms = ModelSpace.init) const {
         bool any = hasAnySelectedFaces();
         bool[] vis = new bool[](vertices.length);
         Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
@@ -8106,7 +8124,8 @@ struct Mesh {
             foreach (vi; face) {
                 if (vis[vi]) continue;
                 vis[vi] = true;
-                Vec3 v = vertices[vi];
+                Vec3 v = ms.isIdentity ? vertices[vi]
+                                       : ms.toWorldPoint(vertices[vi]);
                 if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
                 if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
                 if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
@@ -8125,7 +8144,9 @@ struct Mesh {
     /// Falls back to `selectionBBoxCenterFaces` when there's no border
     /// edge (every selected face's edges are also adjacent to other
     /// selected faces — closed selection on a closed manifold).
-    Vec3 selectionBorderBBoxCenterFaces() const {
+    /// `ms` — see `selectionBBoxCenterVertices` for why the space is applied
+    /// per point rather than to the result.
+    Vec3 selectionBorderBBoxCenterFaces(ModelSpace ms = ModelSpace.init) const {
         if (!hasAnySelectedFaces()) return Vec3(0, 0, 0);
         bool[] onBorder = new bool[](vertices.length);
         bool   any      = false;
@@ -8142,11 +8163,11 @@ struct Mesh {
                 any = true;
             }
         }
-        if (!any) return selectionBBoxCenterFaces();
+        if (!any) return selectionBBoxCenterFaces(ms);
         Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
         Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
         foreach (vi, on; onBorder) if (on) {
-            Vec3 v = vertices[vi];
+            Vec3 v = ms.isIdentity ? vertices[vi] : ms.toWorldPoint(vertices[vi]);
             if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
             if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
             if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
