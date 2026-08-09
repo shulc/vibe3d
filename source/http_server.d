@@ -93,7 +93,21 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
         immutable long my = atomicOp!"+="(submitted, 1);
         int iters = 0;
         while (atomicLoad(completed) < my) {
-            if (++iters > maxIters) return false;
+            if (++iters > maxIters) {
+                // The main thread never drained this request. Callers emit
+                // their own timeout body, but such a body reads like an
+                // ordinary API error — and for the silent-timeout callers
+                // (reset/undo/jump) there is no body at all. Say it once,
+                // loudly, where whoever is driving the app will see it.
+                try {
+                    import std.format : format;
+                    logWarn("http", format(
+                        "main thread did not service a %s request within %d ms —"
+                        ~ " the reply is a timeout, not a result",
+                        Req.stringof, maxIters * 2));
+                } catch (Exception) {}
+                return false;
+            }
             Thread.sleep(2.msecs);
         }
         return true;
@@ -1515,11 +1529,75 @@ class HttpServer {
         logInfo("http", "HTTP server stopped");
     }
 
+    // --- Per-connection I/O budget ----------------------------------------
+    // The accept loop is SINGLE-THREADED and calls handleClient INLINE, so a
+    // peer that connects and then never sends a complete request header used
+    // to park the one server thread in recv() forever. Meanwhile listen()'s
+    // backlog keeps completing TCP handshakes, so every LATER client still
+    // connects successfully and then waits forever — the server "accepts and
+    // never answers". That is the worst failure shape a harness can meet: a
+    // readiness probe that only checks connectivity PASSES while nothing will
+    // ever be served, and the timeout surfaces much later, blamed on whatever
+    // was being measured (task 0652).
+    //
+    // Two bounds close it. clientIoTimeout caps a single blocking recv/send,
+    // so an idle peer cannot park the loop; clientReadDeadline caps the whole
+    // request read, so a peer dribbling one byte per timeout cannot either.
+    // Both are enormous next to a real client, which sends its entire request
+    // in one segment immediately. Hitting either is LOUD on stderr — closing a
+    // connection without an answer must never be silent.
+    //
+    // Fields rather than manifest constants ONLY so an in-module unittest can
+    // exercise the give-up paths in milliseconds instead of waiting the
+    // production budget. Nothing in the app writes them.
+    Duration clientIoTimeout    =  5.seconds;
+    Duration clientReadDeadline = 15.seconds;
+
+    /// True when the last socket call failed only because a signal arrived.
+    /// The GC's stop-the-world signals every thread, so a blocking recv() on
+    /// the HTTP thread is interrupted routinely and for no fault of the peer.
+    /// Treating that as end-of-request drops a perfectly good in-flight
+    /// request and closes the connection with no reply — the exact failure
+    /// this file exists to make impossible — so callers must retry instead.
+    /// Check this BEFORE wouldHaveBlocked(): both read `errno`.
+    private static bool interruptedBySignal() nothrow @nogc {
+        version (Posix) {
+            import core.stdc.errno : errno, EINTR;
+            return errno == EINTR;
+        } else {
+            return false;
+        }
+    }
+
+    /// Report a connection we accepted and are closing WITHOUT a response.
+    /// A separate `nothrow` helper because its caller is handleClient's
+    /// `finally` block, where D forbids a `catch` statement outright.
+    private static void reportAbandoned(string peer, MonoTime startedAt, string why) nothrow {
+        try {
+            import std.format : format;
+            logWarn("http", format(
+                "closed connection from %s after %.1fs WITHOUT a response: peer %s",
+                peer, (MonoTime.currTime - startedAt).total!"msecs" / 1000.0, why));
+        } catch (Exception) {}
+    }
+
     /**
      * Handle a client connection
      */
     private void handleClient(Socket client) {
+        import std.format : format;
+
+        immutable startedAt = MonoTime.currTime;
+        string peer = "<unknown peer>";
+        // Non-empty means "closing this connection WITHOUT a response", which
+        // is precisely the event that must never pass unreported.
+        string abandoned;
+
         try {
+            try { peer = client.remoteAddress().toString(); } catch (Exception) {}
+            client.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, clientIoTimeout);
+            client.setOption(SocketOptionLevel.SOCKET, SocketOption.SNDTIMEO, clientIoTimeout);
+
             // Read until we have the full header block (ends with \r\n\r\n)
             ubyte[] raw;
             ubyte[4096] chunk;
@@ -1527,7 +1605,19 @@ class HttpServer {
             size_t headerEnd;
             while (true) {
                 n = client.receive(chunk[]);
-                if (n <= 0) break;
+                if (n == 0) break;  // peer closed cleanly
+                if (n < 0) {
+                    if (interruptedBySignal()) {
+                        if (MonoTime.currTime - startedAt <= clientReadDeadline) continue;
+                        abandoned = format("request header still incomplete after %s",
+                                           clientReadDeadline);
+                        break;
+                    }
+                    abandoned = wouldHaveBlocked()
+                        ? format("sent no request data for %s", clientIoTimeout)
+                        : format("receive failed: %s", lastSocketError());
+                    break;
+                }
                 raw ~= chunk[0 .. n];
                 // Search entire buffer for end-of-headers marker
                 size_t searchFrom = raw.length > n + 3 ? raw.length - n - 3 : 0;
@@ -1538,8 +1628,16 @@ class HttpServer {
                     }
                 }
                 if (headerEnd > 0) break;
+                if (MonoTime.currTime - startedAt > clientReadDeadline) {
+                    abandoned = format("request header still incomplete after %s",
+                                       clientReadDeadline);
+                    break;
+                }
             }
 
+            if (abandoned.length) return;  // reported by the `finally` below
+            // A peer that connects and closes without sending is an ordinary
+            // liveness probe, not a fault — stay quiet about it.
             if (raw.length == 0) return;
 
             string headerPart = cast(string)raw[0 .. headerEnd].idup;
@@ -1558,18 +1656,51 @@ class HttpServer {
             ubyte[] bodyRaw = raw[headerEnd .. $];
             while (bodyRaw.length < contentLength) {
                 n = client.receive(chunk[]);
-                if (n <= 0) break;
+                if (n == 0) break;  // peer closed cleanly; parse what arrived
+                if (n < 0) {
+                    if (interruptedBySignal()) {
+                        if (MonoTime.currTime - startedAt <= clientReadDeadline) continue;
+                        abandoned = format("body still incomplete (%d of %d bytes) after %s",
+                                           bodyRaw.length, contentLength, clientReadDeadline);
+                        break;
+                    }
+                    abandoned = wouldHaveBlocked()
+                        ? format("stopped sending its body at %d of %d bytes (idle %s)",
+                                 bodyRaw.length, contentLength, clientIoTimeout)
+                        : format("receive failed reading body: %s", lastSocketError());
+                    break;
+                }
                 bodyRaw ~= chunk[0 .. n];
+                if (MonoTime.currTime - startedAt > clientReadDeadline) {
+                    abandoned = format("body still incomplete (%d of %d bytes) after %s",
+                                       bodyRaw.length, contentLength, clientReadDeadline);
+                    break;
+                }
             }
+            if (abandoned.length) return;  // reported by the `finally` below
 
             HttpRequest httpRequest = parseRequest(headerPart, cast(string)bodyRaw.idup);
             HttpResponse response = handleRequest(httpRequest);
 
             string responseStr = formatResponse(response);
-            client.send(responseStr);
+            auto sent = client.send(responseStr);
+            if (sent < 0 || cast(size_t) sent != responseStr.length) {
+                // A peer that stops reading stalls the send the same way a
+                // silent peer stalled the receive — bounded by SNDTIMEO now,
+                // but a half-delivered answer is still no answer, so say it.
+                logWarn("http", format(
+                    "peer %s took only %d of %d response bytes: %s",
+                    peer, sent, responseStr.length,
+                    sent < 0 ? lastSocketError() : "stopped reading"));
+            }
         } catch (Exception e) {
             logWarn("http", "Error handling client: " ~ e.msg);
         } finally {
+            // The whole point of task 0652: a connection we accepted and did
+            // not answer is invisible to every caller (their probe connected
+            // fine, their request just never came back), so it has to be
+            // audible here or nowhere.
+            if (abandoned.length) reportAbandoned(peer, startedAt, abandoned);
             client.close();
         }
     }
@@ -3270,4 +3401,131 @@ string meshToJsonDetailed(ref const(Mesh) m) {
     json ~= "}";
 
     return json.data;
+}
+// ---------------------------------------------------------------------------
+// Task 0652: a connection we accept and never answer.
+//
+// The accept loop is single-threaded and runs handleClient INLINE, so before
+// this was fixed a peer that connected and then sent nothing parked the only
+// server thread in recv() forever. listen()'s backlog kept completing TCP
+// handshakes throughout, so every later client still CONNECTED — and then
+// waited forever. Observed as: the port answers a readiness probe, and every
+// actual request times out.
+//
+// Two properties are pinned here, both against a real listening socket
+// because the defect lives in the accept loop itself and not in any routing
+// branch that `handleRequest` could be asked about directly:
+//
+//   1. a silent peer must not stop a well-behaved peer being ANSWERED. The
+//      assertion is on the received status line AND body — never on the
+//      connection being established, because connecting is precisely what
+//      still worked while the defect was live;
+//   2. giving up on the silent peer must be LOUD. A connection closed without
+//      a response is invisible to its caller (whose connect() succeeded and
+//      whose request simply never comes back), so it is audible here or
+//      nowhere.
+// ---------------------------------------------------------------------------
+unittest {
+    import core.time    : msecs, seconds;
+    import core.thread  : Thread;
+    import std.algorithm: canFind;
+    import log          : snapshot, LogLevel;
+
+    // Take a free port the way the OS offers one: bind ephemeral, read the
+    // number back, release it.
+    ushort freePort;
+    {
+        auto probe = new TcpSocket();
+        probe.bind(new InternetAddress("127.0.0.1", cast(ushort) 0));
+        freePort = (cast(InternetAddress) probe.localAddress).port;
+        probe.close();
+    }
+
+    auto srv = new HttpServer(freePort);
+    // Production budgets are 5 s / 15 s; shrink them so this costs ~0.5 s.
+    srv.clientIoTimeout    = 500.msecs;
+    srv.clientReadDeadline = 1500.msecs;
+    srv.start();
+    scope(exit) srv.stop();
+
+    Socket connectOnce() {
+        auto s = new TcpSocket();
+        try { s.connect(new InternetAddress("127.0.0.1", freePort)); }
+        catch (Exception) { s.close(); return null; }
+        return s;
+    }
+
+    Socket silent;
+    foreach (_; 0 .. 200) {
+        silent = connectOnce();
+        if (silent !is null) break;
+        Thread.sleep(10.msecs);
+    }
+    assert(silent !is null, "0652: the test server never started listening");
+    scope(exit) silent.close();
+    // `silent` now holds an accepted connection and deliberately says nothing.
+
+    auto client = connectOnce();
+    assert(client !is null, "0652: the well-behaved peer could not connect");
+    scope(exit) client.close();
+    client.send("GET /api/ping HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    // Bound the read so a regression FAILS here rather than hanging the suite.
+    client.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, 10.seconds);
+
+    string reply;
+    ubyte[2048] buf;
+    for (;;) {
+        auto n = client.receive(buf[]);
+        if (n <= 0) break;
+        reply ~= cast(string) buf[0 .. n].idup;
+    }
+
+    assert(reply.canFind("HTTP/1.1 200 OK"),
+        "0652: a silent peer must not stop a well-behaved peer being ANSWERED"
+        ~ " — expected a 200 status line, got: "
+        ~ (reply.length ? reply : "<no answer at all>"));
+    assert(reply.canFind(`{"status": "ok"}`),
+        "0652: the answer must carry the /api/ping body, got: " ~ reply);
+
+    bool saidSoOutLoud = false;
+    foreach (e; snapshot()) {
+        if (e.level == LogLevel.Warn && e.subsystem == "http"
+            && e.msg.canFind("WITHOUT a response")) { saidSoOutLoud = true; break; }
+    }
+    assert(saidSoOutLoud,
+        "0652: closing an accepted connection without answering it must be"
+        ~ " reported — an unreported give-up is invisible to the caller,"
+        ~ " whose connect() succeeded and whose request never returns");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0652, a second defect found while fixing the first: a blocking recv()
+// is interrupted by ANY signal, and the GC's stop-the-world signals every
+// thread. EINTR therefore means "ask again", not "this peer is done" —
+// classifying it as end-of-request drops a perfectly good in-flight request
+// and closes the connection with no reply, which is the very failure the
+// accept-loop budget above exists to prevent. Seen live before the retry was
+// added: a peer that had sent nothing was reported closed after 1.1 s with
+// "Interrupted system call", long before its idle budget was spent.
+//
+// The retry itself needs a signal to land mid-recv, which a test cannot
+// schedule; what IS pinnable is the classification the retry hangs off, and
+// in particular that it is not confused with the idle timeout.
+// ---------------------------------------------------------------------------
+version (Posix)
+unittest {
+    import core.stdc.errno : errno, EINTR, EAGAIN;
+
+    immutable saved = errno;
+    scope(exit) errno = saved;
+
+    errno = EINTR;
+    assert(HttpServer.interruptedBySignal(),
+        "0652: EINTR must be classified as 'retry the receive' — treating it as"
+        ~ " end-of-request drops an in-flight request and answers nothing");
+
+    errno = EAGAIN;
+    assert(!HttpServer.interruptedBySignal(),
+        "0652: EAGAIN is the idle budget expiring, NOT a signal — classifying"
+        ~ " it as EINTR would retry forever and re-park the accept loop");
 }
