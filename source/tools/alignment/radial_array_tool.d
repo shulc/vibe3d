@@ -10,6 +10,7 @@ import editmode : EditMode;
 import params : Param;
 import handler : Arrow, BoxHandler, ToolHandles, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
+import overlay_space : OverlaySpace;
 import drag : screenAxisDelta, gesturePrevPixel;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
@@ -21,6 +22,7 @@ import display_sync : refreshDisplay;
 import tools.create.create_common : screenToConstructionPlane;
 
 import std.math : sin, cos, atan2, PI;
+import std.json : JSONValue;
 
 /// The interactive tool reuses the dedicated MeshSessionEdit record
 /// command (a before/after MeshSnapshot pair) — mirroring PolyExtrudeTool's
@@ -86,7 +88,7 @@ alias RadialArrayEditFactory = MeshSessionEdit delegate();
 //                 divergence in generated geometry.
 // A plain click that misses both handles repositions `center` (the
 // reference's own "click again away from the handles to reposition the
-// center" gesture) via the same Work Plane projection every other
+// center" gesture) via the same construction-plane projection every other
 // click-to-place tool in this codebase uses.
 //
 // Pixel-level handle geometry is not calibrated against the reference
@@ -94,6 +96,31 @@ alias RadialArrayEditFactory = MeshSessionEdit delegate();
 // scope for a Stage-0 spec-extract) — the handles here are functional
 // (world-anchored, screen-scaled, correctly hit-tested) but not a pixel
 // trace of the reference's rendering.
+//
+// WHICH SPACE EVERY PARAMETER LIVES IN (task 0660).
+//
+// The kernel this tool drives, `Mesh.radialArrayFaces`, pivots the LAYER'S OWN
+// stored vertex coordinates: it rotates `vertices[vid]` about `axisVec` through
+// `center`, then adds `step * extraShift`. Nothing in it knows about the item
+// transform. So all four generated quantities — `center_`, the axis, `offset_`
+// and `angle_` — are LAYER-space readings, and that is the meaning the panel
+// fields carry (identical to the one-shot `mesh.radial_array` command, which
+// shares this kernel verbatim).
+//
+// Every GESTURE that writes one of them, on the other hand, resolves in WORLD
+// space: the construction plane is a world plane (task 0661 — it follows the
+// view, but it is world either way), `screenAxisDelta` returns a world
+// displacement, a cursor ray is a world ray. And every OVERLAY that reads one
+// of them is world too — `gizmoSize`, `Handler.draw`, `Handler.hitTest`.
+//
+// The centre used to cross that line unconverted: the off-handle click wrote
+// the construction plane's WORLD hit straight into `center_`, so on a layer
+// with a non-identity item transform the array was built around that point's
+// image under the IDENTITY matrix, not around the point that was clicked. The
+// conversion at every crossing is `source/overlay_space.d` — one `OverlaySpace`
+// per event/frame, used for the handle that is drawn AND for the gain of the
+// drag that handle drives, which is task 0645's law and the reason a
+// half-conversion here is worse than none.
 //
 // Session model (matches PolyExtrudeTool):
 //   activate()   — snapshot cage+selection; reset params to the captured
@@ -199,6 +226,9 @@ public:
             Param.int_  ("count",  "Count",           &count_,  24).min(1).max(256).enforceBounds(),
             Param.enum_ ("axis",   "Axis",             &axis_,
                          [["X","X"], ["Y","Y"], ["Z","Z"]], "Y"),
+            // LAYER coordinates — the space `Mesh.radialArrayFaces` pivots in
+            // (see the class doc comment). The off-handle click converts the
+            // construction plane's world hit into this space before writing it.
             Param.vec3_ ("center", "Center",           &center_, Vec3(0, 0, 0)),
             Param.float_("angle",  "End Angle (deg)",  &angle_,  0.0f),
             Param.float_("offset", "Offset",           &offset_, 0.0f),
@@ -304,8 +334,18 @@ public:
         // ray is parallel to that floor, so the call returned false and the
         // missing `else` turned it into "the centre stayed put" — a click the
         // user made and the tool never registered.
-        center_ = screenToConstructionPlane(cast(float)e.x, cast(float)e.y,
-                                            cachedVp);
+        //
+        // That construction plane is a WORLD construct however it is oriented,
+        // so the point it returns is a WORLD point — and `center_` is read by
+        // `Mesh.radialArrayFaces`, which pivots the layer's own stored
+        // coordinates. Writing it in unconverted built the array around its
+        // image under the identity matrix (task 0660). `toLocalPos` is the
+        // exact inverse of the `pos()` the same object uses to place the
+        // handles in `draw()`, so the point the user clicked and the point the
+        // copies turn about are one point.
+        center_ = OverlaySpace.ofPrimary().toLocalPos(
+                      screenToConstructionPlane(cast(float)e.x, cast(float)e.y,
+                                                cachedVp));
         rebuildPreview();
         return true;
     }
@@ -325,12 +365,25 @@ public:
         gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
                          lastMX, lastMY, prevMX, prevMY);
 
+        // ONE overlay space per event (task 0645/0660). Both branches below are
+        // per-event increments — previous pixel to current pixel — so there is
+        // no gesture-long plane to freeze the matrix against the way
+        // `ArrayTool` must; re-resolving per event matches `PolyExtrudeTool`.
+        const auto os = OverlaySpace.ofPrimary();
+
         if (dragPart == PART_OFFSET) {
             bool skip;
-            Vec3 au = axisUnit();
-            Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY, center_, au, cachedVp, skip);
+            // The arm is DRAWN along the local axis lifted through the item
+            // matrix, and `offset_` is the LOCAL span the kernel spreads over
+            // `count-1` steps. One `OverlayAxis` in both roles: `ax.dir` is the
+            // arm the pixels are dotted against, `ax.toLocal` turns the world
+            // length that produced back into the length the kernel means, so
+            // the geometry follows the arm on screen.
+            const auto ax = os.axis(axisUnit());
+            Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY,
+                                         os.pos(center_), ax.dir, cachedVp, skip);
             if (!skip) {
-                offset_ += dot(delta, au);
+                offset_ += ax.toLocal(dot(delta, ax.dir));
                 rebuildPreview();
             }
             lastMX = e.x;
@@ -340,9 +393,22 @@ public:
 
         if (dragPart == PART_ANGLE) {
             Vec3 au = axisUnit();
+            // `angle_` is the sweep the kernel applies about the LOCAL
+            // principal axis, and under a non-uniform item scale a local
+            // rotation is not a world rotation at all — there is no world angle
+            // to convert back. So the two cursor rays are carried into layer
+            // space and the ENTIRE measurement happens there, against a plane
+            // whose point (`center_`) and normal (`au`) are already local.
+            //
+            // `screenPointToLocalRay` is task 0619's law as one call: build the
+            // ray from the UN-composed world viewport, then `toLocalPoint` the
+            // origin and `toLocalDir` the direction, leaving the direction
+            // un-normalised. At identity it is byte-identical to the
+            // `screenPointToRay` pair this replaced.
+            const ModelSpace rayMs = os.rayModelSpace();
             Vec3 originC, dirC, originP, dirP;
-            screenPointToRay(cast(float)e.x,     cast(float)e.y,     cachedVp, originC, dirC);
-            screenPointToRay(cast(float)prevMX,  cast(float)prevMY,  cachedVp, originP, dirP);
+            screenPointToLocalRay(cast(float)e.x,    cast(float)e.y,    cachedVp, rayMs, originC, dirC);
+            screenPointToLocalRay(cast(float)prevMX, cast(float)prevMY, cachedVp, rayMs, originP, dirP);
             Vec3 hitC, hitP;
             if (rayPlaneIntersect(originC, dirC, center_, au, hitC) &&
                 rayPlaneIntersect(originP, dirP, center_, au, hitP)) {
@@ -379,20 +445,42 @@ public:
         return true;
     }
 
+    // Read-only test seam (task 0645's pattern) — GET /api/tool/handles. The
+    // registry stays the hit-testing authority; this only exposes its
+    // already-drawn state, and that state is the ONLY place a handle's SPACE is
+    // observable from outside the process.
+    public override JSONValue toolHandlesJson() const {
+        return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
+    }
+
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
         if (!active || mesh is null) return;
 
-        Vec3  au = axisUnit();
-        float sz = gizmoSize(center_, vp, 1.0f);
+        // ONE overlay space for the pass (task 0645): both handles are placed
+        // through it and `toolHandles.update` below hit-tests these same
+        // objects, so drawing and hitting cannot land in different spaces.
+        const auto os      = OverlaySpace.ofPrimary();
+        const Vec3 au      = axisUnit();
+        const auto ax      = os.axis(au);
+        const Vec3 centerW = os.pos(center_);
 
-        offsetArrow.start = center_ + au * (sz / 6.0f);
-        offsetArrow.end   = center_ + au * sz;
+        float sz = gizmoSize(centerW, vp, 1.0f);
+
+        offsetArrow.start = centerW + ax.dir * (sz / 6.0f);
+        offsetArrow.end   = centerW + ax.dir * sz;
         offsetArrow.color = OFFSET_COLOR;
 
-        Vec3 refDir  = referenceTangent(axis_);
-        Vec3 tangent = rotateAroundAxis(refDir, au, angle_ * PI / 180.0f);
-        angleCube.pos   = center_ + tangent * (sz * 0.85f);
+        // The dial reads the LOCAL sweep, so its tangent is built in layer
+        // space and then lifted; its RADIUS stays a world, screen-constant
+        // length from `gizmoSize`. Same split as the arrow above — direction
+        // from the item matrix, length from the view — which is what keeps the
+        // cube a constant pixel size on a scaled layer instead of tracing the
+        // ellipse the local circle is drawn as.
+        Vec3 refDir   = referenceTangent(axis_);
+        Vec3 tangentL = rotateAroundAxis(refDir, au, angle_ * PI / 180.0f);
+        Vec3 tangentW = os.axis(tangentL).dir;
+        angleCube.pos   = centerW + tangentW * (sz * 0.85f);
         angleCube.size  = sz * 0.06f;
         angleCube.color = ANGLE_COLOR;
 

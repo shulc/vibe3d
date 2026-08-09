@@ -123,6 +123,36 @@ struct OverlaySpace {
         return active ? ms.toWorldPoint(local) : local;
     }
 
+    /// A WORLD point -> the local point that is DRAWN at it. The exact inverse
+    /// of `pos`, and the half of this seam 0645 had no call for (task 0660).
+    ///
+    /// This is the direction a CLICK travels, and it is the one place the two
+    /// sides of the seam are easy to confuse. A screen gesture resolves against
+    /// a WORLD construct — the construction plane, a world ray/plane hit
+    /// — so the point it produces is a world point; the parameter it writes is
+    /// then read by a kernel that addresses the layer's OWN stored vertex
+    /// coordinates. Writing the world point straight into that parameter builds
+    /// the result around the point's image under the identity matrix, which is
+    /// the same defect `pos`'s absence causes, pointing the other way.
+    ///
+    /// Guarded by `active` on exactly the same terms as `pos`: a non-invertible
+    /// item matrix hands the point back verbatim rather than pushing it through
+    /// an `mInv` that means nothing, so `toLocalPos(pos(p)) == p` holds in both
+    /// branches.
+    Vec3 toLocalPos(Vec3 world) const @safe pure nothrow @nogc {
+        return active ? ms.toLocalPoint(world) : world;
+    }
+
+    /// The `ModelSpace` to carry a whole RAY into (`math.screenPointToLocalRay`),
+    /// honouring the same `active` gate every accessor here does — identity
+    /// whenever this space declines to convert, so a caller cannot pick up an
+    /// `mInv` that `active` has already declared meaningless. At identity the
+    /// carried ray is byte-identical to the world one, since `applyAffine` and
+    /// `toLocalDir` against the identity matrix are exact.
+    ModelSpace rayModelSpace() const @safe pure nothrow @nogc {
+        return active ? ms : ModelSpace.world();
+    }
+
     /// A local MOTION direction -> the world direction it is drawn moving
     /// along, plus the gain. `localUnit` is expected to be unit length; at
     /// identity it is handed straight back (see the module header on
@@ -276,6 +306,60 @@ unittest { // toLocal / toWorld invert each other, and toLocalDelta agrees with 
     Vec3 localDelta = os.toLocalDelta(az.dir * 5.0f);
     assert(abs(localDelta.x) < 1e-5f && abs(localDelta.y) < 1e-5f
         && abs(localDelta.z - 1.0f) < 1e-5f);
+}
+
+unittest { // `toLocalPos` is the FULL affine inverse, not the linear one.
+    // The wrong implementation this refuses (task 0660): reusing
+    // `toLocalDelta` for a POINT, i.e. dropping the translation. It is the
+    // mirror of the mistake the `pos`/`axis` test above refuses from the other
+    // side, and it is easy to make because the two differ by nothing at the
+    // call site — both take a Vec3 and return a Vec3.
+    //
+    // On this stand `pos(1,0,0) == (7,-2,11)`; carrying that world point back
+    // with the LINEAR inverse alone yields (-1, -2.3333, 2.2), 3.78 away from
+    // the point it came from.
+    import std.math : abs;
+    auto os = OverlaySpace(tiltedStand());
+
+    Vec3 local = Vec3(1, 0, 0);
+    Vec3 world = os.pos(local);
+    Vec3 back  = os.toLocalPos(world);
+    assert(abs(back.x - 1.0f) < 1e-5f && abs(back.y) < 1e-5f && abs(back.z) < 1e-5f);
+
+    // The named wrong reading is a genuinely different point, not a rounding
+    // term — so the round-trip above is a real assertion.
+    Vec3 linearOnly = os.toLocalDelta(world);
+    assert(abs(linearOnly.x + 1.0f)      < 1e-4f
+        && abs(linearOnly.y + 7.0f/3.0f) < 1e-4f
+        && abs(linearOnly.z - 2.2f)      < 1e-4f);
+
+    // Identity hands a point back verbatim, exactly as `pos` does.
+    auto id = OverlaySpace(ModelSpace.world());
+    Vec3 p = Vec3(1.0e-8f, 3.3333333f, -7.7777777f);
+    assert(id.toLocalPos(p).x == p.x && id.toLocalPos(p).y == p.y
+        && id.toLocalPos(p).z == p.z);
+
+    // ...and a non-invertible matrix declines the conversion on the same terms
+    // `pos` does, so the round-trip identity survives in that branch too.
+    ModelSpace dead = tiltedStand();
+    dead.invertible = false;
+    auto od = OverlaySpace(dead);
+    assert(od.toLocalPos(od.pos(p)).x == p.x && od.toLocalPos(od.pos(p)).z == p.z);
+}
+
+unittest { // `rayModelSpace` honours `active`, it does not just hand out `ms`.
+    // The wrong implementation this refuses: returning `ms` unconditionally.
+    // A caller carrying a cursor ray into layer space would then use an `mInv`
+    // that `active` has already declared meaningless — the half-conversion the
+    // module header refuses everywhere else, arriving through the one accessor
+    // that hands out the raw matrix.
+    auto live = OverlaySpace(tiltedStand());
+    assert(!live.rayModelSpace().isIdentity);
+
+    ModelSpace dead = tiltedStand();
+    dead.invertible = false;
+    assert(OverlaySpace(dead).rayModelSpace().isIdentity);
+    assert(OverlaySpace(ModelSpace.world()).rayModelSpace().isIdentity);
 }
 
 unittest { // A degenerate axis falls back instead of producing a NaN handle.

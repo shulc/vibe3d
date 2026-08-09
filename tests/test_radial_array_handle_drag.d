@@ -10,10 +10,12 @@
 // rotation centre — but it does not touch `offset`, so `offset` moving off
 // zero is evidence that the press hit the offset arrow and the increment ran.
 //
-// The press point is reconstructed from the arrow's own geometry: this tool
-// does not override toolHandlesJson, so /api/tool/handles reports no parts
-// for it. With the default Y axis and a centre at the origin, the shaft runs
-// from centre + Y*(arm/6) to centre + Y*arm.
+// The press point is reconstructed from the arrow's own geometry rather than
+// read off /api/tool/handles: with the default Y axis and a centre at the
+// origin, the shaft runs from centre + Y*(arm/6) to centre + Y*arm. (The tool
+// does now override toolHandlesJson — task 0660 — so the registry is readable
+// here too; this test's independent reconstruction is left as it was, since it
+// is what makes a geometry change fail loudly instead of silently following.)
 
 import std.conv : to;
 import std.json;
