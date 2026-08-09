@@ -1,7 +1,16 @@
-# Layer (item) Properties form — per-layer transform + name.
+# Layer (item) Properties form — shared item properties + a per-kind section.
 #
-# Config-driven properties for the ACTIVE (primary) layer, rendered by the
-# Layers panel (source/app.d) via FormsPanel. Each value control binds to a
+# COMPOSED, not flat: the rows are the UNION over every item kind. The shared
+# rows (`name`, the four transform clusters) bind for every kind that has them;
+# a per-kind section binds channels only one kind exposes and is hidden for the
+# rest. See the "Per-kind section" block near the bottom for how the hiding
+# works and why it needs no per-kind form file.
+#
+# Config-driven properties for the item-selection FOCUS — NOT the primary. The
+# two coincide on an all-mesh document, but `primary` is by invariant a mesh, so
+# a form bound to it could never reach a non-mesh item's channels at all
+# (`layer_params.itemPropsTarget`). Rendered by the Layers panel
+# (source/ui/panels.d) via FormsPanel. Each value control binds to a
 # `layer.attr <index> <attr> ?` line carrying exactly one `?` placeholder:
 # reading queries the layer's LayerPropsProvider param, writing executes the
 # command with `?` substituted.
@@ -82,3 +91,59 @@ forms:
           - { control: "layer.attr 0 pivot.x ?", label: X }
           - { control: "layer.attr 0 pivot.y ?", label: Y }
           - { control: "layer.attr 0 pivot.z ?", label: Z }
+
+      # ---------------------------------------------------------------------
+      # Per-kind section: an image plane's authored channels.
+      # ---------------------------------------------------------------------
+      # Everything above this line is the SHARED half of the form — `name` plus
+      # the item transform — bound for every kind that has them. This is the
+      # per-kind half, and it is why the form is one file rather than one file
+      # per kind: `LayerPropsProvider.params()` already returns the shared
+      # bundle PLUS the focused item's per-kind bundle, so a row bound to a
+      # channel only one kind exposes resolves for that kind and is hidden for
+      # every other. The composition happens in the provider's snapshot; the
+      # YAML is the union of the rows, exactly as config/forms/falloff.yaml is
+      # the union of every falloff type's rows.
+      #
+      # Two gating mechanisms are at work and they are not the same one:
+      #
+      #   * A `control` row self-hides when its own bound attr is absent from
+      #     the live snapshot (forms.planRows -> resolveControl found=false).
+      #     That covers all ten rows below with no annotation.
+      #   * A row carrying NO value bind of its own — the section heading —
+      #     has nothing to self-hide on, so it rides an explicit `whenAttr`
+      #     gate naming a channel only a plane exposes. Without it the heading
+      #     would caption an empty region on every mesh layer.
+      #
+      # NOT wrapped in a `group:`. A group here would gate the whole section
+      # with one `whenAttr` (that works — falloff.yaml gates its "Auto Size"
+      # group exactly so), but `drawGroup` renders the COMPACT VECTOR-CLUSTER
+      # layout: the group title is printed once on the first member's row and
+      # each member's own label is right-aligned into the narrow fixed column
+      # just before the value field. That is built for X / Y / Z. A label as
+      # wide as "Show in Perspective" overruns the column, is clamped to x=0,
+      # and the value field is then drawn on top of its tail. Groups here are
+      # a vector-cluster layout, not a collapsible section — so the section is
+      # a heading plus flat rows, which is what the `name` row above already
+      # uses and what falloff.yaml uses for its per-type rows.
+      #
+      # No `label:` overrides below: the visible text is the Param's own label
+      # (layer_params.d), so the channel is named in exactly one place.
+      #
+      # No divider row precedes the heading — `drawGroup` already emits a
+      # trailing Separator after the Pivot cluster, and a second one abutting
+      # it renders as a doubled rule.
+      - { label: Image Plane, whenAttr: projection }
+      - { control: "layer.attr 0 projection ?" }
+      - { control: "layer.attr 0 showInPerspective ?" }
+      - { control: "layer.attr 0 pixelSize ?" }
+      - { control: "layer.attr 0 keepAspect ?" }
+      # The three look scalars declare both a min and a max (layer_params.d),
+      # so `style: slider` resolves to a bounded slider rather than an unbounded
+      # drag — the range is the meaningful part of these channels.
+      - { control: "layer.attr 0 brightness ?",   style: slider }
+      - { control: "layer.attr 0 contrast ?",     style: slider }
+      - { control: "layer.attr 0 transparency ?", style: slider }
+      - { control: "layer.attr 0 invert ?" }
+      - { control: "layer.attr 0 flipHorizontal ?" }
+      - { control: "layer.attr 0 smooth ?" }

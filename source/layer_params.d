@@ -464,6 +464,97 @@ Layer itemPropsTarget(Document* doc) {
     return doc.itemTransformTarget();
 }
 
+/// Every attr a layer can expose, across EVERY item kind — the union, in
+/// first-seen order.
+///
+/// This is the static universe `forms.validateForms` fences the layer-props
+/// form against at boot, and it has to be the UNION because ONE form serves
+/// every kind: its per-kind section names channels that only a plane's
+/// provider returns, and those rows are hidden (not erroneous) for a mesh.
+///
+/// Why it exists at all: a `layer.attr` control row whose attr is misspelt
+/// fails SILENTLY. It resolves `found == false` on every snapshot, the row is
+/// never planned, and the panel looks exactly as it does when the channel has
+/// no row — which is the precise defect the per-kind section was added to
+/// correct. Tool and stage bindings have had this boot fence since the forms
+/// engine's Phase 3; the layer namespace was the one that never got it.
+///
+/// Built by asking a real provider, one kind at a time, rather than by listing
+/// names: a list would be a second declaration of the param set and would drift
+/// from `params()` the first time a bundle changed. The `final switch` is the
+/// forcing function — a new `ItemKind` is a COMPILE ERROR here until someone
+/// decides whether it carries a payload, so a kind cannot be added with its
+/// channels silently outside the universe.
+string[] layerAttrUniverse()
+{
+    import document   : ImageData, ImagePlaneData;
+    import std.traits : EnumMembers;
+
+    string[] names;
+    bool[string] seen;
+    foreach (k; [EnumMembers!ItemKind]) {
+        auto l = new Layer;
+        l.kind = k;
+        // Construct the payload a kind's bundle binds its pointers into —
+        // without it `params()` takes its documented null-payload fallback and
+        // that kind contributes nothing but the base bundle.
+        final switch (k) {
+            case ItemKind.Mesh:
+            case ItemKind.Empty:
+                break;                                        // payload-less
+            case ItemKind.Image:
+                l.imageRef() = new ImageData();
+                break;
+            case ItemKind.ImagePlane:
+                l.imagePlaneRef() = new ImagePlaneData();
+                break;
+        }
+        foreach (ref p; (new LayerPropsProvider(l)).params())
+            if (p.name !in seen) { seen[p.name] = true; names ~= p.name; }
+    }
+    return names;
+}
+
+// ---------------------------------------------------------------------------
+// The universe really is the UNION, not any one kind's bundle.
+//
+// Discriminating: an implementation that built it from a single default-kind
+// (mesh) layer — the tempting one, since a mesh has the most params — returns
+// 14 names and NONE of the plane's ten, so the form's whole per-kind section
+// would be rejected at boot as ten unknown attrs. The plane-channel assertions
+// below read absent for it. The mesh half is the control: a union that somehow
+// lost the shared bundle would break every existing transform row.
+// ---------------------------------------------------------------------------
+unittest {
+    auto u = layerAttrUniverse();
+    bool has(string n) { foreach (x; u) if (x == n) return true; return false; }
+
+    // Shared bundle — every kind that has a transform contributes these.
+    foreach (n; ["name", "visible", "pos.x", "rot.y", "scl.z", "pivot.x"])
+        assert(has(n), "the shared attr `" ~ n ~ "` is in the universe");
+    // The image kind's bundle.
+    foreach (n; ["filename", "colorspace", "useAlpha"])
+        assert(has(n), "the image kind's `" ~ n ~ "` is in the universe");
+    // The plane's ten — the reason the union has to span kinds at all.
+    foreach (n; ["projection", "showInPerspective", "pixelSize", "keepAspect",
+                 "brightness", "contrast", "transparency", "invert",
+                 "flipHorizontal", "smooth"])
+        assert(has(n), "the plane's `" ~ n ~ "` is in the universe — the "
+                     ~ "layer-props form's per-kind section binds it, and a "
+                     ~ "universe without it rejects that row at boot");
+
+    // No duplicates: `name`/`visible` are contributed by all four kinds and
+    // must appear once, or the fence's error messages and any count read off
+    // this list would be nonsense.
+    bool[string] once;
+    foreach (n; u) {
+        assert((n in once) is null, "`" ~ n ~ "` appears twice in the universe");
+        once[n] = true;
+    }
+    // 14 shared/transform + 3 image + 10 plane = 27 distinct names.
+    assert(u.length == 27, "the union spans every kind's bundle");
+}
+
 // ---------------------------------------------------------------------------
 // P0.4b (task 0616 Ph4): the properties form follows the FOCUS.
 //

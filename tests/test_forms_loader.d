@@ -753,11 +753,17 @@ unittest { // the shipped config/forms/layer_props.yaml loads + validates clean
     validateForms(forms, realisticValidators(), "config/forms/layer_props.yaml");
 
     // Every control binds to the layer namespace + names a LayerPropsProvider
-    // attr (the static 14: pos/rot/scl/pivot components + name; visible is
-    // deliberately omitted from this form).
+    // attr. Two halves, because the form is composed: the SHARED bundle
+    // (pos/rot/scl/pivot components + name; `visible` is deliberately omitted
+    // from this form — it rides layer.setVisible), and the per-kind section's
+    // ten image-plane channels, which resolve only when the bound item is a
+    // plane and are hidden for every other kind.
     static immutable string[] layerAttrs = [
         "pos.x", "pos.y", "pos.z", "rot.x", "rot.y", "rot.z",
         "scl.x", "scl.y", "scl.z", "pivot.x", "pivot.y", "pivot.z", "name",
+        "projection", "showInPerspective", "pixelSize", "keepAspect",
+        "brightness", "contrast", "transparency", "invert",
+        "flipHorizontal", "smooth",
     ];
     void checkRow(ref Row r) {
         if (r.kind == RowKind.control) {

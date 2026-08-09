@@ -3515,6 +3515,7 @@ void main(string[] args) {
     {
         import forms : loadForms, validateForms, FormValidators, g_forms,
                        g_formsPanelEnabled;
+        import layer_params : layerAttrUniverse;
         import toolpipe.pipeline : g_pipeCtx;
 
         // Phase-5 enablement: FormsPanel is the PRIMARY Tool Properties UI by
@@ -3546,6 +3547,14 @@ void main(string[] args) {
         };
         fv.commandExists = (string cmdId) =>
             (cmdId in reg.commandFactories) !is null;
+        // The layer (item) namespace's universe is the UNION over every item
+        // kind, because ONE form serves them all: its per-kind section binds
+        // channels only a plane's provider returns, and those rows are hidden
+        // — not erroneous — for a mesh. Without this delegate a misspelt
+        // channel is invisible rather than loud: it resolves absent on every
+        // snapshot, so the row is simply never drawn and looks identical to a
+        // channel nobody wrote a row for.
+        fv.layerAttrs = () => layerAttrUniverse();
 
         if (exists("config/forms")) {
             string[] files;

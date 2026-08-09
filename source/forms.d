@@ -559,6 +559,153 @@ private WidgetKind decideWidget(const ref Param p, ControlStyle styleOverride,
 }
 
 // ===========================================================================
+// Render plan
+//
+// WHAT the renderer will draw, decided without ImGui.
+//
+// Row visibility is a pure function of the schema and the provider's live
+// params() snapshot. Three rules decide it: a row's `whenAttr` gate, a control
+// row whose bound attr is absent from the snapshot, and a group every one of
+// whose members went away. Those rules used to live inside forms_render.d's
+// ImGui walk, where the only thing a test could observe was "the function
+// ran" — so a param DECLARED by a provider and a row RENDERED for it were
+// indistinguishable from a test, and a channel with no row looked exactly like
+// a channel with one.
+//
+// planForm lifts the decision out. FormsPanel.draw calls it and then draws
+// ONLY what the plan contains, re-deriving no visibility of its own — so an
+// assertion against a plan is an assertion about the panel, not about a
+// parallel reimplementation of it.
+//
+// The plan is per-frame and disposable: `row` points into the caller's Form,
+// which outlives the draw call it was planned for.
+// ===========================================================================
+
+/// One row the renderer will actually emit for a given params() snapshot.
+struct PlannedRow {
+    RowKind kind;
+
+    /// Index within the PARENT's `rows` array — counting hidden siblings, so
+    /// it is the same number the renderer used before the plan existed. It
+    /// seeds the control's PushID / edit-scratch key, and those keys must not
+    /// shift when a sibling row appears or disappears (a shifted key resets a
+    /// drag mid-edit).
+    int index;
+
+    /// The text the user actually sees: a control's authored label, or the
+    /// resolved Param's label when the row authored none, or "" when the row
+    /// suppresses its label. Display-ready on purpose — a wrong implementation
+    /// then reads a different STRING here rather than hiding the difference in
+    /// the untested half.
+    string label;
+
+    /// Control rows: the bound attr name. Empty for every other kind.
+    string attr;
+
+    /// Control rows: the resolved Param + choices + final widget. `found` is
+    /// true by construction — an unresolved control is never planned.
+    ResolvedControl rc;
+
+    /// The schema row this was planned from (points into the caller's Form).
+    Row* row;
+
+    /// Group members that survived, in draw order.
+    PlannedRow[] children;
+
+    /// The widget the renderer will emit (WidgetKind.none for non-controls).
+    WidgetKind widget() const { return rc.widget; }
+}
+
+/// Plan `form`'s rows against a provider's live params() snapshot.
+PlannedRow[] planForm(ref Form form, Param[] snapshot)
+{
+    return planRows(form.rows, snapshot);
+}
+
+/// Plan one row list (recursing into groups). Public so a test can plan a
+/// hand-built row array without wrapping it in a Form.
+PlannedRow[] planRows(Row[] rows, Param[] snapshot)
+{
+    PlannedRow[] plan;
+    foreach (i, ref row; rows) {
+        // Row-level visibility gate — applies to ANY row kind, including the
+        // ones carrying no value bind of their own (a section heading, a
+        // divider, a button strip). This is how a form expresses a per-type
+        // SECTION with no inline conditional: the gate names an attr only that
+        // type's provider exposes.
+        if (row.whenAttr.length && !snapshotHasAttr(snapshot, row.whenAttr))
+            continue;
+
+        PlannedRow pr;
+        pr.kind  = row.kind;
+        pr.index = cast(int) i;
+        pr.label = row.label;
+        pr.row   = &rows[i];
+
+        final switch (row.kind) {
+            case RowKind.control:
+                pr.rc = resolveControl(row, snapshot);
+                if (!pr.rc.found) continue;   // attr absent from THIS snapshot
+                pr.attr  = parseBinding(row.command).attr;
+                pr.label = row.showLabel
+                         ? (row.label.length ? row.label : pr.rc.param.label)
+                         : "";
+                break;
+
+            case RowKind.group:
+                pr.children = planRows(rows[i].rows, snapshot);
+                // Every member hid ⇒ drop the group too, or the renderer emits
+                // a label + separator framing nothing.
+                if (pr.children.length == 0) continue;
+                break;
+
+            case RowKind.cmd:
+                pr.label = row.label.length ? row.label : row.command;
+                break;
+
+            case RowKind.choice:
+                if (row.entries.length == 0) continue;
+                break;
+
+            case RowKind.divider:
+            case RowKind.label:
+                break;
+
+            // Cross-form assembly is out of scope for v1: the renderer draws
+            // nothing for these, so the plan carries nothing either.
+            case RowKind.sub:
+            case RowKind.ref_:
+                continue;
+        }
+        plan ~= pr;
+    }
+    return plan;
+}
+
+/// True iff `snapshot` exposes a param named `attr` — the test behind a row's
+/// `whenAttr` gate, and the same presence question a control's own value bind
+/// asks through resolveControl.
+bool snapshotHasAttr(Param[] snapshot, string attr)
+{
+    foreach (ref p; snapshot)
+        if (p.name == attr) return true;
+    return false;
+}
+
+/// Flatten a plan to the bound attr of every control row it contains, in draw
+/// order (group members inline, where they are drawn). The compact form of
+/// "which value rows does the panel actually show for this provider".
+string[] plannedAttrs(PlannedRow[] plan)
+{
+    string[] out_;
+    foreach (ref pr; plan) {
+        if (pr.kind == RowKind.control) out_ ~= pr.attr;
+        out_ ~= plannedAttrs(pr.children);
+    }
+    return out_;
+}
+
+// ===========================================================================
 // Write-path serialization (Phase 4)
 //
 // The renderer (forms_render.d) writes an edited value by substituting it for
@@ -1018,6 +1165,13 @@ struct FormValidators {
     string[] delegate(string stageId) stageAttrs;
     /// True iff a plain command id exists in the command registry.
     bool     delegate(string cmdId)   commandExists;
+    /// Every attr a layer (item) can expose, across EVERY item kind — the
+    /// union, because one layer form serves all kinds and each kind's rows are
+    /// hidden at runtime for the others. Takes no target: a `layer.attr` line's
+    /// first positional is a layer INDEX placeholder, not an id to resolve.
+    /// Null ⇒ no live universe, and the layer arm accepts unconditionally
+    /// (pure-loader callers).
+    string[] delegate()               layerAttrs;
 }
 
 /// Thrown by validateForms when a binding references an attr / stage / tool /
@@ -1036,9 +1190,41 @@ void validateForms(Form[] forms, FormValidators v, string ctx)
 {
     foreach (ref f; forms) {
         validateFormStageBinding(f, v, ctx);
+        validateFormLayerGates(f, v, ctx);
         foreach (ref r; f.rows)
             validateRow(r, f.id, v, ctx);
     }
+}
+
+/// A form whose value rows bind the LAYER namespace expresses its per-kind
+/// sections as `whenAttr` gates on rows that carry no value bind of their own
+/// (a section heading, a divider). Those gates decide whether a whole section
+/// appears, and a misspelt one fails SILENTLY — the section is simply never
+/// drawn — so they get the same boot-time typo fence the control bindings get.
+/// Skipped when no live layer universe was supplied.
+private void validateFormLayerGates(ref Form f, FormValidators v, string ctx)
+{
+    if (v.layerAttrs is null) return;
+
+    bool bindsLayer;
+    void scan(ref Row r) {
+        if (r.kind == RowKind.control
+            && parseBinding(r.command).namespace == Namespace.layer)
+            bindsLayer = true;
+        foreach (ref c; r.rows) scan(c);
+    }
+    foreach (ref r; f.rows) scan(r);
+    if (!bindsLayer) return;   // a tool/stage form: gates belong to that universe
+
+    auto universe = v.layerAttrs();
+    void checkGate(ref Row r) {
+        if (r.whenAttr.length && !hasName(universe, r.whenAttr))
+            throw new FormValidationException(format(
+                "forms: form '%s' (%s) row gates on unknown attr '%s' "
+                ~ "(whenAttr) for a layer item", f.id, ctx, r.whenAttr));
+        foreach (ref c; r.rows) checkGate(c);
+    }
+    foreach (ref r; f.rows) checkGate(r);
 }
 
 /// A `whenStage:` form must name a LIVE pipe stage (the per-stage loop will
@@ -1151,15 +1337,28 @@ private void validateControlBinding(string line, string formId,
 
         case Namespace.layer:
             // `layer.attr <index> <attr> ?` — a layer (item) property bind.
-            // The bound attr resolves at runtime against the live
-            // LayerPropsProvider's params() (the static 14: pos/rot/scl/pivot
-            // components + name + visible); the renderer hides a row whose attr
-            // is absent, exactly like the tool/stage runtime path. There is no
-            // layer-attr universe delegate here, so the boot-strict pass accepts
-            // the line unconditionally (its shape was already checked by
-            // parseBinding). The `<index>` token is a literal placeholder
-            // overwritten with the live layer index by rebindBindingTarget; it
-            // is NOT validated as a target id here.
+            // The bound attr resolves at RUNTIME against the live
+            // LayerPropsProvider's params(), which returns the shared bundle
+            // plus the focused item's per-KIND bundle; the renderer hides a row
+            // whose attr is absent from that snapshot, exactly like the
+            // tool/stage runtime path. The `<index>` token is a literal
+            // placeholder overwritten with the live layer index by
+            // rebindBindingTarget; it is NOT validated as a target id here.
+            //
+            // The universe is the union over every kind, so a per-kind row is
+            // legal at boot and merely hidden for the other kinds. Without this
+            // check a misspelt channel is INVISIBLE rather than loud — it
+            // resolves found=false forever and the row simply never appears,
+            // which is indistinguishable from a channel that has no row at all.
+            // That is the exact failure this form's per-kind section was added
+            // to correct, so it gets the same boot fence tool and stage lines
+            // have had since Phase 3.
+            if (v.layerAttrs is null) break;
+            auto layerUniverse = v.layerAttrs();
+            if (!hasName(layerUniverse, b.attr))
+                throw new FormValidationException(format(
+                    "forms: form '%s' (%s) sets unknown attr '%s' on a layer "
+                    ~ "(binding '%s')", formId, ctx, b.attr, line));
             break;
 
         case Namespace.command:

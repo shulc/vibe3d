@@ -183,48 +183,45 @@ class FormsPanel {
         if (form.showLabel && form.label.length)
             ImGui.SeparatorText(form.label);
 
-        foreach (i, ref row; form.rows)
-            drawRow(row, cast(int) i, snapshot, provider, dispatch, idispatch);
+        // WHICH rows are drawn is decided by forms.planForm — a pure function
+        // of the schema + this snapshot, with no ImGui in it. This loop draws
+        // exactly what the plan contains and asks no visibility question of its
+        // own, so the plan a test can assert IS the panel's row list rather
+        // than a parallel model of it.
+        auto plan = planForm(form, snapshot);
+        foreach (ref pr; plan)
+            drawPlanned(pr, provider, dispatch, idispatch);
     }
 
     // -----------------------------------------------------------------------
     // Row dispatch
     // -----------------------------------------------------------------------
 
-    private void drawRow(ref Row row, int rowIdx, Param[] snapshot,
-                         ParamProvider provider,
-                         DispatchFn dispatch, InteractiveDispatchFn idispatch)
+    private void drawPlanned(ref PlannedRow pr, ParamProvider provider,
+                             DispatchFn dispatch, InteractiveDispatchFn idispatch)
     {
-        // Row-level visibility gate: a `whenAttr` row draws only when that attr
-        // is present in the live params() this frame — the same value-driven
-        // hiding a control gets when its own attr is absent, but extended to
-        // rows with no value bind (cmd / group). Lets the Linear-only falloff
-        // actions (Auto Size, Reverse) ride `start`, exposed only by Linear.
-        if (row.whenAttr.length && !snapshotHasAttr(snapshot, row.whenAttr))
-            return;
-
-        final switch (row.kind) {
+        final switch (pr.kind) {
             case RowKind.control:
-                drawControl(row, rowIdx, snapshot, provider, idispatch);
+                drawControl(pr, provider, idispatch);
                 break;
             case RowKind.cmd:
-                drawCmd(row, dispatch);
+                drawCmd(pr, dispatch);
                 break;
             case RowKind.choice:
-                drawChoice(row, rowIdx, dispatch);
+                drawChoice(pr, dispatch);
                 break;
             case RowKind.group:
-                drawGroup(row, rowIdx, snapshot, provider, dispatch, idispatch);
+                drawGroup(pr, provider, dispatch, idispatch);
                 break;
             case RowKind.divider:
                 ImGui.Separator();
                 break;
             case RowKind.label:
-                ImGui.TextUnformatted(row.label);
+                ImGui.TextUnformatted(pr.label);
                 break;
-            // sub / ref: cross-form assembly is out of scope for v1 (Phase 4).
-            // ref: toolprops.falloff in transform.yaml resolves to nothing yet —
-            // render nothing rather than error, so the shipped form loads clean.
+            // sub / ref: cross-form assembly is out of scope for v1 (Phase 4);
+            // planRows never emits one, so this arm is unreachable and exists
+            // only to keep the switch final.
             case RowKind.sub:
             case RowKind.ref_:
                 break;
@@ -329,18 +326,22 @@ class FormsPanel {
     // control rows — value field/toggle bound to `tool.attr ... ?`.
     // -----------------------------------------------------------------------
 
-    private void drawControl(ref Row row, int rowIdx, Param[] snapshot,
-                             ParamProvider provider,
+    private void drawControl(ref PlannedRow pr, ParamProvider provider,
                              InteractiveDispatchFn idispatch)
     {
-        auto rc = resolveControl(row, snapshot);
-        if (!rc.found) return;             // runtime-hidden (dynamic absence)
+        // Resolution already happened in the plan (an unresolved control is
+        // never planned), so there is no found-check here — the plan is the
+        // single authority on whether this row draws.
+        Row* row = pr.row;   // `ptr.member` auto-derefs; `*row` passes by ref
+        auto rc  = pr.rc;
 
         // Stable per-control id: PushID so repeated labels (X in Position vs X
         // in Scale) never collide. Prefer the authored id; else derive from the
-        // command line + row index.
+        // command line + row index. pr.index counts HIDDEN siblings too, so a
+        // control's id (and with it its edit scratch) does not shift when a
+        // neighbouring row appears or disappears.
         string cid = row.id.length ? row.id
-                                   : format("%s#%d", row.command, rowIdx);
+                                   : format("%s#%d", row.command, pr.index);
         ImGui.PushID(cid);
         scope(exit) ImGui.PopID();
 
@@ -355,42 +356,42 @@ class FormsPanel {
         // fixed LEFT column and let the widget fill the rest of the row width —
         // so X/Y/Z labels never clip off the panel edge and the boxes don't
         // overflow (the readability fix, doc/forms_engine_plan.md user feedback).
-        string visible = row.showLabel
-                       ? (row.label.length ? row.label : rc.param.label)
-                       : "";
+        // The plan already resolved the label text (authored label, else the
+        // Param's own), so the string a test asserts is the string drawn here.
+        string visible = pr.label;
         string hidden  = "##" ~ cid;   // unique id, no visible glyphs
 
         final switch (rc.widget) {
             case WidgetKind.checkbox:
-                drawCheckbox(row, rc, row.showLabel ? visible : hidden, idispatch);
+                drawCheckbox(*row, rc, row.showLabel ? visible : hidden, idispatch);
                 break;
             case WidgetKind.button:
-                drawBoolButton(row, rc, row.showLabel ? visible : hidden, idispatch);
+                drawBoolButton(*row, rc, row.showLabel ? visible : hidden, idispatch);
                 break;
             case WidgetKind.dragFloat:
             case WidgetKind.sliderFloat:
                 beginLabeledRow(visible);
-                drawFloatControl(row, rc, cid, hidden, idispatch);
+                drawFloatControl(*row, rc, cid, hidden, idispatch);
                 break;
             case WidgetKind.dragInt:
             case WidgetKind.sliderInt:
                 beginLabeledRow(visible);
-                drawIntControl(row, rc, cid, hidden, idispatch);
+                drawIntControl(*row, rc, cid, hidden, idispatch);
                 break;
             case WidgetKind.combo:
                 beginLabeledRow(visible);
-                drawCombo(row, rc, hidden, idispatch);
+                drawCombo(*row, rc, hidden, idispatch);
                 break;
             case WidgetKind.text:
                 beginLabeledRow(visible);
-                drawText(row, rc, hidden, idispatch);
+                drawText(*row, rc, hidden, idispatch);
                 break;
             case WidgetKind.vec3:
                 // A single Vec3 attr (e.g. falloff start/end) expands into an
                 // editable X/Y/Z cluster, rendered in the same compact layout as
                 // a separate-attr `group:` (TX/TY/TZ). An edit writes the full
                 // vec3 back as "x,y,z".
-                drawVec3Control(row, rc, cid, row.showLabel ? visible : "",
+                drawVec3Control(*row, rc, cid, row.showLabel ? visible : "",
                                 idispatch);
                 break;
             case WidgetKind.none:
@@ -593,16 +594,16 @@ class FormsPanel {
     // cmd / choice rows — fire-only (plain dispatch, no interactive flag).
     // -----------------------------------------------------------------------
 
-    private void drawCmd(ref Row row, DispatchFn dispatch)
+    private void drawCmd(ref PlannedRow pr, DispatchFn dispatch)
     {
         // Button sits in the value column (left label empty), same width as the
         // input fields, flush right — so a standalone command button (falloff
         // "Reverse") lines up with the fields above it rather than spanning the
-        // whole panel.
-        string label = row.label.length ? row.label : row.command;
+        // whole panel. The plan already resolved the label (authored, else the
+        // command line itself).
         beginLabeledRow("");
-        if (ImGui.Button(label, ImVec2(-float.min_normal, 0)))
-            fireLine(row.command, dispatch);
+        if (ImGui.Button(pr.label, ImVec2(-float.min_normal, 0)))
+            fireLine(pr.row.command, dispatch);
     }
 
     // -----------------------------------------------------------------------
@@ -611,19 +612,21 @@ class FormsPanel {
     // the right edge, with a tiny gap between them (the falloff "Auto Size"
     // X/Y/Z row). The group label sits in the left column like any other row.
     // -----------------------------------------------------------------------
-    private void drawButtonRow(ref Row row, int rowIdx, DispatchFn dispatch)
+    private void drawButtonRow(ref PlannedRow pr, DispatchFn dispatch)
     {
-        ImGui.PushID(format("btnrow#%d#%s", rowIdx, row.label));
+        ImGui.PushID(format("btnrow#%d#%s", pr.index, pr.label));
         scope(exit) ImGui.PopID();
 
-        // Count the cmd children (the buttons).
+        // Count the cmd children (the buttons). The plan already dropped any
+        // child whose own `whenAttr` gate is unsatisfied, so the width split
+        // below divides by the number that will actually be drawn.
         int n = 0;
-        foreach (ref c; row.rows)
+        foreach (ref c; pr.children)
             if (c.kind == RowKind.cmd) n++;
         if (n == 0) return;
 
         // Label left, cursor positioned at the shared field column.
-        beginLabeledRow(row.label);
+        beginLabeledRow(pr.label);
 
         const float gap   = 2.0f;   // tiny inter-button spacing
         float avail = ImGui.GetContentRegionAvail().x;
@@ -631,26 +634,25 @@ class FormsPanel {
         if (bw < 1.0f) bw = 1.0f;
 
         int i = 0;
-        foreach (ref c; row.rows) {
+        foreach (ref c; pr.children) {
             if (c.kind != RowKind.cmd) continue;
             if (i > 0) ImGui.SameLine(0, gap);
-            string lbl = c.label.length ? c.label : c.command;
-            if (ImGui.Button(lbl ~ format("##b%d", i), ImVec2(bw, 0)))
-                fireLine(c.command, dispatch);
+            if (ImGui.Button(c.label ~ format("##b%d", i), ImVec2(bw, 0)))
+                fireLine(c.row.command, dispatch);
             i++;
         }
     }
 
-    private void drawChoice(ref Row row, int rowIdx, DispatchFn dispatch)
+    private void drawChoice(ref PlannedRow pr, DispatchFn dispatch)
     {
-        if (row.entries.length == 0) return;
-        ImGui.PushID(format("choice#%d#%s", rowIdx, row.label));
+        // An entry-less choice row is never planned, so there is no empty check.
+        ImGui.PushID(format("choice#%d#%s", pr.index, pr.label));
         scope(exit) ImGui.PopID();
 
         // v1: a plain action combo with no derived checked-state — selecting an
         // entry fires its command. The preview shows the menu title.
-        if (ImGui.BeginCombo(row.label, row.label)) {
-            foreach (e; row.entries) {
+        if (ImGui.BeginCombo(pr.label, pr.label)) {
+            foreach (e; pr.row.entries) {
                 if (ImGui.Selectable(e.label, false))
                     fireLine(e.cmd, dispatch);
             }
@@ -666,51 +668,25 @@ class FormsPanel {
     // A naive rect-after-widgets would paint over them; channel-split avoids it.
     // -----------------------------------------------------------------------
 
-    // True iff at least one member of `group` resolves to a renderable widget
-    // this frame. A control row whose bound attr is absent from the active
-    // params() resolves found=false and draws nothing (drawControl early-returns);
-    // a fully-absent group would otherwise leave an empty framed box with just
-    // the group label. Non-control members (cmd / choice / divider / label)
-    // always draw, so they count as visible.
-    // True iff `snapshot` exposes a param named `attr` this frame — the test
-    // behind a row's `whenAttr` visibility gate (drawRow).
-    private static bool snapshotHasAttr(Param[] snapshot, string attr)
-    {
-        foreach (ref p; snapshot)
-            if (p.name == attr) return true;
-        return false;
-    }
+    // Group visibility ("every member is runtime-hidden ⇒ draw no framed box
+    // at all, or the layout below paints a label and a separator around
+    // nothing") now lives in forms.planRows: a group with no surviving
+    // children is simply not planned. The two predicates that used to answer
+    // it here — snapshotHasAttr and groupHasVisibleMember — moved to forms.d
+    // with it, so there is exactly one implementation of the rule and a test
+    // can reach it.
 
-    private bool groupHasVisibleMember(ref Row group, Param[] snapshot)
-    {
-        foreach (ref child; group.rows) {
-            if (child.kind == RowKind.control) {
-                if (resolveControl(child, snapshot).found) return true;
-            } else {
-                return true;   // cmd / choice / divider / label always render
-            }
-        }
-        return false;
-    }
-
-    private void drawGroup(ref Row row, int rowIdx, Param[] snapshot,
-                           ParamProvider provider,
+    private void drawGroup(ref PlannedRow pr, ParamProvider provider,
                            DispatchFn dispatch, InteractiveDispatchFn idispatch)
     {
         // style: buttons — a horizontal equal-width button strip, not a framed
-        // vector cluster. Routed before the visible-member check (its cmd
-        // children always render).
-        if (row.groupStyle == GroupStyle.buttons) {
-            drawButtonRow(row, rowIdx, dispatch);
+        // vector cluster.
+        if (pr.row.groupStyle == GroupStyle.buttons) {
+            drawButtonRow(pr, dispatch);
             return;
         }
 
-        // Skip the framed box entirely when every member is runtime-hidden —
-        // otherwise the channel-split below paints an empty rect + the group
-        // label with no controls inside it.
-        if (!groupHasVisibleMember(row, snapshot)) return;
-
-        ImGui.PushID(format("group#%d#%s", rowIdx, row.label));
+        ImGui.PushID(format("group#%d#%s", pr.index, pr.label));
         scope(exit) ImGui.PopID();
 
         // Compact vector layout, closed by a horizontal rule that separates this
@@ -718,13 +694,15 @@ class FormsPanel {
         // the fields slightly misaligned). The group label rides the first
         // member's row; members pack with a tighter ItemSpacing.y.
         GroupLayout saved = glayout_;
-        glayout_ = makeVectorLayout(row.label);
+        glayout_ = makeVectorLayout(pr.label);
 
         const ImVec2 sp = ImGui.GetStyle().ItemSpacing;
         ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, ImVec2(sp.x, 2.0f));
 
-        foreach (i, ref child; row.rows)
-            drawRow(child, cast(int) i, snapshot, provider, dispatch, idispatch);
+        // Only the members the plan kept — a member hidden this frame was
+        // already dropped, and a group with none left was never planned at all.
+        foreach (ref child; pr.children)
+            drawPlanned(child, provider, dispatch, idispatch);
 
         ImGui.PopStyleVar();
         glayout_ = saved;   // restore for nested groups / following rows
