@@ -48,6 +48,17 @@ run), Windows zip or installer, macOS `.app` — with no extra dependencies to
 stage. See **[INSTALL.md](INSTALL.md)** for per-platform steps (and the optional
 AI image→3D generation add-on). Or [build from source](#build-from-source).
 
+What changed in each release is in the **[CHANGELOG](CHANGELOG.md)**. To find
+out which build you are running — including from a terminal, with no display:
+
+```sh
+./vibe3d --version
+```
+
+The same block is in `File ▸ About…`. Please include it in bug reports:
+nightly builds all carry the same version number, and the build date is what
+distinguishes them.
+
 ## Highlights
 
 **Editing** — three modes (**Vertices** / **Edges** / **Polygons**; `1`/`2`/`3`,

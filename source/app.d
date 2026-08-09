@@ -19,6 +19,7 @@ import imgui_impl_sdl2;
 import imgui_impl_opengl3;
 import nfde;
 
+import app_version      : appAboutLines;
 import math;
 import mesh;
 import eventlog;
@@ -175,6 +176,7 @@ private enum bool kSnappingHasOwnTab = true;
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.image_list      : UiImageListCommand, g_imageListShown;
 import commands.ui.channels        : UiChannelsCommand, g_channelsShown;
+import commands.ui.about           : g_aboutShown;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 version (WithAI)
 import commands.ui.copilot_panel : g_copilotPanelShown;
@@ -919,6 +921,19 @@ void main(string[] args) {
                 exit(1);
             }
             playbackFile = args[++i];
+        } else if (args[i] == "--version") {
+            // Name this build and leave. Handled INSIDE the arg loop, which
+            // runs before loadSDL/SDL_Init/prefs/GL — so `--version` answers on
+            // a machine with no display, no X11, no Wayland and no GPU. That is
+            // not a nicety: the bug reports this flag exists for come from
+            // headless installs and from users whose editor will not start.
+            // Same shape as the --render-diff early exit further down.
+            // (task 0641)
+            import std.stdio : stdout;
+            foreach (line; appAboutLines) writeln(line);
+            stdout.flush();
+            import core.stdc.stdlib : exit;
+            exit(0);
         } else if (args[i] == "--test") {
             testMode = true;
             startHttpServer = true;
@@ -6030,6 +6045,17 @@ void main(string[] args) {
         if (!command.g_testMode || g_viewportPropsShown) {
             import ui.panels : drawViewportPropsPanel;
             drawViewportPropsPanel(app);
+        }
+
+        // ---- About (floating; task 0641) ----
+        // Unlike the panels above, the gate is NOT `--test`-conditional: About
+        // is an on-demand window in every mode, opened by File → About… (which
+        // dispatches `ui.about show`). Starting hidden also means it can never
+        // swallow a synthetic viewport drag, so the imgui-determinism rule the
+        // three panels above concede to is satisfied for free here.
+        if (g_aboutShown) {
+            import ui.panels : drawAboutPanel;
+            drawAboutPanel(app);
         }
 
         // ---- AI Findings (floating; task 0402 Phase 2) ----

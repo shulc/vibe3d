@@ -24,6 +24,9 @@ panels:
                 - { label: "glTF…",  action: { kind: command, id: "file.export.gltf" } }
                 - { label: "FBX…",   action: { kind: command, id: "file.export.fbx"  } }
           - { label: "Generate 3D…", action: { kind: command, id: "ai3d.generate.open" } }
+          # Version / build configuration / platform — the facts a bug report
+          # needs. Same block `vibe3d --version` prints (task 0641).
+          - { label: "About…", action: { kind: script, lines: ["ui.about show"] } }
           - { label: Quit, action: { kind: command, id: file.quit } }
       - title: History
         buttons:

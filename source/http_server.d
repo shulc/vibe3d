@@ -19,6 +19,32 @@ import bindbc.sdl;
 import eventlog;
 import argstring : parseArgstring, ParsedLine;
 import log : logInfo, logWarn, logError;
+import app_version : appVersion, appBuildConfig, appPlatform, appBuildDate,
+                     appAboutLines;
+
+// ---------------------------------------------------------------------------
+// versionJson — the GET /api/version payload (task 0641).
+//
+// All compile-time constants, so this is safe to build on the HTTP thread
+// without the main-thread bridge every state-reading endpoint needs.
+//
+// `lines` carries `appAboutLines` verbatim rather than re-deriving the block
+// from the scalar fields: it is the array the About window draws and the
+// array `--version` prints, and shipping it unchanged is what lets a test
+// assert that all three surfaces read one source. Re-formatting it here would
+// have created the second literal the whole task is about.
+// ---------------------------------------------------------------------------
+string versionJson() {
+    JSONValue j;
+    j["version"]  = JSONValue(appVersion);
+    j["build"]    = JSONValue(appBuildConfig);
+    j["platform"] = JSONValue(appPlatform);
+    j["built"]    = JSONValue(appBuildDate);
+    JSONValue[] lines;
+    foreach (line; appAboutLines) lines ~= JSONValue(line);
+    j["lines"] = JSONValue(lines);
+    return j.toString();
+}
 
 // ============================================================================
 // Generic HTTP-thread <-> main-thread request/response bridge (task 0183 C3).
@@ -1589,6 +1615,7 @@ class HttpServer {
                            "<p>Available endpoints:</p>" ~
                            "<ul><li>/status - Get application status</li>" ~
                            "<li>/info - Get application information</li>" ~
+                           "<li>/api/version - Version, build configuration, platform and build date (same block `vibe3d --version` prints)</li>" ~
                            "<li>/api/model - Get current model state</li>" ~
                            "<li>/api/command - Execute one command (JSON {\"id\":...\"params\":...} OR argstring \"name arg:val ...\")</li>" ~
                            "<li>/api/script - Execute multi-line script (line-by-line argstring)</li>" ~
@@ -1606,12 +1633,31 @@ class HttpServer {
                            Clock.currTime.toISOExtString() ~ "\"}";
             response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/info") {
+            // The "version": "1.0" this used to hardcode was never any release
+            // this program shipped — it was written once and then outlived
+            // every version that followed, which is the whole failure mode
+            // task 0641 exists to close. It now reads app_version like every
+            // other surface.
             response.statusCode = 200;
-            response.body = "{\"name\": \"Vibe3D\", \"description\": \"A 3D polygon mesh editor written in D\", \"version\": \"1.0\"}";
+            response.body = "{\"name\": \"Vibe3D\", \"description\": "
+                          ~ "\"A 3D polygon mesh editor written in D\", "
+                          ~ "\"version\": \"" ~ appVersion ~ "\"}";
             response.headers["Content-Type"] = "application/json";
         } else if (request.path == "/api/ping" && request.method == "GET") {
             response.statusCode = 200;
             response.body = `{"status": "ok"}`;
+            response.headers["Content-Type"] = "application/json";
+        } else if (request.path == "/api/version" && request.method == "GET") {
+            // What this binary is (task 0641). Served straight off the HTTP
+            // thread with NO main-thread marshalling: every field is a
+            // compile-time constant, so there is no live state to tear.
+            //
+            // `lines` is `app_version.appAboutLines` verbatim — the same array
+            // the About window draws and `--version` prints. That is what makes
+            // tests/test_app_version.d able to prove the terminal and the UI
+            // read one source instead of two literals that agree today.
+            response.statusCode = 200;
+            response.body = versionJson();
             response.headers["Content-Type"] = "application/json";
         } else if (request.path.startsWith("/api/model")) {
             bool haveProvider = (layerModelProvider !is null)

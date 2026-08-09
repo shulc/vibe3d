@@ -19,6 +19,8 @@
 	],
 	"license": "MIT",
 	"name": "vibe3d",
+	"_comment-version": "MIRROR, not the source of truth. The version the BINARY reports is `appVersion` in source/app_version.d — a plain D literal, so a clean clone with no git and no network still produces a binary that can name itself. This field exists because it is what `dub describe` and any package consumer read; tests/test_app_version.d fails when the two disagree, and CI's tag check keys off the D literal.",
+	"version": "0.0.2",
 	"sourcePaths": [
 		"source"
 	],

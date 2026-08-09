@@ -72,6 +72,36 @@ jobs:
             echo "nightly=$nightly"
           } >> "$GITHUB_OUTPUT"
 
+      # The released tag must equal the version the binary will report.
+      #
+      # VERIFICATION, NOT SUBSTITUTION. Nothing here injects the tag into the
+      # build: source/app_version.d's `appVersion` literal is the only place
+      # the number lives, so a binary cannot be made to claim a version its
+      # source did not carry. All this job does is refuse to build when the
+      # two disagree — which is the cheapest possible place to catch it, since
+      # `check` runs before the whole platform matrix.
+      #
+      # Skipped for nightlies: their tag is the literal word "nightly" and is
+      # not a version. Nightlies still report the real `appVersion` plus their
+      # compile date, which is what separates one from the next.
+      - name: Check release tag matches source/app_version.d
+        if: ${{ steps.decide.outputs.should_run == 'true' && steps.decide.outputs.nightly != 'true' }}
+        env:
+          TAG: ${{ steps.decide.outputs.tag }}
+        run: |
+          src=$(sed -n 's/^enum appVersion = "\(.*\)";$/\1/p' source/app_version.d)
+          if [ -z "$src" ]; then
+            echo "::error::could not read appVersion from source/app_version.d"
+            exit 1
+          fi
+          # Tags are written v<version>; compare on the bare number.
+          want="${TAG#v}"
+          if [ "$want" != "$src" ]; then
+            echo "::error::release tag '$TAG' does not match source/app_version.d (appVersion = $src). Bump the constant and dub.json, or retag."
+            exit 1
+          fi
+          echo "tag $TAG matches appVersion $src"
+
   build:
     needs: check
     if: ${{ needs.check.outputs.should_run == 'true' }}

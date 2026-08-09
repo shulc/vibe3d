@@ -472,3 +472,27 @@ stop. Replay any recorded session deterministically with:
 
 Event logs power the automated test suite (`tests/events/*.log`); see the
 [README](README.md#testing) for the test harness.
+
+## Which build am I running?
+
+`File ▸ About…` shows the version, the build configuration
+(`modeling` / `modeling-noai` / `with-render`), the platform and the build
+date, with a **Copy** button so it can be pasted into a bug report.
+
+The same block prints from the terminal, and needs no display — so it also
+answers on a headless machine, or on one where the editor will not start:
+
+```sh
+./vibe3d --version
+```
+
+```
+vibe3d 0.0.2
+build: modeling
+platform: linux-x86_64
+built: Aug  9 2026
+```
+
+Please include it when reporting a problem: nightly builds all share a version
+number, and the build date is what tells them apart. Release notes for each
+version are in the [CHANGELOG](CHANGELOG.md).

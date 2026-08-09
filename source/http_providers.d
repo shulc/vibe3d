@@ -226,6 +226,7 @@ import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesSh
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.image_list      : UiImageListCommand;
 import commands.ui.channels        : UiChannelsCommand;
+import commands.ui.about           : UiAboutCommand;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
@@ -1994,6 +1995,17 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             uvp.setVisible(pos[0].str);
+                    }
+                }
+            } else if (auto uab = cast(UiAboutCommand)cmd) {
+                // ui.about <show|hide|toggle> (task 0641). Not test-only —
+                // this is the command the File → About… menu item dispatches.
+                // A bare `ui.about` keeps the command's own default (show).
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            uab.setVisible(pos[0].str);
                     }
                 }
             } else if (auto fad = cast(FalloffAddCommand)cmd) {

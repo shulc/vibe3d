@@ -225,6 +225,7 @@ import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.image_list      : UiImageListCommand;
 import commands.ui.channels        : UiChannelsCommand;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
+import commands.ui.about           : UiAboutCommand;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.snap.mode        : SnapModeCommand;
@@ -946,6 +947,8 @@ void registerCommands(EditorApp app) {
         new UiChannelsCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["ui.viewportProps"] = () => cast(Command)
         new UiViewportPropsCommand(&mesh(), cameraView, editMode);
+    reg.commandFactories["ui.about"] = () => cast(Command)
+        new UiAboutCommand(&mesh(), cameraView, editMode);
 
     // layer.* commands (layers Stage 2) — mutate the one Document; the
     // active-index movers (add/delete/select) fire onActiveLayerChanged.

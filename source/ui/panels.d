@@ -876,6 +876,49 @@ void drawViewportPropsPanel(EditorApp app) {
 }
 
 // =============================================================================
+// drawAboutPanel -- what this binary is (task 0641)
+//
+// Deliberately NOT a splash: no logo, no credits, no modal. It is the four
+// facts a bug report needs — version, build configuration, platform, build
+// date — plus a Copy button so they reach the report as text instead of being
+// retyped from a screenshot.
+//
+// The rows come from `app_version.appAboutLines` and nothing else. This
+// function formats no version string of its own, because a second string is
+// exactly how a UI starts telling a different story from `--version`: it does
+// not drift on the day it is written, it drifts on the day one of the two is
+// bumped. The same array is what `--version` prints and what `/api/version`
+// serves, and tests/test_app_version.d compares the terminal against the
+// served copy to keep that true.
+//
+// On-demand: hidden until `ui.about show` (File → About…). The window's own
+// close box writes straight back through `&g_aboutShown`.
+// =============================================================================
+void drawAboutPanel(EditorApp app) {
+    with (app) {
+    import app_version : appAboutLines;
+    import commands.ui.about : g_aboutShown;
+
+    pushPanelChromeStyle();
+    // AlwaysAutoResize: the window is exactly as big as the facts in it.
+    if (ImGui.Begin("About", &g_aboutShown, ImGuiWindowFlags.AlwaysAutoResize)) {
+        // TextUnformatted, never Text-as-format — these rows are data, and a
+        // stray `%` in a future one must not be read as a conversion.
+        foreach (line; appAboutLines)
+            ImGui.TextUnformatted(line);
+
+        ImGui.Dummy(ImVec2(0, 4));
+        if (ImGui.Button("Copy")) {
+            import std.array : join;
+            ImGui.SetClipboardText(appAboutLines.join("\n"));
+        }
+    }
+    ImGui.End();
+    popPanelChromeStyle();
+    }
+}
+
+// =============================================================================
 // Phase 4 -- drawLayerListPanel (document/layer/layerRenameIndex/
 // layerRenameBuf/formsPanel/formsInteractiveDispatch/runCommand -- runCommand
 // isn't actually read by this body, verbatim comment kept from the plan's own
