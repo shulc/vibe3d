@@ -11,6 +11,7 @@ import params : Param;
 import handler : Arrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta;
+import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -228,10 +229,16 @@ public:
     override bool onMouseMotion(ref const SDL_MouseMotionEvent e, ref VectorStack vts) {
         if (!active || dragPart < 0 || !gizmoValid) return false;
         bool skip;
+        // Projected in the space the arm is DRAWN in, and converted back into
+        // the LOCAL length the kernel means (task 0645) — one OverlayAxis in
+        // both roles, so the arm the pixels are dotted against is the arm on
+        // screen and the geometry follows it.
+        const auto os = OverlaySpace.ofPrimary();
+        const auto ax = os.axis(widthAxis);
         Vec3 delta = screenAxisDelta(e.x, e.y, dragStartMX, dragStartMY,
-                                     anchor, widthAxis, cachedVp, skip);
+                                     os.pos(anchor), ax.dir, cachedVp, skip);
         if (!skip) {
-            float d = dot(delta, widthAxis);
+            float d = ax.toLocal(dot(delta, ax.dir));
             width_ = dragBaseWidth + d;
             if (width_ < 0.0f) width_ = 0.0f;
             rebuildPreview();
@@ -262,11 +269,18 @@ public:
             computeGizmoFrame();
         if (!gizmoValid) return;
 
-        anchor = baseAnchor;
+        anchor = baseAnchor;   // LOCAL, like the kernel
 
-        float armLen = gizmoSize(anchor, vp, 1.0f);
-        widthArrow.start = anchor + widthAxis * (armLen / 6.0f);
-        widthArrow.end   = anchor + widthAxis * armLen;
+        // ONE overlay space for the pass (task 0645): the arm is positioned in
+        // it and `toolHandles.update` below hit-tests this same object, so
+        // drawing and hitting cannot land in different spaces.
+        const auto os      = OverlaySpace.ofPrimary();
+        const auto ax      = os.axis(widthAxis);
+        const Vec3 anchorW = os.pos(anchor);
+
+        float armLen = gizmoSize(anchorW, vp, 1.0f);
+        widthArrow.start = anchorW + ax.dir * (armLen / 6.0f);
+        widthArrow.end   = anchorW + ax.dir * armLen;
         widthArrow.color = WIDTH_COLOR;
 
         toolHandles.begin();

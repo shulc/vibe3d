@@ -25,6 +25,7 @@ import eventlog : queryMouse;
 import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSegment;
 import viewport_scheme : schemeColor, SchemeColor;
 import document : primaryModelSpace;
+import overlay_space : OverlaySpace;
 
 // The interactive commit reuses the generic before/after snapshot edit command
 // (the same MeshSessionEdit the mirror / tack / Slice tools reuse for their
@@ -170,12 +171,16 @@ private:
     //   * `tFromLocalRailClick` — the **Closest** aiming kind (§1.3), which
     //     runs its election in WORLD space and therefore wants exactly this,
     //     un-composed, with the rail lifted to meet it.
-    //   * `toolHandlesJson` / `toolHandles_.test` — the handle bank. Its
-    //     positions are written from `chainPointPos` (LOCAL) and DRAWN with
-    //     this same world viewport, so draw and hit-test agree with each
-    //     other; converting only one of them would break that. The handle
-    //     bank's own space is the tool-overlay question task 0619 lists as
-    //     out of scope.
+    //   * `toolHandlesJson` / `toolHandles_.test` — the handle bank, and it
+    //     wants exactly this world viewport, because task 0645 lifted the
+    //     bank's POSITIONS instead. Its positions came from `chainPointPos`
+    //     (LOCAL) and were DRAWN with this same world viewport: draw and
+    //     hit-test agreed with each OTHER while both sat where the geometry
+    //     would be at the identity pose, and converting only one of them
+    //     would have broken the one property that worked. `draw()` now lifts
+    //     every handle position through `OverlaySpace` once, which moves the
+    //     drawing and the hit-testing together because they read the same
+    //     `handles_[]` objects.
     //   * the `draw()` write itself.
     // `drawHud` is the one use that needed the AIMING space instead; it now
     // builds its own via `aimSpace` and does not read this field.
@@ -610,15 +615,25 @@ public:
         ensureHandleCount(total);
 
         immutable float handleScale = HANDLE_HALF_PX / getGizmoPixels();
+        // The bank's own space, settled (task 0645). `positions` and
+        // `pendingPos` are LOCAL — both lerp raw `mesh.vertices` — while
+        // `BoxHandler.pos`, `gizmoSize`, `Handler.draw` and
+        // `ToolHandles.hitTest` are all WORLD. One lift here serves the draw
+        // AND the hit-test, because they read these very objects; that is the
+        // whole reason the comment on `vpWorld_` above says converting the
+        // hit-test alone would break the one property that worked.
+        const auto os = OverlaySpace.ofPrimary();
         toolHandles_.begin();
         foreach (i, pos; positions) {
-            handles_[i].pos  = pos;
-            handles_[i].size = gizmoSize(pos, vp, handleScale);
+            const Vec3 posW  = os.pos(pos);
+            handles_[i].pos  = posW;
+            handles_[i].size = gizmoSize(posW, vp, handleScale);
             toolHandles_.add(handles_[i], cast(int)i);
         }
         if (havePending) {
-            handles_[$ - 1].pos  = pendingPos;
-            handles_[$ - 1].size = gizmoSize(pendingPos, vp, handleScale);
+            const Vec3 pendW     = os.pos(pendingPos);
+            handles_[$ - 1].pos  = pendW;
+            handles_[$ - 1].size = gizmoSize(pendW, vp, handleScale);
             toolHandles_.add(handles_[$ - 1], cast(int)(total - 1));
         }
         toolHandles_.setHaul(dragPart_);
@@ -633,7 +648,8 @@ public:
         if (havePending)
             // 1.0f is WINDOW PIXELS — halved from 2.0f with task 0600's
             // geometry-shader unit fix (see shader.thickLineGeomSrc). Same ink.
-            drawWorldSegment(positions[$ - 1], pendingPos, vp, CHORD_COLOR, 1.0f, shader.program);
+            drawWorldSegment(os.pos(positions[$ - 1]), os.pos(pendingPos), vp,
+                             CHORD_COLOR, 1.0f, shader.program);
 
         foreach (hd; handles_) hd.draw(shader, vp);
 

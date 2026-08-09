@@ -9,6 +9,7 @@ import math;
 import editmode : EditMode;
 import params : Param;
 import drag : haulWorldPerPixel, gesturePrevPixel;
+import overlay_space : OverlaySpace;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -99,7 +100,9 @@ private:
     bool  dragging;
     int   dragLastMX, dragLastMY;
     float dragBaseInset;
-    float worldPerPixel;   // frozen at drag-start (see anchorForHaul)
+    // Frozen at drag-start (see haulAnchor) — the LOCAL length one pixel is
+    // worth at the anchor, item transform included (task 0645).
+    float localPerPixel;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
@@ -210,7 +213,13 @@ public:
         dragLastMX     = e.x;
         dragLastMY     = e.y;
         dragBaseInset  = inset_;
-        worldPerPixel  = haulWorldPerPixel(haulAnchor(), cachedVp);
+        // Anchored where the geometry is DRAWN, and converted back into the
+        // LOCAL units `insetFacesByMask` means (task 0645). The inset is a
+        // distance with no direction, so the conversion is the declared mean
+        // — see `OverlaySpace.meanWorldPerLocal`.
+        const auto os  = OverlaySpace.ofPrimary();
+        localPerPixel  = haulWorldPerPixel(os.pos(haulAnchor()), cachedVp)
+                       / os.meanWorldPerLocal();
         return true;
     }
 
@@ -235,7 +244,7 @@ public:
         gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
                          dragLastMX, dragLastMY, prevMX, prevMY);
         float dyPixels = cast(float)(prevMY - e.y);
-        inset_ = dragBaseInset + dyPixels * worldPerPixel;
+        inset_ = dragBaseInset + dyPixels * localPerPixel;
         dragLastMX = e.x;
         dragLastMY = e.y;
         rebuildPreview();

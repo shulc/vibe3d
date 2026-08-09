@@ -8,6 +8,7 @@ import mesh;
 import math;
 import editmode : EditMode;
 import drag : planeDragDelta;
+import overlay_space : OverlaySpace;
 import shader : Shader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
@@ -63,7 +64,16 @@ private:
     MeshSnapshot before;      // session baseline (recaptured after each commit)
 
     int  anchorMX, anchorMY;  // drag-start pixel coords
-    Vec3 anchorWorld;          // world-space drag anchor (selection centroid)
+    // The drag anchor, in the space the geometry is DRAWN in — the selection
+    // centroid lifted through the item matrix (task 0645). It used to be the
+    // raw LOCAL centroid under this same name, which is why the plane the drag
+    // resolved on sat where the geometry would be at the identity pose.
+    Vec3 anchorWorld;
+    // The item space, FROZEN at the press with the anchor. `planeDragDelta`'s
+    // law is "one matrix for the whole gesture"; the conversion of its answer
+    // back into layer coordinates has to be frozen with it or the two halves
+    // of the same drag could read different layers.
+    OverlaySpace dragSpace;
     Viewport cachedVp;         // last viewport from draw(), used by drag math
 
 public:
@@ -146,7 +156,8 @@ public:
 
         anchorMX    = e.x;
         anchorMY    = e.y;
-        anchorWorld = mesh.selectionCentroidFaces();
+        dragSpace   = OverlaySpace.ofPrimary();
+        anchorWorld = dragSpace.pos(mesh.selectionCentroidFaces());
         dragging    = true;
         return true;
     }
@@ -170,7 +181,11 @@ public:
         // onto the most-facing screen plane (dragAxis=3).
         Vec3 delta = planeDragDelta(e.x, e.y, anchorMX, anchorMY,
                                     3, anchorWorld, cachedVp, skip);
-        if (!skip) rebuildPreview(delta);
+        // `planeDragDelta` answers in WORLD; the copy offset it feeds is added
+        // to LAYER-space vertices, so it converts back (task 0645). A full
+        // linear inverse — a displacement has no direction to elect, so unlike
+        // the axis hauls there is no gain question here.
+        if (!skip) rebuildPreview(dragSpace.toLocalDelta(delta));
         return true;
     }
 

@@ -11,6 +11,7 @@ import params : Param;
 import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta, haulWorldPerPixel;
+import overlay_space : OverlaySpace, OverlayAxis;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -63,6 +64,11 @@ private:
     MeshSnapshot before;
     Viewport     cachedVp;
 
+    // LOCAL (task 0645): `anchor` / `baseAnchor` are mesh-space points and
+    // `shiftAxis` / `insetAxis` mesh-space directions, because that is what
+    // the kernel consumes and what `computeGizmoFrame` reads. Everything that
+    // DRAWS or AIMS lifts them through `OverlaySpace` first — see the module
+    // header of `overlay_space.d`.
     bool gizmoValid;
     Vec3 anchor;
     Vec3 baseAnchor;
@@ -78,7 +84,11 @@ private:
     float dragBaseShift, dragBaseInset;
     bool  freeCtrl;            // Ctrl held at free-drag start → lock to one axis
     int   freeLockAxis = -1;   // PART_SHIFT / PART_INSET, decided on first motion
-    float freeWorldPerPixel;
+    // Frozen at the press, one per parameter — the LOCAL length a pixel is
+    // worth. Two, not one, because the two axes carry different item scales
+    // (task 0645); at identity both are the single old `freeWorldPerPixel`.
+    float freeShiftPerPixel;
+    float freeInsetPerPixel;
 
     Arrow      shiftArrow;
     CubicArrow insetArrow;
@@ -256,7 +266,13 @@ public:
         dragPart          = PART_FREE;
         freeCtrl          = (mods & KMOD_CTRL) != 0;
         freeLockAxis      = -1;
-        freeWorldPerPixel = haulWorldPerPixel(anchor, cachedVp);
+        // The haul is anchored where the geometry is DRAWN, and its world
+        // answer is converted back into each parameter's own local units by
+        // that parameter's axis gain (task 0645).
+        const auto os     = OverlaySpace.ofPrimary();
+        float worldPerPx  = haulWorldPerPixel(os.pos(anchor), cachedVp);
+        freeShiftPerPixel = os.axis(shiftAxis).toLocal(worldPerPx);
+        freeInsetPerPixel = os.axis(insetAxis).toLocal(worldPerPx);
         return true;
     }
 
@@ -277,9 +293,9 @@ public:
             if (freeCtrl && freeLockAxis < 0 && (abs(dx) > 3 || abs(dy) > 3))
                 freeLockAxis = (abs(dy) >= abs(dx)) ? PART_SHIFT : PART_INSET;
             if (!freeCtrl || freeLockAxis == PART_SHIFT)
-                shift_ = dragBaseShift + cast(float)dy * freeWorldPerPixel;
+                shift_ = dragBaseShift + cast(float)dy * freeShiftPerPixel;
             if (!freeCtrl || freeLockAxis == PART_INSET)
-                inset_ = dragBaseInset + cast(float)dx * freeWorldPerPixel; // may go < 0 (outset)
+                inset_ = dragBaseInset + cast(float)dx * freeInsetPerPixel; // may go < 0 (outset)
             rebuildPreview();
             return true;
         }
@@ -296,10 +312,20 @@ public:
         // draw() slides along the normal by the current shift): a moving
         // projection reference drifts the screen→world mapping mid-drag, so the
         // same screen pixel would map to a different value each event.
+        //
+        // The projection runs in the space the arrow is DRAWN in (task 0645):
+        // the anchor is lifted through the item matrix and the axis is the
+        // world direction the geometry actually moves along, so the arm the
+        // pixels are dotted against is the arm on screen. `toLocal` then turns
+        // the world length back into the local one `bevelFacesByMask` means —
+        // the same `OverlayAxis` in both roles, which is the invariant that
+        // keeps the handle tracking the cursor.
+        const auto os = OverlaySpace.ofPrimary();
+        const auto ax = os.axis(axis);
         Vec3 delta = screenAxisDelta(e.x, e.y, dragStartMX, dragStartMY,
-                                     baseAnchor, axis, cachedVp, skip);
+                                     os.pos(baseAnchor), ax.dir, cachedVp, skip);
         if (!skip) {
-            float d = dot(delta, axis);
+            float d = ax.toLocal(dot(delta, ax.dir));
             // shift: drag ALONG +normal (away from center) grows it. inset:
             // drag TOWARD the center (−insetAxis) shrinks the cap → inset grows,
             // so its sign is inverted (scale-handle feel: pull the box inward).
@@ -316,20 +342,32 @@ public:
             computeGizmoFrame();
         if (!gizmoValid) return;
 
-        anchor = baseAnchor + shiftAxis * shift_;
+        anchor = baseAnchor + shiftAxis * shift_;   // LOCAL, like the kernel
 
-        float armLen   = gizmoSize(anchor, vp, 1.0f);
-        float cubeHalf = gizmoSize(anchor, vp, 0.03f);
-        shiftArrow.start = anchor + shiftAxis * (armLen / 6.0f);
-        shiftArrow.end   = anchor + shiftAxis * armLen;
+        // ONE overlay space for the whole pass (task 0645). Both handles are
+        // positioned from it and `toolHandles.update` below hit-tests the very
+        // objects this positions, so the drawing and the hit-testing cannot
+        // disagree about which space they are in.
+        const auto os      = OverlaySpace.ofPrimary();
+        const auto shiftAx = os.axis(shiftAxis);
+        const auto insetAx = os.axis(insetAxis);
+        const Vec3 anchorW = os.pos(anchor);
+
+        float armLen   = gizmoSize(anchorW, vp, 1.0f);
+        float cubeHalf = gizmoSize(anchorW, vp, 0.03f);
+        shiftArrow.start = anchorW + shiftAx.dir * (armLen / 6.0f);
+        shiftArrow.end   = anchorW + shiftAx.dir * armLen;
         shiftArrow.color = SHIFT_COLOR;
         // Inset handle = a SCALE-style box: it sits out along the in-plane axis
         // and travels TOWARD the center as inset grows, so dragging the box
         // inward visibly shrinks the cap (the box follows the cursor 1:1).
-        float insetBoxDist = armLen - inset_;
+        // `armLen` is a WORLD length and `inset_` a LOCAL one, so the travel
+        // converts before it subtracts — otherwise the box would move by the
+        // wrong amount on a scaled item and stop following the cursor.
+        float insetBoxDist = armLen - insetAx.toWorld(inset_);
         if (insetBoxDist < cubeHalf * 2.5f) insetBoxDist = cubeHalf * 2.5f;
-        insetArrow.start         = anchor;
-        insetArrow.end           = anchor + insetAxis * insetBoxDist;
+        insetArrow.start         = anchorW;
+        insetArrow.end           = anchorW + insetAx.dir * insetBoxDist;
         insetArrow.fixedCubeHalf = cubeHalf;
         insetArrow.color         = INSET_COLOR;
 

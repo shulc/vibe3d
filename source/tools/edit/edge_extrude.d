@@ -12,6 +12,7 @@ import params : Param;
 import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta, gesturePrevPixel;
+import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -411,10 +412,18 @@ public:
                          dragLastMX, dragLastMY, prevMX, prevMY);
         Vec3 axis = (dragPart == PART_EXTRUDE) ? extrudeAxis : widthAxis;
         bool skip;
+        // Projected in the space the arm is DRAWN in, and converted back into
+        // the LOCAL length the kernel means (task 0645) — one OverlayAxis in
+        // both roles, so the arm the pixels are dotted against is the arm on
+        // screen and the geometry follows it.
+        const auto os = OverlaySpace.ofPrimary();
+        const auto ax = os.axis(axis);
         Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY,
-                                     anchor, axis, cachedVp, skip);
+                                     os.pos(anchor), ax.dir, cachedVp, skip);
         if (!skip) {
-            float d = dot(delta, axis);   // axis is unit ⇒ signed world distance
+            // ax.dir is unit ⇒ a signed WORLD distance; toLocal makes it the
+            // param's own unit.
+            float d = ax.toLocal(dot(delta, ax.dir));
             if (dragPart == PART_EXTRUDE) extrude_ += d;
             else                          width_   += d;
             // Width is a shrink amount: the kernel no-ops for width < ~0 and
@@ -434,6 +443,16 @@ public:
         dragPart = -1;
         toolHandles.clearHaul();
         return true;
+    }
+
+
+    // Read-only test seam (task 0645) — GET /api/tool/handles. The registry
+    // stays the hit-testing authority; this only exposes its already-drawn
+    // state, and that state is the ONLY place a handle's SPACE is observable
+    // from outside the process. Mirrors PolyBevelTool / EdgeBevelTool, which
+    // carried it already.
+    public override JSONValue toolHandlesJson() const {
+        return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
     }
 
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
@@ -463,18 +482,26 @@ public:
         // normal), so this also reproduces the prior "follows the live edge"
         // behaviour. The AXES stay fixed (computed once from the ORIGINAL
         // pre-extrude neighbour normals); only the position moves.
-        anchor = baseAnchor + extrudeAxis * extrude_;
+        anchor = baseAnchor + extrudeAxis * extrude_;   // LOCAL, like the kernel
+
+        // ONE overlay space for the pass (task 0645): both arms are positioned
+        // in it and `toolHandles.update` below hit-tests these same objects, so
+        // drawing and hitting cannot land in different spaces.
+        const auto os        = OverlaySpace.ofPrimary();
+        const auto extrudeAx = os.axis(extrudeAxis);
+        const auto widthAx   = os.axis(widthAxis);
+        const Vec3 anchorW   = os.pos(anchor);
 
         // Position the two handles, screen-stable via gizmoSize(). The WIDTH
         // handle mirrors ScaleHandler's axis arrows: shaft from anchor+axis*
         // (size/7) to anchor+axis*size, with a fixed-size cube head (size*0.03).
-        float armLen   = gizmoSize(anchor, vp, 1.0f);
-        float cubeHalf = gizmoSize(anchor, vp, 0.03f);
-        extrudeArrow.start = anchor + extrudeAxis * (armLen / 6.0f);
-        extrudeArrow.end   = anchor + extrudeAxis * armLen;
+        float armLen   = gizmoSize(anchorW, vp, 1.0f);
+        float cubeHalf = gizmoSize(anchorW, vp, 0.03f);
+        extrudeArrow.start = anchorW + extrudeAx.dir * (armLen / 6.0f);
+        extrudeArrow.end   = anchorW + extrudeAx.dir * armLen;
         extrudeArrow.color = EXTRUDE_COLOR;
-        widthArrow.start         = anchor + widthAxis * (armLen / 7.0f);
-        widthArrow.end           = anchor + widthAxis * armLen;
+        widthArrow.start         = anchorW + widthAx.dir * (armLen / 7.0f);
+        widthArrow.end           = anchorW + widthAx.dir * armLen;
         widthArrow.fixedCubeHalf = cubeHalf;
         widthArrow.color         = WIDTH_COLOR;
 

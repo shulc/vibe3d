@@ -11,6 +11,7 @@ import params : Param;
 import handler : Arrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta, gesturePrevPixel;
+import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -20,6 +21,7 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
+import std.json : JSONValue;
 
 /// The interactive tool reuses the dedicated MeshSessionEdit record command
 /// (a before/after MeshSnapshot pair) — mirroring EdgeExtrudeTool's pattern.
@@ -244,10 +246,16 @@ public:
         gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
                          dragLastMX, dragLastMY, prevMX, prevMY);
         bool skip;
+        // Projected in the space the arm is DRAWN in, and converted back into
+        // the LOCAL length `extrudeFaces` means (task 0645) — one OverlayAxis
+        // in both roles, so the arm the pixels are dotted against is the arm
+        // on screen and the geometry follows it.
+        const auto os = OverlaySpace.ofPrimary();
+        const auto ax = os.axis(extrudeAxis);
         Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY,
-                                     anchor, extrudeAxis, cachedVp, skip);
+                                     os.pos(anchor), ax.dir, cachedVp, skip);
         if (!skip) {
-            distance_ += dot(delta, extrudeAxis);
+            distance_ += ax.toLocal(dot(delta, ax.dir));
             rebuildPreview();
         }
         dragLastMX = e.x;
@@ -263,6 +271,16 @@ public:
         return true;
     }
 
+
+    // Read-only test seam (task 0645) — GET /api/tool/handles. The registry
+    // stays the hit-testing authority; this only exposes its already-drawn
+    // state, and that state is the ONLY place a handle's SPACE is observable
+    // from outside the process. Mirrors PolyBevelTool / EdgeBevelTool, which
+    // carried it already.
+    public override JSONValue toolHandlesJson() const {
+        return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
+    }
+
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
         // Recompute gizmo frame when selection changes while idle (not mid-drag,
@@ -271,12 +289,20 @@ public:
             computeGizmoFrame();
         if (!gizmoValid) return;
 
-        // Anchor slides analytically along extrudeAxis by distance_.
+        // Anchor slides analytically along extrudeAxis by distance_ — in the
+        // LOCAL space both of them live in.
         anchor = baseAnchor + extrudeAxis * distance_;
 
-        float armLen = gizmoSize(anchor, vp, 1.0f);
-        extrudeArrow.start = anchor + extrudeAxis * (armLen / 6.0f);
-        extrudeArrow.end   = anchor + extrudeAxis * armLen;
+        // ONE overlay space for the pass (task 0645): the arm is positioned in
+        // it and `toolHandles.update` below hit-tests this same object, so
+        // drawing and hitting cannot land in different spaces.
+        const auto os      = OverlaySpace.ofPrimary();
+        const auto ax      = os.axis(extrudeAxis);
+        const Vec3 anchorW = os.pos(anchor);
+
+        float armLen = gizmoSize(anchorW, vp, 1.0f);
+        extrudeArrow.start = anchorW + ax.dir * (armLen / 6.0f);
+        extrudeArrow.end   = anchorW + ax.dir * armLen;
         extrudeArrow.color = EXTRUDE_COLOR;
 
         toolHandles.begin();

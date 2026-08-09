@@ -11,6 +11,7 @@ import params : Param;
 import handler : Arrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta, gesturePrevPixel;
+import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -20,6 +21,7 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
+import std.json : JSONValue;
 
 // Reuses the generic before/after-snapshot record command (MeshSessionEdit),
 // same as tools/edge_bevel.d and tools/poly_bevel.d — see those modules'
@@ -245,10 +247,16 @@ public:
         gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
                          dragLastMX, dragLastMY, prevMX, prevMY);
         bool skip;
+        // Projected in the space the arm is DRAWN in, and converted back into
+        // the LOCAL length the kernel means (task 0645) — one OverlayAxis in
+        // both roles, so the arm the pixels are dotted against is the arm on
+        // screen and the geometry follows it.
+        const auto os = OverlaySpace.ofPrimary();
+        const auto ax = os.axis(insetAxis);
         Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY,
-                                     anchor, insetAxis, cachedVp, skip);
+                                     os.pos(anchor), ax.dir, cachedVp, skip);
         if (!skip) {
-            float d = dot(delta, insetAxis);
+            float d = ax.toLocal(dot(delta, ax.dir));
             // No clamp to >=0: the captured law says BOTH inset==0 AND
             // inset<0 are no-ops (mesh.bevelVerticesByMask already guards
             // `amount < 1e-6f`), so a drag that crosses zero just yields a
@@ -261,17 +269,34 @@ public:
         return true;
     }
 
+
+    // Read-only test seam (task 0645) — GET /api/tool/handles. The registry
+    // stays the hit-testing authority; this only exposes its already-drawn
+    // state, and that state is the ONLY place a handle's SPACE is observable
+    // from outside the process. Mirrors PolyBevelTool / EdgeBevelTool, which
+    // carried it already.
+    public override JSONValue toolHandlesJson() const {
+        return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
+    }
+
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
         if (dragPart < 0 && !built && mesh.selectionSignature(EditMode.Vertices) != gizmoSelHash)
             computeGizmoFrame();
         if (!gizmoValid) return;
 
-        anchor = baseAnchor;
+        anchor = baseAnchor;   // LOCAL, like the kernel
 
-        float armLen = gizmoSize(anchor, vp, 1.0f);
-        insetArrow.start = anchor + insetAxis * (armLen / 6.0f);
-        insetArrow.end   = anchor + insetAxis * armLen;
+        // ONE overlay space for the pass (task 0645): the arm is positioned in
+        // it and `toolHandles.update` below hit-tests this same object, so
+        // drawing and hitting cannot land in different spaces.
+        const auto os      = OverlaySpace.ofPrimary();
+        const auto ax      = os.axis(insetAxis);
+        const Vec3 anchorW = os.pos(anchor);
+
+        float armLen = gizmoSize(anchorW, vp, 1.0f);
+        insetArrow.start = anchorW + ax.dir * (armLen / 6.0f);
+        insetArrow.end   = anchorW + ax.dir * armLen;
         insetArrow.color = INSET_COLOR;
 
         toolHandles.begin();

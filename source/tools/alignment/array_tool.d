@@ -8,6 +8,7 @@ import mesh;
 import math;
 import editmode : EditMode;
 import drag : planeDragDelta;
+import overlay_space : OverlaySpace;
 import params : Param, IntEnumEntry;
 import shader : Shader;
 import command_history : CommandHistory;
@@ -133,7 +134,16 @@ private:
     MeshSnapshot before;       // session baseline (recaptured after each commit)
 
     int  anchorMX, anchorMY;   // drag-start pixel coords
-    Vec3 anchorWorld;          // world-space drag anchor (selection centroid)
+    // The drag anchor, in the space the geometry is DRAWN in — the selection
+    // centroid lifted through the item matrix (task 0645). It used to be the
+    // raw LOCAL centroid under this same name, which is why the plane the drag
+    // resolved on sat where the geometry would be at the identity pose.
+    Vec3 anchorWorld;
+    // The item space, FROZEN at the press with the anchor. `planeDragDelta`'s
+    // law is "one matrix for the whole gesture"; the conversion of its answer
+    // back into layer coordinates has to be frozen with it or the two halves
+    // of the same drag could read different layers.
+    OverlaySpace dragSpace;
     Vec3 dragBaseOffset;       // Offset X/Y/Z at drag start
     Viewport cachedVp;
 
@@ -282,7 +292,8 @@ public:
 
         anchorMX       = e.x;
         anchorMY       = e.y;
-        anchorWorld    = mesh.selectionCentroidFaces();
+        dragSpace      = OverlaySpace.ofPrimary();
+        anchorWorld    = dragSpace.pos(mesh.selectionCentroidFaces());
         dragBaseOffset = offsetVec();
         dragging       = true;
         return true;
@@ -309,9 +320,14 @@ public:
         Vec3 delta = planeDragDelta(e.x, e.y, anchorMX, anchorMY,
                                     3, anchorWorld, cachedVp, skip);
         if (!skip) {
-            offX_ = dragBaseOffset.x + delta.x;
-            offY_ = dragBaseOffset.y + delta.y;
-            offZ_ = dragBaseOffset.z + delta.z;
+            // WORLD in, LAYER out (task 0645): offX_/offY_/offZ_ are the
+            // per-copy offset `arrayFacesGrid` adds to layer-space vertices.
+            // A full linear inverse — a displacement elects no direction, so
+            // there is no gain question as there is on the axis hauls.
+            Vec3 local = dragSpace.toLocalDelta(delta);
+            offX_ = dragBaseOffset.x + local.x;
+            offY_ = dragBaseOffset.y + local.y;
+            offZ_ = dragBaseOffset.z + local.z;
             rebuildPreview();
         }
         return true;

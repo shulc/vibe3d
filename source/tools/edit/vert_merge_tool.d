@@ -9,6 +9,7 @@ import math;
 import editmode : EditMode;
 import params : Param;
 import drag : haulWorldPerPixel, gesturePrevPixel;
+import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -91,7 +92,9 @@ private:
     bool  dragging;
     int   dragLastMX, dragLastMY;
     float dragBaseDist;
-    float worldPerPixel;
+    // Frozen at drag-start — the LOCAL length one pixel is worth at the
+    // selection centroid, item transform included (task 0645).
+    float localPerPixel;
 
 public:
     this(Mesh* delegate() meshSrc, GpuMesh* gpu, EditMode* editMode, LitShader litShader,
@@ -203,7 +206,13 @@ public:
         dragLastMX    = e.x;
         dragLastMY    = e.y;
         dragBaseDist  = dist_;
-        worldPerPixel = haulWorldPerPixel(mesh.selectionCentroidVertices(), cachedVp);
+        // Anchored where the geometry is DRAWN, and converted back into the
+        // LOCAL units the merge threshold means (task 0645). A threshold is a
+        // distance with no direction, so the conversion is the declared mean —
+        // see `OverlaySpace.meanWorldPerLocal`.
+        const auto os = OverlaySpace.ofPrimary();
+        localPerPixel = haulWorldPerPixel(os.pos(mesh.selectionCentroidVertices()), cachedVp)
+                      / os.meanWorldPerLocal();
         return true;
     }
 
@@ -229,7 +238,7 @@ public:
         gesturePrevPixel(vts.get!GesturePacket(), e.x, e.y,
                          dragLastMX, dragLastMY, prevMX, prevMY);
         float dyPixels = cast(float)(prevMY - e.y);
-        dist_ = dragBaseDist + dyPixels * worldPerPixel;
+        dist_ = dragBaseDist + dyPixels * localPerPixel;
         if (dist_ < 0.0f) dist_ = 0.0f;
         dragLastMX = e.x;
         dragLastMY = e.y;

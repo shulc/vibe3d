@@ -11,6 +11,7 @@ import params : Param;
 import handler : Arrow, CubicArrow, ToolHandles, HandleState, gizmoSize;
 import viewport_scheme : schemeColor, SchemeColor;
 import drag : screenAxisDelta, gesturePrevPixel;
+import overlay_space : OverlaySpace;
 import eventlog : queryMouse;
 import shader : Shader, LitShader;
 import command_history : CommandHistory;
@@ -20,6 +21,7 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 
 import std.math : abs, sqrt;
+import std.json : JSONValue;
 
 /// The interactive tool reuses the dedicated MeshSessionEdit record
 /// command (a before/after MeshSnapshot pair) — mirroring PolyExtrudeTool /
@@ -309,10 +311,16 @@ public:
                          dragLastMX, dragLastMY, prevMX, prevMY);
         Vec3 axis = (dragPart == PART_OFFSET) ? offsetAxis : scaleAxis;
         bool skip;
+        // Projected in the space the arm is DRAWN in, and converted back into
+        // the LOCAL length the kernel means (task 0645) — one OverlayAxis in
+        // both roles, so the arm the pixels are dotted against is the arm on
+        // screen and the geometry follows it.
+        const auto os = OverlaySpace.ofPrimary();
+        const auto ax = os.axis(axis);
         Vec3 delta = screenAxisDelta(e.x, e.y, prevMX, prevMY,
-                                     anchor, axis, cachedVp, skip);
+                                     os.pos(anchor), ax.dir, cachedVp, skip);
         if (!skip) {
-            float d = dot(delta, axis);
+            float d = ax.toLocal(dot(delta, ax.dir));
             if (dragPart == PART_OFFSET) {
                 shift_ = dragBaseShift + d;
             } else {
@@ -326,21 +334,39 @@ public:
         return true;
     }
 
+
+    // Read-only test seam (task 0645) — GET /api/tool/handles. The registry
+    // stays the hit-testing authority; this only exposes its already-drawn
+    // state, and that state is the ONLY place a handle's SPACE is observable
+    // from outside the process. Mirrors PolyBevelTool / EdgeBevelTool, which
+    // carried it already.
+    public override JSONValue toolHandlesJson() const {
+        return toolHandles is null ? JSONValue(null) : toolHandles.toJson(cachedVp);
+    }
+
     override void draw(const ref Shader shader, const ref Viewport vp, ref VectorStack vts, bool visualOnly = false) {
         cachedVp = vp;
         if (dragPart < 0 && !built && mesh.selectionSignature(EditMode.Polygons) != gizmoSelHash)
             computeGizmoFrame();
         if (!gizmoValid) return;
 
-        anchor = baseAnchor + offsetAxis * shift_;
+        anchor = baseAnchor + offsetAxis * shift_;   // LOCAL, like the kernel
 
-        float armLen   = gizmoSize(anchor, vp, 1.0f);
-        float cubeHalf = gizmoSize(anchor, vp, 0.03f);
-        offsetArrow.start = anchor + offsetAxis * (armLen / 6.0f);
-        offsetArrow.end   = anchor + offsetAxis * armLen;
+        // ONE overlay space for the pass (task 0645): both arms are positioned
+        // in it and `toolHandles.update` below hit-tests these same objects, so
+        // drawing and hitting cannot land in different spaces.
+        const auto os       = OverlaySpace.ofPrimary();
+        const auto offsetAx = os.axis(offsetAxis);
+        const auto scaleAx  = os.axis(scaleAxis);
+        const Vec3 anchorW  = os.pos(anchor);
+
+        float armLen   = gizmoSize(anchorW, vp, 1.0f);
+        float cubeHalf = gizmoSize(anchorW, vp, 0.03f);
+        offsetArrow.start = anchorW + offsetAx.dir * (armLen / 6.0f);
+        offsetArrow.end   = anchorW + offsetAx.dir * armLen;
         offsetArrow.color = OFFSET_COLOR;
-        scaleArrow.start         = anchor + scaleAxis * (armLen / 7.0f);
-        scaleArrow.end           = anchor + scaleAxis * armLen;
+        scaleArrow.start         = anchorW + scaleAx.dir * (armLen / 7.0f);
+        scaleArrow.end           = anchorW + scaleAx.dir * armLen;
         scaleArrow.fixedCubeHalf = cubeHalf;
         scaleArrow.color         = SCALE_COLOR;
 
