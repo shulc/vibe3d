@@ -48,6 +48,7 @@
 // translation-only one — before asserting which of the two we landed on.  The
 // two identity control cells are exempt by construction: there the readings
 // coincide, and their job is only to prove the recovery chain is exact.
+//
 // ── VERIFIED BY MUTATION ──────────────────────────────────────────────────
 //
 // Each wrong implementation below was applied to the green tree, built, and
@@ -96,7 +97,16 @@
 //      folded anything — mixing one world end with one local end reproduces
 //      the fold exactly.
 //
-//   6. AN INERT MUTATION, recorded because it is the useful one.  Restoring
+//   6. AUTO-SIZE FITTED TO THE LAYER-LOCAL BOX (§6), i.e. what it did before.
+//        → "auto-sized centre is (0.225000, 0.550000, 0.110000), the WORLD
+//           selection box centre is (0.450000, 0.275000, 0.440000) and the
+//           layer-local one is (0.225000, 0.550000, 0.110000)."
+//      Note for whoever mutates this next: `autoSize` and `autoSizeAxis` open
+//      with the SAME four lines, so a textual patch anchored on them lands in
+//      `autoSizeAxis` (which comes first in the file) and looks inert.  Anchor
+//      on the `final switch (type)` that follows autoSize's copy.
+//
+//   7. AN INERT MUTATION, recorded because it is the useful one.  Restoring
 //      the `toLocalPoint` fold on `FalloffStage.evaluate`'s published
 //      `pkt.pickedCenter` leaves every cell here GREEN.  That is not a hole
 //      in §4c so much as a fact about the code: `pickedCenter` has two
@@ -319,6 +329,36 @@ double[] recoverWeights(string name, out double[3] tOut) {
         w ~= proj;
     }
     return w;
+}
+
+string[string] wghtAttrs() {
+    auto j = getJson("/api/toolpipe");
+    foreach (st; j["stages"].array)
+        if (st["task"].str == "WGHT") {
+            string[string] out_;
+            foreach (k, v; st["attrs"].object) out_[k] = v.str;
+            return out_;
+        }
+    assert(false, "WGHT stage missing from /api/toolpipe");
+}
+
+double[3] parseVec3Attr(string s) {
+    import std.array : split;
+    auto parts = s.split(",");
+    assert(parts.length == 3, "expected an \"x,y,z\" attr, got: " ~ s);
+    double[3] v;
+    foreach (i; 0 .. 3) v[i] = parts[i].to!double;
+    return v;
+}
+
+double maxAbsDiff3(double[3] a, double[3] b) {
+    double m = 0;
+    foreach (i; 0 .. 3) m = max(m, fabs(a[i] - b[i]));
+    return m;
+}
+
+string fmt3(double[3] v) {
+    return format("%.6f, %.6f, %.6f", v[0], v[1], v[2]);
 }
 
 double rms(double[] a, double[] b) {
@@ -641,4 +681,75 @@ unittest {
     assert(fabs(world[5] - local[5]) < 1e-6 && fabs(world[6] - local[6]) < 1e-6,
         "F/G lie on the rotation axis and must read the same under both "
         ~ "readings — they are this cell's in-cell control");
+}
+// ==========================================================================
+// 6. AUTO-SIZE FITS THE WORLD BOX.
+//
+//     The other half of the seam, and the write side of it.  `autoSize()`
+//     runs on a falloff type change and pre-fits centre/size (or start/end)
+//     to the selection's bounding box.  It used to fit the box in the
+//     layer's OWN coordinates, which made it the single writer of these
+//     fields that disagreed with all the others — the handle drags, the
+//     action centre and the overlay are world.  With the weight now measured
+//     in world, a local fit would place the region of influence off the very
+//     geometry it was fitted to on any transformed layer.
+//
+//     Directly observable: the fitted values are published as WGHT stage
+//     attrs, so this reads them back rather than inferring them from motion.
+//
+//     Anti-vacuity is structural here — the two candidate boxes are computed
+//     side by side below and asserted to differ before either is matched.
+// ==========================================================================
+unittest {
+    auto fx   = fixture();
+    auto kase = caseNamed("scaled_radial");   // reused for its item transform
+    auto M    = arrOf(kase["matrix"]);
+
+    double[3] toWorld(double[3] p) {
+        double[3] q;
+        foreach (r; 0 .. 3)
+            q[r] = M[0*4+r]*p[0] + M[1*4+r]*p[1] + M[2*4+r]*p[2] + M[12+r];
+        return q;
+    }
+
+    // The two candidate fits, from the same eight vertices.
+    double[3] lMin, lMax, wMin, wMax;
+    bool first = true;
+    foreach (v; fx["stand"]["vertices"].array) {
+        auto p = vec3Of(v);
+        auto q = toWorld(p);
+        if (first) { lMin = p; lMax = p; wMin = q; wMax = q; first = false; }
+        foreach (k; 0 .. 3) {
+            if (p[k] < lMin[k]) lMin[k] = p[k];
+            if (p[k] > lMax[k]) lMax[k] = p[k];
+            if (q[k] < wMin[k]) wMin[k] = q[k];
+            if (q[k] > wMax[k]) wMax[k] = q[k];
+        }
+    }
+    double[3] lCen, lHalf, wCen, wHalf;
+    foreach (k; 0 .. 3) {
+        lCen[k]  = (lMin[k] + lMax[k]) * 0.5;
+        lHalf[k] = (lMax[k] - lMin[k]) * 0.5;
+        wCen[k]  = (wMin[k] + wMax[k]) * 0.5;
+        wHalf[k] = (wMax[k] - wMin[k]) * 0.5;
+    }
+    assert(maxAbsDiff3(lCen, wCen) > 0.1 && maxAbsDiff3(lHalf, wHalf) > 0.1,
+        "the local and world fits coincide on this stand — nothing to test");
+
+    buildStand(kase);
+    cmd("tool.set move");
+    cmd("tool.pipe.attr falloff type radial");   // this is what runs autoSize
+
+    auto a = wghtAttrs();
+    double[3] gotCen  = parseVec3Attr(a["center"]);
+    double[3] gotSize = parseVec3Attr(a["size"]);
+
+    assert(maxAbsDiff3(gotCen, wCen) < 1e-4,
+        format("auto-sized centre is (%s), the WORLD selection box centre is "
+               ~ "(%s) and the layer-local one is (%s)",
+               fmt3(gotCen), fmt3(wCen), fmt3(lCen)));
+    assert(maxAbsDiff3(gotSize, wHalf) < 1e-4,
+        format("auto-sized radii are (%s), the WORLD selection box half-"
+               ~ "extents are (%s) and the layer-local ones are (%s)",
+               fmt3(gotSize), fmt3(wHalf), fmt3(lHalf)));
 }
