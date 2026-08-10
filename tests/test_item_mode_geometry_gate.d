@@ -64,6 +64,21 @@
 //   * the selection-feedback gate applied to drawing but the standing selection
 //     also cleared on the way into Items
 //       -> U1(b) "the geometry selection must SURVIVE the switch — [] ".
+//
+// TASK 0674 re-verified both drawing rows after the colour compare was changed
+// from a frozen byte triple to the quantisation bracket of the source float
+// (see `DrawnColour` below), because a widened predicate is exactly the kind of
+// repair that quietly stops catching what it was written for:
+//   * the vertex-dot pass goes back to `editMode` (the same mutation as above,
+//     re-run against the new predicate)
+//       -> U1(b) "under the item type the selected vertices must not be drawn —
+//          vertex 0's 5x5 patch still carries 25 selection-coloured pixels".
+//   * the dot pass paints in the ITEM HIGHLIGHT colour instead of the selection
+//     colour — the "both are orange" confusion the exact compare existed to
+//     prevent, aimed straight at the widened predicate
+//       -> U1(a) "baseline: … carries 0 of 25 selection-coloured pixels.
+//          Looking for the selection dot = (255..255, 127..128, 25..26); the
+//          patch is mostly (255, 168, 41) (25 of 25)".
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -151,28 +166,112 @@ private Px[] probe(const int[2][] fboPts) {
     return outp;
 }
 
-/// The two colours this file reads back, EXACTLY. Both are written by a
-/// `glUniform3f` with no lighting, no blending and no anti-aliasing on the
-/// pass that carries them, and the FBO applies no gamma — so these are the
-/// literal bytes, and an exact compare is available where a tolerance would
-/// not be. It matters here more than usual: the two are both orange and only
-/// 41 apart in green, so a "looks orange" predicate would call the item
-/// highlight a selection dot and pass the very bug under test.
-private enum int[3] kSelectedVertexDot = [255, 127, 25];  // mesh_gpu.d: 1.0, 0.5, 0.1
-private enum int[3] kItemHighlight     = [255, 168, 41];  // viewport_scheme.d, selected item
+/// The two colours this file reads back — declared as the FLOATS the draw
+/// passes hand to GL, NOT as the bytes one machine's GL happened to store.
+///
+/// Both are written by a `glUniform3f` with no lighting, no blending and no
+/// anti-aliasing on the pass that carries them, and the FBO applies no gamma.
+/// What that buys is an exact statement about the FLOAT; it does not buy an
+/// exact statement about the byte. The framebuffer stores `round(f * 255)`,
+/// and where `f * 255` lands exactly halfway between two integers the
+/// direction of that rounding is the implementation's to choose. Two of the
+/// selection dot's three channels are exactly that: `0.5 * 255 = 127.5` and
+/// `0.1 * 255 = 25.5`.
+///
+/// MEASURED, same binary, same rig, same frame, two GLs: a discrete GPU stores
+/// (255, 127, 25) and a software rasteriser stores (255, 128, 26). This file
+/// used to freeze the first pair, which made it a claim about the machine that
+/// wrote it. Everywhere else the census then counted ZERO selection-coloured
+/// pixels at a vertex that had been drawn, correctly and in full — reporting a
+/// live defect in the words of the defect it exists to catch, which is the
+/// worst failure a test can have.
+///
+/// So a channel is matched against the two integers that BRACKET `f * 255`,
+/// and nothing wider. Where the product is exact (red: `1.0 * 255 = 255`) that
+/// is one value and the compare stays as tight as it ever was; where it is a
+/// tie it admits the single count that is genuinely undecided, and no more.
+/// The point of the old exactness is kept by `static assert` below rather than
+/// by luck: the two are both orange, and a predicate that could not tell them
+/// apart would pass the very bug under test.
+private struct DrawnColour {
+    string   name;
+    float[3] rgb;
 
-/// How many pixels of a 5x5 patch centred on `p` are exactly `want`.
+    /// The lowest / highest byte a conformant GL may store for channel `c`.
+    /// Equal when `rgb[c] * 255` is an integer — then this is an exact compare.
+    int lo(size_t c) const { return cast(int)(rgb[c] * 255.0f); }
+    int hi(size_t c) const {
+        immutable float exact = rgb[c] * 255.0f;
+        immutable int   t     = cast(int)exact;
+        return (cast(float)t == exact) ? t : t + 1;
+    }
+
+    bool matches(Px p) const {
+        if (!p.valid) return false;
+        immutable int[3] v = [p.r, p.g, p.b];
+        foreach (c; 0 .. 3) if (v[c] < lo(c) || v[c] > hi(c)) return false;
+        return true;
+    }
+
+    /// For failure messages: what this predicate would have accepted.
+    string spell() const {
+        return format("%s = (%d..%d, %d..%d, %d..%d)", name,
+                      lo(0), hi(0), lo(1), hi(1), lo(2), hi(2));
+    }
+}
+
+private enum DrawnColour kSelectedVertexDot =
+    DrawnColour("the selection dot",  [1.0f, 0.5f,  0.1f ]);  // mesh_gpu.d
+private enum DrawnColour kItemHighlight =
+    DrawnColour("the item highlight", [1.0f, 0.66f, 0.16f]);  // viewport_scheme.d
+
+/// The census means nothing unless the two colours stay TELLABLE APART under
+/// the widened predicate. They part company on green — and they must part by
+/// more than the quantisation slack, or "0 selection-coloured pixels while the
+/// item highlight is present" degenerates into a statement about one colour
+/// counted twice. Checked at compile time so a re-theme that brought the two
+/// within a count of each other fails here, loudly, instead of quietly turning
+/// every drawing row below into a tautology.
+static assert(kSelectedVertexDot.hi(1) < kItemHighlight.lo(1) - 1,
+    "the selection dot and the item highlight are no longer separable on the "
+    ~ "green channel; the pixel census below can no longer tell them apart");
+
+/// How many pixels of a 5x5 patch centred on `p` carry `want`.
 ///
 /// A patch, not a pixel: the dot is a 10-px GL point, so a 5x5 window centred
 /// on the projected vertex is entirely inside it — the count is 25 or it is 0,
 /// with no third answer for a rounding disagreement to hide in.
-private int patchCount(int[2] p, int[3] want) {
+private int patchCount(int[2] p, DrawnColour want) {
     int[2][] pts;
     foreach (dy; -2 .. 3) foreach (dx; -2 .. 3) pts ~= [p[0] + dx, p[1] + dy];
     int n = 0;
     foreach (v; probe(pts))
-        if (v.valid && v.r == want[0] && v.g == want[1] && v.b == want[2]) ++n;
+        if (want.matches(v)) ++n;
     return n;
+}
+
+/// What the patch actually carries, for a failure message.
+///
+/// A census that reads zero is otherwise mute about WHY, and the candidates are
+/// three different bugs: the pixels are background (nothing was drawn there),
+/// they are some other pass's colour (the wrong thing was drawn), or they are
+/// the right colour a count away (the predicate, not the frame, is wrong). The
+/// last of those is what sent this file to CI red for a day and read exactly
+/// like the first. Naming the majority colour separates them in the message.
+private string patchSpell(int[2] p) {
+    int[2][] pts;
+    foreach (dy; -2 .. 3) foreach (dx; -2 .. 3) pts ~= [p[0] + dx, p[1] + dy];
+    int[string] tally;
+    int invalid = 0;
+    foreach (v; probe(pts)) {
+        if (!v.valid) { ++invalid; continue; }
+        ++tally[format("(%d, %d, %d)", v.r, v.g, v.b)];
+    }
+    string best; int bestN = 0;
+    foreach (k, n; tally) if (n > bestN) { best = k; bestN = n; }
+    if (bestN == 0) return format("%d of 25 pixels could not be read at all", invalid);
+    return format("the patch is mostly %s (%d of 25)%s", best, bestN,
+                  invalid ? format(", %d unreadable", invalid) : "");
 }
 
 // ---------------------------------------------------------------------------
@@ -387,8 +486,9 @@ unittest {
         assert(patchCount(rig.vertFbo[vi], kSelectedVertexDot) == 25,
             format("baseline: in the vertex type the selected vertex %d must be "
                    ~ "drawn as a selection dot — its 5x5 patch carries %d of 25 "
-                   ~ "selection-coloured pixels",
-                   vi, patchCount(rig.vertFbo[vi], kSelectedVertexDot)));
+                   ~ "selection-coloured pixels. Looking for %s; %s",
+                   vi, patchCount(rig.vertFbo[vi], kSelectedVertexDot),
+                   kSelectedVertexDot.spell(), patchSpell(rig.vertFbo[vi])));
     assert(patchCount(rig.vertFbo[1], kSelectedVertexDot) == 0,
         format("baseline: vertex 1 is NOT selected, so its patch must carry no "
                ~ "selection colour — it carries %d, which would make the census "
@@ -419,7 +519,8 @@ unittest {
         assert(item > 0,
             format("the frame must still be drawing the item at vertex %d's "
                    ~ "pixels — its patch carries %d item-highlight pixels, so "
-                   ~ "the zero above says nothing", vi, item));
+                   ~ "the zero above says nothing. Looking for %s; %s",
+                   vi, item, kItemHighlight.spell(), patchSpell(rig.vertFbo[vi])));
     }
 
     // ---- (c) back to the vertex type: the same selection, drawn again.
@@ -431,8 +532,9 @@ unittest {
     foreach (vi; kStanding)
         assert(patchCount(rig.vertFbo[vi], kSelectedVertexDot) == 25,
             format("coming back must draw it again — vertex %d's patch carries "
-                   ~ "%d of 25 selection-coloured pixels",
-                   vi, patchCount(rig.vertFbo[vi], kSelectedVertexDot)));
+                   ~ "%d of 25 selection-coloured pixels. Looking for %s; %s",
+                   vi, patchCount(rig.vertFbo[vi], kSelectedVertexDot),
+                   kSelectedVertexDot.spell(), patchSpell(rig.vertFbo[vi])));
 }
 
 // ---------------------------------------------------------------------------
