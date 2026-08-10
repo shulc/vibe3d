@@ -716,6 +716,19 @@ bool prepareWorker(ref Worker w) {
 //      itself (its promote hook) and by the `/api/select` in step 3b; the
 //      verify below checks it so that a regression in either one is a named
 //      failure rather than one silently dead test.
+// A SEVENTH was found by task 0674 and is deliberately NOT handled here, so
+// that this list stays a list of things this function does: THE MODIFIER KEYS.
+// Every replayed mouse event drove `SDL_SetModState` to the value the log
+// recorded and nothing put it back, so a log that ended on a Ctrl left the app
+// believing Ctrl was held for the rest of the process — and side-panel buttons
+// draw their `ctrl:` variant while it is, which is a different label and a
+// different action. It could not be closed from here anyway (there is no HTTP
+// route that clears it), so it is closed at the only writer: `EventPlayer` now
+// borrows the modifier state and hands it back when the log runs out. Named
+// here because it belongs to exactly this family and cost a CI lane a day —
+// red at -j 4, green at -j 8, on the same commit, because the packing below
+// decides which test inherits the latch.
+//
 // This is the documented cross-test state-bleed flake family (test_http_endpoint
 // asserting the pristine startup cube, test_selection's "expected 2 got 0",
 // etc.). Resetting at the RUNNER level — between every binary — kills the whole

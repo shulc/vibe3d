@@ -102,9 +102,11 @@ struct DrawnButton {
 private __gshared DrawnButton[] g_scratch;        // main thread only
 private __gshared bool          g_scratchTarget;  // main thread only
 private __gshared string        g_scratchTool;    // main thread only
+private __gshared uint          g_scratchMods;    // main thread only
 private __gshared DrawnButton[] g_published;      // guarded by g_mx
 private __gshared bool          g_publishedTarget;// guarded by g_mx
 private __gshared string        g_publishedTool;  // guarded by g_mx
+private __gshared uint          g_publishedMods;  // guarded by g_mx
 private __gshared Object        g_mx;
 
 shared static this() { g_mx = new Object(); }
@@ -122,13 +124,29 @@ shared static this() { g_mx = new Object(); }
 /// whether that tool is the armed one (pressing the armed tool's button drops
 /// it, which needs no target). A reader without it cannot tell a correct grey
 /// from a user stranded inside a tool.
-void beginButtonAvailabilityFrame(bool hasEditTarget, string activeToolId) {
+///
+/// `mods` is the THIRD input to what got drawn, and it is recorded for a reason
+/// that cost a CI lane a day. A side-panel row whose YAML declares a `ctrl:` /
+/// `alt:` / `shift:` variant draws the VARIANT while that modifier is held —
+/// a different label, a different action, the same row. So a reader that finds
+/// no button called "Box" is looking at one of two completely different facts:
+/// the row is gone, or the row is currently called "Unit Box". Without the
+/// modifiers in the record those are indistinguishable, and the reader is told
+/// only the number of rows — which is the SAME either way, because nothing was
+/// lost.
+///
+/// Taken here, once, rather than per button: it is then by construction the
+/// state the whole frame's labels were chosen against, and a reader comparing
+/// the two is comparing one frame with itself.
+void beginButtonAvailabilityFrame(bool hasEditTarget, string activeToolId,
+                                  uint mods = 0) {
     import command : g_testMode;
     if (!g_testMode) return;
     g_scratch.length = 0;
     g_scratch.assumeSafeAppend();
     g_scratchTarget = hasEditTarget;
     g_scratchTool   = activeToolId;
+    g_scratchMods   = mods;
 }
 
 /// Record one drawn button. No-op outside `--test`, so a normal run pays a
@@ -150,6 +168,7 @@ void endButtonAvailabilityFrame() {
         g_published       = g_scratch.dup;
         g_publishedTarget = g_scratchTarget;
         g_publishedTool   = g_scratchTool;
+        g_publishedMods   = g_scratchMods;
     }
 }
 
@@ -160,10 +179,12 @@ string buttonAvailabilityJson() {
     DrawnButton[] snap;
     bool   hasEditTarget;
     string activeToolId;
+    uint   mods;
     synchronized (g_mx) {
         snap          = g_published.dup;
         hasEditTarget = g_publishedTarget;
         activeToolId  = g_publishedTool;
+        mods          = g_publishedMods;
     }
     JSONValue[] items;
     foreach (ref b; snap) {
@@ -179,6 +200,7 @@ string buttonAvailabilityJson() {
     JSONValue root;
     root["hasEditTarget"] = JSONValue(hasEditTarget);
     root["activeToolId"]  = JSONValue(activeToolId);
+    root["mods"]          = JSONValue(mods);
     root["buttons"]       = JSONValue(items);
     return root.toString();
 }

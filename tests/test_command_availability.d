@@ -55,6 +55,24 @@
 //       -> D1
 //   * grey, but silent about why
 //       -> R1
+//
+// TASK 0674 added the sixth, which is not a defect in the feature but a defect
+// in this file's UNSTATED PRECONDITION — every row names a button by its label,
+// and a side-panel row draws a DIFFERENT label while a modifier is held:
+//   * a modifier latched by something outside this file (replaying an event log
+//     drove SDL's global modifier state and never handed it back, and
+//     `run_test.d` shares one `--test` instance across a worker's whole slice)
+//       -> `readBar` "the frame was drawn with modifier bits 0x0040 held …
+//          Labels drawn: [… "Unit Box", "Unit Sphere", "Unit Ellipsoid" …]".
+//     Before that row existed this arrived as `byLabel`'s "no button labelled
+//     'Box' was drawn — the record has 37 rows": every row present, nothing
+//     missing, and a message that reads exactly like the feature being broken.
+//     Red at -j 4 and green at -j 8 on the same commit, because the slice
+//     packing decides which test inherits the latch. The leak itself is closed
+//     at source (eventlog.d); this row is the tripwire for the next one.
+//   * the resolver stops being consulted at all (`actionRefusal` returns "")
+//       -> N2 "30 button(s) disagree with what their action declared: [tool
+//          'move' (Move): drawn available, declaration says it needs a target …]"
 
 import std.net.curl;
 import std.json;
@@ -99,13 +117,25 @@ private struct Bar {
     JSONValue[] rows;
     bool   hasEditTarget;
     string activeToolId;
+    uint   mods;
 
     JSONValue byLabel(string label) {
         foreach (r; rows) if (r["label"].str == label) return r;
         assert(false, "no button labelled '" ~ label ~ "' was drawn — the record "
-               ~ "has " ~ rows.length.to!string ~ " rows");
+               ~ "has " ~ rows.length.to!string ~ " rows, and the labels it does "
+               ~ "carry are: " ~ rows.map!(r => r["label"].str).array.to!string);
     }
 }
+
+/// SDL's modifier bits, as the record reports them. Duplicated rather than
+/// imported for the same reason `kReason` is: a test that took the app's own
+/// spelling of "no modifier is held" would keep passing whatever the app
+/// decided that meant.
+private enum uint kModShift = 0x0003;   // L|R shift
+private enum uint kModCtrl  = 0x00C0;   // L|R ctrl
+private enum uint kModAlt   = 0x0300;   // L|R alt
+private enum uint kModGui   = 0x0C00;   // L|R gui / cmd
+private enum uint kModVariantBits = kModShift | kModCtrl | kModAlt | kModGui;
 
 private Bar readBar() {
     // The record is published once per frame; give the app a frame to draw
@@ -118,10 +148,37 @@ private Bar readBar() {
     b.rows = j["buttons"].array;
     b.hasEditTarget = j["hasEditTarget"].boolean;
     b.activeToolId  = j["activeToolId"].str;
+    b.mods          = cast(uint)j["mods"].integer;
     assert(b.rows.length > 0,
         "the button-availability record is EMPTY. Nothing recorded means the "
         ~ "draw is not reporting what it drew, and every correspondence row "
         ~ "below would pass vacuously.");
+    // The PRECONDITION, asserted rather than assumed. Every row below names a
+    // button by its label, and a side-panel row draws its `ctrl:` / `alt:` /
+    // `shift:` variant — a different label and a different action — while that
+    // modifier is held. So "Box" is only "Box" with no modifier down.
+    //
+    // Nobody presses a key in this file, so the only way one gets held is a
+    // LEAK: replaying an event log drove `SDL_SetModState` to the recorded
+    // value, and `run_test.d` shares one `--test` instance across a worker's
+    // whole slice. That is exactly what happened — this file went red in CI
+    // reporting "no button labelled 'Box' was drawn — the record has 37 rows",
+    // with all 37 rows present and the create group reading "Unit Box", "Unit
+    // Sphere", "Unit Ellipsoid"…  Nothing in the message pointed at a modifier,
+    // and the row count was identical because nothing had been lost.
+    //
+    // The leak itself is closed at its source (eventlog.d hands the modifiers
+    // back when a log ends). This stays as the tripwire: if any future writer
+    // latches one again, the failure says so in one line instead of sending the
+    // reader after a button that is sitting right there under another name.
+    assert((b.mods & kModVariantBits) == 0,
+        format("the frame was drawn with modifier bits 0x%04x held. No test "
+               ~ "here presses a key, so something latched them — every row "
+               ~ "below names a button by a label that only applies with no "
+               ~ "modifier down, and would report the variant's absence as the "
+               ~ "primary's. Labels drawn: %s",
+               b.mods & kModVariantBits,
+               b.rows.map!(r => r["label"].str).array.to!string));
     return b;
 }
 

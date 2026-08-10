@@ -6305,7 +6305,12 @@ void main(string[] args) {
         // `/api/buttons/availability` reads back what was actually drawn
         // (disabled flag + reason), not what a resolver would answer if asked
         // again. `--test` only; a no-op branch otherwise.
-        beginButtonAvailabilityFrame(document.hasEditTarget(), activeToolId);
+        // The modifiers go in with the frame: the side panel picks a row's
+        // label and action from the LIVE modifier state (`ctrl:` / `alt:` /
+        // `shift:` variants), so a record without them cannot tell "that button
+        // was not drawn" from "that button is currently called something else".
+        beginButtonAvailabilityFrame(document.hasEditTarget(), activeToolId,
+                                     cast(uint)SDL_GetModState());
         drawSidePanel(app);
         drawTabPanel(app);
 

@@ -12,6 +12,7 @@ version(unittest) {
     private __gshared ulong function()           _mock_PerfCounter;
     private __gshared ulong function()           _mock_PerfFreq;
     private __gshared void function(SDL_Keymod)  _mock_SetModState;
+    private __gshared SDL_Keymod function()      _mock_GetModState;
     private __gshared int function(SDL_Event*)   _mock_PushEvent;
 }
 
@@ -30,6 +31,10 @@ private ulong _perfFreq() {
 private void _setModState(SDL_Keymod mod) {
     version(unittest) if (_mock_SetModState) { _mock_SetModState(mod); return; }
     SDL_SetModState(mod);
+}
+private SDL_Keymod _getModState() {
+    version(unittest) if (_mock_GetModState) return _mock_GetModState();
+    return SDL_GetModState();
 }
 private int _pushEvent(SDL_Event* e) {
     version(unittest) if (_mock_PushEvent) return _mock_PushEvent(e);
@@ -264,6 +269,46 @@ struct EventPlayer {
     // pixel coordinates of mouse events on replay.
     ViewportMeta recordedViewport;
 
+    // The modifier state as it was BEFORE this playback started, and whether
+    // it has been captured yet.
+    //
+    // Every replayed mouse event drives `SDL_SetModState(entry.mod)` so the app
+    // reads the recorded modifiers while handling the pushed event (see the
+    // comment at the call site). Nothing ever put it back. SDL's modifier state
+    // is process-global and has NO other writer in `--test` — there is no real
+    // keyboard behind a hidden window — so the last mouse event of a log left
+    // its Ctrl/Alt/Shift latched for the REST OF THE PROCESS.
+    //
+    // That outlives the log, and `run_test.d` reuses ONE `vibe3d --test` across
+    // a worker's whole slice, so it outlives the test too: every later test in
+    // that worker draws its frames with a modifier the user never pressed. The
+    // symptom is silent and looks nothing like its cause — a side-panel button
+    // that swaps to its `ctrl:` variant is simply a DIFFERENT button, with a
+    // different label and a different action, and a reader is told only that
+    // the one they wanted "was not drawn". Which test it lands on depends on
+    // the slice packing, so it moves with the worker count: this cost a CI
+    // lane a day, red at -j 4 and green at -j 8 on the same commit.
+    //
+    // Same argument as `parkOverrideMouse` for the pointer, but closed HERE
+    // rather than in the automation reset, because it is not test-only: a real
+    // `--playback` session leaves the modifiers latched for the human too, and
+    // "the app thinks Ctrl is down" is not a state a user can see or clear.
+    SDL_Keymod modBeforePlayback;
+    bool       modCaptured;
+
+    /// Take the loan: remember the live modifiers the first time this playback
+    /// is about to overwrite them.
+    ///
+    /// Here rather than in `load()` on purpose, and not only for tidiness — a
+    /// log with no mouse events in it must not read or write the modifier state
+    /// at all, and reading it from `load()` made every caller of `load()` touch
+    /// SDL whether or not it ever replayed anything that cared.
+    private void borrowModifiers() {
+        if (modCaptured) return;
+        modBeforePlayback = _getModState();
+        modCaptured       = true;
+    }
+
     // Load and parse a JSON Lines log file written by EventLogger.
     // Returns true on success.
     bool open(string path) {
@@ -479,11 +524,13 @@ struct EventPlayer {
             // queryMouse() returns the replayed position for picking code.
             // (Mouse coords here are post-remap so g_mouseX/Y stay consistent.)
             if (e.type == SDL_MOUSEMOTION) {
+                borrowModifiers();
                 _setModState(entry.mod);
                 mouseX = e.motion.x;
                 mouseY = e.motion.y;
                 g_mouseX = mouseX; g_mouseY = mouseY; g_mouseOverride = true;
             } else if (e.type == SDL_MOUSEBUTTONDOWN || e.type == SDL_MOUSEBUTTONUP) {
+                borrowModifiers();
                 _setModState(entry.mod);
                 mouseX = e.button.x;
                 mouseY = e.button.y;
@@ -499,6 +546,15 @@ struct EventPlayer {
         }
         if (idx >= entries.length) {
             active = false;
+            // Hand the modifiers back. The log's `mod` values were on loan for
+            // the duration of the replay; from here on the only truthful answer
+            // is whatever was held before it started (KMOD_NONE under `--test`,
+            // where no keyboard reaches the hidden window). Cleared rather than
+            // merely restored-once so a later log banks its own baseline.
+            if (modCaptured) {
+                _setModState(modBeforePlayback);
+                modCaptured = false;
+            }
             {
                 import log : logInfo;
                 logInfo("eventlog", "EventPlayer: playback finished");
@@ -743,6 +799,71 @@ unittest { // EventPlayer.tick: deactivates when all events are consumed
     assert(p.tick() == false);
     assert(!p.active);
     assert(g_testPushCount == 1);
+}
+
+version(unittest) private __gshared SDL_Keymod g_testModState;
+
+unittest { // EventPlayer: a log's modifiers are ON LOAN and go back when it ends
+    // The whole point is the LAST line: the log latches Ctrl into a global with
+    // no other writer, and before this it stayed latched for the life of the
+    // process. Every later frame — and, on a shared `--test` instance, every
+    // later TEST — then drew as if the user were holding Ctrl.
+    //
+    // Asserted as a value at three moments, not as "restore was called": the
+    // mid-playback reading is what separates the fix from an implementation
+    // that simply stopped applying the recorded modifiers at all, which would
+    // break the recorded gesture instead of the leak.
+    _mock_PerfCounter = function() { return 9000UL; };
+    _mock_PerfFreq    = function() { return 1000UL; };
+    _mock_GetModState = function() { return g_testModState; };
+    _mock_SetModState = function(SDL_Keymod m) { g_testModState = m; };
+    _mock_PushEvent   = function(SDL_Event* e) { g_testPushCount++; return 1; };
+    scope(exit) {
+        _mock_PerfCounter = null; _mock_PerfFreq   = null;
+        _mock_SetModState = null; _mock_PushEvent  = null;
+        _mock_GetModState = null;
+    }
+
+    // A real keyboard holding SHIFT while a log is replayed: that is the state
+    // playback borrows from and must give back. KMOD_NONE would let a "reset to
+    // zero" implementation pass, which is wrong for `--playback` on a live
+    // keyboard.
+    g_testModState = KMOD_SHIFT;
+
+    EventPlayer p;
+    // Timestamps 1000 ms apart so the clock below can be parked BETWEEN them —
+    // the mid-playback reading needs a moment at which exactly one event has
+    // been dispatched and the log is not finished.
+    assert(p.load(`{"t":1000.000,"type":"SDL_MOUSEBUTTONDOWN","btn":1,"x":10,"y":20,"clicks":1,"mod":64}` ~ "\n"
+                ~ `{"t":2000.000,"type":"SDL_MOUSEBUTTONUP","btn":1,"x":10,"y":20,"clicks":1,"mod":64}` ~ "\n"));
+    p.startCounter = 0;
+    p.freq         = 1000;
+
+    // 1. Loading must not touch the live state — nothing has been replayed yet.
+    assert(g_testModState == KMOD_SHIFT,
+        "load() changed the modifier state before a single event was replayed");
+    assert(!p.modCaptured, "nothing has been overwritten, so nothing is on loan");
+
+    // 2. Mid-playback the app must see the RECORDED modifiers. Drain only the
+    //    first event by parking the clock between the two timestamps.
+    _mock_PerfCounter = function() { return 1500UL; };
+    g_testPushCount = 0;
+    assert(p.tick() == true, "one event is still pending, so playback continues");
+    assert(g_testModState == cast(SDL_Keymod)64,
+        "the replayed event must be handled with the modifiers the log recorded");
+    assert(p.modCaptured && p.modBeforePlayback == KMOD_SHIFT,
+        "the first overwrite must bank what it overwrote");
+
+    // 3. When the log runs out the loan ends: back to the real keyboard's
+    //    SHIFT, not to the log's Ctrl and not to nothing.
+    _mock_PerfCounter = function() { return 9000UL; };
+    assert(p.tick() == false);
+    assert(!p.active);
+    assert(g_testModState == KMOD_SHIFT,
+        "the log's modifiers outlived the log — every later frame, and on a "
+        ~ "shared --test instance every later TEST, draws as if the user were "
+        ~ "holding them");
+    assert(!p.modCaptured, "the bank must reopen so the NEXT log snapshots afresh");
 }
 
 unittest { // EventPlayer.tick: fastForward drains ALL events regardless of nowMs
