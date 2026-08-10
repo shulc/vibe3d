@@ -77,7 +77,7 @@ enum ItemGlyph : ubyte {
 }
 
 /// What a row reports in its ROLE cell — the item-selection state, as ONE
-/// four-valued token.
+/// three-valued token.
 ///
 /// It replaces two controls the panel used to draw side by side: a `>`/`@`/`*`
 /// text marker, and an "F" checkbox that reported `Document.foreground(l)` —
@@ -87,22 +87,109 @@ enum ItemGlyph : ubyte {
 /// selection, so "foreground" is the conjunction of the two and neither fact
 /// hides the other.
 ///
-/// The ordering is deliberate and is read by `isCurrentRole`: each value is
-/// strictly more specific than the one before it.
+/// ---------------------------------------------------------------------------
+/// TASK 0672 — WHAT THIS ENUM USED TO SAY, AND WHY IT NO LONGER SAYS IT.
+///
+/// It had two more values, and the pair of them was the owner-reported bug:
+///
+///   ~~`Focus`   — the item-selection FOCUS, but not the mesh edit target~~
+///   ~~`Primary` — the mesh edit target (ALWAYS SELECTED + VISIBLE)~~
+///
+/// The parenthesis is the claim that was tested and is now FALSE. It held
+/// while task 0654's invariant kept "is the edit target" and "is selected"
+/// welded together. Task 0671 made the edit target the head of a walk over
+/// *[current selection] ++ [deselect history]*, so a mesh stays the target
+/// after it has been deselected — and a `Primary` row that is not selected at
+/// all became reachable by the plainest route there is: create an image plane,
+/// which selects the plane and deselects the mesh. `isCurrentRole` then drew
+/// that row with the highlight AND the accent ink, i.e. as selected, which is
+/// the report: "the mesh layer still looks selected. It is not selected."
+///
+/// The fix is not a second colour for the target. It is MEASURED (Ph0/Ph1,
+/// `tests/fixtures/item_row_appearance.json`) that the reference does not draw
+/// the edit target at all: a row that is the target but not selected is
+/// pixel-identical to a row that is neither — 0 px of 15 225, on two rows, in
+/// two independent boots, with the lever that swaps *which* of two foreground
+/// meshes is the target moving nothing. What its third treatment marks is the
+/// **first element of the item selection**, whatever its kind — a locator that
+/// can never be a mesh edit target takes it while the mesh that IS the target
+/// sits in the other shade.
+///
+/// So the target and the focus are not row treatments here either, and the
+/// three values below are the three the measurement found. `Document` still
+/// answers `isPrimary` / `isFocused`; this list simply does not ask.
+/// ---------------------------------------------------------------------------
+///
+/// The ordering is deliberate: each value is strictly more specific than the
+/// one before it.
 enum RowRole : ubyte {
-    None = 0,   ///< not in the item selection (derived background)
-    Selected,   ///< in the foreground set, but neither the focus nor primary
-    Focus,      ///< the item-selection FOCUS, but not the mesh edit target
-    Primary,    ///< the mesh edit target (always selected + visible)
+    None = 0,       ///< not in the item selection (derived background)
+    Selected,       ///< in the item selection, but not its first element
+    SelectedFirst,  ///< the FIRST element of the item selection, any kind
 }
 
-/// The rows drawn as CURRENT — background highlight plus accent text.
+/// One drawn row's COLOUR, as plain channel bytes.
 ///
-/// A predicate rather than a `bool accent` field on the row: a field would be
-/// a second statement of a rule `role` already carries, and the two could
-/// then disagree. Panels ask this; tests assert `role` directly.
-bool isCurrentRole(RowRole r) pure nothrow @nogc @safe {
-    return r == RowRole.Focus || r == RowRole.Primary;
+/// Bytes rather than a packed `IM_COL32` because this module is deliberately
+/// ImGui-free (see the header): the panel packs. It also makes the assertion a
+/// test writes read as the value a pixel would take, which is the whole point
+/// of moving the choice out of the draw call — an ImGui panel body has no
+/// headless observable, so a colour decided inside `drawLayerListPanel` can
+/// only ever be asserted as "the function ran".
+///
+/// `a == 0` means DRAW NOTHING, which is a different statement from drawing
+/// the panel's own backdrop colour: an unselected row has no fill of its own.
+struct RowColor {
+    ubyte r, g, b, a;
+}
+
+/// The pixels a row is drawn with: its background fill and its ink (the name
+/// text, and every glyph on the row).
+struct RowLook {
+    RowColor background;  ///< the whole-row fill; `a == 0` = no fill
+    RowColor ink;         ///< name text and glyphs
+}
+
+// The palette. Two shades for the two SELECTED treatments and nothing else —
+// the relation between them is the reference's own (task 0672): the row that
+// is not first in the selection is the first one's background LIGHTENED by 8
+// per channel and its ink dimmed by 11/12/12, rather than a new colour. The
+// values themselves are ours: the panel runs on a light grey backdrop where
+// the reference's are unreadable, and the fixture is explicit that what ports
+// is the partition, not the RGBs.
+private enum RowColor kInk          = RowColor(  0,   0,   0, 255); // ordinary
+private enum RowColor kInkOff       = RowColor( 97,  97,  97, 255); // greyed
+private enum RowColor kBgFirst      = RowColor( 88,  88,  96, 255);
+private enum RowColor kBgSelected   = RowColor( 96,  96, 104, 255);
+private enum RowColor kInkFirst     = RowColor(255, 176,  75, 255);
+private enum RowColor kInkSelected  = RowColor(244, 164,  63, 255);
+private enum RowColor kInkFirstDim  = RowColor(158, 120,  74, 255);
+private enum RowColor kInkSelDim    = RowColor(147, 108,  62, 255);
+
+/// The row's look — the ONE place a row's colours are decided.
+///
+/// ITS SIGNATURE IS THE LOAD-BEARING PART. It cannot see the `Document`, the
+/// edit target or the focus, so "the target is not a row treatment" is a
+/// property of what this function is ABLE to read rather than of a branch
+/// someone can add back. Re-introducing the reported bug means changing this
+/// signature, which is a visible act.
+///
+/// `dimmed` — "selected, but the item gizmo will not move this row" — is the
+/// one cue that is ours rather than the reference's, and it is orthogonal to
+/// the three treatments: it re-inks a SELECTED row and can never fire on an
+/// unselected one, so it cannot reach the state this task is about.
+RowLook lookOf(RowRole role, bool dimmed) pure nothrow @nogc @safe {
+    final switch (role) {
+        case RowRole.None:
+            // No fill at all — the panel's own backdrop shows through. The
+            // edit target that is not selected lands HERE, which is the whole
+            // point of task 0672.
+            return RowLook(RowColor(0, 0, 0, 0), dimmed ? kInkOff : kInk);
+        case RowRole.Selected:
+            return RowLook(kBgSelected, dimmed ? kInkSelDim : kInkSelected);
+        case RowRole.SelectedFirst:
+            return RowLook(kBgFirst, dimmed ? kInkFirstDim : kInkFirst);
+    }
 }
 
 /// What an unnamed item shows. The SAME literal `ui/image_rows.d` uses, on
@@ -160,6 +247,10 @@ struct ItemRow {
     /// user-reachable command and a parented item is drawn under its parent.
     int depth;
     RowRole role;       ///< the ROLE cell
+    /// The colours this row is drawn with — `lookOf(role, dimmed)`, carried on
+    /// the row so a test can read the END of the chain (`itemRowsInto` →
+    /// `roleOf` → `lookOf`) rather than re-deriving the middle of it.
+    RowLook look;
 
     bool isRoot;            ///< the scene root (no layer, no dispatch)
     bool visible;           ///< the EYE cell's state
@@ -170,7 +261,32 @@ struct ItemRow {
     bool canRename;         ///< false on the root (nothing to rename)
     /// Selected, but the item gizmo will NOT move it. Drawn greyed, so "this
     /// does not move" is visible instead of being discovered by dragging.
+    ///
+    /// A MOVING-SET fact, and the only cue on this row that is ours rather
+    /// than the reference's (task 0672 measured no dimming there at all). It
+    /// keys on `Document.isTransformTarget`, so it fires only on a row that is
+    /// SELECTED — an unselected edit target is never dimmed, and the state
+    /// this task exists to fix is out of its reach. Where it does correlate
+    /// with the edit target is the one narrowing our transform model has: a
+    /// mesh-less item in focus moves alone, and the row that then stops moving
+    /// is the mesh target. That correlation belongs to `itemTransformTargets`
+    /// (task 0671, approximation D), not to this panel, which draws what the
+    /// gizmo will do and nothing else.
     bool dimmed;
+
+    /// This row is the ENTIRE item selection — so a plain (exclusive) click on
+    /// it would change nothing, and the panel skips the dispatch.
+    ///
+    /// TASK 0672. Both click guards used to ask whether the row was the EDIT
+    /// TARGET (`isCurrentRole(r.role)` on the role cell, `document.isPrimary`
+    /// on the name), which was a faithful spelling of "already the sole
+    /// selection" only while the target could not be unselected. After task
+    /// 0671 it can: with the target latched onto a deselected mesh, clicking
+    /// that mesh's row to select it back was SWALLOWED — the same defect 0671
+    /// found and fixed in `app.d`'s viewport item-click guard, still standing
+    /// in the panel. Asking about the selection instead makes the guard say
+    /// what it means.
+    bool isSoleSelection;
 }
 
 /// The TYPE token for a kind.
@@ -220,10 +336,17 @@ string documentRootName(string docPath, bool dirty) {
     return dirty ? base ~ kDirtyMark : base;
 }
 
+/// The row's standing in the item selection.
+///
+/// SELECTION FIRST AND ONLY (task 0672). This used to ask `doc.isPrimary(l)`
+/// before it asked whether the row was selected at all, which is how an
+/// unselected edit target came to be drawn as selected. Neither the edit
+/// target nor the focus is consulted now — see `RowRole`'s comment for the
+/// measurement that removed them.
 private RowRole roleOf(Document* doc, Layer l) {
-    if (doc.isPrimary(l))       return RowRole.Primary;
-    if (doc.focusedItem is l)   return RowRole.Focus;
-    return l.selected ? RowRole.Selected : RowRole.None;
+    if (!l.selected)            return RowRole.None;
+    if (doc.isFirstSelected(l)) return RowRole.SelectedFirst;
+    return RowRole.Selected;
 }
 
 /// The nearest ancestor that is itself a row, or `null` when the item hangs
@@ -273,6 +396,7 @@ void itemRowsInto(Document* doc, string docPath, bool dirty,
         root.glyph            = ItemGlyph.Scene;
         root.depth            = 0;
         root.role             = RowRole.None;
+        root.look             = lookOf(RowRole.None, false);
         root.visible          = true;
         root.canToggleVisible = false;
         root.canRename        = false;
@@ -291,6 +415,11 @@ void itemRowsInto(Document* doc, string docPath, bool dirty,
     if (emitted.length < doc.layers.length) emitted.length = doc.layers.length;
     emitted[0 .. doc.layers.length] = false;
 
+    // ONCE, not per row: `selectedItemCount` walks `layers`, and asking it
+    // inside `emit` would make a panel draw quadratic in the item count — the
+    // same `@property`-in-a-loop trap this codebase has been bitten by twice.
+    immutable size_t selCount = doc.selectedItemCount();
+
     void emit(Layer l, size_t li, int depth) {
         if (emitted[li]) return;
         emitted[li] = true;
@@ -306,6 +435,8 @@ void itemRowsInto(Document* doc, string docPath, bool dirty,
         r.canToggleVisible = true;
         r.canRename        = true;
         r.dimmed           = l.selected && !doc.isTransformTarget(l);
+        r.look             = lookOf(r.role, r.dimmed);
+        r.isSoleSelection  = l.selected && selCount == 1;
         outBuf[k++] = r;
 
         foreach (ci, c; doc.layers)
@@ -650,23 +781,26 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// I4 — the ROLE cell, and which row is CURRENT.
+// I4 — the ROLE cell reports the SELECTION, and the first element of it.
 //
-// Discriminating: FOUR rows land on FOUR different roles at once. The focus is
-// moved onto the marker — an `Empty`, which can never be primary — so it
-// cannot coincide with the mesh edit target; the plane rides along as a plain
-// set member; meshB is left out of the selection entirely. So an
-// implementation that equates role with selection reads `Selected` on the
-// focus row, one that reports the document's single focus on every row reads
-// `Focus` three times, and one that reports only primary-ness reads `None` for
-// both the focus and the plain member.
+// Task 0672 rewrote this test with the enum it asserts. It used to require
+// `Primary` on the edit target and `Focus` on the focus; the capture found the
+// reference draws neither, and the state the owner reported — an unselected
+// edit target drawn as selected — is exactly what those two arms produced.
 //
-// The SELECTION SEQUENCE is load-bearing and not interchangeable: `selectItem`
-// with `Add` sets the primary as well as the focus whenever the target can be
-// one, so adding a second MESH would move the edit target instead of leaving
-// it behind. Only a kind with `canBePrimary == false` can pull the focus off
-// the primary — which is the whole reason `Focus` is a role distinct from
-// `Primary`.
+// Discriminating, in one fixture, against every wrong reading that survives
+// the rewrite:
+//
+//   * an implementation that still asks `isPrimary` FIRST reads a non-None
+//     role on meshA in the second half, where meshA is the latched target and
+//     is not selected at all;
+//   * one that keys the loud treatment on the edit target reads
+//     `SelectedFirst` on meshA rather than on the plane in the D1 half —
+//     the plane cannot be an edit target in principle;
+//   * one that keys it on the FOCUS reads it on the marker (the newest touch,
+//     i.e. the other end of the queue) rather than on meshA;
+//   * one that ignores selection ORDER reads the same token on every selected
+//     row.
 // ---------------------------------------------------------------------------
 unittest {
     import seltype : SelMode;
@@ -675,50 +809,116 @@ unittest {
     ItemRow[] rows;
 
     itemRowsInto(&f.doc, "", false, true, rows);
-    assert(rows[1].role == RowRole.Primary,
-        "the baseline: the mesh edit target; got " ~ to!string(rows[1].role));
+    assert(rows[1].role == RowRole.SelectedFirst,
+        "the baseline: the sole selected item is also the first one; got "
+        ~ to!string(rows[1].role));
     foreach (r; rows[2 .. $])
         assert(r.role == RowRole.None,
             "…and nothing else is in the selection; got " ~ to!string(r.role));
-
-    // The plane joins the set, then the marker takes the focus — neither can
-    // become the edit target. BOTH are `Add` (task 0668): the plane used to
-    // join via `Set`, which spared the mesh primary and produced the same
-    // three-item set, but an exclusive select now drops the mesh and this test
-    // needs a live primary to separate the Primary role from the Focus role.
-    f.doc.selectItem(f.plane,  SelMode.Add);
-    f.doc.selectItem(f.marker, SelMode.Add);
-    itemRowsInto(&f.doc, "", false, true, rows);
-
-    assert(f.doc.focusedItem is f.marker,
-        "fixture precondition: the focus is on an item that can NEVER be "
-        ~ "primary, or Focus and Primary would coincide and this test could "
-        ~ "not separate them");
-    assert(f.doc.isPrimary(f.meshA),
-        "…while the mesh edit target has not moved");
 
     RowRole roleOfLayer(Layer l) {
         foreach (r; rows) if (r.layer is l) return r.role;
         assert(false, "layer has no row");
     }
-    assert(roleOfLayer(f.meshA)  == RowRole.Primary,  "still the edit target");
-    assert(roleOfLayer(f.marker) == RowRole.Focus,    "the item-selection focus");
-    assert(roleOfLayer(f.plane)  == RowRole.Selected, "in the set, neither of the above");
-    assert(roleOfLayer(f.meshB)  == RowRole.None,     "not in the set at all");
 
-    // Four rows, four DIFFERENT roles — the vacuity guard for every equality
+    // The plane joins the set, then the marker — neither can become the edit
+    // target, so the target stays on meshA while the FOCUS moves to the marker.
+    f.doc.selectItem(f.plane,  SelMode.Add);
+    f.doc.selectItem(f.marker, SelMode.Add);
+    itemRowsInto(&f.doc, "", false, true, rows);
+
+    assert(f.doc.focusedItem is f.marker && f.doc.isPrimary(f.meshA),
+        "fixture precondition: the focus (newest touch) and the edit target "
+        ~ "are on DIFFERENT rows, or 'the role follows neither' is untestable");
+
+    assert(roleOfLayer(f.meshA)  == RowRole.SelectedFirst,
+        "the first element of the selection; got " ~ to!string(roleOfLayer(f.meshA)));
+    assert(roleOfLayer(f.plane)  == RowRole.Selected, "a later member");
+    assert(roleOfLayer(f.marker) == RowRole.Selected,
+        "…and so is the FOCUS: it is the NEWEST touch, the opposite end of the "
+        ~ "queue from the one the treatment marks; got "
+        ~ to!string(roleOfLayer(f.marker)));
+    assert(roleOfLayer(f.meshB)  == RowRole.None, "not in the set at all");
+
+    // Three rows, three DIFFERENT roles — the vacuity guard for the equalities
     // above. If any two coincided, a wrong implementation could satisfy both.
-    assert(roleOfLayer(f.meshA) != roleOfLayer(f.marker)
-        && roleOfLayer(f.marker) != roleOfLayer(f.plane)
+    assert(roleOfLayer(f.meshA) != roleOfLayer(f.plane)
         && roleOfLayer(f.plane) != roleOfLayer(f.meshB),
-        "vacuity guard: all four selection states really are distinct here");
+        "vacuity guard: the three selection states really are distinct here");
 
-    // CURRENT is the pair that gets the highlight and the accent colour.
-    assert(isCurrentRole(RowRole.Primary) && isCurrentRole(RowRole.Focus),
-        "the edit target and the focus are drawn current");
-    assert(!isCurrentRole(RowRole.Selected) && !isCurrentRole(RowRole.None),
-        "a merely-selected row is not — it is highlighted as a set member, "
-        ~ "which is a different thing from being the row the panels bind");
+    // ---- D1: the first element is not the edit target -------------------
+    // `set plane; add meshA`. The plane heads the selection and can NEVER be
+    // the edit target; meshA IS the target and is second. This is the cell
+    // that separated "the loud treatment marks the target" from "it marks the
+    // first element" in the capture, and it separates them here.
+    f.doc.selectItem(f.plane, SelMode.Set);
+    f.doc.selectItem(f.meshA, SelMode.Add);
+    itemRowsInto(&f.doc, "", false, true, rows);
+
+    assert(f.doc.isPrimary(f.meshA) && f.doc.firstSelectedItem is f.plane,
+        "fixture precondition: the edit target and the first-selected item "
+        ~ "are different rows, and the first one cannot be a target at all");
+    assert(roleOfLayer(f.plane) == RowRole.SelectedFirst,
+        "the FIRST element takes it — even though it can never be an edit "
+        ~ "target; got " ~ to!string(roleOfLayer(f.plane)));
+    assert(roleOfLayer(f.meshA) == RowRole.Selected,
+        "…and the actual edit target does not; got "
+        ~ to!string(roleOfLayer(f.meshA)));
+
+    // ---- The owner's state: the target, deselected ----------------------
+    // An exclusive select of the plane leaves meshA LATCHED as the edit target
+    // (task 0671) while dropping it from the selection. Its row is an ORDINARY
+    // row — `roleOf` asking `isPrimary` first is what this reads against.
+    f.doc.selectItem(f.plane, SelMode.Set);
+    itemRowsInto(&f.doc, "", false, true, rows);
+
+    assert(f.doc.isPrimary(f.meshA) && !f.meshA.selected,
+        "fixture precondition: the edit target is latched onto a DESELECTED "
+        ~ "mesh — the state the owner reported");
+    assert(roleOfLayer(f.meshA) == RowRole.None,
+        "the edit target is not a row treatment; got "
+        ~ to!string(roleOfLayer(f.meshA)));
+    assert(roleOfLayer(f.meshB) == RowRole.None,
+        "…and it reads the same as a row that was never anything");
+}
+
+// ---------------------------------------------------------------------------
+// I4b — the guard that decides whether a plain row click DISPATCHES.
+//
+// `isSoleSelection` replaces two guards that asked whether the row was the
+// EDIT TARGET. Discriminating on exactly the state where the two answers part
+// company: with the target latched onto a deselected mesh, the old guards said
+// "already current" and swallowed the click that would have selected it back.
+// ---------------------------------------------------------------------------
+unittest {
+    import seltype : SelMode;
+    auto f = makeItemFixture();
+    ItemRow[] rows;
+
+    bool soleOf(Layer l) {
+        foreach (r; rows) if (r.layer is l) return r.isSoleSelection;
+        assert(false, "layer has no row");
+    }
+
+    itemRowsInto(&f.doc, "", false, true, rows);
+    assert(soleOf(f.meshA), "the sole selected row: a `set` on it changes nothing");
+    assert(!soleOf(f.meshB), "…and no other row claims to be");
+
+    f.doc.selectItem(f.plane, SelMode.Add);
+    itemRowsInto(&f.doc, "", false, true, rows);
+    assert(!soleOf(f.meshA) && !soleOf(f.plane),
+        "with TWO rows selected an exclusive click on either one narrows the "
+        ~ "selection, so neither may be guarded out");
+
+    f.doc.selectItem(f.plane, SelMode.Set);
+    itemRowsInto(&f.doc, "", false, true, rows);
+    assert(f.doc.isPrimary(f.meshA) && !f.meshA.selected,
+        "fixture precondition: the latched-target state");
+    assert(!soleOf(f.meshA),
+        "the latched edit target is NOT the selection, so clicking its row "
+        ~ "must dispatch — `document.isPrimary` here read true and swallowed "
+        ~ "the click, which is 0671's app.d defect still standing in the panel");
+    assert(soleOf(f.plane), "…while the row that IS the whole selection is guarded");
 }
 
 // ---------------------------------------------------------------------------

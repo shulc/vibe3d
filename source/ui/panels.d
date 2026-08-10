@@ -1014,8 +1014,8 @@ void drawLayerListPanel(EditorApp app) {
     import std.json : JSONValue;
     import std.conv : to;
     import std.string : fromStringz;
-    import ui.item_rows   : ItemRow, ItemGlyph, RowRole, itemRowsInto,
-                            isCurrentRole, kAddItemChoices;
+    import ui.item_rows   : ItemRow, ItemGlyph, RowRole, RowColor, itemRowsInto,
+                            kAddItemChoices;
     import ui.item_glyphs : drawItemGlyph, drawEyeGlyph, drawRoleGlyph,
                             drawDisclosure, kGlyphCellRatio,
                             kGlyphRadiusRatio, kIndentRatio;
@@ -1054,6 +1054,14 @@ void drawLayerListPanel(EditorApp app) {
         immutable uint inkCol  = IM_COL32(0,  0,  0,  255);  // ordinary row
         immutable uint hintCol = IM_COL32(77, 77, 77, 255);  // column header
         immutable uint offCol  = IM_COL32(97, 97, 97, 255);  // hidden / greyed
+
+        // The ROW colours are not decided here (task 0672). `ItemRow.look`
+        // carries them, because a colour chosen inside this function has no
+        // headless observable — the same argument that put the row CONTENT in
+        // `ui/item_rows.d`. This packs, and packing is all it does.
+        static uint packed(RowColor c) {
+            return IM_COL32(c.r, c.g, c.b, c.a);
+        }
 
         // ---- "Add Item" (one drop-down) + Delete -------------------------
         // ONE button with a list, not one button per kind. With the plane
@@ -1162,7 +1170,7 @@ void drawLayerListPanel(EditorApp app) {
             drawEyeGlyph(hdl, ImVec2(hp.x + cellW * 0.5f, hp.y + rowH * 0.5f),
                          gRad, /*visible=*/true, hintCol);
             drawRoleGlyph(hdl, ImVec2(hp.x + cellW * 1.5f, hp.y + rowH * 0.5f),
-                          gRad, RowRole.Primary, hintCol);
+                          gRad, RowRole.SelectedFirst, hintCol);
             ImGui.Dummy(ImVec2(cellW * 2.0f, rowH));
             ImGui.SameLine(0.0f, 0.0f);
             ImGui.TextDisabled("Name");
@@ -1193,27 +1201,20 @@ void drawLayerListPanel(EditorApp app) {
             // ---- Row background ----
             // The WHOLE row, drawn into the window list before any cell, so
             // the highlight spans the icon columns too rather than starting at
-            // the name. Two shades for two different facts: a member of the
-            // foreground set, and the single row every panel binds.
-            if (isCurrentRole(r.role))
-                dl.AddRectFilled(rowP0, rowP1, IM_COL32(88, 88, 96, 255));
-            else if (r.role == RowRole.Selected)
-                dl.AddRectFilled(rowP0, rowP1, IM_COL32(120, 120, 120, 255));
+            // the name. Two shades for two facts about the SELECTION: being in
+            // it, and heading it. An `a` of zero is "no fill" — an unselected
+            // row keeps the panel's own backdrop, and after task 0672 that
+            // includes an unselected mesh that is still the edit target.
+            if (r.look.background.a != 0)
+                dl.AddRectFilled(rowP0, rowP1, packed(r.look.background));
 
             // ---- Row ink ----
-            // The current row is drawn in an ACCENT colour as well as on a
+            // A selected row is drawn in an ACCENT colour as well as on a
             // highlight — which is the half of "selected" the old plain
             // `Selectable` did not carry. A greyed row (selected, but the item
             // gizmo will not move it) keeps saying so THROUGH the accent
-            // rather than losing one of the two facts: the combination is not
-            // hypothetical, it is exactly the state where the mesh edit target
-            // stays selected while a mesh-less item holds the focus.
-            uint txtCol;
-            if (isCurrentRole(r.role))
-                txtCol = r.dimmed ? IM_COL32(158, 120,  74, 255)   // muted accent
-                                  : IM_COL32(255, 176,  75, 255);  // accent
-            else
-                txtCol = r.dimmed ? offCol : inkCol;
+            // rather than losing one of the two facts.
+            immutable uint txtCol = packed(r.look.ink);
 
             // ---- Eye cell ----
             // Absent, not disabled, where there is nothing to toggle (the
@@ -1250,14 +1251,16 @@ void drawLayerListPanel(EditorApp app) {
             // select the marker was, ctrl-click is `mode:toggle`, whose two
             // outcomes are exactly the checkbox's `mode:add` / `mode:remove`.
             //
-            // The command compares object identity, so re-clicking the current
-            // row is a no-op switch; guard against re-dispatching every frame
-            // the row is held. Ctrl-click always dispatches (it must be able
-            // to deselect the current row too).
+            // An exclusive click on a row that is ALREADY the whole selection
+            // changes nothing, so it is not dispatched. `r.isSoleSelection`,
+            // not "is this the current row": task 0672 — a latched edit target
+            // is not the selection, and asking about the target here swallowed
+            // the click that would have selected it back. Ctrl-click always
+            // dispatches (it must be able to deselect the sole row too).
             if (!r.isRoot) {
                 if (ImGui.InvisibleButton("##role", ImVec2(cellW, rowH))) {
                     if (commandHandlerDelegate !is null
-                        && (io.KeyCtrl || !isCurrentRole(r.role)))
+                        && (io.KeyCtrl || !r.isSoleSelection))
                         commandHandlerDelegate("layer.select",
                             `{"index":` ~ to!string(r.index) ~ `,"mode":`
                             ~ (io.KeyCtrl ? `"toggle"` : `"set"`) ~ `}`);
@@ -1364,10 +1367,15 @@ void drawLayerListPanel(EditorApp app) {
                     // io.KeyCtrl is the frame's merged Ctrl-modifier state
                     // (matches every other modifier read in the app).
                     immutable mode = io.KeyCtrl ? `"toggle"` : `"set"`;
-                    // Plain click on the already-current row is a no-op
-                    // switch; skip it so a single-select drag-press doesn't
-                    // re-dispatch every frame.
-                    if (io.KeyCtrl || !document.isPrimary(r.layer))
+                    // Plain click on a row that is already the WHOLE selection
+                    // is a no-op switch; skip it so a single-select drag-press
+                    // doesn't re-dispatch every frame. Task 0672: this asked
+                    // `document.isPrimary(r.layer)` — the edit target, which
+                    // after task 0671 need not be selected at all, so clicking
+                    // the latched mesh's name to select it back did nothing.
+                    // It is the same defect 0671 fixed in app.d's viewport
+                    // click guard, and the same fix: ask about the SELECTION.
+                    if (io.KeyCtrl || !r.isSoleSelection)
                         commandHandlerDelegate("layer.select",
                             `{"index":` ~ to!string(r.index) ~ `,"mode":`
                             ~ mode ~ `}`);

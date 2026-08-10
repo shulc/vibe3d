@@ -1660,6 +1660,46 @@ struct Document {
     /// all-mesh document `focusedItem is primary` always, so the two agree.
     bool isFocused(const(Layer) l) const { return l is focusedItem; }
 
+    /// The FIRST element of the current item selection — lowest `selSeat`,
+    /// ties on `layers` order. Null when nothing is selected.
+    ///
+    /// The OTHER END of the queue from `focusedItem`, which is the newest
+    /// touch, and a DIFFERENT question from `primary`, which is the head of a
+    /// walk that filters on `canBePrimary` and continues into the deselect
+    /// history. Three distinct answers, and they part company on the ordinary
+    /// two-item selection: `set plane; add mesh` puts the plane first, the mesh
+    /// in focus, and the mesh — not the plane — is the edit target.
+    ///
+    /// NO KIND FILTER, deliberately. This is a fact about the selection LIST,
+    /// so an item that can never be an edit target heads it whenever it was
+    /// selected first (task 0672 measured exactly that row: the first-selected
+    /// item takes the distinguishing treatment even when it is a kind that
+    /// cannot be a mesh edit target at all).
+    ///
+    /// No visibility filter either: hiding an item does not remove it from the
+    /// selection, and `visible` is its own cell in every surface that draws
+    /// this.
+    inout(Layer) firstSelectedItem() inout {
+        // `bestIndex` rather than a `Layer` local for the reason
+        // `nthEditTargetCandidate` gives: D forbids assigning to an
+        // `inout`-typed variable inside an `inout` function, and indexing
+        // `layers` at the end reintroduces the caller's own constness for free.
+        size_t bestIndex = layers.length;
+        long   bestSeat  = 0;
+        foreach (i, l; layers) {
+            if (l is null || !l.selected) continue;
+            if (bestIndex == layers.length || l.selSeat < bestSeat) {
+                bestSeat = l.selSeat; bestIndex = i;
+            }
+        }
+        return bestIndex == layers.length ? null : layers[bestIndex];
+    }
+
+    /// True iff `l` is the first element of the current item selection.
+    bool isFirstSelected(const(Layer) l) const {
+        return l !is null && l.selected && l is firstSelectedItem;
+    }
+
     /// Lazy range over just the mesh-kind layers — for "iterate the meshes"
     /// consumers that must not see a non-mesh layer (task 0615, R1 mitigation
     /// #1). A `std.algorithm.filter` over the slice, NOT `.array` — this is

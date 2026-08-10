@@ -63,17 +63,9 @@ enum float kIndentRatio = 0.85f;
 
 private enum float kThin = 1.0f;
 
-/// A hollow diamond, four lines. `AddNgon` does not exist in this binding.
-private void diamondOutline(ImDrawList* dl, ImVec2 c, float r, uint col) {
-    immutable ImVec2 n = ImVec2(c.x,     c.y - r);
-    immutable ImVec2 e = ImVec2(c.x + r, c.y);
-    immutable ImVec2 s = ImVec2(c.x,     c.y + r);
-    immutable ImVec2 w = ImVec2(c.x - r, c.y);
-    dl.AddLine(n, e, col, kThin);
-    dl.AddLine(e, s, col, kThin);
-    dl.AddLine(s, w, col, kThin);
-    dl.AddLine(w, n, col, kThin);
-}
+// ~~`diamondOutline` — a hollow diamond, four lines.~~ It drew `RowRole.Focus`
+// and went with it (task 0672): the reference has three row treatments and
+// none of them is a focus, so the panel has no focus mark to draw.
 
 /// The TYPE glyph for a row.
 ///
@@ -174,12 +166,17 @@ void drawEyeGlyph(ImDrawList* dl, ImVec2 c, float r, bool visible, uint col) {
 
 /// The ROLE glyph: how this row stands in the item selection.
 ///
-/// A filled diamond for the mesh edit target, a hollow one for a focus that
-/// is not the edit target (only reachable on an item that can never be
-/// primary), a dot for plain set membership, nothing at all for a row outside
-/// the selection. Three marks for three states the panel genuinely holds —
-/// this cell replaces both the old `>`/`@`/`*` text marker AND the "F"
-/// checkbox that restated part of it.
+/// A filled diamond for the FIRST element of the selection, a dot for every
+/// other selected row, nothing at all for a row outside it. This cell replaces
+/// both the old `>`/`@`/`*` text marker AND the "F" checkbox that restated
+/// part of it.
+///
+/// TASK 0672 — the mark is present on every SELECTED row and on no other, which
+/// is what the reference's own mode icon was measured to be ("a selected
+/// marker, not a target marker"). It used to draw the filled diamond for the
+/// mesh EDIT TARGET and a hollow one for the focus; both are gone with the
+/// `RowRole` values that carried them, because a target that is not selected
+/// is drawn as an ordinary row and a glyph is a pixel like any other.
 void drawRoleGlyph(ImDrawList* dl, ImVec2 c, float r, RowRole role, uint col) {
     if (dl is null) return;
     final switch (role) {
@@ -188,10 +185,7 @@ void drawRoleGlyph(ImDrawList* dl, ImVec2 c, float r, RowRole role, uint col) {
         case RowRole.Selected:
             dl.AddCircleFilled(c, r * 0.35f, col, 8);
             break;
-        case RowRole.Focus:
-            diamondOutline(dl, c, r * 0.9f, col);
-            break;
-        case RowRole.Primary:
+        case RowRole.SelectedFirst:
             dl.AddQuadFilled(ImVec2(c.x, c.y - r * 0.9f),
                              ImVec2(c.x + r * 0.9f, c.y),
                              ImVec2(c.x, c.y + r * 0.9f),
