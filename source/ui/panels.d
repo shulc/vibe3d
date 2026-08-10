@@ -64,6 +64,9 @@ import shader;
 import viewcache;
 import perf_probe : g_perf, Cat, g_frames, Phase, FrameRec, FrameStatsSnapshot;
 import io.assimp_runtime : initAssimp, shutdownAssimp, isAssimpAvailable;
+// Task 0669 — "would this action refuse if pressed", and the per-frame record
+// of what the bars actually drew. See source/ui/availability.d.
+import ui.availability : actionRefusal, recordDrawnButton;
 import symmetry_pick : symmetricSelectVertex, symmetricSelectEdge, symmetricSelectFace;
 import bvh_pick : BvhPick;
 import tools.transform.transform;
@@ -2201,13 +2204,24 @@ void renderPopupItems(EditorApp app, ref PopupItem[] items) {
                 if (it.action.kind == ActionKind.command)
                     blocked = popupActionNeedsAssimp(it.action.id)
                               && !isAssimpAvailable();
-                if (blocked) ImGui.BeginDisabled(true);
-                if (ImGui.MenuItem(it.label, "", checked) && !blocked)
+                // TASK 0669 — the popup rows follow the same rule as the
+                // buttons: a row that would refuse is greyed, and says why.
+                // The MENU itself always opens (`actionRefusal` answers ""
+                // for a popup action) — a menu whose rows are unavailable
+                // still has to be readable.
+                string rowWhy = blocked
+                    ? "Requires libassimp — not loaded"
+                    : actionRefusal(reg, it.action, document.hasEditTarget(), activeToolId);
+                bool rowBlocked = blocked || rowWhy.length > 0;
+                recordDrawnButton("popup", it.label, it.action.kind, it.action.id,
+                                  rowBlocked, blocked ? "" : rowWhy);
+                if (rowBlocked) ImGui.BeginDisabled(true);
+                if (ImGui.MenuItem(it.label, "", checked) && !rowBlocked)
                     dispatchAction(app, it.action);
-                if (blocked) {
+                if (rowBlocked) {
                     ImGui.EndDisabled();
                     if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                        ImGui.SetTooltip("Requires libassimp — not loaded");
+                        ImGui.SetTooltip(rowWhy);
                 }
                 break;
             case PopupItemKind.submenu:
@@ -2547,7 +2561,18 @@ void drawSidePanel(EditorApp app) {
             // kGenerateAiAvailable's doc comment near `main`).
             bool aiGateBlocked = action.kind == ActionKind.command
                 && action.id == "ai3d.generate.open" && !kGenerateAiAvailable;
-            bool effDisabled = btn.disabled || modeBlocked || aiGateBlocked;
+            // TASK 0669 — a row whose action would REFUSE if pressed is drawn
+            // unavailable now, instead of the press being the only way to
+            // learn. The reason comes from `ui.availability.actionRefusal`,
+            // which reads what the command/tool itself declared — the same
+            // answer `activateToolById` and `Command.apply()` refuse on. No
+            // list of ids is consulted anywhere on this path.
+            string unavailWhy = actionRefusal(reg, action,
+                                              document.hasEditTarget(), activeToolId);
+            bool effDisabled = btn.disabled || modeBlocked || aiGateBlocked
+                            || unavailWhy.length > 0;
+            recordDrawnButton("side", label, action.kind, action.id,
+                              effDisabled, unavailWhy);
             if (renderStyledButton(label, sc, on, isCommand,
                                    ImVec2(-1, 0), effDisabled)) {
                 if (action.kind == ActionKind.popup)
@@ -2557,6 +2582,14 @@ void drawSidePanel(EditorApp app) {
             }
             if (aiGateBlocked && ImGui.IsItemHovered())
                 ImGui.SetTooltip("Not available in this build");
+            // "Why is this grey" answered where it is asked. The reason string
+            // already exists (it is the sentence the dispatch funnel would have
+            // thrown), so surfacing it costs one call. `renderStyledButton`
+            // draws its own disabled look rather than wrapping the widget in
+            // BeginDisabled, so the item is still hoverable and plain
+            // IsItemHovered() is the right query here.
+            else if (unavailWhy.length > 0 && ImGui.IsItemHovered())
+                ImGui.SetTooltip(unavailWhy);
             // Render BeginPopup for EVERY popup variant the button
             // declares, regardless of which one is currently
             // active. Without this, a popup opened via alt-click
@@ -2827,8 +2860,17 @@ void drawStatusBar(EditorApp app) {
                 bool aiGateBlocked = action.kind == ActionKind.command
                     && action.id == "ai.toggle"
                     && !(kAiToggleAvailable && kCopilotEnabled);
+                // TASK 0669 — same rule as the side panel: an action that
+                // would refuse is drawn unavailable before the press. Same
+                // resolver, so the two bars cannot disagree with each other
+                // either.
+                string unavailWhy = actionRefusal(reg, action,
+                                                  document.hasEditTarget(), activeToolId);
+                bool effDisabled = aiGateBlocked || unavailWhy.length > 0;
+                recordDrawnButton("status", label, action.kind, action.id,
+                                  effDisabled, unavailWhy);
                 if (renderStyledButton(label, sc, on, /*isCommand=*/true,
-                                       ImVec2(effW, 0), aiGateBlocked)) {
+                                       ImVec2(effW, 0), effDisabled)) {
                     final switch (action.kind) {
                         case ActionKind.tool:
                             activateToolById(action.id);
@@ -2864,6 +2906,8 @@ void drawStatusBar(EditorApp app) {
                 }
                 if (aiGateBlocked && ImGui.IsItemHovered())
                     ImGui.SetTooltip("Not available in this build");
+                else if (unavailWhy.length > 0 && ImGui.IsItemHovered())
+                    ImGui.SetTooltip(unavailWhy);
                 // Render BeginPopup for EVERY popup variant the
                 // button declares, regardless of which is currently
                 // active under the live modifier state. Without

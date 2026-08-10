@@ -88,6 +88,22 @@ struct Registry {
     string[string] commandParamsJson;
     string[string] toolParamsJson;
 
+    // Cached `needsEditTarget()` per registered id (task 0669) — the fact the
+    // COMMAND / TOOL ITSELF declares about whether it can run with no item
+    // selected. Taken in the same startup walk, off the same cold instance,
+    // and for the same reason: asking it later would mean calling a factory,
+    // and a factory call is GL work that must not happen on the HTTP thread
+    // (see `commandParamsJson` above) or 60 times a second in the draw.
+    //
+    // This map is the ONLY place the answer is stored, and nothing writes it
+    // but the walk below — there is deliberately no hand-written list of
+    // "commands that need a layer" anywhere in the tree to drift from it.
+    //
+    // Missing-key lookup ⇒ "does not need one" (an id nobody registered
+    // cannot be pressed).
+    bool[string] commandNeedsTarget;
+    bool[string] toolNeedsTarget;
+
     /// Walk every registered factory once and snapshot its
     /// `supportedModes()` into the cache. Call after all
     /// `commandFactories[*]` / `toolFactories[*]` assignments.
@@ -98,6 +114,7 @@ struct Registry {
             commandModes[id] = cmd.supportedModes().dup;
             commandNames[id] = cmd.name;
             commandParamsJson[id] = paramsSchemaJson(cmd.params());
+            commandNeedsTarget[id] = cmd.needsEditTarget();
             // Fail fast on any command whose name() does not resolve back to
             // a registered command key — a dead replay string in the making
             // (history/scripting re-dispatch cmd.name through
@@ -113,8 +130,9 @@ struct Registry {
         }
         foreach (id, factory; toolFactories) {
             auto tool = factory();
-            toolModes[id]      = tool.supportedModes().dup;
-            toolParamsJson[id] = paramsSchemaJson(tool.params());
+            toolModes[id]       = tool.supportedModes().dup;
+            toolParamsJson[id]  = paramsSchemaJson(tool.params());
+            toolNeedsTarget[id] = tool.needsEditTarget();
         }
     }
 
@@ -158,6 +176,33 @@ struct Registry {
         }
         buf.put(`}`);
 
+        // Task 0669 — which registered ids DECLARED that they need a mesh
+        // edit target (`Command.needsEditTarget` / `Tool.needsEditTarget`).
+        //
+        // Published so a test can assert the declaration against BEHAVIOUR
+        // over the whole registry rather than over a handful of ids a
+        // hand-written list would also satisfy: fire every declared command
+        // with no item selected and each one must refuse. Without this the
+        // only total sweep available would be "fire everything", and
+        // `file.quit` is in everything.
+        buf.put(`,"commandsNeedingTarget":[`);
+        bool firstNeed = true;
+        foreach (k; cmds) {
+            if (!commandNeedsTarget.get(k, false)) continue;
+            if (!firstNeed) buf.put(",");
+            firstNeed = false;
+            buf.put(format(`"%s"`, k));
+        }
+        buf.put(`],"toolsNeedingTarget":[`);
+        bool firstToolNeed = true;
+        foreach (k; tools) {
+            if (!toolNeedsTarget.get(k, false)) continue;
+            if (!firstToolNeed) buf.put(",");
+            firstToolNeed = false;
+            buf.put(format(`"%s"`, k));
+        }
+        buf.put(`]`);
+
         if (includeParams) {
             buf.put(`,"commandParams":{`);
             bool firstCmd = true;
@@ -198,6 +243,46 @@ struct Registry {
         }
         foreach (m; modes) if (m == currentMode) return false;
         return true;
+    }
+
+    /// TASK 0669 — the one-clause reason pressing `actionId` would refuse
+    /// RIGHT NOW, or `""` when it would run. THE single availability answer:
+    /// the button-draw greys a row iff this is non-empty, and
+    /// `activateToolById` declines to arm iff this is non-empty, so what the
+    /// user sees and what the press does are the same computation.
+    ///
+    /// It never consults a name. The per-id fact comes from
+    /// `Command.needsEditTarget()` / `Tool.needsEditTarget()`, snapshotted in
+    /// `cacheSupportedModes` — so the day a new mesh operator is registered,
+    /// its button greys correctly with no edit here.
+    ///
+    /// `activeToolId` is load-bearing for tools and only for tools: pressing
+    /// the button of the ARMED tool DROPS it, and dropping never needed a
+    /// target (`activateToolById` takes its same-id branch before the
+    /// refusal). Greying that press would strand the user in a tool they
+    /// cannot leave. Pass `""` from callers that are not asking about the
+    /// live tool bank.
+    ///
+    /// `kind` is `"command"` or `"tool"`, matching `isModeBlocked`. Script
+    /// actions are not a kind here — a script is a sequence of command lines,
+    /// and its caller resolves each line's id and asks about that (see
+    /// `ui.availability.actionRefusal`).
+    string actionRefusal(string kind, string actionId,
+                         bool hasEditTarget, string activeToolId) const {
+        import command : kNoEditTargetReason;
+        if (hasEditTarget) return "";
+        if (kind == "command") {
+            if (auto p = actionId in commandNeedsTarget)
+                return *p ? kNoEditTargetReason : "";
+            return "";
+        }
+        if (kind == "tool") {
+            if (actionId.length > 0 && actionId == activeToolId) return "";
+            if (auto p = actionId in toolNeedsTarget)
+                return *p ? kNoEditTargetReason : "";
+            return "";
+        }
+        return "";
     }
 }
 
@@ -361,4 +446,102 @@ unittest {
     assert(plain["commandNames"]["thing.cmd"].str == "thing.cmd");
     assert("commandParams" !in plain.object);
     assert(_regCtorCalls == atStartup);
+}
+
+// ---------------------------------------------------------------------------
+// Task 0669 — the edit-target declaration cache and the availability answer
+// derived from it.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    import operator : Operator, VectorStack, Task, PacketKind;
+
+    /// A mesh operator — the shape `Command.needsEditTarget()` answers TRUE
+    /// for by default, with no override of its own anywhere.
+    private final class _RegOpCmd : Command, Operator {
+        private Mesh  _mesh;
+        private View  _view = new View(0, 0, 1, 1);
+        this() { super(&_mesh, _view, EditMode.Vertices); }
+        override string name() const { return "thing.op"; }
+        Task task() const { return Task.Actr; }
+        bool evaluate(ref VectorStack vts) { return true; }
+        void reset() {}
+        PacketKind[] requiredPackets() const { return []; }
+    }
+    /// A tool that declares it needs no target — nothing in the build does
+    /// this today; it exists so the "grey iff declared" wiring is proven to be
+    /// a read of the declaration rather than a constant true for tools.
+    private final class _RegFreeTool : Tool {
+        override bool needsEditTarget() const { return false; }
+    }
+}
+
+// (e) The declaration is snapshotted per id, from the command/tool itself.
+unittest {
+    import std.json : parseJSON;
+    import std.algorithm : canFind;
+
+    Registry reg;
+    reg.commandFactories["thing.op"]   = () => cast(Command) new _RegOpCmd();
+    reg.commandFactories["thing.bare"] = () => cast(Command) new _RegTestCmd("thing.bare");
+    reg.toolFactories["thing.tool"]    = () => cast(Tool)    new _RegParamTool();
+    reg.toolFactories["thing.free"]    = () => cast(Tool)    new _RegFreeTool();
+    reg.cacheSupportedModes();
+
+    // An Operator needs a target by the BASE rule — no override, no list.
+    assert(reg.commandNeedsTarget["thing.op"]);
+    // A plain command does not.
+    assert(!reg.commandNeedsTarget["thing.bare"]);
+    // Tools default to needing one; the declaration is read, not assumed.
+    assert(reg.toolNeedsTarget["thing.tool"]);
+    assert(!reg.toolNeedsTarget["thing.free"]);
+
+    // …and it reaches the wire, which is what makes the correspondence
+    // assertable against behaviour over the whole registry.
+    auto j = parseJSON(reg.registryJson(false));
+    auto needCmds  = j["commandsNeedingTarget"].array;
+    auto needTools = j["toolsNeedingTarget"].array;
+    assert(needCmds.length  == 1 && needCmds[0].str  == "thing.op");
+    assert(needTools.length == 1 && needTools[0].str == "thing.tool");
+}
+
+// (f) `actionRefusal` — BOTH sides. A version that greys everything always
+// fails the first block; a version that greys nothing fails the second.
+unittest {
+    import command : kNoEditTargetReason;
+
+    Registry reg;
+    reg.commandFactories["thing.op"]   = () => cast(Command) new _RegOpCmd();
+    reg.commandFactories["thing.bare"] = () => cast(Command) new _RegTestCmd("thing.bare");
+    reg.toolFactories["thing.tool"]    = () => cast(Tool)    new _RegParamTool();
+    reg.cacheSupportedModes();
+
+    // WITH a target nothing is refused.
+    assert(reg.actionRefusal("command", "thing.op",   true, "") == "");
+    assert(reg.actionRefusal("tool",    "thing.tool", true, "") == "");
+
+    // WITHOUT one, exactly what declared the need is refused.
+    assert(reg.actionRefusal("command", "thing.op",   false, "") == kNoEditTargetReason);
+    assert(reg.actionRefusal("command", "thing.bare", false, "") == "");
+    assert(reg.actionRefusal("tool",    "thing.tool", false, "") == kNoEditTargetReason);
+
+    // An unregistered id cannot be pressed, so it is not refused either.
+    assert(reg.actionRefusal("command", "thing.never", false, "") == "");
+    assert(reg.actionRefusal("gibberish", "thing.op",  false, "") == "");
+
+    // The ARMED tool's own button drops the tool, and dropping never needed a
+    // target. Greying it would strand the user inside a tool they cannot exit.
+    //
+    // This is the ONE row of task 0669 with no HTTP counterpart: emptying the
+    // item selection also DROPS the active tool today (the primary-change
+    // hook), so the live app never reaches the stranded state and
+    // tests/test_command_availability.d's D1 can only assert the disjunction.
+    // Asserted here by value instead.
+    assert(reg.actionRefusal("tool", "thing.tool", false, "thing.tool") == "",
+        "the ARMED tool's own button was refused. Pressing it DROPS the tool, "
+        ~ "which needs no edit target — refusing it strands the user inside a "
+        ~ "tool with no way to press out. Got: '"
+        ~ reg.actionRefusal("tool", "thing.tool", false, "thing.tool") ~ "'");
+    assert(reg.actionRefusal("tool", "thing.tool", false, "other")
+           == kNoEditTargetReason,
+        "arming a tool that is NOT the armed one still needs a target");
 }

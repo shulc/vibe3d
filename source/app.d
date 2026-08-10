@@ -3813,14 +3813,23 @@ void main(string[] args) {
         if (activeToolId == id) {
             setActiveTool(null);
             activeToolId = "";
-        } else if (!document.hasEditTarget()) {
+        } else if (reg.actionRefusal("tool", id, document.hasEditTarget(),
+                                     activeToolId).length > 0) {
             // TASK 0654 — the interactive half of `tool.set`'s refusal (see
             // `commands/tool/set.d` for the reasoning). Every tool factory
             // below binds `Mesh*` off the edit target, and with an empty item
             // selection there is none. Dropping a tool stays possible (the
             // same-id arm above ran first); only ARMING one refuses.
-            import document : kNoEditTargetReason;
-            logWarn("tool", "'" ~ id ~ "' not armed: " ~ kNoEditTargetReason);
+            //
+            // TASK 0669 — the condition is `Registry.actionRefusal`, which is
+            // the SAME call the button-draw makes to decide whether to grey
+            // the row. That is the whole point: the grey and the refusal are
+            // one computation, so they cannot drift into disagreement, and a
+            // tool that some day declares `needsEditTarget() == false` becomes
+            // both armable and un-greyed in one edit.
+            logWarn("tool", "'" ~ id ~ "' not armed: "
+                    ~ reg.actionRefusal("tool", id, document.hasEditTarget(),
+                                        activeToolId));
         } else {
             // Switching tools: reset tool-driven pipe stages BEFORE
             // the new preset's preActivate writes its own settings.
@@ -5762,6 +5771,9 @@ void main(string[] args) {
         popPanelChromeStyle, renderViewportSceneToFbo,
         drawAi3dModal, drawRemeshModal, drawQuitGuardModal,
         drawCommandHistoryPanel;
+    // Task 0669 — the per-frame button-availability record (see ui/availability.d).
+    import ui.availability : beginButtonAvailabilityFrame,
+                             endButtonAvailabilityFrame;
 
     // -------------------------------------------------------------------------
     // Main loop
@@ -6280,6 +6292,11 @@ void main(string[] args) {
         }
         // ── end DockSpace host ─────────────────────────────────────────────
 
+        // TASK 0669 — bracket every button bar of this frame so
+        // `/api/buttons/availability` reads back what was actually drawn
+        // (disabled flag + reason), not what a resolver would answer if asked
+        // again. `--test` only; a no-op branch otherwise.
+        beginButtonAvailabilityFrame(document.hasEditTarget(), activeToolId);
         drawSidePanel(app);
         drawTabPanel(app);
 
@@ -6299,6 +6316,7 @@ void main(string[] args) {
         drawQuitGuardModal(app);
 
         drawStatusBar(app);
+        endButtonAvailabilityFrame();
         version (WithRender) drawIPRPanel(&mesh(), cameraView);
 
         // ---- Layers (floating) ----

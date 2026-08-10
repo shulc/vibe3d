@@ -149,11 +149,11 @@ class Command {
             // command directly over a local `Mesh`) means "there is a target":
             // those callers own the mesh they passed and never went through a
             // Document at all.
-            if (g_editTargetResolver !is null && !g_editTargetResolver()) {
-                baseRefusal_ = kNoEditTargetReason;
-                return false;
-            }
-            baseRefusal_ = "";
+            //
+            // TASK 0669 — the condition itself now lives in
+            // `refusedForNoEditTarget()` / `needsEditTarget()` so the BUTTON can
+            // ask it before the press. Same test, same reason, one copy.
+            if (refusedForNoEditTarget()) return false;
             VectorStack vts;
             SubjectPacket subj;
             subj.mesh     = mesh;
@@ -223,6 +223,56 @@ class Command {
     protected string baseRefusal_;
 
     string refusalReason() const { return baseRefusal_; }
+
+    // TASK 0669 — does running this command require a mesh edit target?
+    //
+    // THE POINT: this is the SAME question `apply()` asks, asked WITHOUT
+    // running the command, so a button can be drawn unavailable BEFORE the
+    // press instead of the press being the only way to find out. 0654 made the
+    // refusal correct and left it invisible: the button looked exactly like a
+    // working one.
+    //
+    // The default answer is derived from the command's own TYPE — an
+    // `Operator` command reaches its kernel through the base `apply()` above
+    // and is refused there, so `needsEditTarget` is exactly "am I an
+    // Operator". Nothing enumerates command NAMES anywhere: a new mesh
+    // operator is covered the day it is written, and a list that could drift
+    // from behaviour is never created (which is the whole reason this is a
+    // method on `Command` and not a `requires:` key in `config/buttons.yaml`).
+    //
+    // Override it when a command writes the mesh through an `apply()` of its
+    // own and therefore never reaches the base branch — `ToolHeadlessCommand`
+    // is the one such case in the build (it runs a Tool's `applyHeadless()`
+    // against `*mesh`), and it pairs the override with the
+    // `refusedForNoEditTarget()` guard below. An override that ADDS the
+    // requirement without the guard would make the button lie in the other
+    // direction: grey, but working.
+    //
+    // MUST BE A TYPE PROPERTY, NOT LIVE STATE. `Registry.cacheSupportedModes`
+    // snapshots this off one COLD instance per registered id at startup (the
+    // same walk that caches `supportedModes()` / `params()`, and for the same
+    // reason: a factory call is GL work that may not happen on the HTTP
+    // thread). A state-dependent answer would stale that cache.
+    bool needsEditTarget() const {
+        import operator : Operator;
+        return (cast(const(Operator)) this) !is null;
+    }
+
+    // The refusal a mesh-writing command owes when there is no edit target,
+    // as a guard any `apply()` can open with. Returns true when the command
+    // must decline — and records the reason, so the dispatch funnel's message
+    // and the disabled button's tooltip read the same sentence.
+    //
+    // Uninstalled resolver means "there is a target" (see `g_editTargetResolver`).
+    protected final bool refusedForNoEditTarget() {
+        if (needsEditTarget()
+            && g_editTargetResolver !is null && !g_editTargetResolver()) {
+            baseRefusal_ = kNoEditTargetReason;
+            return true;
+        }
+        baseRefusal_ = "";
+        return false;
+    }
 
     // Classify the command. BASE default is CmdFlags.Model — most
     // commands alter scene state and are therefore undoable. Read-only /

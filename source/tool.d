@@ -471,6 +471,22 @@ class Tool : ParamProvider {
     EditMode[] supportedModes() const {
         return [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
     }
+
+    // TASK 0669 — does ARMING this tool require a mesh edit target?
+    //
+    // The tool half of `Command.needsEditTarget()`, and the reason the
+    // button's grey and the arm's refusal cannot disagree: `activateToolById`
+    // and the button-draw resolve availability through the SAME answer
+    // (`Registry.actionRefusal`), which reads this.
+    //
+    // TRUE for every tool in the build today — a tool binds `Mesh*` off the
+    // edit target when it arms, and with an empty item selection there is
+    // none, which is what 0654's arming refusal says. It is a method rather
+    // than a constant so a future tool that touches no mesh (a camera or
+    // measurement tool) declares itself once and BOTH sites follow; the
+    // snapshot rule of `Command.needsEditTarget()` applies here too (cached
+    // per id off a cold instance in `Registry.cacheSupportedModes`).
+    bool needsEditTarget() const { return true; }
 }
 
 // ---------------------------------------------------------------------------

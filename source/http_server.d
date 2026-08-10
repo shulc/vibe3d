@@ -1903,6 +1903,31 @@ class HttpServer {
                 response.body = "{\"error\": \"Failed to retrieve tool props ids\", \"message\": \"" ~
                                e.msg.replace("\"", "\\\"") ~ "\"}";
             }
+        } else if (request.path == "/api/buttons/availability" && request.method == "GET") {
+            // Task 0669 — every button the last complete frame drew, with the
+            // `disabled` flag and the reason it was drawn WITH. This is the
+            // rendered fact, not a re-computation: a test that asked the
+            // availability resolver again would prove the resolver and say
+            // nothing about whether the buttons still call it.
+            //
+            // NOT marshaled, on the same grounds as /api/toolprops/ids right
+            // above: the draw publishes a finished frame under a lock in one
+            // assignment (buttons AND the hasEditTarget they were drawn
+            // against), and this reads it back under the same lock. Nothing
+            // live is walked from this thread.
+            //
+            // Empty `buttons` is the honest answer before the first frame and
+            // in a non-`--test` run, where nothing records.
+            response.headers["Content-Type"] = "application/json";
+            try {
+                import ui.availability : buttonAvailabilityJson;
+                response.statusCode = 200;
+                response.body = buttonAvailabilityJson();
+            } catch (Exception e) {
+                response.statusCode = 500;
+                response.body = "{\"error\": \"Failed to retrieve button availability\", \"message\": \"" ~
+                               e.msg.replace("\"", "\\\"") ~ "\"}";
+            }
         } else if (request.path == "/api/layers" && request.method == "GET") {
             // Layer list. MARSHALED (task 0612 Stage 3) — it used to be served
             // straight from the HTTP thread on the grounds that "tests are
