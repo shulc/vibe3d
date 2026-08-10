@@ -82,6 +82,44 @@ Patch: immediately after `NFD_Init()` obtains the connection, call
 soft failure (subsequent dialog calls return an error) rather than process
 death.
 
+### 4. `configure_guarded.cmake` — a new file; the build survives its own path changing
+
+Not present upstream in any form. Added by task 0673 and wired in front of the
+`cmake -B` in each of the three `preBuildCommands` sets.
+
+CMake bakes the absolute paths it was configured for into `CMakeCache.txt`
+(`CMAKE_CACHEFILE_DIR`, `CMAKE_HOME_DIRECTORY`). Reach these same files under a
+second absolute path and CMake refuses to reuse `nativefiledialog-extended/out`
+and fails the build. vibe3d does exactly that on every release run: the matrix
+build compiles under the runner's own workspace path, then the AppImage step
+bind-mounts that same workspace into a container at `/src` and runs its own
+`dub build` there. Before this file, the second build died on the first
+directory the first build had left behind.
+
+Until task 0662 the situation could not arise, because these commands began
+with `rm -rf .../out` and a directory that never survives cannot be stale.
+Removing that wipe was right on its own terms (it rebuilt the whole C++ backend
+for a one-line D change) but it silently took the path-indifference with it.
+This script restores the property and keeps the speed: the `cmake -B` runs
+unchanged, and the directory is cleared **only** when CMake refused **and** the
+cache in it names some other directory.
+
+Two things not to "simplify", both measured in 0673 and both explained at
+length in the script's own header:
+
+- Do not replace it with an up-front string comparison of the cached path.
+  CMake compares by device+inode, so the same directory seen under two visible
+  names is *accepted*; a string test is stricter than CMake and would discard
+  warm caches CMake is happy with.
+- Do not check only `CMAKE_CACHEFILE_DIR`. A configure CMake accepted under a
+  second path rewrites that entry but leaves `CMAKE_HOME_DIRECTORY` on the old
+  path, so a cache can be stale in the source half alone.
+
+Regression test: `tests/test_cmake_path_guard.d` — it exercises the path
+change, not the build, and asserts the two negatives (an unchanged path and an
+unrelated configure error must both leave the directory alone) as well as the
+recovery.
+
 ## Re-vendoring procedure
 
 1. `git clone https://github.com/btzy/nativefiledialog-extended` and check out
@@ -89,7 +127,8 @@ death.
    obtain `unstable/xdg-foreign/xdg-foreign-unstable-v1.xml`.
 2. Fetch the matching `nfde` D wrapper from the dub registry (`dub fetch nfde@<version>`).
 3. Copy the file set listed above into `third_party/nfde/`.
-4. Re-apply patches 1–3 and update the pin table.
+4. Re-apply patches 1–4 (4 is a whole file — keep `configure_guarded.cmake` and
+   the `preBuildCommands` that call it) and update the pin table.
 5. Rebuild: `rm -f dub.selections.json && dub build`, then confirm with
    `nm -D ./vibe3d | grep dbus_message` (present) and
    `ldd ./vibe3d | grep -i gtk` (absent).
