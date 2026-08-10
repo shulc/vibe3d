@@ -187,8 +187,20 @@ unittest {
                           ~ "\"closed\", read \"%s\" — a typo must not silently pick "
                           ~ "the parity branch", st.id, status));
             immutable long frozenOurs = row["vibe3d_measured_edit_target"].integer;
+            // `closed_by` must name a real CARD, not a phrase — a marker whose
+            // closer is prose ("model M") sends the reader looking for a task
+            // that may not exist. Four digits, and nothing else.
+            immutable string closedBy = div["closed_by"].str;
+            assert(closedBy.length == 4
+                   && closedBy[0] >= '0' && closedBy[0] <= '9'
+                   && closedBy[1] >= '0' && closedBy[1] <= '9'
+                   && closedBy[2] >= '0' && closedBy[2] <= '9'
+                   && closedBy[3] >= '0' && closedBy[3] <= '9',
+                   format("step %d: `closed_by` must be a four-digit task number, "
+                          ~ "read \"%s\" — a marker that names a phrase instead of a "
+                          ~ "card cannot be looked up", st.id, closedBy));
             // The SET is what tells a real model-M landing from a REVERT of
-            // task 0668: both restore the latched target, but only model M
+            // task 0668: both restore the latched target, but only a real fix
             // keeps the reference's set (the non-mesh item alone). Computed
             // here so the retirement message below can name the right one —
             // "the gap closed" is the wrong instruction to hand someone who
@@ -198,26 +210,25 @@ unittest {
             refSel.sort();
             immutable bool setMatches = got.selected == refSel;
             if (status == "open") {
-                // (1) still differs — checked FIRST, so the day model M lands
-                // this row says "the gap closed, retire me" rather than
-                // reporting a regression.
+                // (1) still differs — checked FIRST, so the day task 0670
+                // lands this row says "the gap closed, retire me" rather
+                // than reporting a regression.
                 assert(got.primary != wantTarget,
                        setMatches
                        ? format("step %d: DIVERGENCE CLOSED — the edit target now stays "
                               ~ "latched on item %d exactly as the reference does, and "
-                              ~ "the selected set still matches. The latched-target model "
-                              ~ "(model M) has landed; flip "
+                              ~ "the selected set still matches. Task %s has landed; flip "
                               ~ "`edit_target_unlatches_on_nonmesh_exclusive_select` to "
                               ~ "\"closed\" in the fixture and re-freeze "
                               ~ "`vibe3d_measured_edit_target` on rows 3 and 5.",
-                              st.id, wantTarget)
+                              st.id, wantTarget, closedBy)
                        : format("step %d: the edit target is latched on item %d again, "
                               ~ "but the selected set is %s where the reference holds %s "
-                              ~ "— that is task 0668 REVERTED, not model M landed. The "
+                              ~ "— that is task 0668 REVERTED, not task %s landed. The "
                               ~ "mesh is back in the selection, which is the defect the "
                               ~ "owner reported.",
                               st.id, wantTarget, got.selected.to!string,
-                              refSel.to!string));
+                              refSel.to!string, closedBy));
                 // (2) and still differs in the way we recorded, so an
                 // unrelated regression is red too.
                 assert(got.primary == frozenOurs,
@@ -301,7 +312,7 @@ unittest {
     // open both rows read the absent-sentinel, so the check inverts: BOTH must
     // report no edit target, which is a real assertion (a half-applied change
     // that unlatched only one of the two rows is red here) and it flips back
-    // the day model M lands.
+    // the day task 0670 lands.
     {
         immutable string status = fx["classification"]["divergences"]
             ["edit_target_unlatches_on_nonmesh_exclusive_select"]["status"].str;

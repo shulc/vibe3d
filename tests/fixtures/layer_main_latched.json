@@ -98,7 +98,7 @@
   },
   "classification": {
     "verdict": "mixed",
-    "was": "Until task 0668 this fixture's verdict was \"match\": vibe3d reproduced the edit-target column row for row, and the only difference was the selected SET on steps 3 and 5, which vibe3d could not hold. 0668 TRADED those two halves. It made the exclusive select exclusive for every kind, so the reference's set is now reproducible — and it did so by dropping the edit target, which the reference keeps. Neither state is full parity; only the latched-target model (model M) is.",
+    "was": "Until task 0668 this fixture's verdict was \"match\": vibe3d reproduced the edit-target column row for row, and the only difference was the selected SET on steps 3 and 5, which vibe3d could not hold. 0668 TRADED those two halves. It made the exclusive select exclusive for every kind, so the reference's set is now reproducible — and it did so by dropping the edit target, which the reference keeps. Neither state is full parity; neither is full parity; task 0670 decides which model closes the gap.",
     "divergences": {
       "edit_target_unlatches_on_nonmesh_exclusive_select": {
         "status": "open",
@@ -108,9 +108,12 @@
         ],
         "reference": "the edit target stays LATCHED on the last-selected mesh",
         "vibe3d": "there is no edit target at all (`active` reports -1)",
-        "why": "The reference's edit target is a latched pointer that is NOT a member of the item selection, so an exclusive select of a non-mesh item empties the selection without touching it. vibe3d derives foreground from the selection (`foreground(l) == visible && selected`), so a latched-but-unselected edit target would draw as BACKGROUND — dimmed and read-only — while the toolpipe wrote to it. Task 0654 examined that state and declared it unrepresentable, so vibe3d has two choices and the reference's is not among them: keep the mesh SELECTED (pre-0668, which is the bug the owner reported) or drop the target (0668).",
-        "closed_by": "model M — separating the edit target from the item selection throughout the draw derivation, the panels, `/api/layers` and `.v3d`. Named as its own task in `Document.itemTransformTargets`' doc comment.",
-        "corroboration_still_stands": "The auto-fit reading recorded under `corroboration` is evidence for the REFERENCE's latched law, not for ours. It is unaffected by this marker and is the thing model M would have to reproduce."
+        "why": "WHAT IS MEASURED, and it is only this: on an exclusive select of a non-mesh item the reference's selected set is that item ALONE, and its edit target stays on the last-selected mesh. vibe3d derives foreground from the selection (`foreground(l) == visible && selected`), so a target that is not selected would draw as BACKGROUND — dimmed and read-only — while the toolpipe wrote to it. Task 0654 examined that state and declared it unrepresentable, so vibe3d has two answers available and the reference's reading is not among them: keep the mesh SELECTED (pre-0668, the defect the owner reported) or drop the target (0668).",
+        "closed_by": "0670",
+        "corroboration_still_stands": "The auto-fit reading recorded under `corroboration` is a second, independent OBSERVATION of the reference reaching the same mesh — evidence for the behaviour, not for any particular mechanism behind it. It is unaffected by this marker and is a row task 0670's answer has to account for.",
+        "closed_by_what": "Task 0670 — establish what the reference actually does by READING, then decide vibe3d's model. This fixture is its acceptance test: the marker below retires itself the day rows 3 and 5 agree.",
+        "accepted_cost": "Until 0670 lands, creating an image plane leaves NO edit target, and with task 0669 merged that draws the primitive buttons grey until a mesh is selected again. Accepted by the owner on 2026-08-10.",
+        "inferred_not_read": "The usual EXPLANATION — that the reference's edit target is a latched pointer living outside the item selection — is an INFERENCE from the rows above, not something anyone has read. It fits every row and the auto-fit corroboration, and it may well be right, but this fixture is evidence of BEHAVIOUR only. Task 0670 settles the mechanism by reading the SDK (two builds are on disk), and by debugger if the declarations do not settle it. Do not restate the inference as fact on the strength of this file."
       }
     },
     "live_parity_rows": [

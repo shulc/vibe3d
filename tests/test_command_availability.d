@@ -71,7 +71,15 @@ enum string BASE = "http://localhost:8080";
 /// from `command.kNoEditTargetReason` on purpose — a test that imported the
 /// constant would keep passing if the app changed the words to something
 /// meaningless, and the words are half the point of task 0669.
-enum string kReason = "no item is selected: there is no mesh edit target";
+///
+/// TASK 0668 REWORDED IT: "no MESH item is selected". The old wording denied
+/// that anything was selected, which since 0668 can be said while a reference
+/// plane is selected and visibly highlighted — an absent edit target no longer
+/// implies an empty selection. Being a deliberate duplicate, this literal does
+/// not follow the app on its own; it is updated BY HAND when the app's wording
+/// changes, and the N1 block below is written so the failure tells you that is
+/// what happened.
+enum string kReason = "no mesh item is selected: there is no mesh edit target";
 
 private JSONValue getJson(string p) { return parseJSON(cast(string) get(BASE ~ p)); }
 
@@ -190,10 +198,28 @@ unittest {
     {
         string[] liars;
         string[] anonymous;
+        string[] misworded;
+        string   sampleMsg;
         foreach (id; needCmds) {
             auto j = post_(id);
             if (j["status"].str != "error") { liars ~= id; continue; }
-            if (!j["message"].str.canFind(kReason)) anonymous ~= id;
+            immutable msg = j["message"].str;
+            if (msg.canFind(kReason)) continue;
+            // TASK 0668 — these are TWO different defects and the difference is
+            // the whole instruction. `app.d`'s dispatch funnel (`failMsg`)
+            // appends `": " ~ refusalReason()` only when there IS one, so a
+            // refusal that carries no reason reads exactly the bare boilerplate
+            // and nothing else. Anything longer HAS a reason; it is simply not
+            // the one this file froze.
+            //
+            // Lumping them together cost real time once: this block reported
+            // "refused ANONYMOUSLY (no reason in the message)" for 98 commands
+            // that were in fact refusing correctly and naming the reason —
+            // 0668 had reworded the sentence and this file's deliberate
+            // duplicate still held the old words. The message sent the reader
+            // hunting for a lost reason that was never lost.
+            if (msg == "command '" ~ id ~ "' did not apply") anonymous ~= id;
+            else { misworded ~= id; if (sampleMsg.length == 0) sampleMsg = msg; }
         }
         assert(liars.length == 0,
             format("%d command(s) DECLARE they need an edit target and then "
@@ -201,8 +227,19 @@ unittest {
                    ~ "drawn grey, so the grey is a lie in the other direction.",
                    liars.length, liars.to!string));
         assert(anonymous.length == 0,
-            format("%d command(s) refused ANONYMOUSLY (no reason in the "
-                   ~ "message): %s", anonymous.length, anonymous.to!string));
+            format("%d command(s) refused ANONYMOUSLY — the message is the bare "
+                   ~ "boilerplate with no reason appended at all, which is the "
+                   ~ "defect this task exists to remove: %s",
+                   anonymous.length, anonymous.to!string));
+        assert(misworded.length == 0,
+            format("%d command(s) refused WITH a reason, but not the one this "
+                   ~ "file froze. Read:\n  %s\nExpected to contain:\n  %s\n"
+                   ~ "Nothing is anonymous — this is a WORDING drift. If the "
+                   ~ "app's wording changed on purpose, update `kReason` at the "
+                   ~ "top of this file (it is a deliberate duplicate of "
+                   ~ "`command.kNoEditTargetReason` and does not follow it "
+                   ~ "automatically). Commands: %s",
+                   misworded.length, sampleMsg, kReason, misworded.to!string));
     }
 
     // =======================================================================
