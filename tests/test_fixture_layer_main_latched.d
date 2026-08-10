@@ -175,12 +175,81 @@ unittest {
         auto got = docState();
         editTargetPerStep ~= got.primary;
 
-        assert(got.primary == wantTarget,
-               format("step %d (%s): edit target is item %d, want item %d. Reading %d "
-                      ~ "would mean the edit target follows the item selection instead of "
-                      ~ "latching onto the last-selected mesh.",
-                      st.id, row["item_selection"].toString, got.primary, wantTarget,
-                      iNonMesh));
+        // TASK 0668 — the edit-target column is a MARKED DIVERGENCE on the two
+        // rows that select the non-mesh item exclusively. The reference keeps
+        // the target latched; we no longer have one to keep. Rows without a
+        // `divergence` key are unchanged live-parity rows, control included.
+        if (auto dk = "divergence" in row) {
+            auto div = fx["classification"]["divergences"][dk.str];
+            immutable string status = div["status"].str;
+            assert(status == "open" || status == "closed",
+                   format("step %d: divergence status must be exactly \"open\" or "
+                          ~ "\"closed\", read \"%s\" — a typo must not silently pick "
+                          ~ "the parity branch", st.id, status));
+            immutable long frozenOurs = row["vibe3d_measured_edit_target"].integer;
+            // The SET is what tells a real model-M landing from a REVERT of
+            // task 0668: both restore the latched target, but only model M
+            // keeps the reference's set (the non-mesh item alone). Computed
+            // here so the retirement message below can name the right one —
+            // "the gap closed" is the wrong instruction to hand someone who
+            // has actually reintroduced the bug the owner reported.
+            long[] refSel;
+            foreach (lbl; row["item_selection"].array) refSel ~= indexOfLabel(rig, lbl.str);
+            refSel.sort();
+            immutable bool setMatches = got.selected == refSel;
+            if (status == "open") {
+                // (1) still differs — checked FIRST, so the day model M lands
+                // this row says "the gap closed, retire me" rather than
+                // reporting a regression.
+                assert(got.primary != wantTarget,
+                       setMatches
+                       ? format("step %d: DIVERGENCE CLOSED — the edit target now stays "
+                              ~ "latched on item %d exactly as the reference does, and "
+                              ~ "the selected set still matches. The latched-target model "
+                              ~ "(model M) has landed; flip "
+                              ~ "`edit_target_unlatches_on_nonmesh_exclusive_select` to "
+                              ~ "\"closed\" in the fixture and re-freeze "
+                              ~ "`vibe3d_measured_edit_target` on rows 3 and 5.",
+                              st.id, wantTarget)
+                       : format("step %d: the edit target is latched on item %d again, "
+                              ~ "but the selected set is %s where the reference holds %s "
+                              ~ "— that is task 0668 REVERTED, not model M landed. The "
+                              ~ "mesh is back in the selection, which is the defect the "
+                              ~ "owner reported.",
+                              st.id, wantTarget, got.selected.to!string,
+                              refSel.to!string));
+                // (2) and still differs in the way we recorded, so an
+                // unrelated regression is red too.
+                assert(got.primary == frozenOurs,
+                       format("step %d: vibe3d reads edit target %d, but the fixture "
+                              ~ "froze %d for this open divergence. Neither the "
+                              ~ "reference's answer nor ours — this is a regression, "
+                              ~ "not a retirement.", st.id, got.primary, frozenOurs));
+                // (3) marked means DIFFERENT numbers. Re-arming the flag to
+                // silence a regression is then unsatisfiable.
+                assert(frozenOurs != wantTarget,
+                       format("step %d: a MARKED divergence must record different "
+                              ~ "numbers; the fixture froze %d for both engines",
+                              st.id, frozenOurs));
+            } else {
+                assert(got.primary == wantTarget,
+                       format("step %d: the divergence is marked \"closed\", so this "
+                              ~ "row demands parity — edit target %d, want %d",
+                              st.id, got.primary, wantTarget));
+                assert(frozenOurs == wantTarget,
+                       format("step %d: a RETIRED divergence must record the SAME "
+                              ~ "number for both engines; the fixture still holds %d "
+                              ~ "against the reference's %d — that is the second half "
+                              ~ "of the retiring edit", st.id, frozenOurs, wantTarget));
+            }
+        } else {
+            assert(got.primary == wantTarget,
+                   format("step %d (%s): edit target is item %d, want item %d. Reading %d "
+                          ~ "would mean the edit target follows the item selection instead of "
+                          ~ "latching onto the last-selected mesh.",
+                          st.id, row["item_selection"].toString, got.primary, wantTarget,
+                          iNonMesh));
+        }
 
         // The selection really landed. The focus is the NEWEST touch, so it
         // must be on the last item the row names — on every row, not just the
@@ -225,9 +294,29 @@ unittest {
            "CONTROL (step 2): the edit target must follow the mesh that was selected");
 
     // ---- and the two latching steps latch onto DIFFERENT meshes ------------
-    assert(editTargetPerStep[2] != editTargetPerStep[4],
-           format("steps 3 and 5 must latch onto different meshes (%d vs %d) — otherwise "
-                  ~ "the answer could be a value pinned to one particular layer rather "
-                  ~ "than the last mesh selected",
-                  editTargetPerStep[2], editTargetPerStep[4]));
+    //
+    // TASK 0668: this cross-row check belongs to the marked divergence. Its
+    // job is to prove the latched value is not pinned to one particular layer,
+    // which presupposes there IS a latched value. While the divergence is
+    // open both rows read the absent-sentinel, so the check inverts: BOTH must
+    // report no edit target, which is a real assertion (a half-applied change
+    // that unlatched only one of the two rows is red here) and it flips back
+    // the day model M lands.
+    {
+        immutable string status = fx["classification"]["divergences"]
+            ["edit_target_unlatches_on_nonmesh_exclusive_select"]["status"].str;
+        if (status == "open") {
+            assert(editTargetPerStep[2] == -1 && editTargetPerStep[4] == -1,
+                   format("steps 3 and 5 must BOTH report no edit target while the "
+                          ~ "divergence is open (%d, %d) — one of them latching is a "
+                          ~ "half-applied change, not a retirement",
+                          editTargetPerStep[2], editTargetPerStep[4]));
+        } else {
+            assert(editTargetPerStep[2] != editTargetPerStep[4],
+                   format("steps 3 and 5 must latch onto different meshes (%d vs %d) — "
+                          ~ "otherwise the answer could be a value pinned to one "
+                          ~ "particular layer rather than the last mesh selected",
+                          editTargetPerStep[2], editTargetPerStep[4]));
+        }
+    }
 }
