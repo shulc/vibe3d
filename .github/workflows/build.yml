@@ -318,7 +318,32 @@ jobs:
 
       # ---- Build ----
 
+      # Builds the binary this job SHIPS — on macOS and Windows. Not on Linux,
+      # and that asymmetry is deliberate: please do not add Linux back for
+      # symmetry.
+      #
+      # Who consumes this step's ./vibe3d:
+      #   macOS   — `build_app.sh --no-build`, which exits 1 if ./vibe3d is absent
+      #   Windows — `Zip artifact (Windows)` copies ${{ matrix.binary }} into the zip
+      #   Linux   — NOBODY. The AppImage step below builds its own inside the
+      #             container, and `Upload AppImage (Linux)` uploads only
+      #             Vibe3D-x86_64.AppImage. A host build here would be compiled,
+      #             overwritten by the container's, and thrown away.
+      #
+      # Nor is compile coverage lost by skipping it. The container runs the same
+      # command with the same flags (modeling / release / ReleaseBuild / ldc2),
+      # so an LDC-only or release-only break still fails this job, one step
+      # later. What Linux no longer gets is a compile against the RUNNER's own
+      # toolchain — deliberately, since the runner's glibc is exactly what the
+      # container exists to avoid, and ci.yaml already builds and runs the suites
+      # on the host (with dmd).
+      #
+      # Skipping it also removes an ambiguity rather than adding one: with both
+      # builds writing ./vibe3d in the same workspace, which binary the packer
+      # picked up depended on the container's dub cache being cold. Now only one
+      # build ever writes it.
       - name: Build
+        if: runner.os != 'Linux'
         run: dub build --compiler=ldc2 --build=release --d-version=ReleaseBuild
 
       - name: Build app bundle (macOS)
@@ -330,11 +355,10 @@ jobs:
       # Linux: a self-contained, broad-glibc (>= 2.30) AppImage built + launch-
       # verified INSIDE an Ubuntu-20.04 container (podman rootless), which floors
       # the glibc far below the runner's own. Replaces vibe3d-linux.zip (which
-      # needed a system SDL2 + GTK3 and floored at the runner's glibc). The
-      # container does its own `dub build`, so the matrix Build step above is
-      # redundant on Linux (kept for simplicity; a later optimization can skip it).
-      # Requires podman/docker on the self-hosted Linux runner (+ network for the
-      # first image build). Ships the opt-in AI worker under usr/bin/tools/.
+      # needed a system SDL2 + GTK3 and floored at the runner's glibc). This is
+      # the ONLY build on Linux — see the Build step above for why it is skipped
+      # there. Requires podman/docker on the self-hosted Linux runner (+ network
+      # for the first image build). Ships the opt-in AI worker under usr/bin/tools/.
       - name: Build self-contained AppImage (Linux)
         if: runner.os == 'Linux'
         run: tools/release/build_linux_appimage_container.sh --verify
