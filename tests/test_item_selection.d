@@ -93,28 +93,53 @@ unittest { // mode:set is the today-equivalent exclusive select.
     assert(isSelected(1) && !isSelected(0) && !isSelected(2));
 }
 
-unittest { // mode:add accumulates selection + promotes primary (multi-foreground).
+unittest { // mode:add accumulates selection; the target stays on the HEAD.
+    // TASK 0671 — INTENT CHANGE. This used to assert "newest add (C) is
+    // primary". The current item selection is an ordered QUEUE and the edit
+    // target is its head, so an add appends and does not change who is being
+    // edited (frozen: tests/fixtures/edit_target_legality.json, cell
+    // `flush_is_per_item_kind` step 3, where `set B; add A` targets B).
     threeLayers();
     cmd("layer.select index:1 mode:add");
     cmd("layer.select index:2 mode:add");
     auto s = selState();
     assert(s.selectedCount == 3, "add accumulates: A,B,C all selected");
-    assert(s.primaryIndex == 2, "newest add (C) is primary");
+    assert(s.primaryIndex == 0,
+        "the target is the queue HEAD (A, selected first), not the newest add");
     assert(isSelected(0) && isSelected(1) && isSelected(2));
 }
 
-unittest { // mode:remove of the primary moves primary to a remaining member.
+unittest { // mode:add in REVERSE layer order — seat order, not `layers` order.
+    // The discriminating rig: select C first, then add A. A `layers`-order walk
+    // answers A; the selection queue answers C. Every ascending rig above
+    // cannot tell the two apart.
     threeLayers();
-    cmd("layer.select index:1 mode:add");   // A,B selected; B primary
-    cmd("layer.select index:2 mode:add");   // A,B,C selected; C primary
-    cmd("layer.select index:2 mode:remove");// remove primary C
+    cmd("layer.select index:2");            // set C
+    cmd("layer.select index:0 mode:add");   // add A
     auto s = selState();
-    assert(s.selectedCount == 2, "C removed → two selected");
-    assert(!isSelected(2), "C deselected");
-    assert(s.primaryIndex == 0 || s.primaryIndex == 1,
-        "primary promoted to a remaining selected member");
+    assert(s.selectedCount == 2, "A and C selected");
+    assert(s.primaryIndex == 2,
+        "the target is the EARLIEST-SELECTED (C), not the lowest-indexed (A)");
+}
+
+unittest { // mode:remove of the target: CURRENT outranks HISTORY.
+    // TASK 0671 — the removed item keeps a non-zero selection state (it moves
+    // into its kind's recently-deselected cache) and keeps its queue seat, so a
+    // walk that merged the two lists by seat would leave the target on the
+    // layer just deselected. It does not: current is walked to exhaustion
+    // first.
+    threeLayers();
+    cmd("layer.select index:1 mode:add");   // A,B selected; A is the head
+    cmd("layer.select index:2 mode:add");   // A,B,C selected; A is the head
+    cmd("layer.select index:0 mode:remove");// remove the TARGET, A
+    auto s = selState();
+    assert(s.selectedCount == 2, "A removed → two selected");
+    assert(!isSelected(0), "A deselected");
+    assert(s.primaryIndex == 1,
+        "the target promoted to the first remaining CURRENT item (B), even "
+        ~ "though the deselected A holds an earlier seat");
     assert(isPrimary(s.primaryIndex) && isSelected(s.primaryIndex),
-        "promoted primary is selected");
+        "the promoted target is selected");
 }
 
 unittest { // mode:remove of the LAST selected EMPTIES the selection (task 0654).
@@ -130,9 +155,15 @@ unittest { // mode:remove of the LAST selected EMPTIES the selection (task 0654)
     auto s = selState();
     assert(s.selectedCount == 0,
         "removing the last selected layer empties the item selection (0654)");
-    assert(s.primaryIndex == -1,
-        "…and drops the primary with it — a layer still reporting primary here "
-        ~ "would be an edit target latched behind an empty selection");
+    // TASK 0671 — the second half of that line was never measured. 0653
+    // measured the SELECTION emptying; "and drops the primary with it" was
+    // forced by the model of the day. Deselecting moves the item into its
+    // kind's recently-deselected cache and the target is the head of a walk
+    // over [current ++ cache], so it is still A.
+    assert(s.primaryIndex == 0,
+        "…and the edit target stays LATCHED on A: an empty item selection with "
+        ~ "a live edit target is a legal state (frozen: edit_target_legality, "
+        ~ "cell target_set_nothing_selected)");
     assert(!isSelected(0));
 }
 
@@ -143,49 +174,67 @@ unittest { // mode:clear empties the whole set in one step (task 0654).
     cmd("layer.select mode:clear");
     auto s = selState();
     assert(s.selectedCount == 0, "clear empties the set");
-    assert(s.primaryIndex == -1, "…and leaves no primary");
-    // Not a trap: selecting again installs a primary.
+    assert(s.primaryIndex == 0,
+        "…and leaves the target on the head of what was cleared (task 0671) — "
+        ~ "A, which was selected first");
+    // Selecting a mesh FLUSHES the mesh bucket, so the latch does not
+    // accumulate: after this exactly one layer is foreground again.
     cmd("layer.select index:2 mode:set");
     assert(selState().selectedCount == 1 && selState().primaryIndex == 2,
-        "a select out of the empty state installs a primary again");
+        "a select out of the empty state moves the target to what was selected");
+    assert(layers()["layers"].array[0]["foreground"].type == JSONType.false_,
+        "…and A is no longer foreground: the mesh bucket was flushed, not "
+        ~ "appended to");
 }
 
 unittest { // mode:toggle flips selection on/off.
     threeLayers();
     cmd("layer.select index:1 mode:toggle"); // B off→on (add)
-    assert(isSelected(1) && isPrimary(1), "toggle-on selects + promotes B");
+    // TASK 0671: an add appends to the queue; the target is the head, A.
+    assert(isSelected(1) && isPrimary(0), "toggle-on selects B, target stays A");
     assert(selState().selectedCount == 2, "A,B selected");
     cmd("layer.select index:1 mode:toggle"); // B on→off (remove)
     assert(!isSelected(1), "toggle-off deselects B");
     assert(selState().selectedCount == 1, "back to A only");
-    assert(isPrimary(0), "primary fell back to A");
+    assert(isPrimary(0), "the target was on A throughout");
 }
 
-unittest { // hide-primary promotes the primary to another selected+visible layer.
+unittest { // hiding the edit target does NOT hand it to anyone else.
+    // ~~hide-primary promotes the primary to another selected+visible layer.~~
+    // TASK 0671 — measured (edit_target_legality, cell
+    // `hidden_mesh_keeps_the_target`): visibility and targethood are
+    // independent. The promotion this used to assert was forced by
+    // `foreground == visible && selected`, under which a hidden target was
+    // neither foreground nor background and had to go somewhere.
     threeLayers();
-    cmd("layer.select index:1 mode:add");    // A,B selected; B primary
-    // B is primary + selected + visible; hide it.
+    cmd("layer.select index:1 mode:add");    // A,B selected; A is the target
+    cmd("layer.select index:0 mode:remove"); // …now only B is, and B is the target
+    assert(isPrimary(1) && isSelected(1), "precondition: B holds the target");
     cmd("layer.setVisible index:1 value:false");
-    auto s = selState();
     assert(layers()["layers"].array[1]["visible"].type == JSONType.false_,
         "B is hidden");
-    assert(s.primaryIndex == 0, "primary promoted to the visible selected A");
-    assert(isPrimary(0) && isSelected(0));
-    assert(layers()["layers"].array[s.primaryIndex]["visible"].type == JSONType.true_,
-        "promoted primary is visible");
+    assert(isPrimary(1),
+        "THE MEASUREMENT: the hidden layer is still the edit target — A does "
+        ~ "not inherit it and the hide is not refused");
+    assert(layers()["layers"].array[1]["foreground"].type == JSONType.true_,
+        "…and it classifies FOREGROUND while hidden, which is what keeps it in "
+        ~ "the walk");
+    assert(layers()["layers"].array[1]["background"].type == JSONType.false_,
+        "…and specifically NOT background: it must not become a dimmed snap "
+        ~ "source while it is the thing being edited");
+    // CONTROL: the target still moves normally, so the rows above are not a
+    // frozen read.
+    cmd("layer.select index:0 mode:set");
+    assert(isPrimary(0), "CONTROL: selecting another mesh moves the target");
 }
 
-unittest { // hide-primary with NO promotion target is allowed (hidden primary).
-    // The plan's literal "refuse" fallback is softened to "allow" to keep the
-    // pre-#4 single-layer setVisible behaviour neutral (see d-code-writer
-    // report's ambiguity flag). When there is no other selected+visible layer,
-    // hiding the sole primary leaves a hidden primary; it stays the edit target.
-    threeLayers();                            // only A selected+visible, primary
+unittest { // hiding the sole selected layer is allowed and keeps the target.
+    threeLayers();                            // only A selected+visible, target
     cmd("layer.setVisible index:0 value:false");
     assert(layers()["layers"].array[0]["visible"].type == JSONType.false_,
-        "hiding the sole selected primary is allowed (hidden primary)");
+        "hiding the sole selected target is allowed (hidden target)");
     assert(isPrimary(0) && isSelected(0),
-        "A remains the selected primary even while hidden (no promotion target)");
+        "A remains the selected edit target even while hidden");
 }
 
 unittest { // an item select makes SelType.Item the current type.
@@ -196,21 +245,26 @@ unittest { // an item select makes SelType.Item the current type.
         "item select promotes SelType.Item to current, got " ~ sel["selType"].str);
 }
 
-unittest { // undo of an item select (UI-undo) restores the prior set + primary.
+unittest { // undo of an item select (UI-undo) restores the prior SET.
+    // TASK 0671 — the target sits on A throughout (an add appends; the target
+    // is the queue head), so the SET is what these undos have to get right and
+    // the target column is the constant. The rig is kept because the set is
+    // still the discriminating column, and E5b in
+    // tests/test_empty_item_selection.d is where the undo's restoration of the
+    // deselect CACHE is asserted.
     threeLayers();
-    cmd("layer.select index:1 mode:add");    // A,B selected; B primary
-    cmd("layer.select index:2 mode:add");    // A,B,C selected; C primary
-    // Before undo: 3 selected, C primary.
-    assert(selState().selectedCount == 3 && isPrimary(2));
+    cmd("layer.select index:1 mode:add");    // A,B selected; A is the target
+    cmd("layer.select index:2 mode:add");    // A,B,C selected; A is the target
+    assert(selState().selectedCount == 3 && isPrimary(0));
     undoOk("undo C add");
     auto s1 = selState();
     assert(s1.selectedCount == 2, "undo restores the two-member set");
     assert(!isSelected(2), "C deselected by undo");
-    assert(s1.primaryIndex == 1, "primary restored to B");
+    assert(s1.primaryIndex == 0, "the target is still A");
     undoOk("undo B add");
     auto s2 = selState();
     assert(s2.selectedCount == 1, "undo restores the SET-of-one");
-    assert(s2.primaryIndex == 0, "primary restored to A");
+    assert(s2.primaryIndex == 0, "the target is still A");
     assert(isSelected(0) && !isSelected(1) && !isSelected(2));
 }
 
@@ -230,10 +284,11 @@ unittest { // Stage 4 /api/selection final shape: selTypeOrder + items view.
     assert("items" in sel, "/api/selection carries an items view");
     auto items = sel["items"].array;
     assert(items.length == 3, "one items entry per layer");
-    assert(items[0]["selected"].type == JSONType.true_  && items[0]["primary"].type == JSONType.false_,
-        "A selected, not primary");
-    assert(items[1]["selected"].type == JSONType.true_  && items[1]["primary"].type == JSONType.true_,
-        "B selected + primary");
+    // TASK 0671: the target is the queue head, so A holds it and B does not.
+    assert(items[0]["selected"].type == JSONType.true_  && items[0]["primary"].type == JSONType.true_,
+        "A selected + primary (it was selected first)");
+    assert(items[1]["selected"].type == JSONType.true_  && items[1]["primary"].type == JSONType.false_,
+        "B selected, not primary");
     assert(items[2]["selected"].type == JSONType.false_ && items[2]["primary"].type == JSONType.false_,
         "C neither selected nor primary");
 }

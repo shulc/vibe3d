@@ -103,10 +103,18 @@ Vec3 buildTwoLayers(bool bg, string baseUrl = "http://localhost:8080") {
         cmd("layer.select index:1 mode:remove");      // B left visible+deselected
     } else {
         // NEGATIVE: B visible + SELECTED non-primary (foreground) ⇒ NOT a snap
-        // source. Add B to the selection, then add A so A becomes primary while
-        // B STAYS selected (mode:add, NOT mode:set — set would deselect B).
-        cmd("layer.select index:1 mode:add");         // B selected + primary
-        cmd("layer.select index:0 mode:add");         // A primary, B still selected
+        // source. A must be the EDIT TARGET (the drag moves the target's v0)
+        // while B stays selected.
+        //
+        // TASK 0671 — the order matters now and it used to not. This read
+        // `add B; add A` on the reasoning that the newest add becomes primary.
+        // The edit target is the head of the selection queue, so that sequence
+        // leaves it on B — and the drag would then move B's own vertex and
+        // "snap to 3.0" for a reason that has nothing to do with snap sources.
+        // `set A; add B` puts A at the head and leaves B selected, which is
+        // what this rig always meant.
+        cmd("layer.select index:0");                  // A alone, A is the target
+        cmd("layer.select index:1 mode:add");         // + B selected, A still the target
     }
 
     return Vec3(3.0f, -0.5f, -0.5f);

@@ -307,14 +307,33 @@ unittest { // deleting the LAST layer is refused (document invariant: >= 1)
     assert(layerCount() == 1, "last layer survives a refused delete");
 }
 
-unittest { // deleting the ACTIVE layer activates a neighbour
+unittest { // deleting the ACTIVE layer leaves NO edit target.
+    // ~~deleting the ACTIVE layer activates a neighbour~~
+    //
+    // TASK 0671 — INTENT CHANGE. The fallback this asserted was the stored
+    // edit target asking to be kept valid: the delete re-homed it onto the
+    // nearest surviving mesh and selected that mesh. Measured, the reference
+    // does neither (`tests/fixtures/edit_target_legality.json`, cell
+    // `selection_nonempty_no_target`, step 3 — a scene that HAS a mesh layer
+    // and has NO edit target, reached exactly this way). Re-homing names a
+    // layer the user never selected, which is the substitution task 0654
+    // removed from every other path.
+    //
+    // The delete GUARD is unchanged and is asserted by the case above: the
+    // document always keeps at least one mesh LAYER. That is a different
+    // invariant from "something is always the edit target".
     twoCubeDoc();
-    cmd("layer.select index:1");       // B active
+    cmd("layer.select index:1");       // B is the edit target
     clearHistory();
-    cmd("layer.delete index:1");       // delete the active layer
+    cmd("layer.delete index:1");       // delete it
     assert(layerCount() == 1, "active-layer delete drops it");
-    assert(activeLayer() == 0, "deleting the last/active layer falls back to A");
+    assert(activeLayer() == -1,
+        "deleting the edit target leaves NO edit target — 0 here is a re-home "
+        ~ "onto a layer nobody selected");
     assert(vertCount(0) == 8, "surviving layer A intact");
+    // Not a trap: one select recovers, and it is the only way out.
+    cmd("layer.select index:0");
+    assert(activeLayer() == 0, "a select installs a target again");
 }
 
 // ---------------------------------------------------------------------------
@@ -338,37 +357,59 @@ unittest { // rename reflected in /api/layers + undoable (Model class)
         "layer.add not reverted — only the rename was undone");
 }
 
-unittest { // setVisible / foreground→background (via layer.select) in /api/layers
-    // Stage 2b: `background` is DERIVED (visible && !selected). Stage 5 retired
-    // the `layer.setBackground` alias — backgrounding a layer is now expressed
-    // directly as `layer.select mode:remove` (deselect). To exercise a real
-    // foreground→background round-trip, hold BOTH layers selected first
-    // (mode:add) so backgrounding layer 1 is not the ≥1-selected no-op; then
-    // layer 1 is foreground, and mode:remove deselects it.
+unittest { // setVisible / foreground→background in /api/layers
+    // ~~Stage 2b: `background` is DERIVED (visible && !selected)…
+    // backgrounding a layer is now expressed directly as `layer.select
+    // mode:remove` (deselect).~~
+    //
+    // TASK 0671 — A DESELECT IS NOT A BACKGROUNDING, and that is the whole
+    // shape of the task. Deselecting moves a mesh into its kind's
+    // recently-deselected cache; the classifier tests the whole selection
+    // STATE against zero, so a mesh in that cache is still FOREGROUND. What
+    // actually sends it to the background is a selection of another MESH,
+    // which flushes the bucket (frozen: edit_target_legality, cell
+    // `flush_is_per_item_kind`, step 2 — the count stays 1 and the previous
+    // mesh falls all the way back).
+    //
+    // Both halves are asserted here, in that order, because the first is the
+    // one a `visible && !selected` implementation gets wrong and the second is
+    // the one an implementation that never flushes gets wrong.
     resetCube();
     cmd("layer.add");                  // layer 1 active + selected (set-of-one)
-    cmd("layer.select index:0 mode:add");   // A added ⇒ both selected, A primary
-    // layer 1 is now SELECTED non-primary ⇒ foreground.
+    cmd("layer.select index:0 mode:add");   // A added ⇒ both selected
     assert(getLayers()["layers"].array[1]["background"].type == JSONType.false_,
         "layer 1 starts foreground (selected)");
-    cmd("layer.select index:1 mode:remove");   // deselect ⇒ background
+    cmd("layer.select index:1 mode:remove");   // deselect ⇒ LATCHED, not background
+    {
+        auto l1a = getLayers()["layers"].array[1];
+        assert(l1a["selected"].type == JSONType.false_, "layer 1 is deselected");
+        assert(l1a["background"].type == JSONType.false_,
+            "…and NOT background: it is in the mesh bucket, so its selection "
+            ~ "state is non-zero and it stays an active layer");
+        assert(l1a["foreground"].type == JSONType.true_,
+            "…it reads foreground, which is what `visible && !selected` cannot say");
+    }
+    cmd("layer.select index:0");       // an exclusive select of a MESH: flushes
+    {
+        auto l1b = getLayers()["layers"].array[1];
+        assert(l1b["background"].type == JSONType.true_,
+            "NOW layer 1 is background — selecting a mesh flushed the bucket, "
+            ~ "which is the operation that actually demotes one");
+    }
     cmd("layer.setVisible index:1 value:false");
     auto l1 = getLayers()["layers"].array[1];
     // Derived background requires visible; layer 1 is now hidden, so `background`
     // is false — assert on the underlying `selected` bit (cleared = backgrounded).
     assert(l1["selected"].type == JSONType.false_, "layer 1 deselected (backgrounded)");
     assert(l1["visible"].type == JSONType.false_, "visible flag cleared");
-    // Stack: [layer.add(Model), sel0(UI), sel1-remove(UI), setVisible(Model)].
-    // T-SEP undo: nearest Model from tail = setVisible. Reverts it directly.
+    // Stack tail is [.., setVisible(Model)]. T-SEP undo: nearest Model from
+    // tail = setVisible. Reverts it directly.
     undoOk("undo setVisible");
     assert(getLayers()["layers"].array[1]["visible"].type == JSONType.true_,
         "setVisible undo restores visible");
-    // Visible again + still deselected ⇒ derived background true.
+    // Visible again + no selection state ⇒ derived background true.
     assert(getLayers()["layers"].array[1]["background"].type == JSONType.true_,
-        "layer 1 is visible + deselected ⇒ derived background");
-    // Next undo: nearest Model from tail = layer.add (UI entries carried inert).
-    // But we only want to test the setVisible/select round-trip here, not delete
-    // the layer — stop after the setVisible undo is confirmed above.
+        "layer 1 is visible with no selection state ⇒ derived background");
 }
 
 // ---------------------------------------------------------------------------

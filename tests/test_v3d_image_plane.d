@@ -588,27 +588,34 @@ unittest {
 }
 
 // ===========================================================================
-// T-S6 (task 0668) — a document whose only selected item CANNOT be primary
-// round-trips as such.
+// T-S6 (tasks 0668 / 0671) — a document whose selected set and edit target
+// name DIFFERENT items round-trips as such.
 //
-// WHY THIS ROW EXISTS. 0654 taught the writer to emit `primaryLayer: -1` for
-// "no mesh edit target", and taught the reader to answer it by CLEARING the
-// selection outright — deliberately ignoring every per-layer `selected` bit,
-// on the then-true ground that -1 and a selected layer could not both occur.
-// 0668 makes them occur together on the most ordinary path there is: create
-// a reference plane. Without the reader change, saving that document and
-// opening it again silently deselects the plane — the panel the user had
-// open comes back empty, with nothing anywhere reporting an error.
+// WHY THIS ROW EXISTS, in two layers.
+//
+// 0654 taught the writer to emit `primaryLayer: -1` for "no mesh edit target"
+// and taught the reader to answer it by CLEARING the selection outright,
+// ignoring every per-layer `selected` bit, on the then-true ground that -1 and
+// a selected layer could not both occur. 0668 made them occur together on the
+// most ordinary path there is: create a reference plane.
+//
+// 0671 changed WHICH disagreement this row carries, and made it a harder one.
+// Creating a plane no longer clears the edit target — the mesh is deselected
+// into the mesh history bucket and stays the target — so what gets saved is a
+// file whose `primaryLayer` names an item its own `selected` says is FALSE.
+// A reader that re-selects the item `primaryLayer` names round-trips the
+// document into a different one, silently, with the panel showing a selection
+// the user never left behind.
 //
 // The wrong implementations and their readings:
-//   * the reader keeps 0654's `clearItemSelection()`-and-stop  -> `selected
-//     []` and `focused -1` after the load;
-//   * the reader re-applies `selected` but ALSO obeys it for a mesh, or
-//     repairs -1 back to a real index  -> `primary [0]` / `active 0`, i.e.
-//     the load quietly hands back an edit target the file said was absent;
-//   * the writer emits `primaryLayer: 0` for the absent primary  -> same
-//     reading as above, and the FILE assertion below is what tells the two
-//     apart.
+//   * the reader re-SELECTS the item `primaryLayer` names  -> `selected [0,1]`
+//     after the load, where the file said `[1]`;
+//   * the reader treats an unselected `primaryLayer` as no target  -> `primary
+//     []` / `active -1`, losing the latch the file recorded;
+//   * the reader keeps 0654's `clearItemSelection()`-and-stop  -> `selected []`
+//     and `focused -1`;
+//   * the writer emits the wrong `primaryLayer`  -> the same readings as
+//     above, and the FILE assertions below are what tell writer from reader.
 // ===========================================================================
 unittest {
     int[] selectedIndices() {
@@ -636,29 +643,32 @@ unittest {
     resetCube();
     cmd(`{"id":"imagePlane.add","params":{"name":"Lone Plane"}}`);
     assert(layerCount() == 2, "fixture: the cube and one plane");
-    assert(selectedIndices() == [1] && primaryIndices() == [],
-        "fixture: the plane alone, no edit target — read selected "
-        ~ selectedIndices().to!string ~ " primary " ~ primaryIndices().to!string);
+    assert(selectedIndices() == [1] && primaryIndices() == [0],
+        "fixture (task 0671): the plane alone in the SELECTION, the mesh still "
+        ~ "the EDIT TARGET — read selected " ~ selectedIndices().to!string
+        ~ " primary " ~ primaryIndices().to!string);
 
     cmd(`{"id":"file.save","params":{"path":` ~ jsonStr(path) ~ `}}`);
 
     // The FILE, read as bytes. Distinguishes a writer defect from a reader
     // defect before either is blamed.
     auto onDisk = parseJSON(readText(path));
-    assert(onDisk["primaryLayer"].integer == -1,
-        "the file records the absent edit target as -1, read "
+    assert(onDisk["primaryLayer"].integer == 0,
+        "the file records the LATCHED edit target as its index, read "
         ~ onDisk["primaryLayer"].integer.to!string);
     assert(onDisk["layers"].array[1]["selected"].boolean,
-        "…and still records the plane as SELECTED — -1 alone would be "
-        ~ "indistinguishable from an emptied document");
+        "…and records the plane as SELECTED");
     assert(!onDisk["layers"].array[0]["selected"].boolean,
-        "…and the mesh as not");
+        "…and the mesh as NOT selected, which is the disagreement this row is "
+        ~ "about: `primaryLayer` names an item the file does not mark selected");
     assert(onDisk["focusedItem"].integer == 1,
         "…and names the plane as the focus, read "
         ~ onDisk["focusedItem"].integer.to!string);
 
     resetCube();
-    assert(primaryIndices() == [0], "control: the reset document HAS a primary");
+    assert(primaryIndices() == [0] && selectedIndices() == [0],
+        "control: the reset document has the mesh both selected AND the target, "
+        ~ "so the load has both columns to change");
     cmd(`{"id":"file.load","params":{"path":` ~ jsonStr(path) ~ `}}`);
 
     assert(layerCount() == 2, "the load restored both items");
@@ -666,9 +676,15 @@ unittest {
         "the plane comes back as the ONLY selected item. `[]` is the 0654 "
         ~ "reader (selection dropped); `[0,1]` or `[0]` is a reader that "
         ~ "repaired the absent primary. Read " ~ selectedIndices().to!string);
-    assert(primaryIndices() == [] && activeIndex() == -1,
-        "…and with no edit target, read primary " ~ primaryIndices().to!string
-        ~ " active " ~ activeIndex().to!string);
+    assert(primaryIndices() == [0] && activeIndex() == 0,
+        "…and the LATCHED edit target came back on the mesh, read primary "
+        ~ primaryIndices().to!string ~ " active " ~ activeIndex().to!string);
+    assert(!getLayers()["layers"].array[0]["selected"].boolean,
+        "…without re-selecting it: a reader that installs the target by "
+        ~ "SELECTING it round-trips this document into a different one");
+    assert(getLayers()["layers"].array[0]["foreground"].boolean,
+        "…and it reads FOREGROUND, so what came back is the state that was "
+        ~ "saved and not merely the same index");
     assert(focusedIndex() == 1,
         "…and the plane holds the focus, read " ~ focusedIndex().to!string);
     assert(layerAt(1)["type"].str == "imagePlane",

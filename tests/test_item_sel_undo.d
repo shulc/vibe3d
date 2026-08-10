@@ -79,24 +79,37 @@ JSONValue getLayers() { return getJson("/api/layers"); }
 // The primary invariant — checked after every step. Returns the primary index.
 // ---------------------------------------------------------------------------
 
+/// TASK 0671 — WHAT THE EDIT TARGET STILL OWES, restated.
+///
+/// Three of this oracle's five clauses were the STORED-pointer model, not the
+/// invariant: "primary is never null", "primary must always be selected" and
+/// "at least one selected layer". All three are now representable states the
+/// reference itself sits in — a target latched behind an empty selection, and
+/// a document whose target was deleted. Keeping them would make this oracle
+/// reject exactly what the frozen fixtures measure.
+///
+/// What survives is the part that is actually load-bearing, and one clause is
+/// STRONGER than before: there is never more than one target, and when there is
+/// one it is a FOREGROUND layer — which is what every consumer depends on and
+/// what "selected" was standing in for.
+///
+/// Returns the target's index, or -1 when there is none.
 int assertPrimaryInvariant(string at) {
     auto ls = getLayers()["layers"].array;
     assert(ls.length >= 1, "document must always have >=1 layer at: " ~ at);
     int primaryIdx = -1;
-    int primaryCount = 0, selectedCount = 0;
+    int primaryCount = 0;
     foreach (i, l; ls) {
         if (l["primary"].type  == JSONType.true_) { primaryCount++; primaryIdx = cast(int)i; }
-        if (l["selected"].type == JSONType.true_)   selectedCount++;
     }
-    assert(primaryCount == 1,
-        "exactly one primary required (got " ~ primaryCount.to!string ~ ") at: " ~ at);
-    assert(primaryIdx >= 0, "primary is never null at: " ~ at);
+    assert(primaryCount <= 1,
+        "at most one primary required (got " ~ primaryCount.to!string ~ ") at: " ~ at);
+    if (primaryIdx < 0) return -1;
     auto p = ls[primaryIdx];
-    assert(p["selected"].type == JSONType.true_,
-        "primary must always be selected (foreground) at: " ~ at);
-    assert(p["visible"].type  == JSONType.true_,
-        "primary must always be visible at: " ~ at);
-    assert(selectedCount >= 1, "at least one selected layer at: " ~ at);
+    assert(p["foreground"].type == JSONType.true_,
+        "the edit target must be a FOREGROUND layer at: " ~ at);
+    assert(p["background"].type == JSONType.false_,
+        "…and never a background one — dimmed, read-only and written to at: " ~ at);
     return primaryIdx;
 }
 
@@ -286,7 +299,16 @@ unittest {
     assert(afterAddB.lastCurrentType == "item",
         "item selection makes Item the current type");
     int pAddB = assertPrimaryInvariant("after add B");
-    assert(pAddB == 1, "newest add (B) is primary");
+    // TASK 0671: an `add` appends to the selection queue and the edit target is
+    // the queue's HEAD, so it stays on A. This line used to read `== 1`.
+    assert(pAddB == 0, "an add does not promote — the target stays on A");
+
+    // Move the target to B EXPLICITLY, then edit its geometry. Before 0671 the
+    // add above did this as a side effect; making it a step of its own is what
+    // keeps the rest of the phase testing what it was testing.
+    expectPublish("set-primary B (item)", c => c.totalSelItem,
+        () { cmd("layer.select index:1"); });
+    assert(assertPrimaryInvariant("after set B") == 1, "B is the edit target now");
 
     // Edit the NEW primary B's geometry. totalPosition publishes again; the
     // primary (B) is the edit target. (move_vertex targets the active layer.)
@@ -303,8 +325,8 @@ unittest {
 
     // Re-add B and C, then BACKGROUND B (mode:remove). Backgrounding is a pure
     // item-selection event (the retired BackgroundChanged kind never fires).
-    cmd("layer.select index:1 mode:add");   // A,B selected, B primary
-    cmd("layer.select index:2 mode:add");   // A,B,C selected, C primary
+    cmd("layer.select index:1 mode:add");   // A,B selected; A heads the queue
+    cmd("layer.select index:2 mode:add");   // A,B,C selected; A still heads it
     assertPrimaryInvariant("after re-add B,C");
     settle();                               // drain ActiveChanged from the two adds above
     auto beforeBg = changes();

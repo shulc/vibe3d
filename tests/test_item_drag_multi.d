@@ -210,7 +210,20 @@ void buildRig() {
     author(1, B_POS, B_ROT, B_SCL, B_PIVOT);
     author(2, C_POS, [0.0,0.0,0.0], [1.0,1.0,1.0], [0.0,0.0,0.0]);
 
-    cmd("layer.select index:1 mode:set");
+    // TASK 0671 — `set 0` then `add 1`, not the other way round. The edit
+    // target is the HEAD of the selection queue, so the old order left it on
+    // layer 1 and the rig's own premise (layer 0 is the target) stopped
+    // holding. The SET is identical either way; only which of the two heads
+    // the queue moved, and this rig has always wanted layer 0 there.
+    // TASK 0671 — three steps where two used to do. The rig needs layer 0 to
+    // be BOTH the edit target (the queue HEAD, hence the `set` first) and the
+    // item-transform target (the FOCUS, hence the trailing `add` on an item
+    // that is already selected — an `add` moves the focus whether or not it
+    // changes the set). Before 0671 the two pointers moved in lockstep and
+    // `set 1; add 0` put both on layer 0 in one step; they are separable now,
+    // and this rig wants them together.
+    cmd("layer.select index:0 mode:set");
+    cmd("layer.select index:1 mode:add");
     cmd("layer.select index:0 mode:add");
 
     auto ls = layers();

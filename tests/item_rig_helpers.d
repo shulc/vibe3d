@@ -155,9 +155,9 @@ void buildThreeItemRig(JSONValue rig) {
 /// geometry-derived candidates are genuinely computable), the distinguished
 /// item is the index the fixture names, and the Item selection type is current.
 ///
-/// Also asserts the two SEPARATIONS the rig exists to provide: the
-/// distinguished item is neither the first item in the layer list nor the last
-/// one. Without those, a reading of `layers[0]` or `layers[$-1]` would agree
+/// Also asserts the SEPARATIONS the rig exists to provide: the distinguished
+/// item is neither the first item in the layer list nor the last one, and
+/// (task 0671) it is not the mesh edit target either. Without those, a reading of `layers[0]` or `layers[$-1]` would agree
 /// with the correct law by construction and the rejected numbers below would
 /// never be reached.
 void assertItemRigPremises(JSONValue rig) {
@@ -167,19 +167,41 @@ void assertItemRigPremises(JSONValue rig) {
            format("rig has %d items, got %d", n, layers.length));
 
     size_t nSelected = 0;
-    long   primary   = -1;
+    long   focused   = -1;
+    long   editTarget = -1;
     foreach (l; layers) {
         if (l["selected"].type == JSONType.true_) ++nSelected;
-        if (l["primary"].type  == JSONType.true_) primary = l["index"].integer;
+        if ("focused" in l && l["focused"].type == JSONType.true_)
+            focused = l["index"].integer;
+        if (l["primary"].type  == JSONType.true_) editTarget = l["index"].integer;
         assert(l["vertexCount"].integer == 8,
                "each item carries real geometry, so the rejected geometry-derived "
                ~ "candidates are genuinely computable: " ~ l.toString);
     }
     assert(nSelected == n, format("all %d items selected, got %d", n, nSelected));
 
+    // TASK 0671 — THE DISTINGUISHED ITEM IS THE FOCUS, NOT THE EDIT TARGET,
+    // and separating them is what this task made possible.
+    //
+    // The captured law is "the LAST one added is distinguished" (the fixture's
+    // own provenance says so, and its `selection_order` is built around it).
+    // That is the item-selection FOCUS. It used to be readable off `primary`
+    // only because an `add` promoted the newest item to the edit target as a
+    // side effect — the two pointers moved in lockstep and either could stand
+    // in for the other.
+    //
+    // 0671 read the reference's own model: the edit target is the HEAD of the
+    // selection queue, so with `set 0; add 2; add 1` it is item 0 while the
+    // focus is item 1. The premise therefore reads the column it always meant,
+    // and asserts the separation rather than losing it.
     immutable long want = rig["primary_is"].integer;
-    assert(primary == want,
-           format("the distinguished item must be index %d, got %d", want, primary));
+    assert(focused == want,
+           format("the distinguished item must be index %d, got %d", want, focused));
+    assert(editTarget != want,
+           format("rig premise (task 0671): the distinguished item (%d) must NOT "
+                  ~ "also be the mesh EDIT TARGET (%d) — they are two different "
+                  ~ "questions now, and a rig where they coincide cannot tell a "
+                  ~ "consumer bound to the wrong one apart", want, editTarget));
 
     assert(want != 0 && want != cast(long)(n - 1),
            format("rig premise: the distinguished item is index %d of %d — it must be "

@@ -300,7 +300,11 @@ unittest {
         cmd(`{"id":"layer.delete","index":1}`);
         auto s3 = docState();
         assert(s3.layerCount == 1, format("step 3: one layer left, got %d", s3.layerCount));
-        assert(s3.selected.length == 0, "step 3: nothing is selected");
+        assert(s3.selected.length == 0,
+            format("step 3: nothing is selected, got %s — a non-empty set here "
+                 ~ "is a delete that RE-SELECTED a survivor, which is the "
+                 ~ "pre-0671 behaviour and the reason there was always a target",
+                   s3.selected.to!string));
         assert(s3.editTarget == -1,
             format("step 3: THE STATE — a scene that HAS a mesh layer and has NO edit "
                  ~ "target, got %d. Mesh A's state was flushed at step 2 and the item that "

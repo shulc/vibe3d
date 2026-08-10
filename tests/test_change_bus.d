@@ -581,10 +581,17 @@ unittest {
 unittest {
     post(baseUrl ~ "/api/reset", "");
     cmd("layer.add name:B");                 // need >1 layer (B active + selected)
-    cmd("layer.select index:0 mode:add");    // A added ⇒ both selected, A primary
+    // TASK 0671 — `set A` then `add B`, not `add A`. The edit target is the
+    // HEAD of the selection queue, so `add A` would leave it on B and
+    // deselecting B below would MOVE it, bumping ActiveChanged — a real event,
+    // for a reason that has nothing to do with the channel this row guards.
+    // Selecting A first makes A the head, so the deselect touches nothing but
+    // the selection.
+    cmd("layer.select index:0");             // A alone, A is the target
+    cmd("layer.select index:1 mode:add");    // + B selected, A still the target
     auto before = settleAfter(readChanges());
 
-    cmd("layer.select index:1 mode:remove"); // deselect B ⇒ background
+    cmd("layer.select index:1 mode:remove"); // deselect B
     auto after = settleAfter(before);
 
     // No LAYER-channel counter moves — backgrounding is not a layer-structural

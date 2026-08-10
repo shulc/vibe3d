@@ -178,12 +178,25 @@ unittest {
     // =======================================================================
     // Clear the item selection — the state the owner was in.
     // =======================================================================
-    cmdOk("layer.select mode:clear");
+    // TASK 0671 — `layer.select mode:clear` no longer reaches this state, and
+    // that is the point of the task: deselecting moves a mesh into its kind's
+    // recently-deselected cache and the edit target is the head of a walk over
+    // [current ++ that cache], so an empty item selection keeps its target
+    // (frozen: tests/fixtures/edit_target_legality.json, cell
+    // `target_set_nothing_selected`). Reaching "no edit target" now means
+    // taking the target AWAY: duplicate the layer — the duplicate's exclusive
+    // select flushes the mesh bucket, so the original loses its state — then
+    // delete the duplicate, which removes the only item that had one.
+    cmdOk("layer.duplicate");
+    cmdOk("layer.delete index:1");
     {
         auto layers = getJson("/api/layers");
         assert(layers["active"].integer == -1,
-            "the selection did not actually empty; every row below would be "
-            ~ "asserting the WITH-target state a second time");
+            "the document did not actually lose its edit target; every row "
+            ~ "below would be asserting the WITH-target state a second time");
+        assert(layers["layers"].array.length == 1,
+            "…and it is a one-layer document again, so the rows below see the "
+            ~ "same shape they did with a target");
     }
 
     // =======================================================================
@@ -341,8 +354,19 @@ unittest {
     // =======================================================================
     {
         cmdOk("layer.select index:0 mode:set");
+        // TASK 0671 — the tool has to be armed on a layer that is then TAKEN
+        // AWAY, because `layer.select mode:clear` (what this row used to use)
+        // leaves the target latched. Duplicate, arm on the clone, delete the
+        // clone: the document ends with one layer and no edit target, under an
+        // armed tool — the exact state this row guards.
+        cmdOk("layer.duplicate");
         cmdOk("tool.set prim.cube");
-        cmdOk("layer.select mode:clear");
+        cmdOk("layer.delete index:1");
+        {
+            auto ls = getJson("/api/layers");
+            assert(ls["active"].integer == -1,
+                "precondition: the arming layer is gone and no target replaced it");
+        }
         auto bar = readBar();
         auto box = bar.byLabel("Box");
         if (bar.activeToolId == "prim.cube")
@@ -352,7 +376,7 @@ unittest {
                 ~ "strands the user inside a tool with no way to press out.");
         else
             assert(box["disabled"].boolean,
-                format("the tool was dropped when the selection emptied "
+                format("the tool was dropped when the edit target went away "
                        ~ "(activeToolId '%s'), so arming 'Box' again needs a "
                        ~ "target and it must be unavailable", bar.activeToolId));
         // A DIFFERENT tool needs a target either way.

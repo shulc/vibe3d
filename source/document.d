@@ -2145,9 +2145,19 @@ struct Document {
     /// as if it were a cause, which is the stored-pointer model creeping back
     /// in through the undo stack.
     static struct ItemSelectionState {
-        private Layer[]   current;      ///< selected, in seat order
+        private Layer[]   current;      ///< selected, in `layers` order
         private long[]    currentSeats; ///< parallel to `current`
         private Layer[][ItemKind.max + 1] history;
+        /// Seats for the history entries, parallel to `history`. Recorded
+        /// separately from the current ones because a seat is not a property
+        /// of either LIST — it lives on the `Layer`, so an item that leaves the
+        /// current list and rejoins it (a `setPrimary` between capture and
+        /// restore is enough) carries a seat the capture never saw. Without
+        /// this the restore would put the right items in the right lists in the
+        /// wrong ORDER, which is the one way a "restore" can be silently
+        /// partial: every membership assertion passes and the edit target is
+        /// somebody else.
+        private long[][ItemKind.max + 1]  historySeats;
         private Layer     focus;
         private long      seatBack;
         private long      seatFront;
@@ -2160,11 +2170,36 @@ struct Document {
             s.current      ~= l;
             s.currentSeats ~= l.selSeat;
         }
-        foreach (k; 0 .. ItemKind.max + 1) s.history[k] = deselected_[k].dup;
+        foreach (k; 0 .. ItemKind.max + 1) {
+            s.history[k] = deselected_[k].dup;
+            foreach (h; deselected_[k]) s.historySeats[k] ~= h.selSeat;
+        }
         s.focus     = focusedItem;
         s.seatBack  = selSeatBack_;
         s.seatFront = selSeatFront_;
         return s;
+    }
+
+    /// Drop the WHOLE item-selection state: both lists, the focus, the seat
+    /// allocators. For a WHOLESALE document replacement — a file load, a scene
+    /// reset — where the old state names items that are not in this document
+    /// at all (task 0671).
+    ///
+    /// Distinct from `clearItemSelection`, and the difference is the point:
+    /// clearing the selection is a user OPERATION and it MOVES the selected
+    /// items into their history buckets (which is why the edit target survives
+    /// it). This throws the buckets away too. Calling `clearItemSelection` on
+    /// a replaced document would be harmless only by accident — the walk
+    /// filters by membership — but it would leave the previous document's
+    /// items reachable from the new one's state, and that is the sort of
+    /// accident that stops being harmless the first time something iterates
+    /// the buckets for another reason.
+    void resetSelectionState() {
+        foreach (l; layers) if (l !is null) l.selected = false;
+        foreach (k; 0 .. ItemKind.max + 1) deselected_[k] = null;
+        focusedItem   = null;
+        selSeatBack_  = 0;
+        selSeatFront_ = 0;
     }
 
     /// Put back exactly what `captureItemSelection` recorded.
@@ -2183,7 +2218,11 @@ struct Document {
             l.selected = true;
             l.selSeat  = s.currentSeats[i];
         }
-        foreach (k; 0 .. ItemKind.max + 1) deselected_[k] = s.history[k].dup;
+        foreach (k; 0 .. ItemKind.max + 1) {
+            deselected_[k] = s.history[k].dup;
+            foreach (i, h; s.history[k])
+                if (h !is null && !h.selected) h.selSeat = s.historySeats[k][i];
+        }
         focusedItem   = isMember(s.focus) && s.focus.selected ? s.focus : null;
         selSeatBack_  = s.seatBack;
         selSeatFront_ = s.seatFront;
@@ -2228,6 +2267,35 @@ struct Document {
         noteSelected(l);
         l.selSeat   = --selSeatFront_;
         focusedItem = l;
+    }
+
+    /// Make `l` the edit target WITHOUT selecting it — the reconstruction of a
+    /// LATCHED target, for a reader restoring a document that was saved in that
+    /// state (task 0671; `io/native.d`).
+    ///
+    /// WHY A READER NEEDS THIS AND NOTHING ELSE DOES. `.v3d` records the
+    /// selected SET per item and the edit target as one index. In every state
+    /// reachable before this task those two agreed — the target was always
+    /// selected — so a loader could re-select the named item and be done. A
+    /// latched target is the state where they disagree: `"primaryLayer": 2`
+    /// with layer 2's `"selected": false`. Re-selecting it would round-trip a
+    /// document into a DIFFERENT one, quietly, with the panel showing a
+    /// selection the user did not leave behind.
+    ///
+    /// So this puts the item where the state that produced it would have: at
+    /// the front of its kind's history bucket, which is precisely what "it was
+    /// deselected most recently, and nothing has been selected of its kind
+    /// since" means.
+    ///
+    /// It is NOT a general affordance and there is deliberately no command for
+    /// it. Interactively the latch is always a CONSEQUENCE — of a deselect
+    /// that happened — and a verb that produced one directly would be the
+    /// stored pointer wearing a different name.
+    void latchEditTarget(Layer l) {
+        if (!isMember(l) || l.selected) return;
+        l.selSeat = --selSeatFront_;
+        foreach (h; deselected_[l.kind]) if (h is l) return;   // already listed
+        deselected_[l.kind] ~= l;
     }
 
     /// ~~Hide-primary promotion helper (called by the setVisible command path).

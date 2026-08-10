@@ -257,10 +257,17 @@ unittest { // an out-of-range primaryLayer is clamped, not rejected
     assert(m["faceCount"].integer == 1, "clamped primary layer face count");
 }
 
-unittest { // an inconsistent file (primary marked deselected) is forced selected
-    // The file names layer 0 primary but marks it `selected:false`. The reader
-    // must FORCE the primary selected (the edit target can't be deselected), so
-    // the re-saved file shows it selected.
+unittest { // a file whose edit target is marked deselected round-trips LATCHED
+    // ~~an inconsistent file (primary marked deselected) is forced selected…
+    // the reader must FORCE the primary selected (the edit target can't be
+    // deselected).~~
+    //
+    // TASK 0671 — that file is not inconsistent any more, it is the ordinary
+    // encoding of a latched edit target: drop the item selection, or select a
+    // reference plane, and this is what gets written. Forcing it selected would
+    // round-trip the document into a different one. The reader now seats the
+    // named item at the head of its kind's recently-deselected cache instead —
+    // the state that produces exactly this file.
     enum string path = "/tmp/vibe3d-test-v3-inconsistent.v3d";
     write(path,
         `{"formatVersion":8,"primaryLayer":0,"layers":[`
@@ -277,8 +284,12 @@ unittest { // an inconsistent file (primary marked deselected) is forced selecte
     scope(exit) if (exists(outp)) remove(outp);
     runCmd("file.save", `{"path":"` ~ outp ~ `"}`);
     auto saved = parseJSON(readText(outp));
-    assert(saved["layers"].array[0]["selected"].type == JSONType.true_,
-        "the primary must be forced selected even if the file marked it deselected");
+    assert(saved["layers"].array[0]["selected"].type == JSONType.false_,
+        "the deselected edit target stays deselected across the round trip — "
+        ~ "`true` here is a reader that installs the target by SELECTING it");
+    assert(saved["primaryLayer"].integer == 0,
+        "…and it is still named as the edit target, so what came back is the "
+        ~ "state that was read and not merely an emptied selection");
 }
 
 unittest { // a legacy v2 file is now REJECTED cleanly (the deliberate Stage 3 break)

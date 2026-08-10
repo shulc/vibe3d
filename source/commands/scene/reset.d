@@ -35,6 +35,17 @@ class SceneReset : Command {
     private bool             docCollapsed;   // true when we replaced the layer list
     // Task 0654: the item selection was EMPTY at fire time and apply() re-homed
     // a primary so it had a mesh to write. revert() owes the empty state back.
+    /// TASK 0671 — the exact prior item-selection state (both lists, the
+    /// order, the focus). Replaces the `prevActiveIndex` + `prevSelectionEmpty`
+    /// pair, which recorded a DERIVED index plus a flag for the one case that
+    /// index could not express; neither could express a latched target, and
+    /// the `clearItemSelection()` used to restore the empty case now LATCHES
+    /// rather than empties.
+    private Document.ItemSelectionState prevSelection;
+    /// Whether the document had NO edit target at fire time, which `apply()`
+    /// repairs by re-homing one so it has a mesh to write. Kept beside the
+    /// snapshot rather than derived from it: the snapshot is opaque by design,
+    /// and this flag gates a MUTATION in `apply()`, not a restore.
     private bool             prevSelectionEmpty;
     // The kept active layer's original metadata (apply overwrites it to the
     // default "Layer 1"/visible; revert restores these). Foreground/background
@@ -123,6 +134,10 @@ class SceneReset : Command {
         // "find a layer that can be the edit target", the same one a structural
         // mutation runs; null from it means a document with no `canBePrimary`
         // item at all, which is unrepresentable, so that one really does refuse.
+        // Task 0671: capture BEFORE the rehome below, so an undo puts back the
+        // no-target state rather than the one this command manufactured to
+        // have somewhere to write.
+        if (document !is null) prevSelection = document.captureItemSelection();
         prevSelectionEmpty = document !is null && document.layers.length > 0
                           && !document.hasEditTarget();
         if (prevSelectionEmpty) {
@@ -174,6 +189,10 @@ class SceneReset : Command {
             // Task 0082: clear the parent link on reset (-j8 bleed fix).
             keep.parent     = null;
             document.layers      = [ keep ];
+            // Task 0671: the item-selection state still names the layers this
+            // collapse just dropped — forget it wholesale before re-selecting,
+            // rather than leaving them reachable from a history bucket.
+            document.resetSelectionState();
             // Stage-0 lockstep: one selected primary layer (the surviving
             // active one) — setActive(0) re-asserts the SET-of-one.
             document.setActive(0);
@@ -275,14 +294,14 @@ class SceneReset : Command {
             keep.xform      = keptPrevXform;
             keep.parent     = keptPrevParent;
             document.layers      = prevLayers;
-            // Restore primary/selected/activeIndex in lockstep (setActive
-            // clamps the index into range).
-            document.setActive(prevActiveIndex);
-            // Task 0654: apply() re-homed a primary onto an empty selection so
-            // it had somewhere to write. Undo owes that back — otherwise
-            // Ctrl+Z after a reset leaves an item selected that the user never
-            // picked. LAST, so it overrides the `setActive` above.
-            if (prevSelectionEmpty) document.clearItemSelection();
+            // TASK 0671 — one exact restore. `apply()` re-homed a target onto a
+            // document that had none so it had somewhere to write; undo owes
+            // that back, and the snapshot is what owes it — the
+            // `setActive` + `clearItemSelection` pair this replaces would now
+            // put the re-homed item into a history bucket instead of forgetting
+            // it, i.e. hand back a target the user never had.
+            document.resetSelectionState();
+            document.restoreItemSelection(prevSelection);
         }
         // Camera/viewport state isn't snapshotted — undoing a reset doesn't
         // restore the camera, only the mesh. The viewport reset is delegated

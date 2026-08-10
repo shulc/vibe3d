@@ -26,9 +26,29 @@
 // The wrong implementations each row catches
 // ---------------------------------------------------------------------------
 //   * a viewport miss in Items mode does nothing (the pre-0654 branch)
-//       -> covered by tests/test_item_click_select.d U3, not here; this file
-//          drives the state through `layer.select mode:clear` so it can also
-//          run on documents no click can reach.
+//       -> covered by tests/test_item_click_select.d U3, not here.
+//
+// ---------------------------------------------------------------------------
+// TASK 0671 — HOW THE STATE IS REACHED CHANGED, AND THAT IS THE FINDING
+// ---------------------------------------------------------------------------
+// Every row below used to drive the state with `layer.select mode:clear`. That
+// does not produce it any more. 0670 read the reference's mechanism: deselecting
+// MOVES an item into a cache of recently deselected elements, bucketed by item
+// kind, and the edit target is the head of a walk over [current selection ++
+// that cache]. So dropping the whole item selection empties the SELECTION and
+// leaves the target exactly where it was — measured, and frozen in
+// `tests/fixtures/edit_target_legality.json`, cell `target_set_nothing_selected`.
+//
+// 0654 measured the first half of that (a viewport miss empties the selection)
+// and INFERRED the second. Nothing here is retracted: the absent edit target is
+// still a legal state, every refusal below is still owed, and none of the values
+// asserted has moved. Only the RIG moved — the state is now reached the way the
+// reference's own fixture reaches it, by taking the target away rather than by
+// deselecting it (`noEditTarget()` below).
+//
+// E1 keeps the old rig too, as the discriminating row: it asserts that a clear
+// does NOT produce this state. That is the one assertion in this file that a
+// pre-0671 build fails.
 //   * `Document.activeIndex` keeps answering 0 for an absent primary
 //       -> E1 "`/api/layers` reports active 0".
 //   * the set empties but `primary` stays latched (the forbidden third state)
@@ -138,9 +158,46 @@ private size_t faceCountOf(int layer) {
     return j["faces"].array.length;
 }
 
-/// Empty the item selection through the command layer, and assert it took.
+/// Empty the item selection through the command layer.
+///
+/// TASK 0671: this no longer produces an absent edit target — it produces the
+/// LATCHED one. Kept, and used by the rows that are genuinely about the
+/// selection (E5, E6, E7) and by E1's discriminating row.
 private void clearSelection() {
     cmd(`{"id":"layer.select","mode":"clear"}`);
+}
+
+/// Reach the state with NO mesh edit target, and leave layer 0 holding the
+/// original reset cube (8 verts / 6 faces) so every row below can read it.
+///
+/// THE CONSTRUCTION, and why it takes three steps rather than one:
+///   1. duplicate layer 0. The duplicate's `setActive` is an exclusive select
+///      of the CLONE, and selecting a mesh FLUSHES the mesh bucket — so the
+///      original loses its selection state entirely rather than being latched.
+///      This is `edit_target_legality`'s cell `flush_is_per_item_kind`, step 2.
+///   2. delete the clone. The item holding the target leaves the document, and
+///      the target is derived by enumerating `layers`, so it stops being an
+///      answer. Nothing is promoted in its place.
+///   3. what is left is one mesh layer, unselected, with no target — which is
+///      `edit_target_legality`'s cell `selection_nonempty_no_target`, step 3.
+///
+/// A DUPLICATE and not `layer.add`: an added layer carries no geometry, and
+/// two rows here read the surviving layer's vertex count.
+private void noEditTarget() {
+    resetCube();
+    cmd(`{"id":"layer.duplicate"}`);
+    assert(getJson("/api/layers")["layers"].array.length == 2,
+        "rig: the duplicate landed");
+    assert(activeIndex() == 1, "rig: the clone took the edit target");
+    cmd(`{"id":"layer.delete","index":1}`);
+    assert(getJson("/api/layers")["layers"].array.length == 1,
+        "rig: the clone is gone");
+    assert(selectedItems() == [] && activeIndex() == -1,
+        format("rig: nothing selected and NO edit target — selected %s "
+               ~ "active %d. If this fires, the rig itself is broken and every "
+               ~ "row below would be asserting refusals against a document that "
+               ~ "has a target.", selectedItems(), activeIndex()));
+    cmd(`{"id":"history.clear"}`);
 }
 
 /// One step of undo, through `/api/undo`.
@@ -169,19 +226,35 @@ private void undoOk(string why) {
 //      to every other question.
 // ---------------------------------------------------------------------------
 unittest {
+    // --- the discriminating half (task 0671): a CLEAR does not get you here --
     resetCube();
     assert(selectedItems() == [0] && activeIndex() == 0,
         "precondition: the reset document has exactly layer 0 selected + primary");
-
     clearSelection();
-
     assert(selectedItems() == [],
         format("clearing empties the item SET — selected %s", selectedItems()));
+    assert(activeIndex() == 0,
+        format("…and does NOT drop the edit target — it reads %d, want 0. "
+               ~ "Deselecting MOVES an item into its kind's recently-deselected "
+               ~ "cache, and the target is the head of a walk over [current ++ "
+               ~ "that cache], so an empty item selection with a live edit "
+               ~ "target is a legal state (frozen: edit_target_legality, cell "
+               ~ "target_set_nothing_selected). -1 here is the pre-0671 model, "
+               ~ "which inferred this half instead of measuring it.",
+               activeIndex()));
+    assert(getJson("/api/layers")["layers"][0]["foreground"].type == JSONType.true_,
+        "…and the latched layer is FOREGROUND, not a dimmed background layer "
+        ~ "that the toolpipe is nevertheless writing to");
+
+    // --- the state itself ---------------------------------------------------
+    noEditTarget();
+
+    assert(selectedItems() == [],
+        format("no item is selected — selected %s", selectedItems()));
     assert(primaryRows() == [],
-        format("…and drops the primary with it — rows reporting primary:true "
-               ~ "are %s. A non-empty answer here is the forbidden third state: "
-               ~ "an edit target latched behind an empty selection, which "
-               ~ "renders as background and is invisible to the user.",
+        format("…and no row reports primary:true — rows reporting it are %s. "
+               ~ "A non-empty answer here is a target rehomed onto a layer "
+               ~ "nobody selected, which the delete path used to do.",
                primaryRows()));
     assert(activeIndex() == -1,
         format("…and `active` names no layer — it reads %d. 0 is the silent "
@@ -189,10 +262,14 @@ unittest {
                ~ "one'); 1 is the in-process absent-sentinel leaking to the "
                ~ "wire as a plausible index.", activeIndex()));
     // Every visible layer is BACKGROUND now — the derived rule, read back.
-    foreach (i, l; getJson("/api/layers")["layers"].array)
+    foreach (i, l; getJson("/api/layers")["layers"].array) {
         assert(l["background"].type == JSONType.true_,
-            format("layer %d must be background with nothing selected "
-                   ~ "(background == visible && !selected)", i));
+            format("layer %d must be background with no selection state "
+                   ~ "anywhere", i));
+        assert(l["foreground"].type == JSONType.false_,
+            format("layer %d must not ALSO read foreground — the two are arms "
+                   ~ "of one classifier, not a value and its negation", i));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -205,14 +282,12 @@ unittest {
 //      the same field, and the second cannot hide behind the first.
 // ---------------------------------------------------------------------------
 unittest {
-    resetCube();
+    noEditTarget();
     immutable size_t v0 = vertexCountOf(0);
     immutable size_t f0 = faceCountOf(0);
     assert(v0 == 8 && f0 == 6,
-        format("precondition: the reset cube is 8 verts / 6 faces, got %d / %d",
-               v0, f0));
-
-    clearSelection();
+        format("precondition: the surviving layer is the reset cube, 8 verts / "
+               ~ "6 faces, got %d / %d", v0, f0));
 
     auto msg = cmdRefused(`{"id":"mesh.subdivide"}`, "E2");
     assert(msg.canFind(kReason),
@@ -238,8 +313,7 @@ unittest {
 //      that separates them is that a refusal has NO `vertices` array at all.
 // ---------------------------------------------------------------------------
 unittest {
-    resetCube();
-    clearSelection();
+    noEditTarget();
 
     auto j = getJson("/api/model");
     assert("error" in j,
@@ -265,8 +339,7 @@ unittest {
 //      drag.
 // ---------------------------------------------------------------------------
 unittest {
-    resetCube();
-    clearSelection();
+    noEditTarget();
 
     auto msg = cmdRefused(`{"id":"tool.set","_positional":["prim.cube"]}`, "E4");
     assert(msg.canFind(kReason),
@@ -290,23 +363,69 @@ unittest {
     cmd(`{"id":"layer.add"}`);
     cmd(`{"id":"layer.select","index":0,"mode":"set"}`);
     cmd(`{"id":"layer.select","index":1,"mode":"add"}`);
-    assert(selectedItems() == [0, 1] && activeIndex() == 1,
-        format("precondition: both layers selected, 1 primary — selected %s "
-               ~ "active %d", selectedItems(), activeIndex()));
+    // TASK 0671: `add` does not promote — the edit target is the head of the
+    // selection queue, so it stays on the FIRST-selected layer 0.
+    assert(selectedItems() == [0, 1] && activeIndex() == 0,
+        format("precondition: both layers selected, 0 is the target — selected "
+               ~ "%s active %d", selectedItems(), activeIndex()));
     // Drop the Model entry (`layer.add`) from the stack so the clear below is
     // an all-UI tail and the single undo therefore steps ON it — see undoOk.
     cmd(`{"id":"history.clear"}`);
 
     clearSelection();
-    assert(selectedItems() == [] && activeIndex() == -1, "precondition: emptied");
+    assert(selectedItems() == [], "precondition: the SELECTION emptied");
 
     undoOk("the clear");
     assert(selectedItems() == [0, 1],
         format("undo must bring the WHOLE prior set back — selected %s. [1] "
                ~ "alone is an undo that restored only the primary.",
                selectedItems()));
+    assert(activeIndex() == 0,
+        format("…including which member headed the queue — active %d",
+               activeIndex()));
+}
+
+// ---------------------------------------------------------------------------
+// E5b (task 0671) — the undo restores the DESELECT CACHE too, not only the
+//      selected bits.
+//
+//      The rig makes the two halves disagree: layer 1 is the edit target and
+//      layer 0 is not selected at all, so a `clear` latches ONLY layer 1. Undo
+//      that clear, then clear again — if the revert had put back the bits and
+//      left the cache alone, the second clear would find layer 0 already in the
+//      bucket from an operation that has been undone, and the target would come
+//      back as layer 0.
+//
+//      This is the row that says the snapshot is the whole state. An undo that
+//      restores a DERIVED value (which item was the target) instead of the
+//      state it is derived from passes E5 and fails here.
+// ---------------------------------------------------------------------------
+unittest {
+    resetCube();
+    cmd(`{"id":"layer.add"}`);
+    cmd(`{"id":"layer.select","index":0,"mode":"set"}`);
+    cmd(`{"id":"layer.select","index":1,"mode":"set"}`);   // flushes layer 0 out
+    assert(selectedItems() == [1] && activeIndex() == 1,
+        format("precondition: only layer 1 is selected and it is the target — "
+               ~ "selected %s active %d", selectedItems(), activeIndex()));
+    cmd(`{"id":"history.clear"}`);
+
+    clearSelection();
+    assert(selectedItems() == [] && activeIndex() == 1,
+        format("the clear latches layer 1 and only layer 1 — selected %s "
+               ~ "active %d", selectedItems(), activeIndex()));
+
+    undoOk("the clear");
+    assert(selectedItems() == [1] && activeIndex() == 1,
+        format("undo restores the selection — selected %s active %d",
+               selectedItems(), activeIndex()));
+
+    clearSelection();
     assert(activeIndex() == 1,
-        format("…including which member was primary — active %d", activeIndex()));
+        format("…and re-clearing latches layer 1 AGAIN, reading %d. 0 here is "
+               ~ "an undo that restored the selected bits and left the "
+               ~ "deselect cache holding a layer the undone operation put "
+               ~ "there.", activeIndex()));
 }
 
 // ---------------------------------------------------------------------------
@@ -319,22 +438,31 @@ unittest {
 //      through the undo stack rather than through a click.
 // ---------------------------------------------------------------------------
 unittest {
+    // TASK 0671 — TWO layers, so the undo has a value to get WRONG. With one
+    // layer the state before and after the select agree on the edit target
+    // (layer 0 either way) and only the selected set moves; here the target
+    // moves too, from the latched layer 1 back to layer 0 and back again.
     resetCube();
+    cmd(`{"id":"layer.duplicate"}`);                 // layer 1 selected + target
     clearSelection();
-    assert(activeIndex() == -1, "precondition: emptied");
+    assert(selectedItems() == [] && activeIndex() == 1,
+        format("precondition: nothing selected, layer 1 LATCHED — selected %s "
+               ~ "active %d", selectedItems(), activeIndex()));
     cmd(`{"id":"history.clear"}`);     // all-UI tail from here — see undoOk
 
     cmd(`{"id":"layer.select","index":0,"mode":"set"}`);
-    assert(activeIndex() == 0, "precondition: selected again");
+    assert(selectedItems() == [0] && activeIndex() == 0,
+        "precondition: selecting layer 0 flushes the bucket and takes the target");
 
-    undoOk("the select out of the empty state");
+    undoOk("the select out of the empty-selection state");
     assert(selectedItems() == [],
-        format("undoing a select made FROM the empty state must return to it — "
-               ~ "selected %s", selectedItems()));
-    assert(activeIndex() == -1,
-        format("…with no primary — active %d. 0 is `setActive` clamping the "
-               ~ "absent-sentinel index into the last layer and selecting it.",
-               activeIndex()));
+        format("undoing a select made FROM the empty selection must return to "
+               ~ "it — selected %s", selectedItems()));
+    assert(activeIndex() == 1,
+        format("…with the LATCH back on layer 1 — active %d. 0 is an undo that "
+               ~ "restored the bits and left the mesh bucket flushed by the "
+               ~ "select it just reverted; -1 is one that forgot the latch "
+               ~ "existed.", activeIndex()));
 }
 
 // ---------------------------------------------------------------------------
@@ -354,28 +482,65 @@ unittest {
     // would make this row fail for a reason that is not about the selection.
     cmd(`{"id":"layer.duplicate"}`);
     clearSelection();
-    assert(activeIndex() == -1, "precondition: emptied");
+    // TASK 0671 — what gets saved is now the state the two halves DISAGREE on:
+    // nothing selected, and layer 1 still the edit target. That is what makes
+    // this row a real round-trip test instead of a test that -1 survives -1.
+    assert(selectedItems() == [] && activeIndex() == 1,
+        format("precondition: nothing selected, layer 1 LATCHED — selected %s "
+               ~ "active %d", selectedItems(), activeIndex()));
 
     immutable string path = buildPath(tempDir(), "vibe3d_0654_empty.v3d");
     if (exists(path)) remove(path);
     cmd(format(`{"id":"file.save","path":%s}`, JSONValue(path).toString));
     assert(exists(path), "precondition: the save produced a file");
 
-    // Put a selection back so the load has something to overwrite — otherwise
-    // "the load restored empty" and "the load did nothing" are one reading.
-    cmd(`{"id":"layer.select","index":1,"mode":"set"}`);
-    assert(activeIndex() == 1, "precondition: a DIFFERENT selection before the load");
+    // Put a DIFFERENT state back so the load has something to overwrite —
+    // otherwise "the load restored it" and "the load did nothing" are one
+    // reading. Layer 0, selected: both columns differ from the saved state.
+    cmd(`{"id":"layer.select","index":0,"mode":"set"}`);
+    assert(selectedItems() == [0] && activeIndex() == 0,
+        "precondition: a DIFFERENT selection AND a different target before the load");
 
     cmd(format(`{"id":"file.load","path":%s}`, JSONValue(path).toString));
     assert(selectedItems() == [],
         format("a document saved with nothing selected must load that way — "
-               ~ "selected %s", selectedItems()));
-    assert(activeIndex() == -1,
-        format("…with no primary — active %d. 0 is the reader clamping a "
-               ~ "negative `primaryLayer` back into range; 1 is the load "
-               ~ "leaving the pre-load selection standing.", activeIndex()));
+               ~ "selected %s. [1] is a reader that re-SELECTS the item "
+               ~ "`primaryLayer` names, which round-trips the document into a "
+               ~ "different one.", selectedItems()));
+    assert(activeIndex() == 1,
+        format("…and the LATCHED target comes back on layer 1 — active %d. 0 "
+               ~ "is the load leaving the pre-load state standing; -1 is a "
+               ~ "reader that treated an unselected `primaryLayer` as no "
+               ~ "target at all.", activeIndex()));
+    assert(getJson("/api/layers")["layers"][1]["foreground"].type == JSONType.true_,
+        "…and it reads FOREGROUND, so the restored state is the same one that "
+        ~ "was saved and not merely the same index");
     assert(getJson("/api/layers")["layers"].array.length == 2,
         "the layers themselves survived — this is about the selection only");
+    remove(path);
+}
+
+// ---------------------------------------------------------------------------
+// E7b (task 0671) — the file can also carry NO edit target at all, and the
+//      reader must not repair that into one.
+// ---------------------------------------------------------------------------
+unittest {
+    noEditTarget();
+    immutable string path = buildPath(tempDir(), "vibe3d_0671_notarget.v3d");
+    if (exists(path)) remove(path);
+    cmd(format(`{"id":"file.save","path":%s}`, JSONValue(path).toString));
+    assert(exists(path), "precondition: the save produced a file");
+
+    cmd(`{"id":"layer.select","index":0,"mode":"set"}`);
+    assert(activeIndex() == 0, "precondition: a target exists before the load");
+
+    cmd(format(`{"id":"file.load","path":%s}`, JSONValue(path).toString));
+    assert(selectedItems() == [] && activeIndex() == -1,
+        format("a document saved with NO edit target must load that way — "
+               ~ "selected %s active %d. 0 is the reader clamping a negative "
+               ~ "`primaryLayer` back into range, or re-homing onto the only "
+               ~ "mesh because it assumes one is always needed.",
+               selectedItems(), activeIndex()));
     remove(path);
 }
 
@@ -398,11 +563,9 @@ unittest {
 //      assertion in this file can see the sentinel change.
 // ---------------------------------------------------------------------------
 unittest {
-    resetCube();
+    noEditTarget();
     immutable string name0 = getJson("/api/layers")["layers"][0]["name"].str;
     assert(name0.length > 0, "precondition: layer 0 has a name to lose");
-
-    clearSelection();
 
     auto msg = cmdRefused(`{"id":"layer.rename","name":"RENAMED-BY-DEFAULT"}`, "E9");
     assert(msg.canFind("`index:-1` names no layer"),
@@ -418,13 +581,19 @@ unittest {
 // ---------------------------------------------------------------------------
 // E8 — nothing selected does NOT mean nothing drawn.
 //
-//      Foreground/background is DERIVED (`visible && selected`), so an empty
-//      selection makes every visible layer background. The trap is that the
-//      background pass had a `layers.length > 1` fast path: on a ONE-layer
-//      document the foreground pass skips the layer (there is no primary) and
-//      the background pass never runs, so the model disappears the moment the
-//      user clicks empty space. A single-layer document is therefore the only
-//      one that can see this, which is why this row uses the reset cube.
+//      The trap is that the background pass had a `layers.length > 1` fast
+//      path: on a ONE-layer document with no edit target the foreground pass
+//      skips the layer and the background pass never ran, so the model
+//      disappeared. A single-layer document is the only one that can see this.
+//
+//      TASK 0671 — TWO rows now, because the two states this file distinguishes
+//      draw through DIFFERENT passes and each has to be checked:
+//        * clear the selection: the layer is LATCHED, therefore foreground,
+//          therefore drawn by the foreground pass;
+//        * take the target away entirely (`noEditTarget`): the layer is
+//          background, therefore drawn by the background pass — the pass whose
+//          fast path is the actual trap.
+//      Checking only the first would leave that fast path unguarded again.
 //
 //      The reading is a COUNT of pixels across the model's row that differ from
 //      the viewport background, before and after. "Went dark" is 0.
@@ -496,6 +665,14 @@ unittest {
 
     clearSelection();
 
+    immutable size_t latched = paintedCount(probeRow(row, 0, w));
+    assert(latched * 2 >= before,
+        format("with the selection cleared the layer is LATCHED and therefore "
+               ~ "foreground, so it must still draw — the row went from %d "
+               ~ "painted pixels to %d out of %d probed", before, latched, w));
+
+    // …and the harder half: no edit target at all, so it draws as BACKGROUND.
+    noEditTarget();
     immutable size_t after = paintedCount(probeRow(row, 0, w));
     // A PROPORTION, not `> 0`. The viewport also carries the ground grid, whose
     // pixels survive whatever happens to the layer — so "some pixel is not the
@@ -505,7 +682,7 @@ unittest {
     // dimmed, so the model's pixels change VALUE and keep their COUNT; losing
     // the model halves the row's painted pixels at least.
     assert(after * 2 >= before,
-        format("with nothing selected the single layer must still DRAW, as "
+        format("with no edit target the single layer must still DRAW, as "
                ~ "background — the row went from %d painted pixels to %d out "
                ~ "of %d probed. A large drop is 'everything went dark': the "
                ~ "foreground pass skipped it (no primary) and the background "

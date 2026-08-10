@@ -5690,13 +5690,22 @@ void main(string[] args) {
         // entry that reverts to the state it came from, so clicking the one
         // selected item twice would cost the user an Esc-less undo step that
         // does nothing visible. All three conditions are needed — with two
-        // items selected, a bare click on the primary genuinely collapses the
+        // items selected, a bare click on one of them genuinely collapses the
         // set to one and must go through.
+        //
+        // TASK 0671 — `.selected`, NOT `isPrimary`. The two agreed while the
+        // edit target had to be a selected item, and `isPrimary` was the
+        // spelling. They part company the moment a target is latched behind a
+        // selection it is not in: click a reference plane (the plane alone is
+        // selected, the mesh keeps the target), then click the MESH, and the
+        // guard read `selCount == 1 && isPrimary(mesh)` as "already the sole
+        // selection" and swallowed the click. The mesh was not selected at all
+        // — the user could not select it back by clicking it.
         {
             size_t selCount = 0;
             foreach (l; document.layers) if (l !is null && l.selected) ++selCount;
             if (!ctrl && !shift && selCount == 1
-                && document.isPrimary(document.layers[h.layerIndex]))
+                && document.layers[h.layerIndex].selected)
                 return;
         }
         import std.format : format;

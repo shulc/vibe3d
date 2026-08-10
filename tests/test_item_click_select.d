@@ -446,19 +446,23 @@ unittest {
         format("shift-click ADDS to the item set — got %s, want [0, 1]. [0] "
                ~ "alone means the modifier was ignored and the click set.",
                selectedItems()));
-    assert(primaryIndex() == 0,
-        format("the newly added item becomes the primary — got %d", primaryIndex()));
+    // TASK 0671: a shift-ADD appends to the selection queue; the edit target is
+    // the queue's HEAD, so it stays on item 1 (the bare click). This line used
+    // to read `== 0`.
+    assert(primaryIndex() == 1,
+        format("the edit target stays on the first-selected item — got %d",
+               primaryIndex()));
 
     // Ctrl REMOVES, and it removes the one under the cursor, not an arbitrary
-    // member: item 0 is the primary here, so this also exercises the promotion
-    // of another member when the primary leaves the set.
+    // member: item 0 is the newest add here, so removing it also exercises the
+    // arm where the deselected item enters its kind's history bucket.
     clickAt(c, boxes[0].cx, boxes[0].cy, kModCtrl);
     assert(selectedItems() == [1],
         format("ctrl-click REMOVES the item under the cursor — got %s, want [1]",
                selectedItems()));
     assert(primaryIndex() == 1,
-        format("removing the primary promotes a remaining member — got %d",
-               primaryIndex()));
+        format("…and the edit target is unchanged, it was never on item 0 — "
+               ~ "got %d", primaryIndex()));
 
     // …and the LAST selected item CAN be removed (task 0654).
     //
@@ -473,10 +477,20 @@ unittest {
         format("ctrl-clicking the only selected item EMPTIES the item "
                ~ "selection — got %s. [1] is the retired refusal.",
                selectedItems()));
-    assert(primaryIndex() == -1,
-        format("…and there is then no primary — /api/layers reports active %d. "
-               ~ "0 is the substitution this must never make: a real layer "
-               ~ "silently promoted into an emptied selection.", primaryIndex()));
+    // TASK 0671 — the SELECTION empties; the EDIT TARGET does not go with it.
+    // 0653 measured the first half and this line inferred the second. 0670 read
+    // the mechanism: deselecting moves the item into its kind's
+    // recently-deselected cache, and the edit target is the head of a walk over
+    // [current ++ that cache] (frozen: tests/fixtures/edit_target_legality.json,
+    // cell `target_set_nothing_selected`). So it stays on item 1, the item that
+    // was just deselected.
+    assert(primaryIndex() == 1,
+        format("…and the edit target stays LATCHED on the item just "
+               ~ "deselected — /api/layers reports active %d. 0 is the "
+               ~ "substitution this must never make (a real layer silently "
+               ~ "promoted into an emptied selection); -1 is the pre-0671 "
+               ~ "model, which inferred this half instead of measuring it.",
+               primaryIndex()));
 }
 
 // ---------------------------------------------------------------------------
@@ -522,11 +536,14 @@ unittest {
     assert(selectedItems() == [],
         format("a click on empty space EMPTIES the item selection — selected "
                ~ "%s. [2] is the retired do-nothing branch.", selectedItems()));
-    assert(primaryIndex() == -1,
-        format("…and leaves NO primary — /api/layers reports active %d. 2 is "
-               ~ "'the primary stayed latched while the set emptied' (the "
-               ~ "forbidden third state); 0 is 'layer 0 was substituted'.",
-               primaryIndex()));
+    // TASK 0671 — the latch is what the reference does, so this asserts it.
+    // The empty-space click empties the SELECTION; the mesh it deselected keeps
+    // a non-zero selection state and stays the edit target.
+    assert(primaryIndex() == 2,
+        format("…and the edit target stays LATCHED on item 2 — /api/layers "
+               ~ "reports active %d. 0 is 'layer 0 was substituted'; -1 is the "
+               ~ "pre-0671 model, which inferred that the target went with the "
+               ~ "selection instead of measuring it.", primaryIndex()));
     assert(selType() == "item", "…and the type stays Item");
 
     // The GEOMETRY selection survived the emptying. It has to be read back
@@ -756,18 +773,20 @@ unittest {
     assert(hoveredItem() == 2,
         format("the ray reports the backdrop under the cursor too — got %d",
                hoveredItem()));
-    // TASK 0668 inverted this row. It used to read "the MESH EDIT TARGET does
-    // not move: a backdrop cannot be primary, so selecting one must leave the
-    // primary where it was". A viewport click is an EXCLUSIVE select, and an
-    // exclusive select of a kind that cannot be primary now clears the edit
-    // target rather than sparing the mesh — the same law that makes creating
-    // a reference plane deselect the model.
-    assert(primaryIndex() == -1,
-        format("…and the MESH EDIT TARGET goes with it: a backdrop cannot be "
-               ~ "primary, and an exclusive select leaves none — read %d, "
-               ~ "where 0 is the pre-0668 sparing", primaryIndex()));
+    // This row has been inverted twice. It read "the MESH EDIT TARGET does not
+    // move" (pre-0668, because the mesh was SPARED from the exclusive select);
+    // then "the edit target goes with it" (0668, which made the select truly
+    // exclusive and had nowhere to put the target); and now the two answers
+    // that were traded are both true at once — the cube leaves the SELECTION
+    // and keeps the TARGET, because a backdrop's select flushes the backdrop
+    // bucket and the mesh sits in the mesh one.
+    assert(primaryIndex() == 0,
+        format("…and the MESH EDIT TARGET stays on the cube — read %d. -1 is "
+               ~ "0668's answer, which cost the target to buy the set.",
+               primaryIndex()));
     assert(!itemSelected(0),
-        "…so the cube is deselected too, not merely demoted");
+        "…while the cube IS deselected: 0668's half of the answer, kept, and "
+        ~ "what makes the set match the reference's");
 
     // (b) 1.4 half-extents along U: outside the rectangle, and still on the
     //     plane's own infinite surface. An implementation that intersects the

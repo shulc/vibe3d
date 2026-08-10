@@ -171,19 +171,24 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Stage 6 §L2, AS AMENDED BY TASK 0668: an EXCLUSIVE select of the non-mesh
-// item takes the mesh edit target with it.
+// Stage 6 §L2, AS AMENDED BY TASKS 0668 AND 0671: an EXCLUSIVE select of the
+// non-mesh item takes the mesh out of the SELECTION and leaves it the EDIT
+// TARGET.
 //
-// This case used to assert the opposite — "A stays primary, A stays selected,
-// A is never reclassified background, the selected set is {target} ∪
-// {primary-after}, size 2". That was not a design preference: the pre-0654
-// invariants demanded a non-null, selected, visible primary, so sparing the
-// mesh was the only representable answer. 0654 made an absent primary legal
-// and 0668 spends it, so `mode:set` now means set.
+// This case has held three answers, and the sequence is the record:
+//   * before 0668 — "A stays primary AND selected, the set is {E, A}". Not a
+//     preference: the pre-0654 invariants demanded a non-null, selected,
+//     visible primary, so sparing the mesh was the only representable answer.
+//   * 0668 — "the set is {E} and there is NO edit target". It bought the
+//     reference's set by spending the target.
+//   * 0671 — "the set is {E} and the target is still A". 0670 read the
+//     mechanism: deselecting moves the mesh into the MESH history bucket, and
+//     selecting a non-mesh item flushes only that item's OWN bucket. The two
+//     halves were never in tension; the trade was an artefact of our model.
 //
-// The rows are inverted rather than deleted, and the COUNT is the load-bearing
-// one: "E becomes selected" passed under the old law too. THREE layers exist
-// here, so `1` also separates "cleared all others" from "cleared exactly one".
+// The COUNT is still the load-bearing row on the selection side ("E becomes
+// selected" passed under every one of the three), and the TARGET column is the
+// load-bearing one on the other — it is 0 here, where the naive reading is -1.
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -191,14 +196,19 @@ unittest {
     cmd("layer.select index:1 mode:set");          // exclusive-select E
 
     auto ls = getLayers()["layers"].array;
-    assert(ls[0]["primary"].type == JSONType.false_,
-        "§L2/0668: A is no longer the edit target — nothing selected can be");
+    assert(ls[0]["primary"].type == JSONType.true_,
+        "§L2/0671: A is STILL the edit target — E is a different history "
+        ~ "bucket, so selecting it cannot reach the mesh's");
     assert(ls[0]["selected"].type == JSONType.false_,
-        "§L2/0668: and A is no longer selected. `true` here is the pre-0668 "
-        ~ "sparing, which is the whole defect this task closed");
-    assert(ls[0]["background"].type == JSONType.true_,
-        "§L2/0668: so A derives as BACKGROUND — dimmed and read-only, which "
-        ~ "is what an item that is no longer the edit target must look like");
+        "§L2/0668, kept: and A is no longer SELECTED. `true` here is the "
+        ~ "pre-0668 sparing, which is the defect the owner reported");
+    assert(ls[0]["foreground"].type == JSONType.true_
+        && ls[0]["background"].type == JSONType.false_,
+        "§L2/0671: A is FOREGROUND, not a dimmed read-only background layer "
+        ~ "that the toolpipe is nevertheless writing to");
+    assert(ls[2]["background"].type == JSONType.true_,
+        "…and B, which has no selection state at all, IS background — the "
+        ~ "negative control for the row above");
     assert(ls[1]["selected"].type == JSONType.true_,   "§L2: E becomes selected");
     assert(ls[1]["primary"].type == JSONType.false_,   "§L2: E never becomes primary");
     size_t selCount = 0;
@@ -206,12 +216,12 @@ unittest {
     assert(selCount == 1,
         "§L2/0668: the selected set is exactly {target}, size 1 — read "
         ~ to!string(selCount));
-    assert(getLayers()["active"].integer == -1,
-        "…and `active` reports the absence rather than substituting a layer");
+    assert(getLayers()["active"].integer == 0,
+        "…and `active` names the latched mesh");
 
     // Stage 9: /api/layers reports "focused" distinctly from "primary" — and
-    // 0668 makes them disagree in a new way: E holds the focus and NOTHING
-    // holds the primary.
+    // this state is where they disagree by naming two DIFFERENT rows: E holds
+    // the focus, A holds the edit target.
     assert(ls[0]["focused"].type == JSONType.false_,  "§L2: A holds no focus");
     assert(ls[1]["focused"].type == JSONType.true_,   "§L2: E holds focus but not primary");
 
@@ -228,19 +238,21 @@ unittest {
         && selItems[1]["focused"].type == JSONType.true_,
         "/api/selection reports focused per item, same as /api/layers");
 
-    // A mesh.* command now REFUSES, by name — the 0654 refusal, reached
-    // through the 0668 state instead of through an empty selection.
-    auto r = cmdMayFail(
-        `{"id":"mesh.move_vertex","params":{"from":[0.5,-0.5,-0.5],"to":[3.0,-0.5,-0.5]}}`);
-    assert(r["status"].str != "ok",
-        "§L2/0668: with no edit target a mesh command refuses: " ~ r.toString);
-    assert(r["message"].str.canFind("mesh edit target"),
-        "…and names the reason rather than refusing anonymously — read `"
-        ~ r["message"].str ~ "`");
+    // TASK 0671 — a mesh.* command LANDS, and it lands on A. ~~A mesh.*
+    // command now REFUSES, by name — the 0654 refusal, reached through the
+    // 0668 state.~~ That refusal is what selecting a reference image used to
+    // cost, and removing it is the point of this task: the tool keeps writing
+    // to the mesh you were editing while you click around the item list. The
+    // 0654 refusal itself is untouched and is covered where it is still
+    // reachable (tests/test_empty_item_selection.d).
+    cmdJson(`{"id":"mesh.move_vertex","params":{"from":[0.5,-0.5,-0.5],"to":[3.0,-0.5,-0.5]}}`);
+    bool wrote = false;
     foreach (v; getJson("/api/model?layer=0")["vertices"].array)
-        assert(!approx(v.array[0].floating, 3.0),
-            "…and A really was not written — read through an explicit "
-            ~ "`?layer=0`, the one reading a silent substitution could not fake");
+        if (approx(v.array[0].floating, 3.0)) wrote = true;
+    assert(wrote,
+        "the mesh command wrote to the LATCHED A — read through an explicit "
+        ~ "`?layer=0`, so 'it succeeded' and 'it wrote to the right layer' are "
+        ~ "two readings and not one");
 
     // /api/model?layer=1 (the non-mesh layer) reports an explicit error
     // naming the kind, not a silent empty mesh. The error string itself
@@ -353,37 +365,42 @@ unittest {
     assert(getLayers()["layers"].array[1]["type"].str == "empty",
         "kind survived a second undo round-trip");
 
-    // Try to make the restored E primary. TASK 0668: the reading changed from
-    // "the primary stays where it was" to "there is no primary" — an
-    // exclusive select of a kind that cannot be primary clears the edit
-    // target. Either way the point stands: the restored layer never BECOMES
-    // the primary, which is the kind-survival evidence this row is after.
+    // Try to make the restored E primary. The reading has changed twice —
+    // 0668: "the primary stays where it was" became "there is no primary";
+    // 0671: it became "the mesh stays latched". The POINT is unchanged and is
+    // what this row is after: the restored layer never BECOMES the edit
+    // target, which is the kind-survival evidence.
     cmd("layer.select index:1 mode:set");
     // `activeLayer()` casts to `size_t`, which cannot carry the -1 sentinel —
     // read the raw field.
     immutable long activeAfter = getLayers()["active"].integer;
-    assert(activeAfter == -1,
-        "the restored layer is still non-mesh: selecting it exclusively "
-        ~ "leaves NO edit target rather than making it one — read "
-        ~ to!string(activeAfter));
+    assert(activeAfter != 1,
+        "the restored layer is still non-mesh: an exclusive select of it never "
+        ~ "makes it the edit target — read " ~ to!string(activeAfter));
     assert(getLayers()["layers"].array[1]["primary"].type == JSONType.false_,
         "…and specifically it did not become the primary itself");
+    assert(getLayers()["layers"].array[1]["selected"].type == JSONType.true_,
+        "…while it IS selected, so the row above is about the TARGET and not "
+        ~ "about the select having failed");
     auto e = getJson("/api/model?layer=1");
     assert("error" in e, "the restored layer still reports no mesh — kind survived undo");
 }
 
 // ---------------------------------------------------------------------------
-// Stage 9 review finding — accepted pre-existing gap, pinned rather than
+// ~~Stage 9 review finding — accepted pre-existing gap, pinned rather than
 // fixed: undoing the deletion of a FOCUSED non-mesh item does not restore
-// focus to it. `LayerDelete` (source/commands/layer/commands.d) only
-// snapshots `prevPrimary` (the mesh edit target), never `focusedItem`; its
-// `revert()` re-lands on the primary via `doc.setPrimary`/`doc.setActive`,
-// both of which unconditionally write `focusedItem` as part of their
-// contract (document.d). This predates task 0615 — `LayerDelete` never
-// tracked focus — but Stage 9's "focused" field is what makes it observable
-// over HTTP, and the undo/redo test above only pins "type" surviving, not
-// "focused". Pinned here so a future change to this behaviour is a
-// deliberate, reviewed decision, not an accidental drift.
+// focus to it. `LayerDelete` only snapshots `prevPrimary` (the mesh edit
+// target), never `focusedItem`; its `revert()` re-lands on the primary via
+// `doc.setPrimary`/`doc.setActive`, both of which unconditionally write
+// `focusedItem` as part of their contract.~~
+//
+// GAP CLOSED (task 0671), as a side effect and not as a goal. The edit target
+// became derived, so the five `revert()` paths stopped snapshotting a set of
+// bits plus a pointer and started snapshotting the WHOLE item-selection state
+// — both lists, their order, and the focus — because the deselect history had
+// to come back too. The focus rode in on that. The row below is INVERTED
+// rather than deleted: what it pinned is now the thing that must not
+// regress.
 // ---------------------------------------------------------------------------
 
 unittest {
@@ -406,10 +423,15 @@ unittest {
     assert(layerCount() == 3, "undo restores E");
     auto ls = getLayers()["layers"].array;
     assert(ls[1]["name"].str == "E", "E is back at its original slot");
-    assert(ls[0]["focused"].type == JSONType.true_,
-        "ACCEPTED GAP: focus lands back on the mesh primary A, not on the restored E");
-    assert(ls[1]["focused"].type == JSONType.false_,
-        "ACCEPTED GAP: the restored E does not recover the focus it held before the delete");
+    assert(ls[1]["focused"].type == JSONType.true_,
+        "the restored E recovers the focus it held before the delete — the "
+        ~ "snapshot carries the focus, so nothing has to re-derive it");
+    assert(ls[0]["focused"].type == JSONType.false_,
+        "…and the focus did NOT land back on the mesh, which is where a "
+        ~ "`setPrimary`-based restore puts it");
+    assert(ls[0]["primary"].type == JSONType.true_,
+        "…while A is still the edit target, so the row above is about the "
+        ~ "focus and not about the target moving");
 }
 
 // ---------------------------------------------------------------------------
@@ -431,9 +453,9 @@ unittest {
 
 unittest {
     mixedDoc();                             // [A, E, B]
-    cmd("layer.select index:1 mode:set");   // E alone; no edit target
-    assert(getLayers()["active"].integer == -1,
-        "fixture: an exclusive select of E leaves no edit target");
+    cmd("layer.select index:1 mode:set");   // E alone; A stays LATCHED
+    assert(getLayers()["active"].integer == 0,
+        "fixture (task 0671): an exclusive select of E leaves the mesh latched");
     clearHistory();
 
     cmd("layer.delete index:1");
@@ -450,8 +472,8 @@ unittest {
         "the undo restored the prior set — E alone. `[2]` is the clamp "
         ~ "selecting the last layer; `[0]` is a rehome to the first mesh. "
         ~ "Read " ~ to!string(sel));
-    assert(getLayers()["active"].integer == -1,
-        "…and the absent edit target came back absent, read "
+    assert(getLayers()["active"].integer == 0,
+        "…and the latched edit target came back latched, read "
         ~ to!string(getLayers()["active"].integer));
     assert(ls[1]["focused"].type == JSONType.true_,
         "…with the focus on the one item that is selected");
@@ -470,13 +492,19 @@ unittest { // delete the primary while the non-mesh item is focused
     cmd("layer.select index:1 mode:add");   // E focused; A still primary
     clearHistory();
 
-    cmd("layer.delete index:0");            // delete A (the primary)
+    cmd("layer.delete index:0");            // delete A (the edit target)
     assert(layerCount() == 2, "A deleted");           // [E, B]
     auto ls = getLayers()["layers"].array;
-    assert(ls[1]["primary"].type == JSONType.true_,
-        "§L1: primary rehomes to the surviving MESH layer B");
+    // TASK 0671 — the delete no longer re-homes. ~~§L1: primary rehomes to the
+    // surviving MESH layer B.~~ Deleting the item that holds the edit target
+    // leaves none; re-homing names a layer the user never selected. What this
+    // row still pins, and it is the half that was ever in doubt, is that the
+    // NON-MESH survivor does not inherit it either.
     assert(ls[0]["primary"].type == JSONType.false_,
-        "§L1: the non-mesh layer E never becomes primary");
+        "§L1: the non-mesh layer E never becomes the edit target");
+    assert(ls[1]["primary"].type == JSONType.false_,
+        "…and B is not promoted into it: deleting the target leaves none");
+    assert(getLayers()["active"].integer == -1, "…so `active` reports the absence");
 }
 
 unittest { // reorder the non-mesh item above the primary, then delete the primary
@@ -489,8 +517,14 @@ unittest { // reorder the non-mesh item above the primary, then delete the prima
     cmd("layer.delete index:1");            // delete A at its new slot
     assert(layerCount() == 2, "A deleted");           // [E, B]
     auto ls = getLayers()["layers"].array;
-    assert(ls[1]["primary"].type == JSONType.true_,
-        "primary rehomes to B, never to the reordered E");
+    // TASK 0671 — no re-home; see the case above. What this row is FOR is that
+    // the reordered non-mesh item, now sitting at index 0 where a positional
+    // successor rule would land, does not become the edit target.
+    assert(ls[0]["primary"].type == JSONType.false_,
+        "the reordered E never becomes the edit target, even at index 0");
+    assert(getLayers()["active"].integer == -1,
+        "deleting the target leaves none — read "
+        ~ to!string(getLayers()["active"].integer));
 }
 
 unittest { // hide the primary when the only other selected layer is non-mesh
@@ -498,15 +532,18 @@ unittest { // hide the primary when the only other selected layer is non-mesh
     cmd("layer.select index:1 mode:add");   // A, E selected; A stays primary (E can't be)
     clearHistory();
 
-    cmd("layer.setVisible index:0 value:false");   // hide A (the primary)
+    cmd("layer.setVisible index:0 value:false");   // hide A (the edit target)
     auto ls = getLayers()["layers"].array;
-    // Pre-existing (deliberately softened) semantics: hiding the ONLY
-    // promotable layer still succeeds — it just cannot PROMOTE to a
-    // non-mesh alternative. The load-bearing assertion here is the second
-    // one: primary must never become the non-mesh E.
+    // TASK 0671: hiding the edit target never moves it (measured —
+    // edit_target_legality, cell `hidden_mesh_keeps_the_target`), so the
+    // question this row asked ("does it promote to the non-mesh E?") has one
+    // fewer way to go wrong. It is still worth asking, because a hidden target
+    // is exactly where a stray promotion would land.
     assert(ls[0]["visible"].type == JSONType.false_, "the hide itself still applies");
     assert(ls[0]["primary"].type == JSONType.true_,
-        "promoteAwayFromHiddenPrimary must never promote to the non-mesh E (§Q2)");
+        "the hidden layer is still the edit target, and E never becomes it (§Q2)");
+    assert(ls[0]["foreground"].type == JSONType.true_,
+        "…and it stays FOREGROUND while hidden, which is what keeps it in the walk");
 }
 
 // ---------------------------------------------------------------------------

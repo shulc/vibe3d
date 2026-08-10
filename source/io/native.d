@@ -1035,6 +1035,12 @@ bool readV3d(string path, ref Document document)
         // so far left the caller's document byte-identical. Nothing below can
         // throw.
         document.layers = parsed;
+        // Task 0671: the item-selection state names the PREVIOUS document's
+        // items (this is the app's live `Document`, handed by `ref`), so drop
+        // it wholesale before rebuilding from the file. `clearItemSelection`
+        // would be the wrong call here — it MOVES items into history rather
+        // than forgetting them, which is exactly what must not survive a load.
+        document.resetSelectionState();
 
         // Re-assert the selection-set invariants via the mutators, never by
         // writing raw fields. `setActive` alone is enough to install the
@@ -1090,41 +1096,56 @@ bool readV3d(string path, ref Document document)
             return true;
         }
 
-        document.setActive(primaryIndex);
-        // Force the primary visible if the file marked it hidden (an
-        // inconsistent file can't leave the edit target invisible). Decision 7:
-        // this runs AFTER the channel injection, which is the only reason a
-        // generic `visible` write is safe here at all.
-        if (!document.primary.visible)
-            document.primary.visible = true;
-        // Re-add every other layer the file marked selected (multi-select set);
-        // setPrimary at the end restores the file's primary as the edit target
-        // without dropping the rest of the set.
-        foreach (i, layer; parsed) {
-            if (i == primaryIndex) continue;
-            if (selected[i])
-                document.selectItem(layer, SelMode.Add);
-        }
-        document.setPrimary(document.layers[primaryIndex]);
-
-        // Focus LAST: `setPrimary` above homed the focus onto the primary, so
-        // a file that named a different focus re-states it here — through the
-        // mutator, which also satisfies the `focusedItem.selected` invariant.
+        // TASK 0671 — the file's edit target may be LATCHED, i.e. named by
+        // `primaryLayer` while its own `"selected"` is false. That is now an
+        // ordinary saved state (drop the item selection, or select a reference
+        // plane, and save), and it is the state the old shape here could not
+        // read back: `setActive(primaryIndex)` SELECTS the item it installs,
+        // so the document would come back with a selection the user never
+        // left behind.
         //
-        // A focus on a `canBePrimary` item that is NOT the primary is not a
-        // representable state (every mutator that focuses such an item also
-        // makes it the primary), so it is reported and dropped rather than
-        // obeyed — obeying it would move the edit target the file explicitly
-        // named somewhere else.
-        if (focusIndex != primaryIndex) {
+        // Restore the SET first, in file order, then decide the target from
+        // what the file said about it — selected ⇒ re-seat at the head of the
+        // current queue; not selected ⇒ re-seat at the head of its kind's
+        // history bucket. Both are the same statement ("this item is first in
+        // the walk") made in whichever of the two lists the file put it in.
+        document.clearItemSelection();
+        foreach (i, layer; parsed)
+            if (selected[i]) document.selectItem(layer, SelMode.Add);
+        if (selected[primaryIndex])
+            document.setPrimary(document.layers[primaryIndex]);
+        else
+            document.latchEditTarget(document.layers[primaryIndex]);
+        // ~~Force the primary visible if the file marked it hidden (an
+        // inconsistent file can't leave the edit target invisible).~~ RETIRED
+        // (task 0671): a hidden edit target is not an inconsistency, it is a
+        // measured state — hiding the target does not hand it on (`tests/
+        // fixtures/edit_target_legality.json`, cell
+        // `hidden_mesh_keeps_the_target`). Forcing `visible` here made the
+        // round trip lose the user's hide.
+
+        // Focus LAST: the `Add` loop above left the focus on whichever selected
+        // item came last in file order, so a file that named a different focus
+        // re-states it here — through the mutator, which also satisfies the
+        // `focusedItem.selected` invariant.
+        //
+        // TASK 0671 — the "not representable" arm is gone. It refused a focus
+        // on a `canBePrimary` item that was not the primary, on the (then true)
+        // ground that every mutator focusing such an item also made it the
+        // target. `add` no longer promotes: select mesh A, ctrl-add mesh B, and
+        // the focus is B while the target is A. That is now the ordinary
+        // multi-mesh selection, and dropping it on load would have moved the
+        // user's focus without saying so. The one case still refused is a focus
+        // on an item the file did not mark selected, which the invariant
+        // forbids outright.
+        if (focusIndex < parsed.length && focusIndex != primaryIndex) {
             auto f = parsed[focusIndex];
-            if (!kindInfo(f.kind).canBePrimary)
+            if (selected[focusIndex])
                 document.selectItem(f, SelMode.Add);
             else
-                v3dWarn(format("ignoring \"focusedItem\" %d: it names a \"%s\" "
-                    ~ "item that is not the primary, which the selection model "
-                    ~ "cannot represent; the focus stays on the primary",
-                    focusIndex, tokenOf(f.kind)));
+                v3dWarn(format("ignoring \"focusedItem\" %d: the file does not "
+                    ~ "mark that item selected, and the focus is the current "
+                    ~ "selection's own pointer", focusIndex));
         }
 
         v3dInfo(format("document ready: %d item(s), primary=%d, focus=%d",
