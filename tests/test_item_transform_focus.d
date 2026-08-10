@@ -89,8 +89,19 @@ void moveX(double dx) {
 
 /// Fixture: the cube at layer 0 (primary, identity) plus one reference-image
 /// plane at layer 1, posed so its world pivot shares no component with the
-/// cube's. `imagePlane.add` folds the selection in, so on return the plane is
-/// the focus and the mesh is still the (forced) primary.
+/// cube's, with BOTH selected and the plane holding the focus.
+///
+/// TASK 0668 CHANGED HOW THIS STATE IS REACHED, and the change is the point of
+/// the file. It used to be `layer.select index:1 mode:set` — an exclusive
+/// select that the document turned into `{plane, mesh}` by FORCING the mesh to
+/// stay selected, because the invariants had nowhere else to put the edit
+/// target. 0668 removed that forcing: an exclusive select of a plane now
+/// leaves `{plane}` and no edit target at all, which needs no narrowing.
+///
+/// The state approximation D exists for is the OTHER order — select the mesh,
+/// then ctrl-ADD the plane — where the mesh is in the selection because the
+/// USER put it there. That is what this fixture builds now, and it is exactly
+/// the divergence T-X6 declares.
 void planeFixture() {
     resetCube();
     cmd(`{"id":"imagePlane.add","params":{"name":"Ref","projection":"front"}}`);
@@ -100,16 +111,17 @@ void planeFixture() {
     cmd("layer.attr 1 pos.y 1.5");
     cmd("layer.attr 1 pos.z -2.0");
     cmd("layer.attr 1 pivot.x 0.25");
-    cmd("layer.select index:1 mode:set");
+    cmd("layer.select index:0 mode:set");
+    cmd("layer.select index:1 mode:add");
     // Vacuity guards. Without these, every assertion below could be passing
     // on a document that simply does not hold the state it claims to.
     assert(layerAt(0)["primary"].boolean,
         "vacuity: the MESH is still the mesh edit target — a plane can never "
         ~ "be one, and if it could there would be nothing to narrow");
     assert(layerAt(0)["selected"].boolean,
-        "vacuity: the document invariant FORCES the mesh to stay selected "
-        ~ "alongside the plane. If this ever reads false the approximation "
-        ~ "this file tests has become unnecessary — see model M");
+        "vacuity: the mesh is in the SET, put there by the select above. If "
+        ~ "this ever reads false the approximation this file tests has become "
+        ~ "unnecessary on this path too");
     assert(layerAt(1)["focused"].boolean, "vacuity: the plane holds the focus");
     assert(getJson("/api/selection")["selType"].str == "item",
         "vacuity: selecting a layer promotes the item selection type, which "

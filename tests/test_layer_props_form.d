@@ -332,7 +332,10 @@ unittest {
     plane.kind = ItemKind.ImagePlane;
     plane.imagePlaneRef() = new ImagePlaneData();
     doc.layers ~= plane;
-    doc.selectItem(plane, SelMode.Set);
+    // ADD, not Set (task 0668): an exclusive select of a plane leaves NO
+    // primary, and the fixture guard below turns on the bound item differing
+    // from a LIVE primary — against `null` it would stop discriminating.
+    doc.selectItem(plane, SelMode.Add);
 
     // The end-to-end binding: the form follows the item-selection FOCUS, and a
     // plane can never be primary — so this is what makes the section reachable

@@ -756,10 +756,18 @@ unittest {
     assert(hoveredItem() == 2,
         format("the ray reports the backdrop under the cursor too — got %d",
                hoveredItem()));
-    assert(primaryIndex() == 0,
-        format("…and the MESH EDIT TARGET does not move: a backdrop cannot be "
-               ~ "primary, so selecting one must leave the primary where it "
-               ~ "was — it moved to %d", primaryIndex()));
+    // TASK 0668 inverted this row. It used to read "the MESH EDIT TARGET does
+    // not move: a backdrop cannot be primary, so selecting one must leave the
+    // primary where it was". A viewport click is an EXCLUSIVE select, and an
+    // exclusive select of a kind that cannot be primary now clears the edit
+    // target rather than sparing the mesh — the same law that makes creating
+    // a reference plane deselect the model.
+    assert(primaryIndex() == -1,
+        format("…and the MESH EDIT TARGET goes with it: a backdrop cannot be "
+               ~ "primary, and an exclusive select leaves none — read %d, "
+               ~ "where 0 is the pre-0668 sparing", primaryIndex()));
+    assert(!itemSelected(0),
+        "…so the cube is deselected too, not merely demoted");
 
     // (b) 1.4 half-extents along U: outside the rectangle, and still on the
     //     plane's own infinite surface. An implementation that intersects the

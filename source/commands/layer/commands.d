@@ -749,7 +749,26 @@ final class LayerDelete : LayerCommandBase {
                 "LayerDelete.revert: prevPrimary must be canBePrimary (R5)");
             doc.setPrimary(prevPrimary);
         } else {
-            doc.setActive(prevActiveIndex);
+            // TASK 0668 — `prevPrimary is null` used to mean "the selection
+            // was empty" (task 0654) and now also means "everything selected
+            // was of a kind that cannot be primary", which a plain click on a
+            // reference plane reaches. `setActive(prevActiveIndex)` is wrong
+            // for BOTH: `prevActiveIndex` is then the absent-sentinel
+            // (`layers.length`), and `setActive` CLAMPS an out-of-range index
+            // into a real layer — so an undo would EXCLUSIVELY select the
+            // last layer, discarding the set the loop above just restored and
+            // picking an item the user never touched. That is the silent
+            // substitution 0654 removed everywhere else, arriving through the
+            // undo stack.
+            //
+            // Re-assert the restored SET through the mutators instead. The
+            // raw loop above wrote `selected` only; this makes `primary` and
+            // `focusedItem` derive from it — null when nothing selected can be
+            // primary, which is exactly the state being restored.
+            doc.clearItemSelection();
+            foreach (l; doc.layers)
+                if (auto wasSel = l in prevSelected)
+                    if (*wasSel) doc.selectItem(l, SelMode.Add);
         }
         // Task 0082: restore parent links for any layers that had been orphaned.
         foreach (l; orphanedChildren_) l.parent = removed;
