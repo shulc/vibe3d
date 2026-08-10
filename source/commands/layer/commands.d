@@ -204,8 +204,14 @@ final class LayerDuplicate : LayerCommandBase {
     private int         indexArg = -1;    // -1 → primary (resolveIndex)
     private size_t      addedIndex;
     private Layer       added;            // the appended clone
-    private bool[Layer] prevSelected;     // full selection snapshot by identity
-    private Layer       prevPrimary;
+    // TASK 0671 — one EXACT snapshot of the whole item-selection state
+    // replaces the `bool[Layer] prevSelected` + `Layer prevPrimary` pair. The
+    // pair recorded the selected bits and a DERIVED consequence (which item
+    // was the edit target); the state now also has a deselect history, and
+    // restoring a consequence while losing a cause is how an undo leaves a
+    // mesh latched by a command that has been undone. See
+    // `Document.captureItemSelection`.
+    private Document.ItemSelectionState prevSelection;
     private size_t      prevActiveIndex;
     private bool        applied;
 
@@ -229,12 +235,9 @@ final class LayerDuplicate : LayerCommandBase {
         prevActiveIndex = doc.activeIndex;
         auto prevLayer  = doc.active();
 
-        // Snapshot the full prior selection set by layer identity, BEFORE
-        // setActive (which collapses to SET-of-one) so revert can restore any
-        // prior multi-selection exactly (LayerDelete review-#6 pattern).
-        prevPrimary  = prevLayer;
-        prevSelected = null;
-        foreach (l; doc.layers) prevSelected[l] = l.selected;
+        // Snapshot the whole item-selection state BEFORE the mutation, so
+        // revert restores it exactly (task 0671; LayerDelete review-#6 pattern).
+        prevSelection = doc.captureItemSelection();
 
         // Source: default -1 → primary; explicit index for test/scripted paths.
         size_t srcIdx = resolveIndex(indexArg);
@@ -360,22 +363,8 @@ final class LayerDuplicate : LayerCommandBase {
         if (addedIndex < doc.layers.length)
             doc.layers = doc.layers[0 .. addedIndex];
 
-        // Restore the exact prior selection set by identity, then the prior
-        // primary (mirrors LayerDelete.revert, review #6). This handles any
-        // multi-selection that was active before the duplicate.
-        foreach (l; doc.layers) {
-            auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
-            l.selected  = wasSel;
-        }
-        if (prevPrimary !is null) {
-            // R5 (task 0615): `prevPrimary` was `doc.primary` at snapshot
-            // time, so it is always `canBePrimary` — see LayerDelete.revert.
-            debug assert(kindInfo(prevPrimary.kind).canBePrimary,
-                "LayerDuplicate.revert: prevPrimary must be canBePrimary (R5)");
-            doc.setPrimary(prevPrimary);
-        } else {
-            doc.setActive(prevActiveIndex);
-        }
+        // Task 0671: one exact restore (mirrors LayerDelete.revert).
+        doc.restoreItemSelection(prevSelection);
 
         // Undo of a duplicate is effectively a remove; the switch hook fires
         // because the active OBJECT changed from the clone back to prevPrimary.
@@ -606,10 +595,17 @@ final class LayerDelete : LayerCommandBase {
     // rest). Snapshot the FULL prior selection set by layer OBJECT identity + the
     // prior primary so revert restores the EXACT set — not just the index. Keyed
     // by identity so the splice between apply and revert can't drift it.
-    private bool[Layer] prevSelected;
-    private Layer       prevPrimary;
+    // TASK 0671 — one EXACT snapshot of the whole item-selection state
+    // replaces the `bool[Layer] prevSelected` + `Layer prevPrimary` pair. The
+    // pair recorded the selected bits and a DERIVED consequence (which item
+    // was the edit target); the state now also has a deselect history, and
+    // restoring a consequence while losing a cause is how an undo leaves a
+    // mesh latched by a command that has been undone. See
+    // `Document.captureItemSelection`.
+    private Document.ItemSelectionState prevSelection;
+    private Layer       prevPrimary;   // only for the switch-hook comparison
     // Task 0082: layers whose `parent` pointed at `removed` — cleared on apply,
-    // restored on revert (snapshot-by-identity, mirrors prevSelected pattern).
+    // restored on revert (snapshot-by-identity, mirrors the pattern above).
     private Layer[] orphanedChildren_;
     private bool   applied;
 
@@ -659,12 +655,12 @@ final class LayerDelete : LayerCommandBase {
         // crashing).
         if (!canDeleteLayer(doc, removed)) return false;
 
-        // Snapshot the full prior selection set + primary by identity (review #6)
-        // BEFORE the splice / setActive collapse, so revert restores the exact
-        // multi-selection (including the deleted layer's own bit).
-        prevPrimary  = prevLayer;
-        prevSelected = null;
-        foreach (l; doc.layers) prevSelected[l] = l.selected;
+        // Snapshot the whole item-selection state BEFORE the splice, so revert
+        // restores it exactly — including the deleted layer's own bit and the
+        // deselect history, which is what makes the reinserted object become
+        // the edit target again by identity (task 0671).
+        prevPrimary   = prevLayer;
+        prevSelection = doc.captureItemSelection();
 
         // Task 0082: collect layers whose parent points at `removed`, snapshot
         // them by identity, then clear their parent to avoid dangling refs.
@@ -687,29 +683,32 @@ final class LayerDelete : LayerCommandBase {
         // `rehomePrimary`'s doc comment), which is what keeps
         // `test_layers.d` / `test_layers_undo.d` / `test_layer_duplicate.d`
         // green unmodified.
-        Layer survivor = (removed is prevPrimary)
-            ? doc.rehomePrimary(removedIndex) : prevPrimary;
-        // NIT (task 0615 Stage 6 review round 2): `rehomePrimary` filters
-        // candidates on `canBePrimary` alone — unlike its sibling
-        // `anotherPrimaryCandidate` (used by hide-primary promotion and the
-        // multi-select `Remove` case), which also requires `l.visible` (and
-        // `l.selected`). Deleting the primary can therefore re-home it onto
-        // a HIDDEN mesh layer, where the other paths never would. This is
-        // PRE-EXISTING (`rehomePrimary` predates this task; this call is
-        // merely its first production caller — see its doc comment in
-        // document.d) and deliberately NOT changed here: adding a
-        // visibility filter would make `rehomePrimary` return `null` in
-        // cases `canDeleteLayer`'s guard (above) currently treats as safe
-        // (a hidden `canBePrimary` layer counts as "another candidate"
-        // there too), breaking the "`rehomePrimary` returns null only in a
-        // state the delete guard already forbids" contract — fixing it
-        // properly means updating the guard and `rehomePrimary` together,
-        // which is out of scope for this slice. Left faithfully preserved.
-        // Stage-0 lockstep: set primary + selected + activeIndex together,
-        // BEFORE fireSwitchIfChanged. `survivor` is `canBePrimary` by
-        // construction (guard above / `rehomePrimary`'s contract), so this
-        // takes `setActive`'s unchanged, exclusive-select branch.
-        doc.setActive(doc.indexOf(survivor));
+        // ~~Layer survivor = (removed is prevPrimary) ? doc.rehomePrimary(...)
+        // : prevPrimary; … doc.setActive(doc.indexOf(survivor));~~
+        //
+        // TASK 0671 — THE DELETE NO LONGER SELECTS ANYTHING. Two things went
+        // with that call, and both were the stored-target model asking to be
+        // kept valid rather than anything the reference does:
+        //
+        //   * the REHOME. Deleting the mesh that holds the edit target leaves
+        //     the document with no edit target — measured, and it is the only
+        //     way the reference's own frozen fixture reaches that state
+        //     (`tests/fixtures/edit_target_legality.json`, cell
+        //     `selection_nonempty_no_target` step 3). Rehoming picks a layer
+        //     the user never selected, which is the substitution task 0654
+        //     removed from every other path. The `canDeleteLayer` guard above
+        //     still keeps at least one `canBePrimary` LAYER in the document;
+        //     that is a different (and unchanged) invariant from "something is
+        //     always the target".
+        //   * the EXCLUSIVE SELECT. `setActive` collapsed the selection to a
+        //     set of one on EVERY delete, including deletes of a layer nobody
+        //     had selected — the reason `prevSelected` had to snapshot the
+        //     whole set to undo it. Splicing an item out is not a selection
+        //     command; the survivors keep exactly the state they had.
+        //
+        // The edit target is derived, so nothing has to be re-pointed here at
+        // all: the walk enumerates `layers` and the removed item simply stops
+        // being an answer.
         applied = true;
         // Removed kind from the command; the hook contributes ActiveChanged iff
         // the active layer OBJECT changed (deleting a layer below the active one
@@ -731,45 +730,15 @@ final class LayerDelete : LayerCommandBase {
         if (removedIndex > doc.layers.length) removedIndex = doc.layers.length;
         doc.layers = doc.layers[0 .. removedIndex] ~ removed
                                                    ~ doc.layers[removedIndex .. $];
-        // Restore the EXACT prior selection set by identity (review #6), then the
-        // prior primary — `setActive(prevActiveIndex)` would collapse to a SET-of
-        // -one and lose any sibling foreground layers a multi-selection had. The
-        // reinserted `removed` layer carries its own bit from the snapshot.
-        foreach (l; doc.layers) {
-            auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
-            l.selected  = wasSel;
-        }
-        if (prevPrimary !is null) {
-            // R5: `prevPrimary` was `doc.primary` at snapshot time, and the
-            // document invariant guarantees a primary is always
-            // `canBePrimary` — so this can never re-establish an illegal
-            // (non-mesh) primary. `setPrimary` on an already-selected layer
-            // is a no-op reselect.
-            debug assert(kindInfo(prevPrimary.kind).canBePrimary,
-                "LayerDelete.revert: prevPrimary must be canBePrimary (R5)");
-            doc.setPrimary(prevPrimary);
-        } else {
-            // TASK 0668 — `prevPrimary is null` used to mean "the selection
-            // was empty" (task 0654) and now also means "everything selected
-            // was of a kind that cannot be primary", which a plain click on a
-            // reference plane reaches. `setActive(prevActiveIndex)` is wrong
-            // for BOTH: `prevActiveIndex` is then the absent-sentinel
-            // (`layers.length`), and `setActive` CLAMPS an out-of-range index
-            // into a real layer — so an undo would EXCLUSIVELY select the
-            // last layer, discarding the set the loop above just restored and
-            // picking an item the user never touched. That is the silent
-            // substitution 0654 removed everywhere else, arriving through the
-            // undo stack.
-            //
-            // Re-assert the restored SET through the mutators instead. The
-            // raw loop above wrote `selected` only; this makes `primary` and
-            // `focusedItem` derive from it — null when nothing selected can be
-            // primary, which is exactly the state being restored.
-            doc.clearItemSelection();
-            foreach (l; doc.layers)
-                if (auto wasSel = l in prevSelected)
-                    if (*wasSel) doc.selectItem(l, SelMode.Add);
-        }
+        // TASK 0671 — one exact restore replaces the set-then-re-point pair.
+        // The two branches this had (restore `prevPrimary` through
+        // `setPrimary`, or rebuild the set through `clearItemSelection` + a
+        // chain of `Add`s) both existed to re-derive a STORED target from a
+        // restored set. There is no stored target now, and the snapshot
+        // carries the deselect history as well as the selected bits — so
+        // whatever the target was comes back because the state it was derived
+        // from comes back, not because anything re-installs it.
+        doc.restoreItemSelection(prevSelection);
         // Task 0082: restore parent links for any layers that had been orphaned.
         foreach (l; orphanedChildren_) l.parent = removed;
         // Undo of a delete is an add; ActiveChanged via the hook iff it changed.
@@ -796,11 +765,15 @@ final class LayerDelete : LayerCommandBase {
 final class LayerSelect : LayerCommandBase {
     private int    indexArg = 0;
     private string modeArg  = "set";   // {set,add,remove,toggle}; set == today's
-    // Full prior selection snapshot (per-layer selected bits keyed by layer
-    // OBJECT identity, so reorder/delete between apply and revert can't drift
-    // it) + the prior primary object.
-    private bool[Layer] prevSelected;
-    private Layer       prevPrimary;
+    // TASK 0671 — one EXACT snapshot of the whole item-selection state
+    // replaces the `bool[Layer] prevSelected` + `Layer prevPrimary` pair. The
+    // pair recorded the selected bits and a DERIVED consequence (which item
+    // was the edit target); the state now also has a deselect history, and
+    // restoring a consequence while losing a cause is how an undo leaves a
+    // mesh latched by a command that has been undone. See
+    // `Document.captureItemSelection`.
+    private Document.ItemSelectionState prevSelection;
+    private Layer       prevPrimary;   // only for the switch-hook comparison
     private size_t      prevActiveIndex;
     private bool        applied;
 
@@ -825,9 +798,8 @@ final class LayerSelect : LayerCommandBase {
         if (doc.layers.length == 0) return false;
         prevActiveIndex = doc.activeIndex;
         prevPrimary     = doc.active();
-        // Snapshot the full prior selection set by layer identity.
-        prevSelected = null;
-        foreach (l; doc.layers) prevSelected[l] = l.selected;
+        // Snapshot the whole item-selection state (task 0671).
+        prevSelection = doc.captureItemSelection();
 
         // `mode:clear` (task 0654) — empty the item selection. It is the one
         // mode that names no target, so it resolves no index; passing one is
@@ -878,32 +850,14 @@ final class LayerSelect : LayerCommandBase {
         if (!applied) return false;
         auto prevLayer = doc.active();
         size_t prevIdx = doc.activeIndex;
-        // Restore the exact prior selection set (background derives from it).
-        foreach (l; doc.layers) {
-            auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
-            l.selected  = wasSel;
-        }
-        // Restore the prior primary by identity (it is guaranteed selected in
-        // the restored set since it was the primary at snapshot time).
-        if (prevPrimary !is null) {
-            // R5 (task 0615): see LayerDelete.revert.
-            debug assert(kindInfo(prevPrimary.kind).canBePrimary,
-                "LayerSelect.revert: prevPrimary must be canBePrimary (R5)");
-            doc.setPrimary(prevPrimary);
-        } else {
-            // TASK 0654 — a null `prevPrimary` now MEANS something: by the
-            // biconditional it is the empty selection, and undoing back into it
-            // must land there. The `setActive(prevActiveIndex)` this replaces
-            // would take the absent-sentinel index, CLAMP it to the last layer
-            // and select it — an undo that leaves a layer selected that the
-            // user never picked, which is the whole failure mode this task is
-            // about, arriving through the undo stack instead of a click.
-            //
-            // The `foreach` above already restored every `selected` bit from
-            // the snapshot (all false here); `clearItemSelection` is what drops
-            // `primary`/`focusedItem` with them.
-            doc.clearItemSelection();
-        }
+        // TASK 0671 — one exact restore. The pair of branches this replaces
+        // (`setPrimary(prevPrimary)` / `clearItemSelection()`) both existed to
+        // re-derive a STORED edit target from a restored set of bits. There is
+        // no stored target; putting the state back puts the target back. The
+        // 0654 hazard the `else` arm named — `setActive(prevActiveIndex)`
+        // clamping the absent-sentinel onto a real layer and selecting it — is
+        // gone with the index arithmetic that produced it.
+        doc.restoreItemSelection(prevSelection);
         fireSwitchIfChanged(prevLayer, prevIdx);
         noteItemSelectionChange();
         if (onItemSelect !is null) onItemSelect();
@@ -1444,26 +1398,30 @@ unittest {
     // (`ItemKindInfo.canBePrimary`), so the mesh snapshot the ctor's `mesh`
     // pointer aliases is correctly skipped.
     //
-    // TASK 0668 — and the mesh edit target does NOT stay put. `apply()`'s
-    // `doc.setActive(addedIndex)` is an EXCLUSIVE select, and 0668 made an
-    // exclusive select of a kind that cannot be primary drop the previous
-    // target instead of sparing it. Duplicating a non-mesh item therefore
-    // leaves the clone alone in the selection with no edit target, which is
-    // the same answer `imagePlane.add` gives for the same reason. The rows
-    // below used to assert the opposite (`doc.primary is meshA`,
-    // `meshA.selected`, `!background(meshA)`) and are inverted, not deleted:
-    // the formula is still what is being pinned.
-    assert(doc.primary is null,
-        "apply: a non-mesh clone becomes the lone selection, so there is no "
-        ~ "edit target left");
+    // ~~TASK 0668 — and the mesh edit target does NOT stay put. Duplicating a
+    // non-mesh item leaves the clone alone in the selection with no edit
+    // target.~~
+    //
+    // TASK 0671 — the SET half of that is kept and the TARGET half is
+    // reversed, which is the whole shape of this task. `apply()`'s
+    // `doc.setActive(addedIndex)` is still an exclusive select and the clone
+    // is still alone in the selection; what changed is where the mesh GOES
+    // when it is deselected. It goes into the MESH history bucket, and
+    // selecting a non-mesh clone flushes only the clone's own bucket — so the
+    // mesh is still non-zero, still foreground, and still the thing you are
+    // editing. Duplicating a reference image no longer takes the model away
+    // from under the tool.
+    assert(doc.primary is meshA,
+        "apply: the mesh edit target stays LATCHED on meshA — duplicating a "
+        ~ "non-mesh item cannot move it, because it never enters the mesh bucket");
     assert(doc.focusedItem is dup.added, "apply: the clone becomes the item focus");
     assert(dup.added.selected, "apply: clone is selected");
     assert(!meshA.selected,
         "apply: the exclusive select really was exclusive — the mesh is "
-        ~ "dropped from the selection, not spared");
-    assert(Document.background(meshA),
-        "…and derives as BACKGROUND: dimmed and read-only, which is what an "
-        ~ "item that is no longer the edit target must look like");
+        ~ "dropped from the SELECTION, not spared");
+    assert(doc.foreground(meshA) && !doc.background(meshA),
+        "…and it is FOREGROUND, not a dimmed read-only background layer that "
+        ~ "the toolpipe is nevertheless writing to");
     {
         size_t selCount = 0;
         foreach (l; doc.layers) if (l.selected) ++selCount;
@@ -1527,12 +1485,13 @@ unittest {
     assert(dup.apply(), "apply must succeed on an image source");
     assert(doc.layers.length == 3, "apply: layer count == 3");
     assert(dup.added.kind == ItemKind.Image, "clone of an image source keeps its kind");
-    // Task 0668: an image clone never becomes primary AND, because `apply()`
-    // selects it exclusively, no other item stays primary either — see the
+    // Task 0671: an image clone never becomes the target, and the mesh that
+    // was the target keeps it — an image is a different history bucket, so the
+    // exclusive select that focuses the clone cannot reach the mesh's. See the
     // `ItemKind.Empty` clone test above for the full statement of the law.
-    assert(doc.primary is null,
-        "apply: an image clone is not canBePrimary, and the exclusive select "
-        ~ "that focuses it leaves no edit target behind");
+    assert(doc.primary is meshA,
+        "apply: an image clone is not canBePrimary, and selecting it flushes "
+        ~ "only the IMAGE bucket — the mesh stays latched");
     assert(!meshA.selected, "apply: the mesh is dropped from the selection");
 
     // (a) the clone must be a LIVE image row, not a payload-null one — the
@@ -1652,12 +1611,12 @@ unittest {
     dup.indexArg = 2;
     assert(dup.apply(), "apply must succeed on an image-plane source");
     assert(dup.added.kind == ItemKind.ImagePlane, "the clone keeps its kind");
-    // Task 0668, as in the `Empty` and `Image` clone tests above: the clone is
+    // Task 0671, as in the `Empty` and `Image` clone tests above: the clone is
     // not `canBePrimary`, and the exclusive select that focuses it drops the
-    // mesh rather than sparing it, so there is no edit target afterwards.
-    assert(doc.primary is null,
-        "a plane clone never becomes primary, and its exclusive select leaves "
-        ~ "no edit target behind");
+    // mesh from the SELECTION while leaving it latched as the edit target.
+    assert(doc.primary is meshA,
+        "a plane clone never becomes the target, and it cannot take the one "
+        ~ "the mesh holds — different history bucket");
     assert(!meshA.selected, "the mesh is dropped from the selection");
 
     auto cl = dup.added.imagePlaneOrNull();
@@ -1735,14 +1694,15 @@ unittest {
     // through `layer.add` itself (no `kind` param, per the header above) — but
     // it IS the shape `imagePlane.add` and `layer.duplicate` reach, so the
     // formula is worth pinning here where the call site is isolated.
-    assert(doc.primary is null,
-        "§L2 as amended by 0668: `setActive` onto a non-mesh target leaves NO "
-        ~ "mesh edit target");
+    assert(doc.primary is meshA,
+        "§L2 as amended by 0671: `setActive` onto a non-mesh target leaves the "
+        ~ "mesh edit target LATCHED — 0668's `is null` is what this task undoes");
     assert(!meshA.selected,
-        "…and the mesh is dropped from the selection, not spared");
-    assert(Document.background(meshA),
-        "…so it derives as BACKGROUND — dimmed and read-only, which is what "
-        ~ "an item that is no longer the edit target must look like");
+        "…and the mesh is dropped from the SELECTION, not spared: 0668's half "
+        ~ "of the answer is unchanged, and it is what matches the reference's set");
+    assert(doc.foreground(meshA) && !doc.background(meshA),
+        "…so it stays FOREGROUND — an item that is still being edited must not "
+        ~ "derive as a dimmed, read-only, snappable background layer");
     assert(doc.focusedItem is added, "§L2 (LayerAdd): focus moves to the new item");
     {
         size_t selCount = 0;
@@ -1753,19 +1713,25 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Task 0615 Stage 6 §L1: `LayerDelete` — the identity-based successor
+// ~~Task 0615 Stage 6 §L1: `LayerDelete` — the identity-based successor
 // rewrite. `[MeshA(primary), Empty, MeshB]`, delete index 0 (the primary
-// itself). RED against the pre-revision positional wording: `newActive =
-// removedIndex < length ? removedIndex : length-1` would land on index 0 of
-// the post-splice `[Empty, MeshB]`, i.e. the `Empty` layer — `setActive`
-// would then find `primary` (MeshA) stale-but-non-null and, under the OLD
-// (pre-Stage-3b) semantics, either strand it outside `layers` or (as this
-// codebase's actual `exclusiveSelect` stale-primary fallback happens to
-// recover via `rehomePrimary(0)`) land on the WRONG survivor when a
-// non-mesh layer precedes a mesh layer that is not first — see the plan's
-// worked example. The rewrite decides by identity + `rehomePrimary
-// (removedIndex)` directly, matching the plan's algorithm exactly rather
-// than relying on that incidental fallback.
+// itself). The rewrite decides by identity + `rehomePrimary(removedIndex)`
+// directly…~~
+//
+// TASK 0671 — DELETING THE EDIT TARGET LEAVES NO EDIT TARGET, and the
+// successor rule is retired rather than corrected. Measured: `tests/fixtures/
+// edit_target_legality.json`, cell `selection_nonempty_no_target` step 3 — a
+// scene that HAS a mesh layer and has NO edit target, reached by deleting the
+// item that held it. Rehoming names a layer the user never selected, which is
+// the substitution task 0654 removed everywhere else; §L1's whole subject
+// (WHICH successor, and never the non-mesh one) stops being a question.
+//
+// What this pins now is the property the rehome was hiding: the target is
+// derived, so a deleted item stops being an answer with no cooperation from
+// the delete path — and the remaining mesh is NOT promoted in its place. The
+// §L1 delete GUARD (never delete the last `canBePrimary` layer) is unchanged
+// and still asserted below; it is a different invariant from "something is
+// always the target".
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : makeCube;
@@ -1787,16 +1753,19 @@ unittest {
 
     assert(del.apply(), "delete of the primary must succeed (MeshB survives)");
     assert(doc.layers.length == 2, "MeshA spliced out");
-    assert(doc.primary is meshB,
-        "§L1: primary rehomes to the surviving MESH layer, never to Empty");
-    assert(doc.primary.hasMesh, "§L1: primary always hasMesh");
-    assert(doc.layers[doc.activeIndex] is doc.primary,
-        "§L1: activeIndex tracks the rehomed primary (false under the "
-        ~ "pre-revision wording, where activeIndex silently falls back to 0)");
+    assert(doc.primary is null,
+        "0671: deleting the item that held the edit target leaves NO edit "
+        ~ "target — MeshB is not promoted into it, and neither is Empty");
+    assert(!meshB.selected,
+        "…and nothing is selected on the way: the delete is a structural "
+        ~ "mutation, not a selection command");
+    assert(doc.background(meshB),
+        "…so the surviving mesh is BACKGROUND — still drawn, dimmed");
+    assert(doc.activeIndex == doc.layers.length,
+        "activeIndex is the absent-sentinel, never a real row");
     assert(switchFired,
-        "§L1 / R11: the switch hook must fire — primary genuinely moved "
-        ~ "off the deleted layer (the pre-revision wording's stale-primary "
-        ~ "identity check would have skipped this)");
+        "§L1 / R11: the switch hook must fire — the edit target genuinely "
+        ~ "moved off the deleted layer (to nothing)");
 
     // §L1 guard: deleting the LAST canBePrimary layer is refused, even
     // though the document has more than one layer left ([Empty, MeshB]).
@@ -1804,15 +1773,19 @@ unittest {
     del2.indexArg = 1;                                // MeshB is now the ONLY mesh layer
     assert(!del2.apply(), "§L1 guard: refuse deleting the last canBePrimary layer");
     assert(doc.layers.length == 2, "refused delete leaves the document untouched");
-    assert(doc.primary is meshB, "refused delete leaves primary untouched");
+    assert(doc.primary is null, "refused delete leaves the (absent) target untouched");
 
-    // §L1 undo symmetry: undo the FIRST delete restores MeshA as primary and
-    // the full prior selection set.
+    // §L1 undo symmetry: undo the FIRST delete restores MeshA as the target
+    // and the full prior selection set. TASK 0671 — this is the row that says
+    // the snapshot is EXACT: nothing re-installs MeshA, it comes back because
+    // the state it was derived from comes back, and the reinserted object is
+    // the same one by identity.
     assert(del.revert(), "undo the delete of MeshA");
     assert(doc.layers.length == 3, "MeshA reinserted");
-    assert(doc.primary is meshA, "undo restores MeshA as primary");
+    assert(doc.primary is meshA, "undo restores MeshA as the edit target");
+    assert(meshA.selected, "…and as a selected member, exactly as it was");
     assert(doc.layers[doc.activeIndex] is doc.primary,
-        "undo: activeIndex tracks the restored primary");
+        "undo: activeIndex tracks the restored target");
 }
 
 // ---------------------------------------------------------------------------
@@ -1886,13 +1859,14 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// TASK 0668 — the same blocker on the state a PLAIN click now produces.
-// Selecting a non-mesh row exclusively leaves no primary, so `activeIndex`
-// answers the absent-sentinel `layers.length`: the old
-// `document.activeIndex` formula would index PAST THE END rather than merely
-// name the wrong layer. `layerDeleteButtonState` reads the focus, so the
-// answer is the same either way — which is the point worth pinning, because
-// "reads the focus" is what makes it independent of whether a primary exists.
+// TASK 0668/0671 — the same blocker on the state a PLAIN click now produces.
+// Selecting a non-mesh row exclusively takes every mesh out of the SELECTION.
+// The Delete button must target the FOCUSED row, not the edit target, and this
+// pins that it does so on the state where the two genuinely differ: 0671
+// leaves the mesh LATCHED, so `activeIndex` names MeshA while the focus is on
+// the Empty row three slots away. Before 0671 they differed by the primary
+// being absent; now they differ by naming two different real rows, which is
+// the harder case for a formula that reads the wrong one.
 // ---------------------------------------------------------------------------
 unittest {
     import mesh : makeCube;
@@ -1905,18 +1879,18 @@ unittest {
     doc.layers ~= empty;
 
     doc.selectItem(empty, SelMode.Set);          // a plain CLICK
-    assert(doc.primary is null, "0668: the plain click leaves no edit target");
-    assert(doc.activeIndex == doc.layers.length,
-        "…so activeIndex is the absent-sentinel, OUT of range");
+    assert(doc.primary is meshA, "0671: the plain click leaves the mesh latched");
+    assert(doc.activeIndex == 0, "…so activeIndex names MeshA, not the clicked row");
     assert(!meshA.selected && !meshB.selected,
-        "…and neither mesh is left in the selection");
+        "…and neither mesh is left in the SELECTION");
 
     auto state = layerDeleteButtonState(&doc);
     assert(state.index == doc.indexOf(empty),
-        "the Delete button still targets the FOCUSED row when there is no "
-        ~ "primary at all");
-    assert(state.index < doc.layers.length,
-        "…and that target is in range, which the activeIndex formula is not");
+        "the Delete button targets the FOCUSED row, which is NOT the edit "
+        ~ "target here — a formula reading `activeIndex` deletes MeshA");
+    assert(state.index != doc.activeIndex,
+        "…and the two really are different rows in this state, so the row "
+        ~ "above is discriminating rather than incidentally equal");
 }
 
 // ---------------------------------------------------------------------------

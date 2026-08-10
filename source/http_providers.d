@@ -526,6 +526,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 immutable bool isXTarget = document.isTransformTarget(l);
                 a.put(format(
                     `{"index":%d,"name":%s,"type":%s,"visible":%s,"background":%s,` ~
+                    `"foreground":%s,` ~
                     `"active":%s,"selected":%s,"primary":%s,"focused":%s,` ~
                     `"transformTarget":%s,` ~
                     `"vertexCount":%s,"faceCount":%s,` ~
@@ -534,7 +535,16 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                     i, JSONValue(l.name).toString(),
                     JSONValue(tokenOf(l.kind)).toString(),
                     l.visible ? "true" : "false",
-                    Document.background(l) ? "true" : "false",
+                    document.background(l) ? "true" : "false",
+                    // Task 0671: `foreground` is NOT `!background` and is not
+                    // `visible && selected` either. It is the other arm of the
+                    // same three-way classifier, and a hidden or non-scene item
+                    // is neither — so a caller that wants "is this an active
+                    // layer" has to read this rather than negate the line
+                    // above. It is also the only way an HTTP test can see the
+                    // LATCH: a deselected mesh that is still being edited
+                    // reports selected:false, background:false, foreground:true.
+                    document.foreground(l) ? "true" : "false",
                     // Task 0654: false for EVERY row when nothing is selected
                     // — `activeIndex` is then `layers.length`, which matches no
                     // `i`, so this already reads correctly; spelled through

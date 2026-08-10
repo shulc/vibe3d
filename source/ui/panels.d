@@ -3370,7 +3370,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             foreach (i, lyr; document.layers) {
                 // Task 0615 Stage 4 (§Tier-2 :2162): a non-mesh layer is not a
                 // snap source.
-                if (Document.background(lyr) && lyr.hasMesh) {
+                if (document.background(lyr) && lyr.hasMesh) {
                     snapSrc ~= cast(const(Mesh)*)&lyr.meshRef();
                     // Task 0617 Stage 4: same source as `bgModel` in the draw
                     // loop above (`lyr.xform.composedMatrix()`) — a background

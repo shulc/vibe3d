@@ -1,0 +1,82 @@
+{
+ "name": "edit_target_legality",
+ "description": "Frozen reference behaviour: the mesh EDIT TARGET and the ITEM SELECTION are independent, and BOTH of the states that independence makes representable are legal. A target can be set while nothing at all is selected, and a non-empty selection can coexist with no target. The companion fixture layer_main_latched records that the target survives selecting a non-mesh item; this one records what the two states at the extremes look like, plus the rule that decides when the target is given up.",
+ "source": "Frozen reference capture (headless, scripted): four independent rigs, one process boot each, reading the edit target's identity and the item selection after every step.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "self-drive",
+  "captured_utc": "2026-08-10",
+  "harness": "private headless capture harness (case script + per-case result JSON live in the private tree)",
+  "task": "0670",
+  "notes": "These cells were written to CHECK a model that had already been read out of the reference's own declarations and shipped code, not to discover one. Each cell recorded its prediction before the run. All four agreed. The read, with quotes and addresses, lives in the private tree; only the measured behaviour is frozen here."
+ },
+ "cells": [
+  {
+   "id": "flush_is_per_item_kind",
+   "why": "Establishes the rule that decides when a target is GIVEN UP, and supplies the negative control the other cells rely on: a mesh that has lost the target reads as background, not as a second foreground layer. Without this row one could believe targets simply accumulate.",
+   "rig": "two mesh layers",
+   "rows": [
+    {"step": 1, "action": "select mesh A", "item_selection": ["mesh A"], "foreground_count": 1, "edit_target": "mesh A", "background": ["mesh B"]},
+    {"step": 2, "action": "select mesh B (exclusive)", "item_selection": ["mesh B"], "foreground_count": 1, "edit_target": "mesh B", "background": ["mesh A"],
+     "role": "CONTROL and the law in one: the count stays 1. Selecting another mesh does not add a second foreground layer, it REPLACES the first, and mesh A falls all the way back to background."},
+    {"step": 3, "action": "add mesh A to the selection", "item_selection": ["mesh B", "mesh A"], "foreground_count": 2, "foreground_order": ["mesh B", "mesh A"], "edit_target": "mesh B",
+     "role": "two foreground layers are representable; the target is the FIRST of them, which here is the earlier-selected one, not the most recently added"}
+   ]
+  },
+  {
+   "id": "target_set_nothing_selected",
+   "why": "The first of the two states the independence makes representable. Dropping the whole item selection does NOT drop the edit target.",
+   "rig": "two mesh layers",
+   "rows": [
+    {"step": 1, "action": "select mesh A", "item_selection": ["mesh A"], "foreground_count": 1, "edit_target": "mesh A"},
+    {"step": 2, "action": "drop the entire item selection", "item_selection": [], "foreground_count": 1, "edit_target": "mesh A",
+     "role": "THE measurement: an empty item selection with a live edit target is a legal state"},
+    {"step": 3, "action": "select mesh B, then drop the entire item selection", "item_selection": [], "foreground_count": 1, "edit_target": "mesh B",
+     "role": "and it is not pinned to one layer: the retained target follows whichever mesh was selected last"}
+   ]
+  },
+  {
+   "id": "selection_nonempty_no_target",
+   "why": "The other of the two states. Built by taking the target away from a scene that still has a mesh in it: after step 2 mesh A has been demoted to background (see cell flush_is_per_item_kind), so deleting mesh B leaves a scene with a mesh layer and nothing holding the target.",
+   "rig": "two mesh layers, then one is deleted, then a non-mesh item is added",
+   "rows": [
+    {"step": 1, "action": "select mesh A", "item_selection": ["mesh A"], "layer_count": 2, "foreground_count": 1, "edit_target": "mesh A"},
+    {"step": 2, "action": "select mesh B (exclusive)", "item_selection": ["mesh B"], "layer_count": 2, "foreground_count": 1, "edit_target": "mesh B", "background": ["mesh A"]},
+    {"step": 3, "action": "delete mesh B", "item_selection": [], "layer_count": 1, "foreground_count": 0, "edit_target": null, "background": ["mesh A"],
+     "role": "a scene that HAS a mesh layer and has NO edit target"},
+    {"step": 4, "action": "add a non-mesh item and select it", "item_selection": ["non-mesh item"], "layer_count": 1, "foreground_count": 0, "edit_target": null,
+     "role": "THE measurement: the item selection is non-empty and there is still no edit target. Selecting a non-mesh item cannot create one."},
+    {"step": 5, "action": "select mesh A", "item_selection": ["mesh A"], "layer_count": 1, "foreground_count": 1, "edit_target": "mesh A",
+     "role": "CONTROL: the read recovers immediately, so steps 3 and 4 are a real empty target and not a stuck or broken reading"}
+   ]
+  },
+  {
+   "id": "hidden_mesh_keeps_the_target",
+   "why": "Visibility and targethood are also independent. Hiding the target layer does not hand the target to anyone else.",
+   "rig": "two mesh layers",
+   "rows": [
+    {"step": 1, "action": "select mesh A", "item_selection": ["mesh A"], "foreground_count": 1, "edit_target": "mesh A"},
+    {"step": 2, "action": "hide mesh A", "item_selection": ["mesh A"], "foreground_count": 1, "edit_target": "mesh A",
+     "role": "THE measurement: a hidden layer is still the edit target"},
+    {"step": 3, "action": "select mesh B while mesh A stays hidden", "item_selection": ["mesh B"], "foreground_count": 1, "edit_target": "mesh B",
+     "role": "CONTROL: the target still moves normally, so step 2 is not a frozen read"}
+   ]
+  }
+ ],
+ "layer_list_holds_meshes_only": {
+  "observed": "With a non-mesh item present in the scene the layer list still reports only the mesh layers (cells selection_nonempty_no_target and one discarded rig both show it).",
+  "why_it_matters": "It is the structural reason a non-mesh selection cannot move the target: a non-mesh item is not a candidate, not a rejected candidate."
+ },
+ "not_answered": {
+  "how_long_a_demoted_target_is_remembered": "Every cell used a single generation of selection history. Nothing here says whether a second, third or undone selection changes what is retained.",
+  "what_makes_a_layer_first": "flush_is_per_item_kind step 3 shows the target is the first of two foreground layers, but insertion order and primary-ness were not separated; a single extra cell would do it. It matters only for multi-selection parity.",
+  "fresh_scenes": "Two attempts to build a mesh that had NEVER been selected failed, both times because the reference itself leaves a mesh selected: creating a scene selects its default mesh, and opening a scene selects its first mesh. That is a policy the reference applies, not a property of the model, and this fixture does not assert it."
+ },
+ "classification": {
+  "verdict": "match",
+  "was": "Until this fixture landed the verdict was \"divergence\", on the reasoning that vibe3d could represent neither extreme: the document invariant demanded at least one selected, visible, target-eligible layer, so 'no edit target' and 'nothing selected' were both unreachable and the hidden-mesh cell conflicted with the visibility clause. That was a statement about our model, not about the reference. Separating the two — a per-kind cache of recently deselected items, with the target derived by walking the current selection and then that cache — makes all four cells ordinary passing rows, which is what the self_clearing note below predicted.",
+  "self_cleared": "The marker came off with the model, not with a tuned answer: no cell's expected value was edited to land it."
+ }
+}

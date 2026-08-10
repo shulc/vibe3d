@@ -957,7 +957,30 @@ final class Layer {
     ItemKind kind = ItemKind.Mesh; ///< item kind; capability lookup via `kindInfo`
     string name;               ///< display name (e.g. "Layer 1")
     bool   visible    = true;  ///< drawn when true
-    bool   selected   = false; ///< item selection (foreground membership)
+    bool   selected   = false; ///< membership of the CURRENT item selection
+    /// Task 0671 — this item's SEAT in the ordered item-selection list.
+    ///
+    /// The current selection is not a set, it is a QUEUE: the reference keeps
+    /// its selection as an ordered list and the edit target is the list's
+    /// FIRST surviving member (measured — `set B; add A` targets **B**, the
+    /// earlier one, not the newer). A `bool selected` alone cannot answer
+    /// "which was first", and `layers` order is the wrong answer: it says A,
+    /// because A is layer 0.
+    ///
+    /// Ascending = later. `Document.noteSelected` seats a joining item at the
+    /// BACK (`++selSeatBack_`); `Document.setPrimary` — vibe3d's own affordance,
+    /// see there — re-seats at the FRONT (`--selSeatFront_`), which is why this
+    /// is signed. `0` means "never seated"; ties (two never-seated items) break
+    /// on `layers` order, so the walk is total even for a document assembled by
+    /// direct field writes.
+    ///
+    /// Deliberately NOT cleared on deselect: an item that leaves the current
+    /// list keeps its seat, and `Document.deselected_` — the history bucket —
+    /// is ordered by the same number. That is what makes the two queues one
+    /// order, and it is also why an undo that restores `selected` by raw field
+    /// write (three `revert()` paths do) restores the ORDER too, without
+    /// knowing this field exists.
+    long   selSeat    = 0;
     // Stage 2b: the stored `bool background` field is DELETED. Background is now
     // derived — `Document.background(l) == l.visible && !l.selected` — with no
     // separate field of record (the third state collapsed).
@@ -1221,12 +1244,47 @@ final class Layer {
 ///     focusedItem is null  ⟺  no layer is selected
 ///     primary is null      ⟺  no SELECTED layer is `canBePrimary`
 ///
-/// The first chains into the second one way only: `primary !is null` implies
-/// `primary.selected`, hence a non-empty selection, hence a focus. The
-/// converse fails exactly on the state 0668 introduced — a plane (or a clip)
-/// selected alone.
+/// ===========================================================================
+/// TASK 0671 — THE SECOND HALF OF THAT SPLIT IS ALSO WRONG, AND `primary` IS
+/// NOT A FIELD ANY MORE.
+/// ===========================================================================
 ///
-/// There is STILL deliberately no state where a layer is latched as the edit
+/// 0654 and 0668 both reasoned from OUR model. Task 0670 went and read the
+/// reference's instead, and the mechanism is not the one everybody (this
+/// comment included) had inferred. There is no latched pointer living outside
+/// the selection, and there is no second variable at all. **Per selection type
+/// the reference keeps TWO lists: the current selection, and a cache of
+/// recently deselected elements.** Selectedness is therefore not a boolean:
+/// an element is `CURRENT`, or `HISTORY`, or neither.
+///
+/// Everything else falls out of one comparison. The foreground layer list is
+/// an ENUMERATION over both lists — current first, then history — filtered to
+/// the layer bucket; a mesh counts as foreground when its selection state is
+/// **non-zero**, not when it is in the current list; and history is non-zero.
+/// The edit target is simply the FIRST SURVIVOR OF THAT SAME WALK. It is
+/// recomputed on demand, never stored.
+///
+/// So in this file:
+///
+///   * `Layer.selected` is membership of the CURRENT list only.
+///   * `deselected_` is the second list, bucketed by item KIND — because the
+///     reference's history buckets are keyed by (selection type, subtype) and
+///     the subtype of an item packet is the item's type.
+///   * `primary` is a derived accessor (`nthEditTargetCandidate(0)`), not a
+///     field. Nothing assigns it; the mutators move ITEMS BETWEEN THE TWO
+///     LISTS and the target follows.
+///   * `foreground(l)` / `background(l)` route through `roleOf(l)`, the port of
+///     the reference's own three-way classifier.
+///
+/// THE LAW THAT MAKES THE LATCH: history buckets are keyed by kind, so only a
+/// selection OF A MESH flushes the mesh bucket. Selecting a reference plane
+/// flushes the PLANE bucket and leaves the previously-selected mesh sitting in
+/// the mesh history — still non-zero, therefore still foreground, therefore
+/// still the edit target. Dropping the whole item selection does not flush any
+/// bucket at all, so it too keeps the target (measured; `tests/fixtures/
+/// edit_target_legality.json`, cell `target_set_nothing_selected`).
+///
+/// ~~There is STILL deliberately no state where a layer is latched as the edit
 /// target while unselected. `foreground(l) == visible && selected` is the sole
 /// derivation of foreground/background, so such a primary would render as
 /// BACKGROUND — a dimmed, read-only, non-snappable layer that the toolpipe
@@ -1235,7 +1293,34 @@ final class Layer {
 /// item nothing on screen marks. That is precisely why 0668 clears the mesh
 /// rather than keeping it latched: every consumer that needs an edit target
 /// must ask for one and take the refusal (`hasEditTarget`, `activeMesh() is
-/// null`, `activeMeshRef()` throwing) rather than be handed a substitute.
+/// null`, `activeMeshRef()` throwing) rather than be handed a substitute.~~
+///
+/// SUPERSEDED, and the objection is what got answered rather than overruled.
+/// It was a sound argument about a model in which `foreground` reads
+/// `selected`. In the reference `foreground` reads the SELECTION STATE, and a
+/// deselected mesh in the history bucket has one — so the latched mesh draws
+/// as FOREGROUND, is not a background snap source, and is exactly as marked on
+/// screen as it was a moment ago. The dimmed-but-edited state this paragraph
+/// refuses to represent is still unrepresentable; it was never what the
+/// reference did.
+///
+/// WHAT SURVIVES 0654/0668 UNCHANGED: an absent edit target is still legal and
+/// is still a refusal, not a substitution — every consumer asks
+/// (`hasEditTarget`, `activeMesh() is null`, `activeMeshRef()` throwing) and
+/// takes the refusal. Only the way that state is REACHED changed: no mesh has a
+/// non-zero selection state (e.g. the mesh that held the target was deleted,
+/// or its bucket was flushed by another mesh which was then deleted). Both
+/// odd states are legal and both were measured: "target set, nothing selected"
+/// and "selection non-empty, no target".
+///
+/// The model, whole:
+///
+///     focusedItem is null  ⟺  no layer is in the CURRENT list
+///     primary              == first survivor of [current ++ history], filtered
+///                             to `canBePrimary` members
+///
+/// The two are now genuinely independent — neither implies the other in either
+/// direction — which is what the frozen fixtures measure.
 
 /// Thrown by `Document.activeMeshRef()` when the item selection is empty
 /// (task 0654). Its own type, not a bare `Exception`, so a caller that WANTS to
@@ -1286,22 +1371,210 @@ private __gshared Mesh g_noEditTargetMesh;
 /// intended.
 ref Mesh noEditTargetMesh() { return g_noEditTargetMesh; }
 
+/// The selection STATE of one item — the port of the reference's own state
+/// word, narrowed to the two bits this document model uses (task 0671).
+/// "Deselected" is not the absence of a state; it is the state `History`.
+enum SelState : ubyte {
+    None    = 0,  ///< in neither list
+    Current = 1,  ///< in the current item selection
+    History = 2,  ///< not current, but still in the recently-deselected cache
+}
+
+/// The three-way classification of an item as a LAYER (task 0671) — the port
+/// of the reference's own classifier, which returns exactly these three
+/// answers and whose "none of those" arm is documented in its own headers.
+///
+/// It is deliberately three-valued and not `bool foreground`: a hidden item
+/// with no selection state is neither foreground nor background, and an item
+/// of a kind that is not a scene item at all (a clip) is not a layer at all.
+enum LayerRole : ubyte {
+    None       = 0,  ///< not a layer: not a scene item, or hidden with no state
+    Foreground = 1,  ///< an active layer — editable, undimmed, target-eligible
+    Background = 2,  ///< visible but inactive — dimmed, read-only, snappable
+}
+
 struct Document {
     Layer[] layers;            ///< flat list; always length >= 1
-    Layer   primary;           ///< the MESH EDIT TARGET — component tools and
-                               ///< commands bind `Mesh*` off this; always
-                               ///< `canBePrimary` (today: always mesh-kind).
-                               ///< NULL exactly when no SELECTED item can be
-                               ///< primary (task 0654, narrowed by 0668) —
-                               ///< which includes, but is no longer limited
-                               ///< to, an empty item selection.
     // Task 0615 Stage 2: splits the role `primary` used to conflate. `primary`
     // is the mesh edit target; `focusedItem` is the item-selection focus (item
     // transform, property panel, item ops) and may be ANY kind. On an
-    // all-mesh document the two always coincide — every mutator below keeps
-    // them in lockstep unless the touched target cannot be primary (§L2).
-    Layer   focusedItem;       ///< most-recently-touched selected item, any
-                               ///< kind; `primary` on an all-mesh document.
+    // all-mesh document the two coincide whenever the mesh is CURRENT; task
+    // 0671 lets them part company the other way too (a latched mesh is the
+    // target while the focus sits on a plane, or on nothing).
+    Layer   focusedItem;       ///< most-recently-touched item of the CURRENT
+                               ///< selection, any kind.
+
+    // -----------------------------------------------------------------------
+    // Task 0671 — the SECOND LIST. See the struct's doc comment above for the
+    // model; this is its whole storage.
+    // -----------------------------------------------------------------------
+
+    /// The cache of recently deselected items, bucketed by item KIND.
+    ///
+    /// BUCKETED, and that is the entire mechanism behind the latch — not an
+    /// optimisation and not a tidiness. The reference keys its history nodes by
+    /// (selection type, subtype), and the subtype of an item packet IS the item
+    /// type, so a selection of kind K flushes bucket K and leaves every other
+    /// bucket standing. One flat list would flush the mesh out of history the
+    /// moment a plane was selected, which is precisely the behaviour this task
+    /// exists to remove.
+    ///
+    /// Entries are appended on deselect and dropped WHOLESALE on the next
+    /// selection of that kind (`noteSelected`). Nothing purges a bucket when a
+    /// layer is deleted: the walk filters by MEMBERSHIP (it enumerates
+    /// `layers`), so a deleted item is excluded for as long as it is gone and
+    /// LIVE AGAIN by identity if an undo reinserts the same object — the same
+    /// checked-resolution argument `ItemLink` makes for itself, with the same
+    /// payoff of needing no cooperation from the delete path.
+    private Layer[][ItemKind.max + 1] deselected_;
+
+    /// Seat allocators for `Layer.selSeat` — back of the queue and front of it.
+    /// Two counters rather than one, because the two operations they serve are
+    /// genuinely different: joining the selection appends, and re-seating an
+    /// item as the edit target (`setPrimary`) prepends. Monotone in opposite
+    /// directions, so neither can ever collide with the other.
+    private long selSeatBack_  = 0;
+    private long selSeatFront_ = 0;
+
+    /// The selection STATE of `l` — the reader every other question here is
+    /// asked through. Current is searched FIRST, so an item that is both
+    /// current and still listed in a bucket (an undo that restored `selected`
+    /// by raw field write) reads `Current`, exactly as the reference's own
+    /// lookup resolves it.
+    SelState selectionState(const(Layer) l) const {
+        if (l is null) return SelState.None;
+        if (l.selected) return SelState.Current;
+        foreach (h; deselected_[l.kind]) if (h is l) return SelState.History;
+        return SelState.None;
+    }
+
+    /// Classify `l` as a layer — the port of the reference's classifier, arm
+    /// for arm. Read the `canBePrimary` arm carefully: it tests the whole
+    /// selection STATE against zero, not membership of the current list, and
+    /// that single comparison is the latch.
+    ///
+    /// `canBePrimary` rather than `hasMesh` stands in for the reference's
+    /// "is a mesh" test, for the reason `assertDocInvariants` already gives:
+    /// every refusal in this file keys on the capability, and a future kind
+    /// with geometry but barred from being the edit target must take the
+    /// ordinary arm.
+    LayerRole roleOf(const(Layer) l) const {
+        if (l is null) return LayerRole.None;
+        // Not a scene item at all (a clip lives only in its own panel), so it
+        // is not a layer — not a background one either.
+        if (!kindInfo(l.kind).isSceneItem) return LayerRole.None;
+        immutable st = selectionState(l);
+        immutable bool targetable = kindInfo(l.kind).canBePrimary && st != SelState.None;
+        // Hidden: only a targetable item survives, and it survives as
+        // FOREGROUND — hiding the edit target does not hand it to anyone else
+        // (measured; `edit_target_legality`, cell `hidden_mesh_keeps_the_target`).
+        if (!l.visible) return targetable ? LayerRole.Foreground : LayerRole.None;
+        if (targetable) return LayerRole.Foreground;
+        return st == SelState.Current ? LayerRole.Foreground : LayerRole.Background;
+    }
+
+    /// THE WALK (task 0671), and the only definition of it. Returns the `n`-th
+    /// item of the foreground layer list, or `null` when the list is shorter
+    /// than that. `primary` is `nthEditTargetCandidate(0)` and
+    /// `foregroundLayersInto` is this called until it answers null, so the
+    /// edit target and the list it heads cannot drift apart — they are one
+    /// enumeration asked two questions.
+    ///
+    /// The order is: **the current selection in seat order, then the deselect
+    /// history in seat order**, filtered to items that classify `Foreground`
+    /// and `canBePrimary`. Two stages, and current strictly precedes history no
+    /// matter how the seats compare — that is what makes a freshly selected
+    /// mesh outrank a latched one rather than merely outrank it by luck.
+    ///
+    /// MEMBERSHIP IS THE ENUMERATION. It walks `layers`, so an item that has
+    /// left the document contributes nothing however it is still referenced;
+    /// see `deselected_`.
+    ///
+    /// Ties on `selSeat` break on `layers` order, which makes the order TOTAL
+    /// even for a document mid-assembly by direct field write (several loaders
+    /// and three `revert()` paths do exactly that, and a never-seated item
+    /// carries seat `0`). Without the tie-break, two seat-0 selected meshes
+    /// would be mutually unordered and the walk could stall on the first.
+    ///
+    /// O(k·n) for the k-th answer, with no allocation, so it is safe on the
+    /// per-frame paths that ask for `primary` ~100 times a frame. The reference
+    /// memoises the same walk and drops the memo on every selection / scene /
+    /// animation event; we do not need to, and a memo that is maintained rather
+    /// than dropped is precisely the stored pointer this task exists to not
+    /// reintroduce.
+    private inout(Layer) nthEditTargetCandidate(size_t n) inout {
+        size_t emitted = 0;
+        foreach (stage; 0 .. 2) {
+            immutable want = stage == 0 ? SelState.Current : SelState.History;
+            long   lastSeat  = long.min;
+            size_t lastIndex = 0;
+            bool   haveLast  = false;
+            for (;;) {
+                // `bestIndex`, not a `Layer` local: D forbids assigning to an
+                // `inout`-typed variable inside an `inout` function, and this
+                // one function has to serve both the mutable and the const
+                // caller. Indexing `layers` at the end reintroduces the
+                // caller's own constness for free.
+                size_t bestIndex = layers.length;
+                long   bestSeat  = 0;
+                foreach (i, l; layers) {
+                    if (l is null) continue;
+                    if (!kindInfo(l.kind).canBePrimary) continue;
+                    if (selectionState(l) != want) continue;
+                    if (roleOf(l) != LayerRole.Foreground) continue;
+                    // strictly after the last emitted (seat, index) key
+                    if (haveLast && (l.selSeat < lastSeat
+                                 || (l.selSeat == lastSeat && i <= lastIndex))) continue;
+                    if (bestIndex == layers.length || l.selSeat < bestSeat
+                                     || (l.selSeat == bestSeat && i < bestIndex)) {
+                        bestSeat = l.selSeat; bestIndex = i;
+                    }
+                }
+                if (bestIndex == layers.length) break;
+                if (emitted == n) return layers[bestIndex];
+                ++emitted;
+                lastSeat = bestSeat; lastIndex = bestIndex; haveLast = true;
+            }
+        }
+        return null;
+    }
+
+    /// The MESH EDIT TARGET — the first survivor of the walk. Component tools
+    /// and commands bind `Mesh*` off this; it is always `canBePrimary` (today:
+    /// always mesh-kind) and always a member of `layers`.
+    ///
+    /// NULL when no item with a non-zero selection state can be the edit
+    /// target (task 0654, narrowed by 0668, re-derived by 0671). That includes
+    /// but is NOT implied by an empty item selection: dropping the whole
+    /// selection moves every item into its kind's history bucket, and a mesh
+    /// there is still the target.
+    ///
+    /// A FUNCTION, not a field, and the difference is the point of task 0671 —
+    /// see the struct's doc comment. Nothing assigns the edit target; the
+    /// mutators move items between the current list and the history buckets and
+    /// this recomputes.
+    inout(Layer) primary() inout { return nthEditTargetCandidate(0); }
+
+    /// The foreground layer list, in walk order — `nthEditTargetCandidate`
+    /// enumerated. Fills `outBuf` in place (the `selectedItemsInto` idiom).
+    ///
+    /// The reference's own list query is this same enumeration, and its `main`
+    /// query is this list's head; keeping both here off one private walk is
+    /// what stops "which layers are foreground" and "which one is the target"
+    /// from being answered by two functions that agree today.
+    void foregroundLayersInto(ref Layer[] outBuf) {
+        size_t n = 0;
+        while (nthEditTargetCandidate(n) !is null) ++n;
+        if (outBuf.length != n) outBuf.length = n;
+        foreach (i; 0 .. n) outBuf[i] = nthEditTargetCandidate(i);
+    }
+
+    /// How many layers are foreground — the count the frozen fixture reads.
+    size_t foregroundLayerCount() const {
+        size_t n = 0;
+        while (nthEditTargetCandidate(n) !is null) ++n;
+        return n;
+    }
 
     /// The index of the active (foreground) layer — DERIVED (Stage 2b) from the
     /// `primary` object's position in `layers`. Read-only: there is no stored
@@ -1324,7 +1597,9 @@ struct Document {
     /// This makes the sentinel agree with `indexOf`'s, which the NIT below used
     /// to warn were different. They are the same scan and now the same sentinel.
     size_t activeIndex() const {
-        foreach (i, l; layers) if (l is primary) return i;
+        auto p = primary;                       // task 0671: one walk, not one per layer
+        if (p is null) return layers.length;
+        foreach (i, l; layers) if (l is p) return i;
         return layers.length;
     }
 
@@ -1537,11 +1812,30 @@ struct Document {
     /// not the set midpoint — L2, measured), and both now read
     /// `itemTransformTarget()`. Narrowing the set without moving the centre
     /// would leave the gizmo sitting on a layer it refuses to move.
+    /// TASK 0671 — THE NARROWING CONDITION HAD TO MOVE, and it is a
+    /// correction, not a follow-on cost.
+    ///
+    /// It read `target !is primary`. That was a faithful spelling of "the
+    /// focus is on something the edit target is not" only while the two
+    /// pointers moved in LOCKSTEP on an all-mesh document — which they did,
+    /// because `Add` promoted the newest mesh to primary. `Add` does not
+    /// promote any more (the target is the selection queue's head), so on the
+    /// ordinary multi-mesh drag — select A, ctrl-add B — the focus is B and
+    /// the target is A, and the old condition would have SUBTRACTED A from the
+    /// moving set: half the user's selection silently stops moving.
+    ///
+    /// The condition D actually wants is the one its own doc comment states in
+    /// prose: the focus is on an item that cannot be the edit target at all (a
+    /// plane, a clip). Spelled that way it is exactly equivalent to the old
+    /// formula on every state the old formula could reach, and it stops being
+    /// wrong on the state this task adds.
     void itemTransformTargets(ref Layer[] outBuf) {
         auto target = itemTransformTarget();
-        immutable bool narrowed = target !is primary;
+        auto prim   = primary;
+        immutable bool narrowed =
+            target !is null && !kindInfo(target.kind).canBePrimary;
         bool keep(const(Layer) l) {
-            return movesWithGizmo(l) && !(narrowed && l is primary);
+            return movesWithGizmo(l) && !(narrowed && l is prim);
         }
         size_t n = 0;
         foreach (l; layers) if (keep(l)) ++n;
@@ -1557,20 +1851,37 @@ struct Document {
     /// `itemTransformTargets` membership, spelled without the buffer.
     bool isTransformTarget(const(Layer) l) {
         if (!movesWithGizmo(l)) return false;
-        return !(itemTransformTarget() !is primary && l is primary);
+        // Task 0671: the SAME condition as `itemTransformTargets`, restated
+        // here for the same reason it was restated before — these two must not
+        // drift, and a unittest below asserts they agree row for row.
+        auto target = itemTransformTarget();
+        immutable bool narrowed =
+            target !is null && !kindInfo(target.kind).canBePrimary;
+        return !(narrowed && l is primary);
     }
 
-    /// Foreground / background DERIVATION (Stage 2b: the SOLE source of truth).
+    /// Foreground / background DERIVATION (Stage 2b: the SOLE source of truth;
+    /// task 0671: re-expressed over the selection STATE).
     ///
-    /// `foreground(l) == l.visible &&  l.selected`,
-    /// `background(l) == l.visible && !l.selected`.
+    /// ~~`foreground(l) == l.visible &&  l.selected`,
+    /// `background(l) == l.visible && !l.selected`.~~ — `static`, and keyed on
+    /// the current-list bool alone. That reading is what made a latched target
+    /// draw as background, which is the objection the struct's doc comment
+    /// records 0668 raising and 0671 answering: the answer needs the document,
+    /// because it needs the deselect history, so these are INSTANCE methods now.
     ///
-    /// The stored `bool background` field is gone — these helpers ARE the truth.
-    /// Read by the snap source, both draw guards, `/api/layers`, and the panel
-    /// "foreground" indicator. Accept `const(Layer)` so const consumers (e.g.
-    /// the `ref const Document` writer) can call them.
-    static bool foreground(const(Layer) l) { return l.visible &&  l.selected; }
-    static bool background(const(Layer) l) { return l.visible && !l.selected; }
+    /// Both are one arm of `roleOf` each, so there is one classifier and not
+    /// three. Read by the snap source, both draw guards and `/api/layers`.
+    /// `const` + `const(Layer)` so the read-only consumers (the `ref const
+    /// Document` writers) can still call them.
+    ///
+    /// The only behaviour that moves for a document with no history is
+    /// `foreground` of a HIDDEN selected mesh: false before, true now — the
+    /// measured hidden-mesh law. Nothing draws off `foreground` (the draw
+    /// guards test `background` and `visible`), so this changes what is
+    /// REPORTED, not what is rendered.
+    bool foreground(const(Layer) l) const { return roleOf(l) == LayerRole.Foreground; }
+    bool background(const(Layer) l) const { return roleOf(l) == LayerRole.Background; }
 
     /// Set the active layer by index — routes through `exclusiveSelect` (task
     /// 0615, §L2), which keeps today's exact SET-of-one behaviour when `idx`
@@ -1582,14 +1893,15 @@ struct Document {
     /// mesh) re-uploads the correct mesh — see the Stage-0 ordering rule.
     ///
     /// NIT (review round 2): this can be a TOTAL no-op. `exclusiveSelect`
-    /// refuses silently when neither `target` nor the current `primary` nor
-    /// `rehomePrimary` can produce a `canBePrimary` layer — a state the
-    /// ≥1-mesh invariant forbids on a well-formed `Document`, but callers
-    /// must not assume `setActive` always changes something (e.g. mid-
-    /// assembly of a `Document` via direct field writes, before its first
+    /// refuses silently when `target` is not a member — a state the ≥1-mesh
+    /// invariant forbids on a well-formed `Document`, but callers must not
+    /// assume `setActive` always changes something (e.g. mid-assembly of a
+    /// `Document` via direct field writes, before its first
     /// invariant-restoring call).
     void setActive(size_t idx) {
-        if (layers.length == 0) { primary = null; focusedItem = null; return; }
+        // Task 0671: nothing to null out on an empty document — the edit
+        // target is derived, and a walk over no layers already answers null.
+        if (layers.length == 0) { focusedItem = null; return; }
         if (idx >= layers.length) idx = layers.length - 1;
         exclusiveSelect(layers[idx]);
     }
@@ -1632,20 +1944,57 @@ struct Document {
         // `setActive`) already guards membership, so this is a restatement at
         // the one place that assigns the pointer, not a new refusal.
         if (!isMember(target)) return;
-        // The whole rule, in one line. The `rehomePrimary(0)` scan that used
-        // to sit here existed only to repair the `: primary` branch when
-        // `primary` was null or STALE (a `Document` mid-assembly by direct
-        // field write — `io/scene_ir.d`, `io/native.d`, the `.v3d` loader
-        // reusing the app's live Document by `ref`). With that branch gone
-        // there is nothing left to repair: `primary-after` is either `target`
-        // — checked a member above — or null, and null is now an answer
-        // rather than a defect.
-        Layer primaryAfter = kindInfo(target.kind).canBePrimary ? target : null;
-        foreach (l; layers) l.selected = false;
-        target.selected = true;
-        if (primaryAfter !is null) primaryAfter.selected = true;
-        primary = primaryAfter;
+        // TASK 0671 — the whole body is now two list operations and a focus.
+        // There is no `primaryAfter` to compute, because there is nothing to
+        // assign it to: the edit target is derived. What used to be the entire
+        // difficulty of this function — deciding whether to spare the previous
+        // primary (pre-0668) or drop it (0668) — is not a decision any more.
+        // Deselecting every other item moves them into THEIR OWN kind buckets,
+        // and selecting `target` flushes only `target`'s. A mesh therefore
+        // survives an exclusive select of a plane and does not survive an
+        // exclusive select of another mesh, without either outcome being
+        // written down here.
+        foreach (l; layers) if (l !is target) noteDeselected(l);
+        noteSelected(target);
         focusedItem = target;
+    }
+
+    /// PRIMITIVE 1 (task 0671) — `l` joins the CURRENT item selection.
+    ///
+    /// Two effects, and the second is the one that matters: the item takes the
+    /// back seat of the current queue, and **its kind's history bucket is
+    /// flushed**. The flush is per (selection type, subtype) in the reference
+    /// and the subtype of an item packet is the item's type, so this is the
+    /// per-kind flush spelled out — selecting a mesh forgets the previously
+    /// latched mesh, selecting a plane does not.
+    ///
+    /// An item already in the current list keeps its seat. Re-selecting must
+    /// not reorder the queue: with two meshes selected, clicking the second one
+    /// again would otherwise hand it the edit target, which is neither measured
+    /// nor sensible.
+    private void noteSelected(Layer l) {
+        if (l is null) return;
+        deselected_[l.kind].length = 0;
+        if (l.selected) return;
+        l.selected = true;
+        l.selSeat  = ++selSeatBack_;
+    }
+
+    /// PRIMITIVE 2 (task 0671) — `l` leaves the current item selection and
+    /// enters its own kind's history bucket. Deselecting is not "clearing a
+    /// bool"; it is a MOVE between two lists, and the second list is what the
+    /// edit target survives on.
+    ///
+    /// The seat is deliberately left alone (see `Layer.selSeat`): the history
+    /// bucket is ordered by the same number the current list is, so a batch
+    /// that deselects several meshes at once leaves them in the order they were
+    /// selected — and the walk's head is then the earliest, matching the
+    /// current list's own head rule.
+    private void noteDeselected(Layer l) {
+        if (l is null || !l.selected) return;
+        l.selected = false;
+        foreach (h; deselected_[l.kind]) if (h is l) return;   // already listed
+        deselected_[l.kind] ~= l;
     }
 
     // -----------------------------------------------------------------------
@@ -1693,70 +2042,41 @@ struct Document {
                 break;
 
             case SelMode.Add:
-                l.selected = true;
+                // TASK 0671 — `add` no longer PROMOTES. It used to end with
+                // `primary = l`, which is the newest member taking the edit
+                // target; measured, the target is the queue's HEAD, so with
+                // `set B; add A` it stays on B, the earlier one. Nothing here
+                // says so: `noteSelected` seats A at the back and the walk
+                // reads the front. (`tests/fixtures/edit_target_legality.json`,
+                // cell `flush_is_per_item_kind` step 3, is the row.)
+                //
+                // The `recoverStalePrimary()` arm that used to guard the
+                // non-mesh case is gone with the field it repaired — a derived
+                // target cannot be stale.
+                noteSelected(l);
                 focusedItem = l;                        // newest touch is focus
-                if (kindInfo(l.kind).canBePrimary) {
-                    primary = l;
-                } else {
-                    // SF2 (review round 2): Add on a non-mesh layer must not
-                    // leave `primary` null/stale — this arm never routes
-                    // through `exclusiveSelect`, so nothing else here would
-                    // repair it.
-                    recoverStalePrimary();
-                }
                 break;
 
             case SelMode.Remove:
                 if (!l.selected) break;       // not selected → nothing to do
-                if (l is primary) {
-                    // Removing the primary: promote the most-recent remaining
-                    // selected+visible+canBePrimary layer.
-                    //
-                    // TASK 0654 — when there is none, this used to REFUSE (a
-                    // silent no-op), which is what made ctrl-clicking the last
-                    // selected item do nothing. Measured (0653): the reference
-                    // empties the selection. So the no-candidate arm now
-                    // deselects `l` and drops the primary AND the focus to
-                    // null together — the biconditional in this struct's doc
-                    // comment. `l.selected` is cleared FIRST so the state is
-                    // never "deselected but still primary" even transiently.
-                    auto promote = anotherPrimaryCandidate(l);
-                    l.selected = false;
-                    if (promote is null) {
-                        primary     = null;
-                        focusedItem = null;
-                        break;
-                    }
-                    primary = promote;
-                    if (focusedItem is l) focusedItem = promote;
-                } else {
-                    // Non-primary remove is always safe (primary still holds
-                    // the ≥1-selected invariant). If the removed layer held
-                    // focus, focus falls back to the primary — focusedItem
-                    // must stay selected, and the primary always is.
-                    l.selected = false;
-                    if (focusedItem is l) {
-                        // SF1 (review round 2): guard MEMBERSHIP, not just
-                        // null — `primary` can be non-null yet STALE (see
-                        // `exclusiveSelect`'s comment). Blindly copying it
-                        // into `focusedItem` would propagate the same L1
-                        // violation into the focus pointer. This arm does
-                        // NOT repair `primary` itself (only `Set`/`Add`/
-                        // `setPrimary` do) — it only refuses to hand a stale
-                        // value to `focusedItem`, falling back read-only to
-                        // `rehomePrimary`.
-                        //
-                        // TASK 0654 — the `rehomePrimary` repair is for a
-                        // STALE primary (non-null, no longer a member). A
-                        // primary that is legitimately NULL is the empty
-                        // selection, and rehoming there would SELECT a layer
-                        // the user never picked, out of a remove. The two
-                        // cases are told apart by nullness, not by membership.
-                        Layer fallback = isMember(primary) ? primary
-                                       : (primary !is null ? rehomePrimary(0) : null);
-                        if (fallback !is null) fallback.selected = true;
-                        focusedItem = fallback;
-                    }
+                // TASK 0671 — one arm, not two. The old body branched on
+                // `l is primary` and hand-promoted a successor, because the
+                // target was a field that would otherwise have been left
+                // naming a deselected layer. Removing an item now MOVES it to
+                // its kind's history bucket, and the walk answers what the
+                // target became — including "the item just removed", which is
+                // the latch and is correct: ctrl-clicking the last selected
+                // mesh empties the selection and keeps editing that mesh.
+                noteDeselected(l);
+                if (focusedItem is l) {
+                    // The focus is the CURRENT list's pointer, so its fallback
+                    // must be a current item or null — never the latched
+                    // target, which may not be selected at all any more.
+                    // Prefer the edit target when it is still current (that is
+                    // what this arm has always done on the common path), else
+                    // the newest remaining current item.
+                    auto p = primary;
+                    focusedItem = (p !is null && p.selected) ? p : newestCurrentItem();
                 }
                 break;
 
@@ -1780,53 +2100,153 @@ struct Document {
     /// through a chain of intermediate layers before landing on null, and each
     /// hop fires the caller's switch hook (GPU re-upload, tool drop, cache
     /// invalidation). One transition, not N.
+    /// TASK 0671 — AND IT DOES NOT DROP THE EDIT TARGET. Dropping the whole
+    /// item selection deselects, and deselecting is a MOVE into the history
+    /// buckets, not an erasure: every mesh that was selected is still
+    /// non-zero, so the walk still has a head. Measured — `tests/fixtures/
+    /// edit_target_legality.json`, cell `target_set_nothing_selected`: "an
+    /// empty item selection with a live edit target is a legal state".
+    ///
+    /// That is the reversal task 0654 could not see. 0654 measured that the
+    /// SELECTION empties (a viewport miss in item mode, removing the last
+    /// selected item) and inferred the target went with it, because in our
+    /// model of the time there was nowhere else for the target to live. There
+    /// is now.
     void clearItemSelection() {
-        foreach (l; layers) if (l !is null) l.selected = false;
-        primary     = null;
+        foreach (l; layers) noteDeselected(l);
         focusedItem = null;
     }
 
-    /// Promote an already-selected layer to primary (the mesh edit target)
-    /// without changing the selected set — UNLESS `l` cannot be primary (task
-    /// 0615), in which case `primary` is left alone and `l` only becomes
-    /// selected + `focusedItem`. If `l` is not selected this selects it (Add
-    /// semantics) so the `focusedItem.selected` invariant holds. `setPrimary`
-    /// is not exclusive today and must not become so.
+    // -----------------------------------------------------------------------
+    // Task 0671 — SNAPSHOT / RESTORE of the whole item-selection state.
+    //
+    // WHY IT HAS TO BE THE WHOLE STATE. Five `revert()` paths snapshot the
+    // selection as a per-layer bool map plus the edit target, restore the bools
+    // by raw field write and re-install the target through `setPrimary`. That
+    // was complete while `selected` was the whole story. It is not any more:
+    // the deselect history is document state too, and a revert that put back
+    // the bools alone would leave whatever the APPLY deselected sitting in a
+    // bucket — an unselected mesh reading foreground, and the next deselect
+    // resolving to an item from a command that has been undone.
+    //
+    // 0670 lists the history cache's behaviour under undo as one of the things
+    // it did NOT settle. This does not invent an answer to that: it makes undo
+    // EXACT, which is the one policy that needs no measurement — whatever the
+    // state was, it is what comes back.
+    // -----------------------------------------------------------------------
+
+    /// An exact, opaque capture of the item-selection state: both lists, their
+    /// order, and the focus. Keyed by layer OBJECT identity throughout, so a
+    /// splice or a reorder between capture and restore cannot drift it (the
+    /// reason every one of these snapshots was identity-keyed already).
+    ///
+    /// Deliberately NOT a `bool[Layer]` plus an edit target. The target is
+    /// derived — capturing it would capture a CONSEQUENCE and then restore it
+    /// as if it were a cause, which is the stored-pointer model creeping back
+    /// in through the undo stack.
+    static struct ItemSelectionState {
+        private Layer[]   current;      ///< selected, in seat order
+        private long[]    currentSeats; ///< parallel to `current`
+        private Layer[][ItemKind.max + 1] history;
+        private Layer     focus;
+        private long      seatBack;
+        private long      seatFront;
+    }
+
+    /// Capture the current item-selection state.
+    ItemSelectionState captureItemSelection() {
+        ItemSelectionState s;
+        foreach (l; layers) if (l !is null && l.selected) {
+            s.current      ~= l;
+            s.currentSeats ~= l.selSeat;
+        }
+        foreach (k; 0 .. ItemKind.max + 1) s.history[k] = deselected_[k].dup;
+        s.focus     = focusedItem;
+        s.seatBack  = selSeatBack_;
+        s.seatFront = selSeatFront_;
+        return s;
+    }
+
+    /// Put back exactly what `captureItemSelection` recorded.
+    ///
+    /// MEMBERSHIP IS RE-CHECKED, not assumed: a snapshot may name a layer that
+    /// the very mutation being reverted removed and that the revert has not
+    /// reinserted (or never will). A non-member is dropped from the current
+    /// list — it could not be `selected` on a document it is not in — while the
+    /// history buckets are restored verbatim, because the walk already filters
+    /// them by membership and keeping the entry is what lets a later reinsert
+    /// of the SAME object become live again by identity.
+    void restoreItemSelection(ItemSelectionState s) {
+        foreach (l; layers) if (l !is null) l.selected = false;
+        foreach (i, l; s.current) {
+            if (!isMember(l)) continue;
+            l.selected = true;
+            l.selSeat  = s.currentSeats[i];
+        }
+        foreach (k; 0 .. ItemKind.max + 1) deselected_[k] = s.history[k].dup;
+        focusedItem   = isMember(s.focus) && s.focus.selected ? s.focus : null;
+        selSeatBack_  = s.seatBack;
+        selSeatFront_ = s.seatFront;
+    }
+
+    /// The newest item of the CURRENT selection — highest seat, ties on
+    /// `layers` order. The focus fallback; null when nothing is current.
+    private Layer newestCurrentItem() {
+        Layer best = null;
+        foreach (l; layers) {
+            if (l is null || !l.selected) continue;
+            if (best is null || l.selSeat >= best.selSeat) best = l;
+        }
+        return best;
+    }
+
+    /// Seat `l` at the FRONT of the current selection, making it the edit
+    /// target without changing WHO is selected. Selects `l` first when it is
+    /// not already current (Add semantics), so the `focusedItem.selected`
+    /// invariant holds. Not exclusive today and must not become so.
+    ///
+    /// TASK 0671 — THIS IS THE ONE OPERATION THE REFERENCE HAS NO COMMAND FOR,
+    /// and it is stated as an ordering operation for exactly that reason. The
+    /// reference moves the edit target only by SELECTING a mesh; there is no
+    /// "make this the target" verb, so a faithful port has nothing to copy
+    /// here. What it does have is a queue whose head is the target, and this is
+    /// the only well-defined way to put a given item at that head — hence
+    /// `--selSeatFront_` rather than a write to a target pointer, which is the
+    /// shortcut this task exists to not take.
+    ///
+    /// Its callers are all RESTORES (three `revert()` paths, the `.v3d`
+    /// loader, scene reset), where `l` was the target in the state being
+    /// restored — so "put it back at the head" is exactly the requested
+    /// operation and no policy is being invented for it.
+    ///
+    /// A `canBePrimary == false` `l` cannot head the walk (the walk filters on
+    /// the capability), so this reduces to selecting it and focusing it, with
+    /// no separate arm needed — the filter is the arm.
     void setPrimary(Layer l) {
         // S5 / L1: same membership guard as `selectItem` — see there.
         if (layers.length == 0 || l is null || indexOf(l) == layers.length) return;
-        if (!l.selected) l.selected = true;
+        noteSelected(l);
+        l.selSeat   = --selSeatFront_;
         focusedItem = l;
-        if (kindInfo(l.kind).canBePrimary) {
-            primary = l;
-        } else {
-            // SF2 (review round 2): same recovery as `selectItem`'s `Add`
-            // arm — `setPrimary` on a non-mesh `l` must not leave `primary`
-            // null/stale either.
-            recoverStalePrimary();
-        }
     }
 
-    /// Hide-primary promotion helper (called by the setVisible command path).
+    /// ~~Hide-primary promotion helper (called by the setVisible command path).
     /// Hiding the primary moves the primary to another selected+visible layer
     /// when one exists; returns false (refuse) when the primary is the only
-    /// selected+visible layer (the caller then leaves it visible). Does NOT
-    /// itself flip the `visible` flag — the command owns that, calling this
-    /// AFTER setting visible=false to re-establish a visible primary.
-    bool promoteAwayFromHiddenPrimary() {
-        if (primary is null || primary.visible) return true;  // nothing to do
-        auto promote = anotherPrimaryCandidate(primary);
-        if (promote is null) return false;                    // refuse
-        // S2: only re-home focus when the hidden primary WAS the focus.
-        // Evaluated before `primary` moves, so a focus that is on some
-        // OTHER still-selected, still-valid item is never stolen by this
-        // promotion (mirrors the `if (focusedItem is l) …` gate already used
-        // by `selectItem`'s Remove arm).
-        immutable bool focusFollows = focusedItem is primary;
-        primary = promote;
-        if (focusFollows) focusedItem = promote;
-        return true;
-    }
+    /// selected+visible layer (the caller then leaves it visible).~~
+    ///
+    /// RETIRED BY MEASUREMENT (task 0671). `tests/fixtures/
+    /// edit_target_legality.json`, cell `hidden_mesh_keeps_the_target`: hiding
+    /// the edit target does not hand the target to anyone else, and the
+    /// reference's own classifier says why — the hidden arm keeps a targetable
+    /// item FOREGROUND rather than dropping it. So there is nothing to promote
+    /// away from and nothing to refuse, and `roleOf` carries the whole law.
+    ///
+    /// Kept as an always-true call so the `layer.setVisible` command keeps its
+    /// shape (it asks, and now never has to take no for an answer); the
+    /// alternative was deleting the question at its one call site and losing
+    /// the record of what used to be answered there.
+    bool promoteAwayFromHiddenPrimary() { return true; }
 
     /// L1 (task 0615): the promotion algorithm a structural mutation of
     /// `layers` (e.g. a layer delete) must run to keep `primary` inside the
@@ -1864,7 +2284,7 @@ struct Document {
         return null;
     }
 
-    /// SF2 (task 0615, review round 2): repair `primary` IN PLACE when it is
+    /// ~~SF2 (task 0615, review round 2): repair `primary` IN PLACE when it is
     /// unusable — null OR STALE (`!isMember`, see `exclusiveSelect`'s
     /// comment) — for the two mutator arms that never route through
     /// `exclusiveSelect` (`selectItem`'s `Add` case and `setPrimary`) and
@@ -1885,15 +2305,14 @@ struct Document {
     /// unrelated item. Since [[0654]] an absent primary is a legal state, and
     /// since 0668 it is reachable with items still selected, so the two cases
     /// are told apart by NULLNESS, not by membership — exactly the
-    /// distinction `selectItem`'s Remove arm already draws and documents.
-    private Layer recoverStalePrimary() {
-        if (primary is null) return null;
-        if (isMember(primary)) return primary;
-        auto candidate = rehomePrimary(0);
-        if (candidate !is null) candidate.selected = true;
-        primary = candidate;
-        return candidate;
-    }
+    /// distinction `selectItem`'s Remove arm already draws and documents.~~
+    ///
+    /// DELETED (task 0671) — with the whole hazard it repaired. A STALE
+    /// primary was possible only because `primary` was a stored pointer that a
+    /// direct `layers = …` write could orphan. The edit target is now derived
+    /// by ENUMERATING `layers`, so "non-null but no longer a member" has no
+    /// representation: the walk simply stops seeing an item that left. Two
+    /// mutator arms called this and both lost their reason to at the same time.
 
     /// The index of `l` in `layers` by identity, or `layers.length` if
     /// absent. Callers should not re-derive a position by pointer/index
@@ -1962,7 +2381,9 @@ struct Document {
         l.mesh_ = m;
         l.name = "Layer 1";
         l.visible = true;
-        l.selected = true;
+        // Task 0671: NOT `l.selected = true` here. `setActive` routes through
+        // `noteSelected`, which is what allocates the queue SEAT; pre-setting
+        // the bool made that call a no-op and left the only layer unseated.
         Document d;
         d.layers = [l];
         d.setActive(0);
@@ -1986,8 +2407,8 @@ unittest {
     assert(doc.active() !is null, "active layer object is non-null");
     assert(doc.active().name == "Layer 1", "bootstrap names the layer 'Layer 1'");
     assert(doc.active().visible, "bootstrap layer is visible");
-    assert(!Document.background(doc.active()), "bootstrap layer is foreground (not background)");
-    assert(Document.foreground(doc.active()), "bootstrap layer is foreground (derived)");
+    assert(!doc.background(doc.active()), "bootstrap layer is foreground (not background)");
+    assert(doc.foreground(doc.active()), "bootstrap layer is foreground (derived)");
     // SET-of-one + primary invariants.
     assert(doc.primary !is null, "primary is non-null");
     assert(doc.primary is doc.active(), "primary == active");
@@ -2085,29 +2506,55 @@ private void assertDocInvariants(ref Document d) {
     // therefore means "no edit target", not "nothing selected" — the two
     // parted company the moment an item that cannot be primary was allowed to
     // be the only selected one.
-    immutable bool empty = d.primary is null;
+    // TASK 0671 — `primary` is a WALK now, so the oracle reads it ONCE and
+    // asserts against that value. Re-reading it per clause would let a walk
+    // that is not a function of the state pass by answering differently each
+    // time, which is the one failure mode a derived target has that a stored
+    // one does not.
+    auto prim = d.primary;
+    immutable bool empty = prim is null;
     bool primaryInLayers = false;
     bool focusedInLayers = false;
     bool anyCanBePrimary = false;
     size_t selCount = 0;
-    size_t selCanBePrimary = 0;
+    size_t stateCanBePrimary = 0;
     foreach (l; d.layers) {
-        if (l is d.primary) primaryInLayers = true;
+        if (l is prim) primaryInLayers = true;
         if (l is d.focusedItem) focusedInLayers = true;
         if (l.selected) ++selCount;
-        if (l.selected && kindInfo(l.kind).canBePrimary) ++selCanBePrimary;
+        if (kindInfo(l.kind).canBePrimary && d.selectionState(l) != SelState.None)
+            ++stateCanBePrimary;
         if (kindInfo(l.kind).canBePrimary) anyCanBePrimary = true;
-        // Background is the SOLE derived rule now: visible && !selected.
-        assert(Document.background(l) == (l.visible && !l.selected),
-            "derived background() == visible && !selected");
-        assert(Document.foreground(l) == (l.visible && l.selected),
-            "derived foreground() == visible && selected");
+        // Task 0671: the derivation is `roleOf`, and these two are one arm of
+        // it each. Restated so a `foreground`/`background` that stopped
+        // agreeing with the classifier is caught here rather than at whichever
+        // consumer noticed first.
+        assert(d.background(l) == (d.roleOf(l) == LayerRole.Background),
+            "derived background() == roleOf() is Background");
+        assert(d.foreground(l) == (d.roleOf(l) == LayerRole.Foreground),
+            "derived foreground() == roleOf() is Foreground");
         // A layer is never simultaneously foreground and background.
-        assert(!(Document.foreground(l) && Document.background(l)),
+        assert(!(d.foreground(l) && d.background(l)),
             "foreground and background are mutually exclusive");
+        // Task 0671: an item is never in BOTH lists. `selectionState` resolves
+        // current-first so it could never SAY so, which is exactly why the
+        // storage has to be checked directly.
+        if (l.selected)
+            foreach (h; d.deselected_[l.kind])
+                assert(h !is l,
+                    "a CURRENT item must not also sit in its kind's history bucket");
     }
     assert(empty || primaryInLayers, "primary is a member of layers");
-    assert(empty || d.primary.selected, "primary is selected");
+    // TASK 0671 — the primary is NOT necessarily selected any more. That
+    // clause was the storage model talking: it held because a stored pointer
+    // had to be kept pointing at something the user could see marked. A
+    // latched target is in the history list, and the whole point is that it
+    // survives its own deselection. What it must still be is FOREGROUND, which
+    // is the property every consumer actually depends on.
+    assert(empty || d.roleOf(prim) == LayerRole.Foreground,
+        "the edit target is a foreground layer (task 0671)");
+    assert(empty || d.selectionState(prim) != SelState.None,
+        "the edit target has a non-zero selection state (task 0671)");
     // The focus is the SELECTION's pointer, so it is governed by `selCount`,
     // not by `empty` (task 0668). Keeping it on `empty` would have made this
     // oracle reject the very state the task exists to produce.
@@ -2117,13 +2564,21 @@ private void assertDocInvariants(ref Document d) {
     assert(noSelection || focusedInLayers, "focusedItem is a member of layers (task 0615)");
     assert(noSelection || d.focusedItem.selected,
         "focusedItem is selected (task 0615; relaxed from Stage 2's focusedItem is primary)");
-    // The other direction, restated for 0668: no primary ⟺ nothing SELECTED
-    // can be primary. Without this the oracle would accept "no primary while
-    // a mesh is selected" — a document with an edit target available and
-    // nothing pointing at it, where every mesh command would refuse for want
-    // of the layer the panel is showing as foreground.
-    assert(empty == (selCanBePrimary == 0),
-        "primary is null exactly when no selected item can be primary (task 0668)");
+    // The other direction, restated for 0671: no primary ⟺ no `canBePrimary`
+    // item has a non-zero SELECTION STATE. 0668's version of this line read
+    // `selected` and would now reject the very state this task exists to
+    // produce — a mesh latched in the history bucket with nothing selected.
+    // Without the clause in some form the oracle would accept "no target while
+    // a targetable item is foreground", i.e. an edit target available and the
+    // walk failing to find it.
+    assert(empty == (stateCanBePrimary == 0),
+        "primary is null exactly when no item with a selection state can be "
+        ~ "the edit target (task 0671)");
+    // …and it really is the WALK's head, not merely some candidate. This is
+    // the clause that would catch a `primary` re-implemented as anything other
+    // than `nthEditTargetCandidate(0)`.
+    assert(prim is d.nthEditTargetCandidate(0),
+        "the edit target is the head of the foreground walk (task 0671)");
     // NIT: `anyCanBePrimary` is already implied by `primaryInLayers` + the
     // `canBePrimary` assertion just below (primary is itself a layer that
     // can be primary), so it cannot currently fail independently. Kept
@@ -2139,7 +2594,7 @@ private void assertDocInvariants(ref Document d) {
     // silently decouple a `hasMesh`-keyed oracle from the invariant it is
     // meant to guard.
     assert(anyCanBePrimary, "at least one layer can be primary (document invariant, task 0615)");
-    assert(empty || kindInfo(d.primary.kind).canBePrimary,
+    assert(empty || kindInfo(prim.kind).canBePrimary,
         "primary can always be primary (task 0615, §Q2)");
     // activeIndex (derived) tracks the primary by identity — and answers the
     // OUT-OF-RANGE sentinel, never `0`, when there is no primary (task 0654).
@@ -2147,7 +2602,7 @@ private void assertDocInvariants(ref Document d) {
         assert(d.activeIndex == d.layers.length,
             "activeIndex is the absent-sentinel when there is no primary (task 0654)");
     else
-        assert(d.layers[d.activeIndex] is d.primary, "activeIndex points at primary");
+        assert(d.layers[d.activeIndex] is prim, "activeIndex points at primary");
 }
 
 // Build a 3-layer document A/B/C, A primary+selected (SET-of-one), for the
@@ -2172,40 +2627,87 @@ unittest {  // mode:set is exclusive — equals today's setActive behaviour.
     assert(sel == 1, "set leaves exactly one selected");
 }
 
-unittest {  // mode:add accumulates selection and promotes primary.
+unittest {  // mode:add accumulates selection; the target stays on the HEAD.
+    // TASK 0671 — INTENT CHANGE. This case used to assert "add promotes the
+    // newest to primary", which is the reading a stored pointer invites and
+    // which the reference contradicts: with `set B; add A` the target is B,
+    // the EARLIER one. The current selection is a queue and the target is its
+    // head, so an add appends and changes nothing about who is being edited.
+    // (Frozen: `tests/fixtures/edit_target_legality.json`, cell
+    // `flush_is_per_item_kind` step 3, whose `foreground_order` column pins
+    // the order this test reads through `foregroundLayersInto`.)
     auto doc = threeLayerDoc();
     auto a = doc.layers[0], b = doc.layers[1], c = doc.layers[2];
     doc.selectItem(b, SelMode.Add);
     assertDocInvariants(doc);
     assert(a.selected && b.selected && !c.selected, "add keeps prior selection");
-    assert(doc.primary is b, "add promotes the newest to primary");
+    assert(doc.primary is a, "add does NOT promote — the target is the head, A");
+    assert(doc.focusedItem is b, "…but the FOCUS is the newest touch, B");
     doc.selectItem(c, SelMode.Add);
     assertDocInvariants(doc);
     assert(a.selected && b.selected && c.selected, "three selected (multi-foreground)");
-    assert(doc.primary is c, "newest add is primary");
+    assert(doc.primary is a, "still the head");
+    Layer[] fg;
+    doc.foregroundLayersInto(fg);
+    assert(fg.length == 3 && fg[0] is a && fg[1] is b && fg[2] is c,
+        "the foreground list is the selection queue in SEAT order, and the "
+        ~ "target is its head — one walk, two questions");
 }
 
-unittest {  // mode:remove of the primary moves primary to a remaining member.
+unittest {  // mode:add in REVERSE layer order: seat order, not `layers` order.
+    // The discriminating rig for the ordering law. `set C; add A` selects the
+    // LAST layer first, so an implementation that reads `layers` order answers
+    // A and the seat order answers C. Without this, both readings agree on
+    // every ascending rig above.
+    auto doc = threeLayerDoc();
+    auto a = doc.layers[0], c = doc.layers[2];
+    doc.selectItem(c, SelMode.Set);
+    doc.selectItem(a, SelMode.Add);
+    assertDocInvariants(doc);
+    assert(doc.primary is c,
+        "the target is the earliest SELECTED, not the earliest LISTED — a "
+        ~ "`layers`-order walk answers A here");
+    Layer[] fg;
+    doc.foregroundLayersInto(fg);
+    assert(fg.length == 2 && fg[0] is c && fg[1] is a,
+        "…and the list is in the same order the target was picked from");
+}
+
+unittest {  // mode:remove of the target: CURRENT outranks HISTORY.
+    // TASK 0671 — the case that separates "history is a second queue" from
+    // "history is just more of the first". The removed item keeps a non-zero
+    // selection state and its seat (1, the earliest of the three), so a walk
+    // that merged the two lists by seat would put it back at the head and the
+    // target would never move off a deselected layer. It does not: the walk
+    // runs CURRENT to exhaustion first, so the target promotes to B — and the
+    // latched A is still in the list, just last.
     auto doc = threeLayerDoc();
     auto a = doc.layers[0], b = doc.layers[1], c = doc.layers[2];
-    doc.selectItem(b, SelMode.Add);            // A,B selected; B primary
-    doc.selectItem(c, SelMode.Add);            // A,B,C selected; C primary
-    doc.selectItem(c, SelMode.Remove);         // remove primary C
+    doc.selectItem(b, SelMode.Add);            // A,B selected; A is the head
+    doc.selectItem(c, SelMode.Add);            // A,B,C selected; A is the head
+    doc.selectItem(a, SelMode.Remove);         // remove the TARGET
     assertDocInvariants(doc);
-    assert(!c.selected, "C deselected");
-    assert(doc.primary is a || doc.primary is b, "primary promoted to a remainder");
-    assert(doc.primary.selected, "promoted primary is selected");
+    assert(!a.selected, "A deselected");
+    assert(doc.selectionState(a) == SelState.History, "…into the mesh bucket");
+    assert(doc.primary is b,
+        "the target promoted to the first remaining CURRENT item, even though "
+        ~ "the latched A holds an earlier seat — a seat-only merge answers A");
+    Layer[] fg;
+    doc.foregroundLayersInto(fg);
+    assert(fg.length == 3 && fg[0] is b && fg[1] is c && fg[2] is a,
+        "the WALK is current-then-history: B, C, then the latched A");
+    assert(doc.primary is fg[0], "…and the target is the head of it");
 }
 
-unittest {  // mode:remove of a NON-primary keeps the primary.
+unittest {  // mode:remove of a NON-target keeps the target.
     auto doc = threeLayerDoc();
     auto a = doc.layers[0], b = doc.layers[1];
-    doc.selectItem(b, SelMode.Add);            // A,B selected; B primary+focus
-    doc.selectItem(a, SelMode.Remove);         // remove non-primary, non-focus A
+    doc.selectItem(b, SelMode.Add);            // A,B selected; A target, B focus
+    doc.selectItem(b, SelMode.Remove);         // remove the non-target, focused B
     assertDocInvariants(doc);
-    assert(!a.selected && b.selected, "A deselected, B remains");
-    assert(doc.primary is b, "primary unchanged on non-primary remove");
-    assert(doc.focusedItem is b, "focus unchanged — A held neither primary nor focus");
+    assert(!b.selected && a.selected, "B deselected, A remains");
+    assert(doc.primary is a, "the target is unchanged on a non-target remove");
+    assert(doc.focusedItem is a, "focus fell back to the remaining current item");
 }
 
 unittest {  // S3: selectItem(Remove) must re-home focus ONLY when the
@@ -2244,22 +2746,58 @@ unittest {  // S3: selectItem(Remove) must re-home focus ONLY when the
     assert(doc.focusedItem is empty, "focus untouched by an unrelated remove");
 }
 
-unittest {  // mode:remove of the LAST selected EMPTIES the selection (task 0654).
-    // INTENT CHANGE, not a repaired test. This case used to assert the exact
+unittest {  // mode:remove of the LAST selected EMPTIES the selection (task 0654)
+            // — and KEEPS the edit target (task 0671).
+    // ~~INTENT CHANGE, not a repaired test. This case used to assert the exact
     // opposite ("cannot deselect the last selected layer") because the ≥1
     // invariant made emptying unrepresentable. 0653 measured the reference —
     // ctrl-clicking the last selected item empties — and the owner decided we
     // follow it, so the old assertion is now pinning behaviour we deliberately
-    // removed. The whole point of the task is that this line flips.
+    // removed.~~
+    //
+    // SECOND INTENT CHANGE (task 0671), and it is the half 0653 could not see.
+    // 0653 measured that the SELECTION empties; the line that followed it here
+    // ("and drops the primary with it") was never measured — it was forced,
+    // because in the model of the day there was nowhere else for the target to
+    // live. 0670 read the mechanism: deselecting MOVES the item into its
+    // kind's history bucket, its selection state stays non-zero, and the walk
+    // still finds it. So the selection empties and the mesh is still the thing
+    // you are editing.
     auto doc = threeLayerDoc();
     auto a = doc.layers[0];
     doc.selectItem(a, SelMode.Remove);         // A is the only selected
     assertDocInvariants(doc);
     assert(!a.selected, "removing the last selected layer deselects it (task 0654)");
-    assert(doc.primary is null, "and drops the primary with it");
-    assert(doc.focusedItem is null, "and the focus, together (the biconditional)");
     assert(doc.selectedItemCount() == 0, "the item selection is empty");
-    assert(!doc.hasEditTarget(), "so there is no mesh edit target");
+    assert(doc.focusedItem is null, "the FOCUS goes with the selection — it is the "
+        ~ "current list's pointer and the current list is empty");
+    assert(doc.selectionState(a) == SelState.History,
+        "…and A moved into the mesh history bucket rather than out of existence");
+    assert(doc.primary is a && doc.hasEditTarget(),
+        "task 0671: the edit target is the head of [current ++ history], so it "
+        ~ "is still A. A model that read `selected` would answer null here.");
+    assert(doc.foreground(a),
+        "…and A draws as FOREGROUND, not as a dimmed background layer being "
+        ~ "silently edited — the objection 0668 raised, answered");
+    assert(doc.activeIndex == 0, "activeIndex follows the latched target");
+    assert(doc.activeMesh() !is null, "there is a mesh to bind");
+}
+
+unittest {  // the absent edit target, reached the way the reference reaches it
+            // (task 0671): every mesh's bucket flushed, then the holder gone.
+    //
+    // WHY NOT `clearItemSelection` ANY MORE: it does not produce this state, it
+    // produces the LATCHED one (the unittest above). Building the no-target
+    // state now takes a document in which no `canBePrimary` item has any
+    // selection state at all — here, one assembled without ever selecting.
+    Document doc;
+    auto a = new Layer; a.name = "A";
+    auto b = new Layer; b.name = "B";
+    doc.layers = [a, b];
+    assertDocInvariants(doc);
+    assert(doc.primary is null && !doc.hasEditTarget(),
+        "nothing has a selection state, so the walk is empty");
+    assert(doc.focusedItem is null, "and nothing is selected");
     // The absent-sentinel, spelled out: a consumer that indexes `layers` with
     // this gets a bounds error, not layer 0's geometry.
     assert(doc.activeIndex == doc.layers.length,
@@ -2268,102 +2806,139 @@ unittest {  // mode:remove of the LAST selected EMPTIES the selection (task 0654
     bool threw = false;
     try { doc.activeMeshRef(); } catch (NoEditTargetException) { threw = true; }
     assert(threw, "activeMeshRef() refuses by throwing NoEditTargetException");
+    // Both are BACKGROUND — this is what "everything dims" looks like, and it
+    // is a different state from the latched one above where A is foreground.
+    foreach (l; doc.layers)
+        assert(doc.background(l) && !doc.foreground(l),
+            "with no selection state anywhere, every visible layer is background");
+    // …and it is not a trap: one select recovers.
+    doc.selectItem(b, SelMode.Set);
+    assertDocInvariants(doc);
+    assert(doc.primary is b && doc.hasEditTarget(),
+        "a select out of the no-target state installs a target again");
 }
 
-unittest {  // clearItemSelection empties in one transition and is idempotent.
+unittest {  // clearItemSelection empties the SELECTION in one transition, is
+            // idempotent, and LEAVES THE EDIT TARGET (task 0671).
     auto doc = threeLayerDoc();
-    doc.selectItem(doc.layers[1], SelMode.Add);   // {A, B}, B primary
+    doc.selectItem(doc.layers[1], SelMode.Add);   // {A, B}
     assert(doc.selectedItemCount() == 2, "precondition: two selected");
+    assert(doc.primary is doc.layers[0],
+        "precondition: the target is the queue HEAD (A, selected first), not "
+        ~ "the newest addition — task 0671");
     doc.clearItemSelection();
     assertDocInvariants(doc);
-    assert(doc.selectedItemCount() == 0 && doc.primary is null
-        && doc.focusedItem is null, "clear empties the whole set at once");
+    assert(doc.selectedItemCount() == 0 && doc.focusedItem is null,
+        "clear empties the whole set at once");
     doc.clearItemSelection();                     // idempotent
     assertDocInvariants(doc);
     assert(doc.selectedItemCount() == 0, "clearing an empty selection is a no-op");
-    // Every visible layer is now BACKGROUND — the derived rule, checked here
-    // rather than only in the draw code, because "everything went dark" would
-    // be this predicate answering false for all three.
-    foreach (l; doc.layers)
-        assert(Document.background(l) && !Document.foreground(l),
-            "an empty selection makes every visible layer background");
-    // Selecting again recovers a primary — the empty state is not a trap.
+    // TASK 0671 — the target survived, and it is still the head of the same
+    // order: both A and B went into the mesh bucket, A was seated first.
+    assert(doc.primary is doc.layers[0],
+        "an empty item selection with a live edit target is a LEGAL state "
+        ~ "(frozen fixture edit_target_legality / target_set_nothing_selected)");
+    assert(doc.foreground(doc.layers[0]) && doc.foreground(doc.layers[1]),
+        "…and both latched meshes are foreground: two foreground layers with "
+        ~ "nothing selected, which is the walk's own answer and not a special case");
+    assert(doc.background(doc.layers[2]),
+        "the mesh that was never selected is background — the negative control, "
+        ~ "without which 'everything is foreground' would pass here");
+    // Selecting again re-flushes the bucket, so the latch does not accumulate.
     doc.selectItem(doc.layers[2], SelMode.Set);
     assertDocInvariants(doc);
     assert(doc.primary is doc.layers[2] && doc.hasEditTarget(),
         "a select out of the empty state installs a primary again");
+    assert(doc.foregroundLayerCount() == 1,
+        "…and exactly one: selecting a MESH flushes the mesh bucket, so the two "
+        ~ "latched layers are gone from the walk rather than joining it");
 }
 
 unittest {  // mode:toggle flips selection (remove ↔ add).
     auto doc = threeLayerDoc();
     auto a = doc.layers[0], b = doc.layers[1];
-    doc.selectItem(b, SelMode.Toggle);         // B not selected → add, primary
+    doc.selectItem(b, SelMode.Toggle);         // B not selected → add
     assertDocInvariants(doc);
-    assert(b.selected && doc.primary is b, "toggle-on selects + promotes");
+    // TASK 0671 — `add` does NOT promote. The target is the queue head, and A
+    // was seated first. This line used to read `doc.primary is b`.
+    assert(b.selected && doc.primary is a,
+        "toggle-on selects, and the target stays on the earlier-seated A");
     doc.selectItem(b, SelMode.Toggle);         // B selected → remove
     assertDocInvariants(doc);
     assert(!b.selected, "toggle-off deselects");
-    assert(doc.primary is a, "primary fell back to remaining selected A");
+    assert(doc.primary is a, "the target was on A throughout");
 }
 
-unittest {  // setPrimary promotes an already-selected member without reselecting.
+unittest {  // setPrimary RE-SEATS an already-selected member at the front.
     auto doc = threeLayerDoc();
     auto a = doc.layers[0], b = doc.layers[1];
-    doc.selectItem(b, SelMode.Add);            // A,B selected; B primary
-    doc.setPrimary(a);                         // promote A (already selected)
+    doc.selectItem(b, SelMode.Add);            // A,B selected; A is the head
+    assert(doc.primary is a, "precondition: the head is A (task 0671)");
+    doc.setPrimary(b);                         // re-seat B at the front
     assertDocInvariants(doc);
     assert(a.selected && b.selected, "set is preserved");
-    assert(doc.primary is a, "setPrimary moved the edit target to A");
-    // setPrimary on a not-yet-selected layer selects it (primary.selected inv).
+    assert(doc.primary is b, "setPrimary moved the edit target to B");
+    assert(doc.selectedItemCount() == 2, "…without deselecting anyone");
+    // setPrimary on a not-yet-selected layer selects it (focus invariant).
     auto c = doc.layers[2];
     doc.setPrimary(c);
     assertDocInvariants(doc);
-    assert(c.selected && doc.primary is c, "setPrimary selects + promotes");
+    assert(c.selected && doc.primary is c, "setPrimary selects + re-seats");
+    assert(doc.selectedItemCount() == 3, "…and still does not deselect anyone");
 }
 
-unittest {  // hide-primary promotion: setVisible(false) on primary moves it.
+unittest {  // TASK 0671 — HIDING THE EDIT TARGET DOES NOT MOVE IT.
+    // ~~hide-primary promotion: setVisible(false) on primary moves it.~~
+    // ~~S2: hiding the primary must not steal focus from an unrelated item.~~
+    // ~~hide-primary refusal: no other selected+visible layer.~~
+    //
+    // Three cases retired into one, because the behaviour all three pinned was
+    // an artefact of `foreground(l) == visible && selected`: a hidden primary
+    // was neither foreground nor background, so it HAD to be handed on or the
+    // hide had to be refused. Measured (`tests/fixtures/
+    // edit_target_legality.json`, cell `hidden_mesh_keeps_the_target`) the
+    // reference does neither — visibility and targethood are independent, and
+    // its own classifier says so: the hidden arm keeps a targetable item
+    // FOREGROUND instead of dropping it. `promoteAwayFromHiddenPrimary` is now
+    // the constant `true` and this is what replaces its three tests.
+    //
+    // The CONTROL is the third block: the target still moves normally when a
+    // different mesh is selected, so the first two are not a frozen read.
     auto doc = threeLayerDoc();
     auto a = doc.layers[0], b = doc.layers[1];
-    doc.selectItem(b, SelMode.Add);            // A,B selected; B primary+focus
-    // Simulate the command: hide the primary, then promote.
-    b.visible = false;
-    auto ok = doc.promoteAwayFromHiddenPrimary();
-    assert(ok, "promotion succeeds (A is selected+visible)");
-    assertDocInvariants(doc);                  // primary must be visible now
-    assert(doc.primary is a, "primary moved to the visible selected A");
-    assert(doc.primary.visible, "promoted primary is visible");
-    assert(doc.focusedItem is a, "S2: focus follows promotion when focus WAS on the hidden primary");
-}
+    doc.selectItem(b, SelMode.Add);            // A,B selected; A is the head
+    assert(doc.primary is a, "precondition: A holds the target");
 
-unittest {  // S2: hiding the primary must not steal focus from an unrelated,
-            // still-selected, still-valid item — re-home focus ONLY when the
-            // hidden primary WAS itself the focus. Fixture from the finding:
-            // [MeshA(primary), Empty(selected,FOCUS), MeshB(selected)].
-    auto doc = mixedDoc();                     // [MeshA(primary+focus), Empty, MeshB]
-    auto meshA = doc.layers[0], empty = doc.layers[1], meshB = doc.layers[2];
-    doc.selectItem(meshB, SelMode.Add);        // meshA,meshB selected; meshB primary+focus
-    doc.setPrimary(meshA);                     // primary+focus back to meshA
-    doc.selectItem(empty, SelMode.Add);        // + empty selected; focus->empty, primary stays meshA
+    a.visible = false;                         // hide the TARGET
+    assert(doc.promoteAwayFromHiddenPrimary(), "hiding is never refused now");
     assertDocInvariants(doc);
-    assert(doc.primary is meshA && doc.focusedItem is empty && meshB.selected);
+    assert(doc.primary is a,
+        "THE MEASUREMENT: a hidden layer is still the edit target — B does not "
+        ~ "inherit it, and the hide is not refused");
+    assert(doc.foreground(a),
+        "…and it classifies FOREGROUND while hidden, which is what stops the "
+        ~ "walk skipping it");
+    assert(doc.roleOf(a) != LayerRole.Background,
+        "…and specifically NOT background: it must not become a dimmed snap "
+        ~ "source while it is the thing being edited");
+    assert(doc.focusedItem is b, "the focus is untouched by any of this");
 
-    meshA.visible = false;
-    auto ok = doc.promoteAwayFromHiddenPrimary();
-    assert(ok, "promotion succeeds (meshB is selected+visible+canBePrimary)");
+    // A hidden mesh with NO selection state is not a layer at all — the
+    // negative control for the arm above, which would otherwise pass for an
+    // implementation that made every hidden mesh foreground.
+    auto c = doc.layers[2];
+    c.visible = false;
+    assert(doc.roleOf(c) == LayerRole.None,
+        "a hidden item with no selection state is neither foreground nor "
+        ~ "background — the reference's 'none of those' state");
+
+    // CONTROL: the target still moves.
+    doc.selectItem(b, SelMode.Set);
     assertDocInvariants(doc);
-    assert(doc.primary is meshB, "primary promoted to the other mesh layer");
-    assert(doc.focusedItem is empty,
-        "S2: focus must not be stolen by a promotion it had nothing to do with");
-}
-
-unittest {  // hide-primary refusal: no other selected+visible layer.
-    auto doc = threeLayerDoc();
-    auto a = doc.layers[0];                     // only A selected
-    a.visible = false;
-    auto ok = doc.promoteAwayFromHiddenPrimary();
-    assert(!ok, "refuse — no other selected+visible layer to promote");
-    // Document is left with the (now hidden) primary; the command restores
-    // visibility on refusal (tested at the command layer).
+    assert(doc.primary is b, "CONTROL: selecting another mesh moves the target");
+    assert(!doc.foreground(a),
+        "…and the hidden former target loses its state entirely, because "
+        ~ "selecting a mesh FLUSHES the mesh bucket");
 }
 
 // ---------------------------------------------------------------------------
@@ -2835,27 +3410,42 @@ unittest {  // TASK 0668 — this INVERTS Stage 3 / L2, which asserted the
             // separates "cleared all others" from "cleared none", and the
             // fixture has THREE layers so it also separates it from "cleared
             // exactly one".
+    // TASK 0671 — BOTH HALVES AT ONCE, which is the whole point of the task.
+    // 0668 bought the reference's selected SET (the non-mesh item ALONE) by
+    // spending the edit target; 0670 read the mechanism and there was never a
+    // trade to make. Deselecting the mesh moves it into the MESH bucket;
+    // selecting the non-mesh item flushes the item's OWN bucket and leaves the
+    // mesh one standing; so the set is `{target}` AND the mesh is still the
+    // thing being edited. This is `tests/fixtures/layer_main_latched.json`
+    // rows 3 and 5, in a unit test.
     static void check(Document doc, Layer meshA, Layer empty) {
         assertDocInvariants(doc);
-        assert(doc.primary is null,
-               "0668: a target that cannot be primary leaves NO edit target");
+        assert(doc.primary is meshA,
+               "0671: the edit target stays LATCHED on the last-selected mesh");
         assert(!meshA.selected,
-               "0668: the exclusive select is exclusive — the mesh that was "
-               ~ "the edit target is DESELECTED, not spared");
-        assert(Document.background(meshA),
-               "…and therefore derives as BACKGROUND: dimmed and read-only, "
-               ~ "which is what 'no longer the edit target' has to look like");
+               "0668, kept: the exclusive select is exclusive — the mesh is "
+               ~ "DESELECTED, not spared, so the SET matches the reference");
+        assert(doc.selectionState(meshA) == SelState.History,
+               "…and what it became is HISTORY, not nothing: one bucket, and "
+               ~ "the non-mesh selection could not reach it");
+        assert(doc.foreground(meshA) && !doc.background(meshA),
+               "…so it draws FOREGROUND. A latched target that derived as "
+               ~ "BACKGROUND — dimmed, read-only, a snap source — while the "
+               ~ "toolpipe wrote to it is the state 0668 refused to represent, "
+               ~ "and it is not what the reference does either.");
         assert(empty.selected && doc.focusedItem is empty,
                "the target is selected and becomes the focus");
         size_t sel = 0; foreach (l; doc.layers) if (l.selected) ++sel;
         assert(sel == 1, "the selected set is exactly {target}");
-        // The 0654 refusals, reached through the 0668 state rather than
-        // through an empty selection: an absent edit target must answer the
-        // same way however it became absent.
-        assert(!doc.hasEditTarget() && doc.activeMesh() is null,
-               "every edit-target accessor reports the absence");
-        assert(doc.activeIndex == doc.layers.length,
-               "and activeIndex is the absent-sentinel, never 0");
+        assert(doc.hasEditTarget() && doc.activeMesh() !is null,
+               "every edit-target accessor answers, because there IS one");
+        assert(doc.activeIndex == doc.indexOf(meshA),
+               "and activeIndex names the latched mesh");
+        // The OTHER mesh in the fixture never had a selection state, so it is
+        // background — without this row "everything is foreground" would pass.
+        assert(doc.foregroundLayerCount() == 1,
+               "exactly one foreground layer: the latched mesh. The non-mesh "
+               ~ "item is not a candidate and MeshB never had a state.");
     }
 
     auto d1 = mixedDoc();
@@ -2867,42 +3457,55 @@ unittest {  // TASK 0668 — this INVERTS Stage 3 / L2, which asserted the
     check(d2, d2.layers[0], d2.layers[1]);
 }
 
-unittest {  // TASK 0668 — the round trip. Selecting a mesh again restores the
-            // edit target, so the 0668 state is a state and not a trap: no
-            // path out of it requires anything but an ordinary select.
-    auto doc = mixedDoc();
-    doc.selectItem(doc.layers[1], SelMode.Set);      // plane-alike alone
-    assert(!doc.hasEditTarget(), "precondition: no edit target");
-    doc.selectItem(doc.layers[0], SelMode.Set);      // back to the mesh
+unittest {  // TASK 0671 — the round trip, and the LATCH MOVES.
+            // ~~0668: selecting a mesh again RESTORES the edit target.~~ There
+            // is nothing to restore now; what this has to show instead is that
+            // the latched value is not pinned to one layer — it follows
+            // whichever mesh was selected last. Two meshes are what make that
+            // observable at all (`layer_main_latched`'s own premise note).
+    auto doc = mixedDoc();                           // [MeshA, Empty, MeshB]
+    auto meshA = doc.layers[0], empty = doc.layers[1], meshB = doc.layers[2];
+    doc.selectItem(empty, SelMode.Set);              // plane-alike alone
+    assert(doc.primary is meshA, "precondition: latched on MeshA");
+    doc.selectItem(meshB, SelMode.Set);              // the OTHER mesh
     assertDocInvariants(doc);
-    assert(doc.primary is doc.layers[0] && doc.focusedItem is doc.layers[0],
-        "selecting a mesh re-establishes primary AND focus");
-    assert(!doc.layers[1].selected, "and the non-mesh item is dropped");
+    assert(doc.primary is meshB && doc.focusedItem is meshB,
+        "selecting a mesh moves both the target and the focus");
+    assert(!meshA.selected && doc.selectionState(meshA) == SelState.None,
+        "…and FLUSHES the mesh bucket, so the previously latched MeshA loses "
+        ~ "its state entirely rather than accumulating beside MeshB");
+    assert(doc.background(meshA), "…which is what makes it background again");
+    doc.selectItem(empty, SelMode.Set);              // and latch again
+    assertDocInvariants(doc);
+    assert(doc.primary is meshB,
+        "the latch re-arms on the OTHER mesh — so it is the last mesh selected, "
+        ~ "not a value pinned to one particular layer");
+    assert(!doc.layers[2].selected, "and the non-mesh item is the whole set");
 }
 
-unittest {  // Stage 3: removing the last mesh selection promotes to the
-            // OTHER mesh layer, never to the non-mesh candidate.
+unittest {  // Stage 3: the walk SKIPS the non-mesh candidate, in both queues.
+    // TASK 0671 — the mechanism changed under this test and its point did not:
+    // a non-mesh item must never end up as the edit target, whichever list it
+    // is sitting in. The old rig reached the question through a promotion that
+    // no longer happens, so the rig moved; the negative it asserts did not.
     auto doc = mixedDoc();
     auto meshA = doc.layers[0], empty = doc.layers[1], meshB = doc.layers[2];
+    doc.setPrimary(meshB);                       // meshB seated at the front
     doc.selectItem(empty, SelMode.Add);
-    doc.selectItem(meshB, SelMode.Add);          // meshA, empty, meshB selected; meshB primary
     assertDocInvariants(doc);
-    assert(doc.primary is meshB);
-    doc.selectItem(meshB, SelMode.Remove);       // remove the primary
+    assert(doc.primary is meshB, "precondition: meshB heads the current queue");
+    // Drop BOTH meshes, leaving the non-mesh item as the only CURRENT one.
+    doc.selectItem(meshB, SelMode.Remove);
+    doc.selectItem(meshA, SelMode.Remove);
     assertDocInvariants(doc);
-    assert(!meshB.selected);
-    assert(doc.primary is meshA, "promotion skips the non-mesh candidate");
-    assert(doc.primary.selected);
-}
-
-unittest {  // Stage 3: hiding the primary never promotes to a non-mesh item.
-    auto doc = mixedDoc();
-    auto meshA = doc.layers[0], empty = doc.layers[1];
-    doc.selectItem(empty, SelMode.Add);          // meshA, empty selected; meshA primary
-    meshA.visible = false;
-    auto ok = doc.promoteAwayFromHiddenPrimary();
-    assert(!ok, "refuse — the only other selected layer cannot be primary");
-    assert(doc.primary is meshA, "primary unchanged on refusal");
+    assert(!meshA.selected && !meshB.selected && empty.selected,
+        "the non-mesh item is now the entire current selection");
+    assert(doc.primary !is empty && doc.primary !is null,
+        "the target is never the non-mesh item — the walk filters on the "
+        ~ "capability in BOTH stages, not just in the current one");
+    assert(doc.primary is meshB,
+        "…and it is the front-seated meshB, which is the head of the history "
+        ~ "queue for the same reason it was the head of the current one");
 }
 
 unittest {  // Stage 3: setPrimary on a non-mesh item selects it and moves
@@ -3122,7 +3725,7 @@ unittest {
     auto clip = new Layer;  clip.name  = "Clip";  clip.kind  = ItemKind.Image;
     auto plane = new Layer; plane.name = "Plane"; plane.kind = ItemKind.ImagePlane;
     doc.layers = [mesh, clip, plane];
-    doc.primary = mesh; doc.focusedItem = mesh; mesh.selected = true;
+    doc.selectItem(mesh, SelMode.Set);
     doc.selectItem(clip,  SelMode.Add);
     doc.selectItem(plane, SelMode.Add);
 
@@ -3177,7 +3780,7 @@ unittest {
     auto plane = new Layer;  plane.name = "P"; plane.kind = ItemKind.ImagePlane;
     auto plane2 = new Layer; plane2.name = "P2"; plane2.kind = ItemKind.ImagePlane;
     doc.layers = [meshA, meshB, plane, plane2];
-    doc.primary = meshA; doc.focusedItem = meshA; meshA.selected = true;
+    doc.selectItem(meshA, SelMode.Set);
 
     Layer[] buf;
     string names() {
@@ -3195,13 +3798,21 @@ unittest {
     assert(buf.length == 1 && buf[0] is meshA, "select mesh A ⇒ {A}, got " ~ names());
 
     doc.selectItem(meshB, SelMode.Add);          // ctrl-add a second MESH
-    assert(doc.primary is meshB && doc.focusedItem is meshB,
-        "Add on a primary-eligible kind moves BOTH pointers — this is the "
-        ~ "lockstep the neutrality proof rests on");
+    // TASK 0671 — the two pointers no longer move in lockstep here: `Add`
+    // appends to the selection queue and the target is the queue's HEAD, so
+    // the focus lands on B while A keeps the target. This line used to read
+    // `doc.primary is meshB`, and it is exactly that lockstep going away that
+    // made approximation D's `target !is primary` condition wrong — see
+    // `itemTransformTargets`. The row below is what would have caught it.
+    assert(doc.primary is meshA && doc.focusedItem is meshB,
+        "Add moves the FOCUS to the newest and leaves the target on the head");
     doc.itemTransformTargets(buf);
     assert(buf.length == 2 && buf[0] is meshA && buf[1] is meshB,
         "MULTI-MESH DRAG IS UNTOUCHED: {A,B}. A 'narrow to the focus' "
-        ~ "implementation reads {B} here. got " ~ names());
+        ~ "implementation reads {B} here, and so does a D whose condition is "
+        ~ "still `target !is primary`. got " ~ names());
+    assert(doc.isTransformTarget(meshA) && doc.isTransformTarget(meshB),
+        "…and the per-layer bool agrees with the set, on both rows");
 
     // --- TASK 0668: the plane SELECTED ALONE, and it really is alone ------
     // This row used to open by asserting that a mesh was STILL primary and
@@ -3212,10 +3823,11 @@ unittest {
     // The row is kept, and inverted, because it is the one a user reaches by
     // clicking a plane.
     doc.selectItem(plane, SelMode.Set);
-    assert(doc.primary is null,
-        "0668: an exclusive select of a plane leaves no mesh edit target");
+    assert(doc.primary is meshA,
+        "0671: an exclusive select of a plane leaves the mesh edit target "
+        ~ "LATCHED — 0668's `is null` was the cost this task removes");
     assert(!meshA.selected && !meshB.selected,
-        "…and neither mesh is spared into the selection");
+        "…and neither mesh is spared into the selection: 0668's half is kept");
     assert(doc.itemTransformTarget() is plane,
         "the target follows the FOCUS onto the plane — the pre-Stage-8 "
         ~ "binding reads the mesh here, which is the gizmo sitting on the "
@@ -3448,32 +4060,46 @@ unittest {  // SF1: exclusiveSelect (reached via BOTH `selectItem(Set)` and
     check(d2, empty2, meshB2);
 }
 
-unittest {  // SF1's surviving half (task 0668): `recoverStalePrimary` is
-            // still the repair for the two arms that never route through
-            // `exclusiveSelect` — `selectItem(Add)` and `setPrimary` — and it
-            // must still tell a STALE primary from an ABSENT one. Stale:
-            // rehome. Absent: leave it absent, because rehoming there selects
-            // a layer the user never picked.
-    {   // STALE → rehomed onto the only `canBePrimary` member.
+unittest {  // TASK 0671 — A STALE EDIT TARGET IS NOT REPRESENTABLE ANY MORE.
+            // ~~SF1's surviving half (0668): `recoverStalePrimary` is still
+            // the repair for the two arms that never route through
+            // `exclusiveSelect`.~~ There is nothing left to repair. The target
+            // is derived by ENUMERATING `layers`, so an item that leaves the
+            // list stops being an answer the same instant — a whole class of
+            // defect (and the function that fixed it) went away with the
+            // field. What replaces the two "rehomed" rows is the stronger
+            // claim: after the replacement the target is decided by the NEW
+            // list alone, and nothing is conjured into it.
+    {   // STALE → the departed layer is simply not an answer.
         Layer empty, meshB;
         auto doc = staleDoc(empty, meshB);
         doc.selectItem(empty, SelMode.Add);
         assertDocInvariants(doc);
-        assert(doc.primary is meshB,
-            "SF1: an Add on a non-mesh item repairs a STALE primary via "
-            ~ "rehomePrimary");
-        assert(doc.isMember(doc.primary) && doc.primary.selected,
-            "the recovered primary is a genuine, selected member");
+        assert(doc.primary is null,
+            "the old primary left `layers`, so the walk cannot reach it — and "
+            ~ "no replacement is invented: meshB was never selected");
+        assert(!meshB.selected,
+            "above all it is not SELECTED on the way; that is the substitution "
+            ~ "0654 removed everywhere else, and the pre-0671 repair did it here");
+        assert(doc.focusedItem is empty, "Add still moves focus to the target");
     }
     {   // ABSENT → stays absent. RED before 0668: the mesh gets selected.
-        auto doc = mixedDoc();
-        auto empty = doc.layers[1];
-        doc.clearItemSelection();
+        // TASK 0671 — the rig had to change, and the change IS the finding.
+        // It used to reach "no edit target" with `clearItemSelection()`, which
+        // does not produce that state any more: dropping the selection LATCHES
+        // every mesh that was in it. The state still exists, it is just reached
+        // by having no mesh with a selection state at all — here, a document
+        // nobody has selected anything in yet.
+        Document doc;
+        auto empty = new Layer; empty.name = "E0"; empty.kind = ItemKind.Empty;
+        auto meshA = new Layer; meshA.name  = "M0";
+        doc.layers = [empty, meshA];
+        assert(doc.primary is null, "precondition: no target to begin with");
         doc.selectItem(empty, SelMode.Add);
         assertDocInvariants(doc);
         assert(doc.primary is null,
-            "0668: an Add on a non-mesh item from an EMPTY selection must not "
-            ~ "conjure an edit target");
+            "0668: an Add on a non-mesh item from a document with no "
+            ~ "targetable item must not conjure an edit target");
         size_t sel = 0; foreach (l; doc.layers) if (l.selected) ++sel;
         assert(sel == 1,
             "and exactly one item is selected — the one that was added. The "
@@ -3560,18 +4186,23 @@ unittest {  // SF2, RED-before-fix: setPrimary on a non-mesh layer must not
     assertDocInvariants(doc);
 }
 
-unittest {  // SF2's surviving half for `setPrimary` (task 0668): a STALE
-            // primary — non-null, no longer a member — is still repaired by
-            // `recoverStalePrimary`, because staleness is a state the repair
-            // can actually recognise.
+unittest {  // TASK 0671 — the `setPrimary` half of the same retirement.
+            // ~~SF2's surviving half (0668): a STALE primary is still
+            // repaired by `recoverStalePrimary`.~~
     Layer empty, meshB;
     auto doc = staleDoc(empty, meshB);
     doc.setPrimary(empty);
-    assert(doc.primary is meshB,
-        "SF2: setPrimary on a non-mesh target rehomes a STALE primary");
-    assert(doc.isMember(doc.primary) && doc.primary.selected,
-        "the recovered primary is a genuine, selected member");
+    assert(doc.primary is null,
+        "setPrimary on a non-targetable item seats it and focuses it; the walk "
+        ~ "then filters it out and finds nothing else with a selection state");
+    assert(!meshB.selected, "…and no mesh is selected on the way");
     assert(doc.focusedItem is empty, "and the focus is still the target");
+    assertDocInvariants(doc);
+    // …and the recovery is one ordinary select, exactly as everywhere else.
+    doc.setPrimary(meshB);
+    assert(doc.primary is meshB && doc.isMember(doc.primary) && meshB.selected,
+        "CONTROL: seating a targetable item really does install a target, so "
+        ~ "the null above is a real absence and not a broken walk");
     assertDocInvariants(doc);
 }
 

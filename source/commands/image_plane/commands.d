@@ -95,9 +95,12 @@ final class ImagePlaneAdd : Command {
     // sweep over items, and nothing stops a future consumer naming a plane.
     private Layer created_;
     private Layer target_;               ///< the clip resolved from `image`
-    private bool[Layer] prevSelected;    ///< full prior selection, by identity
-    private Layer prevPrimary;
-    private Layer prevFocus;
+    /// TASK 0671 — the whole item-selection state, captured once. Replaces
+    /// the `prevSelected` / `prevPrimary` / `prevFocus` trio, which recorded a
+    /// set of bits plus two DERIVED-or-coupled pointers and had to be replayed
+    /// in a careful order to avoid one step undoing the previous one.
+    private Document.ItemSelectionState prevSelection;
+    private Layer prevPrimary;           ///< only for the switch-hook comparison
     private bool  applied;
     private string refusal_;
 
@@ -197,10 +200,8 @@ final class ImagePlaneAdd : Command {
         // OBJECT identity (the `LayerDuplicate` / `LayerDelete` pattern) so a
         // multi-selection is restored exactly and not flattened to a
         // set-of-one by the undo.
-        prevPrimary  = doc.primary;
-        prevFocus    = doc.focusedItem;
-        prevSelected = null;
-        foreach (l; doc.layers) prevSelected[l] = l.selected;
+        prevPrimary   = doc.primary;
+        prevSelection = doc.captureItemSelection();   // task 0671: the WHOLE state
         immutable size_t prevActiveIndex = doc.activeIndex;
 
         doc.layers ~= created_;
@@ -242,35 +243,23 @@ final class ImagePlaneAdd : Command {
         if (created_.selected) doc.selectItem(created_, SelMode.Remove);
         doc.layers = doc.layers[0 .. i] ~ doc.layers[i + 1 .. $];
 
-        // Restore the exact prior selection set, then the prior primary, then
-        // the prior FOCUS. The third step is the one `LayerDuplicate.revert`
-        // does not need and this command does: `setPrimary` homes the focus
-        // onto the primary, which is right when the prior focus WAS the
-        // primary (every all-mesh document) and wrong when it was a non-mesh
-        // item — the state this very task makes ordinary.
-        foreach (l; doc.layers) {
-            auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
-            l.selected  = wasSel;
-        }
+        // TASK 0671 — one exact restore replaces the set / primary / focus
+        // trio. ~~Restore the exact prior selection set, then the prior
+        // primary, then the prior FOCUS. The third step is the one
+        // `LayerDuplicate.revert` does not need and this command does:
+        // `setPrimary` homes the focus onto the primary…~~ — a three-step
+        // reconstruction existed because the state was three loosely coupled
+        // pointers and each step could undo the previous one's side effect.
+        // The snapshot carries the current list, its order, the deselect
+        // history and the focus together, so there are no side effects to
+        // sequence and no `prevFocus` field at all.
         //
-        // TASK 0668 — this branch is the one the task singles out ("make sure
-        // the undo returns the previous PRIMARY rather than leaving the
-        // document empty"), and it holds unchanged: `prevPrimary` is read
-        // from the pre-apply document, so restoring it is what puts the mesh
-        // edit target back after an apply that removed it. `setPrimary` also
-        // re-selects it, which the raw loop above cannot have undone. When
-        // `prevPrimary` was ALREADY null — the plane was created while
-        // another plane or a clip was the lone selection — the correct
-        // restore is to leave it null, and the guard does exactly that
-        // rather than rehoming onto some mesh the user had not selected.
-        if (prevPrimary !is null && doc.isMember(prevPrimary)) {
-            debug assert(kindInfo(prevPrimary.kind).canBePrimary,
-                "ImagePlaneAdd.revert: prevPrimary must be canBePrimary");
-            doc.setPrimary(prevPrimary);
-        }
-        if (prevFocus !is null && prevFocus !is prevPrimary
-            && doc.isMember(prevFocus))
-            doc.selectItem(prevFocus, SelMode.Add);
+        // 0668's note here — "make sure the undo returns the previous PRIMARY
+        // rather than leaving the document empty" — is satisfied for a reason
+        // that no longer needs stating at this site: the apply never took the
+        // target away (a plane's selection flushes the PLANE bucket), so there
+        // is nothing for the undo to put back.
+        doc.restoreItemSelection(prevSelection);
 
         applied = false;
         noteLayerChange(LayerChange.Removed);

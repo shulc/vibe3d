@@ -22,8 +22,12 @@ final class Ai3dImportResult : Command {
     private string nameArg;
     private Layer inserted;
     private size_t insertedIndex;
-    private bool[Layer] preSelected;
-    private Layer prePrimary;
+    /// TASK 0671 — the whole item-selection state, captured once (see
+    /// `Document.captureItemSelection`). Replaces the `bool[Layer]` +
+    /// edit-target pair: the target is derived, so recording it was recording
+    /// a consequence, and the deselect history it is derived FROM was not
+    /// being recorded at all.
+    private Document.ItemSelectionState preSelection;
     private size_t preActiveIndex;
     private bool applied;
     // task 0381 follow-up: surface WHY an import failed so the UI modal can show
@@ -82,9 +86,7 @@ final class Ai3dImportResult : Command {
 
         if (inserted is null) {
             preActiveIndex = doc.activeIndex;
-            prePrimary = doc.primary;
-            preSelected = null;
-            foreach (l; doc.layers) preSelected[l] = l.selected;
+            preSelection = doc.captureItemSelection();
 
             ImportedScene scene;
             if (!importViaAssimp(pathArg, scene)) {
@@ -148,7 +150,7 @@ final class Ai3dImportResult : Command {
         insertedIndex = found;
         doc.layers = doc.layers[0 .. found] ~ doc.layers[found + 1 .. $];
 
-        restoreSelection(preSelected, prePrimary, preActiveIndex);
+        doc.restoreItemSelection(preSelection);
         auto active = doc.activeMesh();
         // Task 0654: the pre-import selection may have been EMPTY, in which
         // case restoreSelection put it back that way and there is no active
@@ -160,22 +162,12 @@ final class Ai3dImportResult : Command {
         return true;
     }
 
-    private void restoreSelection(bool[Layer] selected, Layer primary, size_t fallbackIndex) {
-        foreach (l; doc.layers) {
-            auto wasSelected = (l in selected) ? selected[l] : false;
-            l.selected = wasSelected;
-        }
-        // Task 0654: a null `primary` in the snapshot MEANS the item selection
-        // was empty (the document biconditional), so restore it empty. The
-        // `setActive(fallbackIndex)` this replaces would clamp the
-        // absent-sentinel index into a real layer and select it.
-        if (primary !is null)
-            doc.setPrimary(primary);
-        else if (fallbackIndex >= doc.layers.length)
-            doc.clearItemSelection();
-        else
-            doc.setActive(fallbackIndex);
-    }
+    // ~~private void restoreSelection(bool[Layer], Layer primary, size_t
+    // fallbackIndex)~~ — RETIRED (task 0671) in favour of
+    // `Document.restoreItemSelection`. Its three branches existed to re-derive
+    // a stored edit target from a restored set of bits, and its `fallbackIndex`
+    // arm was the 0654 clamp hazard written out longhand. One exact restore
+    // replaces all of it.
 
     private void fireSwitchIfChanged(Layer prevLayer, size_t prevIndex) {
         if (onSwitch is null) return;

@@ -696,14 +696,24 @@ unittest {
     assert(stale !is null, "fixture: there is a focus to go stale");
 
     // The whole layer list is replaced by direct field assignment — the shape
-    // `readV3d` uses, and the only way `primary`/`focusedItem` can go stale.
+    // `readV3d` uses, and the only way `focusedItem` can go stale.
+    //
+    // TASK 0671 — the `doc.primary = fresh` that used to close this block is
+    // gone with the field. The edit target is derived by ENUMERATING `layers`,
+    // so the replacement alone repoints it: `fresh` is the only member with a
+    // selection state, and the old object stops being visible to the walk the
+    // instant it leaves the list. `primary` therefore CANNOT go stale any
+    // more — which is why the case below is a stale FOCUS only, and why it is
+    // still worth testing: `focusedItem` is still a stored pointer.
     auto fresh = new Layer;
     fresh.name = "the document just loaded";
     fresh.meshRef() = makeCube();
     fresh.selected  = true;
     doc.layers      = [fresh];
-    doc.primary     = fresh;
     // …and `focusedItem` is deliberately NOT repointed: that is the bug state.
+    assert(doc.primary is fresh,
+        "precondition: the derived target followed the list replacement on its "
+        ~ "own — if it had not, this test would be checking the wrong fallback");
 
     assert(doc.focusedItem is stale,
         "precondition: the focus still points at the OLD object — if a "
