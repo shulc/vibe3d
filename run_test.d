@@ -707,6 +707,15 @@ bool prepareWorker(ref Worker w) {
 //      rewrites, that pairing is re-rolled every run — which is what made this
 //      look like "a different test fails each time, and it passes on the rerun".
 //      Closed inside /api/reset (step 3): see eventlog.parkOverrideMouse.
+//   6. THE SELECTION TYPE. Every viewport pick site gates on the front of the
+//      selection-type ordering, not on the edit mode, and the two are not the
+//      same reading: under the ITEM type `/api/selection` still reports mode
+//      "vertices". A slice whose baseline is left with the item type current
+//      hands the next binary a viewport in which nothing can be picked, while
+//      reporting a pristine cube and an empty selection. Closed by the reset
+//      itself (its promote hook) and by the `/api/select` in step 3b; the
+//      verify below checks it so that a regression in either one is a named
+//      failure rather than one silently dead test.
 // This is the documented cross-test state-bleed flake family (test_http_endpoint
 // asserting the pristine startup cube, test_selection's "expected 2 got 0",
 // etc.). Resetting at the RUNNER level — between every binary — kills the whole
@@ -755,6 +764,31 @@ void resetBetweenTests(ushort port) {
         if (s.length == 0) return false;
         try {
             auto j = parseJSON(s);
+            // Channel 6 of the list above: THE SELECTION TYPE. `mode` is the
+            // derived GEOMETRY view, and it reads "vertices" even while the
+            // ITEM type is current — deliberately, since that persistence is
+            // what lets 1/2/3 restore the previous geometry mode. But the
+            // viewport pick sites gate on the TYPE, not on `mode`, so a
+            // baseline verified through `mode` alone accepts a state in which
+            // the next test's clicks, hovers, bands and double-clicks all
+            // decline in silence. Measured on a live instance: `/api/model`
+            // reporting the pristine 8-vertex cube with v6 = (0.5, 0.5, 0.5),
+            // `mode` "vertices", all three selection arrays empty — and
+            // `selType` "item". Every field these two predicates read says
+            // clean; the one that decides is not among them.
+            //
+            // This is not a new mechanism, it is this loop's existing one
+            // pointed at the field that now decides: a false re-runs the reset
+            // above, and `/api/reset` does clear the type. Two things already
+            // clear it (the reset's promote hook and the `/api/select` on the
+            // line above), so this is a tripwire rather than a repair — it is
+            // here so that a future change to either of them surfaces as a
+            // named failure instead of as one silently dead test per slice.
+            //
+            // Absent on older / bisected binaries: missing is fine, present
+            // and wrong is not.
+            if (auto t = "selType" in j)
+                if (t.str != "vertex") return false;
             return j["mode"].str == "vertices"
                 && j["selectedVertices"].array.length == 0
                 && j["selectedEdges"].array.length == 0

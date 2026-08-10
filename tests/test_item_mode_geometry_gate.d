@@ -553,3 +553,146 @@ unittest {
                    ~ "again — its patch carries %d of 25",
                    vi, patchCount(rig.vertFbo[vi], kSelectedVertexDot)));
 }
+
+// ---------------------------------------------------------------------------
+// U5 — the BETWEEN-TEST BASELINE has to restore the pick type, not just the
+//      pick mode, and the very next gesture has to pick again.
+//
+// This task moved the gate off `editMode`, and in doing so it split one
+// observable into two. `/api/selection` reports `mode` (the derived geometry
+// view) and `selType` (the ordering front — the gate). Under the item type
+// `mode` still reads "vertices"; U1 asserts that persistence, and it is
+// deliberate. The consequence is a state that reads completely clean and is
+// not: measured on a live instance, `/api/model` gives the pristine 8-vertex
+// cube with v6 = (0.5, 0.5, 0.5), `/api/selection` gives mode "vertices" with
+// all three selection arrays empty — and `selType` is "item", so every
+// viewport pick site declines. That is exactly the tuple `run_test.d`'s
+// `resetBetweenTests` verifies before handing a shared `--test` instance to the
+// next test binary in a worker's slice, which is how a stale pick type would
+// travel between tests without anything being able to see it.
+//
+// So this flow is an ordered PAIR inside one process, and its second half is a
+// real gesture rather than a field read: `selType() == "vertex"` is a claim
+// about a string, the click is the claim about the gate. The control arm
+// measures the click's answer from a clean start in this same process at this
+// same camera, so "picks again" is compared against a value this rig observed
+// rather than a constant written down.
+//
+// Both doors into the item type are driven. `layer.select`'s promote hook and
+// the deliberate `select.typeFrom item` door are different code, and a reset
+// that cleared one and not the other is representable.
+// ---------------------------------------------------------------------------
+
+/// A clean single-cube scene with an empty undo stack — what `/api/reset`
+/// yields between test binaries.
+private void freshCube() {
+    auto r = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+    assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
+    cmd(`{"id":"history.clear"}`);
+    settle();
+}
+
+/// The cube corner NEAREST the eye, and where it lands in WINDOW pixels.
+///
+/// Nearest, not arbitrary: the pick runs against a depth-tested ID buffer, so a
+/// far corner sits behind the cube's own faces and a click there would answer
+/// "nothing" for a reason that has nothing to do with this flow.
+private void nearestVertexPx(out int vi, out int wx, out int wy) {
+    auto eye   = getJson("/api/camera")["eye"];
+    immutable double ex = eye["x"].floating;
+    immutable double ey = eye["y"].floating;
+    immutable double ez = eye["z"].floating;
+    auto vp    = viewportFromCamera(fetchCamera(baseUrl));
+    auto verts = getJson("/api/model")["vertices"].array;
+    double best = double.max;
+    vi = -1;
+    foreach (i, v; verts) {
+        immutable double dx = v.array[0].floating - ex;
+        immutable double dy = v.array[1].floating - ey;
+        immutable double dz = v.array[2].floating - ez;
+        immutable double d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 >= best) continue;
+        float px, py;
+        if (!projectToWindow(DHVec3(cast(float)v.array[0].floating,
+                                    cast(float)v.array[1].floating,
+                                    cast(float)v.array[2].floating),
+                             vp, px, py)) continue;
+        best = d2;
+        vi   = cast(int)i;
+        wx   = cast(int)round(px);
+        wy   = cast(int)round(py);
+    }
+    assert(vi >= 0, "no cube corner projects on-camera at the reset camera");
+}
+
+unittest {
+    foreach (route; ["door", "layer"]) {
+        // ---- the CONTROL, measured here: from a clean start a click at P
+        //      selects exactly one vertex, and this is which one.
+        freshCube();
+        int vi, px, py;
+        nearestVertexPx(vi, px, py);
+        auto c = cell();
+        assert(px - c.vx >= 4 && py - c.vy >= 4
+            && px - c.vx < c.vw - 4 && py - c.vy < c.vh - 4,
+            format("rig: the nearest corner projects to window (%d, %d), not "
+                   ~ "comfortably inside the %dx%d cell at (%d, %d)",
+                   px, py, c.vw, c.vh, c.vx, c.vy));
+        clickAt(c, px, py);
+        auto control = selectedVertices();
+        assert(control == [vi],
+            format("control (%s): a click at the nearest corner must select "
+                   ~ "vertex %d — it selected %s", route, vi, control));
+
+        // ---- the PAIR: enter the item type, then take exactly the reset the
+        //      runner takes between test binaries, then repeat that click.
+        freshCube();
+        if (route == "door") cmd("select.typeFrom item");
+        else                 cmd(`{"id":"layer.select","index":0,"mode":"set"}`);
+        settle();
+        assert(selType() == "item",
+            format("%s: this route must make the item type current — it is %s",
+                   route, selType()));
+        // THE BLIND SPOT, as a value. This is the exact tuple a baseline check
+        // written against `mode` reads, and every field of it says "clean"
+        // while the gate says otherwise. Asserted here rather than described,
+        // because it is the reason the reset below has a job to do.
+        assert(editModeName() == "vertices" && selectedVertices().length == 0,
+            format("%s: the item type must leave the derived view reading "
+                   ~ `"vertices" with an empty geometry selection — it reads `
+                   ~ "%s / %s, and if it did not, a `mode`-only baseline check "
+                   ~ "would already be able to see this state",
+                   route, editModeName(), selectedVertices()));
+
+        auto r = parseJSON(cast(string)post(baseUrl ~ "/api/reset", ""));
+        assert(r["status"].str == "ok", "/api/reset failed: " ~ r.toString);
+        settle();
+
+        // (a) the gate's own input.
+        assert(selType() == "vertex",
+            format("%s: the reset must return the ordering front to a geometry "
+                   ~ "type — it is %s, and every pick site in whatever runs "
+                   ~ "next would decline", route, selType()));
+        // (b) …and why (a) has to be spelled out at all: the field a `mode`-only
+        //     baseline check reads is "vertices" in BOTH states.
+        assert(editModeName() == "vertices",
+            format("%s: the derived geometry view reads %s — it reads "
+                   ~ `"vertices" under the item type too, which is exactly why `
+                   ~ "the assertion above is about selType and not about it",
+                   route, editModeName()));
+
+        // (c) the gate itself. The reset restores the camera, so the same pixel
+        //     is the same click — asserted, not assumed.
+        int vi2, px2, py2;
+        nearestVertexPx(vi2, px2, py2);
+        assert(vi2 == vi && px2 == px && py2 == py,
+            format("%s: the reset must restore the camera or the two clicks are "
+                   ~ "not the same click — corner %d at (%d, %d) became corner "
+                   ~ "%d at (%d, %d)", route, vi, px, py, vi2, px2, py2));
+        clickAt(cell(), px, py);
+        assert(selectedVertices() == control,
+            format("%s: after the reset the next click must pick exactly what "
+                   ~ "it picks from a clean start — expected %s, got %s",
+                   route, control, selectedVertices()));
+    }
+}
