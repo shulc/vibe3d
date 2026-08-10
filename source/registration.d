@@ -1017,13 +1017,20 @@ void registerCommands(EditorApp app) {
         // document item, it rides the same `/api/command` dispatch and the
         // same undo stack, and it mutates the same `Document`.
         //
-        // No `onActiveLayerChanged` forwarding: no plane command moves the
-        // MESH edit target (a plane is never `canBePrimary`), so there is no
-        // switch for the hook to observe.
+        // TASK 0668 — `imagePlane.add` DOES forward `onActiveLayerChanged`
+        // now. The comment that used to stand here ("no plane command moves
+        // the MESH edit target, a plane is never `canBePrimary`") was sound
+        // only while an exclusive select of a plane spared the mesh primary.
+        // It no longer does: the add clears the edit target on apply and the
+        // undo restores it, and both transitions need the tool-drop / GPU
+        // re-upload / cache-resize / `ActiveChanged` the hook performs.
+        // `imagePlane.setImage` still needs none — it rebinds a link and
+        // touches no selection.
         {
             import commands.image_plane.commands : ImagePlaneAdd, ImagePlaneSetImage;
             reg.commandFactories["imagePlane.add"] = () => cast(Command)
-                new ImagePlaneAdd(&mesh(), cameraView, editMode, &document());
+                new ImagePlaneAdd(&mesh(), cameraView, editMode, &document(),
+                                  onActiveLayerChanged);
             reg.commandFactories["imagePlane.setImage"] = () => cast(Command)
                 new ImagePlaneSetImage(&mesh(), cameraView, editMode, &document());
         }

@@ -34,8 +34,16 @@ __gshared bool delegate() g_editTargetResolver;
 // `static assert` in that module's unittest — `command.d` cannot import
 // `document.d` (see `g_editTargetResolver`), so the string is duplicated and
 // the equality is asserted rather than assumed.
+//
+// TASK 0668 — it reads "no MESH item is selected", not "no item is selected".
+// The old wording was true only while an absent edit target implied an empty
+// selection; since 0668 the ordinary way to reach this refusal is a reference
+// plane selected ALONE, and a message denying that anything is selected while
+// the panel shows a selected plane sends the user looking for the wrong
+// problem. The new wording is true in BOTH states and, unlike the old one,
+// says what to do about it.
 enum string kNoEditTargetReason =
-    "no item is selected: there is no mesh edit target";
+    "no mesh item is selected: there is no mesh edit target";
 
 // ---------------------------------------------------------------------------
 // Command — base class for every user-visible action.

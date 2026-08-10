@@ -1066,7 +1066,11 @@ unittest {
         ~ "`image.remove` would refuse it");
     assert(onMesh.layer is null, "a disabled affordance names no target");
 
-    f.doc.selectItem(f.bravo, SelMode.Set);
+    // ADD, not Set (task 0668): an exclusive select of a clip leaves NO
+    // primary, and the index assertion below turns on the primary being a
+    // DIFFERENT, live layer — against `null` it could not tell an
+    // implementation that reads `activeIndex` from one that reads the focus.
+    f.doc.selectItem(f.bravo, SelMode.Add);
     auto onImage = imageRemoveTarget(&f.doc);
     assert(onImage.enabled, "an image row is removable");
     assert(onImage.layer is f.bravo, "the target is the FOCUSED row");

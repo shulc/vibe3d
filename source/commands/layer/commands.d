@@ -90,13 +90,20 @@ private abstract class LayerCommandBase : Command {
         return i;
     }
 
-    /// Why an index-defaulted layer command refuses when the item selection is
-    /// empty (task 0654). Distinct wording from `command.kNoEditTargetReason`
+    /// Why an index-defaulted layer command refuses when there is no active
+    /// layer (task 0654). Distinct wording from `command.kNoEditTargetReason`
     /// on purpose: that one is about a MESH to write to, this one is about
     /// which ITEM `index:-1` names. A caller that passes an explicit index gets
     /// neither.
+    ///
+    /// TASK 0668 — phrased on the ACTIVE LAYER, not on the selection. It used
+    /// to open "no item is selected", which since 0668 can be said while a
+    /// reference plane is selected and visibly highlighted: `index:-1` resolves
+    /// to `activeIndex`, which follows the PRIMARY, and a plane is never the
+    /// primary. The refusal is about the absent default, so that is what it
+    /// names.
     protected enum string kNoDefaultLayerReason =
-        "no item is selected: `index:-1` names no layer";
+        "there is no active layer: `index:-1` names no layer";
 
     protected string refusal_;
     override string refusalReason() const { return refusal_; }
@@ -1414,29 +1421,40 @@ unittest {
     assert(dup.added.kind == ItemKind.Empty, "clone of a non-mesh source keeps its kind");
     assert(!dup.added.hasMesh, "clone of a non-mesh source has no mesh capability");
     // The existing all-mesh test above asserts `doc.primary is dup.added` —
-    // that would be FALSE here: a non-mesh layer can never become primary
+    // that is FALSE here: a non-mesh layer can never become primary
     // (`ItemKindInfo.canBePrimary`), so the mesh snapshot the ctor's `mesh`
-    // pointer aliases is correctly skipped, and the mesh edit target must
-    // stay put.
-    assert(doc.primary is meshA, "apply: a non-mesh clone never becomes primary");
-    assert(doc.focusedItem is dup.added, "apply: the clone still becomes the item focus");
+    // pointer aliases is correctly skipped.
+    //
+    // TASK 0668 — and the mesh edit target does NOT stay put. `apply()`'s
+    // `doc.setActive(addedIndex)` is an EXCLUSIVE select, and 0668 made an
+    // exclusive select of a kind that cannot be primary drop the previous
+    // target instead of sparing it. Duplicating a non-mesh item therefore
+    // leaves the clone alone in the selection with no edit target, which is
+    // the same answer `imagePlane.add` gives for the same reason. The rows
+    // below used to assert the opposite (`doc.primary is meshA`,
+    // `meshA.selected`, `!background(meshA)`) and are inverted, not deleted:
+    // the formula is still what is being pinned.
+    assert(doc.primary is null,
+        "apply: a non-mesh clone becomes the lone selection, so there is no "
+        ~ "edit target left");
+    assert(doc.focusedItem is dup.added, "apply: the clone becomes the item focus");
     assert(dup.added.selected, "apply: clone is selected");
-    assert(meshA.selected, "apply: the mesh primary stays selected too");
-    // §L2 / R12 (task 0615 Stage 6): `doc.setActive(addedIndex)` at apply()'s
-    // call site is the EXACT call the pre-revision wording would have
-    // deselected the mesh primary through — pin the formula, not just the
-    // absence of the bug. RED under that wording: `:170`'s unconditional
-    // deselect would clear `meshA.selected` and `background()` would then
-    // reclassify the live edit target as background.
-    assert(!Document.background(meshA),
-        "§L2: the mesh primary must never be reclassified background by a "
-        ~ "non-mesh duplicate becoming focus+selected");
+    assert(!meshA.selected,
+        "apply: the exclusive select really was exclusive — the mesh is "
+        ~ "dropped from the selection, not spared");
+    assert(Document.background(meshA),
+        "…and derives as BACKGROUND: dimmed and read-only, which is what an "
+        ~ "item that is no longer the edit target must look like");
     {
         size_t selCount = 0;
         foreach (l; doc.layers) if (l.selected) ++selCount;
-        assert(selCount == 2,
-            "§L2: selected set is exactly {target} ∪ {primary-after} == "
-            ~ "{clone, meshA}, size 2");
+        // The COUNT is the load-bearing row: "the clone is selected" passed
+        // under the pre-0668 law too, and only the number separates "cleared
+        // all others" from "cleared none". THREE layers exist at this point
+        // (meshA, empty, clone), so it also separates it from "cleared one".
+        assert(selCount == 1,
+            "§L2 as amended by 0668: the selected set is exactly {target} == "
+            ~ "{clone}, size 1");
     }
 
     assert(dup.revert(), "revert must succeed");
@@ -1490,7 +1508,13 @@ unittest {
     assert(dup.apply(), "apply must succeed on an image source");
     assert(doc.layers.length == 3, "apply: layer count == 3");
     assert(dup.added.kind == ItemKind.Image, "clone of an image source keeps its kind");
-    assert(doc.primary is meshA, "apply: an image clone never becomes primary (not canBePrimary)");
+    // Task 0668: an image clone never becomes primary AND, because `apply()`
+    // selects it exclusively, no other item stays primary either — see the
+    // `ItemKind.Empty` clone test above for the full statement of the law.
+    assert(doc.primary is null,
+        "apply: an image clone is not canBePrimary, and the exclusive select "
+        ~ "that focuses it leaves no edit target behind");
+    assert(!meshA.selected, "apply: the mesh is dropped from the selection");
 
     // (a) the clone must be a LIVE image row, not a payload-null one — the
     // "ships an image-kind layer with no payload" bug reads null here while
@@ -1609,7 +1633,13 @@ unittest {
     dup.indexArg = 2;
     assert(dup.apply(), "apply must succeed on an image-plane source");
     assert(dup.added.kind == ItemKind.ImagePlane, "the clone keeps its kind");
-    assert(doc.primary is meshA, "a plane clone never becomes primary");
+    // Task 0668, as in the `Empty` and `Image` clone tests above: the clone is
+    // not `canBePrimary`, and the exclusive select that focuses it drops the
+    // mesh rather than sparing it, so there is no edit target afterwards.
+    assert(doc.primary is null,
+        "a plane clone never becomes primary, and its exclusive select leaves "
+        ~ "no edit target behind");
+    assert(!meshA.selected, "the mesh is dropped from the selection");
 
     auto cl = dup.added.imagePlaneOrNull();
     assert(cl !is null,
@@ -1680,17 +1710,26 @@ unittest {
     doc.layers ~= added;
     doc.setActive(doc.layers.length - 1);   // mirrors LayerAdd.apply()'s doc.setActive(addedIndex)
 
-    assert(!Document.background(meshA),
-        "§L2 (LayerAdd): the mesh primary must never be reclassified "
-        ~ "background by a non-mesh layer.add target");
-    assert(meshA.selected, "§L2 (LayerAdd): the mesh primary stays selected");
-    assert(doc.primary is meshA, "§L2 (LayerAdd): primary never moves to a non-mesh target");
+    // TASK 0668 inverts every row below. `setActive` is an exclusive select,
+    // and an exclusive select of a kind that cannot be primary now clears the
+    // edit target instead of sparing it. This shape is not user-reachable
+    // through `layer.add` itself (no `kind` param, per the header above) — but
+    // it IS the shape `imagePlane.add` and `layer.duplicate` reach, so the
+    // formula is worth pinning here where the call site is isolated.
+    assert(doc.primary is null,
+        "§L2 as amended by 0668: `setActive` onto a non-mesh target leaves NO "
+        ~ "mesh edit target");
+    assert(!meshA.selected,
+        "…and the mesh is dropped from the selection, not spared");
+    assert(Document.background(meshA),
+        "…so it derives as BACKGROUND — dimmed and read-only, which is what "
+        ~ "an item that is no longer the edit target must look like");
     assert(doc.focusedItem is added, "§L2 (LayerAdd): focus moves to the new item");
     {
         size_t selCount = 0;
         foreach (l; doc.layers) if (l.selected) ++selCount;
-        assert(selCount == 2,
-            "§L2 (LayerAdd): selected set is exactly {target} ∪ {primary-after}, size 2");
+        assert(selCount == 1,
+            "§L2/0668 (LayerAdd): the selected set is exactly {target}, size 1");
     }
 }
 
@@ -1782,9 +1821,15 @@ unittest {
     doc.layers ~= empty;                               // [MeshA(primary), MeshB, Empty]
     assert(doc.primary is meshA);
 
-    // "Click the Empty row" — an exclusive select of a non-mesh target moves
-    // FOCUS only (§L2); primary is untouched.
-    doc.selectItem(empty, SelMode.Set);
+    // "Ctrl-click the Empty row" — an ADD moves FOCUS only (§L2); primary is
+    // untouched. TASK 0668: this used to be a plain `Set`, which spared the
+    // primary and produced the same split. It no longer does — an exclusive
+    // select of a non-mesh target leaves NO primary, and `activeIndex` then
+    // answers the absent-sentinel rather than a different real layer, which
+    // would blunt the discrimination below (the whole blocker is "the button
+    // targets the WRONG EXISTING layer"). The plain-click case that 0668
+    // introduces is pinned by its own test just after this one.
+    doc.selectItem(empty, SelMode.Add);
     assert(doc.focusedItem is empty, "setup: clicking Empty moves focus to it");
     assert(doc.primary is meshA, "setup: primary correctly stays on MeshA");
 
@@ -1819,6 +1864,40 @@ unittest {
         ~ "(focused) Empty row was deleted, not the primary");
     assert(doc.primary is meshA,
         "primary is untouched — it was never the delete target");
+}
+
+// ---------------------------------------------------------------------------
+// TASK 0668 — the same blocker on the state a PLAIN click now produces.
+// Selecting a non-mesh row exclusively leaves no primary, so `activeIndex`
+// answers the absent-sentinel `layers.length`: the old
+// `document.activeIndex` formula would index PAST THE END rather than merely
+// name the wrong layer. `layerDeleteButtonState` reads the focus, so the
+// answer is the same either way — which is the point worth pinning, because
+// "reads the focus" is what makes it independent of whether a primary exists.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+
+    auto doc = Document.bootstrap(makeCube());
+    auto meshA = doc.layers[0];
+    auto meshB = new Layer; meshB.name = "MeshB"; meshB.meshRef() = makeCube();
+    auto empty = new Layer; empty.name = "Empty"; empty.kind = ItemKind.Empty;
+    doc.layers ~= meshB;
+    doc.layers ~= empty;
+
+    doc.selectItem(empty, SelMode.Set);          // a plain CLICK
+    assert(doc.primary is null, "0668: the plain click leaves no edit target");
+    assert(doc.activeIndex == doc.layers.length,
+        "…so activeIndex is the absent-sentinel, OUT of range");
+    assert(!meshA.selected && !meshB.selected,
+        "…and neither mesh is left in the selection");
+
+    auto state = layerDeleteButtonState(&doc);
+    assert(state.index == doc.indexOf(empty),
+        "the Delete button still targets the FOCUSED row when there is no "
+        ~ "primary at all");
+    assert(state.index < doc.layers.length,
+        "…and that target is in range, which the activeIndex formula is not");
 }
 
 // ---------------------------------------------------------------------------

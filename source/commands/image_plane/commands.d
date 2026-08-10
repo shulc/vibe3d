@@ -101,9 +101,34 @@ final class ImagePlaneAdd : Command {
     private bool  applied;
     private string refusal_;
 
-    this(Mesh* m, ref View v, EditMode em, Document* d) {
+    /// app.d's `onActiveLayerChanged` (task 0668). Defaulted to `null` so the
+    /// unit-test constructions that only want `name()` keep compiling;
+    /// `registration.d` forwards the real one.
+    private void delegate(size_t, size_t) onSwitch;
+
+    this(Mesh* m, ref View v, EditMode em, Document* d,
+         void delegate(size_t, size_t) onSwitch = null) {
         super(m, v, em);
         this.doc = d;
+        this.onSwitch = onSwitch;
+    }
+
+    /// `LayerCommandBase.fireSwitchIfChanged`, restated here because this
+    /// command does not extend that base (it is not an index-addressed layer
+    /// command). Same contract: fire iff the primary LAYER OBJECT changed,
+    /// after the mutation, with the PRE-mutation index.
+    ///
+    /// TASK 0668 — this command could not move the primary before, and its own
+    /// comment said so. Now that an exclusive select of a plane clears the mesh
+    /// edit target, it moves it on EVERY apply (mesh → none) and back on every
+    /// revert, so the hook has to run: it drops the armed tool (whose bound
+    /// `Mesh*` would otherwise keep writing into a layer that is now read-only
+    /// background), re-uploads the GPU buffers against the absent target,
+    /// resizes the pick caches and publishes `ActiveChanged`.
+    private void fireSwitchIfChanged(Layer prevLayer, size_t prevIndex) {
+        if (onSwitch is null) return;
+        if (doc.active() is prevLayer) return;
+        onSwitch(prevIndex, doc.activeIndex);
     }
 
     override string name()  const { return "imagePlane.add"; }
@@ -176,21 +201,26 @@ final class ImagePlaneAdd : Command {
         prevFocus    = doc.focusedItem;
         prevSelected = null;
         foreach (l; doc.layers) prevSelected[l] = l.selected;
+        immutable size_t prevActiveIndex = doc.activeIndex;
 
         doc.layers ~= created_;
-        // SET-of-one. `exclusiveSelect` (which this routes to) SPARES the
-        // mesh primary — a plane is never `canBePrimary`, so this makes it
-        // the item-selection FOCUS and leaves the mesh edit target alone.
-        // That is exactly what the properties form binds (`itemPropsTarget`),
-        // which is what makes the new plane's channels editable the moment
-        // it exists.
+        // SET-of-one, and since task 0668 it is a genuine SET-of-ONE: the
+        // exclusive select drops every other item, INCLUDING the mesh that
+        // was the edit target. It used to spare the mesh, which is how
+        // creating a reference plane left the model selected alongside it.
+        // The plane becomes the item-selection FOCUS — what the properties
+        // form binds (`itemPropsTarget`), which is what makes the new plane's
+        // channels editable the moment it exists — and the document is left
+        // with NO mesh edit target until the user selects a mesh again.
         doc.selectItem(created_, SelMode.Set);
         applied = true;
-        // Structural add. No `fireSwitchIfChanged`: the MESH edit target
-        // cannot have moved (a plane is never `canBePrimary`), so there is no
-        // switch for the hook to observe — the reason `registration.d` wires
-        // this command without an `onActiveLayerChanged` delegate at all.
         noteLayerChange(LayerChange.Added);
+        // Task 0668: the primary DID move (mesh → none), so the switch hook
+        // runs. Ordered after `noteLayerChange(Added)` for the same reason
+        // `LayerDelete` orders its pair that way — the structural event
+        // describes the list, the switch event describes the edit target, and
+        // the hook itself publishes `ActiveChanged`.
+        fireSwitchIfChanged(prevPrimary, prevActiveIndex);
         return true;
     }
 
@@ -198,6 +228,14 @@ final class ImagePlaneAdd : Command {
         if (!applied || created_ is null) return false;
         immutable size_t i = doc.indexOf(created_);
         if (i == doc.layers.length) return false;   // already gone
+
+        // Task 0668: the undo RESTORES the edit target the apply cleared, so
+        // it is a primary move in its own right and owes the hook the same
+        // pre-mutation pair the apply does. Captured here, before anything
+        // moves — at this point `active()` is normally null (the apply left
+        // the plane alone in the selection).
+        auto   prevLayer = doc.active();
+        immutable size_t prevIdx = doc.activeIndex;
 
         // Move the selection off the item through the MUTATOR before the
         // splice, so `focusedItem` can never be left naming a non-member.
@@ -214,6 +252,17 @@ final class ImagePlaneAdd : Command {
             auto wasSel = (l in prevSelected) ? prevSelected[l] : false;
             l.selected  = wasSel;
         }
+        //
+        // TASK 0668 — this branch is the one the task singles out ("make sure
+        // the undo returns the previous PRIMARY rather than leaving the
+        // document empty"), and it holds unchanged: `prevPrimary` is read
+        // from the pre-apply document, so restoring it is what puts the mesh
+        // edit target back after an apply that removed it. `setPrimary` also
+        // re-selects it, which the raw loop above cannot have undone. When
+        // `prevPrimary` was ALREADY null — the plane was created while
+        // another plane or a clip was the lone selection — the correct
+        // restore is to leave it null, and the guard does exactly that
+        // rather than rehoming onto some mesh the user had not selected.
         if (prevPrimary !is null && doc.isMember(prevPrimary)) {
             debug assert(kindInfo(prevPrimary.kind).canBePrimary,
                 "ImagePlaneAdd.revert: prevPrimary must be canBePrimary");
@@ -225,6 +274,7 @@ final class ImagePlaneAdd : Command {
 
         applied = false;
         noteLayerChange(LayerChange.Removed);
+        fireSwitchIfChanged(prevLayer, prevIdx);
         return true;
     }
 

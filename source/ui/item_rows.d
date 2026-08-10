@@ -681,9 +681,12 @@ unittest {
         assert(r.role == RowRole.None,
             "…and nothing else is in the selection; got " ~ to!string(r.role));
 
-    // The plane joins the set (sparing the mesh primary, §L2), then the marker
-    // takes the focus — neither can become the edit target.
-    f.doc.selectItem(f.plane,  SelMode.Set);
+    // The plane joins the set, then the marker takes the focus — neither can
+    // become the edit target. BOTH are `Add` (task 0668): the plane used to
+    // join via `Set`, which spared the mesh primary and produced the same
+    // three-item set, but an exclusive select now drops the mesh and this test
+    // needs a live primary to separate the Primary role from the Focus role.
+    f.doc.selectItem(f.plane,  SelMode.Add);
     f.doc.selectItem(f.marker, SelMode.Add);
     itemRowsInto(&f.doc, "", false, true, rows);
 
@@ -761,12 +764,18 @@ unittest {
             "control: with the focus on the mesh, the selection and the "
             ~ "moving set agree, so no row is greyed");
 
-    // Focus a mesh-LESS item: the invariant keeps the mesh selected, the gizmo
-    // narrows onto the focus, and the mesh row is the one that says so. THREE
-    // rows end up selected — the spared mesh primary, the plane and the marker
-    // — so "only the primary greys" is a claim about a set, not about the one
-    // selected row there happened to be.
-    f.doc.selectItem(f.plane,  SelMode.Set);
+    // Focus a mesh-LESS item while the mesh stays selected: the gizmo narrows
+    // onto the focus, and the mesh row is the one that says so. THREE rows end
+    // up selected — the mesh primary, the plane and the marker — so "only the
+    // primary greys" is a claim about a set, not about the one selected row
+    // there happened to be.
+    //
+    // BOTH are `Add` (task 0668). The plane used to join via `Set`, and the
+    // three-row state was then produced by the document FORCING the mesh to
+    // stay selected. 0668 removed that forcing from the exclusive path, so the
+    // state this test needs is now reached the way a user reaches it — by
+    // ctrl-adding to a selection that already holds the mesh.
+    f.doc.selectItem(f.plane,  SelMode.Add);
     f.doc.selectItem(f.marker, SelMode.Add);
     itemRowsInto(&f.doc, "", false, true, rows);
 

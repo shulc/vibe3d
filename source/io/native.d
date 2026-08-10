@@ -1048,14 +1048,45 @@ bool readV3d(string path, ref Document document)
         // hands it by `ref`), so `primary`/`focusedItem` still point at the
         // PREVIOUS document's layers and would be stale, not empty.
         //
-        // The per-layer `selected` bits are deliberately NOT re-applied here:
-        // by the biconditional, `primaryLayer: -1` and a selected layer cannot
-        // both be true, and the file's own `selected` is the less specific of
-        // the two (a writer that emitted -1 emitted all-false with it).
+        // TASK 0668 — the per-layer `selected` bits ARE re-applied here, and
+        // this is a correction, not an addition. 0654 skipped them on the
+        // stated ground that "`primaryLayer: -1` and a selected layer cannot
+        // both be true" — a consequence of its biconditional, which 0668
+        // split. `primaryLayer: -1` now means only "no MESH EDIT TARGET", and
+        // the ordinary document that produces it is a reference plane (or a
+        // clip) selected alone. Skipping the bits would round-trip that
+        // document to an empty selection: the panel the user had open would
+        // come back showing nothing, with no error anywhere to explain it.
+        //
+        // Only `!canBePrimary` items are re-selected. A file that says -1
+        // while marking a MESH selected is self-contradictory — obeying the
+        // `selected` bit would install the very primary the file said does
+        // not exist — so that bit is reported and dropped, the same way an
+        // out-of-model `focusedItem` is below.
         if (emptySelection) {
             document.clearItemSelection();
-            v3dInfo(format("document ready: %d item(s), no item selected",
-                            document.layers.length));
+            foreach (i, layer; parsed) {
+                if (!selected[i]) continue;
+                if (kindInfo(layer.kind).canBePrimary) {
+                    v3dWarn(format("ignoring \"selected\" on layer %d: the file "
+                        ~ "declares no edit target (\"primaryLayer\": -1) but "
+                        ~ "marks a \"%s\" item selected, which would create "
+                        ~ "one", i, tokenOf(layer.kind)));
+                    continue;
+                }
+                document.selectItem(layer, SelMode.Add);
+            }
+            // Focus LAST, for the same reason the primary path states below:
+            // the `Add` loop leaves the focus on whichever item came last in
+            // file order, and the file's own `focusedItem` is the specific
+            // answer. Only honoured for an item the loop actually selected.
+            if (focusIndex < parsed.length && selected[focusIndex]
+                && !kindInfo(parsed[focusIndex].kind).canBePrimary)
+                document.selectItem(parsed[focusIndex], SelMode.Add);
+            v3dInfo(format("document ready: %d item(s), no edit target, "
+                        ~ "%d item(s) selected",
+                            document.layers.length,
+                            document.selectedItemCount));
             return true;
         }
 

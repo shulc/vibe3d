@@ -96,7 +96,7 @@ private string cmdRefused(string argstring, string what) {
 /// The one sentence every no-edit-target refusal must carry. Kept as a literal
 /// here rather than read from the app: a test that echoed the app's own string
 /// back at it would pass whatever the app said.
-enum string kReason = "no item is selected: there is no mesh edit target";
+enum string kReason = "no mesh item is selected: there is no mesh edit target";
 
 private void resetCube() {
     auto r = parseJSON(cast(string) post(BASE ~ "/api/reset", ""));

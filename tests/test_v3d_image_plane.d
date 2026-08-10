@@ -586,3 +586,91 @@ unittest {
     assert(lk.type != JSONType.null_ && lk["target"].integer == 1
         && lk["state"].str == "live", "ENUM: the plane's link — " ~ lk.toString);
 }
+
+// ===========================================================================
+// T-S6 (task 0668) — a document whose only selected item CANNOT be primary
+// round-trips as such.
+//
+// WHY THIS ROW EXISTS. 0654 taught the writer to emit `primaryLayer: -1` for
+// "no mesh edit target", and taught the reader to answer it by CLEARING the
+// selection outright — deliberately ignoring every per-layer `selected` bit,
+// on the then-true ground that -1 and a selected layer could not both occur.
+// 0668 makes them occur together on the most ordinary path there is: create
+// a reference plane. Without the reader change, saving that document and
+// opening it again silently deselects the plane — the panel the user had
+// open comes back empty, with nothing anywhere reporting an error.
+//
+// The wrong implementations and their readings:
+//   * the reader keeps 0654's `clearItemSelection()`-and-stop  -> `selected
+//     []` and `focused -1` after the load;
+//   * the reader re-applies `selected` but ALSO obeys it for a mesh, or
+//     repairs -1 back to a real index  -> `primary [0]` / `active 0`, i.e.
+//     the load quietly hands back an edit target the file said was absent;
+//   * the writer emits `primaryLayer: 0` for the absent primary  -> same
+//     reading as above, and the FILE assertion below is what tells the two
+//     apart.
+// ===========================================================================
+unittest {
+    int[] selectedIndices() {
+        int[] r;
+        foreach (i, l; getLayers()["layers"].array)
+            if (l["selected"].boolean) r ~= cast(int) i;
+        return r;
+    }
+    int[] primaryIndices() {
+        int[] r;
+        foreach (i, l; getLayers()["layers"].array)
+            if (l["primary"].boolean) r ~= cast(int) i;
+        return r;
+    }
+    int focusedIndex() {
+        foreach (i, l; getLayers()["layers"].array)
+            if (l["focused"].boolean) return cast(int) i;
+        return -1;
+    }
+    int activeIndex() { return cast(int) getLayers()["active"].integer; }
+
+    auto dir  = scratch("noprimary");
+    auto path = buildPath(dir, "plane_alone.v3d");
+
+    resetCube();
+    cmd(`{"id":"imagePlane.add","params":{"name":"Lone Plane"}}`);
+    assert(layerCount() == 2, "fixture: the cube and one plane");
+    assert(selectedIndices() == [1] && primaryIndices() == [],
+        "fixture: the plane alone, no edit target — read selected "
+        ~ selectedIndices().to!string ~ " primary " ~ primaryIndices().to!string);
+
+    cmd(`{"id":"file.save","params":{"path":` ~ jsonStr(path) ~ `}}`);
+
+    // The FILE, read as bytes. Distinguishes a writer defect from a reader
+    // defect before either is blamed.
+    auto onDisk = parseJSON(readText(path));
+    assert(onDisk["primaryLayer"].integer == -1,
+        "the file records the absent edit target as -1, read "
+        ~ onDisk["primaryLayer"].integer.to!string);
+    assert(onDisk["layers"].array[1]["selected"].boolean,
+        "…and still records the plane as SELECTED — -1 alone would be "
+        ~ "indistinguishable from an emptied document");
+    assert(!onDisk["layers"].array[0]["selected"].boolean,
+        "…and the mesh as not");
+    assert(onDisk["focusedItem"].integer == 1,
+        "…and names the plane as the focus, read "
+        ~ onDisk["focusedItem"].integer.to!string);
+
+    resetCube();
+    assert(primaryIndices() == [0], "control: the reset document HAS a primary");
+    cmd(`{"id":"file.load","params":{"path":` ~ jsonStr(path) ~ `}}`);
+
+    assert(layerCount() == 2, "the load restored both items");
+    assert(selectedIndices() == [1],
+        "the plane comes back as the ONLY selected item. `[]` is the 0654 "
+        ~ "reader (selection dropped); `[0,1]` or `[0]` is a reader that "
+        ~ "repaired the absent primary. Read " ~ selectedIndices().to!string);
+    assert(primaryIndices() == [] && activeIndex() == -1,
+        "…and with no edit target, read primary " ~ primaryIndices().to!string
+        ~ " active " ~ activeIndex().to!string);
+    assert(focusedIndex() == 1,
+        "…and the plane holds the focus, read " ~ focusedIndex().to!string);
+    assert(layerAt(1)["type"].str == "imagePlane",
+        "sanity: the surviving selected row really is the plane");
+}

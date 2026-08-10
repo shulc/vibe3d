@@ -579,7 +579,13 @@ unittest {
     img.kind = ItemKind.Image;
     img.imageRef() = new ImageData();
     doc.layers ~= img;
-    doc.selectItem(img, SelMode.Set);
+    // ADD, not Set (task 0668): the state under test is "focus and primary are
+    // different OBJECTS", and an exclusive select of an image now leaves no
+    // primary at all — which would make the vacuity guard below pass against
+    // `null` and stop discriminating "binds the focus" from "binds the
+    // primary". Ctrl-adding the image is the reachable state that keeps both
+    // pointers live and different.
+    doc.selectItem(img, SelMode.Add);
 
     assert(doc.primary is doc.layers[0],
         "vacuity guard: an image can never become the primary, so the focus "
@@ -628,7 +634,10 @@ unittest {
     plane.kind = ItemKind.ImagePlane;
     plane.imagePlaneRef() = new ImagePlaneData();
     doc.layers ~= plane;
-    doc.selectItem(plane, SelMode.Set);
+    // ADD, not Set (task 0668): an exclusive select of a plane leaves NO
+    // primary, and the vacuity guard below needs the primary to be a live,
+    // DIFFERENT layer — against `null` it would stop discriminating.
+    doc.selectItem(plane, SelMode.Add);
 
     assert(doc.primary is doc.layers[0] && doc.focusedItem is plane,
         "vacuity guard: a plane can never become the primary, so the focus "

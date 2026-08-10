@@ -420,7 +420,10 @@ unittest {
     plane.kind = ItemKind.ImagePlane;
     plane.imagePlaneRef() = new ImagePlaneData();
     doc.layers ~= plane;
-    doc.selectItem(plane, SelMode.Set);
+    // ADD, not Set (task 0668): an exclusive select of a plane leaves NO
+    // primary, and the vacuity guard below would then be comparing the focus
+    // against `null` rather than against a live, different layer.
+    doc.selectItem(plane, SelMode.Add);
 
     // Vacuity guard: the focus and the primary must really be different
     // objects here, or "binds the focus" is not being tested at all.

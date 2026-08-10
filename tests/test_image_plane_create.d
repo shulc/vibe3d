@@ -77,6 +77,32 @@ int focusedIndex() {
     return -1;
 }
 
+/// The indices of every SELECTED row, in layer order. Task 0668's rows assert
+/// on this LIST rather than on "the plane is selected": the pre-0668
+/// behaviour also left the plane selected, and only the COUNT tells "cleared
+/// every other item" apart from "cleared none" — or, on a document with more
+/// than two items, from "cleared one".
+int[] selectedIndices() {
+    int[] out_;
+    foreach (i, l; layers().array)
+        if (l["selected"].boolean) out_ ~= cast(int) i;
+    return out_;
+}
+
+/// The indices of every row `/api/layers` marks `primary`. A LIST, not a
+/// bool: "no primary" and "two primaries" are different findings and a
+/// bool would fold them together.
+int[] primaryIndices() {
+    int[] out_;
+    foreach (i, l; layers().array)
+        if (l["primary"].boolean) out_ ~= cast(int) i;
+    return out_;
+}
+
+/// `/api/layers`' `active` field — the derived `activeIndex`, reported as -1
+/// when there is no primary.
+int activeIndex() { return cast(int) getJson("/api/layers")["active"].integer; }
+
 /// The plane row's `links` entry for `slot`, or `JSONValue(null)`.
 JSONValue linkSlot(size_t layerIdx, string slot) {
     foreach (s; layerAt(layerIdx)["links"].array)
@@ -192,13 +218,16 @@ unittest {
         "a plane created with a readable clip is `ready`, read `"
         ~ p["imageSource"].str ~ "`");
 
-    // Selection. A plane can never be primary, so `add` must leave the MESH
-    // edit target alone while making the plane the item-selection FOCUS —
-    // which is exactly what the properties form binds.
+    // Selection. A plane can never be primary, so `add` makes it the
+    // item-selection FOCUS — which is exactly what the properties form binds.
+    // Task 0668 rewrote the second half of this: `add` used to leave the mesh
+    // edit target alone, and now clears it. T-A3 below is where that is
+    // asserted properly, on the COUNT; here it is only stated so the two
+    // cannot drift.
     assert(focusedIndex() == 4,
         "the new plane is the focus, read " ~ to!string(focusedIndex()));
-    assert(layerAt(0)["primary"].boolean,
-        "and the mesh is still the edit target");
+    assert(!layerAt(0)["primary"].boolean,
+        "and the mesh is no longer the edit target (task 0668)");
     assert(!p["primary"].boolean, "the plane never becomes primary");
 
     // A second, argument-free add: the defaults, and the auto name counts
@@ -309,4 +338,220 @@ unittest {
         ~ "that minted a fresh item would have written onto an orphan and "
         ~ "left this at 3. Read "
         ~ to!string(linkSlot(4, "image")["target"].integer));
+}
+
+// ---------------------------------------------------------------------------
+// T-A3 (task 0668) — creating a plane selects ONLY the plane.
+//
+// THE ASSERTION THAT WOULD BE WORTH NOTHING HERE. "the plane is selected"
+// passes against the code this row exists to change: before 0668 the add
+// already selected the plane, it just kept the mesh selected alongside it.
+// So every row below reads the COUNT — the exact list of selected indices —
+// which is the only reading that separates "cleared every other item" from
+// "cleared none".
+//
+// AND WHY THE FIXTURE HAS FOUR ITEMS BEFORE THE ADD. On a one-mesh document
+// "cleared all others" and "cleared exactly one" produce identical readings.
+// `buildFixture` leaves [mesh, clipA, clipB, clipC]; selecting all four and
+// then adding the plane makes `[4]` distinguishable from `[0,4]` (cleared
+// only the clips), from `[1,2,3,4]` (cleared only the mesh) and from
+// `[0,1,2,3,4]` (cleared nothing).
+//
+// The wrong implementations this discriminates against:
+//   * the pre-0668 `exclusiveSelect`, which spared the primary  -> reads
+//     `[0,4]` and `primary [0]`;
+//   * "clear the others but keep the mesh latched as primary" (the third
+//     state the document model forbids: a latched item that draws as
+//     background while the toolpipe writes to it) -> reads `selected [4]`
+//     with `primary [0]` and `active 0`;
+//   * a fix written for the image plane specifically rather than for the
+//     KIND property -> T-A4 catches it.
+// ---------------------------------------------------------------------------
+unittest {
+    buildFixture();
+
+    // Select everything first, so the add has more than one thing to clear.
+    foreach (i; 0 .. 4)
+        cmd(`{"id":"layer.select","index":` ~ to!string(i) ~ `,"mode":"add"}`);
+    assert(selectedIndices() == [0, 1, 2, 3],
+        "fixture: all four items selected before the add, read "
+        ~ to!string(selectedIndices()));
+
+    cmd(`{"id":"imagePlane.add"}`);
+
+    assert(selectedIndices() == [4],
+        "the created plane is the ONLY selected item. `[0,4]` is the "
+        ~ "pre-0668 reading (the mesh primary spared); `[0,1,2,3,4]` is "
+        ~ "'cleared nothing'. Read " ~ to!string(selectedIndices()));
+    assert(layerAt(4)["type"].str == "imagePlane",
+        "…and the one thing selected is the plane, not some survivor at "
+        ~ "index 4");
+    assert(focusedIndex() == 4, "which also holds the focus");
+
+    // The primary. There is none — a plane cannot be one, and 0654 made
+    // "no edit target" a legal, named state rather than something to repair.
+    assert(primaryIndices() == [],
+        "no item is the mesh edit target, read " ~ to!string(primaryIndices()));
+    assert(activeIndex() == -1,
+        "and `active` reports the absence rather than substituting layer 0 — "
+        ~ "read " ~ to!string(activeIndex()));
+
+    // The refusal, reached through the 0668 state rather than through an
+    // empty selection: an absent edit target answers the same way however it
+    // became absent, and it NAMES the reason.
+    auto sub = cmdRaw(`{"id":"mesh.subdivide"}`);
+    assert(sub["status"].str != "ok",
+        "a mesh command refuses while there is no edit target: " ~ sub.toString);
+    import std.algorithm : canFind;
+    assert(sub["message"].str.canFind("mesh edit target"),
+        "…and says why, rather than refusing anonymously. Read `"
+        ~ sub["message"].str ~ "`");
+
+    // And the mesh is untouched — read through an EXPLICIT `?layer=0`, the
+    // one reading a silent substitution could not fake.
+    auto m = getJson("/api/model?layer=0");
+    assert(m["vertices"].array.length == 8,
+        "the cube still has its 8 vertices, read "
+        ~ to!string(m["vertices"].array.length));
+}
+
+// ---------------------------------------------------------------------------
+// T-A4 (task 0668) — the rule is the KIND's, not the image plane's.
+//
+// A fix written as "creating a plane clears the selection" would pass T-A3
+// and fail here: an image CLIP is a different kind that also declares
+// `canBePrimary == false`, and an exclusive select of one must behave
+// identically. The second half is the discriminator in the other direction —
+// `mode:add` must NOT clear, or the fix would have been written as "a
+// non-mesh selection never has a primary", which would drop the edit target
+// on a ctrl-click, where the user is adding to a selection rather than
+// replacing it.
+// ---------------------------------------------------------------------------
+unittest {
+    buildFixture();                       // [mesh, clipA, clipB, clipC]
+
+    // SET on a clip — same kind property, same answer.
+    cmd(`{"id":"layer.select","index":2,"mode":"set"}`);
+    assert(selectedIndices() == [2],
+        "an exclusive select of a CLIP clears the mesh too — the rule keys "
+        ~ "on `canBePrimary`, not on the image plane. Read "
+        ~ to!string(selectedIndices()));
+    assert(primaryIndices() == [] && activeIndex() == -1,
+        "…and leaves no edit target, read primary "
+        ~ to!string(primaryIndices()) ~ " active " ~ to!string(activeIndex()));
+
+    // ADD is not SET. Start from the mesh, then ctrl-add a clip.
+    cmd(`{"id":"layer.select","index":0,"mode":"set"}`);
+    assert(selectedIndices() == [0] && primaryIndices() == [0],
+        "control: selecting the mesh restores an ordinary document, read "
+        ~ to!string(selectedIndices()));
+    cmd(`{"id":"layer.select","index":3,"mode":"add"}`);
+    assert(selectedIndices() == [0, 3],
+        "ctrl-adding a clip GROWS the set, read " ~ to!string(selectedIndices()));
+    assert(primaryIndices() == [0],
+        "…and the mesh stays the edit target under Add — a fix that cleared "
+        ~ "here would break ctrl-click. Read " ~ to!string(primaryIndices()));
+    assert(focusedIndex() == 3, "while the focus moves to the added clip");
+}
+
+// ---------------------------------------------------------------------------
+// T-A5 (task 0668) — the undo returns the previous PRIMARY, not an empty
+// document.
+//
+// The apply now removes the edit target, so the revert has to put it back.
+// Two wrong implementations, two different readings:
+//   * the revert restores the selected SET but not the primary (the raw
+//     `l.selected = wasSel` loop alone) -> `selected [0,1]` with
+//     `primary []` and `active -1`: the model is highlighted, the panel
+//     shows a foreground layer, and every mesh command still refuses;
+//   * the revert restores a primary by rehoming rather than from the
+//     snapshot -> lands on layer 0 even when the pre-add primary was a
+//     different mesh, which the DUPLICATED mesh below makes visible.
+// ---------------------------------------------------------------------------
+unittest {
+    buildFixture();                       // [mesh, clipA, clipB, clipC]
+
+    // A SECOND mesh, so "restored the snapshot" differs from "rehomed to the
+    // first canBePrimary layer". `layer.duplicate` (not `layer.add`) because
+    // an added layer has no vertices.
+    cmd(`{"id":"layer.duplicate","index":0}`);
+    assert(layerCount() == 5, "mesh, three clips, and the duplicate");
+    immutable int dup = 4;
+    cmd(`{"id":"layer.select","index":` ~ to!string(dup) ~ `,"mode":"set"}`);
+    cmd(`{"id":"layer.select","index":1,"mode":"add"}`);
+    assert(selectedIndices() == [1, dup] && primaryIndices() == [dup],
+        "fixture: a two-item selection whose primary is NOT layer 0, read "
+        ~ to!string(selectedIndices()) ~ " primary "
+        ~ to!string(primaryIndices()));
+    cmd(`{"id":"history.clear"}`);
+
+    cmd(`{"id":"imagePlane.add"}`);
+    assert(selectedIndices() == [5],
+        "the add cleared both, read " ~ to!string(selectedIndices()));
+    assert(primaryIndices() == [], "and took the edit target with it");
+
+    postUndo();
+
+    assert(layerCount() == 5, "the plane is gone");
+    assert(selectedIndices() == [1, dup],
+        "the undo restored the WHOLE prior set, not a set-of-one. Read "
+        ~ to!string(selectedIndices()));
+    assert(primaryIndices() == [dup],
+        "…and the prior PRIMARY specifically — `[0]` would be a rehome to the "
+        ~ "first mesh, `[]` would be an undo that left the document with no "
+        ~ "edit target. Read " ~ to!string(primaryIndices()));
+    assert(activeIndex() == dup,
+        "which `active` agrees with, read " ~ to!string(activeIndex()));
+    assert(focusedIndex() == 1,
+        "and the prior FOCUS is back on clip A, read "
+        ~ to!string(focusedIndex()));
+
+    // The edit target really works again, not merely reported.
+    auto sub = cmdRaw(`{"id":"mesh.subdivide"}`);
+    assert(sub["status"].str == "ok",
+        "a mesh command runs again after the undo: " ~ sub.toString);
+}
+
+// ---------------------------------------------------------------------------
+// T-A6 (task 0668) — the add moves the edit target, so it must fire the
+// active-layer switch hook.
+//
+// WHY THIS IS NOT COVERED BY T-A3. Everything T-A3 reads comes out of
+// `Document` — the selection bits and the derived `active`. The hook is a
+// SEPARATE obligation the command owes app.d once the primary moves: drop the
+// armed tool (whose bound `Mesh*` would otherwise keep writing into a layer
+// that is now read-only background), re-upload the GPU buffers, resize the
+// pick caches, publish `ActiveChanged`. `imagePlane.add` was registered
+// WITHOUT the hook, on the then-true ground that a plane can never be
+// primary, and T-A3 passes with it still missing.
+//
+// The GPU face VBO is the reading: it holds whatever mesh was last uploaded,
+// so `36` after the add means the cube is still staged as the FOREGROUND mesh
+// while the document says there is no edit target — the scene draws it twice,
+// once bright and once dimmed by the background pass.
+//
+// The wrong implementation and its reading:
+//   * `registration.d` does not forward `onActiveLayerChanged`, or the
+//     command does not call `fireSwitchIfChanged`  ->  `faceVertCount` stays
+//     36 after the add (and stays 0 after the undo).
+// ---------------------------------------------------------------------------
+unittest {
+    long faceVerts() { return getJson("/api/gpu/face-vbo")["faceVertCount"].integer; }
+
+    resetCube();
+    assert(faceVerts() == 36,
+        "fixture: the cube's 6 quads are staged as 36 face-verts, read "
+        ~ to!string(faceVerts()));
+
+    cmd(`{"id":"imagePlane.add"}`);
+    assert(faceVerts() == 0,
+        "the hook ran: with no edit target the empty stand-in is uploaded, "
+        ~ "clearing the foreground buffers. 36 means the cube is still staged "
+        ~ "as foreground while the document says there is none. Read "
+        ~ to!string(faceVerts()));
+
+    postUndo();
+    assert(faceVerts() == 36,
+        "and the undo fires it the other way — the restored edit target's "
+        ~ "mesh is staged again. Read " ~ to!string(faceVerts()));
 }
