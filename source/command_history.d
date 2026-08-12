@@ -620,6 +620,26 @@ final class CommandHistory {
         if (undoStack.length > maxDepth)
             undoStack = undoStack[$ - maxDepth .. $];
         redoStack.length = 0;
+
+        // Macro hook (task 0678 D9-a): record() fires onRecord for every
+        // entry, and this sibling silently did not — a recorded macro
+        // dropped the tool-drop steps and replayed with the tool left
+        // armed. The entry's own wire name is NOT the replay line:
+        // "tool.deactivate" is not a registered command, so a macro
+        // carrying it verbatim would hold a dead string (the C1 replay
+        // class audit #2 fixed). The replayable spelling of a tool drop
+        // is `tool.set <id> off`, which the registry resolves. The other
+        // two divergences from record() stay deliberate: no isUndoable
+        // gate (lifecycle entries are undoable by construction) and
+        // args=="" on the ENTRY (the command carries no wire args; the
+        // macro line above is built from droppedId instead).
+        if (onRecord !is null) {
+            import commands.tool.lifecycle : ToolDeactivationCommand;
+            if (auto td = cast(ToolDeactivationCommand) cmd) {
+                if (td.droppedId.length > 0)
+                    onRecord("tool.set " ~ td.droppedId ~ " off", flags);
+            }
+        }
     }
 
     /// Record `cmd` as ONE in-session entry of the run identified by `runId`.
@@ -2143,4 +2163,31 @@ version(unittest) {
 
         writeln("command_history lifecycle unittest: PASS");
     }
+}
+
+// task 0678 D9-a — recordToolLifecycle must feed the macro recorder, and must
+// feed it a REPLAYABLE line: "tool.deactivate" is not a registered command,
+// so the correct spelling of a recorded tool drop is `tool.set <id> off`.
+unittest {
+    import mesh : Mesh, makeCube;
+    import view : View;
+    import editmode : EditMode;
+    import commands.tool.lifecycle : ToolDeactivationCommand;
+
+    Mesh m = makeCube();
+    View v = new View(0, 0, 800, 600);
+    auto hist = new CommandHistory();
+
+    string[] lines;
+    hist.onRecord = (string line, uint flags) { lines ~= line; };
+
+    hist.recordToolLifecycle(new ToolDeactivationCommand(&m, v, EditMode.Vertices, "move"));
+    assert(lines.length == 1, "lifecycle record must fire the macro hook");
+    assert(lines[0] == "tool.set move off",
+           "the macro line must be the registry-replayable spelling");
+
+    // No dropped id => nothing replayable => the hook must stay silent
+    // (an empty `tool.set  off` line would be a dead string in the macro).
+    hist.recordToolLifecycle(new ToolDeactivationCommand(&m, v, EditMode.Vertices, ""));
+    assert(lines.length == 1, "id-less lifecycle entry must not emit a macro line");
 }
