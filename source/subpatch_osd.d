@@ -245,22 +245,8 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
     }
 
     // ---- OSD topology at depth 1 + read back limit topology.
-    // Boundary rule (task 0468 — match the reference editor on open meshes):
-    //   * Whole-cage subdivide (!anyUnmarked): EDGE_ONLY — the open-mesh
-    //     boundary follows a smooth B-spline, so a valence-2 rim corner V
-    //     with neighbours N1,N2 lands at 3/4*V + 1/8*(N1+N2). This is the
-    //     standard whole-mesh Catmull-Clark rule and is bit-exact on closed
-    //     meshes (no boundary → the option is inert).
-    //   * Selective subdivide (anyUnmarked): EDGE_AND_CORNER — the sub-cage
-    //     boundary is an ARTIFICIAL cut against the un-marked faces we stitch
-    //     back below; pinning its corners to the cage position keeps the
-    //     refined/un-refined seam aligned (see the stitch step further down).
-    immutable int vtxBoundary =
-        anyUnmarked ? OSDC_VTX_BOUNDARY_EDGE_AND_CORNER
-                    : OSDC_VTX_BOUNDARY_EDGE_ONLY;
-    auto osd = osdc_topology_create_sharp(
-        subNumVerts, subNumFaces, sfvc.ptr, sfvi.ptr, 1,
-        0, null, null, 0, null, null, vtxBoundary);
+    auto osd = osdc_topology_create(
+        subNumVerts, subNumFaces, sfvc.ptr, sfvi.ptr, 1);
     if (osd is null) return Mesh.init;
     scope (exit) osdc_topology_destroy(osd);
 
@@ -339,8 +325,7 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
         // 1. Build cage-vert → result-vert idx map:
         //      In-subset cage verts map to their OSD vert-point idx
         //      (corner-pinned, sitting at the original cage position
-        //      because this selective path requested EDGE_AND_CORNER —
-        //      see the vtxBoundary choice at the topology-create above).
+        //      because the shim configures EDGE_AND_CORNER boundary).
         //      Out-of-subset cage verts get appended after the OSD
         //      verts.
         int[] cageToNew = new int[](nv);
@@ -1063,16 +1048,6 @@ struct OsdAccel {
 
         if (!cacheHit) {
             // ---- Cache miss: build a fresh OSD topology -----------
-            // Boundary rule mirrors catmullClarkOsd (task 0468) so the
-            // preview agrees with the eventual mesh.subdivide freeze:
-            //   * Uniform subpatch (!anyUnmarked): EDGE_ONLY — a genuine
-            //     open-mesh hole rim smooths as a B-spline (standard CC rule).
-            //   * Selective (anyUnmarked): EDGE_AND_CORNER — the INF creases
-            //     / corners already pin the marked/un-marked seam; keep rim
-            //     corners pinned too, consistent with the selective freeze.
-            immutable int vtxBoundary =
-                anyUnmarked ? OSDC_VTX_BOUNDARY_EDGE_AND_CORNER
-                            : OSDC_VTX_BOUNDARY_EDGE_ONLY;
             osd = osdc_topology_create_sharp(
                 nv, nf,
                 faceVertCounts.ptr, faceVertIndices.ptr,
@@ -1082,8 +1057,7 @@ struct OsdAccel {
                 creaseWeights.length ? creaseWeights.ptr : null,
                 cast(int)cornerVerts.length,
                 cornerVerts.length    ? cornerVerts.ptr    : null,
-                cornerWeights.length  ? cornerWeights.ptr  : null,
-                vtxBoundary);
+                cornerWeights.length  ? cornerWeights.ptr  : null);
             if (osd is null) { clear(); return false; }
 
             limitVertCount = osdc_topology_limit_vert_count(osd);
