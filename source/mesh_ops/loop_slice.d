@@ -816,6 +816,15 @@ mixin template MeshLoopSliceOps() {
         // face.
         uint[] newWord;
         newWord.reserve(faces.length + rings.length * positions.length * 4);
+        // Same lock-step law for the discrete polygon tags (task 0678 M1):
+        // `faces = newFaces` renumbers every face (a split ring face emits
+        // several sub-faces, shifting everything after it), so
+        // `faceMaterial`/`facePart` must be rebuilt in the same pass or every
+        // tag lands on the wrong face — resetSelection() only fixes the array
+        // LENGTH, not the indexing. Mirrors bevelEdgesByMask's newMat/newPart.
+        uint[] newMat, newPart;
+        newMat.reserve(newWord.capacity);
+        newPart.reserve(newWord.capacity);
 
         // Slice ONE non-quad ring-crossed face (task 0250 "Slice N-gon"). The
         // chord runs from the entry-edge rail to the exit-edge rail, splitting
@@ -966,7 +975,13 @@ mixin template MeshLoopSliceOps() {
             immutable size_t before = newFaces.length;
             splitFace(fi);
             immutable uint word = faceAttrOr(faceMarks, fi);
-            foreach (i; before .. newFaces.length) newWord ~= word;
+            immutable uint mat  = faceAttrOr(faceMaterial, fi);
+            immutable uint part = faceAttrOr(facePart, fi);
+            foreach (i; before .. newFaces.length) {
+                newWord ~= word;
+                newMat  ~= mat;
+                newPart ~= part;
+            }
         }
 
         // Read-only rail lookup for the absorb pass — returns the existing
@@ -1003,7 +1018,12 @@ mixin template MeshLoopSliceOps() {
             // index order, dup non-ring faces, split ring faces.
             foreach (uint fi; 0 .. cast(uint)faces.length) {
                 if (fi in perFaceRings) splitFaceTracked(fi);
-                else { newFaces ~= faces[fi].dup; newWord ~= faceAttrOr(faceMarks, fi); }
+                else {
+                    newFaces ~= faces[fi].dup;
+                    newWord  ~= faceAttrOr(faceMarks, fi);
+                    newMat   ~= faceAttrOr(faceMaterial, fi);
+                    newPart  ~= faceAttrOr(facePart, fi);
+                }
             }
         } else {
             // Slice-Selected / Keep-Quads path — TWO passes. Pass 1 splits the
@@ -1025,7 +1045,9 @@ mixin template MeshLoopSliceOps() {
                     foreach (m; absorbMids(va, vb)) nf ~= m;
                 }
                 newFaces ~= nf;
-                newWord ~= faceAttrOr(faceMarks, fi);
+                newWord  ~= faceAttrOr(faceMarks, fi);
+                newMat   ~= faceAttrOr(faceMaterial, fi);
+                newPart  ~= faceAttrOr(facePart, fi);
             }
         }
 
@@ -1086,6 +1108,14 @@ mixin template MeshLoopSliceOps() {
                     newFaces ~= cyc;
                     newFaceIndices ~= cast(uint)(newFaces.length - 1);
                     newWord ~= capWord;
+                    // Caps are NEW faces with no single source face (a shell
+                    // loop can stitch several ring faces), so they take the
+                    // default surface/part 0 — same as bevel's freshly created
+                    // faces, and same as what the pre-fix zero-fill produced
+                    // for the appended tail. Inheriting "some" ring face's
+                    // material would be AA-iteration-order nondeterministic.
+                    newMat  ~= 0u;
+                    newPart ~= 0u;
                 }
             }
             capBoundaryLoops(loSet);
@@ -1150,7 +1180,11 @@ mixin template MeshLoopSliceOps() {
         // on resize).
         assert(newWord.length == faces.length,
                "insertEdgeLoopsMulti: newWord/newFaces length mismatch");
+        assert(newMat.length == faces.length && newPart.length == faces.length,
+               "insertEdgeLoopsMulti: newMat/newPart/newFaces length mismatch");
         setFaceMarksFrom(newWord, ~Marks.Select);
+        faceMaterial = newMat;
+        facePart     = newPart;
         rebuildEdges();
         buildLoops();
         resetSelection();   // resizes + clears all selection; calls commitChange
@@ -1369,6 +1403,69 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// insertEdgeLoops — task 0678 M1 regression: `faces = newFaces` renumbers
+// every face (a split ring face emits several sub-faces, shifting everything
+// after it), so the discrete polygon tags (`faceMaterial`/`facePart`) must be
+// rebuilt in the same lock-step pass as `faceMarks`.  Before the fix the old
+// arrays were kept as-is (resetSelection only fixed their LENGTH), scrambling
+// every tag after one belt slice.  Fixture: cube with a DISTINCT material and
+// part per face — cube faces are axis-aligned, so every post-slice face's
+// source is recoverable from the one coordinate constant across its verts.
+unittest {
+    import std.math : abs;
+
+    static int planeKeyOf(ref Mesh mm, const(uint)[] f) {
+        foreach (axis; 0 .. 3) {
+            float coordOf(uint vi) {
+                auto v = mm.vertices[vi];
+                return axis == 0 ? v.x : (axis == 1 ? v.y : v.z);
+            }
+            immutable float c0 = coordOf(f[0]);
+            bool constant = true;
+            foreach (v; f)
+                if (abs(coordOf(v) - c0) > 1e-5f) { constant = false; break; }
+            if (constant) return axis * 2 + (c0 > 0.0f ? 1 : 0);
+        }
+        return -1;
+    }
+
+    Mesh m = makeCube();
+    m.buildLoops();
+
+    // Distinct material + part per face, keyed by the face's plane.
+    uint[int] wantMat, wantPart;
+    m.faceMaterial.length = m.faces.length;
+    m.facePart.length     = m.faces.length;
+    foreach (uint fi; 0 .. cast(uint)m.faces.length) {
+        immutable int key = planeKeyOf(m, m.faces[fi]);
+        assert(key >= 0, "cube faces must be axis-aligned");
+        m.faceMaterial[fi] = 10 + fi;
+        m.facePart[fi]     = 20 + fi;
+        wantMat[key]  = 10 + fi;
+        wantPart[key] = 20 + fi;
+    }
+
+    uint eiSeed = m.edgeIndex(0, 1);
+    assert(eiSeed != ~0u, "seed edge 0-1 must exist in cube");
+    assert(m.insertEdgeLoops(eiSeed, [0.5f]), "insertEdgeLoops must succeed");
+    assert(m.faces.length == 10, "one belt loop on the cube must yield 10 faces");
+    assert(m.faceMaterial.length == m.faces.length,
+           "faceMaterial must be rebuilt to the new face count");
+    assert(m.facePart.length == m.faces.length,
+           "facePart must be rebuilt to the new face count");
+
+    // Every post-slice face still lies in one of the six original planes;
+    // its tags must match that plane's original face.
+    foreach (uint fi; 0 .. cast(uint)m.faces.length) {
+        immutable int key = planeKeyOf(m, m.faces[fi]);
+        assert(key >= 0, "sliced cube faces must stay axis-aligned");
+        assert(m.faceMaterial[fi] == wantMat[key],
+               "faceMaterial must follow its source face through the slice");
+        assert(m.facePart[fi] == wantPart[key],
+               "facePart must follow its source face through the slice");
+    }
+}
+
 // insertEdgeLoops — task 0398 regression: OPEN-ring loop slice must land
 // every ring vertex on a CONSISTENT (planar) cut, even on the side-B-
 // exclusive rails of a two-sided open walk.
