@@ -3860,7 +3860,7 @@ version (unittest) private void assertBevelManifoldClean(ref Mesh m, string tag)
 // more — and the caller supplies the expected Euler characteristic instead of
 // a hardcoded 2 (a simply-connected disk with one boundary loop is 1; bevel
 // only adds detail, so it must never change).
-private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler) {
+version (unittest) private void assertBevelManifoldCleanOpen(ref Mesh m, string tag, long wantEuler) {
     import std.conv : to;
 
     // The valence-4 full-hub free-end cap (L>=1) DELIBERATELY reproduces the
@@ -4037,8 +4037,8 @@ version (unittest) private void assertFacesMatchByPosition(ref Mesh m, const Vec
 //     bidirectional nearest-distance check tolerates the coincident duplicates
 //     while still holding every reference position at the float32 floor.
 // NOT a parity claim at the float32 floor — the band is stated per call site.
-private void assertHubHausdorffWithin(ref Mesh m, const(Vec3)[] refVerts,
-                                      float band, string tag) {
+version (unittest) private void assertHubHausdorffWithin(ref Mesh m, const(Vec3)[] refVerts,
+                                                         float band, string tag) {
     import std.conv : to;
     static float maxNearest(const(Vec3)[] a, const(Vec3)[] b) {
         float worst = 0;
