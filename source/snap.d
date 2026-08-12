@@ -664,9 +664,12 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // slot back to the mesh (and its ModelSpace) it came from — see
     // `sourceMesh`/`sourceModelSpace`.
     //
-    // Snapshot-then-walk, not walk-under-lock: queryCandidateGrid re-acquires
-    // g_vgridMutex (non-recursive), so holding it across the walk deadlocks.
-    // Empty in the single-layer common case ⇒ no extra work and no allocation.
+    // Snapshot-then-walk, not walk-under-lock — for lock-scope hygiene, not
+    // deadlock avoidance (comment corrected, task 0678 P2: druntime's Mutex
+    // is re-entrant — PTHREAD_MUTEX_RECURSIVE / CRITICAL_SECTION — so the
+    // old "re-acquire deadlocks" claim here was false). The walk runs guide
+    // callbacks and centre refinement whose cost does not belong under the
+    // module lock. Empty in the single-layer common case ⇒ no extra work.
     //
     // ONE combined snapshot (task 0617 Stage 4 review fix), not a separate
     // `bgSources`+`bgSpaces` pair: `backgroundSourcesFull()` takes the lock
@@ -1974,11 +1977,14 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 // being dragged, so they pass an empty exclude and their projections stay
 // valid by construction (`walkSource(*src, i+1, null)`).
 //
-// THREAD SAFETY: snapCursor's drag callers run on the main thread, but
-// the `/api/snap` test bridge (app.d) calls snapCursor directly on the
-// HTTP server thread. The module-level grid cache is shared across two
-// threads; g_vgridMutex serializes build + query for ALL kinds (queries
-// are ~O(1) and builds rare, so contention is negligible).
+// THREAD SAFETY (comment corrected, task 0678 P2): every caller runs on
+// the MAIN thread — the drag path directly, and the `/api/snap` test
+// endpoint via snapQueryBridge since task 0587 (the provider executes on
+// main; see http_providers.d's bridge wiring — this comment used to claim
+// the HTTP server thread called in here directly, which is no longer
+// true). The module-level grid cache still takes g_vgridMutex around
+// build + query so a future off-thread reader stays correct (queries are
+// ~O(1) and builds rare, so the uncontended lock is negligible).
 //
 // CELL SIZE: `outerRangePx`. When degenerate (<= 0) the query falls back
 // to returning ALL non-excluded element indices (index-ascending) so the
@@ -2276,9 +2282,14 @@ private bool kindExcluded(Kind k, int idx, const ref Mesh mesh,
 // Query the kind-`k` grid: return the index-ASCENDING, deduplicated list
 // of candidate element indices whose closest screen point could lie
 // within `outerRangePx` of cursor pixel (sx, sy), with the dragged set
-// excluded. The list is a reusable module-scoped scratch buffer (valid
-// until the next query) — the caller iterates it immediately. See the
-// broad-phase contract + coverage guarantee in the section header.
+// excluded. Returns a per-call COPY (task 0678 P2): the collection runs in
+// a module-scoped scratch under g_vgridMutex, but the pre-fix code returned
+// that scratch itself after RELEASING the lock — the next query (any
+// thread, or even the same walk re-entering for another source) would
+// resize/reallocate it under the previous caller's slice. The candidates
+// are the near-cursor handful, so the dup is cheap; the degenerate
+// full-scan path below is the one all-indices exception (rare config).
+// See the broad-phase contract + coverage guarantee in the section header.
 private int[] queryCandidateGrid(Kind k, int slot, const ref Mesh mesh,
                                  const ref Viewport vp,
                                  int sx, int sy, float outerRangePx,
@@ -2288,7 +2299,7 @@ private int[] queryCandidateGrid(Kind k, int slot, const ref Mesh mesh,
 
     g_candScratch.length = 0;
     size_t n = kindCount(k, mesh);
-    if (n == 0) return g_candScratch;
+    if (n == 0) return null;
 
     // O(1) per-vertex exclude membership (indexed by vertex id), built
     // once per query and cleared in O(exclude) — keeps kindExcluded O(1).
@@ -2301,7 +2312,7 @@ private int[] queryCandidateGrid(Kind k, int slot, const ref Mesh mesh,
         foreach (i; 0 .. n)
             if (!kindExcluded(k, cast(int)i, mesh, ex))
                 g_candScratch ~= cast(int)i;
-        return g_candScratch;
+        return g_candScratch.dup;
     }
 
     auto g = gridFor(slot, k);
@@ -2317,7 +2328,7 @@ private int[] queryCandidateGrid(Kind k, int slot, const ref Mesh mesh,
         g = gridFor(slot, k);   // table may have reallocated on grow
     }
 
-    if (g.nCols == 0 || g.nRows == 0) return g_candScratch;
+    if (g.nCols == 0 || g.nRows == 0) return null;
 
     float inv = 1.0f / g.cellPx;
     int ccx = cast(int)floor(cast(float)sx * inv);
@@ -2355,12 +2366,13 @@ private int[] queryCandidateGrid(Kind k, int slot, const ref Mesh mesh,
     // order (cheap — only the near-cursor candidates, typically a handful).
     import std.algorithm.sorting : sort;
     sort(g_candScratch);
-    return g_candScratch;
+    return g_candScratch.dup;
 }
 
 // Reusable candidate-list scratch + dedup seen-set, both guarded by
-// g_vgridMutex via the query. `g_candScratch` holds the returned
-// candidate indices; `g_candSeenIdx` records which seen-set bits were
+// g_vgridMutex via the query. `g_candScratch` is the WORKING buffer only —
+// the query returns a per-call copy (see queryCandidateGrid's doc comment,
+// task 0678 P2); `g_candSeenIdx` records which seen-set bits were
 // set this query so they can be cleared in O(emitted) rather than an
 // O(n) memset.
 private __gshared int[]  g_candScratch;
