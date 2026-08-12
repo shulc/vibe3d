@@ -135,13 +135,20 @@ Mesh flattenToMesh(const ref ImportedScene scene) {
     // accumulated through the SAME face-drop logic so it stays index-aligned. A
     // scene with no UV anywhere leaves this empty (no `"uv"` map is created).
     float[]  allUv;
-    bool     anyUv = false;
+    // Pre-scan (task 0678 D1): anyUv must be known BEFORE the first part is
+    // walked. Discovering it mid-loop meant a leading UV-less part emitted no
+    // zero-fill corners, leaving `allUv` short of the corner count — and
+    // populateUvMap's length check then silently dropped the WHOLE map (the
+    // zero-fill promised by the comment below never ran for those corners).
+    // Mirrors partToMesh, which computes its partHasUv up front.
+    bool anyUv = false;
+    foreach (ref part; scene.parts)
+        if (part.uv.length > 0) { anyUv = true; break; }
 
     uint vertexOffset = 0;
     foreach (pi, ref part; scene.parts) {
         const remap = surfRemap[pi];
         const bool partHasUv = part.uv.length > 0;
-        if (partHasUv) anyUv = true;
         // Running corner base into THIS part's uv stream (face-then-corner order),
         // advanced for EVERY local face (including dropped ones) so the slice for
         // a surviving face is read at the right offset.
@@ -404,7 +411,9 @@ Document toLayers(const ref ImportedScene scene) {
 /// single-mesh interchange exporters (OBJ / glTF / FBX / LWO). The inverse seam
 /// of `toLayers`: surfaces are deduped by name across visible layers (first-seen
 /// order, same policy as `flattenToMesh`), vertices concatenated with a running
-/// offset, subpatch + material carried over. Hidden layers are skipped.
+/// offset, subpatch + material carried over, and each layer's per-item xform
+/// BAKED into its points (`composedMatrix()`, same convention as the LWO and
+/// aiScene export walks). Hidden layers are skipped.
 ///
 /// A single-layer (visible) document flattens to a byte-identical copy of that
 /// layer's mesh, so single-layer export is unchanged from pre-Stage-3 behavior.
@@ -422,7 +431,18 @@ Mesh flattenDocument(const ref Document doc) {
     // through the SAME face-drop logic. Empty when no visible layer carries a UV
     // map — so a UV-less document flattens to a UV-less mesh (export unchanged).
     float[]  allUv;
-    bool     anyUv = false;
+    // Pre-scan (task 0678 D1) — same law as flattenToMesh: anyUv must be
+    // known before the first layer is walked, or a leading UV-less layer
+    // emits no zero-fill corners and the whole map is silently dropped.
+    bool anyUv = false;
+    foreach (l; doc.meshLayers) {
+        if (!l.visible) continue;
+        const(MeshMap)* mu = l.meshRef().meshMap(kUvMapName);
+        if (mu !is null && mu.domain == MapDomain.PolyVertex && mu.dim == 2) {
+            anyUv = true;
+            break;
+        }
+    }
 
     uint vertexOffset = 0;
     // Task 0615 Stage 4: interchange export has no non-mesh concept — iterate
@@ -434,7 +454,6 @@ Mesh flattenDocument(const ref Document doc) {
         const(MeshMap)* srcUv = src.meshMap(kUvMapName);
         const bool layerHasUv = srcUv !is null
             && srcUv.domain == MapDomain.PolyVertex && srcUv.dim == 2;
-        if (layerHasUv) anyUv = true;
 
         // Per-layer surface remap into the merged table.
         uint[] remap;
@@ -483,7 +502,17 @@ Mesh flattenDocument(const ref Document doc) {
                 }
             }
         }
-        allVerts ~= src.vertices.dup;
+        // BAKE the per-item xform into this layer's points (task 0678 D2) —
+        // the other two export walks already carry the pose (LWO bakes
+        // composedMatrix per layer, the aiScene path writes it into the node
+        // transform); this flat path silently dropped it. A default ItemXform
+        // composes to identity, so points are verbatim (same convention as
+        // lwo_export).
+        const float[16] M = l.xform.composedMatrix();
+        auto baked = new Vec3[](src.vertices.length);
+        foreach (i, v; src.vertices)
+            baked[i] = transformPoint(M, v);
+        allVerts ~= baked;
         vertexOffset += cast(uint) src.vertices.length;
     }
 
@@ -584,4 +613,66 @@ unittest {
     size_t selCount = 0;
     foreach (l; d.layers) if (l.selected) selCount++;
     assert(selCount >= 1, "at least one layer selected");
+}
+
+// task 0678 D1 — a MIXED multi-part scene (leading part without UV, later part
+// with UV) must still yield an aligned UV map: the leading part's corners are
+// zero-filled.  Before the fix `anyUv` was discovered mid-loop, so the leading
+// part emitted NO corners, the stream came up short, and populateUvMap
+// silently dropped the whole map.
+unittest {
+    ImportedPart p0 = triPart("NoUv",   true);
+    ImportedPart p1 = triPart("WithUv", true);
+    p1.uv = [0.1f, 0.2f,  0.3f, 0.4f,  0.5f, 0.6f];   // 3 corners x dim 2
+
+    ImportedScene scene;
+    scene.parts = [p0, p1];
+    Mesh m = flattenToMesh(scene);
+
+    assert(m.faces.length == 2, "both tris must survive the flatten");
+    const(MeshMap)* mu = m.meshMap(kUvMapName);
+    assert(mu !is null, "mixed-part scene must keep its UV map");
+    assert(mu.data.length == 12, "6 corners x dim 2 (zero-fill for part 0)");
+    foreach (k; 0 .. 6)
+        assert(mu.data[k] == 0.0f, "leading UV-less part must be zero-filled");
+    assert(mu.data[6 .. 12] == p1.uv, "part 1 corners must carry its own UV");
+}
+
+// task 0678 D1+D2 — flattenDocument: (D1) same mixed-UV law across layers;
+// (D2) each layer's ItemXform must be BAKED into the flattened points (the
+// LWO and aiScene export walks already carry the pose; this flat path fed FBX/
+// OBJ/glTF export and silently dropped it).
+unittest {
+    import std.math : abs;
+
+    ImportedScene scene;
+    scene.parts = [triPart("A", true), triPart("B", true)];
+    Document d = toLayers(scene);
+    assert(d.layers.length == 2);
+
+    // Layer 0: posed, no UV. Layer 1: UV-mapped, identity pose.
+    d.layers[0].xform.pos = Vec3(10, 0, 0);
+    ref Mesh m1 = d.layers[1].meshRef();
+    auto mu1 = m1.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    mu1.data = [0.1f, 0.2f,  0.3f, 0.4f,  0.5f, 0.6f];
+
+    Mesh flat = flattenDocument(d);
+    assert(flat.vertices.length == 6 && flat.faces.length == 2);
+
+    // D2: layer 0's verts (the first three) carry the +10 X pose; layer 1's
+    // verts are verbatim.
+    foreach (i; 0 .. 3)
+        assert(abs(flat.vertices[i].x - (d.layers[0].meshRef().vertices[i].x + 10.0f)) < 1e-5f,
+               "layer 0 pose must be baked into flattened points");
+    foreach (i; 3 .. 6)
+        assert(abs(flat.vertices[i].x - d.layers[1].meshRef().vertices[i - 3].x) < 1e-5f,
+               "identity-posed layer must flatten verbatim");
+
+    // D1: UV map survives with layer 0's corners zero-filled.
+    const(MeshMap)* mu = flat.meshMap(kUvMapName);
+    assert(mu !is null, "mixed-UV document must keep its UV map");
+    assert(mu.data.length == 12, "6 corners x dim 2");
+    foreach (k; 0 .. 6)
+        assert(mu.data[k] == 0.0f, "leading UV-less layer must be zero-filled");
+    assert(mu.data[6 .. 12] == mu1.data, "layer 1 corners must carry its own UV");
 }
