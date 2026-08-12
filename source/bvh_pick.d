@@ -914,7 +914,7 @@ unittest {
         gpu.uploadVersion = 1;
 
         auto pick = new BvhPick();
-        int face = pick.pickFace(100, 100, vp, src, gpu);
+        int face = pick.pickFace(100, 100, vp, src, gpu, ModelSpace.world());
         assert(face == 0,
             "pickFace has NO facing term: a face must pick from either side "
             ~ "with nothing in front of it. Winding #" ~ i.to!string
@@ -965,13 +965,13 @@ unittest {
     gpu.uploadVersion = 1;
 
     Mesh both = stack(true);
-    int hitBoth = (new BvhPick()).pickFace(100, 100, vp, both, gpu);
+    int hitBoth = (new BvhPick()).pickFace(100, 100, vp, both, gpu, ModelSpace.world());
     assert(hitBoth == 1,
         "with two same-winding quads stacked along the ray the NEAR one "
         ~ "(face 1, y=2) must win; got " ~ hitBoth.to!string);
 
     Mesh farOnly = stack(false);
-    int hitFar = (new BvhPick()).pickFace(100, 100, vp, farOnly, gpu);
+    int hitFar = (new BvhPick()).pickFace(100, 100, vp, farOnly, gpu, ModelSpace.world());
     assert(hitFar == 0,
         "and the far quad must be pickable at the SAME pixel once nothing "
         ~ "is in front of it — proving it was hidden by DEPTH, not by its "

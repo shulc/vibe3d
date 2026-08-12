@@ -276,12 +276,12 @@ unittest {
         "fixture: the reversed winding must be BACK-facing for this eye");
 
     // Same four coordinates, nothing occluding them, opposite answers.
-    auto visToward = toward.visibleVertices(vp.eye, vp);
+    auto visToward = toward.visibleVertices(vp.eye, vp, ModelSpace.world());
     foreach (vi; 0 .. 4)
         assert(visToward[vi],
             format("v%d of a front-facing lone quad must be visible", vi));
 
-    auto visAway = away.visibleVertices(vp.eye, vp);
+    auto visAway = away.visibleVertices(vp.eye, vp, ModelSpace.world());
     foreach (vi; 0 .. 4)
         assert(!visAway[vi],
             format("v%d: `Mesh.visibleVertices` HAS a facing term — a lone quad"
