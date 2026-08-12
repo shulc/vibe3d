@@ -2413,3 +2413,49 @@ unittest {
             ~ displayed.y.to!string ~ "," ~ displayed.z.to!string);
     }
 }
+
+// task 0678 A4 — status-line coverage: the "Action Center" popup in
+// config/statusline.yaml is a hand-maintained mirror of the panel mode table
+// (`modeEntries`).  The two drifted once already: actr.pivot / actr.parent
+// were registered (task 0082) but never added to the YAML, leaving both modes
+// unreachable from the UI — the startup id-validator only checks that listed
+// ids RESOLVE, never that the listing is COMPLETE.  Pin SET EQUALITY between
+// the popup's direct `actr.<tag>` items and modeEntries' wire tags, so adding
+// or removing a mode must touch both.  (The "Center"/"Axis" submenus are
+// deliberately curated SUBSETS mirroring the reference's, and are not pinned.)
+unittest {
+    import std.file : exists;
+    import buttonset : loadStatusLine, ActionKind, PopupItemKind;
+
+    enum yamlPath = "config/statusline.yaml";
+    assert(exists(yamlPath),
+           "coverage test expects the package root as cwd (config/ missing)");
+
+    bool[string] got;
+    bool sawPopup = false;
+    foreach (g; loadStatusLine(yamlPath)) {
+        foreach (ref b; g.buttons) {
+            if (b.action.kind != ActionKind.popup || b.label != "Action Center")
+                continue;
+            sawPopup = true;
+            foreach (ref pi; b.action.popupItems) {
+                if (pi.kind != PopupItemKind.action) continue;  // divider/submenu
+                const string id = pi.action.id;
+                enum pfx = "actr.";
+                if (id.length > pfx.length && id[0 .. pfx.length] == pfx)
+                    got[id[pfx.length .. $]] = true;
+            }
+        }
+    }
+    assert(sawPopup, "statusline must carry an 'Action Center' popup");
+
+    foreach (e; ActionCenterStage.modeEntries)
+        assert((e.wireTag in got) !is null,
+               "panel mode '" ~ e.wireTag ~ "' has no actr." ~ e.wireTag
+               ~ " item in the statusline Action Center popup");
+    foreach (tag, _; got) {
+        int v;
+        assert(valueForWireTag(ActionCenterStage.modeEntries, tag, v),
+               "statusline actr." ~ tag ~ " has no matching panel mode entry");
+    }
+}

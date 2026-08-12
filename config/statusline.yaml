@@ -73,6 +73,12 @@ groups:
             - label: Local
               action: { kind: command, id: actr.local }
               checked: { path: "actionCenter/mode", equals: "local" }
+            - label: Pivot
+              action: { kind: command, id: actr.pivot }
+              checked: { path: "actionCenter/mode", equals: "pivot" }
+            - label: Parent
+              action: { kind: command, id: actr.parent }
+              checked: { path: "actionCenter/mode", equals: "parent" }
             - { kind: divider }
             - kind: submenu
               label: Center
