@@ -85,6 +85,7 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         uint[][] polys;
         bool[]   polyIsSubpatch;    // parallel to polys
         ubyte[][] ptagBodies;       // PTAG bodies (filtered to SURF later)
+        int[]     ptagKinds;        // lastPolsKind at capture, parallel to ptagBodies
         string   name;
         bool     hidden;            // LAYR flags bit 0 (1 => layer hidden)
 
@@ -102,9 +103,11 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         // POLS chunk of a given kind). `localToGlobal[kind][local]` is the slot in
         // THIS part's `polys[]` that the local poly was appended to, in on-disk
         // POLS order. `lastPolsKind` (0=FACE, 1=PTCH, -1=none) records which kind a
-        // following VMAD binds to. PTAG above keys SURF off layer-local FACE
-        // indices already (vibe3d appends FACE-then-PTCH per the chunk order), so
-        // this table is used only by the VMAD remap.
+        // following VMAD — or PTAG (task 0678 D3) — binds to; `ptagKinds[i]` is
+        // its value at the moment `ptagBodies[i]` was captured. The pre-fix code
+        // read PTAG indices as FLAT slots, which is only right for a single-kind
+        // layer: on a mixed FACE+PTCH layer the second kind's locals also number
+        // 0..M-1 and landed on (and clobbered) the first kind's slots.
         size_t[][2] localToGlobal;
         int         lastPolsKind = -1;
     }
@@ -269,6 +272,7 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             auto cur = &parts[$ - 1];
             auto body = data[pos .. chunkEnd].dup;
             cur.ptagBodies ~= body;
+            cur.ptagKinds  ~= cur.lastPolsKind;
             lwoInfo(format("PTAG (part %d, size %d, type=%s)",
                             parts.length - 1, sz,
                             body.length >= 4
@@ -433,18 +437,32 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         ip.faceSubpatch = pb.polyIsSubpatch;
         ip.surfaces     = globalSurfaces;
 
-        // PTAG SURF -> faceMaterial (layer-local face indices).
+        // PTAG SURF -> faceMaterial. On-disk poly indices are POLS-LOCAL to
+        // the most-recent POLS chunk at the point the PTAG appeared (the same
+        // binding rule as VMAD; the writer emits one PTAG per kind right
+        // after that kind's POLS chunk), so remap (kind, local) -> this
+        // part's polys[] slot via localToGlobal — flat interpretation only
+        // coincides on a single-kind layer (task 0678 D3).
         ip.faceMaterial.length = pb.polys.length;
-        foreach (body; pb.ptagBodies) {
+        foreach (bi, body; pb.ptagBodies) {
             if (body.length < 4 || body[0..4] != "SURF") continue;
+            const int kind = (bi < pb.ptagKinds.length) ? pb.ptagKinds[bi] : -1;
+            if (kind < 0) {
+                lwoWarn(format("PTAG SURF with no preceding POLS (part %d), skipped", pi));
+                continue;
+            }
+            const l2g = pb.localToGlobal[kind];
             size_t p = 4;
             while (p < body.length) {
-                uint faceIdx = readVX(body, p);
+                uint localIdx = readVX(body, p);
                 if (p + 2 > body.length) break;
                 ushort tagIdx = readU16(body, p);
                 p += 2;
-                if (faceIdx < ip.faceMaterial.length && tagIdx < tags.length)
-                    ip.faceMaterial[faceIdx] = tagIdx;
+                if (localIdx < l2g.length && tagIdx < tags.length) {
+                    const size_t slot = l2g[localIdx];
+                    if (slot < ip.faceMaterial.length)
+                        ip.faceMaterial[slot] = tagIdx;
+                }
             }
         }
 
@@ -575,5 +593,64 @@ uint readVX(const ubyte[] buf, ref size_t pos) {
         uint idx = readU16(buf, pos);
         pos += 2;
         return idx;
+    }
+}
+
+// task 0678 D3 — mixed FACE+PTCH layer round-trip: PTAG SURF poly indices are
+// POLS-LOCAL per kind (one PTAG per kind, right after that kind's POLS — the
+// same binding rule as VMAD).  The pre-fix importer read them as FLAT slots
+// into the concatenated poly list, so on a mixed layer the PTCH tags landed on
+// (and clobbered) the FACE slots; the pre-fix writer emitted one trailing PTAG
+// covering both kinds, which no most-recent-POLS reader can disambiguate.
+unittest {
+    import std.file : tempDir, remove, exists;
+    import std.path : buildPath;
+    import std.math : abs;
+    import mesh : Mesh, Surface;
+    import io.lwo_export : exportLwo;
+
+    // Four separate tris, tri k at x offset k*10 so each imported poly's
+    // source is recoverable from its first vertex.  Faces 0,2 = FACE; 1,3 =
+    // PTCH.  Materials: A,B,B,A — chosen so the flat misread produces a
+    // DIFFERENT assignment than the correct per-kind remap.
+    Mesh m = Mesh.init;
+    uint[ulong] el;
+    foreach (uint k; 0 .. 4) {
+        const float x = k * 10.0f;
+        const uint b = cast(uint) m.vertices.length;
+        m.vertices ~= [Vec3(x, 0, 0), Vec3(x + 1, 0, 0), Vec3(x, 1, 0)];
+        m.addFaceFast(el, [b, b + 1, b + 2]);
+    }
+    m.buildLoops();
+    m.resizeSubpatch();
+    m.setFaceSubpatch(1, true);
+    m.setFaceSubpatch(3, true);
+    Surface sa; sa.name = "MatA";
+    Surface sb; sb.name = "MatB";
+    m.surfaces = [sa, sb];
+    m.faceMaterial = [0u, 1u, 1u, 0u];
+
+    const string path = buildPath(tempDir, "vibe3d_0678_d3_mixed_ptag.lwo");
+    scope (exit) if (exists(path)) remove(path);
+    exportLwo(m, path);
+
+    ImportedScene scene;
+    assert(sceneFromLwo(path, scene), "mixed-kind LWO must import");
+    assert(scene.parts.length == 1);
+    auto part = scene.parts[0];
+    assert(part.faces.length == 4, "all four tris must survive");
+
+    const string[4] wantName = ["MatA", "MatB", "MatB", "MatA"];
+    foreach (i, face; part.faces) {
+        const float x0 = part.vertices[face[0]].x;
+        const int k = cast(int) ((x0 + 0.5f) / 10.0f);
+        assert(k >= 0 && k < 4, "imported poly must map to a source tri");
+        const bool wantSub = (k == 1 || k == 3);
+        assert(part.faceSubpatch[i] == wantSub,
+               "poly kind must survive the round-trip");
+        const uint mat = part.faceMaterial[i];
+        assert(mat < part.surfaces.length, "material index must be in range");
+        assert(part.surfaces[mat].name == wantName[k],
+               "PTAG SURF must bind per kind: mixed FACE+PTCH layer tags");
     }
 }
