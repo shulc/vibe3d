@@ -316,6 +316,16 @@ public:
         return ok;
     }
 
+    // Authoritative settable-attr universe (task 0678 P4). This stage has no
+    // params()/fullParams(), so the base knownAttrs() derivation returned
+    // null — and the forms-engine startup-strict validator (forms.d) throws
+    // on ANY attr of a stage whose universe is empty, so the first form bound
+    // to "axis" would fail at boot. applySetAttr's switch accepts exactly
+    // `mode`; keep this list in lock-step with it (pinned by unittest below).
+    override string[] knownAttrs() {
+        return ["mode"];
+    }
+
     override string[2][] listAttrs() const {
         Vec3 r, u, f;
         currentBasis(r, u, f);
@@ -1279,4 +1289,22 @@ unittest {
         ~ "same evaluate() call published is the Auto/world fallback, so a "
         ~ "consumer keyed off `type` alone would wrongly believe it "
         ~ "co-rotates with the gesture");
+}
+
+// task 0678 P4 — knownAttrs must mirror applySetAttr's switch: every listed
+// name is settable with a canonical sample value.  Before the fix this stage
+// had NO attr universe at all (no params/fullParams/knownAttrs), so the
+// forms-engine startup-strict validator (forms.d) would throw for the first
+// form bound to "axis".
+unittest {
+    auto st = new AxisStage();
+    auto names = st.knownAttrs();
+    assert(names.length > 0, "axis knownAttrs must not be empty");
+    string[string] sample = ["mode": "auto"];
+    foreach (n; names) {
+        assert((n in sample) !is null,
+               "no sample value for axis attr '" ~ n ~ "' — extend the test");
+        assert(st.setAttr(n, sample[n]),
+               "axis knownAttrs name '" ~ n ~ "' rejected by setAttr");
+    }
 }

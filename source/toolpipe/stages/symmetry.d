@@ -339,23 +339,51 @@ public:
         return format("Symmetry: %s", axisLabel(axisIndex).toUpper);
     }
 
-    // Tool Properties panel — exposes the user-facing knobs whenever
-    // symmetry is on. Hidden when off (same convention as FalloffStage
-    // hides its config when type=None). The status-bar pulldown stays
-    // the canonical place to flip enabled / axis; the property panel
-    // is for fine-tuning offset and epsilon.
-    override Param[] params() {
-        if (!enabled) return [];
+    // Full attr universe (task 0678 P4): params() below is a VISIBILITY
+    // filter — empty when the stage is off, and even when on it shows only
+    // the fine-tuning knobs — so the base knownAttrs() derivation
+    // under-reported the set applySetAttr accepts (empty when disabled, 4 of
+    // 6 when enabled), which stage.d's fullParams doc comment forbids
+    // outright. `baseSide` stays out deliberately: it is read-only
+    // (listAttrs reports it; applySetAttr has no arm for it).
+    override Param[] fullParams() {
         IntEnumEntry[] axisEntries = [
             IntEnumEntry(0, "x", "X"),
             IntEnumEntry(1, "y", "Y"),
             IntEnumEntry(2, "z", "Z"),
         ];
         Param[] ps;
+        ps ~= Param.bool_   ("enabled", "Enabled", &enabled, false);
         ps ~= Param.intEnum_("axis", "Axis", &axisIndex, axisEntries, 0);
         ps ~= Param.float_  ("offset", "Offset", &offset, 0.0f);
         ps ~= Param.bool_   ("useWorkplane", "Workplane", &useWorkplane, false);
+        ps ~= Param.bool_   ("topology", "Topology", &topology, false);
         ps ~= Param.float_  ("epsilon", "Epsilon", &epsilonWorld, 1e-4f);
+        return ps;
+    }
+
+    // Tool Properties panel — exposes the user-facing knobs whenever
+    // symmetry is on. Hidden when off (same convention as FalloffStage
+    // hides its config when type=None). The status-bar pulldown stays
+    // the canonical place to flip enabled / axis; the property panel
+    // is for fine-tuning offset and epsilon. A FILTER over fullParams()
+    // (Constrain's safe pattern) — enabled/topology stay status-bar/
+    // wire-owned and never appear in the panel.
+    override Param[] params() {
+        if (!enabled) return [];
+        Param[] ps;
+        foreach (p; fullParams()) {
+            switch (p.name) {
+                case "axis":
+                case "offset":
+                case "useWorkplane":
+                case "epsilon":
+                    ps ~= p;
+                    break;
+                default:
+                    break;
+            }
+        }
         return ps;
     }
 
@@ -531,3 +559,40 @@ unittest {
         ~ "papers over)");
 }
 
+
+// task 0678 P4 — the attr universe must be visible even when the stage is
+// OFF: params() is a visibility filter (empty when disabled), and before the
+// fix knownAttrs() derived from it — so a disabled symmetry stage reported an
+// EMPTY universe and the forms-engine startup-strict validator rejected
+// every symmetry attr, while an enabled one under-reported 4 of the 6 names
+// applySetAttr accepts (stage.d's fullParams contract forbids both).
+unittest {
+    auto st = new SymmetryStage();
+    assert(!st.enabled, "fixture assumes the default-constructed stage is off");
+
+    auto names = st.knownAttrs();
+    assert(names.length == 6,
+           "disabled symmetry must still report its full 6-name universe");
+
+    string[string] sample = [
+        "enabled": "true", "axis": "x", "offset": "0.5",
+        "useWorkplane": "false", "topology": "true", "epsilon": "0.001",
+    ];
+    foreach (n; names) {
+        assert((n in sample) !is null,
+               "no sample value for symmetry attr '" ~ n ~ "' — extend the test");
+        assert(st.setAttr(n, sample[n]),
+               "symmetry knownAttrs name '" ~ n ~ "' rejected by setAttr");
+    }
+
+    // The panel filter is a strict subset of the universe, and hides the
+    // status-bar-owned toggles.
+    st.setAttr("enabled", "true");
+    foreach (p; st.params()) {
+        bool known = false;
+        foreach (n; st.knownAttrs()) if (n == p.name) known = true;
+        assert(known, "panel param '" ~ p.name ~ "' missing from knownAttrs");
+        assert(p.name != "enabled" && p.name != "topology",
+               "status-bar-owned toggles must not appear in the panel");
+    }
+}

@@ -95,6 +95,16 @@ class WorkplaneStage : Stage, Operator {
         return ok;
     }
 
+    // Authoritative settable-attr universe (task 0678 P4). This stage has no
+    // params()/fullParams(), so the base knownAttrs() derivation returned
+    // null — and the forms-engine startup-strict validator (forms.d) throws
+    // on ANY attr of a stage whose universe is empty, so the first form bound
+    // to "workplane" would fail at boot. Mirrors applySetAttr's switch (the
+    // header's "HTTP setAttr keys" table); pinned by unittest below.
+    override string[] knownAttrs() {
+        return ["auto", "cenX", "cenY", "cenZ", "rotX", "rotY", "rotZ", "mode"];
+    }
+
     override string[2][] listAttrs() const {
         return [
             ["auto",  isAuto ? "true" : "false"],
@@ -347,5 +357,27 @@ private:
 
     static float parseFloat(string s) {
         return s.length == 0 ? 0.0f : s.to!float;
+    }
+}
+
+// task 0678 P4 — knownAttrs must mirror applySetAttr's switch: every listed
+// name is settable with a canonical sample value.  Before the fix this stage
+// had NO attr universe at all, so the forms-engine startup-strict validator
+// (forms.d) would throw for the first form bound to "workplane".
+unittest {
+    auto st = new WorkplaneStage();
+    auto names = st.knownAttrs();
+    assert(names.length > 0, "workplane knownAttrs must not be empty");
+    string[string] sample = [
+        "auto": "true",
+        "cenX": "1.5", "cenY": "1.5", "cenZ": "1.5",
+        "rotX": "10",  "rotY": "10",  "rotZ": "10",
+        "mode": "auto",
+    ];
+    foreach (n; names) {
+        assert((n in sample) !is null,
+               "no sample value for workplane attr '" ~ n ~ "' — extend the test");
+        assert(st.setAttr(n, sample[n]),
+               "workplane knownAttrs name '" ~ n ~ "' rejected by setAttr");
     }
 }
