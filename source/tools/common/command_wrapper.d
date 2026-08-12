@@ -261,6 +261,19 @@ abstract class CommandWrapperTool : Tool, RefireClient {
     // predicate.
     public override bool hasUncommittedEdit() const { return dirty; }
 
+    // Framework "apply and continue" (task 0461, Shift+click) — task 0678 T7:
+    // the wrapper never overrode this, so the base opt-out (`return false`)
+    // silently made Shift+apply a no-op for every wrapper tool (XfrmSmooth /
+    // XfrmJitter / XfrmQuantize / EdgeSlide) while 16 non-wrapper tools honour
+    // the gesture. commitNow() is exactly the in-place finalize the contract
+    // asks for — commit + record + rebaseline, no teardown (empty label falls
+    // back to name()); the driver follows with resyncSession() to re-arm.
+    public override bool commitUncommittedEdit() {
+        if (!hasUncommittedEdit()) return false;
+        commitNow("");
+        return true;
+    }
+
     // Category A cancel — restore the session baseline into the live mesh (the
     // same restore the new-drag LMB-down body does at :207) and clear `dirty`.
     // With dirty cleared, the subsequent deactivate()->commitNow() is a no-op,
@@ -800,4 +813,42 @@ final class XfrmQuantizeTool : CommandWrapperTool {
     // Quantize's step is per-axis, not a world-space radius — there's
     // no meaningful sphere to draw, so suppress the click-point handle.
     protected override bool drawsClickHandle() const { return false; }
+}
+
+// task 0678 T7 — Shift+apply (task 0461) must work for wrapper tools: a dirty
+// session commits IN PLACE (one history entry, baseline advanced, dirty
+// cleared) and reports true, so EditSession.applyAndContinue proceeds to
+// resyncSession.  Before the fix CommandWrapperTool kept the base opt-out
+// (`return false`), silently no-op'ing the gesture for XfrmSmooth /
+// XfrmJitter / XfrmQuantize / EdgeSlide while 16 non-wrapper tools honour it.
+unittest {
+    import mesh : makeCube;
+    import command_history : CommandHistory;
+    import commands.mesh.vertex_edit : MeshVertexEdit;
+
+    Mesh m = makeCube();
+    m.buildLoops();
+    View view = new View(0, 0, 800, 600);
+    auto hist = new CommandHistory();
+    auto t = new XfrmSmoothTool(&m, view, EditMode.Vertices,
+                                null, null, null, null);
+    t.setUndoBindings(hist, () => new MeshVertexEdit(&m, view, EditMode.Vertices));
+
+    // Idle tool: no open edit — the opt-out contract (nothing recorded).
+    assert(!t.commitUncommittedEdit(), "no open edit must return false");
+    assert(!hist.canUndo(), "idle commit must not record");
+
+    // Open a session by hand (same module => private access): baseline = the
+    // pre-edit geometry, then displace a vert and mark dirty — exactly the
+    // state a live wrapper drag leaves behind.
+    t.baseline = m.vertices.dup;
+    m.vertices[0] = m.vertices[0] + Vec3(0.25f, 0, 0);
+    t.dirty = true;
+
+    assert(t.commitUncommittedEdit(), "dirty wrapper session must commit in place");
+    assert(!t.hasUncommittedEdit(), "commit must close the open edit");
+    assert(hist.canUndo(), "in-place commit must record exactly its own entry");
+    assert(t.baseline.length == m.vertices.length
+           && t.baseline[0].x == m.vertices[0].x,
+           "baseline must advance to the committed geometry");
 }
