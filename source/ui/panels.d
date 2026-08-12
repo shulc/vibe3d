@@ -3271,9 +3271,17 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     //
     // TASK 0654 — the `> 1` fast path is now `> 1 || no edit target`, and that
     // second clause is the difference between "everything is background" and
-    // "everything went dark". Background is DERIVED (`visible && !selected`),
-    // so an empty selection makes every visible layer background; the per-layer
-    // `isPrimary` skip below already lets them all through. But on a
+    // "everything went dark". (Formula updated, task 0678 D4: background is
+    // derived by `Document.roleOf` over the selection HISTORY since 0671 —
+    // the old `visible && !selected` reading here was the one 0671 struck
+    // out.) This DRAW pass and its eviction twin deliberately test
+    // `visible && !isPrimary`, NOT `document.background()`: a Foreground-role
+    // non-primary layer would otherwise be drawn by neither pass (the
+    // foreground pass renders only the primary) — and the rule of this very
+    // comment is "dim, not disappear". The snap-source gate below is the one
+    // that follows `document.background()`. An empty selection makes every
+    // visible layer background; the per-layer `isPrimary` skip below already
+    // lets them all through. But on a
     // SINGLE-layer document the old gate short-circuited before the loop, and
     // that one layer would then have been drawn by neither pass — the
     // foreground pass skips it (it is not the primary; there is no primary) and

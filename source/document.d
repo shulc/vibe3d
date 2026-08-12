@@ -1911,7 +1911,19 @@ struct Document {
     /// because it needs the deselect history, so these are INSTANCE methods now.
     ///
     /// Both are one arm of `roleOf` each, so there is one classifier and not
-    /// three. Read by the snap source, both draw guards and `/api/layers`.
+    /// three. ACTUAL readers (comment corrected, task 0678 D4 — the previous
+    /// claim "both draw guards" was false and had been for a while): the snap
+    /// source gate (`ui/panels.d` snapSrc loop) and `/api/layers` +
+    /// `/api/selection` (`http_providers.d`). The background DRAW pass and its
+    /// GPU-eviction twin deliberately test `visible && !isPrimary` instead:
+    /// a Foreground-role non-primary layer (ctrl-added in Items) is drawn by
+    /// NEITHER pass under `background()` — the foreground pass renders only
+    /// the primary — and task 0654's rule is "dim, not disappear". Unifying
+    /// the draw guards onto roleOf therefore requires first deciding how the
+    /// foreground pass renders non-primary Foreground layers (backlog
+    /// 0642/0672 territory), not a mechanical sweep. Until then: snap and the
+    /// HTTP report follow roleOf; the draw dims everything visible that is
+    /// not the edit target.
     /// `const` + `const(Layer)` so the read-only consumers (the `ref const
     /// Document` writers) can still call them.
     ///
