@@ -30,6 +30,7 @@
 
 import std.net.curl;
 import std.json;
+import std.json : JSONType;
 import std.conv : to;
 
 void main() {}
@@ -37,6 +38,13 @@ void main() {}
 string baseUrl = "http://localhost:8080";
 
 JSONValue getJson(string path) { return parseJSON(cast(string) get(baseUrl ~ path)); }
+
+// `/api/tool/state` carries the ACTIVE tool's own state object and is `{}`
+// when nothing is armed — there is no "active" flag to read.
+bool toolArmed() {
+    auto st = getJson("/api/tool/state");
+    return st.type == JSONType.object && st.object.length > 0;
+}
 
 void cmd(string s) {
     auto resp = post(baseUrl ~ "/api/script", s);
@@ -53,8 +61,7 @@ unittest {
     // Arm a tool, then drop it — the drop is what records a ToolLifecycle
     // entry and fires the onRecord chain from inside the teardown.
     cmd("tool.set move on");
-    assert(getJson("/api/tool/state")["active"].boolean,
-           "tool.set move on must arm the tool");
+    assert(toolArmed(), "tool.set move on must arm the tool");
 
     cmd("tool.set move off");
 
@@ -62,8 +69,7 @@ unittest {
     assert(getJson("/api/ping")["status"].str == "ok",
            "server died dropping a tool — an onRecord consumer read state "
            ~ "that teardown had already released");
-    assert(!getJson("/api/tool/state")["active"].boolean,
-           "tool.set move off must drop the tool");
+    assert(!toolArmed(), "tool.set move off must drop the tool");
 
     // Same shape via the other drop route: activate, then let a scene reset
     // drop the armed tool (file.new's path, which also records a lifecycle
