@@ -2874,20 +2874,27 @@ struct Mesh {
 
         // Snapshot selected edges as undirected keys; edge-array indices
         // are unstable across compactUnreferenced.
-        bool[ulong] selectedEdgeKeys;
-        bool[uint]  regionSeen;
+        // Flat, not hashed (task 0688): both of these used to be associative
+        // arrays walked once per selected edge — ~200 000 hashed inserts for
+        // the keys and ~100 000 more for the seen-set on the perf lane's grid,
+        // paid before the merge even starts. The keys are needed ONLY by the
+        // stale-loops fallback below, so they are built there, lazily; the
+        // seen-set is a plain bool[] indexed by vertex.
+        bool[] regionSeen;
+        regionSeen.length = vertices.length;
+        size_t selectedEdgeCount = 0;
         foreach (i; 0 .. edges.length)
             if (mask[i]) {
                 uint a = edges[i][0], b = edges[i][1];
-                selectedEdgeKeys[edgeKey(a, b)] = true;
-                if (a < vertices.length && a !in regionSeen) {
+                ++selectedEdgeCount;
+                if (a < vertices.length && !regionSeen[a]) {
                     regionSeen[a] = true; lastEdgeDeleteRegion_ ~= vertices[a];
                 }
-                if (b < vertices.length && b !in regionSeen) {
+                if (b < vertices.length && !regionSeen[b]) {
                     regionSeen[b] = true; lastEdgeDeleteRegion_ ~= vertices[b];
                 }
             }
-        if (selectedEdgeKeys.length == 0) { lastEdgeDeleteRegion_ = null; return 0; }
+        if (selectedEdgeCount == 0) { lastEdgeDeleteRegion_ = null; return 0; }
 
         // PolyVertex remap, mechanism (b): merging faces rewrites the corner
         // LIST (the merged poly is a boundary walk). Capture the OLD CSR corner
@@ -2915,21 +2922,58 @@ struct Mesh {
         // "first two distinct faces" semantics: first occurrence → slot 0,
         // second distinct face → slot 1; a 3rd+ face and a face that contains
         // the edge twice are ignored.
-        auto edgeFaces = buildEdgeFaces();
-
-        // For each selected edge, look up both adjacent faces and unite them.
-        // Boundary edges (only 1 adjacent face) leave their face alone and are
-        // NOT recorded as dissolved.
+        // Edge → its (up to two) adjacent faces. `buildEdgeFaces` answers this
+        // from `faces` alone — correct under ANY loop state, and the reason it
+        // exists — but it hashes every corner of every face: on the perf lane's
+        // 99 856-face grid that one call, plus the keyed walk below, measured
+        // 90 ms of the kernel's 157 ms (task 0688).
+        //
+        // The half-edge structure already holds the same fact positionally:
+        // `loopEdge[li]` is the edge of dart `li` and `loops[li].face` its face.
+        // When it is VALID (the stamp `loopsValid()` — task 0678 M6 — not a
+        // guess), the incidence can be read off flat, indexed by edge, with no
+        // hashing at all; the walk below then iterates edge INDICES straight
+        // off `mask` instead of re-deriving keys. Same "first two DISTINCT
+        // faces, ascending" semantics: darts are visited in face order.
+        //
+        // Stale loops fall back to the hashed path, so the contract that made
+        // `buildEdgeFaces` the safe answer is preserved, not traded away.
         size_t dissolved = 0;
         bool[ulong] dissolvedEdgeKeys;   // edges ACTUALLY merged (interior, both faces)
-        foreach (key; selectedEdgeKeys.byKey) {
-            auto p = key in edgeFaces;
-            if (p is null) continue;
-            int fA = (*p)[0], fB = (*p)[1];
-            if (fA != -1 && fB != -1) {
-                unite(fA, fB);
-                dissolvedEdgeKeys[key] = true;
-                ++dissolved;
+        if (loopsValid() && loopEdge.length == loops.length) {
+            auto ef = new int[2][](edges.length);
+            foreach (ref slot; ef) slot = [-1, -1];
+            foreach (li, ref lp; loops) {
+                if (li >= loopEdge.length) break;
+                immutable uint e = loopEdge[li];
+                if (e >= ef.length) continue;
+                immutable int fi = cast(int) lp.face;
+                if (ef[e][0] == -1) ef[e][0] = fi;
+                else if (ef[e][1] == -1 && ef[e][0] != fi) ef[e][1] = fi;
+            }
+            foreach (i; 0 .. edges.length) {
+                if (!mask[i]) continue;
+                immutable int fA = ef[i][0], fB = ef[i][1];
+                if (fA != -1 && fB != -1) {
+                    unite(fA, fB);
+                    dissolvedEdgeKeys[edgeKey(edges[i][0], edges[i][1])] = true;
+                    ++dissolved;
+                }
+            }
+        } else {
+            auto edgeFaces = buildEdgeFaces();
+            bool[ulong] selectedEdgeKeys;
+            foreach (i; 0 .. edges.length)
+                if (mask[i]) selectedEdgeKeys[edgeKey(edges[i][0], edges[i][1])] = true;
+            foreach (key; selectedEdgeKeys.byKey) {
+                auto p = key in edgeFaces;
+                if (p is null) continue;
+                int fA = (*p)[0], fB = (*p)[1];
+                if (fA != -1 && fB != -1) {
+                    unite(fA, fB);
+                    dissolvedEdgeKeys[key] = true;
+                    ++dissolved;
+                }
             }
         }
         if (dissolved == 0) return 0;
