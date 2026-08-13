@@ -907,7 +907,7 @@ void printSummary(TestResult[] results) {
 // ---------------------------------------------------------------------------
 
 int main(string[] args) {
-    bool verbose, noBuild, keep;
+    bool verbose, noBuild, keep, staleOk;
     ushort port = 8080;
     // Machine-aware default worker count: scale with the host but stay sane.
     // Each worker boots its OWN vibe3d (a GL app), so we don't go 1:1 with
@@ -922,6 +922,8 @@ int main(string[] args) {
         "v|verbose",  "stream test output instead of summarizing on failure", &verbose,
         "k|keep",     "leave vibe3d running after tests finish",              &keep,
         "no-build",   "skip `dub build`",                                     &noBuild,
+        "stale-ok",   "with --no-build: run even when ./vibe3d is older than "
+                    ~ "source/ (measures the PREVIOUS build — see the guard)",  &staleOk,
         "p|port",     "HTTP port for vibe3d (default 8080)",                  &port,
         "j|jobs",     "parallel workers — each runs its own vibe3d on a "
                     ~ "private port (default = clamp(cpus/4, 4, 12))",        &j,
@@ -980,6 +982,36 @@ int main(string[] args) {
     }
 
     if (!noBuild && !dubBuild()) return 1;
+
+    // --no-build reuses ./vibe3d as-is. If a source file is NEWER than that
+    // binary, every HTTP assertion below is measuring the PREVIOUS build — a
+    // green run then proves nothing about the working tree. That is not
+    // hypothetical: task 0678 D9-a shipped a change that segfaults the app on
+    // every tool drop, and the pre-merge gate came back 598/598 green because
+    // the binary predated the edit; CI caught it on a fresh build. Refuse
+    // instead of measuring the wrong artifact (the inert-measurement class).
+    if (noBuild && g_attachPort == 0) {
+        import std.algorithm : min;
+        import std.file : timeLastModified;
+        if (!exists("./vibe3d")) {
+            stderr.writeln(red("--no-build: ./vibe3d does not exist — drop --no-build"));
+            return 1;
+        }
+        const binTime = timeLastModified("./vibe3d");
+        string[] stale;
+        foreach (e; dirEntries("source", "*.d", SpanMode.depth))
+            if (e.isFile && timeLastModified(e.name) > binTime) stale ~= e.name;
+        if (stale.length > 0) {
+            stderr.writefln(red("--no-build: ./vibe3d is OLDER than %d source file(s); "
+                ~ "the run would measure a stale binary. Rebuild, or pass --stale-ok."),
+                stale.length);
+            foreach (s; stale[0 .. min(stale.length, 5)]) stderr.writeln("    ", s);
+            if (stale.length > 5)
+                stderr.writefln("    … and %d more", stale.length - 5);
+            if (!staleOk) return 1;
+            stderr.writeln(yellow("--stale-ok given: proceeding against the stale binary"));
+        }
+    }
 
     // Serialise with any other runner on this host BEFORE we touch ports /
     // scratch / vibe3d — concurrent runs mutually kill each other's instances

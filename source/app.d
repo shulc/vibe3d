@@ -2683,6 +2683,17 @@ void main(string[] args) {
         // guard it anyway rather than rely on that invariant silently.
         if (stepTrace is null) return;
         if (flags & (HistoryFlags.InSession | HistoryFlags.Refire)) return;
+        // ToolLifecycle entries are recorded from INSIDE setActiveTool's drop,
+        // i.e. after the outgoing tool's deactivate() has already released its
+        // session state — so the invariant the `entry["tool"]` capture below
+        // documents and relies on ("the tool that produced this step is still
+        // activeTool, with its params untouched") does NOT hold here, and
+        // reading toolStateJson() off the half-torn-down tool segfaults. Task
+        // 0678 D9-a wired recordToolLifecycle into onRecord so the MACRO
+        // RECORDER stops missing tool drops; that consumer only wants the
+        // command line and is unaffected. A tool drop is not a model step,
+        // so the trace loses nothing by skipping it.
+        if (flags & HistoryFlags.ToolLifecycle) return;
 
         string command = line;
         string args    = "";
