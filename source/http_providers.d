@@ -2862,7 +2862,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         httpServer.setTraceProvider(() =>
             stepTrace !is null ? stepTrace.snapshotJson() : "[]");
         httpServer.setTraceResetHandler(() {
-            if (stepTrace !is null) stepTrace.reset();
+            if (stepTrace !is null) stepTrace.arm();
         });
 
         // Read-only undo-service status for automation: {state, lockout,

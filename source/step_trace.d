@@ -33,6 +33,20 @@ final class StepTrace {
     private string[] entries_;
     private long      seq_;
     private Mutex     mutex_;
+    // Capture is ARMED, not always-on (task 0680). Every entry embeds a full
+    // mesh dump, so appending one costs time proportional to the MESH, not to
+    // the command: on the perf lane's 99 856-face grid a single capture measured
+    // 75 ms for mesh.remove, 130 ms for scene.reset and 162 ms for mesh.select —
+    // ten times the work of the command being traced, paid by every `--test`
+    // run whether or not anyone reads /api/trace. It is what made the delete
+    // family read +612% against a baseline captured before this file existed.
+    //
+    // The one documented consumer (the fuzz/parity driver) always POSTs
+    // /api/trace/reset immediately before the gesture it wants and GETs the
+    // trace after, so arming there costs it nothing and leaves every other run
+    // free. A SCENE reset (/api/reset) still CLEARS but must not disarm: it
+    // fires mid-session, inside a capture window that armed deliberately.
+    private bool      armed_;
 
     /// Ring capacity — oldest entry is dropped once exceeded. 500 discrete
     /// (non-InSession/non-Refire) commands is generous for a single editing
@@ -64,12 +78,29 @@ final class StepTrace {
             entries_ = entries_[$ - maxEntries .. $];
     }
 
-    /// Clear the trace. Called on /api/reset and POST /api/trace/reset.
+    /// Clear the trace WITHOUT changing whether capture is armed. Called on
+    /// the scene reset (/api/reset), which can fire inside a capture window.
     void reset() {
         mutex_.lock();
         scope(exit) mutex_.unlock();
         entries_.length = 0;
         seq_ = 0;
+    }
+
+    /// Clear AND arm: start capturing. Backs POST /api/trace/reset — the call
+    /// the capture workflow already makes right before the gesture it wants.
+    void arm() {
+        mutex_.lock();
+        scope(exit) mutex_.unlock();
+        entries_.length = 0;
+        seq_ = 0;
+        armed_ = true;
+    }
+
+    /// Whether captures are being recorded. The capture closure checks this
+    /// BEFORE building an entry, so an unarmed trace costs one bool read.
+    bool armed() const {
+        return armed_;
     }
 
     /// Snapshot the whole trace as a JSON array string. Safe to call

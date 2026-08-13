@@ -2682,6 +2682,11 @@ void main(string[] args) {
         // freshly constructed non-null — so this can't fire in practice, but
         // guard it anyway rather than rely on that invariant silently.
         if (stepTrace is null) return;
+        // Unarmed ⇒ nothing to build. This check is FIRST because everything
+        // below serializes the whole mesh (task 0680): on a 100 000-face mesh
+        // one entry measured 75-160 ms, dwarfing the command it describes.
+        // POST /api/trace/reset arms; see StepTrace's own comment.
+        if (!stepTrace.armed) return;
         if (flags & (HistoryFlags.InSession | HistoryFlags.Refire)) return;
         // ToolLifecycle entries are recorded from INSIDE setActiveTool's drop,
         // i.e. after the outgoing tool's deactivate() has already released its
