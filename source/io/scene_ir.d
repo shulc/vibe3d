@@ -455,6 +455,17 @@ Mesh flattenDocument(const ref Document doc) {
         const bool layerHasUv = srcUv !is null
             && srcUv.domain == MapDomain.PolyVertex && srcUv.dim == 2;
 
+        // The layer's item matrix is BAKED into its points further down. A
+        // NEGATIVE-determinant matrix (a mirror — `scl` with an odd number of
+        // negative components, which `MIN_ITEM_SCALE_MAG` explicitly allows)
+        // moves the points but leaves the index order alone, so every face of
+        // that layer would come out wound inward. Emit its corners in REVERSE
+        // order to compensate (task 0684; the same rule
+        // `create_common.frameIsLeftHanded`/`reverseFaceWinding` applies when a
+        // Create-tool builds through a left-handed workplane frame).
+        const float[16] M = l.xform.composedMatrix();
+        const bool flipWinding = matrixMirrorsWinding(M);
+
         // Per-layer surface remap into the merged table.
         uint[] remap;
         remap.length = src.surfaces.length;
@@ -473,10 +484,18 @@ Mesh flattenDocument(const ref Document doc) {
         foreach (fi; 0 .. src.faces.length) {
             auto face = src.faces[fi];
             if (face.length < 3) continue;            // drop degenerate (UV corners drop too)
+            // `srcCorner(k)` is THE corner-order mapping for this face: the
+            // identity normally, reversed when the bake below mirrors. The index
+            // array AND the per-corner UV stream both read through it, so a
+            // corner keeps its own UV across the reversal (a reversal applied to
+            // the indices alone would shear the per-corner plane by one face).
+            uint srcCorner(size_t k) {
+                return cast(uint) (flipWinding ? (face.length - 1 - k) : k);
+            }
             uint[] offset;
             offset.length = face.length;
-            foreach (k, idx; face)
-                offset[k] = idx + vertexOffset;
+            foreach (k; 0 .. face.length)
+                offset[k] = face[srcCorner(k)] + vertexOffset;
             allFaces ~= offset;
 
             allSubpatch ~= src.isFaceSubpatch(fi);
@@ -489,9 +508,10 @@ Mesh flattenDocument(const ref Document doc) {
             // because the source already has valid loops. Zero-fill when this
             // layer has no UV but another visible layer does.
             if (anyUv) {
-                foreach (uint k; 0 .. cast(uint) face.length) {
+                foreach (k; 0 .. face.length) {
                     if (layerHasUv) {
-                        const size_t loop = src.faceCornerLoop(cast(uint) fi, k);
+                        const size_t loop =
+                            src.faceCornerLoop(cast(uint) fi, srcCorner(k));
                         if (loop != size_t.max && loop * 2 + 2 <= srcUv.data.length)
                             allUv ~= srcUv.data[loop * 2 .. loop * 2 + 2];
                         else
@@ -507,8 +527,9 @@ Mesh flattenDocument(const ref Document doc) {
         // composedMatrix per layer, the aiScene path writes it into the node
         // transform); this flat path silently dropped it. A default ItemXform
         // composes to identity, so points are verbatim (same convention as
-        // lwo_export).
-        const float[16] M = l.xform.composedMatrix();
+        // lwo_export). `M`/`flipWinding` are computed above the face loop
+        // because a mirroring bake also has to reverse the winding emitted
+        // there.
         auto baked = new Vec3[](src.vertices.length);
         foreach (i, v; src.vertices)
             baked[i] = transformPoint(M, v);
@@ -675,4 +696,128 @@ unittest {
     foreach (k; 0 .. 6)
         assert(mu.data[k] == 0.0f, "leading UV-less layer must be zero-filled");
     assert(mu.data[6 .. 12] == mu1.data, "layer 1 corners must carry its own UV");
+}
+
+// ---------------------------------------------------------------------------
+// task 0684 — a MIRRORING layer transform (det(composedMatrix()) < 0) must come
+// out of flattenDocument with reversed face winding, and its per-corner UV must
+// reverse WITH it.
+//
+// A negative `scl` component is a legal item transform (`MIN_ITEM_SCALE_MAG`
+// clamps magnitude only, never the sign), and the bake moves the POINTS while
+// leaving the index order alone — so without the reversal every face of that
+// layer leaves the editor wound inward.
+//
+// The load-bearing assertion is GEOMETRIC (the flattened face's Newell normal
+// still points the way the source face did), not "the indices came out in this
+// order": the point of the reversal is that the surface stays outward, and an
+// index-order assertion alone would still pass if the reversal were applied to
+// the wrong half of the problem.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    /// A unit quad in the Z=0 plane, wound CCW seen from +Z (Newell normal
+    /// +Z), with one UV per corner so the corner plane is observable.
+    private ImportedPart quadPart(string name) {
+        ImportedPart p;
+        p.name     = name;
+        p.visible  = true;
+        p.vertices = [ Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0) ];
+        p.faces    = [ [0u, 1u, 2u, 3u] ];
+        p.uv       = [ 0.0f, 0.0f,  1.0f, 0.0f,  1.0f, 1.0f,  0.0f, 1.0f ];
+        return p;
+    }
+
+    /// Newell normal of `m`'s face `fi` — the same formula the face-orientation
+    /// checks elsewhere use, kept local so this file needs no test helper.
+    private Vec3 newellNormal(ref const Mesh m, size_t fi) {
+        auto f = m.faces[fi];
+        Vec3 n = Vec3(0, 0, 0);
+        foreach (k; 0 .. f.length) {
+            const a = m.vertices[f[k]];
+            const b = m.vertices[f[(k + 1) % f.length]];
+            n.x += (a.y - b.y) * (a.z + b.z);
+            n.y += (a.z - b.z) * (a.x + b.x);
+            n.z += (a.x - b.x) * (a.y + b.y);
+        }
+        return n;
+    }
+
+    /// The dim-2 UV of corner `k` of face `fi`, read through the CSR loop layout.
+    private float[2] cornerUv(ref const Mesh m, uint fi, uint k) {
+        const(MeshMap)* mu = m.meshMap(kUvMapName);
+        assert(mu !is null, "mesh carries no uv map");
+        const size_t loop = m.faceCornerLoop(fi, k);
+        assert(loop != size_t.max && loop * 2 + 2 <= mu.data.length);
+        return [ mu.data[loop * 2], mu.data[loop * 2 + 1] ];
+    }
+}
+
+unittest {
+    ImportedScene scene;
+    scene.parts = [ quadPart("Mirrored") ];
+    Document d = toLayers(scene);
+    // scl.x = -1: one negative component => det < 0 => a mirror.
+    d.layers[0].xform.scl = Vec3(-1, 1, 1);
+    assert(d.layers[0].xform.modelSpace().mirrored, "fixture must actually mirror");
+
+    Mesh flat = flattenDocument(d);
+    assert(flat.faces.length == 1 && flat.vertices.length == 4);
+
+    // The source quad's normal is +Z. The bake mirrors X, so an unreversed
+    // index order would put the flattened normal at -Z (inside-out).
+    import std.conv : to;
+    const n = newellNormal(flat, 0);
+    assert(n.z > 0.0f,
+        "a mirrored layer must flatten with its faces still wound outward "
+      ~ "(+Z here); got normal.z = " ~ n.z.to!string);
+
+    // The winding correction is a corner-order reversal, so corner k of the
+    // flattened face must carry the UV of source corner (n-1-k) — the whole
+    // point of routing the UV stream through the same mapping. Reversing the
+    // indices alone would leave corner 0 holding corner 0's UV over corner 3's
+    // position, shearing the per-corner plane by one face.
+    static immutable float[2][4] srcUv = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    foreach (uint k; 0 .. 4) {
+        const got = cornerUv(flat, 0, k);
+        const want = srcUv[3 - k];
+        assert(got[0] == want[0] && got[1] == want[1],
+            "corner UV must reverse together with the winding");
+    }
+}
+
+unittest {
+    // The control: an IDENTITY-posed layer is not touched — same winding, same
+    // corner order. Without it, "always reverse" would pass the test above.
+    ImportedScene scene;
+    scene.parts = [ quadPart("Plain") ];
+    Document d = toLayers(scene);
+    assert(!d.layers[0].xform.modelSpace().mirrored);
+
+    Mesh flat = flattenDocument(d);
+    const n = newellNormal(flat, 0);
+    assert(n.z > 0.0f, "an unmirrored layer keeps its outward winding");
+    assert(flat.faces[0] == [0u, 1u, 2u, 3u], "no reversal without a mirror");
+
+    static immutable float[2][4] srcUv = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    foreach (uint k; 0 .. 4) {
+        const got = cornerUv(flat, 0, k);
+        assert(got[0] == srcUv[k][0] && got[1] == srcUv[k][1],
+            "corner UV order is untouched without a mirror");
+    }
+}
+
+unittest {
+    // TWO negative components is NOT a mirror (det > 0) — the reversal must not
+    // fire. A rule written as "any negative scale" instead of det < 0 fails here.
+    ImportedScene scene;
+    scene.parts = [ quadPart("DoubleFlip") ];
+    Document d = toLayers(scene);
+    d.layers[0].xform.scl = Vec3(-1, -1, 1);
+    assert(!d.layers[0].xform.modelSpace().mirrored, "two negatives cancel");
+
+    Mesh flat = flattenDocument(d);
+    assert(flat.faces[0] == [0u, 1u, 2u, 3u],
+        "an even number of negative scale components must not reverse winding");
+    // Rotating the quad 180deg about Z keeps its +Z normal.
+    assert(newellNormal(flat, 0).z > 0.0f);
 }

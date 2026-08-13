@@ -391,6 +391,47 @@ unittest { // transformPoint matches a hand-computed T·R·S applied to a point.
         && isClose(got.z, 28.0f, 1e-4f, 1e-4f));
 }
 
+/// True when `m`'s LINEAR part (upper-left 3x3, column-major) reverses
+/// handedness — `det < 0`. Transforming geometry through such a matrix MIRRORS
+/// it, so a face whose vertex order was counter-clockwise (outward) in the
+/// source space comes out clockwise (inward) in the target space: the points
+/// move, the index order does not, and the normal flips. Whoever BAKES such a
+/// matrix into points must therefore also reverse each face's vertex order (and
+/// any per-CORNER attribute that rides along with it) to keep the surface
+/// outward — see `tools/create/create_common.frameIsLeftHanded` (which now
+/// forwards here) for the same rule at the primitive-creation boundary, and
+/// `io/scene_ir.flattenDocument` / `io/lwo_export` / `io/scene_export` for it at
+/// the export boundary.
+///
+/// Takes the whole 4x4 for call-site convenience; the translation column plays
+/// no part in handedness.
+bool matrixMirrorsWinding(const float[16] m) @safe pure nothrow @nogc {
+    // det of the upper-left 3x3, column-major: element (row r, col c) is m[c*4+r].
+    const float a = m[0], b = m[4], c = m[8];
+    const float d = m[1], e = m[5], f = m[9];
+    const float g = m[2], h = m[6], i = m[10];
+    return a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g) < 0;
+}
+unittest { // handedness: identity/rotation keep it; an odd count of negative
+           // scale components reverses it, an even count does not.
+    static immutable float[16] I = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+    assert(!matrixMirrorsWinding(I), "identity preserves handedness");
+    // A pure rotation is det=+1 however far it turns.
+    auto R = pivotRotationMatrix(Vec3(0, 0, 0), Vec3(0, 1, 0), cast(float) PI / 3);
+    assert(!matrixMirrorsWinding(R), "a rotation preserves handedness");
+    // Translation alone never mirrors (and the translation column is ignored).
+    assert(!matrixMirrorsWinding(translationMatrix(Vec3(5, -6, 7))));
+    // One negative component = mirror; two = not; three = mirror again.
+    assert( matrixMirrorsWinding(pivotScaleMatrix(Vec3(0,0,0), -1,  1,  1)));
+    assert(!matrixMirrorsWinding(pivotScaleMatrix(Vec3(0,0,0), -1, -1,  1)));
+    assert( matrixMirrorsWinding(pivotScaleMatrix(Vec3(0,0,0), -1, -1, -1)));
+    // The sign survives composition with a rotation and a translation — this is
+    // the shape the export paths actually see (`ItemXform.composedMatrix()`).
+    auto M = matMul4(translationMatrix(Vec3(1, 2, 3)),
+             matMul4(R, pivotScaleMatrix(Vec3(0, 0, 0), -1, 1, 1)));
+    assert(matrixMirrorsWinding(M), "a mirror survives R and T composition");
+}
+
 // ---------------------------------------------------------------------------
 // ModelSpace — the per-layer item transform, packaged for picking (task 0617,
 // doc/picking_item_transform_plan.md).

@@ -5,7 +5,7 @@ import lwo2;   // lwo2-writer (core config): Lwo2Object / Lwo2Layer / Lwo2Polygo
 
 import mesh;
 import document : Document, Layer;
-import math     : Vec3, transformPoint;
+import math     : Vec3, matrixMirrorsWinding, transformPoint;
 
 // ---------------------------------------------------------------------------
 // LWO2 export via the lwo2-writer library.
@@ -128,6 +128,23 @@ void exportLwoDocument(ref const Document doc, string path)
         // One polygon per face, layer-local indices, surface remapped global.
         lay.polygons = buildPolygons(src, remap);
 
+        // A MIRRORING bake (det(M) < 0 — a legal item transform: an odd number
+        // of negative `scl` components; `MIN_ITEM_SCALE_MAG` clamps magnitude
+        // only, never the sign) moves the points but leaves the index order
+        // alone, so every polygon of that layer would be wound inward. Reverse
+        // each polygon's point order to compensate (task 0684 — the same rule
+        // `create_common.frameIsLeftHanded`/`reverseFaceWinding` applies to a
+        // left-handed workplane frame at the Create-tool boundary).
+        //
+        // UV needs NO reversal here, unlike the flat `flattenDocument` path:
+        // LWO's per-corner channel is a VMAD keyed by (POINT, POLYGON), not by
+        // corner ORDER, so reversing a polygon's index order leaves every
+        // (point, poly) pair — and therefore every override — addressing the
+        // same corner. `buildUvMaps` below reads the SOURCE mesh (unreversed),
+        // which is exactly what keeps that keying correct.
+        if (matrixMirrorsWinding(M))
+            reversePolygonWinding(lay.polygons);
+
         // UV: the same two-tier VMAP+VMAD reconstruction, per layer.
         buildUvMaps(src, lay.vmaps, lay.vmads);
 
@@ -162,6 +179,16 @@ private Lwo2Polygon[] buildPolygons(ref const Mesh mesh, const(uint)[] surfaceRe
         polys ~= poly;
     }
     return polys;
+}
+
+/// Reverse every polygon's point order IN PLACE — the winding correction for a
+/// layer whose baked item matrix mirrors (see the call site). Separate from
+/// `buildPolygons` so the single-mesh path (which bakes nothing) is untouched.
+private void reversePolygonWinding(ref Lwo2Polygon[] polys)
+{
+    import std.algorithm.mutation : reverse;
+    foreach (ref p; polys)
+        reverse(p.indices);
 }
 
 /// Map a vibe3d `Surface` onto an `Lwo2Surface` (value copy of fields).

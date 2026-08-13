@@ -1,6 +1,7 @@
 module tools.create.create_common;
 
-import math : Vec3, Viewport, dot, isOrtho, rayPlaneIntersect, screenPointToRay;
+import math : Vec3, Viewport, dot, isOrtho, matrixMirrorsWinding, rayPlaneIntersect,
+              screenPointToRay;
 import std.math : abs;
 
 import toolpipe.pipeline       : g_pipeCtx;
@@ -427,14 +428,13 @@ private void fillFrameMatrices(ref WorkplaneFrame f) {
 /// it mirrors winding. See the banner above for why the auto-mode
 /// X/Z-dominant camera cases trigger this and the Y-dominant case never
 /// does.
+/// (Task 0684: the determinant test itself now lives in `math` as
+/// `matrixMirrorsWinding` — the export boundary needs the SAME predicate on
+/// `ItemXform.composedMatrix()`, and two hand-written 3x3 determinants would be
+/// a latent divergence rather than a redundancy. This name stays as the
+/// workplane-flavoured spelling of it.)
 bool frameIsLeftHanded(in WorkplaneFrame frame) {
-    // det of upper-left 3×3 of toWorld (column-major).
-    const ref float[16] m = frame.toWorld;
-    float a = m[0], b = m[4], c = m[8];
-    float d = m[1], e = m[5], f = m[9];
-    float g = m[2], h = m[6], i = m[10];
-    float det = a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g);
-    return det < 0;
+    return matrixMirrorsWinding(frame.toWorld);
 }
 
 /// Reverse the vertex order of every face in `m` from `firstFaceIdx`

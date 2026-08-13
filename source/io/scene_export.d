@@ -142,10 +142,17 @@ bool exportViaAssimp(ref const Mesh mesh, string path, string formatId) {
 //     NAMES on glTF (a flat root.mMeshes=[0..N-1] loses mesh names on glTF).
 //     Each child node references its one mesh, carries the layer name, and its
 //     `mTransformation` = `toAiMat(layer.xform.composedMatrix())`. Mesh vertices
-//     stay LOCAL (un-baked); assimp bakes the node transform into the written
-//     geometry itself (verified for glTF), so re-import returns the layer at its
-//     post-bake WORLD position = composedMatrix * v_local (NOT a reappearing node
-//     matrix — our importer has no inverse-factoring step; see the plan's Q9).
+//     stay LOCAL (un-baked), and how the transform is RESOLVED is the writer's
+//     business: the OBJ writer bakes it into the written positions (OBJ has no
+//     node transforms), while glTF keeps it as the node's `matrix`. Either way
+//     re-import returns the layer at its post-bake WORLD position =
+//     composedMatrix * v_local (NOT a reappearing node matrix — our importer
+//     bakes node transforms and has no inverse-factoring step; see the plan's
+//     Q9). The ONE exception is a MIRRORING layer matrix, which this path bakes
+//     itself — see `buildDocumentScene` for why the two writers' conventions
+//     cannot both be served by an un-baked mirror (task 0684). (An earlier
+//     version of this comment claimed assimp bakes the node transform into glTF
+//     geometry too; measurement says otherwise.)
 //
 //   * N == 1: SPECIAL-CASED to today's exact root-mesh shape (one mesh on the
 //     ROOT node, `root.mMeshes=[0]`, NO child node), so a single-layer OBJ/glTF
@@ -578,17 +585,50 @@ private SceneStorage buildDocumentScene(ref const Document doc, double unitScale
     // `meshLayers()` is a plain `filter` InputRange, not an array — a 2-var
     // `foreach` needs the explicit `.enumerate` wrapper to get an index.
     import std.range : enumerate;
+    import math : matrixMirrorsWinding;
     foreach (i, l; doc.meshLayers.enumerate) {
         MeshPiece piece = buildAiMesh(
             l.meshRef(), unitScale, l.name.length ? l.name : ("Layer" ~ itoa(i)));
-        st.pieces ~= piece;        // root the backing arrays
-        meshPtrs.put(piece.mesh);
 
         // Child node referencing mesh i, named by the layer, transform =
-        // composedMatrix() (un-baked; assimp bakes it into the written geometry).
+        // composedMatrix() (un-baked — each format's writer resolves it).
         auto child = new aiNode;
         setAiString(child.mName, l.name.length ? l.name : ("Layer" ~ itoa(i)));
-        child.mTransformation = toAiMat(l.xform.composedMatrix());
+
+        // A MIRRORING layer matrix (det < 0) is the ONE case this path bakes
+        // itself, because the two writers resolve a node transform by
+        // INCOMPATIBLE conventions and no single un-baked aiScene is correct for
+        // both (task 0684, measured on assimp 6.0 with a `scl.x = -1` layer):
+        //
+        //   * OBJ has no node transforms at all — the writer BAKES the
+        //     accumulated matrix into the written vertex positions and copies
+        //     the index order verbatim. A mirrored layer therefore lands in the
+        //     file already inside-out, and the only place to fix it is here.
+        //   * glTF KEEPS the matrix on the node (verified: the mirrored layer's
+        //     node carries `"matrix": [-1, 0, 0, ...]` and its accessor min/max
+        //     stay at the un-mirrored local bounds — so the older comment here
+        //     claiming assimp bakes the node transform into glTF geometry was
+        //     simply wrong). Per the glTF spec a negative-determinant node
+        //     REVERSES the primitive's front-face winding on the consumer side,
+        //     so a file that both keeps the mirror on the node AND reverses the
+        //     indices is inside-out for any spec-following viewer.
+        //
+        // Baking the mirror (verts transformed, winding reversed, node left
+        // IDENTITY) removes the ambiguity: the geometry is outward-facing under
+        // either convention, and our own importer — which bakes node transforms
+        // with no winding term of its own — reads back what it wrote. Layers
+        // that do NOT mirror keep the previous un-baked node-transform shape
+        // byte-for-byte, so nothing else about this path moves.
+        const float[16] M = l.xform.composedMatrix();
+        if (matrixMirrorsWinding(M)) {
+            bakePieceXform(piece, M, cast(float) unitScale);   // + winding reversal
+            aiIdentityMatrix4(&child.mTransformation);
+        } else {
+            child.mTransformation = toAiMat(M);
+        }
+
+        st.pieces ~= piece;        // root the backing arrays
+        meshPtrs.put(piece.mesh);
         uint[] cm = [ cast(uint) i ];
         st.childMeshIdx ~= cm;
         child.mNumMeshes = 1;
@@ -630,11 +670,23 @@ private SceneStorage buildDocumentScene(ref const Document doc, double unitScale
 }
 
 /// Bake a column-major world matrix into a MeshPiece's already-built (and
-/// already unit-scaled) aiVertices. Used only by the N==1 root-mesh path, where
-/// there is no child node to carry the transform. The verts are in scaled space,
-/// so we de-scale, transform, re-scale to keep the matrix in model units.
+/// already unit-scaled) aiVertices. The verts are in scaled space, so we
+/// de-scale, transform, re-scale to keep the matrix in model units.
+///
+/// Used by the N==1 root-mesh path (no child node exists to carry the
+/// transform) and, for a MIRRORING matrix only, by the N>=2 path — see
+/// `buildDocumentScene`.
+///
+/// A matrix that mirrors (det < 0 — a legal item transform: an odd number of
+/// negative `scl` components) moves the points but leaves the index order
+/// alone, so every face would come out wound inward. Reversing each face's
+/// index order compensates (task 0684). The per-corner UV needs no separate
+/// reversal on this path: `buildAiMesh` SPLITS geometry at UV seams so the UV
+/// rides on the (already emitted) aiVertex, and reversing the indices carries
+/// each corner's UV with it for free.
 private void bakePieceXform(ref MeshPiece pc, const float[16] m, float unitScale) {
-    import math : transformPoint;
+    import math : matrixMirrorsWinding, transformPoint;
+    import std.algorithm.mutation : reverse;
     import std.math : isClose;
     // Skip the identity fast-path (the overwhelmingly common single-layer case)
     // so back-compat output is byte-identical.
@@ -648,6 +700,12 @@ private void bakePieceXform(ref MeshPiece pc, const float[16] m, float unitScale
         auto p = transformPoint(m, Vec3(av.x * inv, av.y * inv, av.z * inv));
         av = aiVector3D(p.x * unitScale, p.y * unitScale, p.z * unitScale);
     }
+    // Reverse IN PLACE: each `aiFace.mIndices` points AT one of these arrays, so
+    // the aiFaces need no re-wiring (and must not be rebuilt — their pointers
+    // are what assimp reads).
+    if (matrixMirrorsWinding(m))
+        foreach (ref idx; pc.faceIndices)
+            reverse(idx);
 }
 
 /// Attach a single BOOL metadata entry `ml_visible = visible` to `node`, rooting
