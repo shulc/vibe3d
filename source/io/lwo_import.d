@@ -447,22 +447,55 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         foreach (bi, body; pb.ptagBodies) {
             if (body.length < 4 || body[0..4] != "SURF") continue;
             const int kind = (bi < pb.ptagKinds.length) ? pb.ptagKinds[bi] : -1;
-            if (kind < 0) {
-                lwoWarn(format("PTAG SURF with no preceding POLS (part %d), skipped", pi));
-                continue;
+            const l2g = (kind >= 0) ? pb.localToGlobal[kind] : null;
+
+            // Count entries first — the count is what tells the two on-disk
+            // layouts apart (task 0678 D3 follow-up; the per-kind remap alone
+            // was a REGRESSION on legacy files, see below).
+            size_t entryCount = 0;
+            for (size_t q = 4; q < body.length; ) {
+                readVX(body, q);
+                if (q + 2 > body.length) break;
+                q += 2;
+                ++entryCount;
             }
-            const l2g = pb.localToGlobal[kind];
+
+            // TWO layouts exist in the wild and they need different decoding:
+            //
+            //  * CONFORMANT (this package since the per-kind fix): one PTAG per
+            //    POLS chunk, entries POLS-LOCAL to THAT chunk ⇒ remap through
+            //    `localToGlobal[kind]`. Its entry count can never exceed that
+            //    kind's poly count.
+            //  * LEGACY (everything vibe3d exported before that fix, and any
+            //    writer emitting a single trailing PTAG): ONE chunk covering
+            //    BOTH kinds, entries in emit order — all FACE, then all PTCH —
+            //    each carrying its own per-kind local index. Remapping those
+            //    through the LAST POLS chunk's table (PTCH) sends every FACE
+            //    entry to a PTCH slot: subpatches come out right and EVERY
+            //    ordinary polygon loses its surface. On the common layer (many
+            //    FACE, few PTCH) that is far worse than the flat read it
+            //    replaced — a regression this decode exists to undo.
+            //
+            // The legacy layout is decodable EXACTLY, not by heuristic: this
+            // importer appends polys in POLS-chunk order (FACE chunk first,
+            // then PTCH), the same order the legacy writer emitted entries in,
+            // so the k-th entry is the k-th poly slot. A PTAG arriving before
+            // any POLS (`kind < 0` — non-conformant, but read correctly by the
+            // pre-D3 flat path) takes the same route rather than being dropped.
+            const bool positional = (kind < 0) || (entryCount > l2g.length);
+            size_t ordinal = 0;
             size_t p = 4;
             while (p < body.length) {
                 uint localIdx = readVX(body, p);
                 if (p + 2 > body.length) break;
                 ushort tagIdx = readU16(body, p);
                 p += 2;
-                if (localIdx < l2g.length && tagIdx < tags.length) {
-                    const size_t slot = l2g[localIdx];
-                    if (slot < ip.faceMaterial.length)
-                        ip.faceMaterial[slot] = tagIdx;
-                }
+                const size_t slot = positional
+                    ? ordinal
+                    : (localIdx < l2g.length ? l2g[localIdx] : size_t.max);
+                ++ordinal;
+                if (slot < ip.faceMaterial.length && tagIdx < tags.length)
+                    ip.faceMaterial[slot] = tagIdx;
             }
         }
 
@@ -630,7 +663,9 @@ unittest {
     m.surfaces = [sa, sb];
     m.faceMaterial = [0u, 1u, 1u, 0u];
 
-    const string path = buildPath(tempDir, "vibe3d_0678_d3_mixed_ptag.lwo");
+    import std.process : thisProcessID;
+    const string path = buildPath(tempDir,
+        format("vibe3d_0678_d3_mixed_ptag_%d.lwo", thisProcessID));
     scope (exit) if (exists(path)) remove(path);
     exportLwo(m, path);
 
@@ -653,4 +688,90 @@ unittest {
         assert(part.surfaces[mat].name == wantName[k],
                "PTAG SURF must bind per kind: mixed FACE+PTCH layer tags");
     }
+}
+
+// task 0678 D3 follow-up — LEGACY layout: ONE trailing PTAG covering BOTH
+// kinds. Every .lwo vibe3d exported before the per-kind writer fix looks like
+// this, so the per-kind remap alone was a REGRESSION: it routed the FACE
+// entries through the PTCH table and every ordinary polygon lost its surface.
+// A round-trip test cannot see this — the current writer never emits the
+// layout — so the fixture is hand-built bytes.
+unittest {
+    import std.file : tempDir, write, remove, exists;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+
+    static void putU2(ref ubyte[] b, ushort v) { b ~= cast(ubyte)(v >> 8); b ~= cast(ubyte)(v & 0xFF); }
+    static void putU4(ref ubyte[] b, uint v) {
+        b ~= cast(ubyte)(v >> 24); b ~= cast(ubyte)((v >> 16) & 0xFF);
+        b ~= cast(ubyte)((v >> 8) & 0xFF); b ~= cast(ubyte)(v & 0xFF);
+    }
+    static void putF4(ref ubyte[] b, float f) {
+        import std.bitmanip : nativeToBigEndian;
+        b ~= nativeToBigEndian(f)[];
+    }
+    static ubyte[] chunk(string id, const(ubyte)[] payload) {
+        ubyte[] c; c ~= cast(const(ubyte)[]) id; putU4(c, cast(uint) payload.length);
+        c ~= payload;
+        if (payload.length % 2) c ~= cast(ubyte) 0;      // IFF pad
+        return c;
+    }
+
+    ubyte[] body_;
+    {   // TAGS → tag 0 = Body, tag 1 = Roof
+        ubyte[] t;
+        t ~= cast(const(ubyte)[]) "Body"; t ~= 0; t ~= 0;
+        t ~= cast(const(ubyte)[]) "Roof"; t ~= 0; t ~= 0;
+        body_ ~= chunk("TAGS", t);
+    }
+    {   // PNTS: 5 points
+        ubyte[] p;
+        immutable float[3][5] pts = [[0f,0f,0f],[1f,0f,0f],[1f,1f,0f],[0f,1f,0f],[0.5f,2f,0f]];
+        foreach (v; pts) foreach (c; v) putF4(p, c);
+        body_ ~= chunk("PNTS", p);
+    }
+    {   // POLS FACE: two triangles (locals 0, 1)
+        ubyte[] p; p ~= cast(const(ubyte)[]) "FACE";
+        putU2(p, 3); putU2(p, 0); putU2(p, 1); putU2(p, 2);
+        putU2(p, 3); putU2(p, 0); putU2(p, 2); putU2(p, 3);
+        body_ ~= chunk("POLS", p);
+    }
+    {   // POLS PTCH: one triangle (local 0)
+        ubyte[] p; p ~= cast(const(ubyte)[]) "PTCH";
+        putU2(p, 3); putU2(p, 3); putU2(p, 2); putU2(p, 4);
+        body_ ~= chunk("POLS", p);
+    }
+    {   // ONE trailing PTAG SURF — the legacy shape. Emit order with PER-KIND
+        // locals: FACE 0→Roof, FACE 1→Roof, PTCH 0→Body.
+        ubyte[] p; p ~= cast(const(ubyte)[]) "SURF";
+        putU2(p, 0); putU2(p, 1);
+        putU2(p, 1); putU2(p, 1);
+        putU2(p, 0); putU2(p, 0);
+        body_ ~= chunk("PTAG", p);
+    }
+
+    ubyte[] file;
+    file ~= cast(const(ubyte)[]) "FORM";
+    putU4(file, cast(uint)(4 + body_.length));
+    file ~= cast(const(ubyte)[]) "LWO2";
+    file ~= body_;
+
+    const string path = buildPath(tempDir,
+        format("vibe3d_0678_d3_legacy_ptag_%d.lwo", thisProcessID));
+    scope (exit) if (exists(path)) remove(path);
+    write(path, file);
+
+    ImportedScene scene;
+    assert(sceneFromLwo(path, scene), "legacy-layout LWO must import");
+    assert(scene.parts.length == 1);
+    auto part = scene.parts[0];
+    assert(part.faces.length == 3, "two FACE + one PTCH must survive");
+    assert(!part.faceSubpatch[0] && !part.faceSubpatch[1] && part.faceSubpatch[2],
+           "poly kinds must be read in POLS order");
+
+    // The point: FACE polys keep THEIR surface. Before the fix both read back
+    // as tag 0 because the per-kind remap sent them through the PTCH table.
+    assert(part.faceMaterial[0] == 1, "legacy FACE poly 0 must keep its surface");
+    assert(part.faceMaterial[1] == 1, "legacy FACE poly 1 must keep its surface");
+    assert(part.faceMaterial[2] == 0, "legacy PTCH poly must keep its surface");
 }
