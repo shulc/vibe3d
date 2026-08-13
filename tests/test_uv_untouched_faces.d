@@ -357,11 +357,13 @@ unittest { // no UV map registered ⇒ every path above must stay crash-free and
     m.resetSelection();
     assert(m.meshMap(kUvMapName) is null, "fixture should carry no UV map");
 
-    auto mask = maskFace0(m);
     m.selectFace(0);
-    m.duplicateSelectedFaces();
-    m.mirrorFaces(mask, 'X', Vec3(0, 0, 0), 0.0f, true);
+    assert(m.duplicateSelectedFaces() == 1, "duplicate should have run");
+    // Rebuild the mask against the GROWN face list — `mirrorFaces` refuses a
+    // stale-length mask, and a refused call would exercise nothing.
+    assert(m.mirrorFaces(maskFace0(m), 'X', Vec3(0, 0, 0), 0.0f, true) == 1,
+           "mirror should have run");
     const uint ei = edgeIndexOf(m, 0, 1);
-    m.addEdgePoint(ei, 0.5f);
+    assert(m.addEdgePoint(ei, 0.5f) != uint.max, "addEdgePoint should have run");
     assert(m.meshMap(kUvMapName) is null, "no UV map should have appeared");
 }
