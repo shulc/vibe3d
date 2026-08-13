@@ -31,7 +31,7 @@ import std.format    : format;
 import std.getopt    : getopt, config;
 import std.parallelism : parallel, totalCPUs;
 import std.path      : baseName, buildPath, stripExtension;
-import std.process   : spawnProcess, spawnShell, wait, executeShell,
+import std.process   : spawnProcess, spawnShell, wait, tryWait, executeShell,
                        Config, Pid, ProcessException, environment;
 import std.range     : empty;
 import std.stdio     : writeln, writefln, write, stdin, stdout, stderr, File;
@@ -1119,6 +1119,39 @@ int main(string[] args) {
     printSummary(results);
     int failed = 0;
     foreach (ref r; results) if (!r.passed) failed++;
+
+    // A worker's `vibe3d --test` that DIES mid-slice turns every remaining
+    // test on that worker into an identical "Couldn't connect to server", and
+    // the cause — the app's own stderr — sits in a scratch log this runner
+    // deletes on exit. That is how a segfault on every tool drop reached main
+    // and then read, in CI, as 537 interchangeable connection failures with no
+    // stated reason (task 0678 D9-a follow-up). Name it here: report the dead
+    // server FIRST, with the tail of its log, so the real failure is the thing
+    // you see rather than something to be inferred from a wall of curl errors.
+    if (failed > 0) {
+        foreach (ref w; workers) {
+            if (w.vibePid is null) continue;
+            auto st = tryWait(w.vibePid);
+            if (!st.terminated) continue;
+            writeln();
+            writefln("%s", red(format(
+                "worker %d: its vibe3d on :%d DIED during the run (status %d) — "
+                ~ "every test it had left could only fail to connect",
+                w.id, w.port, st.status)));
+            try {
+                auto lines = readText(w.logPath).splitLines;
+                immutable size_t from = lines.length > 25 ? lines.length - 25 : 0;
+                writeln(dim(format("  last %d line(s) of %s:",
+                                   lines.length - from, w.logPath)));
+                foreach (line; lines[from .. $]) writeln("    ", line);
+            } catch (Exception e) {
+                writeln(dim("  (its log could not be read: " ~ e.msg ~ ")"));
+            }
+            writeln(dim("  a SIGSEGV leaves a coredump: "
+                      ~ "`coredumpctl debug <pid> --debugger=gdb` names the line"));
+        }
+    }
+
     int rc = failed == 0 ? 0 : 1;
 
     return rc;
