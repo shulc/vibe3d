@@ -105,29 +105,6 @@ jobs:
         set -o pipefail
         xvfb-run -a ./run_all.d --only unit --no-build -j 4 2>&1 | tee integration.log
 
-    # The harness writes each worker's `vibe3d --test` stdout+stderr to
-    # $TMPDIR/vibe3d-tests-$PPID/worker_N/vibe3d.log and only dumps it when
-    # COME-UP fails. A server that comes up and dies LATER (every HTTP test
-    # then fails with "Couldn't connect to server") leaves no trace in the CI
-    # output at all — that is exactly the shape of the 2026-08-13 failure, and
-    # it cost a full debug round-trip. Surface the tail of every worker log
-    # whenever the integration step did not succeed.
-    - name: 'Worker vibe3d logs (on integration failure)'
-      if: always() && steps.integration.outcome != 'success'
-      run: |
-        shopt -s nullglob
-        found=0
-        for log in "${TMPDIR:-/tmp}"/vibe3d-tests-*/worker_*/vibe3d.log; do
-          found=1
-          echo "===== $log (last 80 lines) ====="
-          tail -n 80 "$log" || true
-          echo
-        done
-        [ "$found" = 1 ] || echo "no worker logs found under ${TMPDIR:-/tmp}/vibe3d-tests-*"
-        echo "===== kernel OOM / kill records (last 40) ====="
-        (dmesg -T 2>/dev/null | grep -iE "killed process|out of memory|oom" | tail -40) \
-          || echo "dmesg unavailable to this user"
-
     - name: 'Test results summary'
       # Parse run_test.d's per-test lines ("PASS  [wN]  name" / "FAIL ...") into a
       # GitHub job summary table, shown on the run's page. always() so it renders

@@ -332,7 +332,48 @@ bool dubBuild() {
         return false;
     }
     writeln(green("OK"));
+    writeBuildStamp();
     return true;
+}
+
+// What `./vibe3d` was built FROM, recorded next to it. `--no-build` compares
+// against this instead of file timestamps, because timestamps answer neither
+// question that matters:
+//
+//   * `git checkout` / stash / rebase rewrite mtimes without changing content,
+//     so an mtime rule refuses a binary that is in fact current (the branch
+//     workflow this repo runs on hits that constantly);
+//   * `run_all.d`'s perf lane and `--config=with-render` OVERWRITE ./vibe3d
+//     with a different build, leaving it NEWER than every source — so an mtime
+//     rule waves through exactly the "you are testing a different artifact"
+//     case the guard exists to catch (run_all.d says so in its own comments).
+//
+// The digest is over source CONTENT, so it answers "same sources?"; the stamp
+// is only written by dubBuild, so a foreign build leaves it absent or stale
+// and the mismatch is caught by the binary's own mtime being newer than it.
+enum string kBuildStampPath = ".vibe3d.buildstamp";
+
+string sourceDigest() {
+    import std.digest.crc : CRC64ECMA;
+    import std.file : read;
+    CRC64ECMA hash;
+    hash.start();
+    string[] files;
+    foreach (e; dirEntries("source", "*.d", SpanMode.depth))
+        if (e.isFile) files ~= e.name;
+    sort(files);
+    foreach (f; files) {
+        hash.put(cast(const(ubyte)[]) f);
+        try hash.put(cast(const(ubyte)[]) read(f));
+        catch (Exception) { /* vanished mid-scan — digest simply differs */ }
+    }
+    import std.digest : toHexString;
+    return hash.finish().toHexString().idup;
+}
+
+void writeBuildStamp() {
+    try std.file.write(kBuildStampPath, sourceDigest());
+    catch (Exception e) stderr.writeln(yellow("could not write build stamp: " ~ e.msg));
 }
 
 // Pure-D unit tests that exercise project source modules in-process (e.g.
@@ -983,33 +1024,35 @@ int main(string[] args) {
 
     if (!noBuild && !dubBuild()) return 1;
 
-    // --no-build reuses ./vibe3d as-is. If a source file is NEWER than that
-    // binary, every HTTP assertion below is measuring the PREVIOUS build — a
-    // green run then proves nothing about the working tree. That is not
-    // hypothetical: task 0678 D9-a shipped a change that segfaults the app on
-    // every tool drop, and the pre-merge gate came back 598/598 green because
-    // the binary predated the edit; CI caught it on a fresh build. Refuse
-    // instead of measuring the wrong artifact (the inert-measurement class).
+    // --no-build reuses ./vibe3d as-is, so the whole run is only meaningful if
+    // that binary was built from the sources on disk NOW. Task 0678 shipped a
+    // segfault whose pre-merge gate came back 598/598 green because the binary
+    // predated the edit — the run measured the previous build. Refuse instead
+    // of measuring the wrong artifact (the inert-measurement class).
     if (noBuild && g_attachPort == 0) {
-        import std.algorithm : min;
         import std.file : timeLastModified;
         if (!exists("./vibe3d")) {
             stderr.writeln(red("--no-build: ./vibe3d does not exist — drop --no-build"));
             return 1;
         }
-        const binTime = timeLastModified("./vibe3d");
-        string[] stale;
-        foreach (e; dirEntries("source", "*.d", SpanMode.depth))
-            if (e.isFile && timeLastModified(e.name) > binTime) stale ~= e.name;
-        if (stale.length > 0) {
-            stderr.writefln(red("--no-build: ./vibe3d is OLDER than %d source file(s); "
-                ~ "the run would measure a stale binary. Rebuild, or pass --stale-ok."),
-                stale.length);
-            foreach (s; stale[0 .. min(stale.length, 5)]) stderr.writeln("    ", s);
-            if (stale.length > 5)
-                stderr.writefln("    … and %d more", stale.length - 5);
+        string why;
+        if (!exists(kBuildStampPath)) {
+            why = "no build stamp — ./vibe3d was not produced by this runner's `dub build`";
+        } else if (timeLastModified("./vibe3d") > timeLastModified(kBuildStampPath)) {
+            // Something rebuilt the binary without writing a stamp: the perf
+            // lane (buildType=perf, PerfProbe on) and `--config=with-render`
+            // both do exactly this, and both leave a binary that is NEWER than
+            // every source file — invisible to any timestamp-vs-source rule.
+            why = "./vibe3d is newer than the stamp — a different build "
+                ~ "(perf / with-render / manual) overwrote it";
+        } else if (readText(kBuildStampPath).strip != sourceDigest()) {
+            why = "source content differs from what ./vibe3d was built from";
+        }
+        if (why.length) {
+            stderr.writeln(red("--no-build refused: " ~ why));
+            stderr.writeln(dim("    rebuild (`dub build`), or pass --stale-ok to measure it anyway"));
             if (!staleOk) return 1;
-            stderr.writeln(yellow("--stale-ok given: proceeding against the stale binary"));
+            stderr.writeln(yellow("--stale-ok given: proceeding against a binary that may not match"));
         }
     }
 
