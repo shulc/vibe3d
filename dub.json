@@ -64,7 +64,7 @@
 			"repository": "git+https://github.com/shulc/D-YAML.git"
 		},
 		"d-opensubdiv": {
-			"version": "accc871825be8c4f72adc21fc87ed3fb4e4305a3",
+			"version": "0bde3c16d57e9995687158b5166030c4f0cfd329",
 			"repository": "git+https://github.com/shulc/D-OpenSubdiv.git"
 		},
 		"bindbc-assimp6": {
