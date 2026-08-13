@@ -52,7 +52,14 @@ jobs:
       run: rm -rf ~/.dub/packages/nfde ~/.dub/cache/nfde ~/.dub/packages/lwo2-writer ~/.dub/cache/lwo2-writer || true
 
     - name: 'Build'
-      run: dub build --compiler=dmd
+      # The integration step below runs --no-build, whose guard refuses a
+      # ./vibe3d it cannot tie to the sources on disk (task 0678: a gate that
+      # measured the previous build came back green while main segfaulted).
+      # This step builds the binary the suite will use, so it records the
+      # stamp the guard checks.
+      run: |
+        dub build --compiler=dmd
+        ./run_test.d --write-stamp
 
     # Both test steps use continue-on-error + an id so a failure in one does NOT
     # abort the pipeline: the other test set still runs, the summary still

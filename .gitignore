@@ -101,3 +101,4 @@ tools/ai3d_worker/*.egg-info/
 third_party/nfde/nativefiledialog-extended/out/
 third_party/nfde/bin/
 third_party/nfde/.dub/
+.vibe3d.buildstamp

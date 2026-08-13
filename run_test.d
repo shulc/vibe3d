@@ -948,7 +948,7 @@ void printSummary(TestResult[] results) {
 // ---------------------------------------------------------------------------
 
 int main(string[] args) {
-    bool verbose, noBuild, keep, staleOk;
+    bool verbose, noBuild, keep, staleOk, writeStampOnly;
     ushort port = 8080;
     // Machine-aware default worker count: scale with the host but stay sane.
     // Each worker boots its OWN vibe3d (a GL app), so we don't go 1:1 with
@@ -963,8 +963,10 @@ int main(string[] args) {
         "v|verbose",  "stream test output instead of summarizing on failure", &verbose,
         "k|keep",     "leave vibe3d running after tests finish",              &keep,
         "no-build",   "skip `dub build`",                                     &noBuild,
-        "stale-ok",   "with --no-build: run even when ./vibe3d is older than "
-                    ~ "source/ (measures the PREVIOUS build — see the guard)",  &staleOk,
+        "stale-ok",   "with --no-build: run anyway when the binary does not "
+                    ~ "match source/ (measures a DIFFERENT build — see the guard)", &staleOk,
+        "write-stamp","record ./vibe3d as built from the current source/ and "
+                    ~ "exit — for callers that ran `dub build` themselves (CI)", &writeStampOnly,
         "p|port",     "HTTP port for vibe3d (default 8080)",                  &port,
         "j|jobs",     "parallel workers — each runs its own vibe3d on a "
                     ~ "private port (default = clamp(cpus/4, 4, 12))",        &j,
@@ -1019,6 +1021,19 @@ int main(string[] args) {
 
     if (tests.empty) {
         writeln(yellow("no tests found"));
+        return 0;
+    }
+
+    // A caller that ran `dub build` itself (CI's own Build step) records the
+    // stamp with this, so the --no-build guard below can tell that binary from
+    // one a different build produced.
+    if (writeStampOnly) {
+        if (!exists("./vibe3d")) {
+            stderr.writeln(red("--write-stamp: ./vibe3d does not exist"));
+            return 1;
+        }
+        writeBuildStamp();
+        writeln(green("build stamp written for the current source/"));
         return 0;
     }
 
