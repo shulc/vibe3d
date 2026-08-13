@@ -328,15 +328,30 @@ struct MeshEditTracker {
     }
 
     // --- Class B: coarse bulk-op deltas -----------------------------------
-    void recordRemoveFaces(in uint[] idx, in uint[][] lists, in uint[] mat, in uint[] prt, in uint[] sub) {
+    /// TAKES OWNERSHIP of every array passed in — the entry stores them as-is
+    /// rather than copying (task 0680).
+    ///
+    /// The parameters are deliberately NOT `in`: the previous signature copied
+    /// all five, and `faceLists` is an array-of-arrays, so the copy allocated
+    /// once PER REMOVED FACE — on top of the per-face `.dup` its callers had
+    /// already made building it. Removing a 99 856-face mesh therefore paid
+    /// ~200 000 GC allocations to record one delta, and the collector work that
+    /// followed showed up as +612% on the operation itself.
+    ///
+    /// Every call site builds these arrays immediately before the call from
+    /// locals it never touches again (`deleteFacesByMask`, `dissolveVerticesByMask`,
+    /// the merge path, `extrudeFacesByMask`), so handing the buffers over is
+    /// safe. A future caller that wants to KEEP its arrays must `.dup` at the
+    /// call site — the cost then lands on the one caller that needs it.
+    void recordRemoveFaces(uint[] idx, uint[][] lists, uint[] mat, uint[] prt, uint[] sub) {
         if (idx.length == 0) return;
         MeshOpEntry e;
         e.kind      = MeshOpEntry.Kind.RemoveFaces;
-        e.fIdx      = idx.dup;
-        e.faceLists = dupLists(lists);
-        e.faceMat   = mat.dup;
-        e.facePrt   = prt.dup;
-        e.faceSub   = sub.dup;
+        e.fIdx      = idx;
+        e.faceLists = lists;
+        e.faceMat   = mat;
+        e.facePrt   = prt;
+        e.faceSub   = sub;
         log_ ~= e;
     }
 

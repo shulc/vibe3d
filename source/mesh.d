@@ -2175,6 +2175,32 @@ struct Mesh {
         uint[]   droppedFacePart;
         uint[]   droppedFaceSub;
         const bool recDelete = editRecorder_ !is null;
+        // Task 0680 — the delta for a bulk face removal used to cost TWO GC
+        // allocations per removed face: `f.dup` here, then a second copy of
+        // every list inside recordRemoveFaces. On a whole-mesh remove
+        // (99 856 faces) that is ~200 000 allocations to record ONE entry, and
+        // the collector work behind them is what made the operation itself
+        // read +612% against the perf baseline.
+        //
+        // Now: one pass over the mask sizes everything exactly, the vertex
+        // lists live in ONE flat buffer, and each entry in `droppedFaceLists`
+        // is a SLICE of it. Two allocations for the geometry instead of one
+        // per face. The buffer is sized up front and never appended to, so the
+        // slices stay valid; the recorder takes ownership and only ever reads
+        // them (its revert path dups before inserting).
+        uint[] droppedFlat;
+        size_t flatFill = 0;
+        if (recDelete) {
+            size_t willDrop = 0, corners = 0;
+            foreach (i, ref f; faces)
+                if (i < mask.length && mask[i]) { ++willDrop; corners += f.length; }
+            droppedFaceIdx.reserve(willDrop);
+            droppedFaceLists.reserve(willDrop);
+            droppedFaceMat.reserve(willDrop);
+            droppedFacePart.reserve(willDrop);
+            droppedFaceSub.reserve(willDrop);
+            droppedFlat.length = corners;
+        }
         // PolyVertex remap, mechanism (a): surviving faces keep their corner
         // count, so corner `c` of a kept face maps to old loop
         // oldFaceLoop[oldFi]+c. Build `oldLoopOfNewLoop` in NEW-face/new-corner
@@ -2187,7 +2213,9 @@ struct Mesh {
                 ++removed;
                 if (recDelete) {
                     droppedFaceIdx   ~= cast(uint)i;
-                    droppedFaceLists ~= f.dup;
+                    droppedFlat[flatFill .. flatFill + f.length] = f[];
+                    droppedFaceLists ~= droppedFlat[flatFill .. flatFill + f.length];
+                    flatFill += f.length;
                     droppedFaceMat   ~= faceAttrOr(faceMaterial, i);
                     droppedFacePart  ~= faceAttrOr(facePart, i);
                     droppedFaceSub   ~= (isFaceSubpatch(i) ? 1u : 0u);
