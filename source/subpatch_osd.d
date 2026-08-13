@@ -245,22 +245,8 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
     }
 
     // ---- OSD topology at depth 1 + read back limit topology.
-    // Boundary rule (task 0468 — match the reference editor on open meshes):
-    //   * Whole-cage subdivide (!anyUnmarked): EDGE_ONLY — the open-mesh
-    //     boundary follows a smooth B-spline, so a valence-2 rim corner V
-    //     with neighbours N1,N2 lands at 3/4*V + 1/8*(N1+N2). This is the
-    //     standard whole-mesh Catmull-Clark rule and is bit-exact on closed
-    //     meshes (no boundary → the option is inert).
-    //   * Selective subdivide (anyUnmarked): EDGE_AND_CORNER — the sub-cage
-    //     boundary is an ARTIFICIAL cut against the un-marked faces we stitch
-    //     back below; pinning its corners to the cage position keeps the
-    //     refined/un-refined seam aligned (see the stitch step further down).
-    immutable int vtxBoundary =
-        anyUnmarked ? OSDC_VTX_BOUNDARY_EDGE_AND_CORNER
-                    : OSDC_VTX_BOUNDARY_EDGE_ONLY;
-    auto osd = osdc_topology_create_sharp(
-        subNumVerts, subNumFaces, sfvc.ptr, sfvi.ptr, 1,
-        0, null, null, 0, null, null, vtxBoundary);
+    auto osd = osdc_topology_create(
+        subNumVerts, subNumFaces, sfvc.ptr, sfvi.ptr, 1);
     if (osd is null) return Mesh.init;
     scope (exit) osdc_topology_destroy(osd);
 
@@ -339,8 +325,7 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
         // 1. Build cage-vert → result-vert idx map:
         //      In-subset cage verts map to their OSD vert-point idx
         //      (corner-pinned, sitting at the original cage position
-        //      because this selective path requested EDGE_AND_CORNER —
-        //      see the vtxBoundary choice at the topology-create above).
+        //      because the shim configures EDGE_AND_CORNER boundary).
         //      Out-of-subset cage verts get appended after the OSD
         //      verts.
         int[] cageToNew = new int[](nv);
@@ -1063,16 +1048,6 @@ struct OsdAccel {
 
         if (!cacheHit) {
             // ---- Cache miss: build a fresh OSD topology -----------
-            // Boundary rule mirrors catmullClarkOsd (task 0468) so the
-            // preview agrees with the eventual mesh.subdivide freeze:
-            //   * Uniform subpatch (!anyUnmarked): EDGE_ONLY — a genuine
-            //     open-mesh hole rim smooths as a B-spline (standard CC rule).
-            //   * Selective (anyUnmarked): EDGE_AND_CORNER — the INF creases
-            //     / corners already pin the marked/un-marked seam; keep rim
-            //     corners pinned too, consistent with the selective freeze.
-            immutable int vtxBoundary =
-                anyUnmarked ? OSDC_VTX_BOUNDARY_EDGE_AND_CORNER
-                            : OSDC_VTX_BOUNDARY_EDGE_ONLY;
             osd = osdc_topology_create_sharp(
                 nv, nf,
                 faceVertCounts.ptr, faceVertIndices.ptr,
@@ -1082,8 +1057,7 @@ struct OsdAccel {
                 creaseWeights.length ? creaseWeights.ptr : null,
                 cast(int)cornerVerts.length,
                 cornerVerts.length    ? cornerVerts.ptr    : null,
-                cornerWeights.length  ? cornerWeights.ptr  : null,
-                vtxBoundary);
+                cornerWeights.length  ? cornerWeights.ptr  : null);
             if (osd is null) { clear(); return false; }
 
             limitVertCount = osdc_topology_limit_vert_count(osd);
@@ -2040,101 +2014,4 @@ unittest {
     assert(cage.mutationVersion == mutVerBefore,
         "rebuildIfStale must not mutate the CAGE's mutationVersion — only "
         ~ "the preview's own internal mesh may bump its own version");
-}
-
-// ---------------------------------------------------------------------------
-// task 0678 M8-1 / task 0468 — the CC boundary rule on an OPEN mesh, pinned
-// for BOTH OSD paths (bake `catmullClarkOsd` + preview `OsdAccel.buildPreview`)
-// and for both arms of the vtxBoundary choice.
-//
-// Every prior subdivide fixture was a closed cube — and on a closed mesh
-// EDGE_ONLY and EDGE_AND_CORNER agree on every vertex (no boundary), so the
-// pre-0468 hardcoded EDGE_AND_CORNER survived months of green suites (the
-// same closed-fixture blindness CLAUDE.md documents for the facing predicate).
-// Only an OPEN mesh separates the rules:
-//
-//   open 2-quad strip, rim corner v0=(0,0,0), boundary neighbours v1, v3:
-//     EDGE_ONLY (whole-mesh subdivide)  -> v0' = (6*v0 + v1 + v3)/8
-//                                         = (0.125, 0.125, 0)
-//     EDGE_AND_CORNER (selective / cut) -> v0' = v0 = (0, 0, 0)   (pinned)
-//
-// The two paths must also AGREE with each other — they derive `anyUnmarked`
-// from different sources (bake: the faceMask argument; preview:
-// cage.isFaceSubpatch), which is exactly the seam a future edit can split.
-// ---------------------------------------------------------------------------
-unittest {
-    import std.math : abs;
-
-    static Mesh openStrip() {
-        Mesh m = Mesh.init;
-        m.vertices = [ Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 0, 0),
-                       Vec3(0, 1, 0), Vec3(1, 1, 0), Vec3(2, 1, 0) ];
-        uint[ulong] el;
-        m.addFaceFast(el, [0u, 1u, 4u, 3u]);
-        m.addFaceFast(el, [1u, 2u, 5u, 4u]);
-        m.buildLoops();
-        return m;
-    }
-
-    static Vec3 nearestTo(const ref Mesh m, Vec3 p) {
-        Vec3 best = m.vertices[0];
-        float bd = float.max;
-        foreach (v; m.vertices) {
-            const float d = (v.x - p.x) * (v.x - p.x)
-                          + (v.y - p.y) * (v.y - p.y)
-                          + (v.z - p.z) * (v.z - p.z);
-            if (d < bd) { bd = d; best = v; }
-        }
-        return best;
-    }
-
-    static bool near(Vec3 a, float x, float y, float z, float eps = 1e-5f) {
-        return abs(a.x - x) < eps && abs(a.y - y) < eps && abs(a.z - z) < eps;
-    }
-
-    // --- Bake path, whole-cage: EDGE_ONLY smooths the rim corner ---------
-    {
-        Mesh cage = openStrip();
-        Mesh sub = catmullClarkOsd(cage);
-        assert(sub.vertices.length > 0, "whole-cage bake must succeed");
-        const Vec3 c = nearestTo(sub, Vec3(0, 0, 0));
-        assert(near(c, 0.125f, 0.125f, 0),
-               "open-mesh rim corner must follow the B-spline boundary rule "
-               ~ "(EDGE_ONLY), not stay pinned at the cage position");
-    }
-
-    // --- Bake path, selective: EDGE_AND_CORNER pins the cut corner -------
-    {
-        Mesh cage = openStrip();
-        bool[] mask = [true, false];        // face 1 unmarked => anyUnmarked
-        Mesh sub = catmullClarkOsd(cage, mask);
-        assert(sub.vertices.length > 0, "selective bake must succeed");
-        const Vec3 c = nearestTo(sub, Vec3(0, 0, 0));
-        assert(near(c, 0, 0, 0),
-               "selective-subdivide cut corner must stay pinned "
-               ~ "(EDGE_AND_CORNER) so the refined/un-refined seam aligns");
-    }
-
-    // --- Preview path, uniform: must agree with the whole-cage bake ------
-    {
-        Mesh cage = openStrip();
-        cage.resizeSubpatch();
-        foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
-
-        OsdAccel      accel;
-        Mesh          preview;
-        SubpatchTrace trace;
-        assert(accel.buildPreview(cage, 1, preview, trace),
-               "open-strip preview must build");
-
-        // The vert-point descending from cage corner 0, via the trace.
-        Vec3 corner;
-        bool found = false;
-        foreach (i, o; trace.vertOrigin)
-            if (o == 0) { corner = preview.vertices[i]; found = true; break; }
-        assert(found, "preview trace must carry cage corner 0's vert-point");
-        assert(near(corner, 0.125f, 0.125f, 0),
-               "preview must apply the SAME open-mesh boundary rule as the "
-               ~ "bake path (EDGE_ONLY on a uniform subpatch cage)");
-    }
 }

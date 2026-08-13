@@ -64,7 +64,7 @@
 			"repository": "git+https://github.com/shulc/D-YAML.git"
 		},
 		"d-opensubdiv": {
-			"version": "0bde3c16d57e9995687158b5166030c4f0cfd329",
+			"version": "e74bb683d869d31ddcb279b2f05bfaebd53065ee",
 			"repository": "git+https://github.com/shulc/D-OpenSubdiv.git"
 		},
 		"bindbc-assimp6": {
@@ -72,7 +72,7 @@
 			"repository": "git+https://github.com/shulc/bindbc-assimp6.git"
 		},
 		"lwo2-writer": {
-			"version": "8610ff21122e6f91aeb19e76dbfc5b3e0ce82108",
+			"version": "fc87b3f3dc719bbc2d75200949155c2484cdc2dd",
 			"repository": "git+https://github.com/shulc/D-Lwo2Writer.git"
 		}
 	},
