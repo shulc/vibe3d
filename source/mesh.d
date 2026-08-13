@@ -712,6 +712,12 @@ struct Mesh {
     //   append — `addFace`/`addFaceFast` grow+zero-fill the new corners
     //       ATOMICALLY (GAP-3, no element-count window).
     //   snapshot restore — values come back via the captured map `dup`.
+    //   undo/redo delta replay — `MeshEditDelta.apply`/`revert` restore the
+    //       face array entry by entry and carry NO map values (its
+    //       `MeshOpEntry.Kind.MeshMapDelta` is still a stub). A replay that
+    //       renumbers corners therefore DROPS the maps, explicitly, via
+    //       `dropPolyVertexMaps` — see task 0689 and the note there for why a
+    //       stated drop and not `resizePolyVertexMaps`' length test.
     // v1 DROP set (write-once-then-lose tail — length-correct resize, values
     // ZEROED, a documented limitation, each covered by a "dropped, no crash"
     // test): subdivide (Catmull-Clark UV interpolation is a non-goal), every
@@ -5048,6 +5054,29 @@ struct Mesh {
             if (m.data.length == want) continue; // relocate/append/unchanged → keep
             // Topology rewritten without a relocate ⇒ drop (length-correct, zeroed).
             m.data.length = want;
+            m.data[] = 0.0f;
+        }
+    }
+
+    // STATED drop of every PolyVertex map: length-correct for the current
+    // loops, values zeroed (task 0689). The same END STATE `resizePolyVertexMaps`
+    // reaches for the drop class — but reached because the caller SAYS the
+    // corner space was renumbered, not inferred from a length mismatch.
+    //
+    // The distinction is the whole point. `resizePolyVertexMaps` KEEPS a map
+    // whose length already matches, on the reasoning that a matching length
+    // means the values were placed deliberately. A caller that renumbers
+    // corners WITHOUT changing their TOTAL breaks that reasoning: the length
+    // still matches, so every value is kept — sitting on a foreign corner.
+    // That is silent corruption rather than a documented drop, and no length
+    // check can catch it. Such a caller must call THIS instead (or relocate
+    // properly through `remapPolyVertexMaps` / `carryPolyVertexMaps`).
+    //
+    // No-op when no PolyVertex map is registered.
+    void dropPolyVertexMaps() {
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.PolyVertex) continue;
+            m.data.length = loops.length * m.dim;
             m.data[] = 0.0f;
         }
     }

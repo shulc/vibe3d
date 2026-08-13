@@ -216,7 +216,7 @@ struct MeshEditDelta {
                 edgeSel = e.edgeEndsAfter;
                 haveEdgeSel = true;
             }
-        finalize(m, scope_, edgeSel, haveEdgeSel);
+        finalize(m, scope_, edgeSel, haveEdgeSel, renumbersCorners(log));
         return true;
     }
 
@@ -235,9 +235,73 @@ struct MeshEditDelta {
                 edgeSel = e.edgeEndsBefore;
                 haveEdgeSel = true;
             }
-        finalize(m, scope_, edgeSel, haveEdgeSel);
+        finalize(m, scope_, edgeSel, haveEdgeSel, renumbersCorners(log));
         return true;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Per-corner (PolyVertex) map handling for a replay — task 0689.
+//
+// A replay restores `faces` entry by entry and carries NO map values:
+// `MeshOpEntry.Kind.MeshMapDelta` is a `break; // deferred` stub in both
+// directions. So after a replay that renumbers corners the per-corner values
+// are meaningless, and the ONLY thing standing between the mesh and silent
+// corruption is `resizePolyVertexMaps`' length test inside `buildLoops` —
+// which zeroes the map when the corner TOTAL changed, and KEEPS it when it did
+// not. A replay can renumber corners while keeping their total (drop a face,
+// append one of the same arity — `removeEdgesByMask`'s RemoveFaces+AddFaces
+// pair is that shape), and then every value stays put while the faces beneath
+// it move: face 1 wears face 0's UV. Measured, not argued (task 0689's
+// fixture is tests/test_uv_undo_delta.d).
+//
+// So the replay STATES the drop instead of leaving it to a coincidence of
+// lengths. What counts as a renumbering:
+//
+//   * AddFaces / RemoveFaces — a face inserted or dropped re-slots every
+//     corner after it (and, on a tail append, adds corners with no source).
+//   * ReshapeFaces that CHANGES a face's arity — every corner after that face
+//     shifts by the difference.
+//
+// and what deliberately does NOT:
+//
+//   * ReshapeFaces at EQUAL arity — the face keeps its slots and its corner
+//     count; only the VERTEX each corner points at changes (edge/face extrude
+//     repointing a neighbour at its new inset vertex). Per-corner values are
+//     addressed by (face, corner), so they stay valid, and dropping them here
+//     would lose UV the kernel itself preserved.
+//   * AddVerts / RemoveVerts / Reindex / SetPos — vertex-space edits. A
+//     Reindex rewrites the vertex id INSIDE each corner without moving any
+//     corner, so the per-corner plane is untouched.
+//   * the mark / material / edge-selection deltas — no geometry at all.
+//
+// Residual, stated so it is not mistaken for coverage: an equal-arity reshape
+// that PERMUTES one face's corner order (a winding reversal) keeps the slots
+// but changes what sits under them. Nothing wired to the tracker records that
+// today (`mesh.flip` is snapshot-only — see commands/mesh/flip.d), and the
+// honest fix for it is the same one this whole function is a placeholder for:
+// implement MeshMapDelta so a replay RESTORES the values instead of dropping
+// them. That is deliberately left open — this function is the cheap half of
+// task 0689's fork, and it does not stand in the way of the expensive half.
+// ---------------------------------------------------------------------------
+private bool renumbersCorners(in MeshOpEntry[] log) {
+    foreach (ref e; log) {
+        switch (e.kind) {
+            case MeshOpEntry.Kind.AddFaces:
+            case MeshOpEntry.Kind.RemoveFaces:
+                return true;
+            case MeshOpEntry.Kind.ReshapeFaces:
+                foreach (i, ref before; e.faceListsBefore) {
+                    if (i >= e.faceListsAfter.length) return true;  // malformed ⇒ assume the worst
+                    if (before.length != e.faceListsAfter[i].length) return true;
+                }
+                if (e.faceListsAfter.length != e.faceListsBefore.length) return true;
+                break;
+            default:
+                break;
+        }
+    }
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -899,7 +963,8 @@ private void patchMaterial(ref Mesh m, in uint[] idx, in uint[] vals) {
 // Re-derive edges + loops + map lengths, bump both version counters ONCE.
 // ---------------------------------------------------------------------------
 private void finalize(ref Mesh m, MeshEditScope scope_,
-                      in uint[] edgeSelEnds = null, bool haveEdgeSel = false) {
+                      in uint[] edgeSelEnds = null, bool haveEdgeSel = false,
+                      bool cornersRenumbered = false) {
     // buildLoops() reads `edges` (it does NOT re-derive it), so rebuild the
     // deduplicated edge array from the restored faces FIRST — the same triplet
     // the topology mutators run, and the same canonical edge order the kernels
@@ -920,6 +985,13 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     m.faceMaterial.length         = m.faces.length;
     m.facePart.length             = m.faces.length;
     m.resizeAllMeshMaps();
+    // Per-corner maps (task 0689): a replay that renumbered corners carries no
+    // values for the new corner space, so DROP them explicitly — see
+    // `renumbersCorners` above for which entries count and why the length test
+    // in `resizePolyVertexMaps` (already run by `buildLoops`) cannot be trusted
+    // to catch this on its own. No-op when the mesh has no per-corner map (the
+    // common case) or when nothing renumbered.
+    if (cornersRenumbered) m.dropPolyVertexMaps();
     // Hide (code review, task 0613 — S4): refresh the derived vertex/edge
     // planes NOW, right after the length-resize above and BEFORE the edge
     // selection restore below. `rebuildEdges()` gave `edges`/`edgeIndexMap` a
