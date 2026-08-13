@@ -478,8 +478,14 @@ abstract class CommandWrapperTool : Tool, RefireClient {
     override void drawProperties() {
         // Tool Properties panel renders param widgets via the host's
         // PropertyPanel first; this Apply button sits after them.
+        // Empty label ⇒ commitNow() falls back to `name()` — the SAME entry
+        // label every other commit path uses (Shift+apply, deactivate, Space).
+        // Passing "Apply" here made one operation appear in the History panel
+        // under two different names depending on which gesture finished it
+        // (task 0685 T10); the operation's identity is the tool, the button is
+        // just one way to reach it.
         if (ImGui.Button("Apply"))
-            commitNow("Apply");
+            commitNow("");
     }
 
     override void onParamChanged(string name) {
@@ -845,9 +851,18 @@ unittest {
                                 null, null, null, null);
     t.setUndoBindings(hist, () => new MeshVertexEdit(&m, view, EditMode.Vertices));
 
+    // Count entries through the history's own record hook, throughout. task
+    // 0685 T2: `canUndo()` only proves "the stack is non-empty" — it stays
+    // green for a commit that recorded two entries, or none of its own on top
+    // of an earlier one. The refire-latch half of this test below already
+    // counted; this is the same technique applied to the whole test.
+    size_t recorded = 0;
+    hist.onRecord = (string, uint) { ++recorded; };
+
     // Idle tool: no open edit — the opt-out contract (nothing recorded).
     assert(!t.commitUncommittedEdit(), "no open edit must return false");
-    assert(!hist.canUndo(), "idle commit must not record");
+    assert(recorded == 0, "idle commit must not record");
+    assert(!hist.canUndo(), "idle commit must leave nothing to undo");
 
     // Open a session by hand (same module => private access): baseline = the
     // pre-edit geometry, then displace a vert and mark dirty — exactly the
@@ -858,7 +873,8 @@ unittest {
 
     assert(t.commitUncommittedEdit(), "dirty wrapper session must commit in place");
     assert(!t.hasUncommittedEdit(), "commit must close the open edit");
-    assert(hist.canUndo(), "in-place commit must record exactly its own entry");
+    assert(recorded == 1, "in-place commit must record exactly ONE entry");
+    assert(hist.canUndo(), "and that entry must be on the undo stack");
     assert(t.baseline.length == m.vertices.length
            && t.baseline[0].x == m.vertices[0].x,
            "baseline must advance to the committed geometry");
@@ -868,8 +884,7 @@ unittest {
     // bites: it clears `dirty` and records NOTHING, so answering true there
     // makes the caller consume the click and rebaseline over geometry that has
     // no undo entry.
-    size_t recorded = 0;
-    hist.onRecord = (string, uint) { ++recorded; };
+    recorded = 0;
 
     t.baseline = m.vertices.dup;
     m.vertices[1] = m.vertices[1] + Vec3(0, 0.25f, 0);

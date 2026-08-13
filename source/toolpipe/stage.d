@@ -255,3 +255,97 @@ string[2][] defaultStageListAttrs(Stage s) {
         out_ ~= [p.name, stringifyParam(p)];
     return out_;
 }
+
+// ---------------------------------------------------------------------------
+// Test support: the COMPLEMENT of the per-stage "every knownAttrs() name is
+// settable" pins (task 0685 T1).
+//
+// Those pins assert `knownAttrs ⊆ accepted-by-setAttr`. That is the direction
+// the defect was NOT in. The defect fixed in task 0678 P4 was an UNDER-reported
+// universe — `applySetAttr` accepting a name `knownAttrs()` never mentions —
+// and every forward pin stays green through it, while the forms-engine
+// startup-strict validator (`source/forms.d`, which treats `knownAttrs()` as
+// the stage's whole universe) throws on the first form that binds that name.
+//
+// The complement — `accepted-by-setAttr ⊆ knownAttrs` — cannot be asserted
+// exhaustively: a hand-written `switch` is not enumerable at compile time, so
+// there is no way to ask a stage "what names DO you accept?". What can be
+// asserted is a PROBE: a corpus of names that a maintainer plausibly adds a
+// `case` for, each of which must be rejected unless it is declared. The corpus
+// is deliberately cross-stage — the realistic mistake is copying a `case` arm
+// from a sibling stage and forgetting that the sibling also declares it — plus
+// a handful of generic knob names.
+//
+// Weakening the corpus can only make this check miss a defect; it can never
+// make it report a false one, because a name a stage DOES declare is skipped.
+// So: when a stage gains an attr, nothing here needs touching; when a stage
+// gains a `case` without the declaration, this fires.
+//
+// One stage shape is deliberately NOT a caller: FalloffStage carries ACTION
+// pseudo-attrs (`autosize` / `reverse` / `lassoClear`) that `applySetAttr`
+// accepts and `knownAttrs()` deliberately omits — they are fire-only `cmd`
+// form rows, validated by forms.d as command ids rather than as attrs. A
+// stage with that shape must either declare them or stay off this helper;
+// pointing the probe at it would report a documented design as a defect.
+// ---------------------------------------------------------------------------
+
+version (unittest) {
+    /// Attr names drawn from every shipping pipe stage (snap / falloff /
+    /// action-centre / workplane / symmetry / axis) plus generic knob names.
+    /// Used as the "must be rejected unless declared" probe set — see
+    /// `assertRejectsUndeclaredAttrs`.
+    immutable string[] stageAttrProbeCorpus = [
+        // snap
+        "enabled", "types", "snapMode", "innerRange", "outerRange",
+        "fixedGrid", "fixedGridSize", "fixedGridToggle", "typeToggle",
+        "typeVertex", "typeEdge", "typePolygon", "typeWorkplane",
+        // falloff
+        "type", "shape", "start", "end", "center", "size", "axis", "dist",
+        "steps", "anchorRing", "connect", "screenCx", "screenCy",
+        "screenSize", "transparent", "lassoStyle", "lassoPoly", "lassoClear",
+        "softBorder", "in", "out", "mix", "map", "autosize", "reverse",
+        // action centre
+        "cenX", "cenY", "cenZ", "userPlacedCenter", "userPlacedX",
+        "userPlacedY", "userPlacedZ", "selectSubMode",
+        // workplane
+        "auto", "rotX", "rotY", "rotZ", "mode",
+        // symmetry
+        "offset", "useWorkplane", "topology", "epsilon",
+        // generic knobs a stage might plausibly grow
+        "snapping", "symmetry", "workplane", "falloff", "constrain",
+        "visible", "active", "locked", "strength", "weight", "value",
+        "state", "reset", "scope", "target", "count",
+    ];
+
+    /// Values fed to each probe name. A stage that grew an undeclared `case`
+    /// may only accept SOME shapes of value, so probe several — and a value
+    /// that makes the arm THROW while parsing counts as accepted too (reaching
+    /// a parse at all proves the arm exists).
+    immutable string[] stageAttrProbeValues = [
+        "true", "false", "0", "1", "1.5", "auto", "x", "",
+    ];
+
+    /// Assert `st` rejects every probe name it does not declare in
+    /// `knownAttrs()`. `who` labels the failure (defaults to `st.id()`).
+    void assertRejectsUndeclaredAttrs(Stage st, string who = null) {
+        import std.algorithm : canFind;
+        const label    = who.length ? who : st.id();
+        const declared = st.knownAttrs();
+        foreach (probe; stageAttrProbeCorpus) {
+            if (declared.canFind(probe)) continue;   // legitimately declared
+            foreach (v; stageAttrProbeValues) {
+                bool accepted;
+                try
+                    accepted = st.setAttr(probe, v);
+                catch (Exception)
+                    accepted = true;   // reached a parse ⇒ the arm exists
+                assert(!accepted,
+                       "stage '" ~ label ~ "' accepts setAttr(\"" ~ probe
+                       ~ "\", \"" ~ v ~ "\") but does not list '" ~ probe
+                       ~ "' in knownAttrs() — the forms startup-strict "
+                       ~ "validator's universe is under-reported, so the "
+                       ~ "first form binding it throws at boot (task 0685 T1)");
+            }
+        }
+    }
+}

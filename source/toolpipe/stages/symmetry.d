@@ -346,12 +346,19 @@ public:
     // 6 when enabled), which stage.d's fullParams doc comment forbids
     // outright. `baseSide` stays out deliberately: it is read-only
     // (listAttrs reports it; applySetAttr has no arm for it).
+    // `static immutable` — not a local literal. `params()` is a FILTER over
+    // fullParams(), so the Tool Properties panel calls this every frame the
+    // symmetry section is open, and a local array literal allocated a fresh
+    // 3-entry table each time (task 0685 T9). Same shape as ACEN's
+    // `modeEntries`; a static immutable table passes into `intEnum_` without
+    // a `.dup` (see params.d).
+    private static immutable IntEnumEntry[] axisEntries = [
+        IntEnumEntry(0, "x", "X"),
+        IntEnumEntry(1, "y", "Y"),
+        IntEnumEntry(2, "z", "Z"),
+    ];
+
     override Param[] fullParams() {
-        IntEnumEntry[] axisEntries = [
-            IntEnumEntry(0, "x", "X"),
-            IntEnumEntry(1, "y", "Y"),
-            IntEnumEntry(2, "z", "Z"),
-        ];
         Param[] ps;
         ps ~= Param.bool_   ("enabled", "Enabled", &enabled, false);
         ps ~= Param.intEnum_("axis", "Axis", &axisIndex, axisEntries, 0);
@@ -567,6 +574,7 @@ unittest {
 // every symmetry attr, while an enabled one under-reported 4 of the 6 names
 // applySetAttr accepts (stage.d's fullParams contract forbids both).
 unittest {
+    import toolpipe.stage : assertRejectsUndeclaredAttrs;
     auto st = new SymmetryStage();
     assert(!st.enabled, "fixture assumes the default-constructed stage is off");
 
@@ -595,4 +603,12 @@ unittest {
         assert(p.name != "enabled" && p.name != "topology",
                "status-bar-owned toggles must not appear in the panel");
     }
+
+    // task 0685 T1 — and the COMPLEMENT: the mirror must not be one-way.
+    // Everything above proves `knownAttrs ⊆ accepted`; the defect 0678 P4
+    // fixed was the other inclusion (a `case` with no declaration), which
+    // every assertion above stays green through. `baseSide` is the deliberate
+    // read-only exception and is absent from BOTH sides, so it needs no arm
+    // here. See `assertRejectsUndeclaredAttrs`.
+    assertRejectsUndeclaredAttrs(new SymmetryStage(), "symmetry");
 }

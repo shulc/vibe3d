@@ -2428,8 +2428,14 @@ unittest {
     import buttonset : loadStatusLine, ActionKind, PopupItemKind;
 
     enum yamlPath = "config/statusline.yaml";
+    // A hard fail beats a silent skip for a gate test — but say what to DO
+    // about it (task 0685 T8). The gate (`dub test --config=modeling`) already
+    // runs from the package root; a bare "config/ missing" only ever confused
+    // someone running the unittest binary from elsewhere.
     assert(exists(yamlPath),
-           "coverage test expects the package root as cwd (config/ missing)");
+           "cannot read " ~ yamlPath ~ " — run this test from the package "
+           ~ "root (the directory holding dub.json), e.g. "
+           ~ "`dub test --config=modeling`");
 
     bool[string] got;
     bool sawPopup = false;

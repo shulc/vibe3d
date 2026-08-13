@@ -30,7 +30,6 @@
 
 import std.net.curl;
 import std.json;
-import std.json : JSONType;
 import std.conv : to;
 
 void main() {}

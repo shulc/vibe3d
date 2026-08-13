@@ -359,8 +359,20 @@ string sourceDigest() {
     CRC64ECMA hash;
     hash.start();
     string[] files;
-    foreach (e; dirEntries("source", "*.d", SpanMode.depth))
-        if (e.isFile) files ~= e.name;
+    // `dirEntries` is lazy and stats each entry as it goes, so an editor's
+    // temp file (or a `.d` deleted by a concurrent branch switch) mid-walk
+    // throws FileException — out of a helper whose whole job is answering
+    // "same sources?". A partial walk gives a digest that simply differs,
+    // which the caller already handles as "rebuild"; a stack trace instead
+    // of a test run does not (task 0685 T7).
+    try {
+        foreach (e; dirEntries("source", "*.d", SpanMode.depth))
+            if (e.isFile) files ~= e.name;
+    } catch (Exception e) {
+        stderr.writeln(yellow("source scan interrupted (" ~ e.msg
+                            ~ ") — treating the build as stale"));
+        return "";
+    }
     sort(files);
     foreach (f; files) {
         hash.put(cast(const(ubyte)[]) f);
@@ -372,7 +384,13 @@ string sourceDigest() {
 }
 
 void writeBuildStamp() {
-    try std.file.write(kBuildStampPath, sourceDigest());
+    // Empty = the walk was interrupted (see sourceDigest). Never stamp that:
+    // an empty stamp would compare EQUAL to a second interrupted digest and
+    // certify a stale binary as fresh. Leaving the old stamp in place makes
+    // the next run's comparison fail, which is the safe direction.
+    auto digest = sourceDigest();
+    if (digest.length == 0) return;
+    try std.file.write(kBuildStampPath, digest);
     catch (Exception e) stderr.writeln(yellow("could not write build stamp: " ~ e.msg));
 }
 
@@ -637,11 +655,20 @@ bool waitForHttpReady(string logPath, ushort port) {
     return httpProbe(port);
 }
 
-// Poll /api/camera until it answers 200 (or we give up). Used both after we
-// spawn vibe3d and, in --attach mode, to wait for the external endpoint.
-bool httpProbe(ushort port, int tries = 100) {
-    string probe = format("curl -s -o /dev/null -w '%%{http_code}' " ~
-                          "http://localhost:%d/api/camera", port);
+// Poll /api/camera until it answers 200 (or we give up). Used after we spawn
+// vibe3d, in --attach mode to wait for the external endpoint, and by the
+// end-of-run report to tell a HUNG server from a healthy one.
+//
+// `--max-time` is load-bearing, not hygiene: a server whose accept loop is
+// wedged (task 0652) still gets its connection completed by the kernel's
+// listen backlog, so a bare `curl` CONNECTS and then waits for a reply that
+// never comes — forever, with no timeout of its own. Every caller here would
+// rather have "no" after a few seconds than hang the runner (task 0685 T5).
+bool httpProbe(ushort port, int tries = 100, int timeoutSec = 5) {
+    string probe = format("curl -s -o /dev/null --connect-timeout %d "
+                          ~ "--max-time %d -w '%%{http_code}' "
+                          ~ "http://localhost:%d/api/camera",
+                          timeoutSec, timeoutSec, port);
     for (int i = 0; i < tries; ++i) {
         auto r = executeShell(probe);
         if (r.status == 0 && r.output.strip == "200") return true;
@@ -695,6 +722,51 @@ struct Worker {
     string   scratch;  // per-worker scratch dir
     string   logPath;
     Pid      vibePid;
+    // The OS pid, captured at spawn. `Pid.processID` is only valid until the
+    // process is reaped — after `tryWait` returns `terminated` it reads back a
+    // sentinel (-2), which is exactly when the end-of-run death report wants to
+    // name it (task 0685 T3). Keep our own copy.
+    int      vibePidNum;
+}
+
+// Last `maxLines` lines of `path`, read by seeking from the END rather than
+// slurping the file (task 0685 T4). The report below runs on a FAILING run,
+// and a crash-looping vibe3d's raw stdout+stderr log is exactly the case where
+// it is large — on a CI VM with 7.7 GiB and a history of OOM kills, reading it
+// whole to show 25 lines is the wrong trade.
+string[] tailLines(string path, size_t maxLines) {
+    auto f = File(path, "rb");
+    scope (exit) f.close();
+    immutable size_t chunk = 64 * 1024;
+    ulong pos = f.size;
+    ubyte[] buf;
+    string[] lines;
+    while (true) {
+        immutable ulong step = pos > chunk ? chunk : pos;
+        pos -= step;
+        f.seek(cast(long) pos);
+        auto part = new ubyte[cast(size_t) step];
+        buf   = f.rawRead(part) ~ buf;
+        lines = (cast(string) buf).splitLines;
+        // `>` not `>=`: one spare line absorbs the partial line the chunk
+        // boundary cut in half, which the slice below then drops.
+        if (pos == 0 || lines.length > maxLines) break;
+    }
+    if (lines.length > maxLines) lines = lines[$ - maxLines .. $];
+    return lines;
+}
+
+// Print the tail of a worker's vibe3d log — shared by both arms of the
+// end-of-run server report (died / hung).
+void reportVibeLogTail(ref Worker w) {
+    enum size_t kTailLines = 25;
+    try {
+        auto lines = tailLines(w.logPath, kTailLines);
+        writeln(dim(format("  last %d line(s) of %s:", lines.length, w.logPath)));
+        foreach (line; lines) writeln("    ", line);
+    } catch (Exception e) {
+        writeln(dim("  (its log could not be read: " ~ e.msg ~ ")"));
+    }
 }
 
 bool prepareWorker(ref Worker w) {
@@ -715,6 +787,7 @@ bool prepareWorker(ref Worker w) {
     w.logPath = buildPath(w.scratch, "vibe3d.log");
     w.vibePid = startVibe(w.port, w.logPath);
     if (w.vibePid is null) return false;
+    w.vibePidNum = w.vibePid.processID;   // valid now; a sentinel once reaped
     if (!waitForHttpReady(w.logPath, w.port)) {
         stderr.writefln(red("worker %d: vibe3d on :%d failed to come up"),
             w.id, w.port);
@@ -1186,27 +1259,50 @@ int main(string[] args) {
     // stated reason (task 0678 D9-a follow-up). Name it here: report the dead
     // server FIRST, with the tail of its log, so the real failure is the thing
     // you see rather than something to be inferred from a wall of curl errors.
+    //
+    // A server that HANGS produces the identical wall of connect errors while
+    // `tryWait` reports it perfectly alive — the "one silent peer wedges the
+    // inline accept loop" class from task 0652. The dead-only report walked
+    // past it and the log was deleted a second later, so the second arm below
+    // probes the survivors and reports the ones that no longer answer
+    // (task 0685 T5).
     if (failed > 0) {
         foreach (ref w; workers) {
-            if (w.vibePid is null) continue;
+            if (w.vibePid is null) continue;    // --attach: not ours to judge
             auto st = tryWait(w.vibePid);
-            if (!st.terminated) continue;
+            if (st.terminated) {
+                // `tryWait` REAPED it: the pid number is now free for the
+                // kernel to hand to an unrelated process of this user, and
+                // `cleanup()` would SIGTERM/SIGKILL whatever holds it next.
+                // Retire the slot (task 0685 T6).
+                synchronized {
+                    foreach (ref p; vibePids) if (p == w.vibePidNum) p = 0;
+                }
+                writeln();
+                writefln("%s", red(format(
+                    "worker %d: its vibe3d on :%d (pid %d) DIED during the run "
+                    ~ "(status %d) — every test it had left could only fail to "
+                    ~ "connect", w.id, w.port, w.vibePidNum, st.status)));
+                reportVibeLogTail(w);
+                writeln(dim(format("  a SIGSEGV leaves a coredump: "
+                          ~ "`coredumpctl debug %d --debugger=gdb` names the line",
+                          w.vibePidNum)));
+                continue;
+            }
+            // Alive. Still answering? Two probes, 2 s each — the run is
+            // already over, so anything slower than that stalled the tests too.
+            if (httpProbe(w.port, 2, 2)) continue;
             writeln();
             writefln("%s", red(format(
-                "worker %d: its vibe3d on :%d DIED during the run (status %d) — "
-                ~ "every test it had left could only fail to connect",
-                w.id, w.port, st.status)));
-            try {
-                auto lines = readText(w.logPath).splitLines;
-                immutable size_t from = lines.length > 25 ? lines.length - 25 : 0;
-                writeln(dim(format("  last %d line(s) of %s:",
-                                   lines.length - from, w.logPath)));
-                foreach (line; lines[from .. $]) writeln("    ", line);
-            } catch (Exception e) {
-                writeln(dim("  (its log could not be read: " ~ e.msg ~ ")"));
-            }
-            writeln(dim("  a SIGSEGV leaves a coredump: "
-                      ~ "`coredumpctl debug <pid> --debugger=gdb` names the line"));
+                "worker %d: its vibe3d on :%d (pid %d) is ALIVE but no longer "
+                ~ "answers /api/camera — it HUNG during the run, so every test "
+                ~ "it had left could only fail to connect",
+                w.id, w.port, w.vibePidNum)));
+            reportVibeLogTail(w);
+            writeln(dim(format("  a wedged server is attachable while it lives — "
+                      ~ "re-run with `-k` and then `gdb -p %d` (thread apply "
+                      ~ "all bt); `ss -tnp 'sport = :%d'` shows whether a "
+                      ~ "peer's Recv-Q is stuck", w.vibePidNum, w.port)));
         }
     }
 

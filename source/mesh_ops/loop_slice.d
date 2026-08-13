@@ -859,8 +859,14 @@ mixin template MeshLoopSliceOps() {
         // this, `faceMarks` would stay aligned to the OLD `faces` slot
         // indices and every bit would land on the wrong (or a nonexistent)
         // face.
+        // One estimate, named once, for all three lock-step arrays below — a
+        // `reserve(newWord.capacity)` reads the NEIGHBOUR's already-grown
+        // capacity, so merely moving these declarations apart would silently
+        // reserve 0 (task 0685 T12).
+        immutable size_t faceArrayEstimate =
+            faces.length + rings.length * positions.length * 4;
         uint[] newWord;
-        newWord.reserve(faces.length + rings.length * positions.length * 4);
+        newWord.reserve(faceArrayEstimate);
         // Same lock-step law for the discrete polygon tags (task 0678 M1):
         // `faces = newFaces` renumbers every face (a split ring face emits
         // several sub-faces, shifting everything after it), so
@@ -868,15 +874,15 @@ mixin template MeshLoopSliceOps() {
         // tag lands on the wrong face — resetSelection() only fixes the array
         // LENGTH, not the indexing. Mirrors bevelEdgesByMask's newMat/newPart.
         uint[] newMat, newPart;
-        newMat.reserve(newWord.capacity);
-        newPart.reserve(newWord.capacity);
+        newMat.reserve(faceArrayEstimate);
+        newPart.reserve(faceArrayEstimate);
         // Same lock-step law once more, for the CORNER-indexed planes (task
         // 0682): the ORIGINAL face each emitted face came from, `~0u` when
         // there is no single source (a section cap is stitched from a whole
         // shell's boundary, which can span several ring faces). Only populated
         // when a per-corner map exists; `carryPolyVertexMaps` reads it below.
         uint[] newSrc;
-        if (carryUv) newSrc.reserve(newWord.capacity);
+        if (carryUv) newSrc.reserve(faceArrayEstimate);
 
         // Slice ONE non-quad ring-crossed face (task 0250 "Slice N-gon"). The
         // chord runs from the entry-edge rail to the exit-edge rail, splitting
