@@ -58,6 +58,7 @@ class MeshDelete : Command, Operator {
     private SelectionSnapshot  preSel_;     // vertex/face index-keyed
     private uint[]             preEdgeEnds_; // flat [a,b, a,b, …] for edge mode
     private uint[]             preMarksWord_; // face Subpatch+Hide plane, by pre-op face index
+    private MeshMap[]          preMaps_;      // whole mesh-map set, by value, pre-op
     private bool               useDelta_;
 
     // Stable label: captured once in runKernel() after effectiveDeleteMode
@@ -153,6 +154,18 @@ class MeshDelete : Command, Operator {
             preSel_       = SelectionSnapshot.capture(*mesh);
             preEdgeEnds_  = captureSelectedEdgeEnds(*mesh);
             preMarksWord_ = mesh.faceMarks.dup;   // full marks word, by face index
+            // Mesh maps, deep-copied by value (task 0693 / 0689 remainder).
+            // The delta channel has NO map representation — `MeshMapDelta` is
+            // a stub in both directions — and the replay declares an honest
+            // DROP whenever it renumbers corners, so a delta undo would come
+            // back with the map zeroed even though the KERNEL carried it
+            // correctly on the way in. That is a loss the user sees as
+            // "undo ate my UV". The pre-op copy costs one dup of a plane the
+            // command is about to invalidate anyway; redo needs no "after"
+            // copy because it re-runs the kernel (see the useDelta_ branch
+            // above), which carries the map itself.
+            preMaps_ = new MeshMap[](mesh.meshMaps.length);
+            foreach (i, ref m; mesh.meshMaps) preMaps_[i] = m.dup;
             auto rec = MeshEditTracker();
             mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
             const affected = runKernel();
@@ -164,6 +177,7 @@ class MeshDelete : Command, Operator {
                 preSel_       = SelectionSnapshot.init;
                 preEdgeEnds_  = null;
                 preMarksWord_ = null;
+                preMaps_      = null;
                 return false;
             }
             useDelta_ = true;
@@ -194,6 +208,17 @@ class MeshDelete : Command, Operator {
             // claimed the opposite). `~Marks.Select` drops the Select bit
             // from the captured word so this write can never itself
             // resurrect a stale Select bit ahead of the restore below.
+            // Mesh maps: put back the pre-op planes wholesale (task 0693).
+            // The delta replay drops PolyVertex values whenever it renumbers
+            // corners — an honest drop, but on the way BACK the pre-op state
+            // is exactly what "undo" promises, and we hold it. Restored AFTER
+            // the geometry replay (the maps are sized against it) and BEFORE
+            // the selection restore, which does not touch maps. Empty capture
+            // (mesh had no maps) restores nothing, which is also correct.
+            if (preMaps_.length) {
+                mesh.meshMaps.length = preMaps_.length;
+                foreach (i, ref m; preMaps_) mesh.meshMaps[i] = m.dup;
+            }
             if (preMarksWord_.length) {
                 assert(preMarksWord_.length == mesh.faces.length,
                     "MeshDelete.revert: preMarksWord_ length != restored face "

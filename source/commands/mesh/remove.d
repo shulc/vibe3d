@@ -42,6 +42,7 @@ class MeshRemove : Command, Operator {
     private SelectionSnapshot  preSel_;
     private uint[]             preEdgeEnds_;
     private uint[]             preMarksWord_;
+    private MeshMap[]          preMaps_;   // whole mesh-map set, by value, pre-op
     private bool               useDelta_;
 
     // Stable label: captured once in runKernel() — see MeshDelete.appliedMode_.
@@ -128,6 +129,18 @@ class MeshRemove : Command, Operator {
             preSel_       = SelectionSnapshot.capture(*mesh);
             preEdgeEnds_  = captureSelectedEdgeEnds(*mesh);
             preMarksWord_ = mesh.faceMarks.dup;
+            // Mesh maps, deep-copied by value (task 0693 / 0689 remainder).
+            // The delta channel has NO map representation — `MeshMapDelta` is
+            // a stub in both directions — and the replay declares an honest
+            // DROP whenever it renumbers corners, so a delta undo would come
+            // back with the map zeroed even though the KERNEL carried it
+            // correctly on the way in. That is a loss the user sees as
+            // "undo ate my UV". The pre-op copy costs one dup of a plane the
+            // command is about to invalidate anyway; redo needs no "after"
+            // copy because it re-runs the kernel (see the useDelta_ branch
+            // above), which carries the map itself.
+            preMaps_ = new MeshMap[](mesh.meshMaps.length);
+            foreach (i, ref m; mesh.meshMaps) preMaps_[i] = m.dup;
             auto rec = MeshEditTracker();
             mesh.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
             const affected = runKernel();
@@ -137,6 +150,7 @@ class MeshRemove : Command, Operator {
                 preSel_       = SelectionSnapshot.init;
                 preEdgeEnds_  = null;
                 preMarksWord_ = null;
+                preMaps_      = null;
                 return false;
             }
             useDelta_ = true;
@@ -161,6 +175,17 @@ class MeshRemove : Command, Operator {
             // the selection restore would zero the Select bit restore just
             // set. `~Marks.Select` keeps this write from resurrecting a
             // stale Select bit of its own ahead of the restore.
+            // Mesh maps: put back the pre-op planes wholesale (task 0693).
+            // The delta replay drops PolyVertex values whenever it renumbers
+            // corners — an honest drop, but on the way BACK the pre-op state
+            // is exactly what "undo" promises, and we hold it. Restored AFTER
+            // the geometry replay (the maps are sized against it) and BEFORE
+            // the selection restore, which does not touch maps. Empty capture
+            // (mesh had no maps) restores nothing, which is also correct.
+            if (preMaps_.length) {
+                mesh.meshMaps.length = preMaps_.length;
+                foreach (i, ref m; preMaps_) mesh.meshMaps[i] = m.dup;
+            }
             if (preMarksWord_.length) {
                 assert(preMarksWord_.length == mesh.faces.length,
                     "MeshRemove.revert: preMarksWord_ length != restored face "
@@ -267,4 +292,64 @@ unittest { // edge.remove / edge.delete leave unrelated loose geometry alone
           ~ "rebuildEdges re-derived edges[] from faces[] and wiped a bare wire "
           ~ "edge 20 units from the edit");
     }
+}
+
+// task 0693 — undo of a remove/delete must bring the UV map BACK.
+//
+// Task 0689 closed the first half of the delta path's map behaviour: a replay
+// that renumbers corners now DROPS the plane openly instead of leaving values
+// on foreign corners. This is the second half, and it is the one the user
+// feels: the KERNEL carries UV correctly on the way in (deleteFacesByMask runs
+// the mechanism-(a) relocate), so before this fix the map survived the delete
+// and then vanished on Ctrl+Z — a loss the snapshot path this replaced never
+// had.
+//
+// Fixture keying: each corner's `u` NAMES the vertex it sits on (vertex index
+// + 1), so a value restored onto the WRONG corner fails exactly as loudly as a
+// value that vanished. An "is the map non-empty" assert would only catch the
+// second.
+unittest {
+    import mesh : makeCube, kUvMapName, MapDomain;
+    import std.math : abs;
+    import std.conv : to;
+
+    Mesh m = makeCube();
+    m.buildLoops();
+    auto uv = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    assert(uv !is null);
+    foreach (fi; 0 .. m.faces.length)
+        foreach (k, vi; m.faces[fi]) {
+            const size_t loop = m.faceCornerLoop(cast(uint) fi, cast(uint) k);
+            uv.data[loop * 2]     = cast(float)(vi + 1);
+            uv.data[loop * 2 + 1] = 0.5f;
+        }
+    const size_t cornersBefore = uv.data.length;
+
+    m.syncSelection();   // grow the mark planes before touching them
+    m.selectFace(0);
+    View v = new View(0, 0, 800, 600);
+    auto rm = new MeshRemove(&m, v, EditMode.Polygons);
+    assert(rm.apply(), "mesh.remove must apply to a selected face");
+    assert(m.faces.length == 5, "one face must be gone");
+
+    assert(rm.revert(), "undo must succeed");
+    assert(m.faces.length == 6, "undo must bring the face back");
+
+    auto after = m.meshMap(kUvMapName);
+    assert(after !is null, "undo must not delete the map itself");
+    assert(after.data.length == cornersBefore,
+           "undo must restore the map to its pre-op length");
+
+    size_t zeros = 0;
+    foreach (fi; 0 .. m.faces.length)
+        foreach (k, vi; m.faces[fi]) {
+            const size_t loop = m.faceCornerLoop(cast(uint) fi, cast(uint) k);
+            const float got = after.data[loop * 2];
+            if (got == 0.0f) ++zeros;
+            assert(abs(got - cast(float)(vi + 1)) < 1e-6f,
+                   "corner of face " ~ to!string(fi) ~ " sits on vertex "
+                   ~ to!string(vi) ~ " so it must carry " ~ to!string(vi + 1)
+                   ~ ", got " ~ to!string(got));
+        }
+    assert(zeros == 0, "no corner may come back zeroed");
 }
