@@ -80,12 +80,24 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
     // part's `localToGlobal`). `u`/`v` are the 2-D TXUV value.
     struct VmadEntry { uint point; uint globalPoly; float u, v; }
 
+    // One captured PTAG chunk plus the POLS window its poly indices are local
+    // to. A PTAG binds to the MOST-RECENT POLS chunk, and `localToGlobal[kind]`
+    // accumulates across every POLS chunk of that kind, so the kind alone is not
+    // enough to resolve: `[POLS FACE(a)][PTAG][POLS FACE(b)][PTAG]` is legal and
+    // the second PTAG's local 0 means chunk b's first poly. Remembering the
+    // window `localToGlobal[kind][base .. limit]` (the extent of that one chunk,
+    // frozen at capture) is what keeps it out of chunk a (task 0683 D2).
+    struct PtagCapture {
+        ubyte[] body;
+        int     kind = -1;          // lastPolsKind at capture (0=FACE, 1=PTCH, -1=none)
+        size_t  base, limit;        // window into localToGlobal[kind]
+    }
+
     struct PartBuild {
         Vec3[]   verts;
         uint[][] polys;
         bool[]   polyIsSubpatch;    // parallel to polys
-        ubyte[][] ptagBodies;       // PTAG bodies (filtered to SURF later)
-        int[]     ptagKinds;        // lastPolsKind at capture, parallel to ptagBodies
+        PtagCapture[] ptags;        // PTAG chunks + their POLS window (filtered to SURF later)
         string   name;
         bool     hidden;            // LAYR flags bit 0 (1 => layer hidden)
 
@@ -102,13 +114,24 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         // VMAD on-disk poly indices are POLS-LOCAL (0-based within the most-recent
         // POLS chunk of a given kind). `localToGlobal[kind][local]` is the slot in
         // THIS part's `polys[]` that the local poly was appended to, in on-disk
-        // POLS order. `lastPolsKind` (0=FACE, 1=PTCH, -1=none) records which kind a
-        // following VMAD — or PTAG (task 0678 D3) — binds to; `ptagKinds[i]` is
-        // its value at the moment `ptagBodies[i]` was captured. The pre-fix code
-        // read PTAG indices as FLAT slots, which is only right for a single-kind
-        // layer: on a mixed FACE+PTCH layer the second kind's locals also number
-        // 0..M-1 and landed on (and clobbered) the first kind's slots.
+        // POLS order — or `size_t.max` when that poly has NO slot because we
+        // dropped it (a legal 1- or 2-point POLS entry: a point or a line). The
+        // table has one entry per ON-DISK poly, dropped ones included, because
+        // that is the index space the file numbers in; skipping them instead
+        // would shift every later PTAG and VMAD index by one (task 0683 D1).
+        // `polsBase[kind]` is the table length at the start of the most-recent
+        // POLS chunk of that kind, i.e. where that chunk's local 0 lives.
+        // `lastPolsKind` (0=FACE, 1=PTCH, -1=none) records which kind a following
+        // VMAD — or PTAG (task 0678 D3) — binds to. The pre-fix code read PTAG
+        // indices as FLAT slots, which is only right for a single-kind layer: on
+        // a mixed FACE+PTCH layer the second kind's locals also number 0..M-1 and
+        // landed on (and clobbered) the first kind's slots.
+        // `polsFlatOrder` is the same mapping without the per-kind split: the
+        // k-th on-disk poly of the layer (all POLS chunks, in file order) -> slot
+        // or sentinel. Only the LEGACY positional PTAG decode below reads it.
         size_t[][2] localToGlobal;
+        size_t[2]   polsBase;
+        size_t[]    polsFlatOrder;
         int         lastPolsKind = -1;
     }
 
@@ -200,8 +223,12 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                 if (isFace) ++faceChunks; else ++subpatchChunks;
                 // POLS-local poly index space resets per POLS chunk of a kind; a
                 // following VMAD (and PTAG) binds to the MOST-RECENT POLS chunk.
+                // Record where this chunk's local 0 lands in the accumulated
+                // per-kind table so a consumer can address THIS chunk's window
+                // rather than everything seen so far (task 0683 D2).
                 const int kindIdx = isPtch ? 1 : 0;
                 cur.lastPolsKind  = kindIdx;
+                cur.polsBase[kindIdx] = cur.localToGlobal[kindIdx].length;
                 size_t count0 = cur.polys.length;
                 while (p + 2 <= chunkEnd) {
                     ushort numVerts = readU16(data, p);
@@ -212,13 +239,18 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                     face.reserve(numVerts);
                     for (int i = 0; i < numVerts && p < chunkEnd; i++)
                         face ~= readVX(data, p);
+                    // Record (kind, POLS-local) -> this part's polys[] slot in
+                    // on-disk POLS order, BEFORE the append, so the slot index is
+                    // `cur.polys.length`. EVERY on-disk poly gets an entry: a
+                    // 1-point (point) or 2-point (line) POLS entry is legal LWO2
+                    // and counts in the file's local numbering even though we keep
+                    // no polygon for it, so it takes a SENTINEL instead of being
+                    // skipped — skipping shifted every later PTAG/VMAD index by
+                    // one (task 0683 D1). Consumers drop sentinel hits.
+                    const size_t slot = (face.length >= 3) ? cur.polys.length : size_t.max;
+                    cur.localToGlobal[kindIdx] ~= slot;
+                    cur.polsFlatOrder          ~= slot;
                     if (face.length >= 3) {
-                        // Record (kind, POLS-local) -> this part's polys[] slot in
-                        // on-disk POLS order, BEFORE the append, so the slot index
-                        // is `cur.polys.length`. Only arity-valid polys are mapped;
-                        // a VMAD entry for a skipped <3-vert poly is dropped (its
-                        // local index never enters localToGlobal).
-                        cur.localToGlobal[kindIdx] ~= cur.polys.length;
                         cur.polys          ~= face;
                         cur.polyIsSubpatch ~= isPtch;
                     } else {
@@ -270,14 +302,24 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             // Stash on the CURRENT part; face indices are layer-local.
             ensurePart();
             auto cur = &parts[$ - 1];
-            auto body = data[pos .. chunkEnd].dup;
-            cur.ptagBodies ~= body;
-            cur.ptagKinds  ~= cur.lastPolsKind;
-            lwoInfo(format("PTAG (part %d, size %d, type=%s)",
+            PtagCapture pt;
+            pt.body = data[pos .. chunkEnd].dup;
+            pt.kind = cur.lastPolsKind;
+            if (pt.kind >= 0) {
+                // Freeze the window this PTAG's locals index into: the extent of
+                // the POLS chunk it binds to. Resolution happens after the whole
+                // file is read, by which time the per-kind table may have grown
+                // past this chunk (task 0683 D2).
+                pt.base  = cur.polsBase[pt.kind];
+                pt.limit = cur.localToGlobal[pt.kind].length;
+            }
+            cur.ptags ~= pt;
+            lwoInfo(format("PTAG (part %d, size %d, type=%s, kind=%d, window=%d..%d)",
                             parts.length - 1, sz,
-                            body.length >= 4
-                                ? cast(string) body[0..4].idup
-                                : "?"));
+                            pt.body.length >= 4
+                                ? cast(string) pt.body[0..4].idup
+                                : "?",
+                            pt.kind, pt.base, pt.limit));
         } else if (tagBytes == "VMAP" && chunkEnd - pos >= 6) {
             // Continuous per-point vertex map. Body: type[ID4], dim[U2],
             // name[S0], then (point[VX] + f32 * dim)*. We consume only TXUV
@@ -334,7 +376,11 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                 if (cur.lastPolsKind < 0) {
                     lwoWarn("VMAD TXUV with no preceding POLS in this layer, skipped");
                 } else {
-                    auto l2g = cur.localToGlobal[cur.lastPolsKind];
+                    // Locals are relative to the START of the most-recent POLS
+                    // chunk of this kind, not to everything of that kind seen so
+                    // far — take that chunk's window (task 0683 D2).
+                    const kind = cur.lastPolsKind;
+                    auto l2g = cur.localToGlobal[kind][cur.polsBase[kind] .. $];
                     size_t entries = 0, dropped = 0;
                     while (p < chunkEnd) {
                         uint point     = readVX(data, p);
@@ -348,12 +394,14 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                             if (d < 2) uv[d] = f;
                         }
                         if (short_) break;
-                        if (localPoly < l2g.length) {
+                        if (localPoly < l2g.length && l2g[localPoly] != size_t.max) {
                             cur.vmadUv ~= VmadEntry(point,
                                 cast(uint) l2g[localPoly], uv[0], uv[1]);
                             ++entries;
                         } else {
-                            ++dropped;     // override for a skipped/curve poly
+                            // Out of range, or an override for a poly we kept no
+                            // slot for (a <3-vert point/line entry — sentinel).
+                            ++dropped;
                         }
                     }
                     cur.hasVmad = cur.hasVmad || entries > 0;
@@ -440,14 +488,18 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         // PTAG SURF -> faceMaterial. On-disk poly indices are POLS-LOCAL to
         // the most-recent POLS chunk at the point the PTAG appeared (the same
         // binding rule as VMAD; the writer emits one PTAG per kind right
-        // after that kind's POLS chunk), so remap (kind, local) -> this
+        // after that kind's POLS chunk), so remap (window, local) -> this
         // part's polys[] slot via localToGlobal — flat interpretation only
-        // coincides on a single-kind layer (task 0678 D3).
+        // coincides on a single-kind layer (task 0678 D3), and the window is
+        // that ONE chunk, not the kind's whole accumulated table (0683 D2).
         ip.faceMaterial.length = pb.polys.length;
-        foreach (bi, body; pb.ptagBodies) {
+        foreach (ref pt; pb.ptags) {
+            const body = pt.body;
             if (body.length < 4 || body[0..4] != "SURF") continue;
-            const int kind = (bi < pb.ptagKinds.length) ? pb.ptagKinds[bi] : -1;
-            const l2g = (kind >= 0) ? pb.localToGlobal[kind] : null;
+            // The window is THAT PTAG's POLS chunk, not the whole per-kind table.
+            const l2g = (pt.kind >= 0)
+                ? pb.localToGlobal[pt.kind][pt.base .. pt.limit]
+                : null;
 
             // Count entries first — the count is what tells the two on-disk
             // layouts apart (task 0678 D3 follow-up; the per-kind remap alone
@@ -464,8 +516,11 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             //
             //  * CONFORMANT (this package since the per-kind fix): one PTAG per
             //    POLS chunk, entries POLS-LOCAL to THAT chunk ⇒ remap through
-            //    `localToGlobal[kind]`. Its entry count can never exceed that
-            //    kind's poly count.
+            //    that chunk's window of `localToGlobal[kind]`. Its entry count
+            //    can never exceed the window's poly count — which is why the
+            //    window has an entry for every ON-DISK poly, dropped ones
+            //    included: without the sentinels a file that tags a point/line
+            //    poly would overflow the window and be misread as legacy.
             //  * LEGACY (everything vibe3d exported before that fix, and any
             //    writer emitting a single trailing PTAG): ONE chunk covering
             //    BOTH kinds, entries in emit order — all FACE, then all PTCH —
@@ -479,10 +534,12 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             // The legacy layout is decodable EXACTLY, not by heuristic: this
             // importer appends polys in POLS-chunk order (FACE chunk first,
             // then PTCH), the same order the legacy writer emitted entries in,
-            // so the k-th entry is the k-th poly slot. A PTAG arriving before
-            // any POLS (`kind < 0` — non-conformant, but read correctly by the
-            // pre-D3 flat path) takes the same route rather than being dropped.
-            const bool positional = (kind < 0) || (entryCount > l2g.length);
+            // so the k-th entry is the k-th ON-DISK poly — `polsFlatOrder[k]`,
+            // which carries the sentinel for any poly we kept no slot for. A
+            // PTAG arriving before any POLS (`kind < 0` — non-conformant, but
+            // read correctly by the pre-D3 flat path) takes the same route
+            // rather than being dropped.
+            const bool positional = (pt.kind < 0) || (entryCount > l2g.length);
             size_t ordinal = 0;
             size_t p = 4;
             while (p < body.length) {
@@ -491,10 +548,13 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                 ushort tagIdx = readU16(body, p);
                 p += 2;
                 const size_t slot = positional
-                    ? ordinal
-                    : (localIdx < l2g.length ? l2g[localIdx] : size_t.max);
+                    ? (ordinal   < pb.polsFlatOrder.length ? pb.polsFlatOrder[ordinal] : size_t.max)
+                    : (localIdx  < l2g.length              ? l2g[localIdx]             : size_t.max);
                 ++ordinal;
-                if (slot < ip.faceMaterial.length && tagIdx < tags.length)
+                // size_t.max = the on-disk poly this entry names has no slot of
+                // ours (a dropped <3-vert entry). Never assign through it.
+                if (slot != size_t.max && slot < ip.faceMaterial.length
+                        && tagIdx < tags.length)
                     ip.faceMaterial[slot] = tagIdx;
             }
         }
@@ -701,60 +761,17 @@ unittest {
     import std.path : buildPath;
     import std.process : thisProcessID;
 
-    static void putU2(ref ubyte[] b, ushort v) { b ~= cast(ubyte)(v >> 8); b ~= cast(ubyte)(v & 0xFF); }
-    static void putU4(ref ubyte[] b, uint v) {
-        b ~= cast(ubyte)(v >> 24); b ~= cast(ubyte)((v >> 16) & 0xFF);
-        b ~= cast(ubyte)((v >> 8) & 0xFF); b ~= cast(ubyte)(v & 0xFF);
-    }
-    static void putF4(ref ubyte[] b, float f) {
-        import std.bitmanip : nativeToBigEndian;
-        b ~= nativeToBigEndian(f)[];
-    }
-    static ubyte[] chunk(string id, const(ubyte)[] payload) {
-        ubyte[] c; c ~= cast(const(ubyte)[]) id; putU4(c, cast(uint) payload.length);
-        c ~= payload;
-        if (payload.length % 2) c ~= cast(ubyte) 0;      // IFF pad
-        return c;
-    }
-
     ubyte[] body_;
-    {   // TAGS → tag 0 = Body, tag 1 = Roof
-        ubyte[] t;
-        t ~= cast(const(ubyte)[]) "Body"; t ~= 0; t ~= 0;
-        t ~= cast(const(ubyte)[]) "Roof"; t ~= 0; t ~= 0;
-        body_ ~= chunk("TAGS", t);
-    }
-    {   // PNTS: 5 points
-        ubyte[] p;
-        immutable float[3][5] pts = [[0f,0f,0f],[1f,0f,0f],[1f,1f,0f],[0f,1f,0f],[0.5f,2f,0f]];
-        foreach (v; pts) foreach (c; v) putF4(p, c);
-        body_ ~= chunk("PNTS", p);
-    }
-    {   // POLS FACE: two triangles (locals 0, 1)
-        ubyte[] p; p ~= cast(const(ubyte)[]) "FACE";
-        putU2(p, 3); putU2(p, 0); putU2(p, 1); putU2(p, 2);
-        putU2(p, 3); putU2(p, 0); putU2(p, 2); putU2(p, 3);
-        body_ ~= chunk("POLS", p);
-    }
-    {   // POLS PTCH: one triangle (local 0)
-        ubyte[] p; p ~= cast(const(ubyte)[]) "PTCH";
-        putU2(p, 3); putU2(p, 3); putU2(p, 2); putU2(p, 4);
-        body_ ~= chunk("POLS", p);
-    }
-    {   // ONE trailing PTAG SURF — the legacy shape. Emit order with PER-KIND
-        // locals: FACE 0→Roof, FACE 1→Roof, PTCH 0→Body.
-        ubyte[] p; p ~= cast(const(ubyte)[]) "SURF";
-        putU2(p, 0); putU2(p, 1);
-        putU2(p, 1); putU2(p, 1);
-        putU2(p, 0); putU2(p, 0);
-        body_ ~= chunk("PTAG", p);
-    }
+    // TAGS → tag 0 = Body, tag 1 = Roof
+    body_ ~= tagsChunk(["Body", "Roof"]);
+    body_ ~= pntsChunk([[0f,0f,0f],[1f,0f,0f],[1f,1f,0f],[0f,1f,0f],[0.5f,2f,0f]]);
+    body_ ~= polsChunk("FACE", [[0u,1u,2u], [0u,2u,3u]]);   // locals 0, 1
+    body_ ~= polsChunk("PTCH", [[3u,2u,4u]]);               // local 0
+    // ONE trailing PTAG SURF — the legacy shape. Emit order with PER-KIND
+    // locals: FACE 0→Roof, FACE 1→Roof, PTCH 0→Body.
+    body_ ~= ptagSurfChunk([[0, 1], [1, 1], [0, 0]]);
 
-    ubyte[] file;
-    file ~= cast(const(ubyte)[]) "FORM";
-    putU4(file, cast(uint)(4 + body_.length));
-    file ~= cast(const(ubyte)[]) "LWO2";
-    file ~= body_;
+    ubyte[] file = lwoContainer(body_);
 
     const string path = buildPath(tempDir,
         format("vibe3d_0678_d3_legacy_ptag_%d.lwo", thisProcessID));
@@ -774,4 +791,272 @@ unittest {
     assert(part.faceMaterial[0] == 1, "legacy FACE poly 0 must keep its surface");
     assert(part.faceMaterial[1] == 1, "legacy FACE poly 1 must keep its surface");
     assert(part.faceMaterial[2] == 0, "legacy PTCH poly must keep its surface");
+}
+
+// task 0683 D1 — a POLS chunk may carry polys we keep no polygon for: LWO2
+// 1-point (point) and 2-point (line) entries are legal and writers in the wild
+// emit them (curves, guides, single-point props). They still OCCUPY a
+// POLS-local index, so a table that only maps the >=3-vert ones shifts every
+// later PTAG and VMAD entry by one. Hand-built bytes: our writer emits no such
+// poly, so a round-trip cannot reach this input.
+unittest {
+    import std.file : tempDir, write, remove, exists;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+
+    // POLS FACE, SIX on-disk polys: tri, LINE, tri, tri, tri, tri. Each tri
+    // sits at its own x so the imported poly's source is recoverable from its
+    // first vertex. The PTAG tags the first five (locals 0..4) and leaves the
+    // last untagged, so its entry count stays within the chunk's poly count
+    // with or without the line's table slot — the decode takes the conformant
+    // route either way and the assertions below measure the REMAP, not the
+    // layout classifier.
+    ubyte[] body_;
+    body_ ~= tagsChunk(["T0", "T1", "T2", "T3", "T4"]);
+    body_ ~= pntsChunk([
+        [ 0f,0f,0f], [ 1f,0f,0f], [ 0f,1f,0f],   //  0..2   local 0: tri @ x=0
+        [10f,0f,0f], [11f,0f,0f],                //  3..4   local 1: LINE
+        [20f,0f,0f], [21f,0f,0f], [20f,1f,0f],   //  5..7   local 2: tri @ x=20
+        [30f,0f,0f], [31f,0f,0f], [30f,1f,0f],   //  8..10  local 3: tri @ x=30
+        [40f,0f,0f], [41f,0f,0f], [40f,1f,0f],   // 11..13  local 4: tri @ x=40
+        [50f,0f,0f], [51f,0f,0f], [50f,1f,0f]]); // 14..16  local 5: tri @ x=50
+    body_ ~= polsChunk("FACE", [[0u,1u,2u], [3u,4u], [5u,6u,7u],
+                                [8u,9u,10u], [11u,12u,13u], [14u,15u,16u]]);
+    // A tag per on-disk poly for locals 0..4 — including the LINE's own entry,
+    // which has nowhere to go and must be dropped, not applied to the poly that
+    // follows it. Local 5 is deliberately untagged (legal; it keeps tag 0).
+    body_ ~= ptagSurfChunk([[0, 0], [1, 1], [2, 2], [3, 3], [4, 4]]);
+    // Discontinuous UV on two polys AFTER the line — the entries whose local
+    // index the missing table slot used to shift.
+    body_ ~= vmadTxuvChunk("uv", [
+        VmadFix( 5, 2, 0.25f, 0.75f),      // local 2 => tri @ x=20, corner 0
+        VmadFix(14, 5, 0.5f,  0.125f)]);   // local 5 => tri @ x=50, corner 0
+
+    const string path = buildPath(tempDir,
+        format("vibe3d_0683_d1_line_poly_%d.lwo", thisProcessID));
+    scope (exit) if (exists(path)) remove(path);
+    write(path, lwoContainer(body_));
+
+    ImportedScene scene;
+    assert(sceneFromLwo(path, scene), "LWO with a line poly must import");
+    assert(scene.parts.length == 1);
+    auto part = scene.parts[0];
+    assert(part.faces.length == 5, "the 2-point poly is dropped, the tris stay");
+    const float[5] wantX = [0f, 20f, 30f, 40f, 50f];
+    foreach (i, face; part.faces)
+        assert(part.vertices[face[0]].x == wantX[i],
+               "kept polys keep their on-disk order");
+
+    // PTAG: locals 2..4 name the tris at x=20, 30, 40. Reading the table
+    // without the line's sentinel shifted each of them one poly along — and
+    // handed the LINE's tag to the tri at x=20.
+    const string[5] wantTag = ["T0", "T2", "T3", "T4", "T0"];
+    foreach (i, m; part.faceMaterial) {
+        assert(m < part.surfaces.length, "material index must be in range");
+        assert(part.surfaces[m].name == wantTag[i],
+               "PTAG local index must count the <3-vert poly");
+    }
+
+    // VMAD: same shift, same table. Corner cursor runs face-then-corner over
+    // the KEPT polys: face k owns corners 3k .. 3k+2.
+    assert(part.uv.length == 5 * 3 * 2, "one (u,v) per kept corner");
+    assert(part.uv[3 * 2] == 0.25f && part.uv[3 * 2 + 1] == 0.75f,
+           "VMAD local 2 must land on the tri after the line");
+    assert(part.uv[12 * 2] == 0.5f && part.uv[12 * 2 + 1] == 0.125f,
+           "VMAD local 5 must land on the last tri");
+    foreach (c; [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14])
+        assert(part.uv[c * 2] == 0f && part.uv[c * 2 + 1] == 0f,
+               "no other corner may pick up an override");
+}
+
+// task 0683 D2 — two POLS chunks of the SAME kind, each followed by its own
+// PTAG. The binding rule is "the most-recent POLS chunk", so the second PTAG's
+// local 0 is the second chunk's first poly. Resolving it against the kind's
+// whole accumulated table pointed it back into chunk a — clobbering a's tags
+// and leaving b's polys untagged. Our writer emits one POLS per kind, so this
+// input too is hand-built bytes.
+unittest {
+    import std.file : tempDir, write, remove, exists;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+
+    ubyte[] body_;
+    body_ ~= tagsChunk(["T0", "T1", "T2", "T3"]);
+    body_ ~= pntsChunk([
+        [ 0f,0f,0f], [ 1f,0f,0f], [ 0f,1f,0f],   // 0..2    chunk a, local 0
+        [10f,0f,0f], [11f,0f,0f], [10f,1f,0f],   // 3..5    chunk a, local 1
+        [20f,0f,0f], [21f,0f,0f], [20f,1f,0f],   // 6..8    chunk b, local 0
+        [30f,0f,0f], [31f,0f,0f], [30f,1f,0f]]); // 9..11   chunk b, local 1
+    body_ ~= polsChunk("FACE", [[0u,1u,2u], [3u,4u,5u]]);   // chunk a
+    body_ ~= ptagSurfChunk([[0, 0], [1, 1]]);               // a: T0, T1
+    body_ ~= polsChunk("FACE", [[6u,7u,8u], [9u,10u,11u]]); // chunk b
+    body_ ~= ptagSurfChunk([[0, 2], [1, 3]]);               // b: T2, T3
+    // VMAD binds to the most-recent POLS too: local 0 is chunk b's first poly.
+    body_ ~= vmadTxuvChunk("uv", [VmadFix(6, 0, 0.25f, 0.75f)]);
+
+    const string path = buildPath(tempDir,
+        format("vibe3d_0683_d2_two_pols_%d.lwo", thisProcessID));
+    scope (exit) if (exists(path)) remove(path);
+    write(path, lwoContainer(body_));
+
+    ImportedScene scene;
+    assert(sceneFromLwo(path, scene), "two-POLS-chunk LWO must import");
+    assert(scene.parts.length == 1);
+    auto part = scene.parts[0];
+    assert(part.faces.length == 4, "both chunks' polys must survive, in file order");
+
+    const string[4] wantTag = ["T0", "T1", "T2", "T3"];
+    foreach (i, m; part.faceMaterial) {
+        assert(m < part.surfaces.length, "material index must be in range");
+        assert(part.surfaces[m].name == wantTag[i],
+               "each PTAG binds to ITS OWN POLS chunk, not to the kind's whole table");
+    }
+
+    // Corner cursor: faces 0..3 own corners 0..2, 3..5, 6..8, 9..11.
+    assert(part.uv.length == 4 * 3 * 2);
+    assert(part.uv[6 * 2] == 0.25f && part.uv[6 * 2 + 1] == 0.75f,
+           "VMAD local 0 must land on the SECOND chunk's first poly");
+    foreach (c; [0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11])
+        assert(part.uv[c * 2] == 0f && part.uv[c * 2 + 1] == 0f,
+               "no other corner may pick up an override");
+}
+
+// task 0683 D1, legacy layout — the positional decode counts entries against
+// polys, so a dropped <3-vert poly shifts it exactly like the per-kind table.
+// One trailing PTAG (the legacy shape, see above) over a FACE chunk that
+// carries a line.
+unittest {
+    import std.file : tempDir, write, remove, exists;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+
+    ubyte[] body_;
+    body_ ~= tagsChunk(["Body", "Roof"]);
+    body_ ~= pntsChunk([
+        [ 0f,0f,0f], [ 1f,0f,0f], [ 0f,1f,0f],   // 0..2   FACE local 0: tri @ x=0
+        [10f,0f,0f], [11f,0f,0f],                // 3..4   FACE local 1: LINE
+        [20f,0f,0f], [21f,0f,0f], [20f,1f,0f],   // 5..7   FACE local 2: tri @ x=20
+        [30f,0f,0f], [31f,0f,0f], [30f,1f,0f]]); // 8..10  PTCH local 0: tri @ x=30
+    body_ ~= polsChunk("FACE", [[0u,1u,2u], [3u,4u], [5u,6u,7u]]);
+    body_ ~= polsChunk("PTCH", [[8u,9u,10u]]);
+    // ONE trailing PTAG covering both kinds, entries in emit order (all FACE,
+    // then PTCH) — more entries than the last chunk has polys, so this decodes
+    // positionally: the k-th entry is the k-th ON-DISK poly, line included.
+    body_ ~= ptagSurfChunk([[0, 1], [1, 0], [2, 1], [0, 0]]);
+
+    const string path = buildPath(tempDir,
+        format("vibe3d_0683_d1_legacy_line_%d.lwo", thisProcessID));
+    scope (exit) if (exists(path)) remove(path);
+    write(path, lwoContainer(body_));
+
+    ImportedScene scene;
+    assert(sceneFromLwo(path, scene), "legacy-layout LWO with a line must import");
+    assert(scene.parts.length == 1);
+    auto part = scene.parts[0];
+    assert(part.faces.length == 3);
+    assert(!part.faceSubpatch[0] && !part.faceSubpatch[1] && part.faceSubpatch[2],
+           "poly kinds must be read in POLS order");
+    assert(part.vertices[part.faces[1][0]].x == 20f, "slot 1 is the tri after the line");
+
+    assert(part.surfaces[part.faceMaterial[0]].name == "Roof");
+    assert(part.surfaces[part.faceMaterial[1]].name == "Roof",
+           "the line's entry must be dropped, not applied to the next tri");
+    assert(part.surfaces[part.faceMaterial[2]].name == "Body");
+}
+
+version (unittest) {
+    // -----------------------------------------------------------------------
+    // Byte-fixture builders for the hand-assembled LWO2 files above.
+    // -----------------------------------------------------------------------
+    // These inputs are unreachable through a round-trip: our writer emits none
+    // of these layouts (no <3-vert polys, one POLS per kind, one PTAG per
+    // chunk), so the container is assembled by hand — big-endian scalars, IFF
+    // chunks padded to even size.
+
+    void putU2(ref ubyte[] b, ushort v) {
+        b ~= cast(ubyte)(v >> 8);
+        b ~= cast(ubyte)(v & 0xFF);
+    }
+
+    void putU4(ref ubyte[] b, uint v) {
+        b ~= cast(ubyte)(v >> 24); b ~= cast(ubyte)((v >> 16) & 0xFF);
+        b ~= cast(ubyte)((v >> 8) & 0xFF); b ~= cast(ubyte)(v & 0xFF);
+    }
+
+    void putF4(ref ubyte[] b, float f) {
+        import std.bitmanip : nativeToBigEndian;
+        b ~= nativeToBigEndian(f)[];
+    }
+
+    /// S0: null-terminated, padded to an even total length.
+    void putName(ref ubyte[] b, string s) {
+        b ~= cast(const(ubyte)[]) s;
+        b ~= cast(ubyte) 0;
+        if (s.length % 2 == 0) b ~= cast(ubyte) 0;
+    }
+
+    ubyte[] iffChunk(string id, const(ubyte)[] payload) {
+        ubyte[] c;
+        c ~= cast(const(ubyte)[]) id;
+        putU4(c, cast(uint) payload.length);
+        c ~= payload;
+        if (payload.length % 2) c ~= cast(ubyte) 0;   // IFF pad
+        return c;
+    }
+
+    /// FORM + size + "LWO2" around a body of chunks.
+    ubyte[] lwoContainer(const(ubyte)[] body_) {
+        ubyte[] file;
+        file ~= cast(const(ubyte)[]) "FORM";
+        putU4(file, cast(uint)(4 + body_.length));
+        file ~= cast(const(ubyte)[]) "LWO2";
+        file ~= body_;
+        return file;
+    }
+
+    ubyte[] tagsChunk(const string[] names) {
+        ubyte[] t;
+        foreach (n; names) putName(t, n);
+        return iffChunk("TAGS", t);
+    }
+
+    ubyte[] pntsChunk(const float[3][] pts) {
+        ubyte[] p;
+        foreach (v; pts) foreach (c; v) putF4(p, c);
+        return iffChunk("PNTS", p);
+    }
+
+    /// POLS chunk of `type` ("FACE" / "PTCH"); point indices as 2-byte VX.
+    ubyte[] polsChunk(string type, const uint[][] polys) {
+        ubyte[] p;
+        p ~= cast(const(ubyte)[]) type;
+        foreach (poly; polys) {
+            putU2(p, cast(ushort) poly.length);
+            foreach (v; poly) putU2(p, cast(ushort) v);
+        }
+        return iffChunk("POLS", p);
+    }
+
+    /// PTAG SURF from (poly index, tag index) pairs, written verbatim.
+    ubyte[] ptagSurfChunk(const ushort[2][] entries) {
+        ubyte[] p;
+        p ~= cast(const(ubyte)[]) "SURF";
+        foreach (e; entries) { putU2(p, e[0]); putU2(p, e[1]); }
+        return iffChunk("PTAG", p);
+    }
+
+    /// One discontinuous UV entry: (point, POLS-local poly, u, v).
+    struct VmadFix { ushort point, poly; float u, v; }
+
+    ubyte[] vmadTxuvChunk(string name, const VmadFix[] entries) {
+        ubyte[] p;
+        p ~= cast(const(ubyte)[]) "TXUV";
+        putU2(p, 2);                 // dim
+        putName(p, name);
+        foreach (e; entries) {
+            putU2(p, e.point); putU2(p, e.poly);
+            putF4(p, e.u);     putF4(p, e.v);
+        }
+        return iffChunk("VMAD", p);
+    }
 }
