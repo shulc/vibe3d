@@ -135,9 +135,21 @@ bool acquireRunLock(int timeoutSec) {
         if (waited % 15 == 0)
             writefln(yellow("  still waiting for the other run (%ds)..."), waited);
     }
-    stderr.writeln(red(format("timed out after %ds waiting for the in-progress "
-        ~ "test run to finish; not starting (re-run later, or kill the stale "
-        ~ "runner). Lock: %s", timeoutSec, runLockPath())));
+    // NOT a test failure — nothing ran. Say so first and loudly: this exits
+    // non-zero exactly like a red suite, and telling the two apart used to
+    // take reading the FIRST line of a long log (task 0685 / the 2026-08-13
+    // parallel-agent session, where it was mistaken for a regression).
+    stderr.writeln(red(format(
+        "NO TESTS RAN — timed out after %ds waiting for another test run on "
+        ~ "this host. This is a host-contention exit, not a failing suite.",
+        timeoutSec)));
+    stderr.writeln(dim(
+        "    Several agents/worktrees share one machine and one lock. While\n"
+        ~ "    iterating, run NARROW tests instead: `./run_test.d <name> ...`\n"
+        ~ "    (plus `dub test --config=modeling`, which takes no lock). Save\n"
+        ~ "    the full suite for the merge step."));
+    stderr.writeln(dim(format("    Lock: %s (holder's pid is inside it)",
+                              runLockPath())));
     close(runLockFd);
     runLockFd = -1;
     return false;
