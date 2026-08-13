@@ -662,9 +662,36 @@ mixin template MeshLoopSliceOps() {
         // Only active when the caller supplies a per-loop height array.
         immutable bool profileOn = profileHeights !is null;
 
+        // Per-corner map (UV) carry — task 0682. `faces = newFaces` below
+        // renumbers every CORNER, and this kernel also INSERTS vertices, so the
+        // arity-preserving funnel alone cannot describe the result: see
+        // `Mesh.carryPolyVertexMaps` (mechanism (c)) for the law and why a
+        // second, interpolating pass is needed. Two things are recorded as the
+        // split runs: the ORIGINAL face each emitted face came from (`newSrc`,
+        // pushed in lock-step with `newFaces`, `~0u` for a face with no single
+        // source), and the blend of original vertices behind every inserted
+        // vertex (`vertBlend`). Both are skipped entirely when no per-corner map
+        // is registered — the common case pays nothing.
+        immutable bool carryUv = hasPolyVertexMap();
+        const uint[] oldFaceLoop = carryUv ? captureFaceLoop() : null;
+        PolyVertexBlend[uint] vertBlend;
+
         static void reverseInPlace(uint[] a) {
             size_t i = 0, j = a.length - 1;
             while (i < j) { uint t = a[i]; a[i] = a[j]; a[j] = t; ++i; --j; }
+        }
+
+        // Per-corner map carry (task 0682): record that inserted vertex `nv`
+        // sits at fraction `t` along `va`→`vb`, so its corner values are
+        // interpolated exactly the way its position was. The sources are
+        // ORIGINAL vertices and both are corners of every old face this rail
+        // borders — that is what lets `carryPolyVertexMaps` resolve them
+        // per-face and so keep the two sides of a UV seam in their own islands.
+        void recordRailBlend(uint nv, uint va, uint vb, float t) {
+            PolyVertexBlend b;
+            b.add(va, 1.0f - t);
+            b.add(vb, t);
+            vertBlend[nv] = b;
         }
 
         // Surface normal at a rail edge (task 0256): the average of the incident
@@ -720,12 +747,23 @@ mixin template MeshLoopSliceOps() {
                 Vec3 p3 = railContinuation(vb, va);
                 foreach (float t; positions) {
                     float tt = mirror ? 1.0f - t : t;
-                    mids ~= addVertex(curvatureSplinePoint(p0, va3, vb3, p3, tt, curveTension));
+                    uint nv = addVertex(curvatureSplinePoint(p0, va3, vb3, p3, tt, curveTension));
+                    mids ~= nv;
+                    // Per-corner carry (0682): the CURVATURE branch places the
+                    // vertex off the chord, so there is no geometric fraction on
+                    // the edge to read — the map takes the PARAMETRIC fraction
+                    // `tt` instead, which is the same number the flat branch's
+                    // geometric fraction equals and the same one the spline was
+                    // evaluated at. (The reference capture only covers straight
+                    // rails; this is the honest generalisation, not a measurement.)
+                    if (carryUv) recordRailBlend(nv, va, vb, tt);
                 }
             } else {
                 foreach (float t; positions) {
                     float tt = mirror ? 1.0f - t : t;
-                    mids ~= addVertex(va3 + (vb3 - va3) * tt);
+                    uint nv = addVertex(va3 + (vb3 - va3) * tt);
+                    mids ~= nv;
+                    if (carryUv) recordRailBlend(nv, va, vb, tt);
                 }
             }
             railByKey[k] = cast(uint)rails.length;
@@ -770,6 +808,13 @@ mixin template MeshLoopSliceOps() {
                 foreach (v; rails[rp].midsVa) {
                     uint nv = addVertex(vertices[v]);
                     dup ~= nv;
+                    // Per-corner carry (0682): a Split hi-side duplicate is a
+                    // coincident copy of its lo-side midpoint, so it inherits
+                    // that midpoint's blend verbatim — the two sides differ in
+                    // POSITION (Gap pushes them apart afterwards), never in
+                    // where their corner values come from.
+                    if (carryUv)
+                        if (auto b = v in vertBlend) vertBlend[nv] = *b;
                     splitSeams ~= cast(uint[2])[v, nv];
                     splitSeamDirs ~= dir;
                 }
@@ -825,6 +870,13 @@ mixin template MeshLoopSliceOps() {
         uint[] newMat, newPart;
         newMat.reserve(newWord.capacity);
         newPart.reserve(newWord.capacity);
+        // Same lock-step law once more, for the CORNER-indexed planes (task
+        // 0682): the ORIGINAL face each emitted face came from, `~0u` when
+        // there is no single source (a section cap is stitched from a whole
+        // shell's boundary, which can span several ring faces). Only populated
+        // when a per-corner map exists; `carryPolyVertexMaps` reads it below.
+        uint[] newSrc;
+        if (carryUv) newSrc.reserve(newWord.capacity);
 
         // Slice ONE non-quad ring-crossed face (task 0250 "Slice N-gon"). The
         // chord runs from the entry-edge rail to the exit-edge rail, splitting
@@ -952,7 +1004,19 @@ mixin template MeshLoopSliceOps() {
                             + vertices[B] * (u * (1.0f - v))
                             + vertices[C] * (u * v)
                             + vertices[D] * ((1.0f - u) * v);
-                    grid[i+1][j+1] = addVertex(pt);
+                    uint nv = addVertex(pt);
+                    grid[i+1][j+1] = nv;
+                    // Per-corner carry (0682): a grid-interior vertex is a
+                    // BILERP of the quad's four corners, so its corner values
+                    // take the same four weights its position took.
+                    if (carryUv) {
+                        PolyVertexBlend b;
+                        b.add(A, (1.0f - u) * (1.0f - v));
+                        b.add(B, u * (1.0f - v));
+                        b.add(C, u * v);
+                        b.add(D, (1.0f - u) * v);
+                        vertBlend[nv] = b;
+                    }
                 }
 
             foreach (i; 0 .. Pu + 1)
@@ -981,6 +1045,7 @@ mixin template MeshLoopSliceOps() {
                 newWord ~= word;
                 newMat  ~= mat;
                 newPart ~= part;
+                if (carryUv) newSrc ~= fi;   // every sub-face's UV island source
             }
         }
 
@@ -1023,6 +1088,7 @@ mixin template MeshLoopSliceOps() {
                     newWord  ~= faceAttrOr(faceMarks, fi);
                     newMat   ~= faceAttrOr(faceMaterial, fi);
                     newPart  ~= faceAttrOr(facePart, fi);
+                    if (carryUv) newSrc ~= fi;
                 }
             }
         } else {
@@ -1048,6 +1114,7 @@ mixin template MeshLoopSliceOps() {
                 newWord  ~= faceAttrOr(faceMarks, fi);
                 newMat   ~= faceAttrOr(faceMaterial, fi);
                 newPart  ~= faceAttrOr(facePart, fi);
+                if (carryUv) newSrc ~= fi;   // absorbed mids interpolate in THIS face
             }
         }
 
@@ -1116,6 +1183,11 @@ mixin template MeshLoopSliceOps() {
                     // material would be AA-iteration-order nondeterministic.
                     newMat  ~= 0u;
                     newPart ~= 0u;
+                    // No single source face for a cap (its loop can stitch
+                    // several ring faces), so its corners have no island to
+                    // interpolate in and stay ZERO — the pre-0682 drop
+                    // behaviour, kept deliberately rather than guessed at.
+                    if (carryUv) newSrc ~= ~0u;
                 }
             }
             capBoundaryLoops(loSet);
@@ -1166,6 +1238,17 @@ mixin template MeshLoopSliceOps() {
         }
 
         if (splitPairsOut !is null) *splitPairsOut = splitSeams;
+
+        // Carry the corner-indexed planes (UV) across the rebuild BEFORE
+        // `faces` is replaced — the helper reads the OLD faces to find each
+        // corner's island (task 0682). Leaves every map length-correct for the
+        // new corner count, so the tail `buildLoops`'s `resizePolyVertexMaps`
+        // sees a placed map and no-ops instead of zeroing it.
+        if (carryUv) {
+            assert(newSrc.length == newFaces.length,
+                   "insertEdgeLoopsMulti: newSrc/newFaces length mismatch");
+            carryPolyVertexMaps(newFaces, newSrc, faces.range, oldFaceLoop, vertBlend);
+        }
 
         faces = newFaces;
         // Rebuild faceMarks in lock-step with the just-replaced `faces`

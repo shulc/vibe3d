@@ -154,6 +154,34 @@ struct MeshMap {
     }
 }
 
+/// Provenance of ONE vertex an operation inserted: the blend of ORIGINAL
+/// vertices that produced it, as up to four (vertex, weight) pairs with the
+/// weights summing to 1 — an edge midpoint uses two, a quad bilerp four.
+///
+/// Consumed by `Mesh.carryPolyVertexMaps` (per-corner map carry, mechanism (c),
+/// task 0682): a corner sitting on an inserted vertex takes the SAME weighted
+/// combination of the source face's corner VALUES that its position took of the
+/// source face's corner POSITIONS. Four is the ceiling because it covers every
+/// insertion the mesh kernels perform (edge split, bilerp); a hypothetical
+/// wider blend is rejected by `add` rather than silently truncated to a
+/// non-normalised subset (see `full`).
+struct PolyVertexBlend {
+    uint[4]  src = [~0u, ~0u, ~0u, ~0u];
+    float[4] w   = [0.0f, 0.0f, 0.0f, 0.0f];
+    ubyte    n   = 0;
+    /// True once a 5th source was refused — the record is then unusable and
+    /// `carryPolyVertexMaps` leaves such a corner at zero rather than applying
+    /// a partial (weights < 1) blend.
+    bool     overflow = false;
+
+    void add(uint vertex, float weight) {
+        if (n >= 4) { overflow = true; return; }
+        src[n] = vertex;
+        w[n]   = weight;
+        ++n;
+    }
+}
+
 /// Half-edge dart: represents the directed edge vert → next(vert) inside one face.
 struct Loop {
     uint vert;   // start vertex of this dart
@@ -5059,6 +5087,143 @@ struct Mesh {
     static uint oldFaceLoopIndex(const uint[] oldFaceLoop, uint oldFi, uint corner) {
         if (oldFi >= oldFaceLoop.length) return ~0u;
         return oldFaceLoop[oldFi] + corner;
+    }
+
+    // Index of `vertex` in a face's corner list, or `~0u`. First occurrence
+    // wins — a well-formed face lists each vertex once, and a degenerate one
+    // (the same vertex twice) has no better answer to give.
+    static uint cornerOfVertexInFace(const(uint)[] face, uint vertex) {
+        foreach (k, v; face)
+            if (v == vertex) return cast(uint)k;
+        return ~0u;
+    }
+
+    // Mechanism (c) — arity-CHANGING rebuild that also INSERTS vertices
+    // (task 0682). Loop Slice, the bevel family and extrude rebuild `faces`
+    // wholesale AND create vertices that did not exist before (rail midpoints,
+    // chamfer strips, grid interiors). Mechanism (b) cannot describe them: the
+    // funnel copies ONE old corner into ONE new corner, so a corner standing on
+    // a brand-new vertex has no old corner to copy and can only come out `~0u`
+    // ⇒ zero. That is exactly why those ops sat in the v1 DROP set.
+    //
+    // The measured law (tests/fixtures/uv_corner_transfer.json, frozen from the
+    // reference editor) is an INTERPOLATION inside the source face's own UV
+    // island: a vertex inserted at fraction t along edge a→b takes
+    // `lerp(uv(a), uv(b), t)`, where `uv(a)`/`uv(b)` are the corner values OF
+    // THE FACE BEING REBUILT — not of some canonical per-vertex value. That is
+    // what makes a UV seam survive a cut: the two faces meeting at the split
+    // edge each interpolate their own corners and each lands in its own island.
+    //
+    // So the caller supplies, per NEW face, the OLD face it came from
+    // (`srcFaceOfNewFace`, `~0u` for a face with no single source), and per
+    // INSERTED vertex, the blend of ORIGINAL vertices that produced it
+    // (`blendOfNewVertex`). Every new corner is then resolved against the
+    // SOURCE OLD FACE's corner list:
+    //   * its vertex is one the old face already had ⇒ a plain copy, routed
+    //     through the shared `remapPolyVertexMaps` funnel (mechanism (a)/(b));
+    //   * its vertex is a blend of vertices the old face had ⇒ a weighted sum
+    //     of those corners' values, applied in a SECOND pass straight over the
+    //     map data.
+    //
+    // WHY THE SECOND PASS EXISTS: the funnel's contract is one old corner per
+    // new corner. A weighted sum of two or four corners is not expressible in
+    // it without changing the signature every existing caller passes, and it is
+    // a VALUE operation on one map's floats rather than a relocation of corner
+    // identity — the two belong in different passes. The funnel still does all
+    // the relocation; this only fills the corners it had to zero.
+    //
+    // Blend sources are looked up in the OLD face, NOT the new one, so a rail
+    // midpoint whose far endpoint is no longer a corner of the sub-face it
+    // landed in (every ring-split cap face) still interpolates correctly.
+    //
+    // Anything unresolvable is left ZERO — precisely the pre-0682 drop
+    // behaviour, never a guess: a face with no source (a cap polygon stitched
+    // from several ring faces has no single old face to read an island from), a
+    // blend source the old face never had, or an over-wide blend.
+    //
+    // Call BEFORE the tail `buildLoops` and BEFORE `faces` is replaced (it
+    // reads the old `faces` through `oldFaces`); the map is left length-correct
+    // for the new corner count, so `resizePolyVertexMaps` then no-ops.
+    void carryPolyVertexMaps(const(uint[])[] newFaces,
+                             const(uint)[]   srcFaceOfNewFace,
+                             const(uint[])[] oldFaces,
+                             const(uint)[]   oldFaceLoop,
+                             const PolyVertexBlend[uint] blendOfNewVertex) {
+        if (!hasPolyVertexMap()) return;
+
+        // One resolved interpolation: which NEW corner, from which OLD corners,
+        // at which weights. Built in the same pass as `oldLoopOfNewLoop` so the
+        // face/corner walk happens once.
+        struct LoopBlend {
+            size_t   newLoop;
+            uint[4]  oldLoop;
+            float[4] w;
+            ubyte    n;
+        }
+
+        uint[]      oldLoopOfNewLoop;
+        LoopBlend[] blends;
+        size_t      newLoop = 0;
+        oldLoopOfNewLoop.reserve(newFaces.length * 4);
+
+        foreach (nfi, nf; newFaces) {
+            const uint oldFi = (nfi < srcFaceOfNewFace.length)
+                             ? srcFaceOfNewFace[nfi] : ~0u;
+            const(uint)[] of = (oldFi < oldFaces.length) ? oldFaces[oldFi] : null;
+            foreach (v; nf) {
+                uint copyFrom = ~0u;
+                if (of !is null) {
+                    const uint c = cornerOfVertexInFace(of, v);
+                    if (c != ~0u) {
+                        copyFrom = oldFaceLoopIndex(oldFaceLoop, oldFi, c);
+                    } else if (auto b = v in blendOfNewVertex) {
+                        LoopBlend lb;
+                        lb.newLoop = newLoop;
+                        bool ok = !b.overflow && b.n > 0;
+                        foreach (i; 0 .. b.n) {
+                            const uint sc = cornerOfVertexInFace(of, b.src[i]);
+                            if (sc == ~0u) { ok = false; break; }
+                            lb.oldLoop[i] = oldFaceLoopIndex(oldFaceLoop, oldFi, sc);
+                            lb.w[i]       = b.w[i];
+                            if (lb.oldLoop[i] == ~0u) { ok = false; break; }
+                        }
+                        if (ok) { lb.n = b.n; blends ~= lb; }
+                    }
+                }
+                oldLoopOfNewLoop ~= copyFrom;
+                ++newLoop;
+            }
+        }
+
+        // The funnel REPLACES each map's `data`, and the blend pass reads its
+        // sources in the OLD corner space — so snapshot first.
+        float[][] oldData;
+        oldData.reserve(meshMaps.length);
+        foreach (ref m; meshMaps)
+            oldData ~= (m.domain == MapDomain.PolyVertex) ? m.data : null;
+
+        remapPolyVertexMaps(oldLoopOfNewLoop);
+
+        size_t mi = 0;
+        foreach (ref m; meshMaps) {
+            const float[] src = oldData[mi++];
+            if (m.domain != MapDomain.PolyVertex) continue;
+            const ubyte dim = m.dim;
+            foreach (ref b; blends) {
+                const size_t dst = b.newLoop * dim;
+                if (dst + dim > m.data.length) continue;  // defensive
+                foreach (d; 0 .. dim) m.data[dst + d] = 0.0f;
+                bool complete = true;
+                foreach (i; 0 .. b.n) {
+                    const size_t ob = cast(size_t)b.oldLoop[i] * dim;
+                    if (ob + dim > src.length) { complete = false; break; }
+                    foreach (d; 0 .. dim)
+                        m.data[dst + d] += src[ob + d] * b.w[i];
+                }
+                if (!complete)
+                    foreach (d; 0 .. dim) m.data[dst + d] = 0.0f;
+            }
+        }
     }
 
     // True iff at least one PolyVertex map is registered. Mutators take the
