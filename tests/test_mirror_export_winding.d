@@ -193,6 +193,18 @@ string mirroredTwoLayerDoc(string stem) {
     return p;
 }
 
+/// Delete an exported file AND the sidecars assimp writes next to it — `.bin`
+/// for glTF, `.mtl` for OBJ. Removing only the named file leaves those behind in
+/// /tmp on every suite run.
+void cleanExport(string path) {
+    import std.path : stripExtension;
+    if (exists(path)) remove(path);
+    foreach (side; [".bin", ".mtl"]) {
+        const s = stripExtension(path) ~ side;
+        if (exists(s)) remove(s);
+    }
+}
+
 /// Load `src`, export to `out_`, then RESET (so the reload cannot inherit the
 /// source document's own transform) and load the export back.
 void roundTrip(string src, string out_) {
@@ -231,7 +243,7 @@ unittest {
                  ~ "expected 2.0) — the winding assertion above is vacuous "
                  ~ "without it", ext, c.x));
 
-        remove(dst);
+        cleanExport(dst);
     }
     remove(src);
 }
@@ -253,7 +265,7 @@ unittest {
         const dst = tmp("plain-rt", ext);
         roundTrip(src, dst);
         assertAllOutward(model(), "unmirrored layer -> " ~ ext);
-        remove(dst);
+        cleanExport(dst);
     }
     remove(src);
 }
@@ -294,7 +306,7 @@ unittest {
             ext ~ ": both the mirrored and the plain layer must survive the "
                 ~ "round trip (they are separated by centroid sign)");
 
-        remove(dst);
+        cleanExport(dst);
     }
     remove(src);
 }
