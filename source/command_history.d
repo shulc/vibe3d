@@ -621,25 +621,29 @@ final class CommandHistory {
             undoStack = undoStack[$ - maxDepth .. $];
         redoStack.length = 0;
 
-        // Macro hook (task 0678 D9-a): record() fires onRecord for every
-        // entry, and this sibling silently did not — a recorded macro
-        // dropped the tool-drop steps and replayed with the tool left
-        // armed. The entry's own wire name is NOT the replay line:
-        // "tool.deactivate" is not a registered command, so a macro
-        // carrying it verbatim would hold a dead string (the C1 replay
-        // class audit #2 fixed). The replayable spelling of a tool drop
-        // is `tool.set <id> off`, which the registry resolves. The other
-        // two divergences from record() stay deliberate: no isUndoable
-        // gate (lifecycle entries are undoable by construction) and
-        // args=="" on the ENTRY (the command carries no wire args; the
-        // macro line above is built from droppedId instead).
-        if (onRecord !is null) {
-            import commands.tool.lifecycle : ToolDeactivationCommand;
-            if (auto td = cast(ToolDeactivationCommand) cmd) {
-                if (td.droppedId.length > 0)
-                    onRecord("tool.set " ~ td.droppedId ~ " off", flags);
-            }
-        }
+        // NO macro hook here — and that is DELIBERATE (task 0678 D9-a,
+        // reverted after measuring what the hook actually produced).
+        //
+        // The audit flagged this sibling for not calling `onRecord`, and the
+        // premise was that a recorded macro therefore "replays with the tool
+        // left armed". Both halves are false, measured on a live server:
+        //
+        //   * A macro never contained the ARMING line either. The recorder is
+        //     fed only from `onRecord`, and `record()` returns on
+        //     `!cmd.isUndoable` BEFORE firing it; `ToolSetCommand` carries
+        //     CmdFlags.SideEffect, so `tool.set <id> on` never reaches a macro.
+        //     There is no arming step for a drop step to balance.
+        //   * The line a drop would emit is actively harmful. `tool.set <id>
+        //     off` IGNORES the id and deactivates whatever is active
+        //     (commands/tool/set.d), so replaying a macro recorded from an
+        //     ordinary session would drop the user's armed tool — committing
+        //     or discarding an open edit that has nothing to do with the macro.
+        //
+        // Recording tool lifecycle in macros needs the SYMMETRIC pair (arm and
+        // drop, both id-addressed), not this one line. Until then the silence
+        // is correct. The other two divergences from record() are deliberate
+        // too: no isUndoable gate (lifecycle entries are undoable by
+        // construction) and args=="" (the command carries no wire args).
     }
 
     /// Record `cmd` as ONE in-session entry of the run identified by `runId`.
@@ -2165,9 +2169,10 @@ version(unittest) {
     }
 }
 
-// task 0678 D9-a — recordToolLifecycle must feed the macro recorder, and must
-// feed it a REPLAYABLE line: "tool.deactivate" is not a registered command,
-// so the correct spelling of a recorded tool drop is `tool.set <id> off`.
+// task 0678 D9-a (REVERTED) — recordToolLifecycle deliberately does NOT feed
+// the macro recorder; see the comment at its emit point for the measurements
+// that overturned the original finding. Pin the silence so a future "fix" has
+// to re-read that reasoning instead of re-deriving the same broken line.
 unittest {
     import mesh : Mesh, makeCube;
     import view : View;
@@ -2180,14 +2185,11 @@ unittest {
 
     string[] lines;
     hist.onRecord = (string line, uint flags) { lines ~= line; };
-
     hist.recordToolLifecycle(new ToolDeactivationCommand(&m, v, EditMode.Vertices, "move"));
-    assert(lines.length == 1, "lifecycle record must fire the macro hook");
-    assert(lines[0] == "tool.set move off",
-           "the macro line must be the registry-replayable spelling");
 
-    // No dropped id => nothing replayable => the hook must stay silent
-    // (an empty `tool.set  off` line would be a dead string in the macro).
-    hist.recordToolLifecycle(new ToolDeactivationCommand(&m, v, EditMode.Vertices, ""));
-    assert(lines.length == 1, "id-less lifecycle entry must not emit a macro line");
+    assert(lines.length == 0,
+           "a tool drop must not reach the macro recorder on its own: the "
+           ~ "matching arm step never does either, and `tool.set <id> off` "
+           ~ "ignores the id and would drop whatever tool the replay finds armed");
+    assert(hist.canUndo(), "the lifecycle entry itself must still be recorded");
 }
