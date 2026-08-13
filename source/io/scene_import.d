@@ -24,6 +24,14 @@ module io.scene_import;
 //   aiProcess_FlipWindingOrder — those would MIRROR a right-handed source and
 //   invert winding, which is exactly wrong here.
 //
+//   That is a statement about the SCENE's space, not about individual nodes: a
+//   single node inside a right-handed scene may still carry a MIRRORING
+//   transform (negative determinant), and baking it into points without
+//   reversing the face corner order lands that node inside-out. `partFromMesh`
+//   therefore applies the per-node winding term itself (task 0691) — the
+//   global flags stay off, because they would also flip the nodes that are NOT
+//   mirrored.
+//
 // Exact aiImportFile flags (see `importFlags` below):
 //   aiProcess_JoinIdenticalVertices  cheap pre-reduction (the authoritative
 //                                    reduction is the positional weld in B5).
@@ -177,6 +185,34 @@ private ImportedPart partFromMesh(const(aiMesh)* mesh, const float[16] world,
             Vec3(cast(float) v.x, cast(float) v.y, cast(float) v.z));
     }
 
+    // Task 0691 — the winding term the bake above is missing on its own. A
+    // node whose ACCUMULATED world matrix has a negative determinant MIRRORS
+    // the geometry: the points move, the face index order does not, and every
+    // normal flips, so a foreign glTF/FBX with a mirrored node (an ordinary
+    // instancing idiom in other editors) would import inside-out. Neither
+    // assimp reader compensates — verified by measurement on this build
+    // (assimp 6.0.5): before this line a mirrored-node cube arrived with ALL
+    // faces wound inward, in glTF `matrix` form, glTF TRS `scale` form and
+    // ASCII FBX `Lcl Scaling` form alike. The GLOBAL flags stay off (module
+    // header, decision B3): `aiProcess_MakeLeftHanded` /
+    // `aiProcess_FlipWindingOrder` would mirror the WHOLE scene, including the
+    // un-mirrored nodes; the compensation belongs per node, right here.
+    //
+    // `world` is the accumulated `parentWorld * local`, so a mirror inherited
+    // from an ancestor counts, and two mirrors in one chain cancel — the
+    // predicate is a determinant, not a "did anyone mirror" flag.
+    //
+    // The predicate is shared with the export boundary (`io/scene_ir`,
+    // `io/lwo_export`, `io/scene_export`, task 0684) and with the
+    // primitive-creation boundary (`create_common.frameIsLeftHanded`); do not
+    // grow a second determinant here.
+    //
+    // No double flip against our own exports: since 0684 a mirroring layer is
+    // baked in place on the way out (points transformed, winding reversed,
+    // node transform left IDENTITY), so a vibe3d-written file carries no
+    // mirrored node for this to act on.
+    const bool flipWinding = matrixMirrorsWinding(world);
+
     // UV (decision A4 REVERSED for UV — GAP 4). assimp stores UV PER-VERTEX on
     // its split vertices in `mTextureCoords[0]`; we capture a per-CORNER stream
     // NOW, against the ORIGINAL (pre-weld) face corners, so the discontinuous UV
@@ -198,15 +234,24 @@ private ImportedPart partFromMesh(const(aiMesh)* mesh, const float[16] world,
     foreach (fi; 0 .. mesh.mNumFaces) {
         const aiFace f = mesh.mFaces[fi];
         if (f.mNumIndices < 3) continue;   // dropped here ⇒ its UV corners are never appended
+        // `srcCorner(k)` is THE corner-order mapping for this face: the identity
+        // normally, reversed when the bake above mirrors (0691). The index array
+        // AND the per-corner UV stream both read through it, so a corner keeps
+        // its own UV across the reversal — reversing the indices alone would
+        // shear the per-corner plane by one face. Same shape as
+        // `io/scene_ir.flattenDocument`'s `srcCorner`, deliberately.
+        uint srcCorner(uint k) {
+            return flipWinding ? (f.mNumIndices - 1 - k) : k;
+        }
         uint[] idx;
         idx.length = f.mNumIndices;
         foreach (k; 0 .. f.mNumIndices)
-            idx[k] = f.mIndices[k];
+            idx[k] = f.mIndices[srcCorner(k)];
         faces ~= idx;
 
         if (hasUv) {
             foreach (k; 0 .. f.mNumIndices) {
-                const uint vi = f.mIndices[k];
+                const uint vi = f.mIndices[srcCorner(k)];
                 const t = mesh.mTextureCoords[0][vi];   // per-vertex UV at this corner's vertex
                 uv ~= [cast(float) t.x, cast(float) t.y];
             }
