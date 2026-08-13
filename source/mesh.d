@@ -707,10 +707,21 @@ struct Mesh {
     //       `oldLoopOfNewLoop` PLUS a `PolyVertexBlend` per inserted vertex, and
     //       call `carryPolyVertexMaps` (which runs the funnel and then a second,
     //       interpolating pass). Wired in `insertEdgeLoopsMulti` (Loop Slice,
-    //       task 0682); the law it implements is frozen in
-    //       tests/fixtures/uv_corner_transfer.json.
+    //       task 0682), `addEdgePoint` (the `mesh.addPoint` command — one
+    //       corner spliced into each incident winding, blended by the same
+    //       edge-split law) and `spikeFacesByMask` (task 0690; no blends — the
+    //       rim corners copy, the apex is left at the honest zero). The law is
+    //       frozen in tests/fixtures/uv_corner_transfer.json.
     //   append — `addFace`/`addFaceFast` grow+zero-fill the new corners
-    //       ATOMICALLY (GAP-3, no element-count window).
+    //       ATOMICALLY (GAP-3, no element-count window). Bulk kernels that
+    //       cannot use `addFace` (they rebuild edges once and commit one
+    //       change) MUST append through `appendFaceRaw`, which does the same
+    //       growth: a bare `faces ~= …` leaves the map short and the tail
+    //       `buildLoops` then zeroes it WHOLE — losing the UV of faces the
+    //       operation never touched, which is strictly worse than the drop
+    //       below. Wired in array (linear / radial / grid), mirror, duplicate,
+    //       clipboard paste (`appendGeometry`) and the cut's cap polygons
+    //       (task 0690).
     //   snapshot restore — values come back via the captured map `dup`.
     //   undo/redo delta replay — `MeshEditDelta.apply`/`revert` restore the
     //       face array entry by entry and carry NO map values (its
@@ -721,15 +732,28 @@ struct Mesh {
     // v1 DROP set (write-once-then-lose tail — length-correct resize, values
     // ZEROED, a documented limitation, each covered by a "dropped, no crash"
     // test): subdivide (Catmull-Clark UV interpolation is a non-goal), every
-    // primitive factory rebuild, `extrudeEdgesByMask`, edge-extend, bridge,
-    // subpatch cage build, and the bevel family. These end in `buildLoops`, so
-    // `resizePolyVertexMaps` makes them length-correct + zeroed. The reference
-    // law for the bevel and extrude families IS measured (same fixture, cases
-    // `edge_bevel_*` / `face_extrude_*` / `face_bevel_*`) — they stay in the
-    // drop set because their carry needs machinery mechanism (c) does not yet
-    // have: a per-CORNER source face (a chamfer strip has two source faces, one
-    // per side) and, for extrude, a fresh wall parameterisation that is not a
-    // blend of any existing corner. See doc/uv_maps_plan.md D5.
+    // primitive factory rebuild, `extrudeEdgesByMask` / `extrudeVerticesByMask`
+    // / `extrudeFacesByMask` / `smoothShiftFacesByMask`, edge-extend, bridge,
+    // path-extrude (revolve), subpatch cage build, the bevel family, the
+    // plane-cut / edge-slice chord split (`rebuildFacesWithChordSplits`), the
+    // vertex-merge tail (`applyVertexRemapAndRebuild`) and the delta undo/redo
+    // replay (`mesh_edit_delta` — it has no map channel at all:
+    // `MeshOpEntry.Kind.MeshMapDelta` is a deferred stub in both directions, so
+    // a partial carry there would read as support it does not have). These end
+    // in `buildLoops`, so `resizePolyVertexMaps` makes them length-correct +
+    // zeroed. The reference law for the bevel and extrude families IS measured
+    // (same fixture, cases `edge_bevel_*` / `face_extrude_*` / `face_bevel_*`)
+    // — they stay in the drop set because their carry needs machinery mechanism
+    // (c) does not yet have: a per-CORNER source face (a chamfer strip has two
+    // source faces, one per side) and, for extrude, a fresh wall
+    // parameterisation that is not a blend of any existing corner. See
+    // doc/uv_maps_plan.md D5.
+    //
+    // The drop set is deliberately about NEW corners. A kernel whose corner
+    // count changes drops the map for the WHOLE mesh, so the two are only the
+    // same thing for a kernel that rewrites every face; anything more local
+    // (append a face, splice one corner) must carry or grow instead, or the
+    // untouched half of the mesh pays for the edit (task 0690).
     //
     // Discrete polygon tags (`faceMaterial`, a per-face surface INDEX) are
     // deliberately NOT mesh maps: a float channel cannot represent an integer
@@ -3438,7 +3462,7 @@ struct Mesh {
                 cloned.length = src.length;
                 foreach (k, vid; src) cloned[k] = vertMap[vid];
                 newFaceIndices ~= faces.length;
-                faces ~= cloned;
+                appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
             }
         }
 
@@ -3594,7 +3618,7 @@ struct Mesh {
                 cloned.length = src.length;
                 foreach (k, vid; src) cloned[k] = vertMap[vid];
                 newFaceIndices ~= faces.length;
-                faces ~= cloned;
+                appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
             }
         }
 
@@ -3885,7 +3909,7 @@ struct Mesh {
                         foreach (m, vid; src) cloned[m] = vertMap[vid];
                         if (invertPolygons) reverse(cloned);
                         newFaceIndices ~= faces.length;
-                        faces ~= cloned;
+                        appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
                     }
                 }
             }
@@ -3940,12 +3964,38 @@ struct Mesh {
                 keptSelected.reserve(faces.length);
                 keptMaterial.reserve(faces.length);
                 keptPart    .reserve(faces.length);
+                // Per-corner (UV) relocate — mechanism (a). This rebuild drops
+                // whole DUPLICATE faces but keeps every survivor's corner
+                // count, so each kept corner has exactly one old corner. Without
+                // the relocate the tail `buildLoops` would find a wrong-length
+                // map and zero it WHOLE — undoing, for the entire mesh, the
+                // append-time growth the clone loop above just did (task 0690).
+                //
+                // The CSR offsets are recomputed here rather than read from
+                // `faceLoop`: `weldCoincidentVertices` just above rewrites face
+                // windings WITHOUT a `buildLoops`, so the cached offsets are
+                // stale by this point.
+                const bool remapUv = hasPolyVertexMap();
+                uint[] dedupFaceLoop;
+                uint[] oldLoopOfNewLoop;
+                if (remapUv) {
+                    dedupFaceLoop.length = faces.length;
+                    uint acc = 0;
+                    foreach (fi, ref f; faces) {
+                        dedupFaceLoop[fi] = acc;
+                        acc += cast(uint)f.length;
+                    }
+                    oldLoopOfNewLoop.reserve(acc);
+                }
                 foreach (fi, ref f; faces) {
                     auto sorted = f.dup;
                     sort(sorted);
                     string fp = format("%(%d,%)", sorted);
                     if (fp in seenFp) continue;
                     seenFp[fp] = true;
+                    if (remapUv)
+                        foreach (c; 0 .. f.length)
+                            oldLoopOfNewLoop ~= dedupFaceLoop[fi] + cast(uint)c;
                     keptFaces    ~= f;
                     keptWord     ~= faceAttrOr(faceMarks, fi);
                     keptOrder    ~= faceAttrOr(faceSelectionOrder, fi);
@@ -3954,6 +4004,7 @@ struct Mesh {
                     keptPart     ~= faceAttrOr(facePart, fi);
                 }
                 faces              = keptFaces;
+                if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
                 // keptSelected is applied right after via setFacesSelectedFrom,
                 // so Select's bit in keptWord is irrelevant either way; drop it
                 // here anyway to match every other compaction site's convention.
@@ -4033,7 +4084,7 @@ struct Mesh {
             } else {
                 foreach (k, vid; src) cloned[k] = vertMap[vid];
             }
-            faces ~= cloned;
+            appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
         }
 
         // Reflect every cloned vert across the mirror plane. `vertMap`
@@ -4240,7 +4291,7 @@ struct Mesh {
             uint[] cloned;
             cloned.length = src.length;
             foreach (k, vid; src) cloned[k] = vertMap[vid];
-            faces ~= cloned;
+            appendFaceRaw(cloned);   // grows per-corner maps (task 0690)
         }
 
         // Re-derive edges from the (now larger) face list. Doing this
@@ -4314,7 +4365,10 @@ struct Mesh {
             uint[] remapped;
             remapped.length = f.length;
             foreach (k, vid; f) remapped[k] = cast(uint)(vid + vertBase);
-            faces ~= remapped;
+            // Pasted corners have no UV to carry (the clipboard has no
+            // per-corner channel) — but the mesh they land in may, and it must
+            // survive the paste. task 0690.
+            appendFaceRaw(remapped);
         }
 
         // Re-derive edges from the (now larger) face list.
@@ -4445,6 +4499,33 @@ struct Mesh {
         // Class P tracker hook — inert unless a batch is open.
         if (editRecorder_ !is null)
             editRecorder_.recordAddFace(cast(uint)(faces.length - 1), idx);
+    }
+
+    /// Append one face to `faces` WITHOUT any of `addFace`'s bookkeeping —
+    /// no edge insert, no version bump, no tracker hook — but WITH the one
+    /// step a bare `faces ~= idx` silently skips: growing every PolyVertex
+    /// (per-corner) map by this face's corners.
+    ///
+    /// That step is not a nicety. `resizePolyVertexMaps` (hanging off the tail
+    /// `buildLoops` every kernel ends with) keeps a map only when its length
+    /// already matches the new corner count; otherwise it makes it
+    /// length-correct by ZEROING IT WHOLE. So a bulk kernel that appends
+    /// faces with `faces ~= …` does not merely leave the NEW corners without
+    /// UV — it wipes the UV of every face it never touched (task 0690).
+    /// Bulk kernels (array / mirror / duplicate / paste / cut caps) cannot use
+    /// `addFace` — they rebuild edges once at the end and commit one change —
+    /// so this is their append primitive. Use it instead of `faces ~=`
+    /// whenever a face is appended to a mesh that may outlive the call with
+    /// its maps intact.
+    ///
+    /// Only valid for a TAIL append: the appended corners are last in CSR loop
+    /// order, which is what makes zero-filling at the end of the map the right
+    /// relocation. A kernel that also changes an EXISTING face's arity has
+    /// re-laid the corner space and needs a remap (`remapPolyVertexMaps` /
+    /// `carryPolyVertexMaps`), not this.
+    void appendFaceRaw(uint[] idx) {
+        faces ~= idx;
+        growPolyVertexMapsForAppendedCorners(idx.length);
     }
 
     // Grow every PolyVertex map by `nCorners` zero-filled elements at the END —
@@ -7506,6 +7587,21 @@ struct Mesh {
         size_t processed = 0;
         const size_t nFaces = faces.length; // snapshot before appending fan tris
 
+        // Per-corner (UV) capture — task 0690. This kernel changes an EXISTING
+        // face's arity in place (an N-gon becomes the first fan triangle), which
+        // re-lays the corner space of every face after it: the appended tris'
+        // atomic growth via `addFace` is therefore NOT enough, and without a
+        // relocate the tail `buildLoops` zeroes the map WHOLE — spiking one face
+        // would cost every other face its UV. Captured before the first mutation.
+        const bool carryUv = hasPolyVertexMap();
+        uint[][] oldFaces;
+        uint[]   oldFaceLoop;
+        if (carryUv) {
+            oldFaces.reserve(nFaces);
+            foreach (ref f; faces) oldFaces ~= f.dup;
+            oldFaceLoop = captureFaceLoop();
+        }
+
         // Parallel lists: for each appended fan tri, record its face index
         // (captured at addFace time = faces.length-1) and its source face fi.
         uint[] appendedFi;
@@ -7569,11 +7665,28 @@ struct Mesh {
             setFaceSubpatch(newFi, isFaceSubpatch(srcFi));
         }
 
+        // Per-corner (UV) relocate — mechanism (c) with NO blends (task 0690).
+        // Every corner standing on a vertex the source face already had copies
+        // that face's value; the APEX corner is a genuinely new vertex whose UV
+        // this port does not claim to know (the fixture measures edge splits and
+        // bilerps, not a fan apex), so it is left at zero — the honest drop, for
+        // one corner per spiked face instead of for the whole mesh.
+        if (carryUv && oldFaceLoop.length == nFaces) {
+            uint[] srcFaceOfNewFace;
+            srcFaceOfNewFace.length = faces.length;
+            foreach (fi; 0 .. faces.length)
+                srcFaceOfNewFace[fi] = (fi < nFaces) ? cast(uint)fi : ~0u;
+            foreach (k, newFi; appendedFi)
+                if (newFi < srcFaceOfNewFace.length)
+                    srcFaceOfNewFace[newFi] = fanSrc[k];
+            const PolyVertexBlend[uint] noBlends;
+            carryPolyVertexMaps(faces.range, srcFaceOfNewFace, oldFaces,
+                                oldFaceLoop, noBlends);
+        }
+
         // Tail — correct order: syncSelection BEFORE selectFace so that
         // faceSelectionOrder (grown by syncSelection) is in bounds for appended
-        // indices. buildLoops also calls resizePolyVertexMaps which zeroes UV maps
-        // when the arity change produces a length mismatch (per-corner UV carry is
-        // out of scope for v1, consistent with inset/bevel).
+        // indices.
         rebuildEdges();
         buildLoops();
         syncSelection();  // grows faceSelectionOrder et al. to faces.length
@@ -11003,12 +11116,68 @@ struct Mesh {
     // Unlike insertEdgeLoops (ring-walk, quad-only), this touches only the
     // seed edge's incident faces — no quad/ring restriction; triangle edges
     // work too.  Selection state is left unchanged; the caller owns that.
+    //
+    // Per-corner (UV) maps are CARRIED here — mechanism (c), task 0690.
+    // `insertEdgePoint` splices the new corner into the MIDDLE of each incident
+    // winding, so every corner after it renumbers; a tail grow cannot express
+    // that, and with no relocate at all the tail `buildLoops` zeroes the map
+    // WHOLE — a point added to one edge would cost the entire mesh its UV.
+    // The relocate is done at THIS level, not inside `insertEdgePoint`, because
+    // the plane-cut kernels call that primitive once per straddling edge in a
+    // loop and then rebuild `faces` wholesale anyway (they are in the documented
+    // drop set); paying an O(faces) capture per edge there would be pure cost.
     // -----------------------------------------------------------------------
     uint addEdgePoint(uint ei, float t) {
         if (ei >= edges.length)        return uint.max;
         if (t <= 0.0f || t >= 1.0f)   return uint.max;
+
+        // Capture the pre-splice corner space (only when a per-corner map
+        // exists — otherwise this whole path is skipped, as everywhere else).
+        const uint ea = edges[ei][0], eb = edges[ei][1];
+        bool     carryUv = hasPolyVertexMap();
+        uint[][] oldFaces;
+        uint[]   oldFaceLoop;
+        if (carryUv) {
+            oldFaces.reserve(faces.length);
+            foreach (ref f; faces) oldFaces ~= f.dup;
+            oldFaceLoop.length = faces.length;
+            uint acc = 0;
+            foreach (fi, ref f; faces) {
+                oldFaceLoop[fi] = acc;
+                acc += cast(uint)f.length;
+            }
+            // The captured offsets describe the map's own corner space only if
+            // `loops` is in step with `faces` right now. If it is not, the map
+            // is already out of step with the geometry and the honest answer is
+            // the drop, not a relocate against offsets we cannot trust.
+            if (acc != loops.length) carryUv = false;
+        }
+
         bool[] isCutVert; // local throwaway — not used outside this call
         uint vi = insertEdgePoint(ei, t, isCutVert);
+
+        // `vi == ea || vi == eb` means the parameter snapped to an existing
+        // endpoint: no vertex, no corner, nothing to relocate.
+        if (carryUv && vi != ea && vi != eb) {
+            // The new vertex is `lerp(a, b, t)` in POSITION, so its corner takes
+            // the same weighted combination of the source face's corner VALUES —
+            // the law frozen in tests/fixtures/uv_corner_transfer.json (0682),
+            // resolved PER FACE, which is what keeps a UV seam across the split
+            // edge a seam instead of averaging the two islands together.
+            PolyVertexBlend pb;
+            pb.add(ea, 1.0f - t);
+            pb.add(eb, t);
+            PolyVertexBlend[uint] blend;
+            blend[vi] = pb;
+            // The splice neither adds nor reorders faces, so each face's source
+            // is itself.
+            uint[] srcFaceOfNewFace;
+            srcFaceOfNewFace.length = faces.length;
+            foreach (fi; 0 .. faces.length) srcFaceOfNewFace[fi] = cast(uint)fi;
+            carryPolyVertexMaps(faces.range, srcFaceOfNewFace, oldFaces,
+                                oldFaceLoop, blend);
+        }
+
         // Re-derive edges from faces (deduped via edgeIndexMap).
         rebuildEdges();
         buildLoops();

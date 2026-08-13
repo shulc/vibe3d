@@ -766,8 +766,15 @@ mixin template MeshCutOps() {
         if (caps) {
             bool[uint] loSet, hiSet;
             foreach (pr; seamPairs) { loSet[pr[0]] = true; hiSet[pr[1]] = true; }
-            foreach (cyc; capShellCycles(faces, loSet)) faces ~= cyc;
-            foreach (cyc; capShellCycles(faces, hiSet)) faces ~= cyc;
+            // appendFaceRaw, not `faces ~=`: a bare append leaves every
+            // per-corner (UV) map short, and the tail buildLoops then zeroes it
+            // WHOLE rather than just the new cap corners (task 0690). Today the
+            // cut's own Pass-2 rebuild (rebuildFacesWithChordSplits) has
+            // already dropped the map by the time we get here, so this changes
+            // nothing user-visible yet — it keeps the site correct on its own
+            // terms, and becomes load-bearing the moment the cut itself carries.
+            foreach (cyc; capShellCycles(faces, loSet)) appendFaceRaw(cyc);
+            foreach (cyc; capShellCycles(faces, hiSet)) appendFaceRaw(cyc);
         }
         rebuildEdges();
         clearEdgeSelectionResize();
