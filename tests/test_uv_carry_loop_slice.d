@@ -285,6 +285,69 @@ unittest { // untouched faces keep their corner values BIT-identically
     }
 }
 
+unittest { // TWO crossing rings — the grid-split path, which the frozen capture
+           // does not reach (the reference cuts one ring per gesture).
+    //
+    // A face crossed by two distinct rings is split into a grid, and its
+    // INTERIOR vertices are bilerps of the four original corners. Those corners
+    // take the same four weights, which is the only reading consistent with the
+    // measured edge law (it degenerates to that lerp on the grid's boundary
+    // rails). NOTE what this can and cannot pin: the UV here is AFFINE in
+    // position, so "bilerp of the corners" and "re-project the position" agree —
+    // this test pins the WEIGHTS (a midpoint-instead-of-bilerp bug is caught),
+    // not the choice between those two laws, which nobody has measured for a
+    // two-ring crossing.
+    enum string json = import("fixtures/uv_corner_transfer.json");
+    auto fx = parseJSON(json);
+    JSONValue before;
+    foreach (c; fx["cases"].array)
+        if (c["name"].str == "loop_slice_pos025") before = c["before"];
+
+    Mesh m = buildBefore(before);
+    // Author an AFFINE uv: u = x, v = y.
+    auto map = m.meshMap(kUvMapName);
+    foreach (fi; 0 .. m.faces.length)
+        foreach (cIdx; 0 .. m.faces[fi].length) {
+            const size_t slot = (m.faceLoop[fi] + cIdx) * 2;
+            const Vec3 p = m.vertices[m.faces[fi][cIdx]];
+            map.data[slot]     = p.x;
+            map.data[slot + 1] = p.y;
+        }
+
+    // One seed per direction, both incident to vertex (0,0,0): their rings
+    // cross in the bottom-left face.
+    uint vA = ~0u, vB = ~0u, vC = ~0u;
+    foreach (vi, v; m.vertices) {
+        if (v.x == 0 && v.y == 0) vA = cast(uint)vi;
+        if (v.x == 0 && v.y == 1) vB = cast(uint)vi;
+        if (v.x == 1 && v.y == 0) vC = cast(uint)vi;
+    }
+    const uint[] seeds = [m.edgeIndex(vA, vB), m.edgeIndex(vA, vC)];
+    uint[] nfi;
+    assert(m.insertEdgeLoopsMulti(seeds, [0.25f], nfi),
+           "two-seed slice should apply");
+
+    auto post = m.meshMap(kUvMapName);
+    assert(post.data.length == m.loops.length * 2, "grid split: UV length wrong");
+    size_t interiorCorners = 0;
+    foreach (fi; 0 .. cast(uint)m.faces.length)
+        foreach (cIdx; 0 .. m.faces[fi].length) {
+            const Vec3 p = m.vertices[m.faces[fi][cIdx]];
+            const size_t slot = (m.faceLoop[fi] + cIdx) * 2;
+            assert(fabs(post.data[slot] - p.x) < 1e-5f
+                && fabs(post.data[slot + 1] - p.y) < 1e-5f,
+                   "grid split: corner at (" ~ p.x.to!string ~ ", " ~ p.y.to!string
+                 ~ ") got uv (" ~ post.data[slot].to!string ~ ", "
+                 ~ post.data[slot + 1].to!string ~ ")");
+            // A vertex off both original grid lines can only be a bilerp'd
+            // interior one.
+            if (p.x != 0 && p.x != 1 && p.x != 2 && p.y != 0 && p.y != 1 && p.y != 2)
+                ++interiorCorners;
+        }
+    assert(interiorCorners > 0,
+           "grid split produced no interior vertex — the bilerp path never ran");
+}
+
 unittest { // a mesh with NO per-corner map must be unaffected (and not crash)
     import mesh : makeCube;
     Mesh m = makeCube();

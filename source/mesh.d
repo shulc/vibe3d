@@ -703,6 +703,12 @@ struct Mesh {
     //       `dissolveVerticesByMask`, `weldCoincidentVertices` (which does NOT
     //       call buildLoops), and `removeEdgesByMask`/edge-dissolve-merge. The
     //       short-edge-weld callers ride `weldCoincidentVertices`.
+    //   (c) arity-changing rewrite that also INSERTS vertices — build the same
+    //       `oldLoopOfNewLoop` PLUS a `PolyVertexBlend` per inserted vertex, and
+    //       call `carryPolyVertexMaps` (which runs the funnel and then a second,
+    //       interpolating pass). Wired in `insertEdgeLoopsMulti` (Loop Slice,
+    //       task 0682); the law it implements is frozen in
+    //       tests/fixtures/uv_corner_transfer.json.
     //   append — `addFace`/`addFaceFast` grow+zero-fill the new corners
     //       ATOMICALLY (GAP-3, no element-count window).
     //   snapshot restore — values come back via the captured map `dup`.
@@ -710,9 +716,14 @@ struct Mesh {
     // ZEROED, a documented limitation, each covered by a "dropped, no crash"
     // test): subdivide (Catmull-Clark UV interpolation is a non-goal), every
     // primitive factory rebuild, `extrudeEdgesByMask`, edge-extend, bridge,
-    // subpatch cage build, and any future bevel-family op. These end in
-    // `buildLoops`, so `resizePolyVertexMaps` makes them length-correct + zeroed.
-    // (See doc/uv_maps_plan.md D5 for the full per-mutator classification.)
+    // subpatch cage build, and the bevel family. These end in `buildLoops`, so
+    // `resizePolyVertexMaps` makes them length-correct + zeroed. The reference
+    // law for the bevel and extrude families IS measured (same fixture, cases
+    // `edge_bevel_*` / `face_extrude_*` / `face_bevel_*`) — they stay in the
+    // drop set because their carry needs machinery mechanism (c) does not yet
+    // have: a per-CORNER source face (a chamfer strip has two source faces, one
+    // per side) and, for extrude, a fresh wall parameterisation that is not a
+    // blend of any existing corner. See doc/uv_maps_plan.md D5.
     //
     // Discrete polygon tags (`faceMaterial`, a per-face surface INDEX) are
     // deliberately NOT mesh maps: a float channel cannot represent an integer
