@@ -270,8 +270,13 @@ abstract class CommandWrapperTool : Tool, RefireClient {
     // back to name()); the driver follows with resyncSession() to re-arm.
     public override bool commitUncommittedEdit() {
         if (!hasUncommittedEdit()) return false;
-        commitNow("");
-        return true;
+        // Forward what commitNow ACTUALLY did. Returning an unconditional
+        // `true` broke applyAndContinue's stated contract ("true iff it
+        // committed+rearmed") on five early-exit paths — worst of them the
+        // consumed refire latch, where the geometry stays in the mesh, the
+        // caller consumes the click, resyncSession rolls the change into the
+        // new baseline, and no undo entry exists for it (task 0678 T7).
+        return commitNow("");
     }
 
     // Category A cancel — restore the session baseline into the live mesh (the
@@ -577,7 +582,12 @@ abstract class CommandWrapperTool : Tool, RefireClient {
     /// record on history. Refreshes baseline to current state so the
     /// next drag composes on top. `label` is the human-readable
     /// history entry name; empty defaults to the tool's name().
-    private void commitNow(string label) {
+    /// Returns TRUE only when this call actually recorded a history entry.
+    /// Every early exit below is a path where the mesh may still be dirty-ish
+    /// but NOTHING landed in history, and the Shift+apply contract
+    /// (EditSession.applyAndContinue) keys the caller's "consume the click"
+    /// decision on that distinction (task 0678 T7 follow-up).
+    private bool commitNow(string label) {
         // Double-record guard (undo/redo migration P4 — the single commit
         // chokepoint). A refire session already landed its single entry via
         // refireEnd(); the deactivate()/Apply commitNow() that follows MUST NOT
@@ -586,12 +596,12 @@ abstract class CommandWrapperTool : Tool, RefireClient {
         if (refireCommitted_) {
             refireCommitted_ = false;
             dirty = false;
-            return;
+            return false;
         }
-        if (!dirty)              return;
-        if (meshPtr is null)     return;
-        if (history is null)     return;
-        if (vertexEditFactory is null) return;
+        if (!dirty)              return false;
+        if (meshPtr is null)     return false;
+        if (history is null)     return false;
+        if (vertexEditFactory is null) return false;
         // Build the diff: only verts whose position actually changed.
         // For Smooth/Jitter/Quantize the inner Command can touch every
         // vert (with empty selection = whole mesh), so scanning is
@@ -607,7 +617,7 @@ abstract class CommandWrapperTool : Tool, RefireClient {
             // stays consistent.
             baseline.length = 0;
             dirty = false;
-            return;
+            return false;
         }
         foreach (i; 0 .. n) {
             auto a = baseline[i], b = meshPtr.vertices[i];
@@ -618,7 +628,7 @@ abstract class CommandWrapperTool : Tool, RefireClient {
         }
         if (indices.length == 0) {
             dirty = false;
-            return;
+            return false;
         }
         auto cmd = vertexEditFactory();
         cmd.setEdit(indices, before, after_,
@@ -630,6 +640,7 @@ abstract class CommandWrapperTool : Tool, RefireClient {
         // fixed into the geometry and future drags start fresh.
         baseline = meshPtr.vertices.dup;
         dirty    = false;
+        return true;
     }
 
     /// Build a VectorStack from the live toolpipe + mesh subject and
@@ -851,4 +862,20 @@ unittest {
     assert(t.baseline.length == m.vertices.length
            && t.baseline[0].x == m.vertices[0].x,
            "baseline must advance to the committed geometry");
+
+    // task 0678 T7 follow-up — the hook must report what commitNow ACTUALLY
+    // did, not "I was dirty". The consumed-refire-latch path is the one that
+    // bites: it clears `dirty` and records NOTHING, so answering true there
+    // makes the caller consume the click and rebaseline over geometry that has
+    // no undo entry.
+    size_t recorded = 0;
+    hist.onRecord = (string, uint) { ++recorded; };
+
+    t.baseline = m.vertices.dup;
+    m.vertices[1] = m.vertices[1] + Vec3(0, 0.25f, 0);
+    t.dirty = true;
+    t.onRefireCommitted();            // latches refireCommitted_
+    assert(!t.commitUncommittedEdit(),
+           "a commit that recorded nothing must not report success");
+    assert(recorded == 0, "the latched path must not record an entry");
 }
