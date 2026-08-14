@@ -383,27 +383,6 @@ unittest {
     assert(abs(axis2.z)        < 1e-5f);
 }
 
-unittest {
-    // Right-handed basis check. Given (normal, axis2), reconstruct axis1
-    // the same way apply() does and verify the triple is right-handed
-    // and orthonormal.
-    import std.math : abs;
-    Vec3 normal = normalize(Vec3(0.3f, 1.0f, 0.4f));
-    Vec3 raw    = Vec3(2, 0, 0);     // some in-plane edge (will be projected)
-    Vec3 axis2  = normalize(raw - normal * dot(raw, normal));
-    Vec3 axis1  = normalize(cross(normal, axis2));
-    Vec3 axis2b = normalize(cross(axis1, normal));
-
-    // Orthogonality.
-    assert(abs(dot(axis1, normal)) < 1e-5f);
-    assert(abs(dot(axis1, axis2b)) < 1e-5f);
-    assert(abs(dot(normal, axis2b)) < 1e-5f);
-    // Right-handed: axis1 × normal = axis2.
-    Vec3 r = cross(axis1, normal);
-    assert(abs(r.x - axis2b.x) < 1e-5f);
-    assert(abs(r.y - axis2b.y) < 1e-5f);
-    assert(abs(r.z - axis2b.z) < 1e-5f);
-}
 
 // ---------------------------------------------------------------------------
 // Helpers

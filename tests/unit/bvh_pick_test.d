@@ -452,3 +452,4 @@ unittest {
         ~ "is in front of it — proving it was hidden by DEPTH, not by its "
         ~ "orientation; got " ~ hitFar.to!string);
 }
+

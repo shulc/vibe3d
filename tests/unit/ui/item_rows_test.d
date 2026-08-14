@@ -544,3 +544,4 @@ unittest {
             "…and it really is an object: '" ~ c.args ~ "'");
     }
 }
+

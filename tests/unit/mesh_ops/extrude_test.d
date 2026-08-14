@@ -634,3 +634,4 @@ unittest {
     assert(m.vertices.length == 8,  "extrudeVerticesByMask: width=0 must not add verts");
     assert(m.faces.length    == 6,  "extrudeVerticesByMask: width=0 must not add faces");
 }
+

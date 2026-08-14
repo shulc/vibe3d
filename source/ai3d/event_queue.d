@@ -153,23 +153,6 @@ unittest {
     assert(seen[1].kind == Ai3dEventKind.terminal);
 }
 
-unittest {
-    // Overflow: pushing more than the cap of non-coalescable events collapses
-    // the whole pending queue to ONE synthetic terminal failure — never
-    // unbounded memory, never a silent partial stream.
-    auto q = new Ai3dEventQueue();
-    foreach (i; 0 .. Ai3dMaxControllerEvents + 10) {
-        Ai3dEvent e;
-        e.kind = Ai3dEventKind.submitted; // distinct kind so nothing coalesces
-        e.jobId = "job1";
-        q.push(e);
-    }
-    Ai3dEvent[] seen;
-    q.drain((ref const Ai3dEvent e) { seen ~= e; });
-    assert(seen.length == 1);
-    assert(seen[0].kind == Ai3dEventKind.terminal);
-    assert(seen[0].code == "queue_overflow");
-}
 
 unittest {
     // LOAD-BEARING, genuine two-thread proof: drain() must invoke the

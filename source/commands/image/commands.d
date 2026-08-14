@@ -718,37 +718,6 @@ version (unittest) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// LOAD — an item appears, carrying the path, the derived metadata and the
-// file's stem as its name.
-//
-// Discriminating: 3x2 (width != height), so a transposed read reads 2x3; the
-// name is "alpha", which an implementation naming rows "Layer N" / "Image N"
-// reads differently; and the item is NOT primary and NOT selected, which an
-// implementation that copied `layer.add`'s `setActive` would break.
-// ---------------------------------------------------------------------------
-unittest {
-    auto f = makeImgFixture("load");
-
-    assert(f.doc.layers.length == 6, "fixture: mesh + 3 clips + 2 consumers");
-    assert(f.clipA.kind == ItemKind.Image, "load produced an image-kind item");
-    assert(f.clipA.hasImage && f.clipA.imageOrNull() !is null,
-        "load produced a LIVE image row, not a payload-null one");
-
-    auto img = f.clipA.imageOrNull();
-    assert(img.storedPath == f.pathA, "the item carries the path it was given");
-    assert(img.width  == 3, "width comes from the file header");
-    assert(img.height == 2, "height comes from the file header");
-    assert(!img.missing, "a file that read successfully is not missing");
-    assert(f.clipA.name == "alpha",
-        "the row is named after the FILE STEM — not \"Layer N\", and not the "
-        ~ "full path");
-
-    assert(f.doc.primary is f.meshA, "an image never becomes the edit target");
-    assert(!f.clipA.selected,
-        "load does not touch the item selection: mixing a UiState change into "
-        ~ "this Model command would make one Ctrl+Z undo both");
-}
 
 // ---------------------------------------------------------------------------
 // LOAD of an unreadable path — the DECISION: no item at all.

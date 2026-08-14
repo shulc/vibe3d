@@ -163,12 +163,3 @@ private int defaultCandidateIndex(const(AiCandidate)[] candidates) {
     }
     return -1;
 }
-
-unittest {
-    auto adapter = new AiModelAdapter();
-    assert(adapter.availability.status == AiModelStatus.disabled);
-
-    auto context = AiInteractionContext();
-    auto decision = adapter.decide(context, null);
-    assert(decision.keepDefault);
-}

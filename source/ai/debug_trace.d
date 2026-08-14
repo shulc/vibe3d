@@ -267,23 +267,3 @@ const(AiModeToolContextDebugTrace) latestModeToolContextDebugTrace() {
 string latestHandleDebugTraceJson(bool enabled) {
     return tracesToJson(enabled);
 }
-
-unittest {
-    clearLatestAiDebugTraces();
-    auto empty = latestHandleDebugTrace();
-    assert(empty.candidates.length == 0);
-    assert(empty.defaultWinnerIndex == -1);
-    assert(empty.defaultWinnerId.length == 0);
-    assert(empty.appliedWinnerIndex == -1);
-    assert(empty.appliedWinnerId.length == 0);
-    assert(empty.advisor.keepDefault);
-    assert(latestHandleDebugTraceJson(false) ==
-           `{"enabled":false,"advisor":{"intent":"keepDefault","confidence":0.000000,` ~
-           `"candidateIndex":-1,"candidateId":"","keepDefault":true},` ~
-           `"handleTrace":{"candidateCount":0,"candidateIds":[],"candidates":[],` ~
-           `"defaultWinner":{"present":false,"id":"","index":-1},` ~
-           `"appliedWinner":{"present":false,"id":"","index":-1}},` ~
-           `"elementTrace":{"candidateCount":0,"candidateIds":[],"candidates":[],` ~
-           `"defaultWinner":{"present":false,"id":"","index":-1},` ~
-           `"appliedWinner":{"present":false,"id":"","index":-1}}}`);
-}

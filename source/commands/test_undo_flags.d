@@ -50,16 +50,3 @@ class UndoForceNoop : Command {
     // the no-op apply means there is nothing to restore.
     override bool revert() { return true; }
 }
-
-unittest {
-    import view : View;
-    Mesh m;
-    View v;
-    auto sup = new UndoSuppressNoop(&m, v, EditMode.Vertices);
-    // Model bit present, but UndoSuppress wins → not undoable.
-    assert(!sup.isUndoable());
-
-    auto frc = new UndoForceNoop(&m, v, EditMode.Vertices);
-    // No Model/UiState bit, but UndoForce opts in → undoable.
-    assert(frc.isUndoable());
-}

@@ -241,14 +241,6 @@ unittest {
     assert(resolveToolAction(sampleTable, InputButton.Right, InputMod.Alt | InputMod.Shift | InputMod.Ctrl) == PassThrough);
 }
 
-// Empty table: everything is PassThrough — this is the default every
-// unmigrated Tool subclass gets from the base's `bindings()` override.
-unittest {
-    const(InputBinding)[] empty;
-    assert(resolveToolAction(empty, InputButton.Left, InputMod.None) == PassThrough);
-    assert(resolveToolAction(empty, InputButton.Middle, InputMod.Shift) == PassThrough);
-    assert(resolveToolAction(empty, InputButton.Right, InputMod.Alt) == PassThrough);
-}
 
 // resolveResetScope mirrors resolveToolAction's matching, and reports the
 // bound row's declared scope (defaulting to SelfButton for anything

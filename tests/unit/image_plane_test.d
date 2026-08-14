@@ -265,3 +265,4 @@ unittest {
         "a mesh has no image picker");
     assert(planeImageChoices(doc, null).length == 0, "and neither has null");
 }
+

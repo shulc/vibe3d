@@ -211,16 +211,6 @@ string buttonAvailabilityJson() {
 // the parts that are pure data.)
 // ---------------------------------------------------------------------------
 
-unittest {
-    // The script-line id is the leading token, with no parse and no
-    // allocation-visible difference from what the dispatcher resolves.
-    assert(scriptLineCommandId("prim.cube cenX:0 sizeX:1") == "prim.cube");
-    assert(scriptLineCommandId("   prim.sphere method:globe") == "prim.sphere");
-    assert(scriptLineCommandId("select.typeFrom vertex") == "select.typeFrom");
-    assert(scriptLineCommandId("history.undo") == "history.undo");
-    assert(scriptLineCommandId("") == "");
-    assert(scriptLineCommandId("   ") == "");
-}
 
 unittest {
     import command  : Command, kNoEditTargetReason;

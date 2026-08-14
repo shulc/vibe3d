@@ -4258,3 +4258,4 @@ unittest {
         "the un-bumped appended face is counted — the dart arm must have "
       ~ "stood down (its darts do not cover that face)");
 }
+

@@ -473,3 +473,4 @@ unittest { // consistentCandidateIndex — review NIT-1's invariant helper:
         "stale index past a shrunk array must collapse to -1, not pass through");
     assert(consistentCandidateIndex(0, 0) == -1, "any index against a zero-length array is -1");
 }
+

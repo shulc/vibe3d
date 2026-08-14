@@ -772,3 +772,4 @@ unittest {
         "one item's change moves one item: a single memo shared by every row "
         ~ "would drag its neighbours along");
 }
+

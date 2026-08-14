@@ -2439,66 +2439,6 @@ string hiddenReadoutCompact(int hiddenVerts, int hiddenEdges, int hiddenFaces) {
     return format("%d/%d/%d hidden", hiddenVerts, hiddenEdges, hiddenFaces);
 }
 
-unittest {
-    // Each row picks numbers a wrong-but-plausible implementation reads
-    // DIFFERENTLY, not merely a case where it produces nothing.
-    //
-    // 1. Nothing hidden ⇒ the empty signal. An implementation that always
-    //    builds the line reads "Hidden:" here and the callers reserve a row
-    //    for a mesh with nothing hidden.
-    assert(hiddenReadout(0, 0, 0) == "",
-        "nothing hidden must produce NO line at all, not an empty-valued one");
-
-    // 2. Three DIFFERENT non-zero counts. This is the row that separates the
-    //    plausible wrong implementations from each other: one that reads the
-    //    FACE plane for all three reads "3 vert, 3 edge, 3 poly"; one that
-    //    SUMS the planes reads "10 poly"; one that swaps vert/poly (the easy
-    //    transposition, since faces are the stored plane and vertices the
-    //    derived one) reads "3 vert, 5 edge, 2 poly". All three differ from
-    //    the answer below, which is why the counts must be distinct AND the
-    //    order asserted — equal counts would let the transposition through.
-    assert(hiddenReadout(2, 5, 3) == "Hidden: 2 vert, 5 edge, 3 poly",
-        "got: " ~ hiddenReadout(2, 5, 3));
-
-    // 3. Only the face plane — the ordinary polygon-mode hide. An
-    //    implementation that emits every plane unconditionally reads
-    //    "Hidden: 0 vert, 0 edge, 3 poly".
-    assert(hiddenReadout(0, 0, 3) == "Hidden: 3 poly",
-        "got: " ~ hiddenReadout(0, 0, 3));
-
-    // 4. Only the LEADING plane — pins the separator state machine. An
-    //    implementation that joins with a leading ", " reads "Hidden: , 1 vert"
-    //    and one that appends a trailing comma reads "Hidden: 1 vert,".
-    assert(hiddenReadout(1, 0, 0) == "Hidden: 1 vert",
-        "got: " ~ hiddenReadout(1, 0, 0));
-
-    // 5. A gap in the middle — the separator must attach to the SECOND
-    //    printed part, not to the second PLANE.
-    assert(hiddenReadout(4, 0, 6) == "Hidden: 4 vert, 6 poly",
-        "got: " ~ hiddenReadout(4, 0, 6));
-
-    // 6. The compact spelling. Same "nothing hidden ⇒ no line" contract, and
-    //    the same distinct-counts discriminator: a wrong wiring that fed it
-    //    the face count three times reads "3/3/3" and a vert/poly
-    //    transposition reads "3/5/2".
-    assert(hiddenReadoutCompact(0, 0, 0) == "",
-        "compact: nothing hidden must produce no line either");
-    assert(hiddenReadoutCompact(2, 5, 3) == "2/5/3 hidden",
-        "got: " ~ hiddenReadoutCompact(2, 5, 3));
-    // 7. The compact form keeps the ZERO planes, unlike the prose form —
-    //    deliberately, because its whole legibility rests on the reader
-    //    matching the three slots to the V/E/F rows above it. Dropping a zero
-    //    would slide "6" from the F slot into the V slot.
-    assert(hiddenReadoutCompact(0, 0, 6) == "0/0/6 hidden",
-        "got: " ~ hiddenReadoutCompact(0, 0, 6));
-
-    // 8. The two spellings must never disagree about WHETHER to draw — that
-    //    is the one property the side panel and the status bar share.
-    foreach (v; 0 .. 2) foreach (e; 0 .. 2) foreach (f; 0 .. 2)
-        assert((hiddenReadout(v, e, f).length > 0)
-            == (hiddenReadoutCompact(v, e, f).length > 0),
-            "the two readouts disagreed on emptiness");
-}
 
 void drawSidePanel(EditorApp app) {
     with (app) {

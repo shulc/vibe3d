@@ -11,6 +11,7 @@ import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim;
 import bindbc.opengl;
 import std.conv : to;
 import viewport;
+import image_cache   : imagePixelCache;
 
 unittest {
     // DirtyKey must discriminate on toolMat alone: two keys identical in
@@ -806,3 +807,4 @@ unittest {
     m.views[0].indRotate = true;
     m.views[0].masterId  = -1;
 }
+

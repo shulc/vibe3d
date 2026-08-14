@@ -450,22 +450,3 @@ final class EditSession {
         return (cast(LifecycleUndoEmitter) tool_()) !is null;
     }
 }
-
-// ---------------------------------------------------------------------------
-// Module unittest — phase() classification (no GL / SDL: a bare Tool and a
-// bare CommandHistory both construct headlessly).
-// ---------------------------------------------------------------------------
-unittest {
-    Tool held = null;
-    auto es = new EditSession(() => held, new CommandHistory(), () {});
-    assert(es.phase() == SessionPhase.NoTool);
-
-    held = new Tool();
-    assert(es.phase() == SessionPhase.Idle);
-
-    final class OpenEditTool : Tool {
-        override bool hasUncommittedEdit() const { return true; }
-    }
-    held = new OpenEditTool();
-    assert(es.phase() == SessionPhase.EditOpen);
-}

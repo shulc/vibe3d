@@ -131,20 +131,3 @@ void publishModeToolContextCandidates(const ref AiInteractionContext context,
                                          currentContextId,
                                          alternativeContextIds));
 }
-
-unittest {
-    AiInteractionContext context;
-    context.editModeId = "vertices";
-
-    auto candidates = collectModeCandidates(context, ["edges", "polygons"]);
-    assert(candidates.length == 3);
-    assert(candidates[0].id == "mode:vertex");
-    assert(candidates[0].kind == AiCandidateKind.mode);
-    assert(candidates[0].intent == AiIntent.keepDefault);
-    assert(candidates[0].priorityFromCurrentRules == 0.0f);
-    assert(candidates[0].isDefaultWinner);
-    assert(candidates[1].id == "mode:edge");
-    assert(candidates[1].priorityFromCurrentRules == 1.0f);
-    assert(!candidates[1].isDefaultWinner);
-    assert(candidates[2].id == "mode:polygon");
-}

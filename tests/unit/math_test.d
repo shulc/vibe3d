@@ -5,6 +5,7 @@ module tests.unit.math_test;
 
 import std.math : tan, sin, cos, sqrt, PI, abs, acos, asin, atan2, round, isFinite;
 import math;
+import std.math : isClose;
 
 unittest { // handedness: identity/rotation keep it; an odd count of negative
            // scale components reverses it, an even count does not.
@@ -664,4 +665,669 @@ unittest { // rayPlaneIntersect: near-parallel ray below threshold returns false
     // dot((0,1,0), (1, 5e-7, 0)) = 5e-7 < 1e-6
     assert(!rayPlaneIntersect(Vec3(0,0,0), Vec3(1.0f, 5e-7f, 0),
                               Vec3(0,1,0), Vec3(0,1,0), hit));
+}
+
+
+unittest { // The two Rodrigues forms ARE `pivotRotationMatrix` — one law, three
+    // spellings, and the matrix is the one with an independent derivation
+    // (it builds R entry-by-entry from the outer product, the vector forms
+    // build it from cross/dot). A future edit to either vector form that the
+    // matrix does not agree with is the drift this pins.
+    immutable Vec3 axis = normalize(Vec3(0.3f, -0.8f, 0.5f));
+    immutable Vec3 pivot = Vec3(1.5f, -2.0f, 0.25f);
+    immutable Vec3 v = Vec3(-0.7f, 2.4f, 3.1f);
+    foreach (ang; [0.0f, 0.3f, cast(float) PI / 2, -1.9f, cast(float) PI]) {
+        immutable Vec3 byMatrix = applyAffine(pivotRotationMatrix(pivot, axis, ang), v);
+        immutable Vec3 byPivot  = rotateAboutPivot(v, pivot, axis, ang);
+        assert(isClose(byPivot.x, byMatrix.x, 1e-5f, 1e-5f), "rotateAboutPivot.x");
+        assert(isClose(byPivot.y, byMatrix.y, 1e-5f, 1e-5f), "rotateAboutPivot.y");
+        assert(isClose(byPivot.z, byMatrix.z, 1e-5f, 1e-5f), "rotateAboutPivot.z");
+        // Direction form = pivot form at the origin (that IS its contract).
+        immutable Vec3 byAxis = rotateAboutAxis(v, axis, ang);
+        immutable Vec3 atOrig = rotateAboutPivot(v, Vec3(0, 0, 0), axis, ang);
+        assert(isClose(byAxis.x, atOrig.x, 1e-6f, 1e-6f), "rotateAboutAxis.x");
+        assert(isClose(byAxis.y, atOrig.y, 1e-6f, 1e-6f), "rotateAboutAxis.y");
+        assert(isClose(byAxis.z, atOrig.z, 1e-6f, 1e-6f), "rotateAboutAxis.z");
+        // A rotation is an isometry: |v| about the origin is preserved.
+        assert(isClose(byAxis.length, v.length, 1e-5f, 1e-5f), "rotateAboutAxis norm");
+    }
+}
+
+unittest { // transformPoint matches a hand-computed T·R·S applied to a point.
+    // S = diag(2,3,4); R = 90deg about +Y; T = (10,20,30). Column-major
+    // M = T * R * S. Compose via the existing matrix builders, then check.
+    auto S = pivotScaleMatrix(Vec3(0, 0, 0), 2, 3, 4);
+    auto R = pivotRotationMatrix(Vec3(0, 0, 0), Vec3(0, 1, 0), cast(float) PI / 2);
+    auto T = translationMatrix(Vec3(10, 20, 30));
+    auto M = matMul4(T, matMul4(R, S));
+    // Expected by composing the identical sub-steps separately.
+    auto pScaled  = applyAffine(S, Vec3(1, 1, 1));
+    auto pRotated = applyAffine(R, pScaled);
+    auto expected = applyAffine(T, pRotated);
+    auto got = transformPoint(M, Vec3(1, 1, 1));
+    assert(isClose(got.x, expected.x, 1e-5f, 1e-5f)
+        && isClose(got.y, expected.y, 1e-5f, 1e-5f)
+        && isClose(got.z, expected.z, 1e-5f, 1e-5f));
+    // Independent hard number: 90deg-about-+Y of (2,3,4) is (4,3,-2) in this
+    // column-major builder, + T -> (14,23,28).
+    assert(isClose(got.x, 14.0f, 1e-4f, 1e-4f)
+        && isClose(got.y, 23.0f, 1e-4f, 1e-4f)
+        && isClose(got.z, 28.0f, 1e-4f, 1e-4f));
+}
+
+unittest { // toLocalPoint / toWorldPoint round-trip through a non-trivial M/mInv pair.
+    // Pure translation is enough to exercise the full-affine (translation-
+    // including) path independently of the rotation/scale helpers below.
+    ModelSpace ms;
+    ms.m    = translationMatrix(Vec3(3, -2, 5));
+    ms.mInv = translationMatrix(Vec3(-3, 2, -5));
+    ms.isIdentity = false;
+
+    Vec3 localP = Vec3(1, 1, 1);
+    Vec3 worldP = ms.toWorldPoint(localP);
+    assert(isClose(worldP.x, 4.0f, 1e-5f, 1e-5f)
+        && isClose(worldP.y, -1.0f, 1e-5f, 1e-5f)
+        && isClose(worldP.z, 6.0f, 1e-5f, 1e-5f));
+    Vec3 backToLocal = ms.toLocalPoint(worldP);
+    assert(isClose(backToLocal.x, localP.x, 1e-5f, 1e-5f)
+        && isClose(backToLocal.y, localP.y, 1e-5f, 1e-5f)
+        && isClose(backToLocal.z, localP.z, 1e-5f, 1e-5f));
+}
+
+unittest { // toLocalDir preserves a ray's `t`: mInv*(org + t*dir) == toLocalPoint(org) + t*toLocalDir(dir).
+    // §3.4 — the identity this un-normalized transform exists to guarantee.
+    ModelSpace ms;
+    ms.m    = pivotScaleMatrix(Vec3(0,0,0), 2, 1, 1);
+    ms.mInv = pivotScaleMatrix(Vec3(0,0,0), 0.5f, 1, 1);
+    ms.isIdentity = false;
+
+    Vec3 org = Vec3(5, 5, 5);
+    Vec3 dir = Vec3(1, -2, 0.5f); // deliberately not axis-aligned, not unit length
+    float t = 3.7f;
+    Vec3 worldHit  = org + dir * t;
+    Vec3 localHit  = ms.toLocalPoint(worldHit);
+    Vec3 orgLocal  = ms.toLocalPoint(org);
+    Vec3 dirLocal  = ms.toLocalDir(dir); // must stay UN-normalized
+    Vec3 predicted = orgLocal + dirLocal * t;
+    assert(isClose(localHit.x, predicted.x, 1e-4f, 1e-4f)
+        && isClose(localHit.y, predicted.y, 1e-4f, 1e-4f)
+        && isClose(localHit.z, predicted.z, 1e-4f, 1e-4f),
+        "toLocalDir must stay un-normalized for `t` to keep meaning a world distance");
+}
+
+unittest { // frameMatrix columns hold right/up/fwd; identity basis → identity
+    auto m = frameMatrix(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1));
+    foreach (i, v; identityMatrix) assert(isClose(m[i], v));
+}
+
+unittest { // frameMatrix * frameMatrixInverse ≈ identity for a rotated frame
+    // 30° about Y → non-axis-aligned orthonormal basis.
+    float a = cast(float) PI / 6;
+    Vec3 r = Vec3(cos(a), 0, -sin(a));
+    Vec3 u = Vec3(0, 1, 0);
+    Vec3 f = Vec3(sin(a), 0, cos(a));
+    auto m    = frameMatrix(r, u, f);
+    auto mInv = frameMatrixInverse(r, u, f);
+    auto prod = matMul4(m, mInv);
+    foreach (i; 0 .. 16) assert(isClose(prod[i], identityMatrix[i], 1e-5f, 1e-5f));
+    // m·(unit x) == right (multiply convention is not transposed).
+    auto mx = applyAffine(m, Vec3(1, 0, 0));
+    assert(isClose(mx.x, r.x, 1e-5f, 1e-5f)
+        && isClose(mx.y, r.y, 1e-5f, 1e-5f)
+        && isClose(mx.z, r.z, 1e-5f, 1e-5f));
+}
+
+unittest { // wrapAboutPivot of an origin-fixing rotation == the about-pivot one
+    auto Morigin = pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), 0.7f);
+    auto W = wrapAboutPivot(Morigin, Vec3(0.3f, -0.4f, 0.9f));
+    auto direct = pivotRotationMatrix(Vec3(0.3f, -0.4f, 0.9f), Vec3(0,1,0), 0.7f);
+    foreach (i; 0 .. 16) assert(isClose(W[i], direct[i], 1e-5f, 1e-5f));
+}
+
+unittest { // wrapAboutPivot of an origin-fixing scale == the about-pivot one
+    auto Morigin = pivotScaleMatrixBasis(Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0),
+                                         Vec3(0,0,1), 2.0f, 0.5f, 1.5f);
+    Vec3 piv = Vec3(-0.2f, 0.6f, 0.1f);
+    auto W = wrapAboutPivot(Morigin, piv);
+    auto direct = pivotScaleMatrixBasis(piv, Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                                        2.0f, 0.5f, 1.5f);
+    foreach (i; 0 .. 16) assert(isClose(W[i], direct[i], 1e-5f, 1e-5f));
+}
+
+unittest { // wrapAboutPivotStable matches wrapAboutPivot for small pivots (bit-equal after double→float round-trip)
+    import std.conv : to;
+    auto Morigin = pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), 0.7f);
+    Vec3 piv = Vec3(0.3f, -0.4f, 0.9f);
+    auto Wold = wrapAboutPivot(Morigin, piv);
+    auto Wnew = wrapAboutPivotStable(Morigin, piv);
+    foreach (i; 0 .. 16) assert(isClose(Wnew[i], Wold[i], 1e-5f, 1e-5f),
+        "wrapAboutPivotStable small-pivot mismatch at element " ~ i.to!string);
+}
+
+unittest { // projectionSpace: forward projection agrees with pre-transforming the point —
+    // projectToWindow(pLocal, projectionSpace(vp, ms)) == projectToWindow(ms.toWorldPoint(pLocal), vp).
+    import std.math : PI;
+
+    Vec3 eye = Vec3(0, 0, 8);
+    Viewport vp;
+    vp.view = lookAt(eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj = perspectiveMatrix(60.0f * PI / 180.0f, 1.0f, 0.01f, 100.0f);
+    vp.width = 400; vp.height = 400; vp.eye = eye;
+
+    ModelSpace ms;
+    ms.m    = matMul4(translationMatrix(Vec3(1, -0.5f, 0)),
+                       pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), 0.4f));
+    // mInv unused by projectionSpace's forward path except via toLocalPoint(eye);
+    // give it the analytic inverse of the same T*R so that leg is exact too.
+    ms.mInv = matMul4(pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), -0.4f),
+                       translationMatrix(Vec3(-1, 0.5f, 0)));
+    ms.isIdentity = false;
+
+    Vec3 pLocal = Vec3(0.3f, 0.2f, -0.1f);
+
+    Viewport vpLocal = projectionSpace(vp, ms);
+    float px1, py1, z1;
+    bool ok1 = projectToWindow(pLocal, vpLocal, px1, py1, z1);
+
+    Vec3 pWorld = ms.toWorldPoint(pLocal);
+    float px2, py2, z2;
+    bool ok2 = projectToWindow(pWorld, vp, px2, py2, z2);
+
+    assert(ok1 == ok2, "projectionSpace must agree with pre-transforming the point on visibility");
+    assert(ok1);
+    assert(isClose(px1, px2, 1e-3f, 1e-3f) && isClose(py1, py2, 1e-3f, 1e-3f)
+        && isClose(z1, z2, 1e-3f, 1e-3f),
+        "projectionSpace(vp,ms) projection must match projecting the pre-transformed world point");
+}
+
+unittest { // planeForSlice: Free (mode 0) == planeFromLineAndWorkplane
+    Vec3 p0, n0, p1, n1;
+    bool okFree = planeForSlice(Vec3(0, 0, -1), Vec3(0, 0, 1), Vec3(0, 1, 0),
+                                0, Vec3(0, 1, 0), p0, n0);
+    bool okRef  = planeFromLineAndWorkplane(Vec3(0, 0, -1), Vec3(0, 0, 1),
+                                            Vec3(0, 1, 0), p1, n1);
+    assert(okFree && okRef);
+    assert(isClose(n0.x, n1.x) && isClose(n0.y, n1.y) && isClose(n0.z, n1.z),
+           "Free mode must reproduce the drawn-line ⟂ work-plane normal");
+}
+
+unittest { // planeForSlice: X/Y/Z extrude the line along the axis ⇒ plane CONTAINS both endpoints
+    Vec3 p, n;
+    // axis=X: the plane is the drawn line extruded along world-X. It need NOT be
+    // X-normal; the invariant is that BOTH endpoints lie in it (n ⟂ line).
+    Vec3 s = Vec3(0, 0, -1), e = Vec3(0.3f, 0, 1);
+    assert(planeForSlice(s, e, Vec3(0, 1, 0), 1, Vec3(0, 0, 0), p, n));
+    assert(isClose(n.length, 1.0f, 1e-4f), "unit normal");
+    assert(p.x == 0 && p.z == -1, "plane through Start");
+    assert(isClose(dot(s - p, n), 0, 1e-5f, 1e-5f), "Start lies in the plane");
+    assert(isClose(dot(e - p, n), 0, 1e-5f, 1e-5f), "End lies in the plane");
+    assert(isClose(dot(n, Vec3(1, 0, 0)), 0, 1e-5f, 1e-5f), "n ⟂ the extrusion axis X");
+    // axis=Z on a slanted line: plane still contains both endpoints.
+    Vec3 s2 = Vec3(0, 0, 0), e2 = Vec3(1, 0.4f, 0);
+    assert(planeForSlice(s2, e2, Vec3(0, 1, 0), 3, Vec3(0, 0, 0), p, n));
+    assert(isClose(dot(s2 - p, n), 0, 1e-5f, 1e-5f), "Start in plane");
+    assert(isClose(dot(e2 - p, n), 0, 1e-5f, 1e-5f), "End in plane");
+    assert(isClose(dot(n, Vec3(0, 0, 1)), 0, 1e-5f, 1e-5f), "n ⟂ the extrusion axis Z");
+}
+
+unittest { // planeForSlice: Custom extrudes along normalize(vector); zero vector / degenerate → false
+    Vec3 p, n;
+    // Custom vector (2,0,0): extrude a Z-line along X. Plane contains both ends.
+    Vec3 s = Vec3(0, 0, -1), e = Vec3(0.3f, 0, 1);
+    assert(planeForSlice(s, e, Vec3(0, 1, 0), 4, Vec3(2, 0, 0), p, n));
+    assert(isClose(n.length, 1.0f, 1e-4f), "unit normal");
+    assert(isClose(dot(s - p, n), 0, 1e-5f, 1e-5f), "Start in plane");
+    assert(isClose(dot(e - p, n), 0, 1e-5f, 1e-5f), "End in plane");
+    assert(isClose(dot(n, Vec3(1, 0, 0)), 0, 1e-5f, 1e-5f), "n ⟂ the custom axis (2,0,0)");
+    // Zero custom vector ⇒ no plane.
+    assert(!planeForSlice(Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                          4, Vec3(0, 0, 0), p, n),
+           "zero custom vector must be degenerate");
+    // DEGENERATE GUARD: a line PARALLEL to the extrusion axis ⇒ cross ≈ 0 ⇒ false.
+    assert(!planeForSlice(Vec3(-1, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                          1, Vec3(0, 0, 0), p, n),
+           "line ∥ axis X (extrusion axis) has no unique plane");
+    assert(!planeForSlice(Vec3(0, 0, 0), Vec3(0, 0, 2), Vec3(0, 1, 0),
+                          4, Vec3(0, 0, 5), p, n),
+           "line ∥ custom axis has no unique plane");
+}
+
+unittest { // planeFromLineAndWorkplane: horizontal front-view drag → axis-aligned (Y-normal) cut
+    Vec3 p, n;
+    // Front view: work plane = XY, normal = +Z. A horizontal line (dir = +X)
+    // must produce a horizontal cut plane (normal ∥ Y), independent of pitch.
+    bool ok = planeFromLineAndWorkplane(Vec3(-1, 0, 0), Vec3(1, 0, 0),
+                                        Vec3(0, 0, 1), p, n);
+    assert(ok, "expected a valid plane for a horizontal line");
+    assert(isClose(n.length, 1.0f, 1e-4f), "normal must be unit length");
+    assert(isClose(n.y * n.y, 1.0f, 1e-4f), "normal must be parallel to world Y");
+    assert(isClose(n.x, 0, 1e-4f, 1e-4f), "normal X must be zero");
+    assert(isClose(n.z, 0, 1e-4f, 1e-4f), "normal Z must be zero");
+    // Plane contains the line: n ⟂ (end-start) and n ⟂ workplane normal.
+    assert(isClose(dot(n, Vec3(1, 0, 0) - Vec3(-1, 0, 0)), 0, 1e-4f, 1e-4f),
+           "normal must be perpendicular to the line direction");
+    assert(isClose(dot(n, Vec3(0, 0, 1)), 0, 1e-4f, 1e-4f),
+           "normal must be perpendicular to the work-plane normal");
+}
+
+unittest { // planeFromLineAndWorkplane: default XZ work plane (normal +Y) → line along Z gives X=0 plane
+    Vec3 p, n;
+    // Default construction plane (world XZ, normal +Y). A line drawn along Z
+    // through the origin yields a plane with normal ∥ X passing through start —
+    // exactly the mid-cube cut the S0 golden fixture drives.
+    bool ok = planeFromLineAndWorkplane(Vec3(0, 0, -1), Vec3(0, 0, 1),
+                                        Vec3(0, 1, 0), p, n);
+    assert(ok, "expected a valid plane");
+    assert(isClose(n.x * n.x, 1.0f, 1e-4f), "normal must be parallel to world X");
+    assert(isClose(n.y, 0, 1e-4f, 1e-4f), "normal Y must be zero");
+    assert(isClose(n.z, 0, 1e-4f, 1e-4f), "normal Z must be zero");
+    assert(p.x == 0 && p.z == -1, "plane point must equal start");
+}
+
+unittest { // snapAngleToMultiple: nearest 45° multiple + tie / negative / step-guard
+    assert(isClose(snapAngleToMultiple(30, 45), 45, 1e-4f), "30 → 45");
+    assert(isClose(snapAngleToMultiple(20, 45),  0, 1e-4f), "20 → 0");
+    assert(isClose(snapAngleToMultiple(22.4f, 45),  0, 1e-4f), "22.4 → 0");
+    assert(isClose(snapAngleToMultiple(22.6f, 45), 45, 1e-4f), "22.6 → 45");
+    assert(isClose(snapAngleToMultiple(60, 45), 45, 1e-4f), "60 → 45");
+    assert(isClose(snapAngleToMultiple(70, 45), 90, 1e-4f), "70 → 90");
+    assert(isClose(snapAngleToMultiple(-30, 45), -45, 1e-4f), "-30 → -45");
+    // A 90° step keeps only axis-aligned angles.
+    assert(isClose(snapAngleToMultiple(50, 90), 90, 1e-4f), "50 → 90 (step 90)");
+    assert(isClose(snapAngleToMultiple(40, 90),  0, 1e-4f), "40 → 0 (step 90)");
+    // step <= 0 is the disabled guard: angle passes through untouched.
+    assert(isClose(snapAngleToMultiple(37.5f, 0), 37.5f, 1e-4f), "step 0 → identity");
+}
+
+unittest { // snapLineEndpointToAngle: rotates the line to the snapped angle, keeps length
+    // Work plane = world XZ: axis1 = +X, axis2 = +Z (angle measured from +X).
+    Vec3 a1 = Vec3(1, 0, 0), a2 = Vec3(0, 0, 1);
+    // A line at 30° in XZ, length 2. Snap to 45° → direction (cos45, 0, sin45),
+    // same length. anchor at origin.
+    Vec3 anchor = Vec3(0, 0, 0);
+    float c30 = cos(30.0f * cast(float)PI / 180.0f);
+    float s30 = sin(30.0f * cast(float)PI / 180.0f);
+    Vec3 moving = anchor + Vec3(c30, 0, s30) * 2.0f;
+    Vec3 snapped = snapLineEndpointToAngle(anchor, moving, a1, a2, 45);
+    float inv = 1.0f / sqrt(2.0f);
+    assert(isClose(snapped.x, 2.0f * inv, 1e-4f), "snapped X = 2·cos45");
+    assert(isClose(snapped.y, 0, 1e-4f, 1e-4f),   "stays in plane");
+    assert(isClose(snapped.z, 2.0f * inv, 1e-4f), "snapped Z = 2·sin45");
+    // Length preserved.
+    assert(isClose((snapped - anchor).length, 2.0f, 1e-4f), "length preserved");
+    // A ~19° line snaps to 0° → pure +X direction (the clean axis-aligned case
+    // the S5 golden fixture drives). anchor at (-1,0,0), raw end (1,0,0.7).
+    Vec3 an2 = Vec3(-1, 0, 0), mv2 = Vec3(1, 0, 0.7f);
+    Vec3 sn2 = snapLineEndpointToAngle(an2, mv2, a1, a2, 45);
+    float len2 = (mv2 - an2).length;
+    assert(isClose(sn2.z, 0, 1e-4f, 1e-4f), "19° → 0° snaps to Z of anchor (z=0)");
+    assert(isClose(sn2.x, -1.0f + len2, 1e-4f), "moves purely along +X");
+    // snap off (step 0): endpoint unchanged.
+    Vec3 off = snapLineEndpointToAngle(an2, mv2, a1, a2, 0);
+    assert(isClose(off.x, 1, 1e-5f) && isClose(off.z, 0.7f, 1e-5f), "step 0 → raw");
+    // Degenerate: zero-length line returns moving unchanged.
+    assert(snapLineEndpointToAngle(anchor, anchor, a1, a2, 45) == anchor);
+}
+
+unittest { // offsetMeet: 90° corner, one bev one non-bev — slides on non-bev edge
+    Vec3 jv     = Vec3(0, 0, 0);
+    Vec3 ePrev  = Vec3(1, 0, 0);   // non-bev edge along +X
+    Vec3 eNext  = Vec3(0, 1, 0);   // bev edge along +Y
+    Vec3 faceN  = Vec3(0, 0, -1);  // face normal in -Z
+    Vec3 r = offsetMeet(jv, ePrev, eNext, faceN, 0.0f, 0.1f);
+    assert(isClose(r.x, 0.1f, 1e-5));
+    assert(isClose(r.y, 0.0f, 1e-5));
+    assert(isClose(r.z, 0.0f, 1e-5));
+}
+
+unittest { // offsetMeet: 90° corner, both bev — meets at the diagonal
+    Vec3 jv     = Vec3(0, 0, 0);
+    Vec3 ePrev  = Vec3(1, 0, 0);
+    Vec3 eNext  = Vec3(0, 1, 0);
+    Vec3 faceN  = Vec3(0, 0, -1);
+    Vec3 r = offsetMeet(jv, ePrev, eNext, faceN, 0.1f, 0.1f);
+    assert(isClose(r.x, 0.1f, 1e-5));
+    assert(isClose(r.y, 0.1f, 1e-5));
+    assert(isClose(r.z, 0.0f, 1e-5));
+}
+
+unittest { // bevelArcPoints: level=0 returns exactly the 2 flat endpoints
+    Vec3 c = Vec3(0, 0, 0);
+    auto pts = bevelArcPoints(c, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.1f, 0);
+    assert(pts.length == 2);
+    assert(isClose(pts[0].x, 0.1f, 1e-5, 1e-5) && isClose(pts[0].y, 0.0f, 1e-5, 1e-5));
+    assert(isClose(pts[1].x, 0.0f, 1e-5, 1e-5) && isClose(pts[1].y, 0.1f, 1e-5, 1e-5));
+}
+
+unittest { // bevelArcPoints: level=1, 90° sweep — midpoint lands EXACTLY at
+           // the 45° bisector, at radius=width from center (capture-verified law).
+    Vec3 c = Vec3(0, 0, 0);
+    auto pts = bevelArcPoints(c, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.1f, 1);
+    assert(pts.length == 3);
+    import std.math : SQRT1_2;
+    immutable float s = 0.1f * SQRT1_2;
+    assert(isClose(pts[1].x, s, 1e-5, 1e-5) && isClose(pts[1].y, s, 1e-5, 1e-5),
+        "level=1 midpoint should sit at the 45° bisector, radius 0.1");
+    // Every point must sit at exactly `radius` from `center`.
+    foreach (p; pts) assert(isClose(p.length, 0.1f, 1e-5, 1e-5));
+}
+
+unittest { // bevelArcPoints: level=2, 90° sweep — 5 points at 0/22.5/45/67.5/90°
+    import std.math : PI, cos, sin;
+    Vec3 c = Vec3(0, 0, 0);
+    auto pts = bevelArcPoints(c, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.2f, 2);
+    assert(pts.length == 5);
+    foreach (i, p; pts) {
+        immutable float ang = (PI / 2.0f) * (cast(float)i / 4.0f);
+        assert(isClose(p.x, 0.2f * cos(ang), 1e-4, 1e-5));
+        assert(isClose(p.y, 0.2f * sin(ang), 1e-4, 1e-5));
+    }
+}
+
+unittest { // Quat.normalize yields unit length
+    auto q = Quat(2, 0, 0, 0).normalize();
+    assert(isClose(q.w, 1.0f) && isClose(q.x, 0) && isClose(q.y, 0) && isClose(q.z, 0));
+    auto q2 = Quat(1, 1, 1, 1).normalize();
+    assert(isClose(sqrt(q2.w*q2.w + q2.x*q2.x + q2.y*q2.y + q2.z*q2.z), 1.0f));
+}
+
+unittest { // slerp endpoints: t=0 → a, t=1 → b
+    auto a = Quat.identity();
+    auto b = quatFromMatrix(pivotRotationMatrix(Vec3(0,0,0), Vec3(0,0,1), PI/2));
+    auto r0 = slerp(a, b, 0.0f);
+    assert(isClose(r0.w, a.w, 1e-5f) && isClose(r0.x, a.x, 1e-5f)
+        && isClose(r0.y, a.y, 1e-5f) && isClose(r0.z, a.z, 1e-5f));
+    auto r1 = slerp(a, b, 1.0f);
+    // Sign-insensitive compare (q and -q are the same rotation).
+    float d = r1.w*b.w + r1.x*b.x + r1.y*b.y + r1.z*b.z;
+    assert(isClose(abs(d), 1.0f, 1e-5f));
+}
+
+unittest { // quatFromMatrix(pivotRotationMatrix(...)) recovers the angle
+    // Rotation of PI/3 about Z (pivot irrelevant for the rotation part).
+    float ang = PI / 3;
+    auto m = pivotRotationMatrix(Vec3(2, -1, 0.5f), Vec3(0, 0, 1), ang);
+    auto q = quatFromMatrix(m);
+    // For a unit-axis rotation, w = cos(ang/2), |z| = sin(ang/2).
+    assert(isClose(abs(q.w), cos(ang/2), 1e-4f));
+    assert(isClose(abs(q.z), sin(ang/2), 1e-4f));
+    assert(isClose(q.x, 0, 1e-4f, 1e-4f) && isClose(q.y, 0, 1e-4f, 1e-4f));
+}
+
+unittest { // quatFromMatrix divides out per-axis scale → pure rotation
+    // Rotation·scale: rotate PI/4 about Y, then scale (2, 3, 4) along the
+    // rotated axes. quatFromMatrix must recover ONLY the rotation.
+    float ang = PI / 4;
+    Vec3 ax = Vec3(cos(ang), 0, -sin(ang)); // R(Y, ang) applied to X
+    Vec3 ay = Vec3(0, 1, 0);
+    Vec3 az = Vec3(sin(ang), 0, cos(ang));  // R(Y, ang) applied to Z
+    auto rs = pivotScaleMatrixBasis(Vec3(0,0,0), ax, ay, az, 2, 3, 4);
+    auto qpure = quatFromMatrix(pivotRotationMatrix(Vec3(0,0,0), Vec3(0,1,0), ang));
+    auto qrs   = quatFromMatrix(rs);
+    // pivotScaleMatrixBasis builds R·diag(s)·R^T (a symmetric stretch, NOT a
+    // rotation·scale), so this case just asserts scale is removed: the result
+    // is a unit quaternion and (here) the identity rotation.
+    assert(isClose(sqrt(qrs.w*qrs.w+qrs.x*qrs.x+qrs.y*qrs.y+qrs.z*qrs.z), 1.0f, 1e-4f));
+}
+
+unittest { // matrixFromQuat ∘ quatFromMatrix round-trips a rotation matrix
+    auto m = pivotRotationMatrix(Vec3(0,0,0), normalize(Vec3(1, 2, 3)), 0.7f);
+    auto m2 = matrixFromQuat(quatFromMatrix(m));
+    // Compare the 3×3 rotation block (translation is zero for pivot at origin).
+    foreach (i; [0,1,2, 4,5,6, 8,9,10])
+        assert(isClose(m[i], m2[i], 1e-4f), "rotation block mismatch");
+}
+
+unittest { // matrixFromQuat(identity) == identity matrix
+    auto m = matrixFromQuat(Quat.identity());
+    foreach (i, v; identityMatrix)
+        assert(isClose(m[i], v, 1e-6f));
+}
+
+unittest { // SINGLE-AXIS + known multi-axis round-trips
+    auto rx = eulerZYXFromMatrix(matrixFromEulerZYX(Vec3(30, 0, 0)));
+    assert(isClose(rx.x, 30, 1e-4f, 1e-4f) && isClose(rx.y, 0, 1e-4f, 1e-4f)
+        && isClose(rx.z, 0, 1e-4f, 1e-4f));
+    auto ry = eulerZYXFromMatrix(matrixFromEulerZYX(Vec3(0, 30, 0)));
+    assert(isClose(ry.x, 0, 1e-4f, 1e-4f) && isClose(ry.y, 30, 1e-4f, 1e-4f)
+        && isClose(ry.z, 0, 1e-4f, 1e-4f));
+    auto rz = eulerZYXFromMatrix(matrixFromEulerZYX(Vec3(0, 0, 30)));
+    assert(isClose(rz.x, 0, 1e-4f, 1e-4f) && isClose(rz.y, 0, 1e-4f, 1e-4f)
+        && isClose(rz.z, 30, 1e-4f, 1e-4f));
+    // Known multi-axis (well away from gimbal): angles recover directly.
+    auto m = eulerZYXFromMatrix(matrixFromEulerZYX(Vec3(20, -35, 50)));
+    assert(isClose(m.x, 20, 1e-3f, 1e-3f) && isClose(m.y, -35, 1e-3f, 1e-3f)
+        && isClose(m.z, 50, 1e-3f, 1e-3f));
+}
+
+unittest { // applyAffine: translation matrix moves a point by t
+    auto m = translationMatrix(Vec3(1, -2, 3));
+    auto p = applyAffine(m, Vec3(5, 5, 5));
+    assert(isClose(p.x, 6) && isClose(p.y, 3) && isClose(p.z, 8));
+}
+
+unittest { // applyAffine: pivotRotationMatrix matches a hand-rotated point
+    // 90° about Z around origin sends (1,0,0) → (0,1,0).
+    auto m = pivotRotationMatrix(Vec3(0,0,0), Vec3(0,0,1), PI/2);
+    auto p = applyAffine(m, Vec3(1, 0, 0));
+    assert(isClose(p.x, 0, 1e-5f, 1e-5f) && isClose(p.y, 1.0f, 1e-5f)
+        && isClose(p.z, 0, 1e-5f, 1e-5f));
+}
+
+unittest { // normalize axis-aligned
+    auto n = normalize(Vec3(3,0,0));
+    assert(isClose(n.x, 1.0f) && isClose(n.y, 0.0f) && isClose(n.z, 0.0f));
+}
+
+unittest { // normalize length == 1
+    auto n = normalize(Vec3(1,2,3));
+    assert(isClose(n.length, 1.0f));
+}
+
+unittest { // dot
+    assert(isClose(dot(Vec3(1,0,0), Vec3(1,0,0)),  1.0f));
+    assert(isClose(dot(Vec3(1,0,0), Vec3(0,1,0)),  0.0f));
+    assert(isClose(dot(Vec3(1,0,0), Vec3(-1,0,0)), -1.0f));
+}
+
+unittest { // cross X×Y = Z
+    auto r = cross(Vec3(1,0,0), Vec3(0,1,0));
+    assert(isClose(r.x, 0) && isClose(r.y, 0) && isClose(r.z, 1));
+}
+
+unittest { // cross anti-commutative
+    auto a = Vec3(1,2,3), b = Vec3(4,5,6);
+    auto ab = cross(a, b), ba = cross(b, a);
+    assert(isClose(ab.x, -ba.x) && isClose(ab.y, -ba.y) && isClose(ab.z, -ba.z));
+}
+
+unittest { // cross of parallel vectors is zero
+    auto r = cross(Vec3(1,0,0), Vec3(2,0,0));
+    assert(isClose(r.x, 0) && isClose(r.y, 0) && isClose(r.z, 0));
+}
+
+unittest { // mulMV with identity
+    auto r = mulMV(identityMatrix, Vec4(1,2,3,1));
+    assert(isClose(r.x,1) && isClose(r.y,2) && isClose(r.z,3) && isClose(r.w,1));
+}
+
+unittest { // modelMatrix identity frame → identity matrix
+    auto m = modelMatrix(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                         Vec3(1,1,1), Vec3(0,0,0));
+    foreach (i, v; identityMatrix)
+        assert(isClose(m[i], v));
+}
+
+unittest { // modelMatrix translation stored in last column
+    auto m = modelMatrix(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                         Vec3(1,1,1), Vec3(5,-3,7));
+    assert(isClose(m[12], 5) && isClose(m[13], -3) && isClose(m[14], 7));
+}
+
+unittest { // modelMatrix non-uniform scale
+    auto m = modelMatrix(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1),
+                         Vec3(2,3,4), Vec3(0,0,0));
+    assert(isClose(m[0], 2) && isClose(m[5], 3) && isClose(m[10], 4));
+}
+
+unittest { // lookAt — origin is in front of camera
+    auto m = lookAt(Vec3(0,0,5), Vec3(0,0,0), Vec3(0,1,0));
+    Vec4 o = mulMV(m, Vec4(0,0,0,1));
+    assert(isClose(o.x, 0, 1e-4f) && isClose(o.y, 0, 1e-4f));
+    assert(o.z < 0);
+}
+
+unittest { // sphericalToCartesian az=0 el=0 → +Z
+    auto v = sphericalToCartesian(0.0f, 0.0f, 1.0f);
+    assert(isClose(v.x, 0) && isClose(v.y, 0) && isClose(v.z, 1));
+}
+
+unittest { // sphericalToCartesian el=PI/2 → straight up
+    auto v = sphericalToCartesian(0.0f, PI/2, 1.0f);
+    assert(isClose(v.y, 1.0f, 1e-5f));
+    assert(isClose(v.x, 0, 1e-5f, 1e-5f) && isClose(v.z, 0, 1e-5f, 1e-5f));
+}
+
+unittest { // sphericalToCartesian dist=0 → zero vector
+    auto v = sphericalToCartesian(1.23f, 0.45f, 0.0f);
+    assert(isClose(v.x, 0) && isClose(v.y, 0) && isClose(v.z, 0));
+}
+
+unittest { // the bank law: right.y == -sin(roll) * cos(elevation)
+    // The identity that makes this `roll` the same quantity a reference
+    // viewport reports as its bank, rather than merely some rotation about
+    // the view axis. It is what lets a captured bank transfer as a number.
+    foreach (a; [-1.1f, 0.0f, 0.9f])
+    foreach (e; [-0.9f, 0.0f, 0.4138754f, 1.0f])
+    foreach (r; [-1.2f, -0.2055634f, 0.0f, 0.2055634f, 1.2f]) {
+        Orientation o = Orientation.fromAngles(a, e, r);
+        assert(isClose(o.right().y, -sin(r) * cos(e), 2e-5f, 2e-5f),
+               "screen-right.y must equal -sin(roll)*cos(elevation)");
+    }
+}
+
+unittest { // orthonormalized REPAIRS a drifted matrix, and keeps the view axis
+    Orientation o = Orientation.fromAngles(0.5f, 0.4f, 0.2f);
+    Orientation drift = o;
+    drift.m[0] += 0.02f; drift.m[4] -= 0.03f; drift.m[8] += 0.015f;
+    drift.m[3] += 0.01f;
+    assert(drift.orthonormalityDefect() > 1e-3f, "the drifted input must be measurably bad");
+    Orientation fixed = drift.orthonormalized();
+    assert(fixed.orthonormalityDefect() < 1e-6f, "orthonormalized must repair the drift");
+    // Anchored on `back`: the direction the camera looks survives the repair.
+    assert(isClose(dot(fixed.back(), normalize(drift.back())), 1.0f, 1e-6f),
+           "the repair must not swing the view direction");
+}
+
+unittest { // closestOnSegment2D — point above midpoint
+    float t;
+    float d = closestOnSegment2D(2, 1, 0, 0, 4, 0, t);
+    assert(isClose(d, 1.0f) && isClose(t, 0.5f));
+}
+
+unittest { // closestOnSegment2D — clamp to t=1
+    float t;
+    float d = closestOnSegment2D(6, 0, 0, 0, 4, 0, t);
+    assert(isClose(t, 1.0f) && isClose(d, 2.0f));
+}
+
+unittest { // closestOnSegment2D — clamp to t=0
+    float t;
+    float d = closestOnSegment2D(-1, 0, 0, 0, 4, 0, t);
+    assert(isClose(t, 0.0f) && isClose(d, 1.0f));
+}
+
+unittest { // closestOnSegment2D — degenerate segment
+    float t;
+    float d = closestOnSegment2D(3, 4, 0, 0, 0, 0, t);
+    assert(isClose(t, 0.0f) && isClose(d, 5.0f));
+}
+
+unittest { // orthographicMatrix: check diagonal entries and m[15] discriminator
+    import std.math : isClose;
+    float halfH = 2.0f, aspect = 16.0f / 9.0f, near = 0.001f, far = 100.0f;
+    auto m = orthographicMatrix(halfH, aspect, near, far);
+    // Diagonal entries.
+    assert(isClose(m[0],  1.0f / (halfH * aspect), 1e-5f), "m[0] wrong");
+    assert(isClose(m[5],  1.0f / halfH,             1e-5f), "m[5] wrong");
+    assert(isClose(m[10], -2.0f / (far - near),     1e-5f), "m[10] wrong");
+    assert(isClose(m[14], -(far + near) / (far - near), 1e-5f), "m[14] wrong");
+    assert(m[15] == 1.0f, "m[15] must be 1 (ortho discriminator)");
+    // Off-diagonal entries must be zero.
+    foreach (i; 0 .. 16) {
+        if (i != 0 && i != 5 && i != 10 && i != 14 && i != 15)
+            assert(m[i] == 0.0f, "off-diagonal must be 0");
+    }
+}
+
+unittest { // isOrtho: perspective → false, ortho → true
+    import std.math : isClose, PI;
+    Viewport vp;
+    vp.proj = perspectiveMatrix(45.0f * PI / 180.0f, 1.0f, 0.001f, 100.0f);
+    assert(!isOrtho(vp), "perspective matrix must not be ortho");
+    assert(vp.proj[15] == 0.0f, "perspective m[15] must be 0");
+    vp.proj = orthographicMatrix(2.0f, 1.0f, 0.001f, 100.0f);
+    assert(isOrtho(vp), "ortho matrix must be ortho");
+    assert(vp.proj[15] == 1.0f, "ortho m[15] must be 1");
+}
+
+unittest { // screenPointToRay: ortho — parallel dirs, per-pixel origins
+    import std.math : isClose, PI;
+    // Build an ortho Front viewport: eye at Z=3, looking -Z.
+    Viewport vp;
+    vp.view   = lookAt(Vec3(0,0,3), Vec3(0,0,0), Vec3(0,1,0));
+    float halfH = 2.0f;
+    vp.proj   = orthographicMatrix(halfH, 1.0f, 0.001f, 100.0f);
+    vp.width  = 800; vp.height = 800;
+    vp.x = 0; vp.y = 0;
+    vp.eye    = Vec3(0, 0, 3);
+    // Two pixels at different positions.
+    Vec3 o1, d1, o2, d2;
+    screenPointToRay(200.0f, 400.0f, vp, o1, d1);
+    screenPointToRay(600.0f, 400.0f, vp, o2, d2);
+    // Directions must be parallel (same vector, forward = -Z).
+    assert(isClose(d1.x, d2.x, 1e-5f) && isClose(d1.y, d2.y, 1e-5f)
+           && isClose(d1.z, d2.z, 1e-5f), "ortho rays must be parallel");
+    assert(isClose(d1.z, -1.0f, 1e-4f), "ortho forward must be -Z for front view");
+    // Origins must differ (the two X pixels land at different world X).
+    assert(!isClose(o1.x, o2.x, 1e-3f), "ortho origins must differ in X");
+    assert(isClose(o1.y, o2.y, 1e-5f), "ortho origins Y must match (same row)");
+}
+
+unittest { // rayPlaneIntersect: ray from above hits XZ plane at origin
+    Vec3 hit;
+    bool ok = rayPlaneIntersect(Vec3(0,5,0), Vec3(0,-1,0),
+                                Vec3(0,0,0), Vec3(0,1,0), hit);
+    assert(ok);
+    assert(isClose(hit.x, 0, 1e-5f, 1e-5f));
+    assert(isClose(hit.y, 0, 1e-5f, 1e-5f));
+    assert(isClose(hit.z, 0, 1e-5f, 1e-5f));
+}
+
+unittest { // rayPlaneIntersect: angled ray hits offset plane at correct point
+    // Ray from origin along (1,1,0)/√2, plane at x=3 with normal (1,0,0)
+    // t = 3/s where s=1/√2, hit = (3, 3, 0)
+    float s = 1.0f / sqrt(2.0f);
+    Vec3 hit;
+    bool ok = rayPlaneIntersect(Vec3(0,0,0), Vec3(s,s,0),
+                                Vec3(3,0,0), Vec3(1,0,0), hit);
+    assert(ok);
+    assert(isClose(hit.x, 3.0f, 1e-4f));
+    assert(isClose(hit.y, 3.0f, 1e-4f));
+    assert(isClose(hit.z, 0, 1e-5f, 1e-5f));
+}
+
+unittest { // vec3Length
+    assert(isClose(Vec3(3,4,0).length, 5.0f));
+    assert(isClose(Vec3(0,0,0).length, 0.0f));
+    assert(isClose(Vec3(1,0,0).length, 1.0f));
+}
+
+unittest { // vec3Lerp
+    auto r = vec3Lerp(Vec3(0,0,0), Vec3(4,4,4), 0.25f);
+    assert(isClose(r.x, 1.0f) && isClose(r.y, 1.0f) && isClose(r.z, 1.0f));
+    auto a = vec3Lerp(Vec3(1,2,3), Vec3(5,6,7), 0.0f);
+    assert(isClose(a.x, 1.0f) && isClose(a.y, 2.0f) && isClose(a.z, 3.0f));
+    auto b = vec3Lerp(Vec3(1,2,3), Vec3(5,6,7), 1.0f);
+    assert(isClose(b.x, 5.0f) && isClose(b.y, 6.0f) && isClose(b.z, 7.0f));
 }

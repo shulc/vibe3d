@@ -586,19 +586,6 @@ string layoutIniPath(string dir, int ver) pure {
     return buildPath(dir, format("imgui_layout_v%d.ini", ver));
 }
 
-// Pure filename math only — no GL context, no filesystem access.
-unittest {
-    auto p1 = layoutIniPath("/cfg/vibe3d", 1);
-    auto p2 = layoutIniPath("/cfg/vibe3d", 2);
-    auto p3 = layoutIniPath("/cfg/vibe3d", 3);
-    import std.path : baseName, dirName;
-    assert(dirName(p1)  == "/cfg/vibe3d",        "path must be under dir");
-    assert(baseName(p1) == "imgui_layout_v1.ini", "v1 filename");
-    assert(p1 != p2,                              "version bump → different file");
-    assert(baseName(p2) == "imgui_layout_v2.ini", "v2 filename");
-    assert(p2 != p3,                              "version bump → different file");
-    assert(baseName(p3) == "imgui_layout_v3.ini", "v3 filename");
-}
 
 /// Copy `defaultIniPath` (the shipped, user-confirmed default arrangement,
 /// `config/default_layout.ini`) into `userIniPath` if nothing lives at

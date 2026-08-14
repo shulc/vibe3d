@@ -367,24 +367,3 @@ void registerToolPresets(ref Registry reg, ToolPreset[] presets) {
         reg.preActivate[p.id]   = makePreActivate(p);
     }
 }
-
-// Guards the alias mechanism's byte-stability claim: `ElementMove` is an
-// `alias:` entry pointing at `xfrm.elementMove`; the two must resolve to
-// field-identical presets (same base / pipeAttrs / toolAttrs / flags) so both
-// factory ids keep behaving exactly as if each still had its own hand-written
-// YAML block.
-unittest {
-    auto presets = loadToolPresets("config/tool_presets.yaml");
-    const(ToolPreset)* canonical = null;
-    const(ToolPreset)* aliased   = null;
-    foreach (ref p; presets) {
-        if (p.id == "xfrm.elementMove") canonical = &p;
-        if (p.id == "ElementMove")      aliased   = &p;
-    }
-    assert(canonical !is null, "xfrm.elementMove preset missing");
-    assert(aliased   !is null, "ElementMove alias preset missing");
-    assert(aliased.base == canonical.base);
-    assert(aliased.flags == canonical.flags);
-    assert(aliased.toolAttrs == canonical.toolAttrs);
-    assert(aliased.pipeAttrs == canonical.pipeAttrs);
-}

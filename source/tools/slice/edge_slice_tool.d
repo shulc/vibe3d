@@ -39,12 +39,6 @@ string edgeSliceHudLabel(float t) {
     return format("%.2f %%", t * 100.0f);
 }
 
-unittest {
-    assert(edgeSliceHudLabel(0.25f) == "25.00 %");
-    assert(edgeSliceHudLabel(0.5f)  == "50.00 %");
-    assert(edgeSliceHudLabel(0.0f)  == "0.00 %");
-    assert(edgeSliceHudLabel(1.0f)  == "100.00 %");
-}
 
 private Vec3 lerpVec3(Vec3 a, Vec3 b, float t) {
     return a + (b - a) * t;

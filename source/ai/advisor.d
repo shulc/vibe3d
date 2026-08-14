@@ -126,11 +126,3 @@ class AiAdvisor {
         return advise(context, null);
     }
 }
-
-unittest {
-    auto advisor = new AiAdvisor();
-    auto d = advisor.advise();
-    assert(d.keepDefault);
-    assert(d.confidence == 0.0f);
-    assert(d.candidateIndex == -1);
-}

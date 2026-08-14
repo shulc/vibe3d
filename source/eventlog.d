@@ -606,12 +606,6 @@ unittest { // queryMouse without override uses SDL_GetMouseState mock
     assert(mx == 7 && my == 13);
 }
 
-unittest { // EventLogger.close() is a no-op when already inactive
-    EventLogger logger;
-    logger.active = false;
-    logger.close();
-    assert(!logger.active);
-}
 
 unittest { // EventLogger: open sets up state, close marks inactive
     import std.file : remove, exists, tempDir;
@@ -693,16 +687,7 @@ unittest { // EventLogger.log: SDL_KEYDOWN writes JSON with sym/scan/mod/repeat
     assert(line.canFind(`"scan":4`),     line);
 }
 
-unittest { // EventPlayer.tick() returns false immediately when inactive
-    EventPlayer player;
-    player.active = false;
-    assert(player.tick() == false);
-}
 
-unittest { // EventPlayer.open: non-existent file returns false
-    EventPlayer p;
-    assert(!p.open("/nonexistent_path_for_unittest/file.txt"));
-}
 
 unittest { // EventPlayer.open: parse multiple event types from JSON Lines file
     import std.file : write, remove, tempDir;

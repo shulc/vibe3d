@@ -410,3 +410,4 @@ unittest { // the ball is centred on the PANE, not on the window
            "a press at the window centre is nowhere near the cell centre and "
            ~ "must bank — otherwise the subtraction is not happening");
 }
+

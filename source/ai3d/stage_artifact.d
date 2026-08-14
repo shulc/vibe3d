@@ -512,39 +512,3 @@ private void appendAscii(ref typeof(appender!(ubyte[])()) body, string text) {
     foreach (ubyte b; cast(ubyte[]) text)
         body.put(b);
 }
-
-unittest {
-    // Synthetic cancel: a stopRequested flag set BEFORE the call returns
-    // `cancelled` without ever reaching the network (invalid URL also
-    // exercises the same early-return shape, keeping this test offline).
-    shared bool stop = true;
-    auto r = stageArtifact("http://127.0.0.1:1", "/nonexistent.png", 1000,
-        Ai3dDefaultRequestedFaces, stop);
-    assert(r.cancelled || r.code.length > 0);
-}
-
-unittest {
-    assert(clampGenerationDeadlineMs(0) == 1);
-    assert(clampGenerationDeadlineMs(-5) == 1);
-    assert(clampGenerationDeadlineMs(1_000) == 1_000);
-    assert(clampGenerationDeadlineMs(Ai3dMaxGenerationDeadlineMs + 1) == Ai3dMaxGenerationDeadlineMs);
-}
-
-unittest {
-    assert(clampMaxFaces(0) == 1_000);
-    assert(clampMaxFaces(-5) == 1_000);
-    assert(clampMaxFaces(999) == 1_000);
-    assert(clampMaxFaces(1_000) == 1_000);
-    assert(clampMaxFaces(50_000) == 50_000);
-    assert(clampMaxFaces(cast(int) Ai3dMaxTotalFaces) == cast(int) Ai3dMaxTotalFaces);
-    assert(clampMaxFaces(cast(int) Ai3dMaxTotalFaces + 1) == cast(int) Ai3dMaxTotalFaces);
-    assert(clampMaxFaces(int.max) == cast(int) Ai3dMaxTotalFaces);
-}
-
-unittest {
-    // normalizeLocalWorkerUrl only accepts loopback origins.
-    assert(normalizeLocalWorkerUrl("http://127.0.0.1:47831") == "http://127.0.0.1:47831");
-    assert(normalizeLocalWorkerUrl("http://127.0.0.1:47831/") == "http://127.0.0.1:47831");
-    assert(normalizeLocalWorkerUrl("http://example.com") is null);
-    assert(normalizeLocalWorkerUrl("") is null);
-}

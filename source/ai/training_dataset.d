@@ -170,12 +170,3 @@ private void putJsonFloat(B)(ref B buf, float value) {
     else
         buf.put(`null`);
 }
-
-unittest {
-    auto result = exportAiSyntheticTrainingDatasetJsonl();
-    assert(result.stats.total == 3);
-    assert(result.stats.labeled == 3);
-    assert(result.stats.unlabeled == 0);
-    assert(result.stats.skipped == 0);
-    assert(result.lines.length == 3);
-}

@@ -432,3 +432,4 @@ unittest {
         "Origin is the shape that needs two tables: it may be WRITTEN and must "
         ~ "not be READ");
 }
+
