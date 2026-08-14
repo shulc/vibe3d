@@ -355,7 +355,10 @@ private void weldPositional(ref Vec3[] verts, ref uint[][] faces,
         // its UV so the two stay parallel.
         if (nf.length >= 2 && nf[0] == nf[$ - 1]) {
             nf = nf[0 .. $ - 1];
-            if (hasUv) nfUv = nfUv[0 .. $ - 1];
+            // TWO floats per corner: dropping one would leave the stream half a
+            // corner out of phase, and it is shared and sequential, so every
+            // later face would inherit the shift.
+            if (hasUv) nfUv = nfUv[0 .. $ - 2];
         }
         // Drop sub-3-corner faces (and their UV) entirely.
         if (nf.length >= 3) {
@@ -495,4 +498,47 @@ unittest {
     assert(isClose(ai.a4, 10.0f, 1e-6f, 1e-6f));
     assert(isClose(ai.b4, 20.0f, 1e-6f, 1e-6f));
     assert(isClose(ai.c4, 30.0f, 1e-6f, 1e-6f));
+}
+
+unittest {
+    // weldPositional's wrap-around close, with a per-corner UV stream riding
+    // along. The stream carries TWO floats per corner, so closing the wrap has
+    // to drop two of them; dropping one leaves the stream half a corner out of
+    // phase, and since it is one shared sequential buffer, EVERY face after the
+    // affected one inherits that shift. The second face here exists purely to
+    // witness that — a test that looked only at the welded face would pass on
+    // the broken code, and so would one that only checked the total length
+    // parity.
+    import std.math : isClose;
+
+    // v3 sits exactly on v0, so face A's last corner welds onto its first and
+    // the wrap-around branch fires. Face B is disjoint and must come through
+    // untouched.
+    Vec3[] verts = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0),
+        Vec3(0, 0, 0),                       // duplicate of v0 -> welds
+        Vec3(3, 0, 0), Vec3(4, 0, 0), Vec3(4, 1, 0),
+    ];
+    uint[][] faces = [[0, 1, 2, 3], [4, 5, 6]];
+    // Each corner's u is its own marker, v is u*10 — a shift by one float shows
+    // up as a u that used to be someone's v.
+    float[] uv = [1,10, 2,20, 3,30, 4,40,     // face A, 4 corners
+                  5,50, 6,60, 7,70];          // face B, 3 corners
+
+    weldPositional(verts, faces, uv);
+
+    assert(faces.length == 2, "both faces survive: A drops to 3 corners, B is untouched");
+    assert(faces[0].length == 3 && faces[1].length == 3);
+
+    size_t corners = 0;
+    foreach (f; faces) corners += f.length;
+    assert(uv.length == corners * 2,
+           "the UV stream stays exactly two floats per surviving corner");
+
+    // The surviving corners keep THEIR OWN values: face A keeps corners 0..2 and
+    // loses the welded-away corner 4/40 entirely; face B is verbatim.
+    immutable float[] want = [1,10, 2,20, 3,30,   5,50, 6,60, 7,70];
+    foreach (i, w; want)
+        assert(isClose(uv[i], w, 1e-6f, 1e-6f),
+               "corner UV must survive the weld in phase, not shifted by half a corner");
 }
