@@ -321,3 +321,129 @@ unittest {
     auto delta = m.endEditBatch();
     assert(delta.isEmpty(), "(e) empty batch → empty delta");
 }
+
+// ---------------------------------------------------------------------------
+// (f) TWO faces dropped by ONE entry — the face ORDER lock (task 0703).
+//
+// `RemoveFaces.fIdx` is inverted by inserting ascending at the recorded index,
+// which reconstructs the original array only if the indices are in the space
+// of `faces` as it stood BEFORE the removal. `removeEdgesByMask` used to record
+// the POST-drop slot instead (`keptFaces.length` at the moment of the drop);
+// the two spaces coincide only when a SINGLE face is dropped, so every earlier
+// test — all of which drop one — passed while a two-face drop came back
+// reversed.
+//
+// Fixture: two triangles sharing an edge. Dissolving the shared edge merges
+// both into one quad, so BOTH component faces land in one RemoveFaces entry and
+// both used to be recorded at index 0 ⇒ insertInPlace(0) twice ⇒ [f1, f0].
+// The face SET survives either way; only the ORDER distinguishes them, and the
+// order is the key selection / faceMaterial / facePart / per-corner maps hang
+// off. So assert positionally, never as a set.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m;
+    m.addVertex(Vec3(0, 0, 0));   // 0
+    m.addVertex(Vec3(1, 0, 0));   // 1
+    m.addVertex(Vec3(0, 1, 0));   // 2
+    m.addVertex(Vec3(1, 1, 0));   // 3
+    m.addFace([0u, 1u, 2u]);      // f0 — shares edge (1,2) with f1
+    m.addFace([1u, 3u, 2u]);      // f1
+    prep(m);
+    auto pre = capture(m);
+    assert(m.faces.length == 2);
+
+    // The interior edge (1,2).
+    int sharedEdge = -1;
+    foreach (i, e; m.edges)
+        if ((e[0] == 1 && e[1] == 2) || (e[0] == 2 && e[1] == 1)) sharedEdge = cast(int)i;
+    assert(sharedEdge >= 0, "(f) shared edge not found");
+
+    // Distinguishable per-face payload, so a reversal is visible in more than
+    // the vertex lists (these are exactly the arrays a wrong order corrupts).
+    m.faceMaterial[0] = 7u;
+    m.faceMaterial[1] = 9u;
+    m.facePart.length = 2;
+    m.facePart[0] = 11u;
+    m.facePart[1] = 13u;
+    pre = capture(m);
+
+    auto rec = MeshEditTracker();
+    m.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
+    bool[] emask;
+    emask.length = m.edges.length;
+    emask[sharedEdge] = true;
+    const n = m.removeEdgesByMask(emask);
+    auto delta = m.endEditBatch();
+    assert(n == 1, "(f) one edge dissolved");
+    assert(m.faces.length == 1, "(f) the two triangles merged into one polygon");
+
+    delta.revert(m);
+    assert(m.faces.length == 2, "(f) revert restores both faces");
+    assert(m.faces[0] == [0u, 1u, 2u],
+        "(f) face 0 must come back at index 0 — RemoveFaces.fIdx is a PRE-drop "
+        ~ "index space and its inverse inserts ascending; recording the "
+        ~ "post-drop slot reverses the pair");
+    assert(m.faces[1] == [1u, 3u, 2u], "(f) face 1 must come back at index 1");
+    assertGeoEq(m, pre, "(f) revert");
+    assert(m.faceMaterial[0] == 7u && m.faceMaterial[1] == 9u,
+        "(f) faceMaterial follows its own face back");
+    assert(m.facePart[0] == 11u && m.facePart[1] == 13u,
+        "(f) facePart follows its own face back");
+}
+
+// ---------------------------------------------------------------------------
+// (g) The vertex-dissolve twin of (f), plus the ReshapeFaces interaction.
+//
+// Dissolving one vertex can DROP faces (shrunk below 3 corners) and RESHAPE
+// others in the same call. Both entries used to be recorded in the POST-shrink
+// space, which is wrong twice over: the two drops collide on one index (as in
+// (f)), and the reshape index is read AFTER `RemoveFaces⁻¹` has already put the
+// dropped faces back — i.e. against an array that is once again in the ORIGINAL
+// space. Recording both in the pre-op space makes the LIFO revert consistent:
+// RemoveFaces⁻¹ restores the original length and order, then ReshapeFaces⁻¹
+// addresses the reshaped face at the index it always had.
+//
+// Fixture: vertex 0 is shared by two triangles (both degenerate after the
+// dissolve ⇒ dropped) and one quad (⇒ reshaped to a triangle, survives). The
+// two drops precede the survivor, so the post-shrink index of the reshape is 0
+// while its true index is 2.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m;
+    m.addVertex(Vec3( 0,  0, 0));   // 0 — dissolved
+    m.addVertex(Vec3( 1,  0, 0));   // 1
+    m.addVertex(Vec3( 1,  1, 0));   // 2
+    m.addVertex(Vec3( 0,  1, 0));   // 3
+    m.addVertex(Vec3(-1,  1, 0));   // 4
+    m.addVertex(Vec3(-1,  0, 0));   // 5
+    m.addFace([0u, 1u, 2u]);        // f0 — → [1,2], dropped
+    m.addFace([0u, 2u, 3u]);        // f1 — → [2,3], dropped
+    m.addFace([0u, 3u, 4u, 5u]);    // f2 — → [3,4,5], reshaped
+    prep(m);
+    m.faceMaterial[0] = 7u;
+    m.faceMaterial[1] = 9u;
+    m.faceMaterial[2] = 5u;
+    auto pre = capture(m);
+
+    auto rec = MeshEditTracker();
+    m.beginEditBatch(&rec, MeshEditScope.Geometry | MeshEditScope.Marks);
+    bool[] vmask;
+    vmask.length = m.vertices.length;
+    vmask[0] = true;
+    const n = m.dissolveVerticesByMask(vmask);
+    auto delta = m.endEditBatch();
+    assert(n == 1, "(g) one vert dissolved");
+    assert(m.faces.length == 1, "(g) two degenerate faces dropped, one survives");
+
+    delta.revert(m);
+    assert(m.faces.length == 3, "(g) revert restores all three faces");
+    assert(m.faces[0] == [0u, 1u, 2u], "(g) dropped face 0 back at index 0");
+    assert(m.faces[1] == [0u, 2u, 3u], "(g) dropped face 1 back at index 1");
+    assert(m.faces[2] == [0u, 3u, 4u, 5u],
+        "(g) the RESHAPED face must be restored at its own index — a reshape "
+        ~ "index recorded in the post-shrink space lands on a re-inserted "
+        ~ "dropped face instead");
+    assertGeoEq(m, pre, "(g) revert");
+    assert(m.faceMaterial[0] == 7u && m.faceMaterial[1] == 9u
+        && m.faceMaterial[2] == 5u, "(g) faceMaterial follows its own face back");
+}

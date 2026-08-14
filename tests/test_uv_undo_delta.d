@@ -42,8 +42,12 @@ void main() {}
 // never 0 (so a DROP stays distinguishable from a wrong value).
 private float cornerKey(Vec3 p) { return 1.0f + p.x * 10.0f + p.y; }
 
-// u = the corner's identity key, v = 1 + face index (recorded for eyeballing;
-// not asserted — a replay may legitimately restore faces in another ORDER).
+// u = the corner's identity key, v = 1 + face index. The two `assert*Corner*`
+// helpers below read `u` only — they are deliberately order-agnostic, because a
+// forward replay legitimately re-slots faces (a merge appends). `v` is what the
+// byte-exact whole-buffer comparisons in the UNDO cases pin, and since task
+// 0703 an undo does owe the pre-op face order, so those comparisons hold `v`
+// to it.
 private void authorUV(ref Mesh m) {
     auto map = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
     assert(map !is null, "UV map registration failed");
@@ -56,9 +60,11 @@ private void authorUV(ref Mesh m) {
 }
 
 // Every corner must carry either nothing (a drop) or its OWN authored value.
-// Face ORDER and vertex INDICES are both allowed to move (a replay legitimately
-// restores faces in another order, and a delete compacts vertices) — the key is
-// the vertex position, so it survives both.
+// Face ORDER and vertex INDICES are both allowed to move (a forward replay
+// re-slots faces, and a delete compacts vertices) — the key is the vertex
+// position, so it survives both. Where the ORDER is also owed, the caller adds
+// `assertFaceOrderRestored` / a whole-buffer comparison; this helper stays the
+// weaker, order-free question on purpose.
 private void assertNoForeignCorner(ref Mesh m, string what) {
     auto map = m.meshMap(kUvMapName);
     assert(map !is null, what ~ ": the UV map disappeared entirely");
@@ -107,41 +113,21 @@ private void assertEveryCornerMine(ref Mesh m, string what) {
         }
 }
 
-// Per-face identity comparison, for the cases where the geometry replay does
-// NOT restore the face ORDER (see the edge-dissolve test): every face present
-// after the replay must be matched — by its exact vertex list — to a face of
-// the captured pre-op state, and must carry that face's corner values slot for
-// slot. Order-independent, but not one bit weaker per face: a value that moved
-// between two faces with the same corner keys would still be caught, because
-// the pre-op `v` component names the SOURCE FACE.
-private void assertFacesCarryTheirOwnIsland(ref Mesh m,
-                                            const uint[][] preFaces,
-                                            const float[] preData,
-                                            const uint[] preFaceLoop,
-                                            string what) {
-    auto map = m.meshMap(kUvMapName);
-    assert(map !is null, what ~ ": the UV map disappeared entirely");
+// Face-for-face vertex-list identity, positional. The map assertions below are
+// byte-exact against the pre-op buffer, which only means anything if the faces
+// under it came back in the SAME ORDER — assert that separately so a future
+// order regression names itself instead of surfacing as "the UV moved".
+private void assertFaceOrderRestored(ref Mesh m, const uint[][] preFaces,
+                                     string what) {
     assert(m.faces.length == preFaces.length,
         what ~ ": face count changed (" ~ m.faces.length.to!string ~ " vs "
         ~ preFaces.length.to!string ~ ")");
-    foreach (fi; 0 .. m.faces.length) {
-        size_t src = size_t.max;
-        foreach (pf; 0 .. preFaces.length)
-            if (preFaces[pf] == m.faces[fi]) { src = pf; break; }
-        assert(src != size_t.max,
-            what ~ ": face " ~ fi.to!string ~ " " ~ m.faces[fi].to!string
-            ~ " matches no pre-op face — the geometry replay is the problem, "
-            ~ "not the map");
-        foreach (c; 0 .. m.faces[fi].length) {
-            const size_t dst = (m.faceLoop[fi] + c) * 2;
-            const size_t s   = (preFaceLoop[src] + c) * 2;
-            assert(map.data[dst] == preData[s] && map.data[dst + 1] == preData[s + 1],
-                what ~ ": face " ~ fi.to!string ~ " corner " ~ c.to!string
-                ~ " carries (" ~ map.data[dst].to!string ~ ","
-                ~ map.data[dst + 1].to!string ~ "), expected ("
-                ~ preData[s].to!string ~ "," ~ preData[s + 1].to!string ~ ")");
-        }
-    }
+    foreach (fi; 0 .. m.faces.length)
+        assert(m.faces[fi] == preFaces[fi],
+            what ~ ": face " ~ fi.to!string ~ " came back as "
+            ~ m.faces[fi].to!string ~ ", expected " ~ preFaces[fi].to!string
+            ~ " — the face ORDER is the key selection / faceMaterial / facePart "
+            ~ "/ the per-corner maps all hang off");
 }
 
 // Three disconnected triangles: every face has the SAME arity, so a replay can
@@ -425,21 +411,20 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // DELETE EDGES — `removeEdgesByMask` merges the two faces around the dissolved
-// edge into one, recording RemoveFaces (the two components, in the POST-drop
+// edge into one, recording RemoveFaces (the two components, in the PRE-drop
 // index space) + AddFaces (the merged quad, a tail append). Undo has to put
 // both triangles back WITH their corner values, which live nowhere but the
 // delta by then.
 //
-// Asserted per FACE, not byte-for-byte, and the reason is a PRE-EXISTING
-// GEOMETRY defect this test walked into (task 0689, measured): the two dropped
-// component faces are both recorded at post-drop index 0, and
-// `removeFacesReverse` inserts ascending at the recorded index — so they come
-// back in the opposite ORDER ([f1, f0]). More generally the post-drop
-// convention `dissolveVerticesByMask` / `removeEdgesByMask` record in is not
-// the one `removeFacesReverse` inverts (that one is the PRE-drop convention
-// `deleteFacesByMask` uses); the two coincide only when a single face is
-// dropped. Nothing to do with per-corner maps — the map here follows its faces
-// faithfully, which is exactly what this assertion checks.
+// BYTE-EXACT since task 0703. It was per-FACE (order-independent) up to then,
+// and the reason was a PRE-EXISTING GEOMETRY defect this test walked into at
+// 0689: `removeEdgesByMask` recorded the two dropped component faces at
+// POST-drop index 0 — both of them — while `removeFacesReverse` inserts
+// ascending at the recorded index, so undo returned them in the opposite ORDER
+// ([f1, f0]). Nothing to do with per-corner maps; the map followed its faces
+// faithfully, which is why the weaker per-face assertion passed. 0703 brought
+// all three kernels onto the one PRE-drop space `removeFacesReverse` inverts,
+// so the whole buffer must now come back identical.
 // ---------------------------------------------------------------------------
 unittest {
     auto m = twoTriangleStrip();
@@ -467,9 +452,14 @@ unittest {
 
     assert(d.revert(m));
     assert(m.faces.length == 2, "undo must put both triangles back");
+    assertFaceOrderRestored(m, preFaces, "after edge dissolve + undo");
+    assert(m.faceLoop == preFaceLoop,
+        "after edge dissolve + undo: the corner layout must be the pre-op one");
     assertEveryCornerMine(m, "after edge dissolve + undo");
-    assertFacesCarryTheirOwnIsland(m, preFaces, pristine, preFaceLoop,
-        "after edge dissolve + undo");
+    assert(m.meshMap(kUvMapName).data == pristine,
+        "edge dissolve + undo must return the per-corner map byte-for-byte — "
+        ~ "tightened from the per-face check at task 0703, which fixed the "
+        ~ "face-ORDER defect that forced the weaker assertion at 0689");
 }
 
 // ---------------------------------------------------------------------------

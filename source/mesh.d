@@ -2508,8 +2508,20 @@ struct Mesh {
         // Class B tracker hook accumulators — inert unless a batch is open.
         // A face whose boundary shrinks (but stays >= 3) is a ReshapeFaces; a
         // face that becomes degenerate (< 3) and is dropped is a RemoveFaces.
-        // Both index in the NEW (post-rebuild) face-index space so they invert
-        // before the tail compactUnreferenced's vert reindex (LIFO).
+        // Both index in the OLD (pre-rewrite) face-index space — the live index
+        // `fi` — which is the one every entry uses (MeshOpEntry, "THE INDEX
+        // SPACE OF AN ENTRY") and, being the space the maps are still in, also
+        // the one the per-corner payload capture wants (task 0689). Both entries
+        // invert before the tail compactUnreferenced's vert reindex (LIFO).
+        //
+        // Task 0703: these used to be recorded in the POST-shrink space
+        // (`newFaces.length` at the moment each face was appended/dropped),
+        // which is wrong twice over. Two faces dropped from the head both read
+        // 0, so `RemoveFaces⁻¹`'s ascending insertInPlace returned them
+        // reversed; and the reshape index is consumed AFTER that inverse has
+        // already re-inserted the dropped faces — i.e. against an array that is
+        // back in the pre-op space — so it landed on a re-inserted face and
+        // overwrote it. Pinned by tests/test_mesh_edit_delta.d (g).
         const bool recDis = editRecorder_ !is null;
         uint[]   reshapeIdx;
         uint[][] reshapeBefore;
@@ -2519,12 +2531,6 @@ struct Mesh {
         uint[]   removedFaceMat;
         uint[]   removedFacePart;
         uint[]   removedFaceSub;
-        // LIVE (pre-rewrite) face indices of the same two entries, for the
-        // per-corner payload capture (task 0689). `reshapeIdx`/`removedFaceIdx`
-        // above are in the POST-shrink space the entries invert in; the map
-        // values have to be read out of the space they still live in.
-        uint[]   reshapeOldFi;
-        uint[]   removedOldFi;
         // PolyVertex remap, mechanism (b): a masked corner is dropped from its
         // face's corner LIST, so new corner `j` of a surviving face came from a
         // specific OLD corner `k` (its position in the old face). Build
@@ -2543,10 +2549,9 @@ struct Mesh {
             }
             if (kept.length >= 3) {
                 if (recDis && kept.length != f.length) {
-                    reshapeIdx    ~= cast(uint)newFaces.length;
+                    reshapeIdx    ~= cast(uint)fi;
                     reshapeBefore ~= f.dup;
                     reshapeAfter  ~= kept.dup;
-                    reshapeOldFi  ~= cast(uint)fi;
                 }
                 newFaces    ~= kept;
                 newWord     ~= faceAttrOr(faceMarks, fi);
@@ -2557,28 +2562,29 @@ struct Mesh {
                     foreach (kc; keptCorner)
                         oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, kc);
             } else if (recDis) {
-                // Degenerate face dropped — reconstruct it on revert at its
-                // post-shrink position in the new face array.
-                removedFaceIdx   ~= cast(uint)newFaces.length;
+                // Degenerate face dropped — reconstruct it on revert at the
+                // index it holds RIGHT NOW, in the pre-rewrite array.
+                removedFaceIdx   ~= cast(uint)fi;
                 removedFaceLists ~= f.dup;
                 removedFaceMat   ~= faceAttrOr(faceMaterial, fi);
                 removedFacePart  ~= faceAttrOr(facePart, fi);
                 removedFaceSub   ~= (isFaceSubpatch(fi) ? 1u : 0u);
-                removedOldFi     ~= cast(uint)fi;
             }
         }
         if (recDis) {
             // Reshape first, then RemoveFaces — on revert (LIFO) the dropped
-            // faces are re-inserted FIRST, then the reshape lists are restored,
-            // matching the post-shrink index space both were recorded in.
+            // faces are re-inserted FIRST, which restores the pre-rewrite
+            // length and ORDER, and only then are the reshape lists restored,
+            // at the pre-rewrite indices both entries were recorded in.
             // Each face entry is preceded by its own per-corner payload (task
             // 0689): the reshape's payload holds the PRE-shrink corner values
             // of the faces it shortens (the dissolved corner among them), the
             // removal's holds the degenerate faces' corners. `faces` is still
-            // the pre-rewrite array here, so both reads are in the live space.
-            recordPolyVertexPayload(reshapeOldFi);
+            // the pre-rewrite array here, so both reads are in the live space —
+            // the same space the entries' own indices are in.
+            recordPolyVertexPayload(reshapeIdx);
             editRecorder_.recordReshapeFaces(reshapeIdx, reshapeBefore, reshapeAfter);
-            recordPolyVertexPayload(removedOldFi);
+            recordPolyVertexPayload(removedFaceIdx);
             editRecorder_.recordRemoveFaces(removedFaceIdx, removedFaceLists,
                                             removedFaceMat, removedFacePart, removedFaceSub);
         }
@@ -3165,22 +3171,29 @@ struct Mesh {
         // ++ [merged boundary polygons]. That is exactly a keep-filter drop
         // (closing the gaps the dropped component faces leave) followed by a
         // tail append, so the delta is a RemoveFaces (the dropped component
-        // faces, recorded in the POST-DROP face-index space — the same
-        // convention dissolveVerticesByMask uses, so RemoveFaces⁻¹ insertInPlace
-        // ascending reconstructs them) plus an AddFaces (the appended merged
-        // polys, a tail range). The tail compactUnreferenced then self-logs
-        // RemoveVerts + Reindex via the Class-R hook. Forward log for an edge
-        // dissolve = [RemoveFaces, AddFaces, RemoveVerts, Reindex].
+        // faces, recorded in the PRE-DROP face-index space — the space every
+        // entry uses, see MeshOpEntry's "THE INDEX SPACE OF AN ENTRY", and the
+        // only one RemoveFaces⁻¹'s ascending insertInPlace reconstructs) plus
+        // an AddFaces (the appended merged polys, a tail range). The tail
+        // compactUnreferenced then self-logs RemoveVerts + Reindex via the
+        // Class-R hook. Forward log for an edge dissolve =
+        // [RemoveFaces, AddFaces, RemoveVerts, Reindex].
+        //
+        // Task 0703: this used to record the POST-drop slot
+        // (`keptFaces.length` at the moment of the drop). An edge dissolve
+        // drops the WHOLE component — two faces for an ordinary interior edge —
+        // so the two spaces never coincided here: both component faces of a
+        // head-of-array pair recorded index 0 and undo returned them reversed,
+        // silently moving selection / faceMaterial / facePart / the per-corner
+        // maps onto the other face. Pinned by tests/test_mesh_edit_delta.d (f).
         const bool recRemoveEdges = editRecorder_ !is null;
+        // PRE-drop = the live index `fi`, so this doubles as the live-space
+        // index list the per-corner payload capture needs (task 0689).
         uint[]   droppedFaceIdx;
         uint[][] droppedFaceLists;
         uint[]   droppedFaceMat;
         uint[]   droppedFacePart;
         uint[]   droppedFaceSub;
-        // LIVE (pre-rewrite) indices of the dropped component faces, for the
-        // per-corner payload (task 0689) — `droppedFaceIdx` above is in the
-        // POST-drop space the entry inverts in, not the one the maps are in.
-        uint[]   droppedOldFi;
         uint[][] keptFaces;
         uint[]   keptWord;   // whole faceMarks word per face (task 0613 §4.2)
         int[]    keptOrder;
@@ -3191,16 +3204,15 @@ struct Mesh {
         foreach (fi; 0 .. nFaces) {
             if (dropFace[fi]) {
                 if (recRemoveEdges) {
-                    // Position in the POST-DROP array = current keptFaces.length
-                    // (the slot this face would occupy if it had survived; on
-                    // revert RemoveFaces⁻¹ re-inserts ascending into exactly
-                    // these positions, restoring the original relative order).
-                    droppedFaceIdx   ~= cast(uint)keptFaces.length;
+                    // PRE-drop position = the live index `fi`. On revert
+                    // RemoveFaces⁻¹ re-inserts ascending at exactly these
+                    // indices, re-opening the slot each face vacated and so
+                    // restoring the original ORDER, not merely the set.
+                    droppedFaceIdx   ~= cast(uint)fi;
                     droppedFaceLists ~= faces[fi].dup;
                     droppedFaceMat   ~= faceAttrOr(faceMaterial, fi);
                     droppedFacePart  ~= faceAttrOr(facePart, fi);
                     droppedFaceSub   ~= (isFaceSubpatch(cast(uint)fi) ? 1u : 0u);
-                    droppedOldFi     ~= cast(uint)fi;   // LIVE index (task 0689)
                 }
                 continue;
             }
@@ -3229,12 +3241,13 @@ struct Mesh {
         if (recRemoveEdges) {
             // RemoveFaces FIRST, then AddFaces — on revert (LIFO) the appended
             // merged polys truncate FIRST (restoring the kept-only array), then
-            // the dropped component faces re-insert into the post-drop space.
+            // the dropped component faces re-insert at their pre-drop indices.
             // The removal's per-corner payload (task 0689) goes ahead of it;
             // the AddFaces needs none, since a merged polygon is a brand-new
             // face on the way FORWARD (its corners come back on revert with
-            // the component faces they were merged from).
-            recordPolyVertexPayload(droppedOldFi);
+            // the component faces they were merged from). `droppedFaceIdx` is
+            // the live (pre-drop) space, which is what the capture wants.
+            recordPolyVertexPayload(droppedFaceIdx);
             editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
                                             droppedFaceMat, droppedFacePart, droppedFaceSub);
             uint[][] mergedLists;
@@ -5517,12 +5530,14 @@ struct Mesh {
     // PAIRING is by ADJACENCY: the caller records this IMMEDIATELY BEFORE the
     // face entry the values belong to (`recordRemoveFaces` / `recordReshapeFaces`),
     // and `mapArity` runs positionally parallel to that entry's `fIdx`. The
-    // payload therefore carries no face indices of its own — deliberately: the
-    // two kernels that record faces in the POST-op index space
-    // (`dissolveVerticesByMask`, `removeEdgesByMask`) would otherwise have to
-    // carry two different index spaces in one entry, and `oldFaceIdx` here is
-    // in neither of them but in the live one. Position is the one thing all
-    // three agree on.
+    // payload carries no face indices of its own, and since task 0703 that is a
+    // pure de-duplication rather than a workaround: every face entry is now
+    // recorded in the LIVE (pre-op) index space this capture reads in, so
+    // `oldFaceIdx` and the following entry's `fIdx` are the same list. Before
+    // 0703 two kernels (`dissolveVerticesByMask`, `removeEdgesByMask`) recorded
+    // faces in a POST-op space, `oldFaceIdx` was in neither, and position was
+    // the only thing all three agreed on — which is also how the wrong space
+    // stayed invisible for as long as it did.
     //
     // Declines (records nothing, so the replay falls back to zero-filling those
     // corners) when there is no PolyVertex map, when the maps are not in step

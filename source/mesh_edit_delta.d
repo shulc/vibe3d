@@ -103,6 +103,29 @@ enum MeshEditScope : uint {
 // it LIFO, each entry inverting itself. Only the fields relevant to a given
 // `kind` are populated (the rest stay empty) — a tagged record, not a true
 // union, kept simple for Ph1.
+//
+// THE INDEX SPACE OF AN ENTRY (task 0703). Every index an entry carries —
+// `vIdx`, `fIdx`, `markIdx` — is in the space of the mesh **as it stands
+// immediately BEFORE that entry runs forward**, i.e. after all PRECEDING
+// entries have been applied and before this one has. Nothing is in the
+// post-entry space. Consequences worth stating, because both were violated:
+//
+//   * `RemoveFaces.fIdx` is the PRE-drop index of each removed face, ascending.
+//     That is the only space `removeFacesReverse` can invert: it re-inserts
+//     ascending with `insertInPlace(fIdx)`, and inserting at the pre-drop index
+//     is exactly what re-opens the slot each face vacated. A post-drop
+//     ("the slot it would have occupied had it survived") index reads the same
+//     for a SINGLE dropped face and diverges for two or more — two faces
+//     dropped from the head both read 0, `insertInPlace(0)` runs twice, and
+//     they come back reversed.
+//   * a `ReshapeFaces` recorded AFTER a `RemoveFaces` in the same kernel is
+//     still in the pre-op space, because `RemoveFaces⁻¹` has, by the time the
+//     LIFO revert reaches the reshape, put every dropped face back and so
+//     restored that very space.
+//
+// `AddFaces.fIdx` is the [F0,F1) tail range in the post-append space by
+// construction (a tail append has no pre-image), which is the same rule read
+// forward: F0 is the length of `faces` before the append.
 // ---------------------------------------------------------------------------
 struct MeshOpEntry {
     enum Kind : ubyte {
@@ -110,7 +133,9 @@ struct MeshOpEntry {
         RemoveVerts,    // vIdx = removed indices (pre-removal space); pos = positions
         SetPos,         // vIdx = moved indices; posBefore / posAfter (reserved Ph1)
         AddFaces,       // fIdx = [F0..F1); faceLists = appended vertex-lists
-        RemoveFaces,    // fIdx = removed indices; faceLists; faceMat; facePrt; faceSub
+        RemoveFaces,    // fIdx = removed indices (PRE-drop space, ascending —
+                        //   see "THE INDEX SPACE OF AN ENTRY" above);
+                        //   faceLists; faceMat; facePrt; faceSub
         ReshapeFaces,   // fIdx; faceListsBefore / faceListsAfter
         Reindex,        // perm = old->new vertex remap (~0u = dropped)
         SelectionDelta, // markIdx + markBefore / markAfter (Select bit, by element)
