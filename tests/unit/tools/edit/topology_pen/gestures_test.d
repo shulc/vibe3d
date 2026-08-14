@@ -9603,14 +9603,14 @@ unittest {
     immutable uint eInterior = m.edgeIndex(1, 4);   // center-touching: 2 polygons
     immutable uint eBorder   = m.edgeIndex(0, 1);   // perimeter: 1 polygon
     assert(eInterior != uint.max && eBorder != uint.max, "setup: both grid edges must exist");
-    assert(TopologyPenTool.isEdgeInterior(mp, eInterior),
+    assert(isEdgeInterior(mp, eInterior),
         "an edge shared by two quads is interior");
-    assert(!TopologyPenTool.isEdgeInterior(mp, eBorder),
+    assert(!isEdgeInterior(mp, eBorder),
         "a perimeter edge has one polygon and is NOT interior");
-    assert(TopologyPenTool.isVertexInterior(mp, 4),
+    assert(isVertexInterior(mp, 4),
         "the grid's center vertex touches only interior edges");
     foreach (uint vi; [0u, 1u, 2u, 3u, 5u, 6u, 7u, 8u])
-        assert(!TopologyPenTool.isVertexInterior(mp, vi),
+        assert(!isVertexInterior(mp, vi),
             "every perimeter vertex touches at least one border edge");
 
     // (3a) wire geometry stays a candidate — the named extrapolation boundary.
@@ -9621,14 +9621,14 @@ unittest {
     w.addEdge(1, 2);                       // bare wire edge: zero polygons
     w.buildLoops();
     Mesh* wp = &w;
-    assert(!TopologyPenTool.isVertexInterior(wp, 0),
+    assert(!isVertexInterior(wp, 0),
         "an ISOLATED vertex is not interior — the measured predicate is about the interior, and "
       ~ "face-less geometry is outside its domain (see the filter's own note)");
-    assert(!TopologyPenTool.isVertexInterior(wp, 1),
+    assert(!isVertexInterior(wp, 1),
         "a wire-edge endpoint is not interior either");
     immutable uint wireEdge = w.edgeIndex(1, 2);
     assert(wireEdge != uint.max, "setup: the wire edge must exist");
-    assert(!TopologyPenTool.isEdgeInterior(wp, wireEdge),
+    assert(!isEdgeInterior(wp, wireEdge),
         "a zero-polygon wire edge is not interior");
 }
 
@@ -9651,7 +9651,7 @@ unittest {
     Mesh m = makeGridPlane(2);   // 3x3 verts / 4 quads; vertex 4 is the interior one
     Mesh* mp = &m;
 
-    auto g = new TopologyPenTool.PenSnapGuide();
+    auto g = new PenSnapGuide();
     g.retarget(mp, false);       // innerSnap off — the measured default
 
     // (1) EQUALITY with the predicate, over every vertex. Not "the interior one
@@ -9659,7 +9659,7 @@ unittest {
     // them fails here rather than in a fixture six months later.
     foreach (vi; 0 .. m.vertices.length)
         assert(g.admits(SnapType.Vertex, cast(int)vi, 0)
-                 == !TopologyPenTool.isVertexInterior(mp, cast(uint)vi),
+                 == !isVertexInterior(mp, cast(uint)vi),
             "the guide's admission rule must BE the border predicate, vertex for vertex");
     assert(!g.admits(SnapType.Vertex, 4, 0),
         "and concretely: the grid's interior vertex is refused at innerSnap = false");
@@ -9687,7 +9687,7 @@ unittest {
         "an index outside the mesh is refused rather than read");
 
     // (4) no mesh at all — a guide the tool has not pointed anywhere yet.
-    auto blank = new TopologyPenTool.PenSnapGuide();
+    auto blank = new PenSnapGuide();
     assert(!blank.admits(SnapType.Vertex, 0, 0),
         "a guide with no mesh admits nothing; it must not answer from a null");
 
@@ -9737,7 +9737,7 @@ unittest {
     Viewport above = makeGridPlaneTestViewport();       // eye +Y — the FRONT here
     Viewport below = makeGridPlaneFrontViewport();      // eye -Y — the BACK here
 
-    auto g = new TopologyPenTool.PenSnapGuide();
+    auto g = new PenSnapGuide();
 
     // (1) The law, both directions, at the measured default. Every vertex of
     // this quad is a border vertex, so the border half admits all four and
@@ -9777,7 +9777,7 @@ unittest {
         Mesh grid = makeGridPlane(2);
         Mesh* gp  = &grid;
         Viewport front = makeGridPlaneFrontViewport();
-        auto g2 = new TopologyPenTool.PenSnapGuide();
+        auto g2 = new PenSnapGuide();
         g2.retarget(gp, /*innerSnap*/false, /*backFace*/true);
         g2.aimAt(front, cast(int)projectedX(gp, 4, front), cast(int)projectedY(gp, 4, front));
         assert(!g2.admits(SnapType.Vertex, 4, 0),
@@ -9799,7 +9799,7 @@ unittest {
         w.addEdge(0, 1);
         w.buildLoops();
         Mesh* wp = &w;
-        auto g3 = new TopologyPenTool.PenSnapGuide();
+        auto g3 = new PenSnapGuide();
         g3.retarget(wp, /*innerSnap*/false);            // backFace at its default
         foreach (ref Viewport cam; [above, below]) {
             g3.aimAt(cam, cast(int)projectedX(wp, 0, cam), cast(int)projectedY(wp, 0, cam));
@@ -9813,7 +9813,7 @@ unittest {
     // such state). The test is skipped rather than inverted into a rejection —
     // pinned because "an unaimed guide silently rejects everything" would be a
     // policy nobody measured, and would be indistinguishable from a bug.
-    auto g4 = new TopologyPenTool.PenSnapGuide();
+    auto g4 = new PenSnapGuide();
     g4.retarget(mp, /*innerSnap*/false);
     assert(!g4.isAimed(), "setup: a fresh guide is not aimed");
     foreach (vi; 0 .. m.vertices.length)
@@ -9884,7 +9884,7 @@ unittest {
     Mesh m = makeGridPlane(2);
     Mesh* mp = &m;
 
-    auto g = new TopologyPenTool.PenSnapGuide();
+    auto g = new PenSnapGuide();
     g.retarget(mp, false);
     assert(!g.admits(SnapType.Vertex, 4, 0),
         "setup: vertex 4 is interior to the intact grid and must be refused");
@@ -9894,7 +9894,7 @@ unittest {
     bool[] drop = new bool[](m.faces.length);
     drop[0] = true;
     assert(m.deleteFacesByMask(drop, true, true) == 1, "setup: one quad must have gone");
-    assert(!TopologyPenTool.isVertexInterior(mp, 4),
+    assert(!isVertexInterior(mp, 4),
         "setup: with a quad gone the centre vertex touches a border edge");
     assert(g.admits(SnapType.Vertex, 4, 0),
         "FAILS ON A STALE CACHE: the guide must re-derive its border counts when the mesh "
@@ -9919,7 +9919,7 @@ unittest {
     // the priority/distance assertions below would never be reached.
     Viewport vp = makeGridPlaneFrontViewport();
 
-    auto g = new TopologyPenTool.PenSnapGuide();
+    auto g = new PenSnapGuide();
     g.retarget(mp, false);
 
     float d;
@@ -9964,7 +9964,7 @@ unittest {
     // above the framework's pre-seeded default, one below the element snap's),
     // and its flags accessor is absent entirely — in particular it does NOT
     // claim "run even when the global snap enable is off".
-    assert(prio == TopologyPenTool.PenSnapGuide.kPriority && prio == 2,
+    assert(prio == PenSnapGuide.kPriority && prio == 2,
         "the pen's guide declares priority 2");
     assert(prioFar == 2, "and it declares it for every candidate, not just the winner");
     assert(g.flags() == 0,
@@ -10189,11 +10189,11 @@ unittest {
 
     immutable uint fan = m.edgeIndex(0, 1);
     assert(m.edgePolygonCounts()[fan] == 3, "setup: three quads really do border it");
-    assert(TopologyPenTool.isEdgeInterior(mp, fan),
+    assert(isEdgeInterior(mp, fan),
         "FAILS ON THE OLD BEHAVIOUR: the ring walk returned ONE face here, so a "
       ~ "non-manifold edge classified as a BORDER edge and entered the "
       ~ "border-only snap-candidate set");
-    assert(TopologyPenTool.isVertexInterior(mp, 0) == false,
+    assert(isVertexInterior(mp, 0) == false,
         "vertex 0 still touches genuine border edges, so it is not interior — the "
       ~ "fix must not flip this by over-counting");
 
@@ -10201,8 +10201,8 @@ unittest {
     // second one that could drift.
     auto counts = m.edgePolygonCounts();
     foreach (uint ei; 0 .. cast(uint)m.edges.length)
-        assert(TopologyPenTool.isEdgeInterior(counts, ei)
-            == TopologyPenTool.isEdgeInterior(mp, ei),
+        assert(isEdgeInterior(counts, ei)
+            == isEdgeInterior(mp, ei),
             "the hoisted overload and the one-off overload must agree edge for edge");
 }
 
@@ -10294,7 +10294,7 @@ unittest {
     // --- default (innerSnap == false): the interior target is not a candidate.
     Mesh mOff;
     auto off = makeRig(false, &mOff);
-    assert(TopologyPenTool.isVertexInterior(&mOff, 4),
+    assert(isVertexInterior(&mOff, 4),
         "setup: the grid's center vertex must be interior, or this case tests nothing");
     immutable size_t fBefore = mOff.faces.length;
     immutable size_t eBefore = mOff.edges.length;
@@ -10407,7 +10407,7 @@ unittest {
         ImVec2 pa, pb;
         assert(TopologyPenTool.projectWorldPt(m.vertices[1], vp, pa), "setup: v1 must project");
         assert(TopologyPenTool.projectWorldPt(m.vertices[5], vp, pb), "setup: v5 must project");
-        assert(!TopologyPenTool.isVertexInterior(m, 1) && !TopologyPenTool.isVertexInterior(m, 5),
+        assert(!isVertexInterior(m, 1) && !isVertexInterior(m, 5),
             "setup: BOTH ends of this diagonal must be border vertices, so innerSnap is not the "
           ~ "thing under test here");
 
@@ -11226,7 +11226,7 @@ unittest { // P6a — MIRROR. Separates candidate B (and the pre-0619 law) from 
     Vec3 nPre     = normalize(nLocal);                     // what the old code dotted
     Viewport vp   = viewportAlong(nPre - nAdopted, ms.toWorldPoint(Vec3(0, 0, 0)));
 
-    auto g = new TopologyPenTool.PenSnapGuide();
+    auto g = new PenSnapGuide();
     g.retarget(mp, true);            // interior filter OFF: orientation only
     g.aimAt(vp, vp.width / 2, vp.height / 2);
 
@@ -11292,7 +11292,7 @@ unittest { // P6b — NON-UNIFORM SCALE. Separates candidate C from A.
     Vec3 nShader  = normalize(shaderNormalWorld(ms, nLocal));       // mat3(M) n
     Viewport vp   = viewportAlong(nShader - nAdopted, ms.toWorldPoint(Vec3(0, 0, 0)));
 
-    auto g = new TopologyPenTool.PenSnapGuide();
+    auto g = new PenSnapGuide();
     g.retarget(mp, true);
     g.aimAt(vp, vp.width / 2, vp.height / 2);
 

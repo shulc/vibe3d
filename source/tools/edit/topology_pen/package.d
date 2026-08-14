@@ -17,3 +17,4 @@ module tools.edit.topology_pen;
 
 public import tools.edit.topology_pen.tool;
 public import tools.edit.topology_pen.defs;   // the gesture vocabulary the tool is written in
+public import tools.edit.topology_pen.snap_guide;   // border classification + the gesture-lifetime guide
