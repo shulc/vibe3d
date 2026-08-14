@@ -87,8 +87,6 @@ final class Ai3dGenerateOpen : Command {
         return false; // never a document mutation — no undo entry
     }
 
-    override bool revert() { return false; }
-
     private string runOpenDialog() {
         FilterSpec[] fs = [FilterSpec("Images", "png,jpg,jpeg,webp")];
         string path;

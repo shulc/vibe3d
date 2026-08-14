@@ -43,6 +43,4 @@ class ConstrainToggleCommand : Command {
         cs.userLocked = next;   // lock on, clear on disable
         return true;
     }
-
-    override bool revert() { return false; }
 }

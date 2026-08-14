@@ -72,6 +72,4 @@ public:
             ps.sources[0] = src;
         return true;
     }
-
-    override bool revert() { return false; }
 }

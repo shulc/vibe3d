@@ -40,6 +40,4 @@ class SnapToggleCommand : Command {
         sn.setAttr("enabled", sn.enabled ? "false" : "true");
         return true;
     }
-
-    override bool revert() { return false; }
 }

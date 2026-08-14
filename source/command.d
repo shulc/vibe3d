@@ -206,6 +206,14 @@ class Command {
 
     // Restore the pre-apply mesh/selection/state. Default: not undoable.
     // Mutating commands override and return true on success.
+    //
+    // AN OVERRIDE MEANS "THIS COMMAND IS UNDOABLE". Task 0705 deleted 41
+    // overrides that were a bare `return false;` — the default, retyped. They
+    // cost nothing at runtime and a real amount at reading time: with them
+    // present, "does this class override revert()?" answered nothing, so the
+    // question a reader actually has (is this command on the undo stack?) had
+    // to be re-answered by reading each body. Do not restate the default here;
+    // silence is the statement.
     bool revert() { return false; }
 
     // WHY the last apply() returned false, in one clause — or "" when the

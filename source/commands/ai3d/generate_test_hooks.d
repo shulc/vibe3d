@@ -57,8 +57,6 @@ final class Ai3dGenerateStartTestCommand : Command {
             throw new Exception("ai3d.generate.start: a job is already in flight");
         return true;
     }
-
-    override bool revert() { return false; }
 }
 
 final class Ai3dGenerateCancelTestCommand : Command {
@@ -80,6 +78,4 @@ final class Ai3dGenerateCancelTestCommand : Command {
         controller.requestCancel();
         return true;
     }
-
-    override bool revert() { return false; }
 }

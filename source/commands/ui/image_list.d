@@ -71,6 +71,4 @@ class UiImageListCommand : Command {
         g_imageListShown = show_;
         return true;
     }
-
-    override bool revert() { return false; }
 }

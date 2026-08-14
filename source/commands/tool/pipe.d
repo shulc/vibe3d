@@ -150,6 +150,4 @@ class ToolPipeAttrCommand : Command {
             toolHost.session().onStageConfigChanged();
         return true;
     }
-
-    override bool revert() { return false; }
 }

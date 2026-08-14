@@ -78,6 +78,4 @@ class ActrPresetCommand : Command {
         }
         return true;
     }
-
-    override bool revert() { return false; }
 }

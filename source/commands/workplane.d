@@ -59,7 +59,6 @@ class WorkplaneResetCommand : Command, Operator {
         wp.reset();
         return true;
     }
-    override bool revert() { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +98,6 @@ class WorkplaneEditCommand : Command, Operator {
         wp.edit(cenX_, cenY_, cenZ_, rotX_, rotY_, rotZ_);
         return true;
     }
-    override bool revert() { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +133,6 @@ class WorkplaneRotateCommand : Command, Operator {
         wp.rotateBy(axisIdx, angleDeg_);
         return true;
     }
-    override bool revert() { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +168,6 @@ class WorkplaneOffsetCommand : Command, Operator {
         wp.offsetBy(axisIdx, dist_);
         return true;
     }
-    override bool revert() { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -265,8 +261,6 @@ class WorkplaneAlignToSelectionCommand : Command, Operator {
         // when the feature becomes blocking).
         return false;
     }
-    override bool revert() { return false; }
-
 private:
     static float abs1(float x) { return x < 0 ? -x : x; }
 

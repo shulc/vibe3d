@@ -36,6 +36,4 @@ class ToolResetCommand : Command {
     override bool apply() {
         return toolHost.resetActiveTool(optToolId_);
     }
-
-    override bool revert() { return false; }
 }

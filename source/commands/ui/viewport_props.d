@@ -50,6 +50,4 @@ class UiViewportPropsCommand : Command {
         g_viewportPropsShown = show_;
         return true;
     }
-
-    override bool revert() { return false; }
 }

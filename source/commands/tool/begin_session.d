@@ -56,6 +56,4 @@ class ToolBeginSessionCommand : Command {
         xt.openLiveSessionForTest();
         return true;
     }
-
-    override bool revert() { return false; }
 }

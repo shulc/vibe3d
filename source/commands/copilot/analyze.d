@@ -39,6 +39,4 @@ class CopilotAnalyzeCommand : Command {
         panel.setFindings(analyzeMesh(*mesh));
         return true;
     }
-
-    override bool revert() { return false; }
 }

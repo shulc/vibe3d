@@ -69,6 +69,4 @@ class UiChannelsCommand : Command {
         g_channelsShown = show_;
         return true;
     }
-
-    override bool revert() { return false; }
 }

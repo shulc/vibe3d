@@ -136,6 +136,4 @@ class ToolAttrCommand : Command {
             toolHost.session().onValueAttrApplied(interactive_);
         return true;
     }
-
-    override bool revert() { return false; }
 }

@@ -51,6 +51,4 @@ class CoordRoundingCommand : Command {
         setCoordRounding(m);
         return true;
     }
-
-    override bool revert() { return false; }
 }

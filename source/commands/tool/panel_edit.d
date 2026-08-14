@@ -63,6 +63,4 @@ class ToolPanelEditCommand : Command {
         xt.applyMovePanelDelta(delta_);
         return true;
     }
-
-    override bool revert() { return false; }
 }

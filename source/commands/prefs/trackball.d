@@ -93,8 +93,6 @@ class TrackballPrefCommand : Command {
         }
     }
 
-    override bool revert() { return false; }
-
     private bool parseOnOff() {
         if (value_ == "on"  || value_ == "true"  || value_ == "1") return true;
         if (value_ == "off" || value_ == "false" || value_ == "0") return false;

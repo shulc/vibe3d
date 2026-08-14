@@ -57,6 +57,4 @@ class UiCopilotPanelCommand : Command {
         g_copilotPanelShown = show_;
         return true;
     }
-
-    override bool revert() { return false; }
 }

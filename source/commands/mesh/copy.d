@@ -42,5 +42,4 @@ class MeshCopy : Command, Operator {
     }
 
     // Never called: CmdFlags.None means the command is not recorded.
-    override bool revert() { return false; }
 }

@@ -51,6 +51,4 @@ class SnapToggleTypeCommand : Command {
                 ~ typeName_ ~ "'");
         return true;
     }
-
-    override bool revert() { return false; }
 }

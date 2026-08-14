@@ -65,6 +65,4 @@ class UiToolPropertiesCommand : Command {
         g_toolPropertiesShown = show_;
         return true;
     }
-
-    override bool revert() { return false; }
 }

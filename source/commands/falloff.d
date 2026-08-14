@@ -89,8 +89,6 @@ class FalloffPresetCommand : Command {
             toolHost.session().onStageConfigChanged();
         return true;
     }
-
-    override bool revert() { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -139,8 +137,6 @@ class FalloffAutoSizeCommand : Command {
         kickLiveEval(toolHost);
         return true;
     }
-
-    override bool revert() { return false; }
 }
 
 class FalloffReverseCommand : Command {
@@ -161,8 +157,6 @@ class FalloffReverseCommand : Command {
         kickLiveEval(toolHost);
         return true;
     }
-
-    override bool revert() { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -279,8 +273,6 @@ class FalloffAddCommand : Command {
         kickLiveEval(toolHost);
         return true;
     }
-
-    override bool revert() { return false; }
 }
 
 class FalloffRemoveCommand : Command {
@@ -323,8 +315,6 @@ class FalloffRemoveCommand : Command {
         kickLiveEval(toolHost);
         return true;
     }
-
-    override bool revert() { return false; }
 }
 
 class FalloffClearCommand : Command {
@@ -346,8 +336,6 @@ class FalloffClearCommand : Command {
         kickLiveEval(toolHost);
         return true;
     }
-
-    override bool revert() { return false; }
 }
 
 /// Remove every stacked extra FalloffStage (`falloff#N`), keeping the primary

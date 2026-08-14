@@ -68,6 +68,4 @@ class UiLayerListCommand : Command {
         g_layerListShown = show_;
         return true;
     }
-
-    override bool revert() { return false; }
 }

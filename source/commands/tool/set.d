@@ -77,7 +77,4 @@ class ToolSetCommand : Command {
         }
         return true;
     }
-
-    // No mesh mutation — revert is a no-op.
-    override bool revert() { return false; }
 }

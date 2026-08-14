@@ -46,6 +46,4 @@ class SnapModeCommand : Command {
                 ~ modeName_ ~ "'");
         return true;
     }
-
-    override bool revert() { return false; }
 }

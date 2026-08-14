@@ -35,6 +35,4 @@ class SymmetryToggleCommand : Command {
         sym.setAttr("enabled", sym.enabled ? "false" : "true");
         return true;
     }
-
-    override bool revert() { return false; }
 }

@@ -186,8 +186,6 @@ final class RemeshStart : Command {
             throw new Exception("mesh.remesh.start: " ~ job.message());
         return true;
     }
-
-    override bool revert() { return false; }
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +216,4 @@ final class RemeshOpen : Command {
         if (onOpen !is null) onOpen();
         return false;
     }
-
-    override bool revert() { return false; }
 }
