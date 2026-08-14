@@ -757,7 +757,56 @@ private immutable InputBinding[] kTopoPenBindings = [
 //                  mesh access, no mutation — every input comes from
 //                  `lastHit_` (the packet) and the passed-in `vp`.
 // ---------------------------------------------------------------------------
+
+/// ONE gesture's ARM bit — the "this gesture is in progress" flag every
+/// `on*Down` sets and its matching `*Up` clears.
+///
+/// It exists as a distinct TYPE, not as a `bool`, for exactly one reason: the
+/// type is what `TopologyPenTool.eachGestureArm` matches on, so the set of arms
+/// is enumerated by the COMPILER from the field declarations rather than by a
+/// hand-maintained list. Before task 0705 the same set was written out three
+/// times — the OR in `anyGestureArmed()`, the assignments in
+/// `resetAllGestureArms()`, and a Tier-A pin unittest — plus twice more in
+/// prose, and those five spellings had already drifted apart: the doc comment
+/// said "9", the paragraph below it said "10", the pin test listed 10, and
+/// `dupEdgeArmed_` (task 0485) appeared in none of them. Declaring a field of
+/// this type is now the ONLY way to have an arm, and every consumer walks the
+/// same trait — a new gesture cannot be forgotten by one of them.
+///
+/// `alias armed this` + `opAssign(bool)` keep every existing `xArmed_ = true` /
+/// `if (!xArmed_)` / `JSONValue(xArmed_)` site reading exactly as it did when
+/// these were plain `bool`s; the type change is invisible at the ~214 use
+/// sites and visible only to the enumeration.
+struct GestureArm {
+    bool armed;
+    alias armed this;
+    void opAssign(bool v)       { armed = v; }
+    void opAssign(GestureArm o) { armed = o.armed; }
+}
+
+/// The names of every `GestureArm` field of `TopologyPenTool`, in declaration
+/// order — derived by the compiler from the field declarations themselves.
+///
+/// THE list. `anyGestureArmed()`, `resetAllGestureArms()` and the arm-coverage
+/// unittest all iterate this one constant, so none of them can be out of step
+/// with the others or with the class: adding a gesture is declaring one field.
+///
+/// `TopologyPenTool` is named explicitly rather than reached through
+/// `typeof(this)` because inside a `const` method `typeof(this)` is
+/// `const(TopologyPenTool)`, and `is(typeof(field) == GestureArm)` would then
+/// match NOTHING — the walk would silently visit zero fields and every arm
+/// would read as disarmed. Deriving the list once, here at module scope,
+/// removes that trap from the two consumers.
+private enum string[] kGestureArmFields = () {
+    string[] r;
+    static foreach (m; __traits(derivedMembers, TopologyPenTool))
+        static if (is(typeof(__traits(getMember, TopologyPenTool, m)) == GestureArm))
+            r ~= m;
+    return r;
+}();
+
 class TopologyPenTool : Tool {
+
     /// Click-vs-drag gate, in pixels, shared by EVERY gesture in this tool:
     /// a release within this distance of the press pixel is a click, not a
     /// drag, and commits nothing. Compared SQUARED (`dx*dx + dy*dy < k*k`),
@@ -829,7 +878,7 @@ private:
     // `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
     // external history navigation.
     int       sourceVert_     = -1;
-    bool      dragArmed_      = false;
+    GestureArm      dragArmed_;
     int       dragStartX_, dragStartY_;
     BuildCase classifiedCase_ = BuildCase.None;
     int       triN_           = -1;   // Tri case: A's one existing neighbor
@@ -848,8 +897,8 @@ private:
     // primary-layer vertex. Cleared by `onMouseButtonUp` on every
     // commit/no-op path and by `resyncSession` on an external history
     // navigation, exactly like the P3 drag-build state above.
-    bool placeArmed_  = false;
-    bool moveArmed_   = false;
+    GestureArm placeArmed_;
+    GestureArm moveArmed_;
     int  grabbedVert_ = -1;
 
     // --- Move-mode ELEMENT grab + LIVE drag (task 0484). Two extensions of
@@ -923,7 +972,7 @@ private:
     // by `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
     // external history navigation, exactly like the P3/P4 arm state above.
     int  addLoopSeed_  = -1;
-    bool addLoopArmed_ = false;
+    GestureArm addLoopArmed_;
     int  addLoopStartX_, addLoopStartY_;
     Vec3 seedRailA_, seedRailB_;
     float addLoopRatio_ = 0.5f;
@@ -968,7 +1017,7 @@ private:
     // an external history navigation, exactly like the P3/P4/P6 arm state
     // above.
     int   slideSeed_  = -1;
-    bool  slideArmed_ = false;
+    GestureArm  slideArmed_;
     int   slideStartX_, slideStartY_;
     int   slideEndA_ = -1, slideEndB_ = -1;
     int   slideNbrA_ = -1, slideNbrB_ = -1;
@@ -1031,7 +1080,7 @@ private:
     // Cleared by `onMouseButtonUp` on commit/no-op and by `resyncSession`
     // on an external history navigation, exactly like the P3/P4/P6/P7 arm
     // state above.
-    bool  smoothArmed_ = false;
+    GestureArm  smoothArmed_;
     int   smoothStartX_, smoothStartY_, smoothLastX_, smoothLastY_;
     int   smoothDragDx_ = 0;
 
@@ -1050,7 +1099,7 @@ private:
     // Cleared by `onMouseButtonUp` on commit/no-op and by `resyncSession` on
     // an external history navigation, exactly like the P3/P4/P6/P7/P8 arm
     // state above.
-    bool splitArmed_       = false;
+    GestureArm splitArmed_;
     int  splitSourceVert_  = -1;
     int  splitTargetVert_  = -1;
 
@@ -1307,7 +1356,7 @@ private:
     // no BVH to keep — `resnapToBackground` now calls the same
     // `closestPointOnMeshes` P8/P12's Smooth does, which walks the source
     // faces directly.)
-    bool  moveLoopArmed_  = false;
+    GestureArm  moveLoopArmed_;
     int   moveLoopSeed_   = -1;
     int   moveLoopStartX_, moveLoopStartY_;
     int   moveLoopCurX_,   moveLoopCurY_;
@@ -1339,7 +1388,7 @@ private:
     // mid-drag mutation. Cleared by `onMouseButtonUp` on commit/no-op and
     // by `resyncSession` on an external history navigation, exactly like
     // the P3-P10 arm state above.
-    bool  dupLoopArmed_   = false;
+    GestureArm  dupLoopArmed_;
     int   dupLoopSeed_    = -1;
     int[] dupLoopEdges_;
     int   dupLoopStartX_, dupLoopStartY_;
@@ -1361,7 +1410,7 @@ private:
     // `onDupLoopShiftRmbDown`'s own narrow self-reset would then silently
     // cancel the LEFT drag by clearing state they shared. Separate fields
     // keep that property intact.
-    bool  dupEdgeArmed_ = false;
+    GestureArm  dupEdgeArmed_;
     int   dupEdgeSeed_  = -1;
     int[] dupEdgeEdges_;          // what the release will duplicate: [seed], or the trimmed border run
     int   dupEdgeStartX_, dupEdgeStartY_;
@@ -1390,7 +1439,7 @@ private:
     // derive the pass count (`onMouseButtonUp`'s Smooth+Loop branch). Cleared by
     // `onMouseButtonUp` on commit/no-op and by `resyncSession` on an
     // external history navigation, exactly like the P3-P11 arm state above.
-    bool   smoothLoopArmed_   = false;
+    GestureArm   smoothLoopArmed_;
     int    smoothLoopSeed_    = -1;
     uint[] smoothLoopVerts_;
     int    smoothLoopStartX_, smoothLoopStartY_;
@@ -3752,6 +3801,16 @@ public:
     // already goes through `resyncSession()` via `removeFaceAt`/
     // `commitAddLoop`'s own commit paths.
     private void resetAllGestureArms() {
+        // EVERY arm bit, from the compiler's own list (task 0705): each field
+        // declared `GestureArm` is disarmed here, so a gesture added later is
+        // cleared by this helper without anyone remembering to say so. The
+        // per-gesture PAYLOAD below (seeds, cached index runs, drag
+        // accumulators) is still spelled out by hand — that part is not one
+        // uniform shape and each block documents its own reason for the value
+        // it resets to.
+        static foreach (m; kGestureArmFields)
+            __traits(getMember, this, m) = GestureArm.init;
+
         // Mode router (task 0483) — the per-press record of WHICH gesture the
         // unmodified-LMB slot resolved to. Neutral value first, so a press
         // that declines leaves behind an UP leg that is a guarded no-op
@@ -3759,7 +3818,6 @@ public:
         gestureOn_[]    = PenGesture.PlaceOrMove;
         // P3 build (doc/topopen_p3_plan.md)
         sourceVert_     = -1;
-        dragArmed_      = false;
         classifiedCase_ = BuildCase.None;
         triN_ = quadP_ = quadQ_ = quadTriFi_ = -1;
         // P4 Move/Place (doc/topopen_p4_plan.md) + the task-0484 element grab.
@@ -3769,20 +3827,16 @@ public:
         // and `resyncSession` runs when an external history navigation has
         // already replaced the mesh this drag was editing, so there is no
         // "before" left that a recorded entry could mean anything against.
-        placeArmed_     = false;
         clearMoveArm();
         // P6 Add Loop (doc/topopen_p6_addloop_plan.md)
         addLoopSeed_    = -1;
-        addLoopArmed_   = false;
         // P7 Slide (doc/topopen_p7_slide_plan.md)
         slideSeed_   = -1;
-        slideArmed_  = false;
         slideEndA_ = slideEndB_ = -1;
         slideNbrA_ = slideNbrB_ = -1;
         slideAnchor_ = Vec3(0, 0, 0);
         slideDeltaK_ = 0.0f;
         // P8 Smooth (doc/topopen_p8_smooth_plan.md)
-        smoothArmed_  = false;
         smoothDragDx_ = 0;
         // P9 Split (doc/topopen_p9_split_plan.md) — cleared here so the
         // LEFT-button trio's own reset closes a stray split arm too (e.g. an
@@ -3790,7 +3844,6 @@ public:
         // MIDDLE-button `onPlainMmbDown` does NOT call this helper (REV1
         // FIX-1 — see that handler's own doc comment) and uses its own
         // narrow self-reset instead.
-        splitArmed_      = false;
         splitSourceVert_ = -1;
         splitTargetVert_ = -1;
         // P10 Move Loop (doc/topopen_p10_moveloop_plan.md) — cleared here so
@@ -3800,7 +3853,6 @@ public:
         // as `onShiftMmbDown`/`onPlainMmbDown` above — a RIGHT-button press
         // genuinely CAN be a two-button chord while a LEFT gesture is still
         // held) and uses its own narrow self-reset instead.
-        moveLoopArmed_ = false;
         moveLoopSeed_  = -1;
         moveLoopVerts_ = null;
         // P11 Dup Loop (doc/topopen_p11_duploop_plan.md) — cleared here so
@@ -3810,12 +3862,10 @@ public:
         // discipline as `onMoveLoopRmbDown` above — a RIGHT-button press
         // genuinely CAN be a two-button chord while a LEFT gesture is still
         // held) and uses its own narrow self-reset instead.
-        dupLoopArmed_ = false;
         dupLoopSeed_  = -1;
         dupLoopEdges_ = null;
         // Duplicate EDGE (task 0485) — the Shift+LMB sibling; cleared here
         // for the same reason as every LEFT-button arm above.
-        dupEdgeArmed_ = false;
         dupEdgeSeed_  = -1;
         dupEdgeEdges_ = null;
         // P12 Smooth+Loop (doc/topopen_p12_smoothloop_plan.md) — cleared
@@ -3825,7 +3875,6 @@ public:
         // RMB-button discipline as `onMoveLoopRmbDown`/
         // `onDupLoopShiftRmbDown` above) and uses its own narrow self-reset
         // instead.
-        smoothLoopArmed_  = false;
         smoothLoopSeed_   = -1;
         smoothLoopVerts_  = null;
         smoothLoopDragPx_ = 0.0f;
@@ -3834,32 +3883,25 @@ public:
     // MINOR-3 (doc/topopen_hover_highlight_plan.md REV1): the single source
     // of truth for "is ANY gesture currently armed" — the OR of every arm
     // flag `resetAllGestureArms()` (immediately above) clears. The two
-    // helpers travel together: `resetAllGestureArms()` is the authoritative
-    // list of arm FIELDS to clear on a fresh press/history-nav, and this is
-    // the authoritative list of arm FIELDS to test for "something is
-    // in-progress" (currently gating the Generic Hover-Highlight indicator,
-    // `onMouseMotion`/`draw()` below). As of this writing the list is the 9
-    // flags: `dragArmed_` (P3 build) / `placeArmed_` + `moveArmed_` (P4
-    // Move-Place) / `addLoopArmed_` (P6) / `slideArmed_` (P7) /
-    // `smoothArmed_` (P8) / `splitArmed_` (P9) / `moveLoopArmed_` (P10) /
-    // `dupLoopArmed_` (P11).
-    // MAINTENANCE CONTRACT: every NEW gesture's arm flag MUST be OR'd in
-    // HERE too, in addition to being cleared in `resetAllGestureArms()` —
-    // a flag added to one list but not the other silently breaks either
-    // the reset hazard that helper closes, or (if omitted here) lets a
-    // gesture stay "invisible" to this predicate (e.g. the hover indicator
-    // would then incorrectly draw ON TOP OF that gesture's own ghost). The
-    // Tier-A pin immediately below this method's unittest guards against a
-    // bad merge silently dropping a flag from this OR. As of P12
-    // (doc/topopen_p12_smoothloop_plan.md) the list is the 10 flags:
-    // `dragArmed_` (P3 build) / `placeArmed_` + `moveArmed_` (P4 Move-Place)
-    // / `addLoopArmed_` (P6) / `slideArmed_` (P7) / `smoothArmed_` (P8) /
-    // `splitArmed_` (P9) / `moveLoopArmed_` (P10) / `dupLoopArmed_` (P11) /
-    // `smoothLoopArmed_` (P12).
+    // helpers travel together, and since task 0705 they travel over the SAME
+    // derived list (`kGestureArmFields`): this predicate cannot see a
+    // different set of arms than the reset clears, because neither of them
+    // names an arm.
+    //
+    // MAINTENANCE CONTRACT (now enforced by the compiler, not by this
+    // comment): a new gesture's arm flag is declared `GestureArm` and that is
+    // the whole contract — it is OR'd in here and cleared over there by
+    // construction. What this comment used to say, and what the code used to
+    // require, was that the flag be added to THREE hand-written lists (this
+    // OR, the reset's assignments, and a Tier-A pin unittest) plus two prose
+    // enumerations. Those five had already drifted: the prose above said "9"
+    // in one paragraph and "10" in the next, the pin test listed 10, and
+    // `dupEdgeArmed_` (task 0485) was in none of them although it was in the
+    // OR — i.e. the guard everybody trusted was pinning 10 of 11 flags.
     private bool anyGestureArmed() const {
-        return dragArmed_ || placeArmed_ || moveArmed_ || addLoopArmed_
-            || slideArmed_ || smoothArmed_ || splitArmed_ || moveLoopArmed_
-            || dupLoopArmed_ || smoothLoopArmed_ || dupEdgeArmed_;
+        static foreach (m; kGestureArmFields)
+            if (__traits(getMember, this, m).armed) return true;
+        return false;
     }
 
     // The Mode router (task 0483) — the ONE place the Mode dropdown, the
@@ -13818,36 +13860,34 @@ unittest { // U7 (REV1 FIX-2 — the test that would have caught FIX-1): a
         "off-mesh must also clear the resolved nearest indices");
 }
 
-unittest { // anyGestureArmed — Tier-A pin (doc/topopen_hover_highlight_plan.md
-           // MINOR-3, extended by P12 doc/topopen_p12_smoothloop_plan.md):
-           // every one of the 10 currently-enumerated arm flags
-           // independently flips the predicate true and none is silently
-           // ignored — guards a future merge from dropping a flag from the
-           // OR (the hazard `resetAllGestureArms()`'s own doc comment
-           // enumerates for its sibling list).
+unittest { // arm coverage (doc/topopen_hover_highlight_plan.md MINOR-3, task
+           // 0705): EVERY arm — by the compiler's own enumeration, not by a
+           // list written here — independently flips `anyGestureArmed()` true,
+           // and `resetAllGestureArms()` clears it again.
+           //
+           // The predecessor of this test spelled the flags out one per line
+           // and so pinned 10 of the 11 that existed: `dupEdgeArmed_` (task
+           // 0485) was in the OR but in no list. Iterating `kGestureArmFields`
+           // means the test cannot fall behind the class — a new gesture is
+           // covered the moment its field is declared. It also catches the one
+           // way the derivation itself could fail silently: if the trait
+           // matched nothing, the list would be empty and the length assert
+           // below would fire.
     auto t = new TopologyPenTool();
     assert(!t.anyGestureArmed(), "no arm flag set -> false");
+    assert(kGestureArmFields.length >= 11,
+        "the GestureArm walk must find every declared arm — an empty or short "
+        ~ "list means the trait stopped matching and every arm now reads disarmed");
 
-    t.dragArmed_ = true;     assert(t.anyGestureArmed(), "dragArmed_ must count");
-    t.dragArmed_ = false;
-    t.placeArmed_ = true;    assert(t.anyGestureArmed(), "placeArmed_ must count");
-    t.placeArmed_ = false;
-    t.moveArmed_ = true;     assert(t.anyGestureArmed(), "moveArmed_ must count");
-    t.moveArmed_ = false;
-    t.addLoopArmed_ = true;  assert(t.anyGestureArmed(), "addLoopArmed_ must count");
-    t.addLoopArmed_ = false;
-    t.slideArmed_ = true;    assert(t.anyGestureArmed(), "slideArmed_ must count");
-    t.slideArmed_ = false;
-    t.smoothArmed_ = true;   assert(t.anyGestureArmed(), "smoothArmed_ must count");
-    t.smoothArmed_ = false;
-    t.splitArmed_ = true;    assert(t.anyGestureArmed(), "splitArmed_ must count");
-    t.splitArmed_ = false;
-    t.moveLoopArmed_ = true; assert(t.anyGestureArmed(), "moveLoopArmed_ must count");
-    t.moveLoopArmed_ = false;
-    t.dupLoopArmed_ = true;  assert(t.anyGestureArmed(), "dupLoopArmed_ must count");
-    t.dupLoopArmed_ = false;
-    t.smoothLoopArmed_ = true; assert(t.anyGestureArmed(), "smoothLoopArmed_ must count");
-    t.smoothLoopArmed_ = false;
+    static foreach (m; kGestureArmFields) {{
+        __traits(getMember, t, m) = true;
+        assert(t.anyGestureArmed(), m ~ " must count towards anyGestureArmed()");
+        t.resetAllGestureArms();
+        assert(!t.anyGestureArmed(),
+            "resetAllGestureArms() must clear " ~ m);
+        assert(!__traits(getMember, t, m).armed,
+            "resetAllGestureArms() must clear " ~ m ~ " specifically");
+    }}
 
     assert(!t.anyGestureArmed(), "every flag cleared again -> false");
 }
