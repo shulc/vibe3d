@@ -2524,7 +2524,18 @@ unittest {
            ~ "root (the directory holding dub.json), e.g. "
            ~ "`dub test --config=modeling`");
 
-    bool[string] got;
+    // Task 0705 (audit 4, A4-full): the row carries the mode THREE times —
+    // the command id `actr.<tag>`, the state query `checked.equals: <tag>`,
+    // and the human `label:`. 0679 pinned the first against `modeEntries` and
+    // left the other two free to drift. A wrong `checked.equals` silently
+    // stops ticking (or ticks the wrong row); a label edited in one of the two
+    // places is a UI that names the same mode two ways. All three are pinned
+    // now, so the YAML is a *rendering* of the table rather than a second copy
+    // of it — which is as close to structural as a static YAML file gets. The
+    // renderer-side fix (a `dynamicKind` provider that emits these rows from
+    // `modeEntries` and deletes them from the YAML) is filed as 0707.
+    struct Row { string label; string checkedEquals; }
+    Row[string] got;
     bool sawPopup = false;
     foreach (g; loadStatusLine(yamlPath)) {
         foreach (ref b; g.buttons) {
@@ -2536,16 +2547,26 @@ unittest {
                 const string id = pi.action.id;
                 enum pfx = "actr.";
                 if (id.length > pfx.length && id[0 .. pfx.length] == pfx)
-                    got[id[pfx.length .. $]] = true;
+                    got[id[pfx.length .. $]] = Row(pi.label, pi.checked.equals_);
             }
         }
     }
     assert(sawPopup, "statusline must carry an 'Action Center' popup");
 
-    foreach (e; ActionCenterStage.modeEntries)
-        assert((e.wireTag in got) !is null,
+    foreach (e; ActionCenterStage.modeEntries) {
+        auto row = e.wireTag in got;
+        assert(row !is null,
                "panel mode '" ~ e.wireTag ~ "' has no actr." ~ e.wireTag
                ~ " item in the statusline Action Center popup");
+        assert(row.label == e.userLabel,
+               "statusline actr." ~ e.wireTag ~ " is labelled '" ~ row.label
+               ~ "' but the panel calls the same mode '" ~ e.userLabel
+               ~ "' — one UI, two names for one mode");
+        assert(row.checkedEquals == e.wireTag,
+               "statusline actr." ~ e.wireTag ~ " ticks on state '"
+               ~ row.checkedEquals ~ "' — it would never tick, or would tick "
+               ~ "for a different mode");
+    }
     foreach (tag, _; got) {
         int v;
         assert(valueForWireTag(ActionCenterStage.modeEntries, tag, v),

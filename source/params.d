@@ -119,6 +119,33 @@ bool tableCoversEnum(const(IntEnumEntry)[] t, const(int)[] members) pure
     return true;
 }
 
+/// The same check with the member list taken from the ENUM rather than from
+/// the caller — CTFE-evaluable, so it belongs in a `static assert` next to the
+/// table and fails the BUILD, not a test run:
+///
+///     static assert(tableCoversEnumOf!Mode(modeEntries),
+///         "every Mode needs a wire tag and a label");
+///
+/// Task 0705 (audit 4, X2). `tableCoversEnum` above restored exhaustiveness as
+/// a runtime assertion, but at the price of a SECOND hand-written list — its
+/// callers spell out `[cast(int)E.a, cast(int)E.b, …]`, which the new enum
+/// member does not force anyone to extend either. This overload has no list to
+/// forget: `EnumMembers` is the enum. Use it for any table hoisted out of a
+/// `final switch`, so migrating to a table does not trade a compile error for
+/// a runtime one.
+bool tableCoversEnumOf(E)(const(IntEnumEntry)[] t) pure
+    if (is(E == enum))
+{
+    import std.traits : EnumMembers;
+    foreach (m; EnumMembers!E) {
+        bool found = false;
+        foreach (ref e; t)
+            if (e.value == cast(int)m) { found = true; break; }
+        if (!found) return false;
+    }
+    return true;
+}
+
 unittest {
     static immutable IntEnumEntry[] tbl = [
         IntEnumEntry(0, "off",   "Off"),

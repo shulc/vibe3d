@@ -14,6 +14,8 @@ import toolpipe.packets  : AxisPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
 import document          : Layer;
+import params            : IntEnumEntry, wireTagForValue, valueForWireTag,
+                           tableCoversEnumOf;
 
 // ---------------------------------------------------------------------------
 // AxisStage — phase 7.2c. Sits at ordinal 0x70 (after ACEN).
@@ -1010,25 +1012,58 @@ private:
         return true;
     }
 
+    /// Every `Mode`, with its wire tag and its UI label — the one source for
+    /// the parse leg (`applySetAttr`), the stringify leg (`modeLabel`) and any
+    /// future axis dropdown (`Param.intEnum_`/`choicesOf` read this shape).
+    ///
+    /// Task 0705 (audit 4, A5). Before this the parse was a 13-arm if/else
+    /// chain of string literals and the stringify a 13-arm `final switch` of
+    /// the same 13 literals — two independent transcriptions of one mapping.
+    /// They happened to agree exactly (checked, both directions: no tag the
+    /// stringify emits was rejected by the parse, no tag the parse accepted
+    /// was unreachable), but only ONE of them was compiler-enforced: a new
+    /// `Mode` failed to build the `final switch` and compiled clean through
+    /// the if/else chain, which then rejected the new tag at runtime with a
+    /// bare `return false` — the exact one-directional protection the audit
+    /// names.
+    ///
+    /// The `static assert` below is what keeps this from being a downgrade.
+    /// A table on its own would have been one: `wireTagForValue` falls back to
+    /// `"%d"` and `valueForWireTag` returns false, so a new member would have
+    /// stopped breaking the build in EITHER direction. `tableCoversEnumOf`
+    /// takes its member list from `EnumMembers!Mode` rather than from a hand
+    /// list, so the build still fails — now for both legs at once, and at the
+    /// table instead of at one arbitrary consumer of it.
+    ///
+    /// The user labels are new. The axis submenu in `config/statusline.yaml`
+    /// was the only place in the tree that spelled a human name for these
+    /// modes, and it covers 7 of the 13.
+    static immutable IntEnumEntry[] modeEntries = [
+        IntEnumEntry(cast(int)Mode.Auto,       "auto",       "Automatic"),
+        IntEnumEntry(cast(int)Mode.World,      "world",      "World"),
+        IntEnumEntry(cast(int)Mode.Workplane,  "workplane",  "Work Plane"),
+        IntEnumEntry(cast(int)Mode.Select,     "select",     "Selection"),
+        IntEnumEntry(cast(int)Mode.SelectAuto, "selectauto", "Selection Auto Axis"),
+        IntEnumEntry(cast(int)Mode.Element,    "element",    "Element"),
+        IntEnumEntry(cast(int)Mode.Local,      "local",      "Local"),
+        IntEnumEntry(cast(int)Mode.Origin,     "origin",     "Origin"),
+        IntEnumEntry(cast(int)Mode.Screen,     "screen",     "Screen"),
+        IntEnumEntry(cast(int)Mode.Manual,     "manual",     "Manual"),
+        IntEnumEntry(cast(int)Mode.None,       "none",       "(none)"),
+        IntEnumEntry(cast(int)Mode.Pivot,      "pivot",      "Pivot"),
+        IntEnumEntry(cast(int)Mode.Parent,     "parent",     "Parent"),
+    ];
+
+    static assert(tableCoversEnumOf!Mode(modeEntries),
+        "AxisStage.modeEntries must carry an entry for every Mode — a new "
+        ~ "member needs a wire tag (parse + stringify read it) and a UI label");
+
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "mode": {
-                Mode m;
-                if      (value == "auto")       m = Mode.Auto;
-                else if (value == "world")      m = Mode.World;
-                else if (value == "workplane")  m = Mode.Workplane;
-                else if (value == "select")     m = Mode.Select;
-                else if (value == "selectauto") m = Mode.SelectAuto;
-                else if (value == "element")    m = Mode.Element;
-                else if (value == "local")      m = Mode.Local;
-                else if (value == "origin")     m = Mode.Origin;
-                else if (value == "screen")     m = Mode.Screen;
-                else if (value == "manual")     m = Mode.Manual;
-                else if (value == "none")       m = Mode.None;
-                else if (value == "pivot")      m = Mode.Pivot;
-                else if (value == "parent")     m = Mode.Parent;
-                else return false;
-                mode = m;
+                int v;
+                if (!valueForWireTag(modeEntries, value, v)) return false;
+                mode = cast(Mode)v;
                 return true;
             }
             default: return false;
@@ -1036,21 +1071,7 @@ private:
     }
 
     string modeLabel() const {
-        final switch (mode) {
-            case Mode.Auto:       return "auto";
-            case Mode.World:      return "world";
-            case Mode.Workplane:  return "workplane";
-            case Mode.Select:     return "select";
-            case Mode.SelectAuto: return "selectauto";
-            case Mode.Element:    return "element";
-            case Mode.Local:      return "local";
-            case Mode.Origin:     return "origin";
-            case Mode.Screen:     return "screen";
-            case Mode.Manual:     return "manual";
-            case Mode.None:       return "none";
-            case Mode.Pivot:      return "pivot";
-            case Mode.Parent:     return "parent";
-        }
+        return wireTagForValue(modeEntries, cast(int)mode);
     }
 
     void publishState() {
@@ -1315,4 +1336,117 @@ unittest {
     // was the other inclusion (a `case` with no declaration), which every
     // assertion above stays green through. See `assertRejectsUndeclaredAttrs`.
     assertRejectsUndeclaredAttrs(new AxisStage(), "axis");
+}
+
+// Task 0705 (audit 4, A5): the parse/stringify pair round-trips for EVERY
+// Mode, and the tags are exactly the ones already on the wire.
+//
+// Before the table, nothing enumerated the 13 modes at all: the only axis-mode
+// pins in the tree were one positive sample ("auto") in the knownAttrs probe
+// and one negative ("flubber") in tests/test_toolpipe_axis.d. The if/else parse
+// could have dropped an arm — or spelled one differently from the `final
+// switch` that emitted it — and stayed green.
+//
+// The member list comes from `EnumMembers`, so this test cannot fall behind
+// the enum either. The literal tags below are asserted separately and ON
+// PURPOSE: they are a WIRE contract (`tool.pipe.attr axis mode <tag>` appears
+// in config/statusline.yaml and in saved macros), so a rename must be a
+// deliberate edit here and not a silent consequence of editing the table.
+unittest {
+    import std.traits : EnumMembers;
+
+    auto st = new AxisStage();
+    foreach (m; EnumMembers!(AxisStage.Mode)) {
+        st.mode = m;
+        immutable tag = st.modeLabel();
+        assert(tag.length > 0 && tag[0] >= 'a' && tag[0] <= 'z',
+            "every Mode must stringify to a real wire tag, not a %d fallback");
+
+        st.mode = AxisStage.Mode.Auto;                 // clear, then parse back
+        assert(st.applySetAttr("mode", tag),
+            "the parse leg must accept every tag the stringify leg emits");
+        assert(st.mode == m, "mode round-trip must land on the same member");
+    }
+
+    // The wire tags themselves, pinned as a contract (see the note above).
+    static immutable string[] expected = [
+        "auto", "world", "workplane", "select", "selectauto", "element",
+        "local", "origin", "screen", "manual", "none", "pivot", "parent",
+    ];
+    assert(AxisStage.modeEntries.length == expected.length,
+        "an axis Mode was added or removed — extend the wire-tag contract below "
+        ~ "deliberately, and check config/statusline.yaml's axis submenu");
+    foreach (i, e; AxisStage.modeEntries) {
+        assert(e.wireTag == expected[i], "axis mode wire tag changed: " ~ e.wireTag);
+        assert(e.userLabel.length > 0, "every axis mode needs a UI label");
+    }
+
+    // An unknown tag is still refused, and refusal leaves the mode alone.
+    st.mode = AxisStage.Mode.Local;
+    assert(!st.applySetAttr("mode", "flubber"));
+    assert(st.mode == AxisStage.Mode.Local,
+        "a refused parse must not have written a partial value");
+}
+
+// Task 0705 (audit 4, A5 second half): the statusline's Axis submenu is a
+// CURATED SUBSET of the modes — 7 of 13 — and until this task there was
+// nothing on the code side for it to be a subset OF. Its labels were the only
+// human names for axis modes anywhere in the tree, and each row spelled the
+// wire tag twice (once in the script line, once in `checked.equals`).
+//
+// Pinned as a subset, not as equality: which modes the submenu offers is a
+// UI curation decision and is expected to be smaller than the table. What may
+// NOT drift is that every row it does offer names a real mode, agrees with the
+// table on that mode's human label, and ticks on the state the stage actually
+// publishes.
+unittest {
+    import std.file  : exists;
+    import std.array : split;
+    import buttonset : loadStatusLine, ActionKind, PopupItemKind;
+
+    enum yamlPath = "config/statusline.yaml";
+    assert(exists(yamlPath),
+           "cannot read " ~ yamlPath ~ " — run this test from the package "
+           ~ "root (the directory holding dub.json), e.g. "
+           ~ "`dub test --config=modeling`");
+
+    int rows = 0;
+    foreach (g; loadStatusLine(yamlPath)) {
+        foreach (ref b; g.buttons) {
+            if (b.action.kind != ActionKind.popup) continue;
+            foreach (ref pi; b.action.popupItems) {
+                if (pi.kind != PopupItemKind.submenu || pi.label != "Axis") continue;
+                foreach (ref si; pi.subItems) {
+                    if (si.kind != PopupItemKind.action) continue;
+                    // `tool.pipe.attr axis mode <tag>`
+                    auto words = si.action.scriptLines.length ? si.action.scriptLines[0].split : null;
+                    if (words.length != 4 || words[0] != "tool.pipe.attr"
+                        || words[1] != "axis" || words[2] != "mode") continue;
+                    ++rows;
+                    immutable tag = words[3];
+
+                    int v;
+                    assert(valueForWireTag(AxisStage.modeEntries, tag, v),
+                        "statusline Axis submenu offers '" ~ tag
+                        ~ "', which AxisStage.applySetAttr would refuse");
+                    string want;
+                    foreach (e; AxisStage.modeEntries)
+                        if (e.wireTag == tag) want = e.userLabel;
+                    assert(si.label == want,
+                        "statusline Axis row '" ~ si.label ~ "' and the stage "
+                        ~ "table's label '" ~ want ~ "' name the same mode two "
+                        ~ "different ways");
+                    assert(si.checked.path == "axis/mode",
+                        "an Axis row must tick off the axis/mode state path");
+                    assert(si.checked.equals_ == tag,
+                        "statusline Axis row for '" ~ tag ~ "' ticks on '"
+                        ~ si.checked.equals_ ~ "' — it would never tick, or "
+                        ~ "would tick for a different mode");
+                }
+            }
+        }
+    }
+    assert(rows >= 7,
+        "the statusline Axis submenu lost rows — it offered 7 modes when this "
+        ~ "pin was written; removing one is a UI decision, so say so here");
 }
