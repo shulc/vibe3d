@@ -163,7 +163,7 @@ float[2] projectUv(Vec3 p, UvProjMode mode, UvProjAxis axis,
 
 // ---------------------------------------------------------------------------
 // Module-level unittests — analytic golden contracts.
-// Run by `dub test --config=modeling` (the mandatory gate for new core modules).
+// Run by `dub test --config=tests` (the mandatory gate for new core modules).
 // ---------------------------------------------------------------------------
 
 unittest {

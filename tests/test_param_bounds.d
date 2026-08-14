@@ -25,7 +25,7 @@
 //      reaching an OOM. Block B proves the caps hold end-to-end through the
 //      real HTTP path; it is not a "does the app survive an uncapped op"
 //      test — that proof lives in the per-kernel DoS unittests running in
-//      process-isolated `dub test --config=modeling`.
+//      process-isolated `dub test --config=tests`.
 //
 // Block-A allowlist provenance: the plan's own written allowlist
 // (doc/param_bounds_plan.md §3.A) names exactly 4 entries — mesh.sweep.count,

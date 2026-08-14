@@ -18,7 +18,7 @@
 //
 // The kernel-level version of this proof (matrix-exact, all three of
 // 30/60/90 degrees) lives in source/tools/transform/item_xform_kernels.d's
-// own unittest, covered by `dub test --config=modeling`. This file proves
+// own unittest, covered by `dub test --config=tests`. This file proves
 // the WIRING delivers the gesture factor to the kernel at the right index
 // end to end, through a real gizmo drag.
 

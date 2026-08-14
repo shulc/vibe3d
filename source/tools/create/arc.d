@@ -103,7 +103,7 @@ void buildArc(Mesh* dst, const ref ArcParams p)
 }
 
 // ---------------------------------------------------------------------------
-// Pure module unittests — run under `dub test --config=modeling`.
+// Pure module unittests — run under `dub test --config=tests`.
 // ---------------------------------------------------------------------------
 unittest { // basic counts and on-circle geometry (axis=Y default)
     import std.math : fabs, sqrt, atan2;

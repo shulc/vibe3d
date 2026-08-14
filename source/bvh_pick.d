@@ -401,7 +401,7 @@ private:
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests (run via `dub test --config=modeling`)
+// Unit tests (run via `dub test --config=tests`)
 // ---------------------------------------------------------------------------
 
 unittest {

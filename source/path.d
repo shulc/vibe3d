@@ -166,7 +166,7 @@ float pathBank(const Vec3[] knots, bool closed, float t)
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests — run by `dub test --config=modeling`. No running app needed.
+// Unit tests — run by `dub test --config=tests`. No running app needed.
 // ---------------------------------------------------------------------------
 
 unittest {

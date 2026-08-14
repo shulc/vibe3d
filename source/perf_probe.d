@@ -1022,7 +1022,7 @@ private ulong allocatedNow() nothrow {
 __gshared FrameWorkProbe g_fc;
 
 // ---------------------------------------------------------------------------
-// FrameWorkProbe unit tests. These run under `dub test --config=modeling` —
+// FrameWorkProbe unit tests. These run under `dub test --config=tests` —
 // i.e. in the SAME configuration the probe is live in, which is the whole
 // point of it being ungated. A local instance is used throughout; `g_fc` is
 // the main loop's and must not be disturbed.

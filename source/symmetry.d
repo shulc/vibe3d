@@ -597,7 +597,7 @@ void rebuildPairingTopological(const ref Mesh mesh, const ref SymmetryPacket sp,
 }
 
 // ---------------------------------------------------------------------------
-// Unittests — run only under `dub test --config=modeling`, NOT `run_test.d`
+// Unittests — run only under `dub test --config=tests`, NOT `run_test.d`
 // (the HTTP suite static-lib path never compiles this module standalone).
 // ---------------------------------------------------------------------------
 

@@ -25,7 +25,7 @@
 // undo entry (the SceneReset itself), never a second, bogus
 // "mesh.loop_slice_edit" entry ahead of it.
 //
-// `dub build`/`dub test --config=modeling` do NOT exercise this: app.d's
+// `dub build`/`dub test --config=tests` do NOT exercise this: app.d's
 // main() (where the ctx is assembled and registerCommands is actually
 // invoked, and where the REAL LoopSliceTool instance the factory casts
 // against actually lives) is excluded from the `dub test` build.

@@ -149,7 +149,7 @@ class MeshSymmetrize : Command, Operator {
 
 // ---------------------------------------------------------------------------
 // Module unittest — exercises the apply-mask reasoning (plan Risk 1) without
-// an HTTP server.  Runs under `dub test --config=modeling`.
+// an HTTP server.  Runs under `dub test --config=tests`.
 // ---------------------------------------------------------------------------
 
 // Two-quad mesh sharing a seam edge on X=0 — the same topology as the

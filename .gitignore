@@ -10,6 +10,7 @@ imgui.ini
 vibe3d
 vibe3d-test-library
 vibe3d-test-modeling
+vibe3d-test-tests
 vibe3d-test-with-render
 *.dll
 *.o
@@ -75,6 +76,7 @@ tools/perf_mesh_faces/run
 # Ad-hoc test binaries built beside the tracked ones. `vibe3d-test-modeling`
 # above does not cover a suffixed variant.
 vibe3d-test-modeling-*
+vibe3d-test-tests-*
 
 # dyaml 0.10.0 unittests (compiled into -unittest test binaries via
 # test_forms_loader) write a scratch example.yaml into cwd (loader.d:248)

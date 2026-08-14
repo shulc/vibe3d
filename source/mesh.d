@@ -14672,7 +14672,7 @@ unittest { // flipFacesByMask: PolyVertex (UV) map follows reversed winding (R5)
 }
 
 // ---------------------------------------------------------------------------
-// Triangulation-family kernel unittests (dub test --config=modeling gate)
+// Triangulation-family kernel unittests (dub test --config=tests gate)
 // ---------------------------------------------------------------------------
 
 unittest { // triangulateFacesByMask: cube (6 quads) → 12 tris, same verts

@@ -3,7 +3,7 @@ module uv_island;
 /// Pure UV-layout helpers: island detection, bbox, fit-affine, shelf-pack.
 ///
 /// No mesh mutation, no `commitChange`, no OpenGL.  Every function here is
-/// analytic — exercisable by `dub test --config=modeling` unit tests with no
+/// analytic — exercisable by `dub test --config=tests` unit tests with no
 /// running app.
 ///
 /// Island connectivity rule (task-specified, vibe3d-divergence):
@@ -277,7 +277,7 @@ UvAffine[] computeShelfPack(const UvBBox[] boxes, float gutter) {
 
 // ---------------------------------------------------------------------------
 // Module-level unit tests — analytic goldens on the pure layout math.
-// Run by `dub test --config=modeling` (mandatory for changes to core modules).
+// Run by `dub test --config=tests` (mandatory for changes to core modules).
 // ---------------------------------------------------------------------------
 
 unittest {

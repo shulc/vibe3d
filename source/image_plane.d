@@ -19,7 +19,7 @@ module image_plane;
 // decide anything.
 //
 // No GL and no ImGui here, on purpose: this module is gated by
-// `dub test --config=modeling`, which is where the assertions that matter can
+// `dub test --config=tests`, which is where the assertions that matter can
 // actually run.
 // ---------------------------------------------------------------------------
 

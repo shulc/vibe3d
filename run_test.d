@@ -146,7 +146,7 @@ bool acquireRunLock(int timeoutSec) {
     stderr.writeln(dim(
         "    Several agents/worktrees share one machine and one lock. While\n"
         ~ "    iterating, run NARROW tests instead: `./run_test.d <name> ...`\n"
-        ~ "    (plus `dub test --config=modeling`, which takes no lock). Save\n"
+        ~ "    (plus `dub test --config=tests`, which takes no lock). Save\n"
         ~ "    the full suite for the merge step."));
     stderr.writeln(dim(format("    Lock: %s (holder's pid is inside it)",
                               runLockPath())));

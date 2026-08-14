@@ -9,9 +9,12 @@
  *   5. snapshot: the key undo tests forced onto the legacy MeshSnapshot
  *      path (VIBE3D_UNDO_TRACKER=off) — anti-rot coverage for the escape
  *      hatch now that the change-tracker is default-on (Phase 4).
- *   6. dub test --config=modeling — runs ALL module-level unittests in the
- *      project source, including modules not directly imported by any test
- *      binary (math.d, command_history.d, …). The HTTP-suite (run_test.d)
+ *   6. dub test --config=tests — runs ALL module-level unittests in
+ *      source/ AND tests/unit/, including modules not directly imported by
+ *      any test binary (math.d, command_history.d, …). The `tests`
+ *      configuration is the only one that compiles tests/unit/; a bare
+ *      `dub test` silently runs the smaller `modeling` set (task 0706).
+ *      The HTTP-suite (run_test.d)
  *      links a static lib and only pulls referenced members, so unittests
  *      in imported modules are SILENT there. This lane catches what the
  *      static-lib path misses.  See run_test.d:425-434 for the documented
@@ -266,7 +269,7 @@ int main(string[] args) {
                         cmd, ["VIBE3D_UNDO_TRACKER": "off"]);
     }
 
-    // dub-test lane — runs `dub test --config=modeling` to execute ALL module-level
+    // dub-test lane — runs `dub test --config=tests` to execute ALL module-level
     // unittests in the project source tree.  The HTTP-suite (run_test.d) builds a
     // static lib and only pulls referenced members, so any unittest that lives in a
     // module that a given test binary does not import is SILENTLY SKIPPED there
@@ -279,15 +282,24 @@ int main(string[] args) {
     // extra compile.
     //
     // The lane must run BEFORE perf: the perf runner replaces ./vibe3d with the
-    // ldc-release perf binary.  dub test operates on its own configuration and
-    // doesn't touch ./vibe3d, so ordering here is merely defensive.
+    // ldc-release perf binary.  dub test builds its own `vibe3d-test-tests`
+    // binary and doesn't touch ./vibe3d, so ordering here is merely defensive.
+    //
+    // `--config=tests` is NOT optional and NOT cosmetic (task 0706).  The
+    // `tests` configuration is the only one whose sourcePaths include
+    // tests/unit/, where module unittests extracted out of source/ now live.  A
+    // bare `dub test` builds the DEFAULT configuration (`modeling`) instead and
+    // goes green over the smaller set without saying so.  Two things in the
+    // lane's own output tell you which one ran: the binary name
+    // (`Running vibe3d-test-tests` vs `vibe3d-test-modeling`) and the
+    // `N modules passed unittests` count druntime prints at the end.
     if (include("dubtest")) {
         if (noBuild)
             writeln(yellow("- note: dubtest lane always compiles (dub test has "
                 ~ "no --no-build equivalent)"));
-        string[] cmd = ["dub", "test", "--config=modeling"];
+        string[] cmd = ["dub", "test", "--config=tests"];
         suites ~= Suite("dubtest",
-                        "6/8 module unittests (dub test --config=modeling)", cmd);
+                        "6/8 module unittests (dub test --config=tests)", cmd);
     }
 
     // Provenance lane (task 0366) — a fast, offline, MODO-free lint gate over

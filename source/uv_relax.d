@@ -186,7 +186,7 @@ bool uvRelax(const ref Mesh m, MeshMap* uv,
 }
 
 // ---------------------------------------------------------------------------
-// Module-level unit tests — run by `dub test --config=modeling`.
+// Module-level unit tests — run by `dub test --config=tests`.
 // ---------------------------------------------------------------------------
 
 unittest {

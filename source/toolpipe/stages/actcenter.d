@@ -1715,7 +1715,7 @@ private:
 }
 
 // ---------------------------------------------------------------------------
-// params() snapshot — module-level so `dub test --config=modeling` runs it.
+// params() snapshot — module-level so `dub test --config=tests` runs it.
 // A unittest in tests/ would be silently skipped (sourcePaths is "source/").
 // ActionCenterStage ctor is not parameterless; params() only reads `mode`,
 // never derefs the mesh, so a throwaway delegate + EditMode suffice.
@@ -2516,13 +2516,13 @@ unittest {
 
     enum yamlPath = "config/statusline.yaml";
     // A hard fail beats a silent skip for a gate test — but say what to DO
-    // about it (task 0685 T8). The gate (`dub test --config=modeling`) already
+    // about it (task 0685 T8). The gate (`dub test --config=tests`) already
     // runs from the package root; a bare "config/ missing" only ever confused
     // someone running the unittest binary from elsewhere.
     assert(exists(yamlPath),
            "cannot read " ~ yamlPath ~ " — run this test from the package "
            ~ "root (the directory holding dub.json), e.g. "
-           ~ "`dub test --config=modeling`");
+           ~ "`dub test --config=tests`");
 
     // Task 0705 (audit 4, A4-full): the row carries the mode THREE times —
     // the command id `actr.<tag>`, the state query `checked.equals: <tag>`,

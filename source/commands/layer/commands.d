@@ -1297,7 +1297,7 @@ final class LayerParent : LayerCommandBase {
 // In-module unittest — LayerDuplicate: apply/revert contract, deep-copy
 // independence, xform copy, SET-of-one invariant restore.
 //
-// Runs under `dub test --config=modeling` (the mandatory core-module gate —
+// Runs under `dub test --config=tests` (the mandatory core-module gate —
 // no server needed; tests the command directly against a live Document).
 // ---------------------------------------------------------------------------
 unittest {

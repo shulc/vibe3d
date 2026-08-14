@@ -14,7 +14,7 @@ import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
 // All functions operate in world space; screen-space projection is handled
 // by snap.d (screen-space cursor candidates). This module is purely
 // computational — no toolpipe state, no global reads — so it is fully
-// unit-testable under `dub test --config=modeling`.
+// unit-testable under `dub test --config=tests`.
 //
 // Working assumptions (unverified, revisit on Stage-0 captures):
 //   * `point` mode uses nearest-foot (perpendicular closest-point) not
@@ -858,7 +858,7 @@ Vec3 constrainPoint(Vec3 movingPos,
 }
 
 // ---------------------------------------------------------------------------
-// Unit tests — run under `dub test --config=modeling`.
+// Unit tests — run under `dub test --config=tests`.
 // (MANDATORY for core math modules: the HTTP test suite silently skips
 // unittest blocks in modules not imported by the test binary.)
 // ---------------------------------------------------------------------------

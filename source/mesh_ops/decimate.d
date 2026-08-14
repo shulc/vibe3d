@@ -429,7 +429,7 @@ mixin template MeshDecimateOps() {
 // from mesh.d alongside the kernel above).
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// reduceToTarget kernel unittests (dub test --config=modeling gate)
+// reduceToTarget kernel unittests (dub test --config=tests gate)
 // ---------------------------------------------------------------------------
 
 unittest { // reduceToTarget no-op: target >= current face count

@@ -8651,7 +8651,7 @@ public:
 // `unittest { ... }` blocks plus `version (unittest)` helpers only. The
 // production class ends at the `}` just above this banner — keep new
 // production code ABOVE it and new test rigs BELOW it.
-// Run with: dub test --config=modeling.
+// Run with: dub test --config=tests.
 // ===========================================================================
 
 // ---------------------------------------------------------------------------

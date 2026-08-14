@@ -517,7 +517,7 @@ private:
 }
 
 // ---------------------------------------------------------------------------
-// params() snapshot — module-level so `dub test --config=modeling` runs it.
+// params() snapshot — module-level so `dub test --config=tests` runs it.
 // A unittest in tests/ would be silently skipped (sourcePaths is "source/").
 // ---------------------------------------------------------------------------
 unittest {

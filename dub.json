@@ -158,6 +158,26 @@
 				}
 			},
 			"_comment": "Opt-in build with two render backends (Cycles via D-Cycles, RPR via D-RadeonProRender) plus the AI ranker. The default `modeling` config never references the render repos so `dub build` works on machines that have neither. Git dependencies are pinned to commit SHAs so CI can reuse the persistent dub cache instead of re-cloning heavyweight repositories. For active backend development, register a local override once: `dub add-local ~/Code/D-RadeonProRender && dub add-local ~/Code/D-Cycles`. D-Cycles builds its C shim via CMake (Blender LFS submodule + optional CUDA/OptiX); D-RadeonProRender is dynamic-loaded bindbc. See doc/shader_framework_plan.md."
+		},
+		{
+			"name": "tests",
+			"versions": [
+				"WithAI"
+			],
+			"dependencies": {
+				"d-onnxruntime": {
+					"version": "3603828c1f5a6cd36817492252e1efb9c81e7ca4",
+					"repository": "git+https://github.com/shulc/D-OnnxRuntime.git"
+				}
+			},
+			"sourcePaths": [
+				"source",
+				"tests/unit"
+			],
+			"_comment": "The module-unittest gate (task 0706): `dub test --config=tests`. It exists so unittest blocks have somewhere to live OTHER than source/ -- measured by audit 4, 25% of source/ was test code and the god-files were 48-96% tests, with no lever to shrink them while the only source path was `source`. See tests/unit/README.md for what may move there.",
+			"_comment-name": "The name is `tests` and NOT `unittest`, and that is load-bearing. dub gives a configuration literally named `unittest` a special branch: it uses that configuration VERBATIM and skips its own test-main injection. Measured here on dub 1.41 -- with the name `unittest`, `dub test` printed `Linking vibe3d` / `Running vibe3d`: it built the EDITOR with -unittest, overwrote ./vibe3d (the binary `run_test.d --no-build` reuses), ran the unittest blocks, and then whether it terminated at all depended on druntime returning runMain=false. Under any other name dub injects dub_test_root.d, builds a separate `vibe3d-test-<config>` binary, leaves ./vibe3d alone, and -- the part that matters most for this task -- `static import`s EVERY module of the target, which is what guarantees a tests/unit/ module that nothing imports still registers its ModuleInfo and actually runs. Cost of not using the magic name: a bare `dub test` falls back to the default configuration (`modeling`) and silently omits tests/unit/. That is why every caller passes --config=tests explicitly; a wrong one is visible in the run's own output as `Running vibe3d-test-modeling` and a lower `N modules passed unittests`.",
+			"_comment-sourcepaths": "`tests/unit` MUST NOT be added to `modeling`/`with-render` or to the root: dub merges configuration build settings ON TOP of the root ones, so a root-level entry would compile test code into the shipped binary. `source` is repeated here only for readability -- dub de-duplicates source files, so the effective set is source/ + tests/unit/ either way.",
+			"_comment-duplication": "`WithAI` + d-onnxruntime are copied from `modeling` rather than hoisted to the root ON PURPOSE: `modeling-noai` deliberately omits both (Windows 7 target -- onnxruntime.dll needs Win8+ APIs), so hoisting them would silently un-do that build. Keep this block in sync with `modeling` by hand; there are only two lines of it."
 		}
 	]
 }

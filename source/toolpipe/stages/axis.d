@@ -1408,7 +1408,7 @@ unittest {
     assert(exists(yamlPath),
            "cannot read " ~ yamlPath ~ " — run this test from the package "
            ~ "root (the directory holding dub.json), e.g. "
-           ~ "`dub test --config=modeling`");
+           ~ "`dub test --config=tests`");
 
     int rows = 0;
     foreach (g; loadStatusLine(yamlPath)) {

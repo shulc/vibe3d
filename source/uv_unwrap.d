@@ -342,7 +342,7 @@ double uvDirichletEnergy(const ref Mesh m, const float[] uvData)
 }
 
 // ---------------------------------------------------------------------------
-// Module unittests — run by `dub test --config=modeling`.
+// Module unittests — run by `dub test --config=tests`.
 // ---------------------------------------------------------------------------
 
 unittest {

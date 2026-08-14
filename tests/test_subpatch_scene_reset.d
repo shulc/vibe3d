@@ -19,7 +19,7 @@
 // to subpatch (activating the live smoothed preview, verified via the
 // higher `/api/gpu/face-vbo` face-vert count — same technique as
 // test_subpatch_move.d) and then resetting, the rendered surface returns to
-// the flat 36-face-vert cage. `dub build`/`dub test --config=modeling` do
+// the flat 36-face-vert cage. `dub build`/`dub test --config=tests` do
 // NOT exercise this: app.d's main() (where the ctx is actually assembled
 // and registerCommands is actually invoked) is excluded from the
 // `dub test` build, and a by-value regression here compiles cleanly with

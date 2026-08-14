@@ -7,7 +7,7 @@
 //
 // Module-level params() snapshots (disabled→1 param / None→0 params) live in
 // source/toolpipe/stages/constrain.d and source/toolpipe/stages/actcenter.d
-// and run via `dub test --config=modeling`. This file covers the HTTP surface.
+// and run via `dub test --config=tests`. This file covers the HTTP surface.
 
 import std.net.curl;
 import std.json;

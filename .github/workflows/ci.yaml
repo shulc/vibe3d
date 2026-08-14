@@ -70,7 +70,16 @@ jobs:
       continue-on-error: true
       # nfde's static ctor calls NFD_Init() (GTK), which needs a display;
       # xvfb-run gives the headless runner a virtual one.
-      run: xvfb-run -a dub test --compiler=dmd
+      #
+      # --config=tests is required, not decorative (task 0706): the `tests`
+      # configuration is the only one whose sourcePaths include tests/unit/,
+      # where module unittests extracted out of source/ live. A bare `dub test`
+      # builds the DEFAULT configuration (`modeling`) and passes over the
+      # smaller set without reporting anything unusual. The step log names the
+      # binary it ran (`vibe3d-test-tests`) and prints druntime's
+      # `N modules passed unittests` count — check those if this ever looks
+      # suspiciously cheap.
+      run: xvfb-run -a dub test --config=tests --compiler=dmd
 
     - name: 'Integration tests (HTTP suite via run_all.d)'
       id: integration
@@ -121,7 +130,7 @@ jobs:
         {
           echo "## Test results"
           echo ""
-          echo "- Embedded unit tests (\`dub test\`): **${{ steps.unit.outcome }}**"
+          echo "- Embedded unit tests (\`dub test --config=tests\`): **${{ steps.unit.outcome }}**"
           echo ""
           echo "### Integration suite"
           echo ""

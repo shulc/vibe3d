@@ -30,7 +30,7 @@ alias TackEditFactory = MeshSessionEdit delegate();
 // computeTackTransform / applyTackTransform — the captured alignment rule
 // (task 0126, doc/tack_tool_plan.md "Phase-0 CAPTURE RESULTS", RFB-injection
 // re-capture). Pure module-level free functions (no GL, no Tool instance
-// needed) so they're directly unit-testable in `dub test --config=modeling`
+// needed) so they're directly unit-testable in `dub test --config=tests`
 // against a hand-verified golden fixture — same discipline as
 // tools/mirror.d's rebuildMirrorPreview / MirrorParams-free helpers.
 //

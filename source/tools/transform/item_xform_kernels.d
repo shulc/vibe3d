@@ -5,7 +5,7 @@ module tools.transform.item_xform_kernels;
 // frame + a gesture rotation matrix + a per-frame-axis scale factor)
 // rewrites an item's `ItemXform` (document.d), never touching
 // `mesh.vertices`. No app/GL/mesh dependency beyond math + document, so this
-// module is exercised entirely by `dub test --config=modeling` — no HTTP, no
+// module is exercised entirely by `dub test --config=tests` — no HTTP, no
 // GL, no live app.
 //
 // Every law here is per-bank ANALYTIC — never a general matrix decomposition
@@ -236,7 +236,7 @@ bool applyGestureToItems(Layer[] targets, const(ItemXform)[] baselines,
 
 // ---------------------------------------------------------------------------
 // Unit tests — the whole item TRS law lives here precisely so it is covered
-// by `dub test --config=modeling` with no live app, no GL, no HTTP.
+// by `dub test --config=tests` with no live app, no GL, no HTTP.
 // ---------------------------------------------------------------------------
 version (unittest) {
     private bool isClose(float a, float b, float eps = 1e-5f) {

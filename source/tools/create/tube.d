@@ -419,7 +419,7 @@ private:
 }
 
 // ---------------------------------------------------------------------------
-// Pure module unittests for buildTube (run by `dub test --config=modeling`).
+// Pure module unittests for buildTube (run by `dub test --config=tests`).
 // ---------------------------------------------------------------------------
 unittest {  // (a) default → 96 verts / 96 faces (S=24, capped)
     Mesh m;

@@ -164,7 +164,7 @@ UvAffine makeRotate(float angleDeg, float[2] pivot) {
 
 // ---------------------------------------------------------------------------
 // Module-level unit tests — analytic golden contracts on the kernel algebra.
-// These are run by `dub test --config=modeling` (the mandatory gate for any
+// These are run by `dub test --config=tests` (the mandatory gate for any
 // change touching a core module).
 // ---------------------------------------------------------------------------
 

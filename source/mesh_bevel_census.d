@@ -33,7 +33,7 @@ module mesh_bevel_census;
 // to the production primitive-factory set.
 //
 // WHERE THIS RUNS. Plain `unittest {}` blocks in a source/ module, so
-// `dub test --config=modeling` (the `dubtest` lane already in
+// `dub test --config=tests` (the `dubtest` lane already in
 // run_all.d's default suite set) exercises it — no vibe3d process, no
 // HTTP round-trip, no new run_all.d lane needed. Every mesh here tops out
 // in the low hundreds of vertices/edges, and `bevelEdgesByMask` is O(mesh

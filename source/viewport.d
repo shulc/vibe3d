@@ -1283,7 +1283,7 @@ final class ViewportManager {
 
 // ---------------------------------------------------------------------------
 // Unittests — pure (no GL), verifying the data-model invariants the refactor
-// rests on.  Run via `dub test --config=modeling`.
+// rests on.  Run via `dub test --config=tests`.
 // ---------------------------------------------------------------------------
 unittest {
     // 1. Basic construction: 4 allocated cells, cellCount=1, correct initial IDs.
