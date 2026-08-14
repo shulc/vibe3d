@@ -141,7 +141,7 @@ struct VectorStack {
 ///     Viewport vp;
 ///     if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
 ///
-/// which was open-coded 23 times in topology_pen.d alone (audit №4, TP6).
+/// which was open-coded 23 times in the topology-pen tool alone (audit №4, TP6).
 /// The absent-packet answer is deliberately `Viewport.init`, NOT a throw or
 /// a bool-out: that is what every copy did, and `Viewport.init` is a
 /// documented shape here — `focus` is (NaN,NaN,NaN), not the origin (see

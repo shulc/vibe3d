@@ -154,8 +154,8 @@ final class PenSnapGuide : SnapGuide {
     // resolver takes the acceptance radius off the packet it snapshotted
     // at press (one gesture, one set of ranges), and the service applies
     // its own gather cutoff before a candidate ever reaches `proximity`.
-    // They are held so a reader — and the unittests below — can see that
-    // the push arrived.
+    // They are held so a reader — and the package's unittest module — can
+    // see that the push arrived.
     private float innerPx_ = -1.0f, outerPx_ = -1.0f;
     private GuideDrawState draw_ = GuideDrawState.Off;
 

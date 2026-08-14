@@ -10,7 +10,7 @@
 // controls rule out the alternatives — a sibling retopology preset OMITS the
 // argument, a pen preset that composes no snap tool at all still arms, and the
 // "bring your own snap preset" atom sits on presets that both do and do not
-// compose one. See `source/tools/edit/topology_pen.d`'s `armStartupSnap`.
+// compose one. See `source/tools/edit/topology_pen/tool.d`'s `armStartupSnap`.
 //
 // WHY IT MATTERS, and why this file exists rather than a unittest alone: that
 // global IS the weld gate. Every Move-family release now resolves a weld

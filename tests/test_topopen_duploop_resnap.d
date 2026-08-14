@@ -25,8 +25,8 @@
 // The expectation is therefore `expectedNearestOnSphere` — this suite's own
 // nearest-foot solve against the sphere's OWN FACETS, from scratch, never a
 // second call into the code under test. The tilted-background fixture where
-// the two laws differ loudly is in `source/tools/edit/topology_pen.d`'s own
-// unittests; a sphere cannot show a cos(tilt) ratio.
+// the two laws differ loudly is in the pen's own module unittests
+// (`tests/unit/tools/edit/topology_pen/gestures_test.d`); a sphere cannot show a cos(tilt) ratio.
 //
 // Also measured on this gesture and NOT asserted here, deliberately: the
 // reference feeds the query `src_i + Δ` with ONE 3D offset shared by every

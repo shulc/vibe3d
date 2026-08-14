@@ -1,7 +1,8 @@
 // Topology Pen — the Mode dropdown drives a REAL plain-LMB press (task 0483).
 //
-// The unit-level router table is pinned inside source/tools/edit/topology_pen.d
-// (`lmbAction_` per mode/flag). What THIS test proves is the end-to-end claim
+// The unit-level router table (`lmbAction_` per mode/flag) lives in
+// source/tools/edit/topology_pen/tool.d and is pinned by the module unittests
+// in tests/unit/tools/edit/topology_pen/gestures_test.d. What THIS test proves is the end-to-end claim
 // that table exists for: with `mode` set from the Tool Properties dropdown, an
 // UNMODIFIED left click performs the mode's gesture through the real SDL
 // dispatch path — the same mutation the equivalent modifier chord produces —

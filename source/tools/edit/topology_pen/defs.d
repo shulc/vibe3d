@@ -405,8 +405,9 @@ package immutable ChordOv[12] kChordOv = [
 
 /// Which physical button a chord slot belongs to. Taken from the SLOT rather
 /// than from the event, so a synthetic press whose `button` field was never
-/// filled in (every direct-call unittest in this file) still books its gesture
-/// against the right button.
+/// filled in (every direct-call unittest in the package's test module,
+/// `tests/unit/tools/edit/topology_pen/gestures_test.d`) still books its
+/// gesture against the right button.
 package InputButton chordButton(TopoPenChord c) {
     final switch (c) {
     case TopoPenChord.Lmb: case TopoPenChord.ShiftLmb:
@@ -507,7 +508,7 @@ package immutable InputBinding[] kTopoPenBindings = [
 // fifth, the pixel->world MAGNITUDE CURVE, stays ours by decision — see
 // `slideDeltaFromDrag` for the measurement, the reason it was frozen, and
 // the sanity band our gain sits in. The whole set is pinned by the
-// "Slide law — REFERENCE PARITY CONFORMANCE" unittest at the bottom of this
+// "Slide law — REFERENCE PARITY CONFORMANCE" unittest in the package's test
 // module.
 // Commit is deferred to release (`onMouseButtonUp`, `commitSlide`) — a
 // direct Position-only kernel write (`m.vertices[i]=pos` +

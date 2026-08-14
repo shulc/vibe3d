@@ -1658,7 +1658,7 @@ void main(string[] args) {
     // `activeMeshResolver` right below): every picking entry point that
     // needs "the current primary layer's transform" but has no `Document`
     // of its own (http_providers.d's HTTP-bridged closures,
-    // tools/edit/topology_pen.d's TopologyPenTool) resolves it through
+    // tools/edit/topology_pen/tool.d's TopologyPenTool) resolves it through
     // `primaryModelSpace()` rather than a duplicated formula. app.d's own
     // call sites below use the same free function — one accessor, not two.
     // Task 0654 — with an empty item selection there is no primary and so no

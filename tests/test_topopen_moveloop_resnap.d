@@ -27,8 +27,9 @@
 // nearest-foot solve against the sphere's OWN FACETS, computed from scratch,
 // never a second call into the code under test. (The facets, not the ideal
 // sphere: see that helper's own note.) The tilted-background fixture that
-// makes the two laws differ loudly lives in `source/tools/edit/topology_pen.d`'s
-// own unittests — a sphere background cannot show a cos(tilt) ratio.
+// makes the two laws differ loudly lives in the pen's own module unittests
+// (`tests/unit/tools/edit/topology_pen/gestures_test.d`) — a sphere
+// background cannot show a cos(tilt) ratio.
 //
 // Run via: ./run_test.d topopen_moveloop_resnap
 

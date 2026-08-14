@@ -13,7 +13,7 @@
 //     A large overshoot on this same drag also proves clamp-at-neighbor.
 //
 // UPDATED for the measured slide law (see `slideEndpointPos` /
-// `slideDeltaFromDrag` in source/tools/edit/topology_pen.d). Two families of
+// `slideDeltaFromDrag` in source/tools/edit/topology_pen/tool.d). Two families of
 // assertion changed, both because the behaviour they described was refuted by
 // the conformance capture, NOT to make the test pass:
 //

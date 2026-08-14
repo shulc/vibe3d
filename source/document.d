@@ -4118,7 +4118,7 @@ unittest {  // TASK 0671 — the `setPrimary` half of the same retirement.
 //
 // Picking code that needs the CURRENT primary layer's transform but has no
 // `Document` instance of its own — `http_providers.d`'s HTTP-thread-bridged
-// providers, `tools/edit/topology_pen.d`'s `TopologyPenTool` (its
+// providers, `tools/edit/topology_pen/tool.d`'s `TopologyPenTool` (its
 // `pickPrimaryFace` picks against the primary mesh via its own `BvhPick`) —
 // resolves it through this global, mirroring `display_sync.activeMeshResolver`
 // (the identical cross-module problem, already solved once in this codebase).

@@ -1245,7 +1245,7 @@ unittest { // T7: the loop scrub elects on the DRAWN rail
 // ===========================================================================
 // The Topology Pen family — Stages 4a and 4b.
 //
-// `topology_pen.d` had ONE projection helper (`projectPt`) shared by 161 call
+// The topology pen had ONE projection helper (`projectPt`) shared by 161 call
 // sites, whose parameter was named `world` and which was handed a raw
 // `mesh.vertices[...]` by most of them. Stage 4a split it in two by SPACE and
 // classified every site; Stage 4b fixed the half a rename cannot reach — the
@@ -1261,7 +1261,8 @@ unittest { // T7: the loop scrub elects on the DRAWN rail
 //
 // P6a/P6b (the orientation admission, §1.4) are NOT here: they need to read a
 // predicate that has no HTTP observable which can express all three candidate
-// laws, so they live as in-file unittests in `source/tools/edit/topology_pen.d`
+// laws, so they live as module unittests in
+// `tests/unit/tools/edit/topology_pen/gestures_test.d`,
 // where the guide can be constructed directly and its own aim ray read back.
 // ===========================================================================
 
@@ -1299,7 +1300,7 @@ void penBuildFixture(float[16] M, out Vec3[] verts, out int[][] faces) {
     faces ~= [PEN_DA, PEN_DB, PEN_DB + 2, PEN_DA + 2];
 }
 
-// A faithful re-run of `findSourceVertex` (topology_pen.d) in EITHER space.
+// A faithful re-run of `findSourceVertex` (the pen's tool.d) in EITHER space.
 // `M == null` is the pre-0619 law (project the raw local coordinate through
 // the world viewport); `M != null` is the correct one (project the DRAWN
 // point). Returns the elected index or -1, plus the winner's and runner-up's

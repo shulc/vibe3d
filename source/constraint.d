@@ -503,9 +503,10 @@ int consistentCandidateIndex(int idx, size_t len) pure nothrow @nogc @safe {
 // gap -- 32px from the nearest border edge, 86px from the nearest vertex, where
 // an ordinary selection click resolves nothing -- still classifies as an edge
 // press and caps the cell. Our Fill press matches: `fillSeedEdge`
-// (`tools/edit/topology_pen.d`) scans the WHOLE mesh with no radius at all. Do
+// (`tools/edit/topology_pen/tool.d`) scans the WHOLE mesh with no radius at all. Do
 // not "unify" it onto `topoPenPressPickPx` -- that would be a real regression,
-// and the gap-centroid unittest in `tools/edit/topology_pen.d` is what catches
+// and the gap-centroid unittest in `tests/unit/tools/edit/topology_pen/gestures_test.d`
+// is what catches
 // it.
 //
 // UNBOUNDED IS NOT UNARBITRATED (task 0488). Dropping the radius does not make

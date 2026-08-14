@@ -76,6 +76,31 @@ package enum string[] kGestureArmFields = () {
     return r;
 }();
 
+/// The Topology Pen: one tool, one class, eleven gestures.
+///
+/// What is HERE: the session state each gesture arms and clears, the input
+/// dispatch that routes a chord to a gesture, the drag maths, and the commit
+/// steps that write the mesh.
+///
+/// What is elsewhere in the package, and why (task 0718 — the class was
+/// 19 905 lines):
+///   * `defs.d`       — the vocabulary this class is written in: the gesture
+///                      and mode enums, the chord table, the binding grid,
+///                      the command-factory aliases. Knows nothing about this
+///                      class, which is why it can be read first.
+///   * `render.d`     — every pixel the tool draws, mixed back in below as
+///                      `PenRenderOps`.
+///   * `json.d`       — the `GET /api/tool/state` answer and its wire tags,
+///                      mixed back in as `PenStateJsonOps`.
+///   * `snap_guide.d` — border classification and the `SnapGuide` this tool
+///                      registers for the duration of a gesture.
+///   * the white-box unittests — `tests/unit/tools/edit/topology_pen/
+///     gestures_test.d`, a module named INTO this package so it can keep
+///     driving the gesture handlers directly.
+///
+/// The two mixins are members of this class in every way that matters: they
+/// read its state, including its `private` members, exactly as they did when
+/// their bodies were typed out here.
 class TopologyPenTool : Tool, InputBindable {
 
     /// Click-vs-drag gate, in pixels, shared by EVERY gesture in this tool:
@@ -157,7 +182,7 @@ private:
     package @property ref TopoPenSmoothLoopFactory   smoothLoopEditFactory_()   { return factories_.smoothLoop; }
     package @property ref TopoPenFillFactory         fillEditFactory_()         { return factories_.fill; }
 
-    // --- P3 drag-build session state (topology_pen.d, doc/topopen_p3_plan.md).
+    // --- P3 drag-build session state (tool.d, doc/topopen_p3_plan.md).
     // Armed on a press that lands on an existing primary-layer vertex;
     // classified ONCE at arm time (the mesh is never mutated between press
     // and release, so re-classifying at release would be redundant, not
@@ -174,7 +199,7 @@ private:
     int       quadQ_          = -1;   // Quad case: cyclic-prev(A) in the triangle
     int       quadTriFi_      = -1;   // Quad case: the triangle face index to splice
 
-    // --- P4 Move/Place session state (topology_pen.d, doc/topopen_p4_plan.md,
+    // --- P4 Move/Place session state (tool.d, doc/topopen_p4_plan.md,
     // Design A). Both outcomes of a plain-LMB press are ARMED at DOWN
     // (`onPlainLmbDown`'s findSourceVertex disambiguation) and COMMITTED at
     // UP (`onMouseButtonUp`) — never at DOWN, so a stationary click's
@@ -243,7 +268,7 @@ private:
     bool         moveWelded_ = false;
     package MeshSnapshot moveBefore_;
 
-    // --- P6 Add Loop session state (topology_pen.d,
+    // --- P6 Add Loop session state (tool.d,
     // doc/topopen_p6_addloop_plan.md). Armed on a Shift+MMB press that
     // lands on a primary-layer edge whose perpendicular ring exists
     // (`onShiftMmbDown`); the ratio tracks the cursor on every subsequent
@@ -281,7 +306,7 @@ private:
     // pairing shows up here as `addLoopFrac` ignoring the cursor entirely.
     package bool addLoopMiddle_ = false;
 
-    // --- P7 Slide session state (topology_pen.d,
+    // --- P7 Slide session state (tool.d,
     // doc/topopen_p7_slide_plan.md, V1-scope Option B). Armed on a Ctrl+LMB
     // press that lands on a primary-layer edge with at least one slidable
     // endpoint (`onCtrlLmbDown`); `slideEndA_`/`slideEndB_` are the grabbed
@@ -348,7 +373,7 @@ private:
     package SlideDecline slideDecline_     = SlideDecline.None;
     package int          slideDeclineSeed_ = -1;
 
-    // --- P8 Smooth session state (topology_pen.d,
+    // --- P8 Smooth session state (tool.d,
     // doc/topopen_p8_smooth_plan.md). Armed by a Shift+Ctrl+LMB press
     // (`onShiftCtrlLmbDown`) — NO source-vertex pick (whole-primary-mesh
     // scope, unlike every other gesture above) and NO mutation on down;
@@ -372,7 +397,7 @@ private:
     int   smoothStartX_, smoothStartY_, smoothLastX_, smoothLastY_;
     int   smoothDragDx_ = 0;
 
-    // --- P9 Split session state (topology_pen.d,
+    // --- P9 Split session state (tool.d,
     // doc/topopen_p9_split_plan.md). Armed on a plain-MMB press that lands
     // on an existing primary-layer vertex A (`onPlainMmbDown`);
     // `splitTargetVert_` tracks the CURRENT snap target C off every
@@ -415,9 +440,10 @@ private:
     // is `captureSnapForDrag`'s own source. When no SNAP stage is registered
     // this stays `SnapPacket.init`, whose ranges ARE the stage's declared
     // defaults (pinned by a unittest in `toolpipe/stages/snap.d`), so a
-    // pipeline-less pen — every direct-construction unittest below, and the
-    // headless paths — behaves exactly as it did when the constants were
-    // private.
+    // pipeline-less pen — every direct-construction unittest in the package's
+    // test module (`tests/unit/tools/edit/topology_pen/gestures_test.d`),
+    // and the headless paths — behaves exactly as it did when the constants
+    // were private.
     //
     // GATED on `SnapPacket.enabled` since task 0523, where it used not to be.
     // The pen welded whether or not the user had snapping on — alone among the
@@ -621,7 +647,7 @@ private:
     // by `placeArmed_`/`moveArmed_` and therefore a safe no-op.
     package PenGesture[3] gestureOn_ = PenGesture.PlaceOrMove;
 
-    // --- P10 Move Loop session state (topology_pen.d,
+    // --- P10 Move Loop session state (tool.d,
     // doc/topopen_p10_moveloop_plan.md). Armed on an RMB press that lands on
     // a primary-layer edge (`onMoveLoopRmbDown`, reusing `findRingSeedEdge`
     // verbatim from P6/P7): the moving set is the SORTED-UNIQUE endpoint
@@ -650,7 +676,7 @@ private:
     int   moveLoopCurX_,   moveLoopCurY_;
     package uint[] moveLoopVerts_;
 
-    // --- P11 Dup Loop session state (topology_pen.d,
+    // --- P11 Dup Loop session state (tool.d,
     // doc/topopen_p11_duploop_plan.md). Armed on a Shift+RMB press that
     // lands on a primary-layer edge (`onDupLoopShiftRmbDown`, reusing
     // `findRingSeedEdge` verbatim from P6/P7/P10): `dupLoopEdges_` are the
@@ -704,7 +730,7 @@ private:
     int   dupEdgeStartX_, dupEdgeStartY_;
     int   dupEdgeCurX_,   dupEdgeCurY_;
 
-    // --- P12 Smooth+Loop session state (topology_pen.d,
+    // --- P12 Smooth+Loop session state (tool.d,
     // doc/topopen_p12_smoothloop_plan.md). Armed on a Shift+Ctrl+RMB press
     // that lands on a primary-layer edge (`onSmoothLoopRmbDown`, reusing
     // `findRingSeedEdge` verbatim from P6/P7/P10/P11); the moving set is the
@@ -3268,8 +3294,8 @@ public:
     // vertex read raw degree 4 there against fan valence 2, because the fan
     // sees only one of the two fans. Do NOT "simplify" the stop test onto that
     // enumerator: the reference behaviour on either shape is unmeasured. The
-    // equivalence and both separating shapes are pinned by the unittest below
-    // this class.
+    // equivalence and both separating shapes are pinned by a unittest in the
+    // package's test module.
     package int[] trimBorderRunAroundSeed(const(int)[] gathered, int seed) {
         auto m = mesh;
         if (m is null || seed < 0 || seed >= cast(int)m.edges.length) return null;
@@ -3967,7 +3993,7 @@ public:
     //
     // Properties this pins, each independently verified against the captured
     // conformance set (see the "Slide law — REFERENCE PARITY CONFORMANCE"
-    // unittest at the bottom of this module):
+    // unittest in the package's test module):
     //   * colinear — `x'` always lies on the infinite rail LINE through
     //     `x`/`neighbor` (max relative perpendicular 2.4e-08 measured);
     //   * UNBOUNDED — there is deliberately NO `[0,1]` clamp. A vertex
@@ -5819,8 +5845,9 @@ public:
     // is the unconditional mutation + undo-record + display-refresh tail.
     /// `bPosLocal` is a PRIMARY-LAYER LOCAL coordinate (task 0619) — it goes
     /// straight into `m.addVertex`. The gesture's caller converts the CONS
-    /// world hit; the direct-construction unittests below already pass local
-    /// fixture positions, which is what they always meant.
+    /// world hit; the direct-construction unittests in the package's test
+    /// module already pass local fixture positions, which is what they always
+    /// meant.
     package void buildFromSource(int a, BuildCase casee, int n, int p, int q,
                                  int triFi, Vec3 bPosLocal) {
         if (!commitReady(factories_.build)) return;

@@ -226,7 +226,7 @@ private void drawCursorMarker(ImGui.ImDrawList* dl,
 }
 
 // One projection per SPACE, not one projection with a parameter named after
-// the space it usually holds (task 0619 §2.0, the same split `topology_pen.d`
+// the space it usually holds (task 0619 §2.0, the same split the topology pen
 // carries). The old single `project(Vec3 worldPos, ...)` was named `worldPos`
 // and was handed a raw LOCAL vertex at four of its five call sites; a name
 // cannot be wrong in a way the compiler notices, but a TYPE can. `AimViewport`

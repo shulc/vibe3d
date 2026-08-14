@@ -5,7 +5,7 @@
 // about `Mesh`, tools, undo, or the background re-snap. It takes a
 // double-precision position array plus a frozen `RelaxTopology` (CSR
 // adjacency + a per-slot open-edge flag) and runs N relaxation iterations.
-// The caller (`tools/edit/topology_pen.d`, `applySmoothPasses`) owns the
+// The caller (`tools/edit/topology_pen/tool.d`, `applySmoothPasses`) owns the
 // float↔double conversion, the background snap, and the undo record.
 //
 // WHY A SEPARATE MODULE, AND WHY DOUBLE: this law is pinned by a reference
@@ -19,7 +19,8 @@
 //
 // ---------------------------------------------------------------------------
 // THE LAW (measured against the reference; see the conformance unittest in
-// topology_pen.d, which reproduces 6 independently-captured cases). Per
+// `tests/unit/tools/edit/topology_pen/gestures_test.d`,
+// which reproduces 6 independently-captured cases). Per
 // iteration, with `F = strength / 20`:
 //
 //   C(v)  = v's 1-ring, restricted to OPEN-edge neighbours when v is a
@@ -48,7 +49,7 @@
 // in the law, but ONLY as the normaliser that makes `u_i` a unit vector for
 // the dot product — it is NOT the weighting. (An earlier, superseded reading
 // of the same measurements had this backwards, as an inverse-edge-length
-// weighted MEAN; `inverseEdgeLenRelax` in topology_pen.d still implements
+// weighted MEAN; `inverseEdgeLenRelax` in the pen's tool.d still implements
 // that older law for the separate 1-D Smooth+Loop path, whose own weighting
 // has not been re-measured. Do not conflate the two.)
 // ---------------------------------------------------------------------------
@@ -225,7 +226,8 @@ void relaxPasses(RelaxVec3[] pos, const ref RelaxTopology topo, double F, int it
 
 // ---------------------------------------------------------------------------
 // Kernel unittests. The AUTHORITATIVE gate is the 6-case reference parity
-// conformance test in topology_pen.d (it drives this kernel through the real
+// conformance test in the pen's unittest module (it drives this kernel
+// through the real
 // `Mesh`→`RelaxTopology` extraction); these cover the structural properties
 // that test would only catch as a number, and the guard paths it never
 // reaches.

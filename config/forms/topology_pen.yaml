@@ -12,7 +12,7 @@
 #
 # `middle`, `mode`, `loop`, `slide`, `smoothStrength`, `showVertex` and
 # `showEdge` are the attrs in mesh.topoPen.params() (grep params() in
-# source/tools/edit/topology_pen.d for the authoritative name/type list — a
+# source/tools/edit/topology_pen/tool.d for the authoritative name/type list — a
 # mismatch here fails loud at boot, `validateForms`). That same `params()`
 # comment carries the THREE-BUCKET audit of every reference attribute this form
 # deliberately does not carry, with the owning task id for each one; add a row
@@ -103,7 +103,7 @@
 # gesture counter are the same storage, and its press handler overwrites it
 # with 1 at the start of every Smooth press — so setting it cannot affect the
 # gesture that follows. The count comes from the drag alone
-# (`smoothPassesForDragDx`, source/tools/edit/topology_pen.d). Adding a row
+# (`smoothPassesForDragDx`, source/tools/edit/topology_pen/tool.d). Adding a row
 # here would CREATE a divergence, not close one — same resolution as the
 # reference's boundary/corner lock attributes, which are equally absent.
 # `innerSnap` is the counter-example that shows the rule is about EVIDENCE and
