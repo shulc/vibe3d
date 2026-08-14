@@ -514,6 +514,42 @@ struct Mesh {
     // array's current length yields the default (T.init), not a RangeError.
     private static T faceAttrOr(T)(in T[] attr, size_t fi) { return fi < attr.length ? attr[fi] : T.init; }
 
+    /// One face-local vertex substitution: wherever `oldV` appears in a face's
+    /// vertex list, it is replaced IN PLACE by the whole `newVs` run (one
+    /// vertex for a plain slide, two when a corner splits into a predecessor
+    /// and a successor). Accumulated per face id as `VertSub[][uint]` by every
+    /// operator that rims a face without re-deriving its winding.
+    static struct VertSub { uint oldV; uint[] newVs; }
+
+    /// Apply the substitutions recorded for ONE face. `subsP` is the raw
+    /// `fi in faceSubs` lookup, so the untouched-face case (null) stays a
+    /// single `.dup` with no map built.
+    ///
+    /// Singular, not the `rebuildFacesWithVertexSubs` the audit named: the
+    /// three call sites this replaced (edge bevel's L0 boundary resolve,
+    /// vertex bevel's rebuild pass, extrude's rebuild pass) share the inner
+    /// substitution exactly, but each wraps it in its OWN loop with its own
+    /// bound and its own per-face attribute carry. Hoisting the loop too
+    /// would have had to invent a policy for the attrs; hoisting the
+    /// substitution alone is the part that was byte-identical.
+    ///
+    /// Order-sensitive detail worth keeping visible: a repeated `oldV` in
+    /// `subs` means LAST wins (AA assignment), and an `oldV` appearing twice
+    /// in the face is substituted at BOTH positions. Both were true of all
+    /// three copies.
+    private static uint[] rebuildFaceWithVertexSubs(const(uint)[] face, VertSub[]* subsP) {
+        if (subsP is null) return face.dup;
+        uint[][uint] repl;
+        foreach (s; *subsP) repl[s.oldV] = s.newVs;
+        uint[] rebuilt;
+        foreach (v; face) {
+            auto rp = v in repl;
+            if (rp is null) rebuilt ~= v;
+            else            rebuilt ~= *rp;
+        }
+        return rebuilt;
+    }
+
     // Combine two face-marks words for a NEW face created FROM multiple
     // source faces — bevel's chamfer strip/cap, loop-slice's section cap
     // (task 0613 §4.2, code review S5). The two bits this mixes are NOT

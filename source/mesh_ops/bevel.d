@@ -419,7 +419,6 @@ mixin template MeshBevelOps() {
         // idiom as bevelVerticesByMask / extrudeFacesByMask. A face can now
         // legitimately receive substitution entries for MULTIPLE distinct
         // vertices (e.g. a loop's shared "inside" face gets one per corner).
-        struct VertSub { uint oldV; uint[] newVs; }
         VertSub[][uint] faceSubs;
 
         // Full-ring ("hub cap") bookkeeping: vertex → ordered miter-corner
@@ -1355,20 +1354,7 @@ mixin template MeshBevelOps() {
         uint[][] baseFaces;
         foreach (fi; 0 .. faces.length) {
             auto orig = faces[fi];
-            auto subsP = cast(uint)fi in faceSubs;
-            if (subsP is null) {
-                baseFaces ~= orig.dup;
-            } else {
-                uint[][uint] repl;
-                foreach (s; *subsP) repl[s.oldV] = s.newVs;
-                uint[] rebuilt;
-                foreach (v; orig) {
-                    auto rp = v in repl;
-                    if (rp is null) rebuilt ~= v;
-                    else            rebuilt ~= *rp;
-                }
-                baseFaces ~= rebuilt;
-            }
+            baseFaces ~= rebuildFaceWithVertexSubs(orig, cast(uint)fi in faceSubs);
         }
 
         // Inventory rail consumers symbolically before allocating a single
@@ -2913,7 +2899,6 @@ mixin template MeshBevelOps() {
         }
 
         // per-face substitution map: accepted vi → [sp_pred, sp_succ]
-        struct VertSub { uint oldV; uint[] newVs; }
         VertSub[][uint] faceSubs;
 
         foreach (vi; 0 .. origVertCount) {
@@ -2937,20 +2922,7 @@ mixin template MeshBevelOps() {
         // (a) surviving / substituted faces
         foreach (fi; 0 .. faces.length) {
             auto orig  = faces[fi];
-            auto subsP = cast(uint)fi in faceSubs;
-            if (subsP is null) {
-                newFaces ~= orig.dup;
-            } else {
-                uint[][uint] repl;
-                foreach (s; *subsP) repl[s.oldV] = s.newVs;
-                uint[] rebuilt;
-                foreach (v; orig) {
-                    auto rp = v in repl;
-                    if (rp is null) rebuilt ~= v;
-                    else            rebuilt ~= *rp;
-                }
-                newFaces ~= rebuilt;
-            }
+            newFaces ~= rebuildFaceWithVertexSubs(orig, cast(uint)fi in faceSubs);
             newMat  ~=faceAttrOr(faceMaterial, fi);
             newPart ~=faceAttrOr(facePart, fi);
             newOrd  ~=faceAttrOr(faceSelectionOrder, fi);

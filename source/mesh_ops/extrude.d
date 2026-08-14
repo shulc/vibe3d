@@ -2010,7 +2010,6 @@ mixin template MeshExtrudeOps() {
             }
         }
 
-        struct VertSub { uint oldV; uint[] newVs; }
         VertSub[][uint] faceSubs;
         struct NewFaceSpec { uint[] verts; uint srcFi; }
         NewFaceSpec[] extraFaces;
@@ -2042,20 +2041,7 @@ mixin template MeshExtrudeOps() {
 
         foreach (fi; 0 .. origFaceCount) {
             auto orig  = faces[fi];
-            auto subsP = fi in faceSubs;
-            if (subsP is null) {
-                newFaces ~= orig.dup;
-            } else {
-                uint[][uint] repl;
-                foreach (s; *subsP) repl[s.oldV] = s.newVs;
-                uint[] rebuilt;
-                foreach (v; orig) {
-                    auto rp = v in repl;
-                    if (rp is null) rebuilt ~= v;
-                    else            rebuilt ~= *rp;
-                }
-                newFaces ~= rebuilt;
-            }
+            newFaces ~= rebuildFaceWithVertexSubs(orig, fi in faceSubs);
             newMat  ~=faceAttrOr(faceMaterial, fi);
             newPart ~=faceAttrOr(facePart, fi);
             newOrd  ~=faceAttrOr(faceSelectionOrder, fi);
