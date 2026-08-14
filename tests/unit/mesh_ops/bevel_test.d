@@ -3453,7 +3453,7 @@ unittest { // bevelEdgesByMask: "K5 junction (ASYMMETRIC)" L3 (task 0453)
     assertBevelManifoldCleanOpen(m, "K5 junction (asymmetric) L3 (task 0453 parity, both stages load-bearing)", 1);
 }
 
-unittest { // Mesh.centerNormalProject: planarity invariant (task 0453),
+unittest { // centerNormalProject: planarity invariant (task 0453),
            // pure-D property test — NO reference capture needed. A hand-built
            // non-planar EVEN-N (N=4) newC ring (deliberately NOT coplanar —
            // every existing even-N reference fixture happens to be
@@ -3499,7 +3499,11 @@ unittest { // Mesh.centerNormalProject: planarity invariant (task 0453),
     assert(maxPreDeviation > 0.05f, "centerNormalProject planarity test: hand-built ring must be genuinely non-planar pre-projection (got max deviation "
         ~ maxPreDeviation.to!string ~ ") — otherwise this test is a no-op, not a real check");
 
-    Mesh.centerNormalProject(N, hub, ring);
+    // Task 0717 moved this out of struct Mesh into mesh_ops.bevel_curves; it
+    // was a `static` member with exactly one caller (junctionRingN) and this
+    // one test, and it is pure math with no mesh in it.
+    import mesh_ops.bevel_curves : centerNormalProject;
+    centerNormalProject(N, hub, ring);
 
     foreach (i, p; ring) {
         immutable float dev = dot(p - hub, Navg);
