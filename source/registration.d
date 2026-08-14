@@ -1752,9 +1752,8 @@ void registerCommands(EditorApp app) {
                 // command factories and cannot be replayed — exclude them so the
                 // script contains only replayable lines.
                 foreach (ref e; history.undoEntriesVisible()) {
-                    string line = e.args.length > 0
-                        ? (e.commandName ~ " " ~ e.args) : e.commandName;
-                    lines ~= line;
+                    import argstring : serializeCommandLine;
+                    lines ~= serializeCommandLine(e.commandName, e.args);
                 }
                 return lines;
             });

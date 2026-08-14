@@ -2,7 +2,7 @@ module command_history;
 
 import command;
 import command : CmdFlags;
-import argstring : serializeParams;
+import argstring : serializeParams, serializeCommandLine;
 // Byte-neutral in the default build (perf_probe.g_perf.count is a no-op
 // inline stub without version(PerfProbe) — task 0200's undoApply counter).
 import perf_probe : g_perf, Cat;
@@ -455,6 +455,66 @@ final class CommandHistory {
 
     // ----- recording -------------------------------------------------------
 
+    /// Monotonic milliseconds since session start — the stamp every recorder
+    /// writes into `HistoryEntry.timestampMs`.
+    private static long nowMs() {
+        import core.time : MonoTime;
+        return MonoTime.currTime.ticks * 1000 / MonoTime.ticksPerSecond;
+    }
+
+    /// THE append: build the entry, push it, honour `maxDepth`, invalidate the
+    /// redo timeline, and (if asked) feed the macro recorder.
+    ///
+    /// Task 0705 (audit 4, D9). This body was written out FIVE times —
+    /// `record`, `recordToolLifecycle`, `recordInSession`, `refireBegin`'s
+    /// dangling-commit branch, and `replaceInSessionTailWith`'s append arm —
+    /// each under a comment of the form "identical to record() EXCEPT …".
+    /// The copies were mechanically the same and had NOT drifted in what they
+    /// stamp; what makes one home worth having is the next FIELD: `runId`
+    /// (task 0187 in-session runs) and `tweakGeneration` (P-E) each landed in
+    /// one literal and were absent from the other four, which is why an
+    /// ordinary entry carries `runId: 0` by omission rather than by decision.
+    /// Adding a sixth field is now one edit, not five.
+    ///
+    /// `fireHook` is a REQUIRED argument, deliberately without a default: the
+    /// one caller that does not feed the macro recorder
+    /// (`recordToolLifecycle`) has a 23-line comment explaining why, and that
+    /// answer should be forced out of the next caller too rather than
+    /// inherited from whichever default someone picked.
+    ///
+    /// What is NOT here: the guards. `_lockout` / `cmd is null` /
+    /// `!cmd.isUndoable` / `_state != Active` / `blockDepth > 0` /
+    /// `consolidateOpenRunIfForeign()` differ per recorder for reasons each
+    /// one documents — and in one case for a reason nobody documented, see
+    /// `refireBegin`. Hoisting them would have merged five deliberate policies
+    /// into one accidental one.
+    private void pushEntry(Command cmd, string args, uint flags,
+                           ulong runId, ulong tweakGen, long tMs,
+                           bool fireHook) {
+        HistoryEntry e = { label: cmd.label,
+                           args:  args,
+                           commandName: cmd.name,
+                           cmd: cmd,
+                           timestampMs: tMs,
+                           flags: flags,
+                           runId: runId,
+                           tweakGeneration: tweakGen };
+        undoStack ~= e;
+        if (undoStack.length > maxDepth)
+            undoStack = undoStack[$ - maxDepth .. $];
+        // Any new action invalidates the redo timeline.
+        redoStack.length = 0;
+        if (fireHook) fireRecordHook(cmd.name, args, flags);
+    }
+
+    /// Hand the canonical command line to the macro recorder, if one is
+    /// attached. The recorder filters by its own `active` flag — this is not
+    /// gated here, so future hooks can observe every entry unconditionally.
+    private void fireRecordHook(string commandName, string args, uint flags) {
+        if (onRecord !is null)
+            onRecord(serializeCommandLine(commandName, args), flags);
+    }
+
     // Called by the HTTP dispatcher AFTER a successful apply(). The command
     // must already be holding its pre-apply snapshot in instance fields.
     void record(Command cmd) {
@@ -480,42 +540,13 @@ final class CommandHistory {
             // Still feed the macro recorder per child so a captured macro
             // mirrors the individual commands the user ran (the block is a
             // history-grouping concept, not a scripting one).
-            if (onRecord !is null) {
-                string args = serializeParams(cmd.params());
-                string line = args.length > 0
-                    ? (cmd.name ~ " " ~ args) : cmd.name;
-                onRecord(line, historyFlagsFor(cmd));
-            }
+            fireRecordHook(cmd.name, serializeParams(cmd.params()),
+                           historyFlagsFor(cmd));
             return;
         }
 
-        import core.time : MonoTime;
-        long tMs = MonoTime.currTime.ticks
-                 * 1000 / MonoTime.ticksPerSecond;
-        uint flags = historyFlagsFor(cmd);
-        string args = serializeParams(cmd.params());
-        HistoryEntry e = { label: cmd.label,
-                           args:  args,
-                           commandName: cmd.name,
-                           cmd: cmd,
-                           timestampMs: tMs,
-                           flags: flags };
-        undoStack ~= e;
-        if (undoStack.length > maxDepth) {
-            undoStack = undoStack[$ - maxDepth .. $];
-        }
-        // Any new action invalidates the redo timeline.
-        redoStack.length = 0;
-
-        // Phase 7: hand the canonical command line to the macro
-        // recorder. Macro recorder filters by its `active` flag —
-        // we don't gate the callback here so future hooks can
-        // observe all entries unconditionally.
-        if (onRecord !is null) {
-            string line = args.length > 0
-                ? (cmd.name ~ " " ~ args) : cmd.name;
-            onRecord(line, flags);
-        }
+        pushEntry(cmd, serializeParams(cmd.params()), historyFlagsFor(cmd),
+                  0, 0, nowMs(), /*fireHook=*/true);
     }
 
     // Coalescing record (Phase 2 op-merge). Used by the PROGRAMMATIC command
@@ -576,11 +607,13 @@ final class CommandHistory {
 
                     // Fire the macro hook exactly as record() does, so a
                     // running macro still observes coalesced edits.
-                    if (onRecord !is null) {
-                        string line = top.args.length > 0
-                            ? (top.cmd.name ~ " " ~ top.args) : top.cmd.name;
-                        onRecord(line, historyFlagsFor(top.cmd));
-                    }
+                    // NOTE the receiver: the line describes the MERGED-INTO
+                    // command (`top.cmd`), not the one just applied — this is
+                    // the one hook site whose argument is not the caller's own
+                    // `cmd`, and it is deliberate (the macro should replay the
+                    // coalesced result, not each swallowed step).
+                    fireRecordHook(top.cmd.name, top.args,
+                                   historyFlagsFor(top.cmd));
                     return;
                 }
             }
@@ -606,20 +639,12 @@ final class CommandHistory {
         if (_lockout) return;
         if (cmd is null) return;
         if (_state != UndoState.Active) return;
-        import core.time : MonoTime;
-        long tMs = MonoTime.currTime.ticks * 1000 / MonoTime.ticksPerSecond;
-        uint flags = historyFlagsFor(cmd);
-        string args = "";
-        HistoryEntry e = { label: cmd.label,
-                           args:  args,
-                           commandName: cmd.name,
-                           cmd: cmd,
-                           timestampMs: tMs,
-                           flags: flags };
-        undoStack ~= e;
-        if (undoStack.length > maxDepth)
-            undoStack = undoStack[$ - maxDepth .. $];
-        redoStack.length = 0;
+        // `args == ""` (the command carries no wire args) and `fireHook=false`
+        // (see the note below) are this recorder's two deliberate divergences
+        // from `record()`; the third — no `isUndoable` gate, lifecycle entries
+        // being undoable by construction — is the guard above.
+        pushEntry(cmd, "", historyFlagsFor(cmd), 0, 0, nowMs(),
+                  /*fireHook=*/false);
 
         // NO macro hook here — and that is DELIBERATE (task 0678 D9-a,
         // reverted after measuring what the hook actually produced).
@@ -668,38 +693,19 @@ final class CommandHistory {
         // block-child path so behaviour matches a plain record there.
         if (blockDepth > 0) { record(cmd); return; }
 
-        import core.time : MonoTime;
-        long tMs = MonoTime.currTime.ticks
-                 * 1000 / MonoTime.ticksPerSecond;
-        uint flags = historyFlagsFor(cmd) | HistoryFlags.InSession;
-        string args = serializeParams(cmd.params());
-        HistoryEntry e = { label: cmd.label,
-                           args:  args,
-                           commandName: cmd.name,
-                           cmd: cmd,
-                           timestampMs: tMs,
-                           flags: flags,
-                           runId: runId,
-                           // P-E: stamp the live tweak generation. Load-bearing
-                           // only when this entry is later a Refire tail (see
-                           // replaceInSessionTail). A plain gesture entry carries
-                           // it harmlessly.
-                           tweakGeneration: _tweakGeneration };
-        undoStack ~= e;
-        if (undoStack.length > maxDepth) {
-            undoStack = undoStack[$ - maxDepth .. $];
-        }
-        // N1: a fresh in-session gesture invalidates the redo timeline.
-        redoStack.length = 0;
-
-        // The run is now open until consolidate(runId) closes it.
+        // The run is now open until consolidate(runId) closes it. Set BEFORE
+        // the append and not after it: the append fires the macro hook, and
+        // the hook used to run with `_runOpen` already true (it was set
+        // between the redo-clear and the callback). Keeping that ordering
+        // means a re-entrant hook still sees the same history state it did.
         _runOpen = true;
 
-        if (onRecord !is null) {
-            string line = args.length > 0
-                ? (cmd.name ~ " " ~ args) : cmd.name;
-            onRecord(line, flags);
-        }
+        // P-E: stamp the live tweak generation. Load-bearing only when this
+        // entry is later a Refire tail (see replaceInSessionTail). A plain
+        // gesture entry carries it harmlessly.
+        pushEntry(cmd, serializeParams(cmd.params()),
+                  historyFlagsFor(cmd) | HistoryFlags.InSession,
+                  runId, _tweakGeneration, nowMs(), /*fireHook=*/true);
     }
 
     /// Record `cmd` as an in-session RE-GRADE (a falloff re-fire) of the open
@@ -958,35 +964,27 @@ final class CommandHistory {
             --start;
         }
 
-        import core.time : MonoTime;
-        long tMs = MonoTime.currTime.ticks
-                 * 1000 / MonoTime.ticksPerSecond;
-        if (start < end)
-            tMs = undoStack[start].timestampMs;
-
+        long tMs = (start < end) ? undoStack[start].timestampMs : nowMs();
         uint flags = historyFlagsFor(cmd);
         string args = serializeParams(cmd.params());
-        HistoryEntry e = { label: cmd.label,
-                           args: args,
-                           commandName: cmd.name,
-                           cmd: cmd,
-                           timestampMs: tMs,
-                           flags: flags,
-                           runId: 0 };
 
         if (start < end) {
+            // The SPLICE arm — the one recorder that does not append. It swaps
+            // a run's contiguous tail (>= 1 entries) for exactly one, so the
+            // stack can only shrink and `maxDepth` cannot be exceeded; that is
+            // why the trim `pushEntry` does is absent here rather than missing.
+            HistoryEntry e = { label: cmd.label,
+                               args: args,
+                               commandName: cmd.name,
+                               cmd: cmd,
+                               timestampMs: tMs,
+                               flags: flags,
+                               runId: 0 };
             undoStack = undoStack[0 .. start] ~ [e] ~ undoStack[end .. $];
+            redoStack.length = 0;
+            fireRecordHook(cmd.name, args, flags);
         } else {
-            undoStack ~= e;
-            if (undoStack.length > maxDepth)
-                undoStack = undoStack[$ - maxDepth .. $];
-        }
-        redoStack.length = 0;
-
-        if (onRecord !is null) {
-            string line = args.length > 0
-                ? (cmd.name ~ " " ~ args) : cmd.name;
-            onRecord(line, flags);
+            pushEntry(cmd, args, flags, 0, 0, tMs, /*fireHook=*/true);
         }
     }
 
@@ -1345,7 +1343,7 @@ final class CommandHistory {
         // factories and cannot be replayed via commandHandlerDelegate. Return ""
         // so both history.saveAsScript and the panel replay button skip them.
         if (e.flags & HistoryFlags.ToolLifecycle) return "";
-        return e.args.length > 0 ? (e.commandName ~ " " ~ e.args) : e.commandName;
+        return serializeCommandLine(e.commandName, e.args);
     }
 
     void clear() {
@@ -1467,28 +1465,20 @@ final class CommandHistory {
         if (_lockout) return;
         // Defensive: if a prior refire block was left dangling (e.g. tool
         // crashed mid-drag), commit it first so we don't lose the entry.
-        if (refireOpen && liveCmd !is null) {
-            import core.time : MonoTime;
-            long tMs = MonoTime.currTime.ticks
-                     * 1000 / MonoTime.ticksPerSecond;
-            uint flags = historyFlagsFor(liveCmd);
-            string args = serializeParams(liveCmd.params());
-            HistoryEntry e = { label: liveCmd.label,
-                               args:  args,
-                               commandName: liveCmd.name,
-                               cmd: liveCmd,
-                               timestampMs: tMs,
-                               flags: flags };
-            undoStack ~= e;
-            if (undoStack.length > maxDepth)
-                undoStack = undoStack[$ - maxDepth .. $];
-            redoStack.length = 0;
-            if (onRecord !is null) {
-                string line = args.length > 0
-                    ? (liveCmd.name ~ " " ~ args) : liveCmd.name;
-                onRecord(line, flags);
-            }
-        }
+        // UNDOCUMENTED DIVERGENCE, preserved as-is (task 0708): this branch
+        // commits `liveCmd` with NEITHER the `!cmd.isUndoable` gate NOR the
+        // `_state != Active` gate that every other recorder applies — while
+        // `refireEnd()`, which commits the SAME object through `record()`,
+        // states in its own comment that "record()'s flag-and-state checks
+        // (isUndoable, _state) apply". Two commit paths for one command, two
+        // gate sets, and no comment anywhere saying the difference is meant.
+        // Adding the gates would silently drop a dangling entry in a path that
+        // exists precisely to not lose one, so it is an owner call, not
+        // hygiene. Task 0705 only gave the append itself one home.
+        if (refireOpen && liveCmd !is null)
+            pushEntry(liveCmd, serializeParams(liveCmd.params()),
+                      historyFlagsFor(liveCmd), 0, 0, nowMs(),
+                      /*fireHook=*/true);
         refireOpen = true;
         liveCmd    = null;
     }

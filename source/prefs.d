@@ -1079,3 +1079,121 @@ unittest {
     // Newest push is at the front.
     assert(g_prefs.recentFiles[0] == format("/abs/f%d.v3d", kRecentFilesMax + 4));
 }
+
+// ---------------------------------------------------------------------------
+// Task 0705 (audit 4, wave 2, A8) — EXHAUSTIVE round-trip gate.
+//
+// `Prefs` is 17 fields with three hand-written mirrors each (declaration, a
+// line in `savePrefs`, a line in `loadPrefs`) and, until this test, no gate
+// that all three existed. The round-trip test above claims in its own comment
+// to serialize "a fully populated Prefs" and asserts SIX of the seventeen;
+// seven fields had no round-trip coverage at all (the whole trackball group,
+// and both coordinate-rounding fields).
+//
+// The audit asked for a generic `__traits(allMembers, Prefs)` SERIALIZER. That
+// is not expressible: of the 17 fields a naive generic handles about 10, and
+// the other 7 carry per-field policy a generic would have to be told anyway —
+// `version_` writes the CONSTANT rather than the field, `toolDefaults` drops
+// empty inner maps, `recentFiles` caps at load, four floats clamp at load, and
+// `viewportDisplay[].styleUserSet` is decided by the PRESENCE of the cell
+// object rather than by its key. Replacing hand-written I/O that encodes real
+// decisions with a generic that has to be handed the same decisions field by
+// field buys nothing.
+//
+// What the enumeration IS worth is the GATE. Every field is set to a
+// non-default value, saved, loaded and compared — and because the walk comes
+// from `tupleof`, a field added tomorrow is covered the moment it is declared.
+// The `static assert` below is the enforcement: a new field must be handled by
+// one of the type arms or named in `kPrefsRoundTripExempt` with a reason, or
+// this file does not compile. That is the half the audit was really after.
+version (unittest) {
+    /// Fields the round-trip gate cannot compare, each for a stated reason.
+    /// Adding a name here is a decision someone has to write down; leaving a
+    /// new field out of BOTH this list and the type arms is a build error.
+    private enum string[] kPrefsRoundTripExempt = [
+        // Deliberately NOT a mirror of the field: `savePrefs` writes
+        // `kPrefsVersion`, so a struct carrying any other value saves as the
+        // current schema version. Comparing it would assert the opposite of
+        // the intended behaviour.
+        "version_",
+        // The presence/absence rule (`styleUserSet` follows the cell OBJECT,
+        // not its key) and `WireOverlay.Colored`, which the loader's switch
+        // deliberately does not accept, are both covered by the four dedicated
+        // `viewportDisplay` tests above — a blanket equality here would either
+        // duplicate them or contradict them.
+        "viewportDisplay",
+    ];
+}
+
+unittest {
+    import std.traits : isFloatingPoint, isIntegral, EnumMembers;
+
+    auto dir = makeScratch("roundtripall");
+    scope(exit) cleanScratch(dir);
+
+    Prefs p;
+
+    // `tupleof`, not `allMembers`: it yields exactly the FIELDS, in
+    // declaration order, and skips the nested `Window` type declaration and
+    // every method. Same enumeration `FalloffConfig.dup` uses.
+    //
+    // Every field gets a value that is (a) different from its default and
+    // (b) inside whatever range the LOADER accepts — an out-of-range value
+    // would be clamped or rejected on load, which is a documented behaviour of
+    // its own, tested separately, not here.
+    static foreach (i, F; typeof(Prefs.tupleof)) {{
+        enum name   = __traits(identifier, Prefs.tupleof[i]);
+        enum exempt = () {
+            foreach (x; kPrefsRoundTripExempt) if (x == name) return true;
+            return false;
+        }();
+        static if (exempt) {
+            // nothing to set — see kPrefsRoundTripExempt
+        } else static if (is(F == bool)) {
+            p.tupleof[i] = !p.tupleof[i];
+        } else static if (is(F == enum)) {
+            // The last member that is not the default, so the choice stays
+            // stable as members are appended.
+            foreach (e; EnumMembers!F)
+                if (e != Prefs.init.tupleof[i]) p.tupleof[i] = e;
+        } else static if (isFloatingPoint!F) {
+            p.tupleof[i] = 0.25f;      // inside every loader range
+        } else static if (isIntegral!F) {
+            p.tupleof[i] = 3;          // gridStepMask's range is 0..7
+        } else static if (is(F == string)) {
+            p.tupleof[i] = "/abs/roundtrip";
+        } else static if (is(F == string[])) {
+            p.tupleof[i] = ["/abs/a.v3d", "/abs/b.obj"];
+        } else static if (is(F == Prefs.Window)) {
+            p.tupleof[i] = Prefs.Window(1426, 966);
+        } else static if (is(F == string[string][string])) {
+            p.tupleof[i]["bevel"] = ["width": "0.25"];
+        } else {
+            static assert(false,
+                "Prefs." ~ name ~ " has a type the round-trip gate does not "
+                ~ "know how to exercise. Add an arm for it, or name it in "
+                ~ "kPrefsRoundTripExempt with the reason it cannot be "
+                ~ "compared — a field in neither is a field nothing checks "
+                ~ "was saved and loaded at all.");
+        }
+    }}
+
+    savePrefs(p, dir);
+    auto q = loadPrefs(dir);
+
+    static foreach (i, F; typeof(Prefs.tupleof)) {{
+        enum name   = __traits(identifier, Prefs.tupleof[i]);
+        enum exempt = () {
+            foreach (x; kPrefsRoundTripExempt) if (x == name) return true;
+            return false;
+        }();
+        static if (!exempt)
+            assert(q.tupleof[i] == p.tupleof[i],
+                "Prefs." ~ name ~ " did not survive save+load — it is missing "
+                ~ "from savePrefs, from loadPrefs, or the two spell its JSON "
+                ~ "key differently");
+    }}
+
+    // And the exempt one that still has a checkable contract.
+    assert(q.version_ == kPrefsVersion);
+}

@@ -81,12 +81,27 @@ string serializeParams(Param[] params)
     return parts.join(" ");
 }
 
+/// Join an ALREADY-serialized argstring to its command name. The canonical
+/// command line: `"<id> <args>"`, or a bare `"<id>"` when there are no args.
+///
+/// Task 0705 (audit 4, D9): this two-line conditional was written out eight
+/// times — six inside `command_history.d`'s recorders, plus
+/// `undoEntryCommandLine` and `history.saveAsScript` — three of them
+/// character-identical and the rest differing only in indentation and in the
+/// name of the variable holding the args. `serializeCommand` below already
+/// existed and was used NOWHERE in `source/`, because every caller had the
+/// args in hand already and did not want them re-serialized. Splitting the
+/// join out is what made the existing helper reachable.
+string serializeCommandLine(string commandId, string args)
+{
+    return args.length > 0 ? commandId ~ " " ~ args : commandId;
+}
+
 /// Convenience: full argstring line with command name prefix.
 /// If no user-set params exist, emits just the command name.
 string serializeCommand(string commandId, Param[] params)
 {
-    auto args = serializeParams(params);
-    return args.length > 0 ? commandId ~ " " ~ args : commandId;
+    return serializeCommandLine(commandId, serializeParams(params));
 }
 
 // --- private helpers ---
