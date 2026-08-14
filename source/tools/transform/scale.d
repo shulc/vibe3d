@@ -310,49 +310,12 @@ public:
         ];
     }
 
-    // Headless apply path. Drives applyScaleFromActivationCpuOnly with
-    // scaleAccum = headlessScale and the activation snapshot pinned to
-    // the current verts — same per-vertex falloff weighting + symmetry
-    // mirror as interactive drag. Caller (ToolDoApplyCommand) wraps us
-    // in a MeshSnapshot pair for undo.
-    override bool applyHeadless() {
-        import toolpipe.packets : SubjectPacket;
-        SubjectPacket subj;
-        VectorStack vts;
-        buildLocalVts(subj, vts);
-        captureFalloffForDrag(vts);
-        captureSymmetryForDrag(vts);
-        vertexCacheDirty = true;
-        buildVertexCacheIfNeeded();
-        if (vertexProcessCount == 0) return false;
-        // Skip identity scale entirely — applyScaleFromActivationCpuOnly
-        // would touch every vert pointlessly and a no-op apply is a
-        // useful escape hatch for callers driving us scriptedly.
-        if (headlessScale == Vec3(1, 1, 1)) return true;
-
-        // Pull pivot from ACEN (interactive update() does this every
-        // frame; headless never runs update()).
-        cachedCenter     = queryActionCenter(vts);
-        activationCenter = cachedCenter;
-        handler.setPosition(cachedCenter);
-
-        // Orient the handler basis from AXIS — applyScaleFromActivation
-        // reads handler.axisX/Y/Z to scale along the right basis vectors
-        // (auto workplane = world; local AXIS uses workplane axes).
-        Vec3 bX, bY, bZ;
-        currentBasis(bX, bY, bZ, vts);
-        handler.setOrientation(bX, bY, bZ);
-
-        // Pin the activation snapshot to the current mesh — the inner
-        // loop reads activationVertices[vi] as the pre-scale baseline,
-        // so without this the very first headless apply per session
-        // would scale relative to whatever was in mesh.vertices at
-        // activate() time (typically a stale older mesh).
-        activationVertices = mesh.vertices.dup;
-        scaleAccum = headlessScale;
-        applyScaleFromActivationCpuOnly(vts);
-        return true;
-    }
+    // No `applyHeadless()` override — same reason MoveTool and RotateTool have
+    // none: ScaleTool is only ever instantiated by `XfrmTransformTool`,
+    // `applyHeadless` is dispatched on the ACTIVE tool only, and every factory
+    // that could put a scale on screen builds the wrapper. The wrapper folds
+    // `run.s` through `applyTRS`, the single geometry-apply entry point. This
+    // sub-tool's version could not run and has been removed (audit №4, T3).
 
     // Phase 7.5h: tool-session boundary — bake pending edit into one
     // undo entry on tool switch.

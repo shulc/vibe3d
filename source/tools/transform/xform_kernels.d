@@ -64,6 +64,16 @@ private void mirrorAndCount(
 /// Per-vertex incremental translate. Mirrors the non-baseline branch
 /// of MoveTool.applyDeltaImmediate.
 ///
+/// TEST ORACLE, not a production path — hence the `version (unittest)` gate.
+/// MoveTool no longer has an incremental branch to call it (the wrapper's
+/// `applyTRS` is the single geometry-apply entry point), so audit №4 (T3)
+/// filed it as dead. It is NOT dead: `tests/test_xform_matrix_kernel.d`
+/// asserts the matrix kernel `applyXformMatrix` reproduces THIS kernel
+/// pass-by-pass, which is the whole evidence that the matrix fold preserved
+/// the per-component law. Deleting it would delete that proof, so it is kept
+/// and merely kept OUT of the release binary (the M11 pattern from wave 0 —
+/// verified with `nm -C`).
+///
 /// - `dragFalloff.enabled == false`: tight 3-add loop, every index
 ///   moves by `delta`.
 /// - `dragFalloff.enabled == true`: each vert displacement scaled by
@@ -73,6 +83,7 @@ private void mirrorAndCount(
 ///
 /// `toProcess` is the same per-vert mask the tool already maintains;
 /// it doubles as the "selected" input for the symmetry mirror.
+version (unittest)
 void applyTranslateIncremental(
     Mesh* mesh,
     const(int)[] indices,

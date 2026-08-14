@@ -211,41 +211,15 @@ public:
         ];
     }
 
-    // Headless apply path. Reuses applyRotationVec — same per-vertex
-    // weighting + symmetry mirror that interactive drag uses. Each
-    // non-zero R{X,Y,Z} fires one rotation around its basis axis,
-    // pivoting at the ACEN center. dragAxis stays -1 here, so
-    // applyRotationVec uses the global axisVec (no per-cluster axis
-    // lookup) — Local / Element ACEN modes that need per-cluster
-    // pivots already work because pivotFor() consults
-    // queryClusterPivots(vts) regardless of dragAxis.
-    override bool applyHeadless() {
-        import toolpipe.packets : SubjectPacket;
-        SubjectPacket subj;
-        VectorStack vts;
-        buildLocalVts(subj, vts);
-        captureFalloffForDrag(vts);
-        captureSymmetryForDrag(vts);
-        vertexCacheDirty = true;
-        buildVertexCacheIfNeeded();
-        if (vertexProcessCount == 0) return false;
-
-        // Pull the pivot from ACEN. Interactive update() does this
-        // every frame; headless never runs update(), so we do it here.
-        cachedCenter = queryActionCenter(vts);
-        handler.setPosition(cachedCenter);
-
-        Vec3 bX, bY, bZ;
-        currentBasis(bX, bY, bZ, vts);
-
-        if (headlessRotate.x != 0)
-            applyRotationVec(bX, headlessRotate.x * cast(float)(PI / 180.0), vts);
-        if (headlessRotate.y != 0)
-            applyRotationVec(bY, headlessRotate.y * cast(float)(PI / 180.0), vts);
-        if (headlessRotate.z != 0)
-            applyRotationVec(bZ, headlessRotate.z * cast(float)(PI / 180.0), vts);
-        return true;
-    }
+    // No `applyHeadless()` override — same reason MoveTool has none (see the
+    // note at move.d's `params()`): RotateTool is only ever instantiated by
+    // `XfrmTransformTool`, `applyHeadless` is dispatched on the ACTIVE tool
+    // only, and every factory that could put a rotate on screen (`rotate`,
+    // `TransformRotate`, `Transform`, `xfrm.elementMove`) builds the wrapper.
+    // The wrapper's own `applyHeadless` recomposes `run.r` from the injected
+    // euler and folds it through `applyTRS`, which is the single geometry-apply
+    // entry point. This sub-tool's version could not run and has been removed
+    // (audit №4, T3).
 
     // Phase 7.5h: tool-session boundary — commit any pending edit
     // before tool switch so the session lands as one undo entry.
