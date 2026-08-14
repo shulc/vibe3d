@@ -154,16 +154,19 @@ class MeshDelete : Command, Operator {
             preSel_       = SelectionSnapshot.capture(*mesh);
             preEdgeEnds_  = captureSelectedEdgeEnds(*mesh);
             preMarksWord_ = mesh.faceMarks.dup;   // full marks word, by face index
-            // Mesh maps, deep-copied by value (task 0693 / 0689 remainder).
-            // The delta channel has NO map representation — `MeshMapDelta` is
-            // a stub in both directions — and the replay declares an honest
-            // DROP whenever it renumbers corners, so a delta undo would come
-            // back with the map zeroed even though the KERNEL carried it
-            // correctly on the way in. That is a loss the user sees as
-            // "undo ate my UV". The pre-op copy costs one dup of a plane the
-            // command is about to invalidate anyway; redo needs no "after"
-            // copy because it re-runs the kernel (see the useDelta_ branch
-            // above), which carries the map itself.
+            // Mesh maps, deep-copied by value (task 0693). This is a BELT over
+            // the delta's own braces, and it is kept deliberately (owner's
+            // call, task 0689): since 0689 the replay carries the per-corner
+            // plane itself — relocating survivors and restoring the removed
+            // faces' corners from the `MeshMapDelta` payload — so a delta undo
+            // no longer comes back zeroed. But the carry DECLINES rather than
+            // guesses whenever it cannot verify itself (maps out of step with
+            // `faces`, provenance self-check), and this command holds the exact
+            // pre-op state for one dup of a plane it is about to invalidate
+            // anyway. On the paths where both act, they agree; where the carry
+            // declines, this is what the user gets back instead of a zeroed
+            // map. Redo needs no "after" copy because it re-runs the kernel
+            // (see the useDelta_ branch above), which carries the map itself.
             preMaps_ = new MeshMap[](mesh.meshMaps.length);
             foreach (i, ref m; mesh.meshMaps) preMaps_[i] = m.dup;
             auto rec = MeshEditTracker();

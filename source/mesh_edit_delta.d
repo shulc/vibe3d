@@ -123,7 +123,13 @@ struct MeshOpEntry {
                         //   so this is endpoint-keyed — doc §1.3). The vertex
                         //   indices are in the space that finalize restores, so
                         //   forward uses `edgeEndsAfter`, reverse `edgeEndsBefore`.
-        MeshMapDelta,   // reserved — deferred (Q4)
+        MeshMapDelta,   // per-corner (PolyVertex) map values of the faces the
+                        //   NEXT entry in forward order destroys — mapDims /
+                        //   mapArity / mapVals below. Applies nothing itself
+                        //   (see applyForward/applyReverse): the corner plane
+                        //   cannot be written mid-replay, because `loops` is
+                        //   only rebuilt in finalize. It is READ by
+                        //   `CornerCarry`, which is the thing that places it.
     }
     Kind kind;
 
@@ -151,6 +157,25 @@ struct MeshOpEntry {
     // [a0,b0, a1,b1, …]). Applied post-finalize via edgeIndexMap. before = the
     // selection restored on revert; after = the selection restored on apply/redo.
     uint[]    edgeEndsBefore, edgeEndsAfter;
+
+    // --- MeshMapDelta payload (task 0689) ---------------------------------
+    // The per-corner (PolyVertex) map values of the faces the IMMEDIATELY
+    // FOLLOWING entry destroys, captured by `Mesh.recordPolyVertexPayload` at
+    // the last moment they are still readable.
+    //
+    //   mapDims  — `dim` of each PolyVertex map, in registration order. The
+    //              replay refuses the payload unless the mesh still presents
+    //              the same map set (count + dims), so a map added or removed
+    //              between record and replay degrades to a zero-fill rather
+    //              than shuffling one map's floats into another.
+    //   mapArity — corner count of each face, POSITIONALLY parallel to the
+    //              following entry's `fIdx` (a payload carries no face indices
+    //              of its own — see recordPolyVertexPayload for why).
+    //   mapVals  — face-major, then corner, then map: `Σ mapDims` floats per
+    //              corner, `Σ mapArity` corners in total.
+    ubyte[]   mapDims;
+    uint[]    mapArity;
+    float[]   mapVals;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,6 +209,9 @@ struct MeshEditDelta {
             n += e.markAfter.length * uint.sizeof;
             n += e.edgeEndsBefore.length * uint.sizeof;
             n += e.edgeEndsAfter.length * uint.sizeof;
+            n += e.mapDims.length * ubyte.sizeof;
+            n += e.mapArity.length * uint.sizeof;
+            n += e.mapVals.length * float.sizeof;
             n += MeshOpEntry.sizeof;
         }
         return n;
@@ -192,6 +220,11 @@ struct MeshEditDelta {
     // Forward replay — redo. Plays the log in execution order; each entry
     // re-applies its forward effect, then finalize() re-derives edges/loops.
     bool apply(ref Mesh m) const {
+        // Per-corner (PolyVertex) map carry — task 0689. Snapshotting the
+        // provenance BEFORE the first entry is the whole point: from here on
+        // `faces` moves and the live corner indices move with it.
+        CornerCarry carry;
+        carry.begin(m, log);
         foreach (i, ref e; log) {
             // Compaction pair (RemoveVerts immediately followed by Reindex): the
             // Reindex's perm carries the FULL old->new map INCLUDING the dropped
@@ -204,6 +237,7 @@ struct MeshEditDelta {
                 && i + 1 < log.length
                 && log[i + 1].kind == MeshOpEntry.Kind.Reindex)
                 continue;
+            carry.step(i, e, /*forward=*/true);
             applyForward(m, e);
         }
         // Edge selection is endpoint-keyed and must be re-applied AFTER finalize
@@ -216,7 +250,7 @@ struct MeshEditDelta {
                 edgeSel = e.edgeEndsAfter;
                 haveEdgeSel = true;
             }
-        finalize(m, scope_, edgeSel, haveEdgeSel, renumbersCorners(log));
+        finalize(m, scope_, edgeSel, haveEdgeSel, renumbersCorners(log), &carry);
         return true;
     }
 
@@ -224,8 +258,12 @@ struct MeshEditDelta {
     // then finalize() re-derives edges/loops. See doc §2.3 for the extrude
     // reverse-composition trace this generalizes.
     bool revert(ref Mesh m) const {
-        foreach_reverse (ref e; log)
+        CornerCarry carry;
+        carry.begin(m, log);
+        foreach_reverse (i, ref e; log) {
+            carry.step(i, e, /*forward=*/false);
             applyReverse(m, e);
+        }
         // On revert we want the pre-op (before) edge selection, re-applied after
         // finalize rebuilds edges (doc §1.3 / §2.3 step 1's endpoint-keyed part).
         const(uint)[] edgeSel = null;
@@ -235,7 +273,7 @@ struct MeshEditDelta {
                 edgeSel = e.edgeEndsBefore;
                 haveEdgeSel = true;
             }
-        finalize(m, scope_, edgeSel, haveEdgeSel, renumbersCorners(log));
+        finalize(m, scope_, edgeSel, haveEdgeSel, renumbersCorners(log), &carry);
         return true;
     }
 }
@@ -243,20 +281,294 @@ struct MeshEditDelta {
 // ---------------------------------------------------------------------------
 // Per-corner (PolyVertex) map handling for a replay — task 0689.
 //
-// A replay restores `faces` entry by entry and carries NO map values:
-// `MeshOpEntry.Kind.MeshMapDelta` is a `break; // deferred` stub in both
-// directions. So after a replay that renumbers corners the per-corner values
-// are meaningless, and the ONLY thing standing between the mesh and silent
-// corruption is `resizePolyVertexMaps`' length test inside `buildLoops` —
-// which zeroes the map when the corner TOTAL changed, and KEEPS it when it did
-// not. A replay can renumber corners while keeping their total (drop a face,
-// append one of the same arity — `removeEdgesByMask`'s RemoveFaces+AddFaces
-// pair is that shape), and then every value stays put while the faces beneath
-// it move: face 1 wears face 0's UV. Measured, not argued (task 0689's
-// fixture is tests/test_uv_undo_delta.d).
+// THE LAW (both directions):
 //
-// So the replay STATES the drop instead of leaving it to a coincidence of
-// lengths. What counts as a renumbering:
+//   A replay carries the per-corner plane through the face mutations it
+//   replays. Every corner whose face survives the replay keeps its own value;
+//   every corner of a face the replay RE-CREATES takes the value the delta
+//   recorded when that face was destroyed; every other new corner is zero.
+//
+// Zero for a genuinely new corner is deliberate and is the ONLY invented
+// value allowed here: a merged polygon or an extrusion wall has no corner in
+// the other state to inherit from, and making one up would be worse than an
+// honest blank.
+//
+// WHY IT IS A SEPARATE PASS AND NOT PER-ENTRY. Corner `c` of face `fi` lives
+// at loop index `faceLoop[fi] + c`, and `faceLoop`/`loops` are rebuilt only by
+// `buildLoops`, which the replay runs ONCE at the end (`finalize`). So there
+// is no moment mid-replay at which a per-corner value can be written to its
+// final home — every entry that touches `faces` invalidates the addressing of
+// every corner after it. `CornerCarry` therefore does what every kernel in
+// mesh.d does: it tracks PROVENANCE while the faces move, and relocates the
+// values ONCE, just before the tail `buildLoops` (which then sees a
+// length-correct map and no-ops in `resizePolyVertexMaps`). `MeshMapDelta`
+// entries are inert in applyForward/applyReverse for exactly this reason:
+// they are read here, not applied there.
+//
+// It also reuses the vocabulary rather than inventing one: provenance is
+// resolved into an `oldLoopOfNewLoop` array and handed to the shared
+// `Mesh.remapPolyVertexMaps` funnel, with a second pass for the recorded
+// values — the same two-pass shape as `Mesh.carryPolyVertexMaps` (task 0682).
+//
+// SAFETY. The carry declines — leaving `renumbersCorners`' stated drop in
+// charge, i.e. exactly the pre-0689 behaviour — when it cannot be sure of
+// itself: no PolyVertex map at all (the common case, and the whole thing is
+// skipped), maps not in step with `faces` at entry, or a provenance array that
+// ends up a different length from `faces` (which would mean the bookkeeping
+// below stopped mirroring the real face mutations — the failure mode that
+// makes this class of fix dangerous, so it is checked rather than assumed).
+// ---------------------------------------------------------------------------
+private struct CornerCarry {
+    // Where ONE current face's corner values come from. Four cases, resolved
+    // in this order per corner `j`:
+    //   payload >= 0     — log[payload].mapVals, corner recBase + j (a face
+    //                      the replay re-created: its values are in the delta,
+    //                      not in the mesh).
+    //   explicit !is null— the PRE-replay live corner explicit[j] (~0u = none).
+    //                      Only built for an arity-CHANGING reshape, where the
+    //                      slot-for-slot run breaks and corners have to be
+    //                      matched by the vertex they stand on.
+    //   liveBase != ~0u  — the PRE-replay live corner liveBase + j. The common
+    //                      case: a face that came through untouched, or one
+    //                      whose reshape kept its arity (its slots are stable
+    //                      even when a corner is repointed at another vertex —
+    //                      per-corner values are addressed by (face, corner)).
+    //   otherwise        — no source ⇒ zero (a brand-new face).
+    static struct Src {
+        uint   liveBase = ~0u;
+        uint   arity    = 0;
+        uint[] explicit = null;
+        int    payload  = -1;
+        uint   recBase  = 0;
+    }
+
+    bool  active = false;
+    Src[] src;
+    const(MeshOpEntry)[] log;
+
+    // Snapshot the provenance of the mesh AS IT IS NOW: every face's corners
+    // come from its own corners. Declines when there is nothing to carry or
+    // when the maps do not describe the current `faces`.
+    void begin(ref Mesh m, const(MeshOpEntry)[] logIn) {
+        log    = logIn;
+        active = false;
+        if (!m.hasPolyVertexMap()) return;
+        if (!m.polyVertexMapsInStepWithFaces()) return;
+        src.length = m.faces.length;
+        uint run = 0;
+        foreach (fi; 0 .. m.faces.length) {
+            const uint a = cast(uint)m.faces[fi].length;
+            src[fi] = Src(run, a, null, -1, 0);
+            run += a;
+        }
+        active = true;
+    }
+
+    // The payload paired with the entry at `i`: the MeshMapDelta immediately
+    // before it in FORWARD order, carrying one arity per face of `fIdx`. The
+    // arity-count match is the guard against a payload drifting onto the wrong
+    // entry — adjacency alone would silently mis-pair if a recorder ever
+    // interleaved something between the two.
+    private int payloadFor(size_t i, in uint[] fIdx) const {
+        if (i == 0) return -1;
+        const p = &log[i - 1];
+        if (p.kind != MeshOpEntry.Kind.MeshMapDelta) return -1;
+        if (p.mapArity.length != fIdx.length) return -1;
+        return cast(int)(i - 1);
+    }
+
+    // Corner base of the `k`-th face inside a payload's `mapVals` (face-major).
+    private static uint recBaseOf(in MeshOpEntry p, size_t k) {
+        uint b = 0;
+        foreach (i; 0 .. k) b += p.mapArity[i];
+        return b;
+    }
+
+    // Resolve the PRE-replay live corner that currently backs slot `k` of this
+    // face, or ~0u when it has none.
+    private static uint liveCornerOf(in Src s, size_t k) {
+        if (s.explicit !is null)
+            return (k < s.explicit.length) ? s.explicit[k] : ~0u;
+        if (s.liveBase == ~0u || k >= s.arity) return ~0u;
+        return cast(uint)(s.liveBase + k);
+    }
+
+    // A face's corner list is replaced: `from` (what it is now) → `to`.
+    // Equal arity keeps the slot-for-slot run — the documented convention that
+    // per-corner values are addressed by (face, corner), which is what lets an
+    // extrude repoint a neighbour's corner at its new inset vertex without
+    // losing that corner's UV. A CHANGED arity breaks the run, so each new
+    // corner is matched to the old corner standing on the SAME VERTEX (the
+    // law mechanism (b) uses in mesh.d); anything unmatched gets no source.
+    private static void reshapeSrc(ref Src s, const(uint)[] from, const(uint)[] to) {
+        if (to.length == from.length) { s.arity = cast(uint)to.length; return; }
+        uint[] ex;
+        ex.length = to.length;
+        ex[] = ~0u;
+        if (s.payload < 0) {
+            foreach (j, v; to) {
+                foreach (k, u; from)
+                    if (u == v) { ex[j] = liveCornerOf(s, k); break; }
+            }
+        }
+        s.explicit = ex;
+        s.liveBase = ~0u;
+        s.payload  = -1;
+        s.recBase  = 0;
+        s.arity    = cast(uint)to.length;
+    }
+
+    // Mirror of removeFacesForward's drop-filter, on the provenance array.
+    private void dropAt(in uint[] idx) {
+        bool[] drop;
+        drop.length = src.length;
+        foreach (i; idx) if (i < drop.length) drop[i] = true;
+        Src[] ns;
+        ns.reserve(src.length);
+        foreach (i, ref s; src) if (!drop[i]) ns ~= s;
+        src = ns;
+    }
+
+    // Track ONE entry's effect on the face array, in the direction it is being
+    // replayed. Every branch mirrors the corresponding branch of
+    // applyForward / applyReverse EXACTLY — that correspondence is the whole
+    // correctness argument, and `commit`'s length check is its backstop.
+    void step(size_t i, ref const MeshOpEntry e, bool forward) {
+        if (!active) return;
+        switch (e.kind) {
+            case MeshOpEntry.Kind.AddFaces:
+                if (forward) {
+                    foreach (l; e.faceLists)
+                        src ~= Src(~0u, cast(uint)l.length, null, -1, 0);
+                } else {
+                    if (e.fIdx.length != 1) break;
+                    const f0 = e.fIdx[0];
+                    if (f0 <= src.length) src.length = f0;
+                }
+                break;
+            case MeshOpEntry.Kind.RemoveFaces:
+                if (forward) {
+                    dropAt(e.fIdx);
+                } else {
+                    const int p = payloadFor(i, e.fIdx);
+                    foreach (k, fi; e.fIdx) {
+                        Src s;
+                        s.arity = (k < e.faceLists.length)
+                                ? cast(uint)e.faceLists[k].length : 0;
+                        if (p >= 0) {
+                            s.payload = p;
+                            s.recBase = recBaseOf(log[p], k);
+                            s.arity   = log[p].mapArity[k];
+                        }
+                        if (fi <= src.length) src.insertInPlace(fi, s);
+                    }
+                }
+                break;
+            case MeshOpEntry.Kind.ReshapeFaces:
+                const int p = forward ? -1 : payloadFor(i, e.fIdx);
+                foreach (k, fi; e.fIdx) {
+                    if (fi >= src.length) continue;
+                    if (k >= e.faceListsBefore.length || k >= e.faceListsAfter.length)
+                        continue;
+                    const(uint)[] before = e.faceListsBefore[k];
+                    const(uint)[] after  = e.faceListsAfter[k];
+                    if (p >= 0) {
+                        // Reverse with a payload: the delta holds this face's
+                        // pre-op corner values verbatim — strictly better than
+                        // any match against the post-op list, and the only way
+                        // to bring back a corner the forward op deleted.
+                        src[fi] = Src(~0u, log[p].mapArity[k], null, p, recBaseOf(log[p], k));
+                    } else if (forward) {
+                        reshapeSrc(src[fi], before, after);
+                    } else {
+                        reshapeSrc(src[fi], after, before);
+                    }
+                }
+                break;
+            default:
+                break;   // vertex-space, marks, edge-selection, payloads: no
+                         // corner moves. A Reindex rewrites the vertex id
+                         // INSIDE a corner without moving the corner.
+        }
+    }
+
+    // Relocate the per-corner plane onto the replayed faces. MUST run before
+    // the tail rebuildEdges()/buildLoops(), while the maps are still in the
+    // pre-replay corner space. Deactivates itself (leaving the caller's drop in
+    // charge) if the provenance array stopped matching `faces`.
+    void commit(ref Mesh m) {
+        if (!active) return;
+        if (src.length != m.faces.length) { active = false; return; }
+
+        // One resolved restore: which new corner run, from which payload.
+        static struct Restore { size_t newLoop; int payload; uint recBase; uint n; }
+
+        size_t total = 0;
+        foreach (fi; 0 .. m.faces.length) total += m.faces[fi].length;
+
+        uint[] oldLoopOfNewLoop;
+        oldLoopOfNewLoop.length = total;
+        Restore[] restores;
+        size_t w = 0;
+        foreach (fi; 0 .. m.faces.length) {
+            const size_t a = m.faces[fi].length;
+            const Src s = src[fi];
+            if (s.payload >= 0) {
+                oldLoopOfNewLoop[w .. w + a] = ~0u;
+                restores ~= Restore(w, s.payload, s.recBase,
+                                    cast(uint)((a < s.arity) ? a : s.arity));
+            } else {
+                foreach (j; 0 .. a) oldLoopOfNewLoop[w + j] = liveCornerOf(s, j);
+            }
+            w += a;
+        }
+
+        m.remapPolyVertexMaps(oldLoopOfNewLoop);
+
+        foreach (ref r; restores) {
+            const p = &log[r.payload];
+            size_t stride = 0;
+            foreach (d; p.mapDims) stride += d;
+            if (stride == 0) continue;
+            // The map set must still be the one the payload was captured
+            // against — same count, same dims, same order. Otherwise the flat
+            // block would be sliced into the wrong channels.
+            size_t k = 0;
+            bool ok = true;
+            foreach (ref mm; m.meshMaps) {
+                if (mm.domain != MapDomain.PolyVertex) continue;
+                if (k >= p.mapDims.length || p.mapDims[k] != mm.dim) { ok = false; break; }
+                ++k;
+            }
+            if (!ok || k != p.mapDims.length) continue;
+            foreach (j; 0 .. r.n) {
+                const size_t rc = cast(size_t)(r.recBase + j) * stride;
+                if (rc + stride > p.mapVals.length) break;
+                size_t off = 0;
+                foreach (ref mm; m.meshMaps) {
+                    if (mm.domain != MapDomain.PolyVertex) continue;
+                    const size_t dst = (r.newLoop + j) * mm.dim;
+                    if (dst + mm.dim <= mm.data.length)
+                        mm.data[dst .. dst + mm.dim] = p.mapVals[rc + off .. rc + off + mm.dim];
+                    off += mm.dim;
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Does this log RENUMBER corners? The fallback question, asked only when the
+// carry above declined: a replay that re-slots corners and cannot relocate
+// their values must STATE the drop rather than leave it to a coincidence of
+// lengths. `resizePolyVertexMaps` (inside `buildLoops`) zeroes the map when the
+// corner TOTAL changed and KEEPS it when it did not — and a replay CAN renumber
+// corners while keeping their total (drop a face, append one of the same arity
+// — `removeEdgesByMask`'s RemoveFaces+AddFaces pair is that shape), leaving
+// every value in place while the faces beneath it move: face 1 wears face 0's
+// UV. Measured, not argued (tests/test_uv_undo_delta.d).
+//
+// What counts as a renumbering:
 //
 //   * AddFaces / RemoveFaces — a face inserted or dropped re-slots every
 //     corner after it (and, on a tail append, adds corners with no source).
@@ -273,16 +585,14 @@ struct MeshEditDelta {
 //   * AddVerts / RemoveVerts / Reindex / SetPos — vertex-space edits. A
 //     Reindex rewrites the vertex id INSIDE each corner without moving any
 //     corner, so the per-corner plane is untouched.
-//   * the mark / material / edge-selection deltas — no geometry at all.
+//   * the mark / material / edge-selection deltas and the map payloads — no
+//     geometry at all.
 //
-// Residual, stated so it is not mistaken for coverage: an equal-arity reshape
-// that PERMUTES one face's corner order (a winding reversal) keeps the slots
-// but changes what sits under them. Nothing wired to the tracker records that
-// today (`mesh.flip` is snapshot-only — see commands/mesh/flip.d), and the
-// honest fix for it is the same one this whole function is a placeholder for:
-// implement MeshMapDelta so a replay RESTORES the values instead of dropping
-// them. That is deliberately left open — this function is the cheap half of
-// task 0689's fork, and it does not stand in the way of the expensive half.
+// Residual, unchanged by task 0689: an equal-arity reshape that PERMUTES one
+// face's corner order (a winding reversal) keeps the slots but changes what
+// sits under them, and neither this predicate nor the slot-for-slot run in
+// `CornerCarry.reshapeSrc` notices. Nothing wired to the tracker records that
+// today (`mesh.flip` is snapshot-only — see commands/mesh/flip.d).
 // ---------------------------------------------------------------------------
 private bool renumbersCorners(in MeshOpEntry[] log) {
     foreach (ref e; log) {
@@ -498,6 +808,26 @@ struct MeshEditTracker {
         e.kind           = MeshOpEntry.Kind.EdgeSelByEnds;
         e.edgeEndsBefore = before.dup;
         e.edgeEndsAfter  = after.dup;
+        log_ ~= e;
+    }
+
+    // --- Task 0689: the per-corner (PolyVertex) map channel ----------------
+    // The values of the corners the NEXT recorded entry destroys. Only ever
+    // called by `Mesh.recordPolyVertexPayload`, which owns the capture and the
+    // preconditions; the pairing with the entry that follows is by ADJACENCY,
+    // so this must be recorded immediately before it and nothing may be
+    // recorded in between.
+    //
+    // TAKES OWNERSHIP (same convention as recordRemoveFaces, task 0680): the
+    // caller builds all three arrays for this call and never touches them
+    // again, so they are stored as-is rather than copied.
+    void recordPolyVertexValues(ubyte[] dims, uint[] arity, float[] vals) {
+        if (arity.length == 0 || dims.length == 0) return;
+        MeshOpEntry e;
+        e.kind     = MeshOpEntry.Kind.MeshMapDelta;
+        e.mapDims  = dims;
+        e.mapArity = arity;
+        e.mapVals  = vals;
         log_ ~= e;
     }
 
@@ -964,7 +1294,17 @@ private void patchMaterial(ref Mesh m, in uint[] idx, in uint[] vals) {
 // ---------------------------------------------------------------------------
 private void finalize(ref Mesh m, MeshEditScope scope_,
                       in uint[] edgeSelEnds = null, bool haveEdgeSel = false,
-                      bool cornersRenumbered = false) {
+                      bool cornersRenumbered = false,
+                      CornerCarry* carry = null) {
+    // Per-corner (PolyVertex) map carry (task 0689) — FIRST, while the maps are
+    // still in the pre-replay corner space and before `buildLoops` re-lays the
+    // loop array. It leaves every map length-correct for the replayed faces, so
+    // `resizePolyVertexMaps` inside `buildLoops` then no-ops (the same
+    // relocate-then-rebuild order every kernel in mesh.d uses). May deactivate
+    // itself on a self-check failure, in which case the stated drop below takes
+    // over — so read `carry.active` AFTER this call, never before.
+    if (carry !is null) carry.commit(m);
+    const bool carried = (carry !is null && carry.active);
     // buildLoops() reads `edges` (it does NOT re-derive it), so rebuild the
     // deduplicated edge array from the restored faces FIRST — the same triplet
     // the topology mutators run, and the same canonical edge order the kernels
@@ -985,13 +1325,14 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     m.faceMaterial.length         = m.faces.length;
     m.facePart.length             = m.faces.length;
     m.resizeAllMeshMaps();
-    // Per-corner maps (task 0689): a replay that renumbered corners carries no
-    // values for the new corner space, so DROP them explicitly — see
-    // `renumbersCorners` above for which entries count and why the length test
-    // in `resizePolyVertexMaps` (already run by `buildLoops`) cannot be trusted
-    // to catch this on its own. No-op when the mesh has no per-corner map (the
-    // common case) or when nothing renumbered.
-    if (cornersRenumbered) m.dropPolyVertexMaps();
+    // Per-corner maps (task 0689): the FALLBACK, reached only when the carry
+    // above declined (no map, maps out of step at entry, or its self-check
+    // fired). A replay that renumbered corners and carried no values must DROP
+    // them explicitly — see `renumbersCorners` above for which entries count
+    // and why the length test in `resizePolyVertexMaps` (already run by
+    // `buildLoops`) cannot be trusted to catch this on its own. No-op when the
+    // mesh has no per-corner map (the common case) or when nothing renumbered.
+    if (!carried && cornersRenumbered) m.dropPolyVertexMaps();
     // Hide (code review, task 0613 — S4): refresh the derived vertex/edge
     // planes NOW, right after the length-resize above and BEFORE the edge
     // selection restore below. `rebuildEdges()` gave `edges`/`edgeIndexMap` a
