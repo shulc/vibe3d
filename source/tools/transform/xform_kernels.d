@@ -21,7 +21,7 @@ module tools.transform.xform_kernels;
 // "snapshot at drag start" invariant the tools already maintain via
 // captureFalloffForDrag / captureSymmetryForDrag.
 
-import math    : Vec3, Viewport, dot, cross, AimViewport;
+import math    : Vec3, Viewport, dot, cross, AimViewport, rotateAboutPivot;
 import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
                  matMul4, identityMatrix;
 import mesh    : Mesh;
@@ -113,17 +113,6 @@ void applyTranslateIncremental(
 // Rotate
 // ---------------------------------------------------------------
 
-// Rodrigues-style rotation around `pivot + axis`.
-private Vec3 rotateVec(Vec3 v, Vec3 pivot, Vec3 axis, float angle) {
-    import std.math : cos, sin;
-    import math : dot, cross;
-    float c = cos(angle), s = sin(angle);
-    Vec3 p = v - pivot;
-    float d = dot(p, axis);
-    Vec3 pcr = cross(axis, p);
-    return pivot + p * c + pcr * s + axis * (d * (1.0f - c));
-}
-
 // Falloff-WEIGHTED rotation as a linear interpolation of the rotation MATRIX —
 // matches the reference engine's soft-rotation / twist:
 //   M(w) = (1-w)·I + w·R(angle)
@@ -138,7 +127,7 @@ private Vec3 rotateVec(Vec3 v, Vec3 pivot, Vec3 axis, float angle) {
 // reference: rotate-X + linear-Z falloff on a segmented cube, angle+radius RMS<2e-3.)
 private Vec3 rotateVecLerp(Vec3 v, Vec3 pivot, Vec3 axis, float angle, float w) {
     Vec3 p  = v - pivot;
-    Vec3 rp = rotateVec(v, pivot, axis, angle) - pivot;   // R(angle)·(v-pivot)
+    Vec3 rp = rotateAboutPivot(v, pivot, axis, angle) - pivot;   // R(angle)·(v-pivot)
     return pivot + p * (1.0f - w) + rp * w;                // (1-w)·I + w·R
 }
 

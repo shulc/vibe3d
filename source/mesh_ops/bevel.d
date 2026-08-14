@@ -585,12 +585,6 @@ mixin template MeshBevelOps() {
             immutable float k = (abs(denom) > 1e-12f) ? (w2 / denom) : 1.0f;
             return V - (dA + dB) * k;
         }
-        static Vec3 rotateAboutAxis(Vec3 v, float ang, Vec3 axis) {
-            import std.math : sin, cos;
-            axis = safeNormalize(axis);
-            immutable float c = cos(ang), s = sin(ang);
-            return v * c + cross(axis, v) * s + axis * (dot(axis, v) * (1.0f - c));
-        }
         // One-sided rail sample: forward from `a1` towards `a2` by `t`, with the
         // `deltaA`/`deltaB` correction blended by sin(rotAngle) (NOT linear-t —
         // the L1-only formula's coincidence at t=0.5 does not generalize, see
@@ -619,7 +613,10 @@ mixin template MeshBevelOps() {
             if (cosO < -1.0f) cosO = -1.0f;
             immutable float Omega = acos(cosO);
             immutable float rotAngle = t * Omega;
-            immutable Vec3 virtMid = C + rotateAboutAxis(rA, rotAngle, axis);
+            // `axis` here is the raw cross product — `safeNormalize` at the call
+            // boundary is what math.rotateAboutAxis's unit contract requires
+            // (the guard at :611 already rejected the near-zero case).
+            immutable Vec3 virtMid = C + rotateAboutAxis(rA, safeNormalize(axis), rotAngle);
             immutable Vec3 deltaA = a3 - a1, deltaB = a4 - a2;
             immutable float sinR = sin(rotAngle);
             return virtMid + deltaA * (1.0f - sinR) + deltaB * sinR;

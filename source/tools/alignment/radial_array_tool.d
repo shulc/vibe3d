@@ -478,7 +478,8 @@ public:
         // cube a constant pixel size on a scaled layer instead of tracing the
         // ellipse the local circle is drawn as.
         Vec3 refDir   = referenceTangent(axis_);
-        Vec3 tangentL = rotateAroundAxis(refDir, au, angle_ * PI / 180.0f);
+        // `au` is unit (normalised by the caller) — `rotateAboutAxis`'s contract.
+        Vec3 tangentL = rotateAboutAxis(refDir, au, angle_ * PI / 180.0f);
         Vec3 tangentW = os.axis(tangentL).dir;
         angleCube.pos   = centerW + tangentW * (sz * 0.85f);
         angleCube.size  = sz * 0.06f;
@@ -518,13 +519,6 @@ private:
         if (axis == "X") return Vec3(0, 1, 0);
         if (axis == "Z") return Vec3(1, 0, 0);
         return Vec3(0, 0, 1);
-    }
-
-    // Rodrigues' rotation formula — `axis` is assumed unit length (true for
-    // the principal X/Y/Z axes this tool uses).
-    static Vec3 rotateAroundAxis(Vec3 v, Vec3 axis, float angleRad) {
-        float c = cos(angleRad), s = sin(angleRad);
-        return v * c + cross(axis, v) * s + axis * (dot(axis, v) * (1.0f - c));
     }
 
     bool[] currentMask() {

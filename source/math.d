@@ -108,6 +108,64 @@ float[16] pivotRotationMatrix(Vec3 pivot, Vec3 axis, float angle) {
             tx,  ty,  tz,  1];
 }
 
+/// Rodrigues rotation of the DIRECTION `v` about the axis `axis` by `angle`
+/// radians, pivot at the origin. `axis` MUST already be unit length — nothing
+/// here normalises it, and a non-unit axis silently scales the result. Callers
+/// that accept an arbitrary axis normalise at their own boundary (the two
+/// spellings in the tree differ: `normalize` throws away a zero axis as NaN,
+/// `safeNormalize` returns a fallback, and that choice belongs to the caller).
+///
+/// This and `rotateAboutPivot` below are the single home for the formula: it
+/// was written out six times across math.d / xform_kernels.d / rotate.d /
+/// radial_array_tool.d / slice_tool.d / bevel.d, and audit №4 (T3) counted the
+/// copies. The expression is kept in the exact association order the copies
+/// used, so every migrated call site is bit-identical, not merely equal.
+Vec3 rotateAboutAxis(Vec3 v, Vec3 axis, float angle) @safe pure nothrow @nogc {
+    immutable float c = cos(angle), s = sin(angle);
+    return v * c + cross(axis, v) * s + axis * (dot(axis, v) * (1.0f - c));
+}
+
+/// Rodrigues rotation of the POINT `v` about the line through `pivot` along the
+/// unit `axis` — `rotateAboutAxis` applied to `v - pivot` and translated back.
+/// Same unit-axis contract as above.
+///
+/// Written out rather than delegating on purpose: `pivot + p*c + pcr*s + …`
+/// associates the sum left-to-right starting at `pivot`, which is what the
+/// call sites this replaced computed. Delegating would re-associate the adds
+/// and move results by an ulp.
+Vec3 rotateAboutPivot(Vec3 v, Vec3 pivot, Vec3 axis, float angle) @safe pure nothrow @nogc {
+    immutable float c = cos(angle), s = sin(angle);
+    immutable Vec3 p = v - pivot;
+    immutable float d = dot(p, axis);
+    immutable Vec3 pcr = cross(axis, p);
+    return pivot + p * c + pcr * s + axis * (d * (1.0f - c));
+}
+
+unittest { // The two Rodrigues forms ARE `pivotRotationMatrix` — one law, three
+    // spellings, and the matrix is the one with an independent derivation
+    // (it builds R entry-by-entry from the outer product, the vector forms
+    // build it from cross/dot). A future edit to either vector form that the
+    // matrix does not agree with is the drift this pins.
+    immutable Vec3 axis = normalize(Vec3(0.3f, -0.8f, 0.5f));
+    immutable Vec3 pivot = Vec3(1.5f, -2.0f, 0.25f);
+    immutable Vec3 v = Vec3(-0.7f, 2.4f, 3.1f);
+    foreach (ang; [0.0f, 0.3f, cast(float) PI / 2, -1.9f, cast(float) PI]) {
+        immutable Vec3 byMatrix = applyAffine(pivotRotationMatrix(pivot, axis, ang), v);
+        immutable Vec3 byPivot  = rotateAboutPivot(v, pivot, axis, ang);
+        assert(isClose(byPivot.x, byMatrix.x, 1e-5f, 1e-5f), "rotateAboutPivot.x");
+        assert(isClose(byPivot.y, byMatrix.y, 1e-5f, 1e-5f), "rotateAboutPivot.y");
+        assert(isClose(byPivot.z, byMatrix.z, 1e-5f, 1e-5f), "rotateAboutPivot.z");
+        // Direction form = pivot form at the origin (that IS its contract).
+        immutable Vec3 byAxis = rotateAboutAxis(v, axis, ang);
+        immutable Vec3 atOrig = rotateAboutPivot(v, Vec3(0, 0, 0), axis, ang);
+        assert(isClose(byAxis.x, atOrig.x, 1e-6f, 1e-6f), "rotateAboutAxis.x");
+        assert(isClose(byAxis.y, atOrig.y, 1e-6f, 1e-6f), "rotateAboutAxis.y");
+        assert(isClose(byAxis.z, atOrig.z, 1e-6f, 1e-6f), "rotateAboutAxis.z");
+        // A rotation is an isometry: |v| about the origin is preserved.
+        assert(isClose(byAxis.length, v.length, 1e-5f, 1e-5f), "rotateAboutAxis norm");
+    }
+}
+
 // Non-uniform scale around a pivot point (column-major).
 float[16] pivotScaleMatrix(Vec3 pivot, float sx, float sy, float sz) {
     return [sx, 0,  0,  0,
@@ -1400,11 +1458,9 @@ struct Orientation {
         immutable float al = axis.length;
         if (!(al > 1e-12f)) return this;
         immutable Vec3 k = axis * (1.0f / al);
-        immutable float c = cos(angle), s = sin(angle);
-        Vec3 rot(Vec3 v) {
-            return v * c + cross(k, v) * s + k * (dot(k, v) * (1.0f - c));
-        }
-        return fromBasis(rot(right()), rot(up()), rot(back())).orthonormalized();
+        return fromBasis(rotateAboutAxis(right(), k, angle),
+                         rotateAboutAxis(up(),    k, angle),
+                         rotateAboutAxis(back(),  k, angle)).orthonormalized();
     }
 }
 

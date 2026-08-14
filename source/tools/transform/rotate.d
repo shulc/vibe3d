@@ -1071,7 +1071,7 @@ public:
                     foreach (vi; vertexIndicesToProcess) {
                         Vec3 pv = pivotFor(vi, cp, center);
                         mesh.vertices[vi] =
-                            rotateVec(dragStartVertices[vi], pv, axisW, arcAngle);
+                            rotateAboutPivot(dragStartVertices[vi], pv, axisW, arcAngle);
                     }
                     needsGpuUpdate = true;
                 }
@@ -1356,14 +1356,6 @@ public:
 
 private:
 
-    Vec3 rotateVec(Vec3 v, Vec3 pivot, Vec3 axis, float angle) {
-        float c = cos(angle), s = sin(angle);
-        Vec3 p = v - pivot;
-        float d = dot(p, axis);
-        Vec3 pcr = cross(axis, p);
-        return pivot + p * c + pcr * s + axis * (d * (1.0f - c));
-    }
-
     // Phase 4 of the action-center parity plan: per-cluster pivot for
     // vertex `vi`. Mirrors Scale's pivotFor.
     Vec3 pivotFor(size_t vi, ClusterPivots cp, Vec3 fallback) {
@@ -1400,7 +1392,7 @@ private:
             Vec3 ax    = (axisIdx >= 0)
                        ? axisFor(i, axisIdx, ap, cp, dragAxisVec)
                        : dragAxisVec;
-            mesh.vertices[i] = rotateVec(dragStartVertices[i], pivot, ax, angle);
+            mesh.vertices[i] = rotateAboutPivot(dragStartVertices[i], pivot, ax, angle);
         }
     }
 
@@ -1518,7 +1510,7 @@ private:
                                      : IM_COL32(180, 180, 180, 200);
 
         Vec3 rodrig(Vec3 p, float a) {
-            return rotateVec(p, Vec3(0,0,0), axisVec, a);
+            return rotateAboutPivot(p, Vec3(0,0,0), axisVec, a);
         }
 
         ImDrawList* dl = ImGui.GetForegroundDrawList();

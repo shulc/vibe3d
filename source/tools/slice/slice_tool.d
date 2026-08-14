@@ -471,9 +471,10 @@ void sliceOverlayExtentLocked(const ref Mesh m, const ModelSpace ms,
 // |v|. This is the whole rotate-gizmo kernel: new vector = rotate the frozen
 // gesture-start vector about the line by the drag angle.
 Vec3 rotateVectorAboutAxis(Vec3 v, Vec3 axis, float angle) {
-    Vec3 a = normalize(axis);
-    float c = cos(angle), s = sin(angle);
-    return v * c + cross(a, v) * s + a * (dot(a, v) * (1.0f - c));
+    // The formula itself lives in math.d (`rotateAboutAxis`, unit-axis
+    // contract); what this wrapper adds — and what its callers rely on — is
+    // the `normalize` at the boundary.
+    return rotateAboutAxis(v, normalize(axis), angle);
 }
 
 // Signed angle (radians, in [-π, π]) FROM `from` TO `to` measured about the unit
