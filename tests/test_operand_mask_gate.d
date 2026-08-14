@@ -165,26 +165,35 @@ shared static this() {
     // ^ mesh.hide's own "empty selection ⇒ hide everything" (measured, C6).
     //   This is the one place the fallback must NOT subtract hidden geometry:
     //   it is the writer OF that geometry.
-    ALLOWED_COUNT["source/mesh_ops/decimate.d"] = 5;
+    ALLOWED_COUNT["source/mesh_ops/decimate.d"] = 1;
     // ^ :420 is an unconditional internal finalisation mask (coincide-then-weld
     //   every cluster member), not a selection fallback — and it goes through
-    //   weldVerticesByMask, so the §3.3 backstop covers it anyway. The other
-    //   four are unittest fixtures.
+    //   weldVerticesByMask, so the §3.3 backstop covers it anyway. Was 5 until
+    //   task 0706; the other four were unittest fixtures and left with them.
     ALLOWED_COUNT["source/app.d"] = 2;
     // ^ `cageAllInside` is an AND-accumulator seeded true and cleared per
     //   preview child, not an operand set. Its hide handling landed in S4.
+    ALLOWED_COUNT["source/mesh.d"] = 1;
+    // ^ :10141 `vertFanOrdered_[] = true` — a per-vertex fan-ordered FLAG,
+    //   reset to all-true before the loops pass clears it per non-manifold
+    //   edge. Not an operand set at all; it is the exact false positive the
+    //   proximity window above was meant to exclude, and does not, because the
+    //   `vertices.length` that sizes it sits on the line above. Was 15 until
+    //   task 0706, when the fourteen unittest fixtures left source/mesh.d.
 
     // --- UNITTEST-FIXTURE entries: throwaway meshes with nothing hidden.
     //     Bumping these counts is fine and needs no justification beyond
     //     "a new fixture". ---
-    ALLOWED_COUNT["source/mesh.d"]                    = 15;
-    // ^ 14 → 15 (task 0632): facetedSubdivide's hide-carry unittest opens with
-    //   an all-true mask over a throwaway cube as its VACUITY guard — the
-    //   number the kernel produces when nothing is excluded, without which its
-    //   "21 faces" assertion could not be read as a measurement of exclusion.
-    ALLOWED_COUNT["source/mesh_ops/extrude.d"]        = 6;
+    //
+    //     This section is nearly empty since task 0706 moved module unittests
+    //     to tests/unit/, and that is deliberate: the scanner reads `source/`
+    //     only, because what it guards is PRODUCTION code re-opening the idiom.
+    //     A fixture under tests/unit/ is out of scope by construction, so the
+    //     exemption list shrank from 29 lines to 6 — the gate got tighter, not
+    //     looser. The two entries left are blocks that could not leave source/
+    //     (they read private members).
+    ALLOWED_COUNT["source/mesh_ops/extrude.d"]        = 1;
     ALLOWED_COUNT["source/remesh/remesh_job.d"]       = 1;
-    ALLOWED_COUNT["source/tools/alignment/mirror.d"]  = 2;
 }
 
 unittest {
