@@ -895,7 +895,7 @@ public:
     // Mode silently landed on the "not relocatable" side, which is the safe
     // default but still an UNDECLARED one; and it is precisely this set that
     // `transform.acenAllowsClickRelocate` was measured to disagree with (see
-    // task 0706 and that function's own note).
+    // task 0712 and that function's own note).
     private static bool relocateAllowed(Mode m) pure nothrow @nogc @safe {
         final switch (m) {
             case Mode.Auto:
@@ -2533,7 +2533,7 @@ unittest {
     // now, so the YAML is a *rendering* of the table rather than a second copy
     // of it — which is as close to structural as a static YAML file gets. The
     // renderer-side fix (a `dynamicKind` provider that emits these rows from
-    // `modeEntries` and deletes them from the YAML) is filed as 0707.
+    // `modeEntries` and deletes them from the YAML) is filed as 0713.
     struct Row { string label; string checkedEquals; }
     Row[string] got;
     bool sawPopup = false;

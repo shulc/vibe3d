@@ -1080,7 +1080,7 @@ protected:
     /// click. With no ACEN stage registered we behave as Auto (legacy
     /// default).
     ///
-    /// KNOWN DISAGREEMENT, deliberately preserved (task 0706): this answers
+    /// KNOWN DISAGREEMENT, deliberately preserved (task 0712): this answers
     /// FALSE for Pivot and Parent, while `ActionCenterStage.relocateAllowed`
     /// — the stage-side predicate for the same question — answers TRUE for
     /// them, and says so in its own comment ("Pivot/Parent ARE included by
@@ -1093,7 +1093,7 @@ protected:
     /// IS reachable for Pivot/Parent through `notifyAcenUserPlaced`, which has
     /// no mode gate of its own. Reconciling the two changes what an
     /// off-gizmo click does in two modes, so it is an owner call, filed as
-    /// 0706 — task 0705 only made the classification exhaustive.
+    /// 0712 — task 0705 only made the classification exhaustive.
     ///
     /// `final switch` since task 0705: the OR-chain form is exactly how the
     /// disagreement got in. The commit that added Pivot/Parent was FORCED to
@@ -1123,7 +1123,7 @@ protected:
                 return false;
             case M.Pivot:
             case M.Parent:
-                return false;   // see KNOWN DISAGREEMENT above — task 0706
+                return false;   // see KNOWN DISAGREEMENT above — task 0712
         }
     }
 
