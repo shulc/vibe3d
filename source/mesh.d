@@ -10284,7 +10284,7 @@ struct Mesh {
     /// the gate that keeps those scans linear in the selected-element count.
     /// Unittest-only: the scans are hot and this must not cost a thing in a
     /// release build. Reset it, run the walk, read it; see the scaling
-    /// unittests at the bottom of this module.
+    /// unittest next to `selectLoopVerticesHeadRestart`.
     version (unittest) static size_t gSelectLoopSeedScanSteps;
 
     /// One band-trace loop: repeatedly cross the directed exit edge
@@ -10475,8 +10475,8 @@ struct Mesh {
     // scans were made forward-only: every pass re-scans the selected list from
     // the HEAD, and the polygon partner is found by walking the whole
     // selection in order (outer) against A's edges (inner). They are the
-    // oracle the differential unittest at the bottom of this module measures
-    // the fast paths against — the claim being that skipping provably-dead
+    // oracle the differential unittest directly below measures the fast
+    // paths against — the claim being that skipping provably-dead
     // work and ranking the partner candidates from A's edges outward changes
     // only the cost, never the answer.
     //
@@ -10640,6 +10640,24 @@ struct Mesh {
         }
     }
 
+    // ---------------------------------------------------------------------------
+    // select.loop seed scans: cost and equivalence
+    // ---------------------------------------------------------------------------
+    // The recovered face/vertex walks consume seeds one group at a time. Every
+    // pass used to re-scan the whole selected list from the head, so the pass
+    // sequence cost O(passes x selected) — quadratic, and the pass count EQUALS
+    // the selected count on the two shapes an importer and the array tools
+    // actually produce: a triangulated mesh in polygon mode (selectBandTrace skips
+    // odd-sided neighbours, so a triangle never advances and is always a group of
+    // one) and many small components in vertex mode. Command.apply() runs on the
+    // main thread, so that is a frozen UI.
+    //
+    // The scans are now forward-only. The tests below hold that down from both
+    // sides: the cost is asserted in SEED-SCAN STEPS (deterministic — a wall-clock
+    // threshold would flake on a loaded machine), and the ANSWER is asserted
+    // against a frozen head-restart oracle over a corpus, because a cursor that
+    // skipped one element too many would be a silent selection bug.
+    // ---------------------------------------------------------------------------
     unittest { // the forward-only seed scans answer EXACTLY what head-restart did
         SlRng rng;
         size_t cases = 0;
@@ -14559,26 +14577,16 @@ uint[] edgeLoopRing(const ref Mesh m, uint v0, uint v1) {
     return [v0, v1];
 }
 
-
-
-
-
-
 // ---------------------------------------------------------------------------
-// Triangulation-family kernel unittests (dub test --config=tests gate)
+// version (unittest) fixture helpers, module scope.
 // ---------------------------------------------------------------------------
+// Task 0717 (M5) moved the blocks that use these next to the kernels they
+// pin, inside `struct Mesh`. The helpers stayed behind: a struct cannot host
+// a free function, and changing a free function into a static member would
+// have made that move an edit. Each says below which blocks it serves.
 
-
-
-
-
-
-
-
-
-
-
-
+// The raw builder behind the five bevelFacesByMask blocks and the
+// makePolygonFromVerts adjacency cases.
 version (unittest) private Mesh buildRawMesh(Vec3[] verts, uint[][] faceList) {
     Mesh m;
     m.vertices = verts;
@@ -14612,28 +14620,8 @@ version (unittest) private Mesh buildRawMesh(Vec3[] verts, uint[][] faceList) {
 // ---------------------------------------------------------------------------
 public import mesh_gpu;
 
-// ===========================================================================
-// makePolygonFromVerts unittests
-// ===========================================================================
-
-
-
-
-
-
-
-
-
 // ---------------------------------------------------------------------------
-// makePolygonFromVerts — adjacency auto-orient (task 0394)
-// ---------------------------------------------------------------------------
-
-
-
-
-
-// ---------------------------------------------------------------------------
-// weldCoincidentVertices unittests (task 0396 — spatial-hash rewrite)
+// weldCoincidentVertices — reference fixture (task 0396, spatial-hash rewrite)
 // ---------------------------------------------------------------------------
 
 // Reference copy of the PRE-spatial-hash weldCoincidentVertices remap
@@ -14657,7 +14645,7 @@ version (unittest) private int[] naiveWeldRemap_(const Vec3[] verts, double epsS
     return remap;
 }
 
-
+// computation (naive O(V²) all-pairs scan). Kept ONLY so the two blocks next
 
 // Helper: convert size_t to string for assert messages.
 string uintToStr(size_t v) {
@@ -14843,48 +14831,6 @@ version (unittest) private size_t countOpenEdges(ref Mesh m) {
     return cnt;
 }
 
-
-
-
-
-// ---------------------------------------------------------------------------
-// splitVerticesByMask unittests
-// ---------------------------------------------------------------------------
-
-
-
-
-
-
-
-
-
-
-
-
-
-// splitFaceByVertices unittests
-// ---------------------------------------------------------------------------
-
-
-
-
-// spikeFacesByMask unittests
-// ---------------------------------------------------------------------------
-
-
-
-
-// facePart inheritance unittests — parallel to the faceMaterial ones above.
-
-
-
-
-
-
-
-
-
 // ---------------------------------------------------------------------------
 // weldVertexPairs (task 0555) — N independent absorptions in one pass.
 //
@@ -14911,32 +14857,9 @@ version (unittest) private Mesh makeWeldPairStrip() {
 // of its own: it is `weldVerticesByMask`'s own body, unchanged, and the
 // collapse/weld tests already in this file are its net. Verified by mutation —
 // dropping the post-remap consecutive-duplicate strip, and dropping the
-// head/tail wrap strip, each break `collapseFacesByMask` (mesh.d:1477 and
-// mesh.d:1500) before any weld test is reached.
-
-
-
-// ---------------------------------------------------------------------------
-// mirrorFacesPlane / mirrorFaces (task 0230, oriented mirror-plane backend).
-// ---------------------------------------------------------------------------
-
-
-// ===========================================================================
-// Topology Pen P3 (task 0477) — the three additive kernel-seam witnesses:
-// edgeNeighbors (KILLER-1), deleteFacesByMask(keepFloatingEdges) (KILLER-2),
-// makePolygonFromVerts(autoOrient). See doc/topopen_p3_plan.md.
-// ===========================================================================
-
-
-
-
-
-
-
-
-
-
-
+// head/tail wrap strip — both inside `applyVertexRemapAndRebuild` — each break
+// `collapseFacesByMask` before any weld test is reached. (Cited by symbol, not
+// by line: the two line numbers this note carried had already rotted.)
 
 // ---------------------------------------------------------------------------
 // Task 0502 — LOOSE (face-less) GEOMETRY SURVIVES A DISSOLVE.
@@ -14995,23 +14918,11 @@ version (unittest) private Mesh makeGridWithLooseGeometry(int n) {
 
 
 // ---------------------------------------------------------------------------
-// select.loop seed scans: cost and equivalence
+// select.loop seed scans — corpus fixtures.
 // ---------------------------------------------------------------------------
-// The recovered face/vertex walks consume seeds one group at a time. Every
-// pass used to re-scan the whole selected list from the head, so the pass
-// sequence cost O(passes x selected) — quadratic, and the pass count EQUALS
-// the selected count on the two shapes an importer and the array tools
-// actually produce: a triangulated mesh in polygon mode (selectBandTrace skips
-// odd-sided neighbours, so a triangle never advances and is always a group of
-// one) and many small components in vertex mode. Command.apply() runs on the
-// main thread, so that is a frozen UI.
-//
-// The scans are now forward-only. The tests below hold that down from both
-// sides: the cost is asserted in SEED-SCAN STEPS (deterministic — a wall-clock
-// threshold would flake on a loaded machine), and the ANSWER is asserted
-// against a frozen head-restart oracle over a corpus, because a cursor that
-// skipped one element too many would be a silent selection bug.
-// ---------------------------------------------------------------------------
+// The two blocks these feed (equivalence against the head-restart oracle, and
+// the seed-scan step budget) sit next to the walks themselves; the fixtures
+// stay here because a struct cannot host a free function.
 
 version (unittest) private {
     // Deterministic xorshift — std.random's global generator is shared state.
