@@ -489,31 +489,43 @@ mixin template MeshBevelOps() {
             Vec3 arcCenter;      // explicit fillet centre for a junction rail
             bool hasArcCenter;   // ↑ valid (else use the per-vertex fillet centre)
             bool rimRail;        // centre vertex sits on an open (boundary) fan
-            // Task 0454/0456 — N≥4 full-ring hub rail only. Two distinct
+            // Task 0454/0456, widened to K3 by the K3-true-boundary-curve task.
+            // Both fields below are computed for EVERY closed full-ring hub side
+            // — `registerRail`'s gate is `isFullHub && selectedDegree >= 3` at
+            // both corners, NOT `>= 4` (an earlier draft's N≥4-only wording
+            // survived here for a while and was simply false; read the gate, not
+            // this comment, if they ever disagree again). Two distinct
             // constructions live here (they were conflated in the dormant port):
             //   • RING internal net (finding F): `bezP1`/`bezP2` are the
             //     kappa-cubic-Bézier handles of side (a→b)'s boundary curve,
             //     pivoted at the OWN selected edge's slide point. Fed to
-            //     `junctionRingN` for HUB + the L≥2 Gregory ring SURFACE. This
-            //     is still exactly correct — finding (F) verified it against the
-            //     reference's internal control net.
+            //     `junctionRing` (N=3) and `junctionRingN` (N≥4) for HUB + the
+            //     L≥2 Gregory ring SURFACE. This is still exactly correct —
+            //     finding (F) verified it against the reference's internal
+            //     control net.
             //   • Emitted RAIL vertex (finding I): the mesh rail vertex the
             //     reference actually writes is NOT the boundary-Bézier — it is
             //     the rail-position SLERP-plus-correction law
             //     pivoted on the TWO NEIGHBORING sides' slide points `jvA`/`jvB`
             //     (never the side's own). When `hubRail` is set, `railInterior`
-            //     samples that law instead of the slerp arc — the ONLY rail-law
-            //     change vs today, reached only by a genuine closed N≥4 hub
-            //     (`hasArcCenter`/slerp stays byte-identical for every non-hub
-            //     rail, incl. partial-K≥4 free-end rails).
+            //     samples that law instead of the slerp arc, at K3 as well as
+            //     N≥4 (`hasArcCenter`/slerp stays byte-identical for every
+            //     non-hub rail, incl. partial-K≥4 free-end rails).
             Vec3 bezP1, bezP2;   // ring internal-net handles (finding F)
             Vec3 jvA, jvB;       // rail neighbor pivots, a→b (finding I)
+            // `hubRail` = the hub gate AND both finding-(I) pivots are usable:
+            // `(P0−P3).length > 1e-9 && (jA−jB).length > 1e-9`. `hasBez` = the
+            // hub gate alone. So `hubRail` implies `hasBez`, never the reverse,
+            // and the two differ ONLY on a degenerate hub. Read sites (grep them
+            // before changing either — they are not interchangeable):
+            //   • `hasBez`  — the N=3 ring branch's per-side gate.
+            //   • `hubRail` — `railInterior`'s roundPos routing (`jvA`/`jvB` are
+            //     read NOWHERE else), AND the N≥4 ring branch's per-side gate.
+            // That last pairing is why the two ring branches admit different
+            // rails: N≥4 rejects a hub whose ring inputs (poles + handles) are
+            // fine but whose RAIL pivots coincide. Measured, unresolved, owned
+            // by task 0707 — do not "harmonise" the two gates before it lands.
             bool hubRail;
-            // `bezP1`/`bezP2` above are populated for EVERY full-ring hub side,
-            // K3 (`junctionRing`) as well as N≥4 (`junctionRingN`) — both consume
-            // them as the TRUE boundary curve. `hubRail` stays N≥4-only (it gates
-            // the finding-(I) emitted rail law + the odd-N ring corrections, which
-            // K3 does NOT take), so a distinct flag marks the handles as valid.
             bool hasBez;         // bezP1/bezP2 computed (full hub, K≥3)
         }
         RailSpec[ulong] railSpecs;
@@ -707,10 +719,14 @@ mixin template MeshBevelOps() {
             // path, isFullHub false) is EXCLUDED and keeps the plain slerp rail.
             // Both corners of a rail are at the same source vertex, so these flags
             // are identical across left/right; checking both is belt-and-
-            // suspenders. NOTE: `hubRail` only routes `railInterior` to `roundPos`;
-            // it does NOT change the RING evaluator — K3 stays on its own N=3
-            // fast-path (`junctionRing`), never the N≥4 sibling's odd-N center-
-            // normal / corner-move ring corrections (`junctionRingN`).
+            // suspenders. NOTE: `hubRail` does not pick the RING EVALUATOR — that
+            // is `ring_.length`, so K3 always takes its own N=3 fast path
+            // (`junctionRing`) and never the N≥4 sibling's odd-N center-normal /
+            // corner-move corrections (`junctionRingN`). What `hubRail` does gate
+            // is (a) `railInterior`'s roundPos routing, at K3 as well as N≥4, and
+            // (b) whether the N≥4 ring branch accepts the side at all. The N=3
+            // ring branch accepts on `hasBez` instead — a REAL difference on a
+            // degenerate hub, see the RailSpec field comment and task 0707.
             Vec3 bez1 = Vec3(0, 0, 0), bez2 = Vec3(0, 0, 0);
             Vec3 jA = Vec3(0, 0, 0), jB = Vec3(0, 0, 0);
             bool hubRail = false;
@@ -744,7 +760,11 @@ mixin template MeshBevelOps() {
                 // Distinct corners and distinct neighbor pivots are all that is
                 // required — a flat side (linear handles) or an ANTIPODAL pivot
                 // pair (jA≠jB but collinear through V) are both handled above, NOT
-                // refused; only a truly coincident pair drops to the flat N-gon.
+                // refused; only a truly coincident pair is rejected here, which
+                // ALSO drops an N≥4 hub to the flat N-gon (that branch reuses this
+                // flag as its ring gate). A K3 hub does not drop — its ring branch
+                // gates on `hasBez`. Both outcomes are reachable and neither is
+                // pinned by a reference capture; task 0707 owns the choice.
                 hubRail = (P0 - P3).length > 1e-9f && (jA - jB).length > 1e-9f;
             }
             RailSpec spec = RailSpec(
@@ -1984,6 +2004,16 @@ mixin template MeshBevelOps() {
                     // isFullHub && selectedDegree≥3 gate; hubCapRing entries are
                     // always full hubs, so this holds), and an unapproved rail (the
                     // fixed point withheld consent) drops the ring to the flat cap.
+                    //
+                    // This is NOT the same predicate the N≥4 branch below uses.
+                    // `hasBez` carries no non-degeneracy test, so a DEGENERATE hub
+                    // — one whose side has coincident poles or coincident finding-(I)
+                    // pivots — rounds here while the N≥4 rule (`hubRail`) would drop
+                    // it to the flat cap. Reachable and measured: see the
+                    // `parallel-edge K3 hub` unittest below. Which rule the reference
+                    // uses is NOT captured for a degenerate hub; task 0707 owns it.
+                    // Do not silently swap this flag for `hubRail` — that is the
+                    // behaviour change 0707 has to earn with a capture.
                     if (railSpec is null || !railSpec.approved || !railSpec.hasBez) {
                         ok = false; break;
                     }
@@ -2062,14 +2092,23 @@ mixin template MeshBevelOps() {
                 if (ok) foreach (i; 0 .. N) {
                     immutable int nx = (i + 1) % N;
                     auto railSpec = pairKey(poleI[i], poleI[nx]) in railSpecs;
-                    // A genuine N≥4 hub rail carries `hubRail` (registerRail's
-                    // R6 gate: isFullHub && selectedDegree≥4 at both corners,
-                    // AND both the finding-(F) ring-net build and the finding-(I)
-                    // rail build were non-degenerate). Any rail that is
-                    // unapproved (the fixed point withheld consent) OR not a hub
-                    // rail (a degenerate corner either build refused) drops the
-                    // ring to the flat cap, exactly as the N=3 branch drops on an
-                    // unapproved rail.
+                    // A genuine hub rail carries `hubRail`: registerRail's gate
+                    // (`isFullHub && selectedDegree >= 3` at both corners — `>= 3`,
+                    // not the `>= 4` an earlier draft of this comment claimed; the
+                    // K3-true-boundary-curve task widened it) AND both corners
+                    // distinct AND both finding-(I) pivots distinct. Any rail that
+                    // is unapproved (the fixed point withheld consent) OR not a hub
+                    // rail drops the ring to the flat cap.
+                    //
+                    // Note this rejects MORE than the ring itself needs. The ring
+                    // reads only `poles` + `bezP1/bezP2`; `jvA`/`jvB` are read
+                    // nowhere but `railInterior`. So a hub with usable poles and
+                    // handles but coincident rail pivots is flat-capped here purely
+                    // on a RAIL-law precondition — the mirror image of the N=3
+                    // branch's `hasBez`, which rejects less than the ring needs.
+                    // Neither is the ring's own predicate; task 0707 owns the fix,
+                    // and until it lands the asymmetry is deliberate-by-record, not
+                    // an invitation to align the two by taste.
                     if (railSpec is null || !railSpec.approved || !railSpec.hubRail) {
                         ok = false; break;
                     }
@@ -4637,6 +4676,109 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, matches the reference at
             assertFacesMatchByPosition(m, wantVertsL3, wantFacesL3, "K3 L3 Gregory ring (task 0443 freeze)");
         }
         assertBevelManifoldClean(m, "junction shared rails");
+    }
+}
+
+unittest { // bevelEdgesByMask: DEGENERATE ("parallel-edge") K3 hub — the shape
+           // on which the N=3 and N≥4 ring branches disagree (task 0698).
+           //
+           // The two branches gate a side on DIFFERENT flags: N=3 on `hasBez`
+           // (set for every full hub, no non-degeneracy test), N≥4 on `hubRail`
+           // (`hasBez` AND distinct poles AND distinct finding-(I) pivots). They
+           // can only differ where one of those two extra tests fails, so this
+           // fixture makes one fail EXACTLY: cube vertex 7 is moved onto the ray
+           // 6→5, which makes `dir(6→7) == dir(6→5)` bit-for-bit. The rail along
+           // edge (6,2) then takes its two neighbour pivots from edges 6→5 and
+           // 6→7 — the same direction, so |jA − jB| == 0 exactly — and is
+           // registered `hasBez=true, hubRail=false`. (Measured with the two
+           // lengths printed from `registerRail`: |jA−jB| = 0, |P0−P3| = 0.0786;
+           // every rail of the pristine cube reads 0.1414 for both.)
+           //
+           // WHAT THIS TEST IS. It is a one-sided characterization, NOT a parity
+           // freeze: no reference capture covers a degenerate hub (the four
+           // `tests/fixtures/edge_bevel_*.json` goldens are a pristine cube and
+           // an open grid, and the `edge_bevel_*` rows of
+           // `tests/fixtures/uv_corner_transfer.json` are a flat grid with a
+           // single selected edge — none of them reaches a hub cap ring at all),
+           // so there is no `reference_*` half to record and none is invented
+           // here. It pins what vibe3d does TODAY so that the divergence is a
+           // measurement instead of a code reading, and so that the day task 0707
+           // settles the rule, the change is visible rather than silent.
+           //
+           // THE MEASURED ALTERNATIVE. Swapping the N=3 branch's gate to
+           // `hubRail` (i.e. applying the N≥4 rule here) leaves the pristine cube
+           // untouched at 20v/15f and 38v/30f, and turns THIS fixture into
+           // 19v/13f at L1 and 31v/19f at L2: the ring is dropped and the cap
+           // becomes one flat n-gon (a hexagon at L1, a 12-gon at L2) bounded by
+           // the still-rounded arcs. Both outcomes are defensible; picking one is
+           // 0707's job, not this test's.
+    static int findEdge(ref Mesh mm, uint va, uint vb) {
+        foreach (i; 0 .. mm.edges.length) {
+            uint a = mm.edges[i][0], b = mm.edges[i][1];
+            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
+        }
+        return -1;
+    }
+    static Mesh parallelEdgeHub() {
+        auto mm = makeCube();
+        // v7 = (-0.5, 0.5, 0.5) -> onto the ray 6→5. Both offsets are exact
+        // binary fractions, so the two normalized directions are bit-equal.
+        mm.vertices[7] = Vec3(0.5f, 0.0f, 0.5f);
+        mm.buildLoops();
+        return mm;
+    }
+    {
+        // The fixture's defining property, asserted in the same terms
+        // `neighPivot` computes the pivots in — if this stops holding the test
+        // below is measuring an ordinary hub and proves nothing.
+        auto m = parallelEdgeHub();
+        immutable Vec3 d5 = safeNormalize(m.vertices[5] - m.vertices[6]);
+        immutable Vec3 d7 = safeNormalize(m.vertices[7] - m.vertices[6]);
+        assert(d5.x == d7.x && d5.y == d7.y && d5.z == d7.z,
+            "degenerate-K3 fixture must have edges 6→5 and 6→7 exactly parallel");
+        int deg = 0;
+        foreach (ei; m.edgesAroundVertex(6)) ++deg;
+        assert(deg == 3, "degenerate-K3 fixture must keep vertex 6 at valence 3");
+    }
+    foreach (level; [1, 2]) {
+        auto m = parallelEdgeHub();
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (pair; [[6u, 5u], [6u, 2u], [6u, 7u]]) {
+            immutable int ei = findEdge(m, pair[0], pair[1]);
+            assert(ei >= 0);
+            mask[ei] = true;
+        }
+        assert(m.bevelEdgesByMask(mask, 0.1f, level) == 3);
+        int[int] fvd;
+        foreach (f; m.faces) ++fvd[cast(int)f.length];
+        if (level == 1) {
+            assert(m.vertices.length == 20 && m.faces.length == 15,
+                "degenerate K3 hub rounds TODAY (20v/15f); the N≥4 rule would "
+                ~ "give 19v/13f — see task 0707 before changing either gate");
+            // The ring signature: three cap quads and no flat cap n-gon. Under
+            // the N≥4 rule the three quads collapse into a fourth hexagon.
+            assert(fvd.get(6, 0) == 3 && fvd.get(4, 0) == 12,
+                "L1 degenerate hub must emit the 3-quad Gregory fan, not a flat "
+                ~ "hexagonal cap");
+        } else {
+            assert(m.vertices.length == 38 && m.faces.length == 30,
+                "degenerate K3 hub rounds TODAY (38v/30f); the N≥4 rule would "
+                ~ "give 31v/19f — see task 0707 before changing either gate");
+            assert(fvd.get(12, 0) == 0,
+                "L2 degenerate hub must not emit the flat 12-gon cap");
+        }
+        // The degeneracy IS visible in the output: the sliver face (6,5,…,7),
+        // whose two edges at the corner are parallel, takes `offsetMeet`'s
+        // parallel fallback, whose two perpendicular offsets are opposite — so
+        // its miter lands EXACTLY on the uncut corner. That pole is what the
+        // ring is then built on. The pristine cube's K3 golden has no vertex
+        // there (every corner is cut), so this is a real discriminator.
+        bool uncutPole = false;
+        foreach (v; m.vertices)
+            if (v.x == 0.5f && v.y == 0.5f && v.z == 0.5f) uncutPole = true;
+        assert(uncutPole,
+            "the sliver face's miter must land on the uncut corner — without it "
+            ~ "this fixture is no longer the degenerate shape task 0698 measured");
     }
 }
 
