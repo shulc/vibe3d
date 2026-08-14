@@ -1,5 +1,6 @@
 module operator;
 
+import math : Viewport;
 import toolpipe.packets : SubjectPacket, WorkplanePacket, SymmetryPacket,
                           SnapPacket, ActionCenterPacket, AxisPacket,
                           FalloffPacket, ConstrainPacket, ConstrainHitPacket,
@@ -130,6 +131,26 @@ struct VectorStack {
     bool has(PacketKind kind) const {
         return _slots[kind] !is null;
     }
+}
+
+/// The viewport the pipe entered with, or a default-constructed `Viewport`
+/// when no SubjectPacket was published.
+///
+/// This is the two-line idiom
+///
+///     Viewport vp;
+///     if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+///
+/// which was open-coded 23 times in topology_pen.d alone (audit №4, TP6).
+/// The absent-packet answer is deliberately `Viewport.init`, NOT a throw or
+/// a bool-out: that is what every copy did, and `Viewport.init` is a
+/// documented shape here — `focus` is (NaN,NaN,NaN), not the origin (see
+/// math.d's note on `Viewport.focus`), so a consumer that must survive a
+/// headless/no-packet call has to say so itself. Callers that need to
+/// distinguish "no packet" from "a real viewport" still ask `vts.has`.
+Viewport viewportOf(ref VectorStack vts) {
+    if (auto s = vts.get!SubjectPacket()) return s.viewport;
+    return Viewport.init;
 }
 
 /// Boilerplate stubs for terminal (Actr-slot) Operators. Provides

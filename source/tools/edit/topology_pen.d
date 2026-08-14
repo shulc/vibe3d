@@ -13,7 +13,7 @@ import math               : Vec3, Viewport, projectToWindowFull, closestOnSegmen
                              screenPointToLocalRay;
 import document             : primaryModelSpace;
 import shader              : Shader;
-import operator            : VectorStack;
+import operator            : VectorStack, viewportOf;
 import toolpipe.packets    : ConstrainHitPacket, HoverTarget, HoverTargetKind,
                              SubjectPacket, SnapPacket, SnapType;
 import toolpipe.pipeline   : g_pipeCtx;
@@ -758,6 +758,22 @@ private immutable InputBinding[] kTopoPenBindings = [
 //                  `lastHit_` (the packet) and the passed-in `vp`.
 // ---------------------------------------------------------------------------
 class TopologyPenTool : Tool {
+    /// Click-vs-drag gate, in pixels, shared by EVERY gesture in this tool:
+    /// a release within this distance of the press pixel is a click, not a
+    /// drag, and commits nothing. Compared SQUARED (`dx*dx + dy*dy < k*k`),
+    /// strictly less-than, so exactly `k` pixels already counts as a drag.
+    ///
+    /// One constant because it was six identical local `enum int
+    /// kMinDragPx = 3;` declarations, each carrying a comment saying it
+    /// mirrors the others (audit №4, TP3). Two gestures deliberately do NOT
+    /// gate on it — `smoothUp` and `smoothLoopUp`, whose stationary click IS
+    /// the operation; their own comments say so.
+    ///
+    /// NOT the same constant as pen.d's `DRAG_THRESHOLD_PX = 4`. That is a
+    /// different tool with a different measured value; the identical idiom
+    /// there is not evidence the two are one setting.
+    enum int kMinDragPx = 3;
+
 private:
     ConstrainHitPacket lastHit_;
     HoverTarget         lastTarget_;
@@ -1605,9 +1621,7 @@ private:
     void readHit(ref VectorStack vts) {
         if (auto p = vts.get!ConstrainHitPacket()) {
             lastHit_ = *p;
-            Viewport vp;
-            if (auto s = vts.get!SubjectPacket())
-                vp = s.viewport;
+            Viewport vp = viewportOf(vts);
             lastTarget_ = resolveHoverTarget(lastHit_, vp, topoPenPressPickPx(vp));
         }
         // else: leave lastHit_/lastTarget_ unchanged — see class doc (the
@@ -2022,8 +2036,7 @@ public:
             fillRing_        = null;   // Fill mode continuation: same precedence rule
             fillRadiusValid_ = false;  // Fill radius overlay: same precedence rule
         } else {
-            Viewport vp;
-            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            Viewport vp = viewportOf(vts);
             hoverOverMesh_ = overPrimaryMesh(e.x, e.y, vp);
             if (hoverOverMesh_) {
                 computeHoverIndicator(e.x, e.y, vp);
@@ -2112,8 +2125,7 @@ public:
         // where the gesture ends. Consumes, mirroring every armed branch
         // below.
         if (moveArmed_) {
-            Viewport vp;
-            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            Viewport vp = viewportOf(vts);
             applyMoveTargets(moveTargets(e.x, e.y, vp, vts));
             return true;
         }
@@ -2125,8 +2137,7 @@ public:
         // never claim motion) so the drag reads as this tool's own,
         // mirroring the armed-gesture contract elsewhere in this class.
         if (addLoopArmed_) {
-            Viewport vp;
-            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            Viewport vp = viewportOf(vts);
             addLoopRatio_ = ratioFromCursor(e.x, e.y, vp);
             return true;
         }
@@ -2142,8 +2153,7 @@ public:
         // consumes it (neither `commitSlide` nor the draw ghost reads a rail
         // it does not have).
         if (slideArmed_) {
-            Viewport vp;
-            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            Viewport vp = viewportOf(vts);
             slideDeltaK_ = slideDeltaFromDrag(e.x, e.y, vp);
             return true;
         }
@@ -2174,8 +2184,7 @@ public:
         // simply tracks the raw cursor instead. Consumes, mirroring the Add
         // Loop/Slide/Smooth branches above.
         if (splitArmed_) {
-            Viewport vp;
-            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            Viewport vp = viewportOf(vts);
             splitTargetVert_ = resolveSnapTargetVert(e.x, e.y, vp);
             return true;
         }
@@ -3979,8 +3988,7 @@ public:
         // `PlaceOrMove` is also the slot whose UP leg runs `finishMove`, so
         // the destructive-refusal arm below needs no new gesture tag.
         stamp(true, PenGesture.PlaceOrMove, btn);
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
 
         immutable int seedEi = fillSeedEdge(e.x, e.y, vp);
         if (seedEi < 0) return true;   // no border-edge press at all — nothing to fill OR move
@@ -4041,8 +4049,7 @@ public:
         if (loop)  return stamp(onMoveLoopRmbDown(e, vts), PenGesture.MoveLoop, btn);
         if (slide) return stamp(onCtrlLmbDown(e, vts),     PenGesture.Slide,    btn);
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         int src = findSourceVertex(e.x, e.y, vp);
 
         // Is this press on GEOMETRY at all? `||` short-circuits, so a press
@@ -4490,7 +4497,6 @@ public:
         // surface sits under its own pixel, yanking the element onto the
         // background just for being clicked. Below the threshold the set
         // stays exactly where it is.
-        enum int kMinDragPx = 3;
         immutable int dx = px - moveStartX_, dy = py - moveStartY_;
         if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return moveBase_.dup;
 
@@ -4672,8 +4678,7 @@ public:
         // `ResetScope.AllButtons` already fires `resetAllGestureArms()` via
         // `dispatchInput`'s `onInputResetAll()` hook before this handler runs.
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         int src = findSourceVertex(e.x, e.y, vp);
         // The press pick's vertex-slot veto (`pressVertexVetoed`) — the same
         // one `resolveGrabTarget` runs, at the pen's other vertex-then-edge
@@ -4769,8 +4774,7 @@ public:
     // that lands on a polygon still removes exactly that polygon.
     private bool removeDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts,
                             bool loop) {
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         int idx;
         final switch (resolveGrabTarget(e.x, e.y, vp, idx)) {
         case MoveElem.Vertex: removeVertexAt(idx);      break;
@@ -5302,8 +5306,7 @@ public:
         slideDecline_     = SlideDecline.NoEdge;
         slideDeclineSeed_ = -1;
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         int seed = findRingSeedEdge(e.x, e.y, vp);
         if (seed < 0) return false;
 
@@ -5353,8 +5356,7 @@ public:
         addLoopSeed_  = -1;
         addLoopArmed_ = false;
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         int seed = findRingSeedEdge(e.x, e.y, vp);
         if (seed < 0) return false;
 
@@ -5396,8 +5398,7 @@ public:
         splitSourceVert_ = -1;
         splitTargetVert_ = -1;
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         int src = findSourceVertex(e.x, e.y, vp);
         if (src < 0) return false;   // no vertex under the cursor -> no documented gesture
 
@@ -5465,8 +5466,7 @@ public:
         moveLoopSeed_  = -1;
         moveLoopVerts_ = null;
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         int seed = findRingSeedEdge(e.x, e.y, vp);
         if (seed < 0) return false;   // no edge under the cursor -> no documented gesture
 
@@ -5527,8 +5527,7 @@ public:
         dupLoopSeed_  = -1;
         dupLoopEdges_ = null;
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         int seed = findRingSeedEdge(e.x, e.y, vp);
         if (seed < 0) return false;   // no edge under the cursor -> no documented gesture
 
@@ -5586,8 +5585,7 @@ public:
         smoothLoopSeed_  = -1;
         smoothLoopVerts_ = null;
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         int seed = findRingSeedEdge(e.x, e.y, vp);
         if (seed < 0) return false;   // no edge under the cursor -> no documented gesture
 
@@ -5906,8 +5904,7 @@ public:
             // verbatim (go to the release event's CONS-snapped hit), so
             // where a vertex move lands is unchanged; edges and faces take
             // the shared screen-delta law.
-            Viewport vp;
-            if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+            Viewport vp = viewportOf(vts);
             finishMove(e.x, e.y, vp, vts);
             return true;
         }
@@ -5948,7 +5945,6 @@ public:
         // A release back at (near enough) the press pixel is a stationary
         // click on the source vertex, not a drag — capture-confirmed no-op
         // (a near-zero-displacement Move), never a build.
-        enum int kMinDragPx = 3;
         int dx = e.x - startX, dy = e.y - startY;
         if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
 
@@ -5984,12 +5980,10 @@ public:
         // enough) the press pixel is a click without a real drag — an
         // explicit, clean no-op (no vertex write, no undo entry), mirroring
         // P3's own `kMinDragPx` guard.
-        enum int kMinDragPx = 3;
         int dx = e.x - startX, dy = e.y - startY;
         if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         commitSlide(seed, eA, eB, nA, nB, slideDeltaFromDrag(e.x, e.y, vp));
         slideDeltaK_ = 0.0f;
         return true;
@@ -6034,8 +6028,7 @@ public:
         int a = splitSourceVert_;
         splitArmed_      = false;
         splitSourceVert_ = -1;
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         int c = resolveSnapTargetVert(e.x, e.y, vp);
         splitTargetVert_ = -1;
         if (c >= 0) commitSplit(a, c);
@@ -6076,8 +6069,7 @@ public:
         int seed = addLoopSeed_;
         addLoopSeed_  = -1;
         addLoopArmed_ = false;
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         float r = addLoopFrac(ratioFromCursor(e.x, e.y, vp));
         commitAddLoop(cast(uint)seed, r);
         return true;
@@ -6096,12 +6088,10 @@ public:
         moveLoopVerts_ = null;
         moveLoopSeed_  = -1;
 
-        enum int kMinDragPx = 3;   // mirrors P3/P7's own click-vs-drag gate
         int dx = e.x - sx, dy = e.y - sy;
         if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         commitMoveLoop(verts, perVertexTargets(verts, dx, dy, vp), vp);
         return true;
     }
@@ -6123,12 +6113,10 @@ public:
         dupLoopEdges_ = null;
         dupLoopSeed_  = -1;
 
-        enum int kMinDragPx = 3;   // mirrors every other gesture's click-vs-drag gate
         int dx = e.x - sx, dy = e.y - sy;
         if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         commitDupLoop(edges, dx, dy, vp);
         return true;
     }
@@ -6145,13 +6133,11 @@ public:
         dupEdgeSeed_  = -1;
         dupEdgeEdges_ = null;
 
-        enum int kMinDragPx = 3;   // mirrors every other gesture's click-vs-drag gate
         immutable int dx = e.x - sx, dy = e.y - sy;
         if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
         if (edges.length == 0) return true;
 
-        Viewport vp;
-        if (auto s = vts.get!SubjectPacket()) vp = s.viewport;
+        Viewport vp = viewportOf(vts);
         // `buildEditFactory_` — this IS the Shift+LMB Duplicate/build slot,
         // so the entry carries that slot's own wire name, never the loop
         // gesture's (the OBJ-3/D4 discipline every commit path here follows).
