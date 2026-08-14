@@ -17,6 +17,7 @@ module tests.unit.mesh_ops.bevel_test;
 
 import mesh;
 import math;
+import tests.unit.fixtures;
 
 // ===========================================================================
 // Module unittests. Moved VERBATIM from mesh.d, where they lived until the
@@ -181,13 +182,6 @@ unittest { // S4/S5 companion — BOTH sources hidden: the chamfer strip must
 unittest {
     import std.math : abs, sqrt;
 
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     bool[] edgeMask(ref Mesh m, uint a, uint b) {
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         int ei = findEdge(m, a, b);
@@ -340,13 +334,6 @@ unittest { // Case A: vertex/face counts stay flat across the clamp
            // threshold, at both Round Level 0 and 1.
     import std.conv : to;
 
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     bool[] edgeMask(ref Mesh m, uint a, uint b) {
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         int ei = findEdge(m, a, b);
@@ -377,13 +364,6 @@ unittest { // Case A: saturation — w=1.0 and w=1.4 land every slide corner
            // on the SAME position (each has already reached its own
            // farLen at w=1.0), so the two vertex arrays are bit-identical.
     import std.conv : to;
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     bool[] edgeMask(ref Mesh m, uint a, uint b) {
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         int ei = findEdge(m, a, b);
@@ -405,13 +385,6 @@ unittest { // Case A: no weld against the original mesh — at w >= 1.0, each
            // separate INDEX (10 vertex records, not 9-or-fewer). Below
            // threshold there is no coincidence at all.
     import std.conv : to;
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     bool[] edgeMask(ref Mesh m, uint a, uint b) {
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         int ei = findEdge(m, a, b);
@@ -463,13 +436,6 @@ unittest { // Case B (task 0436, clamp_findings.md main pass): a 3-edge chain
         m.addFace([3u, 0u, 4u, 7u]);
         m.buildLoops();
         return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
     }
     bool[] chainMask(ref Mesh m) {
         bool[] mask; mask.length = m.edges.length; mask[] = false;
@@ -559,13 +525,6 @@ unittest { // Case C (task 0436, clamp_findings.md follow-up pass): two
            // pairwise to 2 distinct points.
     import std.conv : to;
 
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     bool[] twoTopEdgeMask(ref Mesh m) {
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         foreach (pair; [[4u, 5u], [6u, 7u]]) {
@@ -658,13 +617,6 @@ unittest { // Case D (task 0436, clamp_findings.md follow-up pass):
         }
         mm.buildLoops();
         return mm;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
     }
     int countNear(ref Mesh m, Vec3 p, double tol = 1e-4) {
         int n = 0;
@@ -1108,13 +1060,6 @@ unittest { // bevelEdgesByMask: LOOP cap manifold-cleanliness backstop
            // (task 0391 Phase 1) — the 4-edge top-face-perimeter loop.
     auto m = makeCube();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     // The +Z face's own perimeter in makeCube()'s vertex numbering (verts
     // 4,5,6,7 all sit at z=0.5) — structurally the same "one face's own
     // 4-edge boundary, every corner a K==2 loop turn" shape as the public
@@ -1140,13 +1085,6 @@ unittest { // bevelEdgesByMask: 3-WAY JUNCTION cap manifold-cleanliness
            // bare-end pentagons in the SAME case).
     auto m = makeCube();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     // Corner 6=(0.5,0.5,0.5); its 3 edges go to 5=(0.5,0.5,-0.5),
     // 2=(0.5,-0.5,0.5), 7=(-0.5,0.5,0.5).
     foreach (pair; [[6u,5u], [6u,2u], [6u,7u]]) {
@@ -1329,13 +1267,6 @@ unittest { // bevelEdgesByMask: K=2 miter round profile GOLDEN — a 2-edge
            //   • the shared-vertex HUB arc (unequal-radius miter hub);
            //   • the two BARE-END arcs (each a plain K1 corner fillet).
     import std.math : SQRT1_2;
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     auto m = makeCube();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (pair; [[6u,7u], [2u,6u]]) {
@@ -1417,13 +1348,6 @@ unittest { // bevelEdgesByMask: K=2 loop rails are shared at L1 and L2.
            // Rail POSITIONS follow the reference-captured miter law (verified
            // bit-exact on the 2-edge K2 golden above); this 4-turn loop case
            // asserts the shared-rail TOPOLOGY/manifoldness only.
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     foreach (level; [1, 2]) {
         auto m = makeCube();
         bool[] mask; mask.length = m.edges.length; mask[] = false;
@@ -1468,13 +1392,6 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, matches the reference at
            // captured (no level-3 corner dump exists), so the L3 block stays
            // kernel-frozen — a regression guard only — until one is captured.
     import std.math : SQRT1_2;
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     foreach (level; [1, 2, 3]) {
         auto m = makeCube();
         bool[] mask; mask.length = m.edges.length; mask[] = false;
@@ -1700,13 +1617,6 @@ unittest { // bevelEdgesByMask: DEGENERATE ("parallel-edge") K3 hub — the shap
            // becomes one flat n-gon (a hexagon at L1, a 12-gon at L2) bounded by
            // the still-rounded arcs. Both outcomes are defensible; picking one is
            // 0707's job, not this test's.
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     static Mesh parallelEdgeHub() {
         auto mm = makeCube();
         // v7 = (-0.5, 0.5, 0.5) -> onto the ray 6→5. Both offsets are exact
@@ -2030,13 +1940,6 @@ unittest { // bevelEdgesByMask: K=3 junction Round Level 0 — the flat N-gon
            // this is a PARITY guard — assertFacesMatchByPosition canonicalises
            // by position+connectivity, letting the reference's own vertex
            // ordering substitute directly.
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     auto m = makeCube();
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (pair; [[6u,5u], [6u,2u], [6u,7u]]) {
@@ -2160,13 +2063,6 @@ unittest { // bevelEdgesByMask: open-boundary "chain3" (task 0443 freeze) —
            // directly. This makes each level a PARITY guard, not merely a
            // regression guard on our own output.
     import std.conv : to;
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     immutable Vec3[8] baseVerts = [
         Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,-0.5f),
         Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f), Vec3(0.5f,0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
@@ -2277,13 +2173,6 @@ unittest { // bevelEdgesByMask: open-boundary "oneend" (task 0443 freeze) —
            // directly. This makes each level a PARITY guard, not merely a
            // regression guard on our own output.
     import std.conv : to;
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     immutable Vec3[8] baseVerts = [
         Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,-0.5f),
         Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f), Vec3(0.5f,0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
@@ -2382,13 +2271,6 @@ unittest { // bevelEdgesByMask: open-boundary "interior" (task 0443 freeze) —
            // directly. This makes each level a PARITY guard, not merely a
            // regression guard on our own output.
     import std.conv : to;
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     immutable Vec3[8] baseVerts = [
         Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,-0.5f),
         Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f), Vec3(0.5f,0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
@@ -2488,13 +2370,6 @@ unittest { // bevelEdgesByMask: open-boundary "rimedge" (task 0443 freeze) —
            // directly. This makes each level a PARITY guard, not merely a
            // regression guard on our own output.
     import std.conv : to;
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     immutable Vec3[8] baseVerts = [
         Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,-0.5f),
         Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f), Vec3(0.5f,0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
@@ -2588,13 +2463,6 @@ unittest { // bevelEdgesByMask: open-boundary "bothends" (task 0443 freeze) —
            // directly. This makes each level a PARITY guard, not merely a
            // regression guard on our own output.
     import std.conv : to;
-    static int findEdge(ref Mesh mm, uint va, uint vb) {
-        foreach (i; 0 .. mm.edges.length) {
-            uint a = mm.edges[i][0], b = mm.edges[i][1];
-            if ((a == va && b == vb) || (a == vb && b == va)) return cast(int)i;
-        }
-        return -1;
-    }
     immutable Vec3[8] baseVerts = [
         Vec3(-0.5f,-0.5f,-0.5f), Vec3(-0.5f,-0.5f,0.5f), Vec3(-0.5f,0.5f,0.5f), Vec3(-0.5f,0.5f,-0.5f),
         Vec3(0.5f,-0.5f,-0.5f), Vec3(0.5f,0.5f,-0.5f), Vec3(0.5f,0.5f,0.5f), Vec3(0.5f,-0.5f,0.5f),
@@ -4837,26 +4705,6 @@ unittest { // bevelEdgesByMask: explicit L0 golden for an isolated cube edge.
 
 unittest { // golden test 1: disk N=4, hub-R0 selected -> triangle cap.
     import std.math : cos, sin, PI;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     auto m = makeDisk(4);
     // Reference-verified law (task0439_A2_freeend_v4fan_L0): every slide
     // vertex is `source + width*normalize(neighbor - source)` — the SAME
@@ -4893,26 +4741,6 @@ unittest { // golden test 1: disk N=4, hub-R0 selected -> triangle cap.
 
 unittest { // golden test 2: disk N=5, hub-R0 selected -> quad cap.
     import std.math : cos, sin, PI;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     auto m = makeDisk(5);
     immutable Vec3[] orig = m.vertices.dup;
     Vec3 slide(int from, int to) {
@@ -4941,26 +4769,6 @@ unittest { // golden test 2: disk N=5, hub-R0 selected -> quad cap.
 
 unittest { // golden test 3: disk N=6, hub-R0 selected -> pentagon cap.
     import std.math : cos, sin, PI;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     auto m = makeDisk(6);
     immutable Vec3[] orig = m.vertices.dup;
     Vec3 slide(int from, int to) {
@@ -4989,26 +4797,6 @@ unittest { // golden test 3: disk N=6, hub-R0 selected -> pentagon cap.
 
 unittest { // golden test 4: disk N=5, hub-R0 + hub-R2 (gap 1/2) -> triangle cap.
     import std.math : cos, sin, PI;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     auto m = makeDisk(5);
     immutable Vec3[] orig = m.vertices.dup;
     Vec3 slide(int from, int to) {
@@ -5050,26 +4838,6 @@ unittest { // golden test 5: disk N=6, hub-R0 + hub-R2 (gap 1/3) -> quad cap,
            // (hub-R4) that the old preflight's active/inactive distinction
            // used to single out and reject on.
     import std.math : cos, sin, PI;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     auto m = makeDisk(6);
     immutable Vec3[] orig = m.vertices.dup;
     Vec3 slide(int from, int to) {
@@ -5122,26 +4890,6 @@ unittest { // F1a: K=1 free end at Round Level, disk N=5 (valence 5), L1-L3.
            // itself leaves the K=1 cap as ONE face with the arc woven in.
     import std.math : cos, sin, PI;
     import std.conv : to;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     static immutable Vec3[] v5L1Verts = [
         Vec3(0.30901700258255005f, 0.9510565400123596f, 0.0f),
         Vec3(-0.80901700258255f, 0.5877852439880371f, 0.0f),
@@ -5231,26 +4979,6 @@ unittest { // F1b: K=1 free end at Round Level, disk N=6 (valence 6), L1-L3.
            // Bit-exact vs reference at every level (task 0449 Замер 1).
     import std.math : cos, sin, PI;
     import std.conv : to;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     static immutable Vec3[] v6L1Verts = [
         Vec3(0.5f, 0.8660253882408142f, 0.0f), Vec3(-0.5f, 0.8660253882408142f, 0.0f),
         Vec3(-1.0f, 1.22464685e-16f, 0.0f), Vec3(-0.5f, -0.8660253882408142f, 0.0f),
@@ -5353,13 +5081,6 @@ unittest { // F1c: K=1 free end at Round Level, NON-PLANAR valence-4 "tent"
         m.syncSelection();
         return m;
     }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     static immutable Vec3[] tentL1Verts = [
         Vec3(6.12323426e-17f, 1.0f, -0.20000000298023224f),
         Vec3(-1.0f, 1.22464685e-16f, 0.15000000596046448f),
@@ -5448,26 +5169,6 @@ unittest { // F1d: F1's own regression bar EXTENDED to `MAX_ROUND_LEVEL`
            // must not blow past a bounded count or leave the mesh unsound
            // at the clamp boundary either.
     import std.math : cos, sin, PI;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     auto m = makeDisk(5);
     int ei = findEdge(m, 0, 1);
     assert(ei >= 0);
@@ -5502,26 +5203,6 @@ unittest { // F2: K=1 free end, valence-4 fan, PLANAR (all rim verts at
            // task — is asserted as a HARD requirement at every Round Level.
     import std.math : cos, sin, PI;
     import std.conv : to;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     // Reproduced reference cap ("Decision C"). Index 0 is the RETAINED raw
     // free-end vertex (0,0,0); the chamfer pinch lands on the same spot (a
     // coincident pair); the (-0.1,0,0) opposite-edge slide is the intended
@@ -5628,26 +5309,6 @@ unittest { // F3: K>=2 notch cap interior, disks N=5 gap(1,2) and N=6
            //     the KNOWN incompleteness exactly.
     import std.math : cos, sin, PI;
     import std.conv : to;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     bool everyVertexMatchesSomeReference(ref Mesh m, const Vec3[] refPositions) {
         foreach (v; m.vertices) {
             bool ok = false;
@@ -5956,26 +5617,6 @@ unittest { // F4: composition on a REAL user-shaped mesh — a K3 hub (K ==
 unittest { // smoke test 7 (extrapolated zone, no reference dump): disk N=7,
            // K=3 at slots 0/2/4 (gaps 1/1/2) -> quad cap.
     import std.math : cos, sin, PI;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     auto m = makeDisk(7);
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (pair; [[0u, 1u], [0u, 3u], [0u, 5u]]) {
@@ -5998,26 +5639,6 @@ unittest { // smoke test 8 (extrapolated zone, no reference dump): disk N=6,
            // which combines this same pattern with two more valence-4 K=1
            // free ends at its far endpoints).
     import std.math : cos, sin, PI;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     auto m = makeDisk(6);
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (pair; [[0u, 1u], [0u, 2u]]) {
@@ -6038,26 +5659,6 @@ unittest { // regression test 9: disk N=6, K=3 "every other" (hub-R0, hub-R2,
            // passed this shape through with no cap: ret=3, 12v/9f, χ=0).
            // Fixed to a triangle cap, χ=1, no non-manifold edge.
     import std.math : cos, sin, PI;
-    Mesh makeDisk(int N) {
-        Mesh m;
-        m.vertices ~= Vec3(0, 0, 0);
-        foreach (i; 0 .. N) {
-            immutable float a = 2.0f * PI * i / N;
-            m.vertices ~= Vec3(cos(a), sin(a), 0);
-        }
-        foreach (i; 0 .. N)
-            m.addFace([0u, cast(uint)(1 + i), cast(uint)(1 + (i + 1) % N)]);
-        m.buildLoops();
-        m.syncSelection();
-        return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
-    }
     auto m = makeDisk(6);
     bool[] mask; mask.length = m.edges.length; mask[] = false;
     foreach (pair; [[0u, 1u], [0u, 3u], [0u, 5u]]) {
@@ -6090,13 +5691,6 @@ unittest { // regression test 10: 3x3-quad grid (4x4 verts), L-turn selection
         m.buildLoops();
         m.syncSelection();
         return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
     }
     auto m = makeGrid(3, 3);
     uint idx(int r, int c) { return cast(uint)(r * 4 + c); }
@@ -6171,13 +5765,6 @@ unittest { // Round Level local-degrade tests 11-13 (was Decision D of task
         m.buildLoops();
         m.syncSelection();
         return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
     }
     // Premise: C (index 8) really is a closed-fan valence-4 vertex.
     {
@@ -6297,13 +5884,6 @@ unittest { // byte-stable reject test 14 (Decision A-5, doc/edge_bevel_freeend_c
         m.setFaceSubpatch(1, true);
         m.selectFace(1);
         return m;
-    }
-    int findEdge(ref Mesh m, uint a, uint b) {
-        foreach (i; 0 .. m.edges.length) {
-            uint x = m.edges[i][0], y = m.edges[i][1];
-            if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
-        }
-        return -1;
     }
     auto m = halfDisk();
     // Premise: the hub really does present an OPEN fan, and the selected
