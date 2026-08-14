@@ -823,6 +823,23 @@ class TopologyPenTool : Tool {
     /// there is not evidence the two are one setting.
     enum int kMinDragPx = 3;
 
+    /// The gate itself, applied to a release's screen delta from its press
+    /// pixel: `true` ⇒ this release was a CLICK and the gesture commits
+    /// nothing.
+    ///
+    /// Task 0705 gives the comparison the same single home wave 1 gave the
+    /// constant. It was written out six times — `buildUp`, `slideUp`,
+    /// `moveLoopUp`, `dupLoopUp`, `dupEdgeUp` and `perVertexTargets` — always
+    /// as the same squared, strictly-less-than test, and always under a
+    /// comment saying it "mirrors" one of the other five. Comparing squared
+    /// and strictly is the part that can silently drift; the six call sites
+    /// still differ in which start pixel they measure from and in what they
+    /// return, which is why THIS is the shared part and the release legs are
+    /// not otherwise merged.
+    private static bool releaseIsClick(int dx, int dy) {
+        return dx * dx + dy * dy < kMinDragPx * kMinDragPx;
+    }
+
 private:
     ConstrainHitPacket lastHit_;
     HoverTarget         lastTarget_;
@@ -4540,7 +4557,7 @@ public:
         // background just for being clicked. Below the threshold the set
         // stays exactly where it is.
         immutable int dx = px - moveStartX_, dy = py - moveStartY_;
-        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return moveBase_.dup;
+        if (releaseIsClick(dx, dy)) return moveBase_.dup;
 
         return perVertexTargetsFrom(moveBase_, dx, dy, vp);
     }
@@ -5988,7 +6005,7 @@ public:
         // click on the source vertex, not a drag — capture-confirmed no-op
         // (a near-zero-displacement Move), never a build.
         int dx = e.x - startX, dy = e.y - startY;
-        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+        if (releaseIsClick(dx, dy)) return true;
 
         if (!lastHit_.hit) return true;        // no surface hit at release -> nothing to build
         if (casee == BuildCase.None) return true;   // unsupported source state / one-shot ceiling
@@ -6023,7 +6040,7 @@ public:
         // explicit, clean no-op (no vertex write, no undo entry), mirroring
         // P3's own `kMinDragPx` guard.
         int dx = e.x - startX, dy = e.y - startY;
-        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+        if (releaseIsClick(dx, dy)) return true;
 
         Viewport vp = viewportOf(vts);
         commitSlide(seed, eA, eB, nA, nB, slideDeltaFromDrag(e.x, e.y, vp));
@@ -6131,7 +6148,7 @@ public:
         moveLoopSeed_  = -1;
 
         int dx = e.x - sx, dy = e.y - sy;
-        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+        if (releaseIsClick(dx, dy)) return true;
 
         Viewport vp = viewportOf(vts);
         commitMoveLoop(verts, perVertexTargets(verts, dx, dy, vp), vp);
@@ -6156,7 +6173,7 @@ public:
         dupLoopSeed_  = -1;
 
         int dx = e.x - sx, dy = e.y - sy;
-        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+        if (releaseIsClick(dx, dy)) return true;
 
         Viewport vp = viewportOf(vts);
         commitDupLoop(edges, dx, dy, vp);
@@ -6176,7 +6193,7 @@ public:
         dupEdgeEdges_ = null;
 
         immutable int dx = e.x - sx, dy = e.y - sy;
-        if (dx * dx + dy * dy < kMinDragPx * kMinDragPx) return true;
+        if (releaseIsClick(dx, dy)) return true;
         if (edges.length == 0) return true;
 
         Viewport vp = viewportOf(vts);
@@ -6225,19 +6242,28 @@ public:
     /// the matching press actually resolved to, per button (task 0487). Every
     /// leg guards on its own arm bool, so a press that resolved-but-declined
     /// lands here as a clean no-op.
+    ///
+    /// `final switch` since task 0705: this used to end in
+    /// `default: return lmbPlaceOrMoveUp(...)`, which is the RIGHT answer for
+    /// `PlaceOrMove` and a silently WRONG one for any gesture added later —
+    /// a new `PenGesture` would have armed at Down and then committed through
+    /// place-or-move's leg at Up, with nothing to say so. Spelling
+    /// `PlaceOrMove` out costs one line and makes the next member a compile
+    /// error here instead. Behaviour is unchanged: `PlaceOrMove` was the only
+    /// member the `default` arm could ever see.
     private bool penGestureUp(PenGesture g, ref const SDL_MouseButtonEvent e,
                               ref VectorStack vts) {
-        switch (g) {
-        case PenGesture.Build:      return buildUp(e, vts);
-        case PenGesture.Slide:      return slideUp(e, vts);
-        case PenGesture.Smooth:     return smoothUp(e, vts);
-        case PenGesture.Split:      return splitUp(e, vts);
-        case PenGesture.AddLoop:    return addLoopUp(e, vts);
-        case PenGesture.MoveLoop:   return moveLoopUp(e, vts);
-        case PenGesture.DupLoop:    return dupLoopUp(e, vts);
-        case PenGesture.SmoothLoop: return smoothLoopUp(e, vts);
-        case PenGesture.Remove:     return false;   // commits on DOWN (D2)
-        default:                    return lmbPlaceOrMoveUp(e, vts);
+        final switch (g) {
+        case PenGesture.Build:       return buildUp(e, vts);
+        case PenGesture.Slide:       return slideUp(e, vts);
+        case PenGesture.Smooth:      return smoothUp(e, vts);
+        case PenGesture.Split:       return splitUp(e, vts);
+        case PenGesture.AddLoop:     return addLoopUp(e, vts);
+        case PenGesture.MoveLoop:    return moveLoopUp(e, vts);
+        case PenGesture.DupLoop:     return dupLoopUp(e, vts);
+        case PenGesture.SmoothLoop:  return smoothLoopUp(e, vts);
+        case PenGesture.Remove:      return false;   // commits on DOWN (D2)
+        case PenGesture.PlaceOrMove: return lmbPlaceOrMoveUp(e, vts);
         }
     }
 
