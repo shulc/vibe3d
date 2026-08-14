@@ -411,6 +411,48 @@ struct Mesh {
         neighbors = _adjCsrNeighbors;
     }
 
+    // ---------------------------------------------------------------------------
+    // Task 0401 — negative/regression check: a TOPOLOGY-keyed cache must NOT
+    // rebuild on a position-only edit. vertexAdjacencyCSR keys purely on
+    // `mutationVersion` by design (topology never changed by a vertex move) —
+    // unlike the 3 caches this task fixes (subpatch preview / symmetry pairing /
+    // snap grid), which needed a Position-bus-driven invalidation ON TOP of
+    // their existing mutationVersion key. This test proves the fix did not
+    // widen — the version-silent noteChange(Position) contract stays exactly as
+    // silent to mutationVersion as before, so vertexAdjacencyCSR provably does
+    // not thrash on every gizmo drag frame.
+    // ---------------------------------------------------------------------------
+    unittest {
+        import change_bus : MeshEditScope;
+
+        Mesh m = makeCube();
+        const(size_t)[] offA;
+        const(uint)[]    nbA;
+        m.vertexAdjacencyCSR(offA, nbA);
+        ulong csrVerAfterBuild = m._adjCsrVer;
+        ulong mutVerBefore     = m.mutationVersion;
+
+        // Version-silent edit — exactly what an interactive gizmo drag/commit
+        // does: mutate a vertex, note the Position change class, never bump
+        // mutationVersion.
+        m.vertices[0] = m.vertices[0] + Vec3(0.5f, 0, 0);
+        m.noteChange(MeshEditScope.Position);
+        assert(m.mutationVersion == mutVerBefore,
+            "test setup must stay version-silent to mirror the gizmo path");
+
+        const(size_t)[] offB;
+        const(uint)[]    nbB;
+        m.vertexAdjacencyCSR(offB, nbB);
+        assert(m._adjCsrVer == csrVerAfterBuild,
+            "task 0401: a position-only edit must NOT force the adjacency CSR "
+            ~ "to rebuild — it stays topology-keyed by design and must be "
+            ~ "unaffected by the Position-bus invalidation this task adds to "
+            ~ "the subpatch preview / symmetry pairing / snap grid caches");
+        assert(offA is offB && nbA is nbB,
+            "no rebuild occurred ⇒ vertexAdjacencyCSR must hand back the "
+            ~ "exact same cached arrays, not freshly rebuilt ones");
+    }
+
     // --- Per-element marks (single source of truth) ----------------------
     // Bitfield per element folding the per-element flags into one word.
     // These marks arrays are the AUTHORITATIVE storage for per-element
@@ -694,6 +736,28 @@ struct Mesh {
         loopsState_   = DerivedState.DeliberatelyEmpty;
         edgeMapState_ = DerivedState.DeliberatelyEmpty;
     }
+
+    unittest {
+        // A preview-style wipe (subpatch_osd's contract): markDerivedEmpty()
+        // reads DeliberatelyEmpty, not Valid and not (bare) Stale.
+        auto m = makeCube();
+        m.markDerivedEmpty();
+        assert(!m.loopsValid(),    "trace: markDerivedEmpty must read loops NOT valid");
+        assert(!m.edgeMapUsable(), "trace: markDerivedEmpty must read edgeMap NOT usable");
+        assert(m.loopsState_   == Mesh.DerivedState.DeliberatelyEmpty);
+        assert(m.edgeMapState_ == Mesh.DerivedState.DeliberatelyEmpty);
+    }
+
+    unittest {
+        // A never-built mesh (fresh Mesh.init) must NOT read as valid by the
+        // `structVersion == loopsStamp == 0` coincidence — the enum state
+        // starts Stale precisely to guard this off-by-one.
+        Mesh m;
+        assert(m.structVersion == 0 && m.loopsStamp == 0,
+            "trace: fresh Mesh.init sanity — both stamps start at 0");
+        assert(!m.loopsValid(),    "trace: fresh Mesh.init must NOT read loopsValid");
+        assert(!m.edgeMapUsable(), "trace: fresh Mesh.init must NOT read edgeMapUsable");
+    }
     /// Debug-only (stripped from release builds — byte-stable): assert the
     /// loops family is valid at a provably-settled read entry point. See
     /// call sites for the settledness proof; never place in a mid-op reader.
@@ -757,6 +821,143 @@ struct Mesh {
     void noteSelectionChange(SelDomain domain) {
         pendingChanges_     |= MeshEditScope.Marks;
         pendingSelDomains_  |= cast(uint)domain;
+    }
+
+    unittest { // noteSelectionChange / marks-setter accumulation (change-bus Stage 5)
+        import change_bus : SelDomain;
+        import mesh_edit_delta : MeshEditScope;
+
+        // Single setters accumulate Marks + the matching domain bit, and stay
+        // version-stable (selection is not a version-bumping geometry change).
+        {
+            Mesh m = makeCube();
+            m.resetSelection();
+            m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+            const ver0 = m.mutationVersion;
+            const top0 = m.topologyVersion;
+
+            m.selectVertex(0);
+            assert(m.pendingChanges_ & MeshEditScope.Marks, "selectVertex notes Marks");
+            assert(m.pendingSelDomains_ & SelDomain.Vertex, "selectVertex notes Vertex domain");
+
+            m.selectEdge(0);
+            assert(m.pendingSelDomains_ & SelDomain.Edge, "selectEdge notes Edge domain");
+
+            m.selectFace(0);
+            assert(m.pendingSelDomains_ & SelDomain.Face, "selectFace notes Face domain");
+
+            // All three domains accumulate (OR), and NO version bump occurred —
+            // marks setters must remain version-stable.
+            assert(m.pendingSelDomains_ ==
+                (SelDomain.Vertex | SelDomain.Edge | SelDomain.Face),
+                "domains OR-accumulate");
+            assert(m.mutationVersion == ver0, "selection must NOT bump mutationVersion");
+            assert(m.topologyVersion == top0, "selection must NOT bump topologyVersion");
+        }
+
+        // Bulk setXSelectedFrom compares-before-set: a no-op re-apply of the SAME
+        // selection does not publish; a real change does.
+        {
+            Mesh m = makeCube();
+            m.resetSelection();
+            m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+            bool[] sel; sel.length = m.vertices.length;
+            sel[2] = true;
+
+            m.setVerticesSelectedFrom(sel);           // real change
+            assert(m.pendingSelDomains_ & SelDomain.Vertex, "first apply publishes");
+
+            m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+            m.setVerticesSelectedFrom(sel);           // identical re-apply: no-op
+            assert(m.pendingSelDomains_ == 0,
+                "re-applying identical selection must NOT publish");
+            assert((m.pendingChanges_ & MeshEditScope.Marks) == 0,
+                "no-op restore must NOT note Marks");
+
+            sel[2] = false; sel[5] = true;            // actual change
+            m.setVerticesSelectedFrom(sel);
+            assert(m.pendingSelDomains_ & SelDomain.Vertex,
+                "a real selection change publishes again");
+        }
+
+        // Bulk setXSelectedFrom restores the "deselected => order==0" invariant
+        // for elements it deselects, matching the per-element select*/deselect*
+        // setters. Establishes rank via the per-element path FIRST (so the
+        // deselected element carries a real nonzero order, unlike the no-op
+        // test above where index 2's order was already 0 from init) then
+        // bulk-deselects it and checks: (a) its order is zeroed, (b) the
+        // surviving element's rank is untouched, and (c) the order-counter
+        // itself is untouched by the bulk call (proving rank monotonicity
+        // isn't reset — a later per-element select continues from the prior
+        // high-water mark rather than restarting).
+        {
+            Mesh m = makeCube();
+            m.resetSelection();
+
+            m.selectFace(0);
+            m.selectFace(1);
+            assert(m.faceSelectionOrder[0] == 1, "face 0 gets rank 1");
+            assert(m.faceSelectionOrder[1] == 2, "face 1 gets rank 2");
+            assert(m.faceSelectionOrderCounter == 2, "counter at 2 after two selects");
+
+            bool[] fsel; fsel.length = m.faces.length;
+            fsel[0] = true;                            // keep face 0, drop face 1
+            m.setFacesSelectedFrom(fsel);
+
+            assert(m.faceSelectionOrder[1] == 0,
+                "bulk-deselected face's order is zeroed (the invariant)");
+            assert(m.faceSelectionOrder[0] == 1,
+                "surviving face keeps its rank");
+            assert(m.selectedFaces[0] == true && m.selectedFaces[1] == false,
+                "marks reflect the bulk apply");
+            assert(m.faceSelectionOrderCounter == 2,
+                "bulk deselect must NOT touch the order counter");
+
+            m.selectFace(2);
+            assert(m.faceSelectionOrder[2] == 3,
+                "next per-element select continues the rank sequence (counter wasn't reset)");
+            assert(m.faceSelectionOrderCounter == 3);
+
+            // Mirror for the other two domains (vertex + edge) so all three
+            // bulk setters are covered directly.
+            m.selectVertex(0);
+            m.selectVertex(1);
+            assert(m.vertexSelectionOrder[0] == 1 && m.vertexSelectionOrder[1] == 2);
+            assert(m.vertexSelectionOrderCounter == 2);
+            bool[] vsel; vsel.length = m.vertices.length;
+            vsel[0] = true;
+            m.setVerticesSelectedFrom(vsel);
+            assert(m.vertexSelectionOrder[1] == 0, "bulk-deselected vertex order zeroed");
+            assert(m.vertexSelectionOrder[0] == 1, "surviving vertex keeps rank");
+            assert(m.vertexSelectionOrderCounter == 2, "vertex counter untouched by bulk deselect");
+
+            m.selectEdge(0);
+            m.selectEdge(1);
+            assert(m.edgeSelectionOrder[0] == 1 && m.edgeSelectionOrder[1] == 2);
+            assert(m.edgeSelectionOrderCounter == 2);
+            bool[] esel; esel.length = m.edges.length;
+            esel[0] = true;
+            m.setEdgesSelectedFrom(esel);
+            assert(m.edgeSelectionOrder[1] == 0, "bulk-deselected edge order zeroed");
+            assert(m.edgeSelectionOrder[0] == 1, "surviving edge keeps rank");
+            assert(m.edgeSelectionOrderCounter == 2, "edge counter untouched by bulk deselect");
+        }
+
+        // clear* compares-before-set: clearing an already-empty selection is inert.
+        {
+            Mesh m = makeCube();
+            m.resetSelection();
+            m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+            m.clearFaceSelection();                   // nothing selected → inert
+            assert(m.pendingSelDomains_ == 0,
+                "clearing empty face selection must NOT publish");
+
+            m.selectFace(1);
+            m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
+            m.clearFaceSelection();                   // drops a live selection
+            assert(m.pendingSelDomains_ & SelDomain.Face,
+                "clearing a live face selection publishes Face");
+        }
     }
 
     // --- Mesh maps (generic per-element float attribute channels) ----------
@@ -1391,6 +1592,99 @@ struct Mesh {
         return welded;
     }
 
+    unittest { // the EDGE-grab cell: two pairs, welded independently, in ONE call
+        import std.conv : to;
+        import std.math : abs;
+        Mesh m = makeWeldPairStrip();
+        assert(m.vertices.length == 6 && m.edges.length == 7 && m.faces.length == 2,
+            "strip rig: expected V=6 E=7 F=2, got V=" ~ m.vertices.length.to!string
+            ~ " E=" ~ m.edges.length.to!string ~ " F=" ~ m.faces.length.to!string);
+
+        // Drag the middle edge 1-4 onto the right edge 2-5: vertex 1 is absorbed
+        // by 2 and vertex 4 by 5, each into its OWN target. This is the measured
+        // delta (task 0545): dV -2, dE -3, dF -1.
+        uint[2][] pairs = [[2u, 1u], [5u, 4u]];
+        assert(m.weldVertexPairs(pairs) == 2,
+            "both endpoints must be absorbed, independently — one call, two welds");
+
+        assert(m.vertices.length == 4,
+            "edge-grab weld: expected V=4 (dV -2), got " ~ m.vertices.length.to!string);
+        assert(m.edges.length == 4,
+            "edge-grab weld: expected E=4 (dE -3), got " ~ m.edges.length.to!string);
+        assert(m.faces.length == 1,
+            "edge-grab weld: expected F=1 (dF -1) — the quad the grabbed edge was "
+            ~ "dragged across collapses; got " ~ m.faces.length.to!string);
+
+        // The survivors sit where the TARGETS were, never at a midpoint: the grab
+        // is absorbed INTO the target, the target does not move to meet it.
+        bool at10 = false, at11 = false;
+        foreach (v; m.vertices) {
+            if (abs(v.x - 1.0f) < 1e-6f && abs(v.y)        < 1e-6f) at10 = true;
+            if (abs(v.x - 1.0f) < 1e-6f && abs(v.y - 1.0f) < 1e-6f) at11 = true;
+        }
+        assert(at10 && at11, "both weld targets must survive at their own positions");
+        foreach (v; m.vertices)
+            assert(abs(v.x) > 1e-6f,
+                "no survivor may sit at x=0 — that is where the absorbed grab was");
+    }
+
+    unittest { // the VERTEX-grab cell: one pair, and BOTH quads become triangles
+        import std.conv : to;
+        Mesh m = makeWeldPairStrip();
+        uint[2][] pairs = [[4u, 1u]];      // vertex 1 dragged onto vertex 4
+        assert(m.weldVertexPairs(pairs) == 1, "the single grab must be absorbed");
+        assert(m.vertices.length == 5,
+            "vertex-grab weld: expected V=5 (dV -1), got " ~ m.vertices.length.to!string);
+        assert(m.faces.length == 2,
+            "vertex-grab weld: both faces survive, got " ~ m.faces.length.to!string);
+        foreach (i, ref f; m.faces)
+            assert(f.length == 3,
+                "vertex-grab weld: face " ~ i.to!string ~ " must be a TRIANGLE (the "
+                ~ "measured 'two quads become triangles'), got length " ~ f.length.to!string);
+    }
+
+    unittest { // a CHAIN is refused whole, not silently followed one link deep
+        import std.conv : to;
+        Mesh m = makeWeldPairStrip();
+        // [4,1] absorbs 1 into 4 while [1,0] absorbs 0 into 1 — vertex 1 is both a
+        // target and a casualty. BOTH links are refused rather than one being
+        // applied and the other left pointing at a dead vertex: the rewrite reads
+        // the remap once per corner and does not chase, so a surviving link would
+        // be silent corruption. Order-independent by construction.
+        uint[2][] pairs = [[4u, 1u], [1u, 0u]];
+        immutable size_t welded = m.weldVertexPairs(pairs);
+        assert(welded == 0,
+            "a chain must be refused whole — expected 0 welds, got " ~ welded.to!string);
+        assert(m.vertices.length == 6 && m.faces.length == 2,
+            "chain reject: the mesh must be untouched, got V="
+            ~ m.vertices.length.to!string ~ " F=" ~ m.faces.length.to!string);
+    }
+
+    unittest { // non-adjacent same-face pairs are refused, exactly as weldVertexPair
+        import std.conv : to;
+        Mesh m = makeWeldPairStrip();
+        // 0 and 4 are the diagonal of F0 = [0,1,4,3] — welding them would leave a
+        // self-touching polygon.
+        uint[2][] pairs = [[4u, 0u]];
+        assert(m.weldVertexPairs(pairs) == 0,
+            "a non-adjacent same-face pair must be refused");
+        assert(m.vertices.length == 6 && m.faces.length == 2,
+            "non-adjacent reject: the mesh must be untouched, got V="
+            ~ m.vertices.length.to!string ~ " F=" ~ m.faces.length.to!string);
+    }
+
+
+
+    unittest { // one vertex cannot be absorbed twice; the first pair wins
+        import std.conv : to;
+        Mesh m = makeWeldPairStrip();
+        uint[2][] pairs = [[4u, 1u], [2u, 1u]];
+        assert(m.weldVertexPairs(pairs) == 1,
+            "a second claim on the same drop must be refused — expected 1 weld");
+        assert(m.vertices.length == 5,
+            "double-absorb reject: expected V=5, got " ~ m.vertices.length.to!string);
+    }
+
     /// Inverse of weldVerticesByMask: unweld each masked vertex so every
     /// incident face gets its own coincident copy. The vertex is kept in
     /// its lowest-indexed incident face; every later incident face (in
@@ -1952,6 +2246,110 @@ struct Mesh {
         // Geometry-class: coincident verts merged, faces/edges rebuilt.
         commitChange(MeshEditScope.Geometry);
         return welded;
+    }
+
+    unittest { // spatial-hash rewrite reproduces the naive remap exactly, incl.
+        // cell-boundary crossings and the non-transitive chaining quirk.
+        //
+        // Layout (eps = 0.1, epsSq = 0.01, cellSize = 0.1):
+        //   0,1: far anchors (A,B) — never welded, used to recover each cluster
+        //        vertex's applied remap target via its face's 3rd corner.
+        //   2:   v0 = (0,0,0)            — representative of a 3-cluster
+        //   3:   v1 = (0.02,0,0)         — welds to v0 (dist 0.02 < eps)
+        //   4:   v2 = (0.05,0,0)         — welds to v0 (dist 0.05 < eps)
+        //   5:   b0 = (5.099,0,0)        — cell 50; welds b1 (adjacent-cell pair)
+        //   6:   b1 = (5.101,0,0)        — cell 51; dist to b0 = 0.002 < eps
+        //   7:   f0 = (20,0,0)           — independent (dist to f1 = 0.5 > eps)
+        //   8:   f1 = (20.5,0,0)         — independent
+        //   9:   P  = (50,0,0)           — claims Q; NOT within eps of R
+        //   10:  Q  = (50.06,0,0)        — welds to P (dist 0.06 < eps)
+        //   11:  R  = (50.12,0,0)        — dist to Q = 0.06 < eps, dist to P =
+        //        0.12 >= eps; since Q is claimed (not a representative) by the
+        //        time R is considered, R must stay UNWELDED — non-transitive.
+        import std.conv : to;
+        Mesh m;
+        m.vertices = [
+            Vec3(1000, 1000, 1000),   // 0: anchor A
+            Vec3(1000, 1000, 1001),   // 1: anchor B
+            Vec3(0, 0, 0),            // 2: v0
+            Vec3(0.02f, 0, 0),        // 3: v1
+            Vec3(0.05f, 0, 0),        // 4: v2
+            Vec3(5.099f, 0, 0),       // 5: b0
+            Vec3(5.101f, 0, 0),       // 6: b1
+            Vec3(20, 0, 0),           // 7: f0
+            Vec3(20.5f, 0, 0),        // 8: f1
+            Vec3(50, 0, 0),           // 9: P
+            Vec3(50.06f, 0, 0),       // 10: Q
+            Vec3(50.12f, 0, 0),       // 11: R
+        ];
+        // One triangle per cluster vertex: [A, B, v]. A and B are never welded
+        // and never coincide with any cluster vertex or each other, so the 3rd
+        // corner after weld directly reveals remap[v] (no corner-collapse can
+        // touch a 3-distinct-corner face).
+        foreach (k; 2 .. m.vertices.length)
+            m.faces ~= [0u, 1u, cast(uint)k];
+        m.rebuildEdgesFromFaces();
+        m.buildLoops();
+        m.resetSelection();
+
+        immutable double epsSq = 0.01; // eps = 0.1
+
+        // Reference remap via the naive O(V²) scan, computed BEFORE any mutation.
+        int[] refRemap = naiveWeldRemap_(m.vertices, epsSq, 0);
+        int[] expected = [0,1, 2,2,2, 5,5, 7,8, 9,9,11];
+        assert(refRemap == expected,
+            "naive reference remap sanity check failed: " ~ refRemap.to!string
+            ~ " vs " ~ expected.to!string);
+
+        size_t refWelded = 0;
+        foreach (i, r; refRemap) if (r != cast(int)i) ++refWelded;
+
+        size_t welded = m.weldCoincidentVertices(epsSq);
+        assert(welded == refWelded,
+            "spatial-hash weld count must match naive: got " ~ uintToStr(welded)
+            ~ " vs " ~ uintToStr(refWelded));
+        assert(m.vertices.length == 12, "weldCoincidentVertices must not touch vertices[]");
+        assert(m.faces.length == 10, "no face should be dropped (all corners stay distinct)");
+
+        // Recover the APPLIED remap from each face's 3rd corner and compare to
+        // the naive reference element-by-element — this catches a wrong
+        // representative choice even when the welded COUNT happens to match.
+        foreach (fi, ref f; m.faces) {
+            uint origV = cast(uint)(fi + 2);
+            uint appliedTarget = f[2];
+            uint expectedTarget = cast(uint)refRemap[origV];
+            assert(appliedTarget == expectedTarget,
+                "face for orig vertex " ~ origV.to!string ~ ": applied remap target "
+                ~ appliedTarget.to!string ~ " != naive " ~ expectedTarget.to!string);
+        }
+    }
+
+    unittest { // protectBelow: both-below pair must NOT weld; below/above pair must
+        Mesh m;
+        m.vertices = [
+            Vec3(0, 0, 0),   // 0: below protectBelow
+            Vec3(0, 0, 0),   // 1: below protectBelow, coincident with 0
+            Vec3(0, 0, 0),   // 2: at/above protectBelow, coincident with 0 and 1
+        ];
+        m.faces = [[0u, 1u, 2u]];  // degenerate on purpose; weld doesn't care about area
+        m.rebuildEdgesFromFaces();
+        m.buildLoops();
+        m.resetSelection();
+
+        immutable double epsSq = 0.01;
+        immutable size_t protectBelow = 2;
+
+        int[] refRemap = naiveWeldRemap_(m.vertices, epsSq, protectBelow);
+        // 0,1 both < protectBelow → skip. 0,2: 0<protectBelow but 2>=protectBelow → eligible → weld.
+        assert(refRemap == [0, 1, 0],
+            "reference: vert 1 stays independent (protected pair), vert 2 welds to 0");
+
+        size_t refWelded = 0;
+        foreach (i, r; refRemap) if (r != cast(int)i) ++refWelded;
+
+        size_t welded = m.weldCoincidentVertices(epsSq, protectBelow);
+        assert(welded == refWelded, "protectBelow weld count must match naive reference");
+        assert(welded == 1, "exactly one weld (2→0) expected under protectBelow=2");
     }
 
     /// Applies a precomputed vertex remap (`remap[i]` = the surviving vertex
@@ -2536,6 +2934,66 @@ struct Mesh {
         // Geometry-class: verts dissolved out of faces, geometry rebuilt.
         commitChange(MeshEditScope.Geometry);
         return dissolved;
+    }
+
+    unittest { // dissolveVerticesByMask, BOTH keepOrphans arms
+        foreach (keepOrphans; [false, true]) {
+            Mesh m = makeGridWithLooseGeometry(2);
+            auto vmask = new bool[](m.vertices.length);
+            vmask[4] = true;                     // the grid's centre vertex
+            assert(m.dissolveVerticesByMask(vmask, keepOrphans) == 1, "setup");
+
+            assert(m.faces.length == 4, "the four quads reshaped to triangles");
+            assert(looseTestVertAt(m, kLoosePoint) >= 0,
+                "a pre-existing loose point is not this call's collateral, at either keepOrphans");
+            assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
+                "FAILS ON THE OLD BEHAVIOUR (both arms): keepOrphans only ever protected "
+              ~ "floating VERTICES; the rebuildEdges above it wiped floating EDGES regardless");
+        }
+    }
+
+    unittest { // keepOrphans:false still sweeps the orphans THIS call created
+        // The preservation is scoped to what was face-less BEFORE the call — it is
+        // not a blanket "never compact". Without this pin, a fix that simply
+        // pinned every vertex would pass every block above.
+        Mesh m;
+        foreach (p; [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0)]) m.addVertex(p);
+        m.addFace([0u, 1u, 2u]);
+        m.addVertex(kLoosePoint);
+        m.buildLoops();
+        m.syncSelection();
+
+        auto vmask = new bool[](m.vertices.length);
+        vmask[0] = true;                         // the triangle degenerates away
+        assert(m.dissolveVerticesByMask(vmask, /*keepOrphans*/false) == 1);
+        assert(m.faces.length == 0, "setup: the only face dropped below 3 corners");
+        assert(looseTestVertAt(m, Vec3(1, 0, 0)) < 0 && looseTestVertAt(m, Vec3(0, 1, 0)) < 0,
+            "verts THIS call orphaned still go — that is what keepOrphans:false means");
+        assert(looseTestVertAt(m, kLoosePoint) >= 0,
+            "…but the point that was already loose before the call is not its collateral");
+    }
+
+    unittest { // a wire the edit ITSELF consumed stays gone — no resurrection
+        // A wire hanging off the grid's centre vertex, which the dissolve then
+        // removes. Preservation restores UNRELATED geometry; it must not put back
+        // an edge whose endpoint the caller deliberately deleted.
+        Mesh m = makeGridPlane(2);
+        immutable uint tip = m.addVertex(Vec3(0, 5, 0));
+        m.addEdge(4, tip);                        // wire off the centre vertex
+        m.buildLoops();
+        m.syncSelection();
+        assert(looseTestHasWire(m, m.vertices[4], Vec3(0, 5, 0)), "fixture");
+        immutable Vec3 centre = m.vertices[4];
+
+        auto vmask = new bool[](m.vertices.length);
+        vmask[4] = true;
+        assert(m.dissolveVerticesByMask(vmask, /*keepOrphans*/true) == 1);
+
+        assert(looseTestVertAt(m, centre) < 0, "the masked vertex is gone");
+        assert(looseTestVertAt(m, Vec3(0, 5, 0)) >= 0,
+            "its far tip was already face-less, so it stays as a loose point");
+        assert(!looseTestHasWire(m, centre, Vec3(0, 5, 0)),
+            "but the wire itself cannot come back — one of its endpoints was deleted");
     }
 
     /// Dissolve every vertex that is incident to exactly 2 edges. Such
@@ -3192,6 +3650,46 @@ struct Mesh {
         // Geometry-class: edge dissolve merged faces, geometry rebuilt.
         commitChange(MeshEditScope.Geometry);
         return dissolved;
+    }
+
+    unittest { // removeEdgesByMask: one interior dissolve, loose geometry untouched
+        Mesh m = makeGridWithLooseGeometry(2);   // 3x3 verts / 4 quads + 3 loose verts
+        immutable size_t vBefore = m.vertices.length;
+
+        auto mask = new bool[](m.edges.length);
+        mask[m.edgeIndex(1, 4)] = true;          // an INTERIOR grid edge, nowhere near
+        assert(m.removeEdgesByMask(mask) == 1, "setup: the interior edge must dissolve");
+
+        assert(m.faces.length == 3, "the two quads either side merged into one");
+        assert(looseTestVertAt(m, kLoosePoint) >= 0,
+            "FAILS ON THE OLD BEHAVIOUR: the tail compactUnreferenced dropped every "
+          ~ "face-less vertex in the mesh, including this one 10 units away");
+        assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
+            "FAILS ON THE OLD BEHAVIOUR: the tail rebuildEdges re-derived edges[] from "
+          ~ "faces[] alone, so a bare wire edge anywhere in the mesh vanished");
+        assert(m.vertices.length == vBefore,
+            "the dissolve consumed no vertex, so none may go — not the grid's, not the loose ones");
+    }
+
+    unittest { // …and the same through the EDGE-REMOVE COMMAND's exact kernel pair
+        // `MeshRemove`/`MeshDelete` in Edges mode run removeEdgesByMask and then
+        // dissolveDegree2Verts over the touched region (commands/mesh/{remove,delete}.d).
+        // The second call is its own dissolve with its own mesh-wide tail, so the
+        // pair has to be pinned together — fixing only the first one leaves the
+        // shipped commands still wiping the wire.
+        Mesh m = makeGridWithLooseGeometry(2);
+
+        auto mask = new bool[](m.edges.length);
+        mask[m.edgeIndex(1, 4)] = true;
+        immutable size_t n = m.removeEdgesByMask(mask);
+        assert(n == 1, "setup");
+        m.dissolveDegree2Verts(m.edgeDeleteRegion(), /*keepOrphans*/true);
+
+        assert(looseTestVertAt(m, kLoosePoint) >= 0,
+            "the loose point must survive the command's SECOND dissolve too");
+        assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
+            "FAILS ON THE OLD BEHAVIOUR at dissolveVerticesByMask's own rebuildEdges: "
+          ~ "the wire survives the edge dissolve only to be wiped by the 2-valent cleanup");
     }
 
     // -----------------------------------------------------------------------
@@ -6774,6 +7272,23 @@ struct Mesh {
         return true;
     }
 
+    unittest { // boundaryContourInset degeneracy gate (task 0467 reviewer NIT):
+               // when e_b is PARALLEL to aveN the U-direction is undefined and
+               // safeNormalize would fabricate a bogus finite (0,1,0); the
+               // source-level |cross(e_b,aveN)| gate must reject it (return
+               // false) so the caller falls back — NOT return bogus geometry.
+        Vec3 res;
+        // e_b ∥ aveN (both along +Y, different magnitudes): must gate out.
+        assert(!Mesh.boundaryContourInset(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,2,0), 0.1f, res),
+            "e_b ∥ aveN must fall to the fallback (degenerate U)");
+        // Anti-parallel projection (G1-style D→0): D sums to ~zero, |D·U| gate.
+        assert(!Mesh.boundaryContourInset(Vec3(1,0,0), Vec3(-1,0,0), Vec3(0,0,1), 0.1f, res),
+            "anti-parallel tangent-plane edges (D→0) must fall to the fallback");
+        // A well-conditioned 90° corner in a plane returns a finite miter.
+        assert(Mesh.boundaryContourInset(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1), 0.1f, res),
+            "a well-conditioned corner should yield a finite mitered offset");
+    }
+
     /// Polygon bevel: for each selected face, inset each corner by `inset`
     /// AND displace the inset cap by `+faceNormal*shift` along the face normal,
     /// bridging the original boundary to the offset cap with N ring quads.
@@ -7493,6 +8008,232 @@ struct Mesh {
         syncSelection();
         commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
         return processed;
+    }
+
+    unittest { // bevelFacesByMask: GROUP accumulator on ASYMMETRIC geometry —
+               // task 0458 Phase 1, finding G1 (internalCnt==1, half-shared).
+               // poly_bevel_corner.json's 3-face cube corner is axis-aligned —
+               // its incident normals are mutually orthogonal, where the
+               // reference's AVE_N=k·N/|N|² degenerates to the naive
+               // Σ(unit normal) sum (the SAME 0453-class symmetry trap this
+               // task's brief warns about). This raw mesh is a deliberately
+               // asymmetric "tent" (non-90° dihedral, unequal adjacent-edge
+               // lengths) — a naive-sum accumulator FAILS it; bit-exact
+               // against the frozen reference dump (`poly_bevel_
+               // G1_halfshared_tent`, 6.2e-9 on the reference side) is the
+               // discriminator. See tests/fixtures/poly_bevel_G1_halfshared_
+               // tent.json for the same case run through the HTTP fixture path.
+        auto m = buildRawMesh(
+            [Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 0.0f, 2.0f), Vec3(1.5f, 0.8f, 2.0f),
+             Vec3(1.5f, 0.8f, 0.0f), Vec3(-0.7f, 1.0f, 0.0f), Vec3(-0.7f, 1.0f, 2.0f)],
+            [[0u,1,2,3], [1u,0,4,5]]);
+        bool[] mask = [true, true];
+        size_t n = m.bevelFacesByMask(mask, 0.1f, 0.1f, true, 0);
+        assert(n == 2);
+        assert(m.vertices.length == 12, "6 orig (unchanged) + 2 shared ridge + 4 standalone");
+        assert(m.faces.length    == 8,  "2 final quads + 2 faces x 3 remaining boundary bridges");
+
+        bool foundA = false, foundB = false;
+        foreach (v; m.vertices) {
+            if ((v - Vec3(0.03111569f, 0.12992836f, 0.1f)).length < 1e-4f) foundA = true;
+            if ((v - Vec3(0.03111569f, 0.12992836f, 1.9f)).length < 1e-4f) foundB = true;
+        }
+        assert(foundA, "shared ridge endpoint A should land at the AVE_N-amplified shift + inset-along-ridge position");
+        assert(foundB, "shared ridge endpoint B (same accumulator, mirrored) should match too");
+    }
+
+    unittest { // bevelFacesByMask: GROUP accumulator, finding G2 (fully-enclosed
+               // apex, internalCnt>=2 && !anyBoundary) — task 0458 Phase 1
+               // (+ follow-up). Valence-3 apex surrounded by 3 irregular
+               // NON-planar, non-orthogonal quads (all selected); the apex has
+               // 3 internal edges and no boundary edge. `orig + shift·AVE_N`
+               // (no inset term) is bit-exact against the reference dump
+               // (`poly_bevel_G2_apex_v3`, 2.6e-8) for the apex vertex itself.
+               // The SAME dump's ring vertices (each internalCnt==1, shared
+               // between 2 of the 3 faces) are now ALSO bit-exact via the
+               // recovered `bevGenInset` mitered-corner offset
+               // (`boundaryContourInset`/`findGroupBoundaryContour`, task 0458
+               // follow-up, findings.md §1/§5) — the position gap this
+               // unittest used to document is closed.
+        auto m = buildRawMesh(
+            [Vec3(1.0f, 0.0f, 0.0f), Vec3(0.6f, -0.1f, 1.1f), Vec3(-0.5f, 0.05f, 1.3f),
+             Vec3(-1.2f, -0.05f, 0.2f), Vec3(-0.7f, 0.1f, -1.0f), Vec3(0.5f, -0.2f, -0.9f),
+             Vec3(0.1f, 1.0f, 0.05f)],
+            // reference dump used reverse_winding=true for +Y outward normals —
+            // pre-reversed here so vibe3d's own faceNormal() convention matches.
+            [[2u,1,0,6], [4u,3,2,6], [0u,5,4,6]]);
+        bool[] mask = [true, true, true];
+        size_t n = m.bevelFacesByMask(mask, 0.1f, 0.1f, true, 0);
+        assert(n == 3);
+        bool foundApex = false;
+        foreach (v; m.vertices)
+            if ((v - Vec3(0.13126321f, 1.18738139f, 0.04756028f)).length < 1e-4f) foundApex = true;
+        assert(foundApex, "fully-enclosed apex should sit at orig + shift*AVE_N (bit-exact against poly_bevel_G2_apex_v3)");
+
+        // Ring vertices (dump[7]/[9]/[11], near orig-vert 0/2/4): bit-exact
+        // against `poly_bevel_G2_apex_v3` via the recovered mitered-corner
+        // offset (task 0458 follow-up).
+        bool foundRing0 = false, foundRing2 = false, foundRing4 = false;
+        foreach (v; m.vertices) {
+            if ((v - Vec3(1.01231349f, 0.14855729f, -0.00942456f)).length < 1e-4f) foundRing0 = true;
+            if ((v - Vec3(-0.48344547f, 0.20435742f, 1.27598262f)).length < 1e-4f) foundRing2 = true;
+            if ((v - Vec3(-0.67538124f, 0.25805962f, -0.98621768f)).length < 1e-4f) foundRing4 = true;
+        }
+        assert(foundRing0, "ring vertex near orig-vert 0 should be bit-exact against poly_bevel_G2_apex_v3's dump[7]");
+        assert(foundRing2, "ring vertex near orig-vert 2 should be bit-exact against poly_bevel_G2_apex_v3's dump[9]");
+        assert(foundRing4, "ring vertex near orig-vert 4 should be bit-exact against poly_bevel_G2_apex_v3's dump[11]");
+        // STANDALONE ring vertices (dump[8]/[10]/[12], near orig-vert 1/3/5 —
+        // each touches only ONE selected face, internalCnt==0). These sit in the
+        // grouped-standalone per-corner-AVE_N regime: `orig + shift*cn +
+        // boundaryContourInset(eNext,ePrev, cn)` with `cn` the corner's own shift
+        // normal (NOT the whole-face Newell normal, which is measurably worse).
+        // Bit-exact against poly_bevel_G2_apex_v3's dump[8]/[10]/[12] (parity task).
+        bool foundStd1 = false, foundStd3 = false, foundStd5 = false;
+        foreach (v; m.vertices) {
+            if ((v - Vec3(0.54333192f, 0.02258310f, 1.02778912f)).length < 1e-4f) foundStd1 = true;
+            if ((v - Vec3(-1.10951495f, 0.07091790f, 0.19473825f)).length < 1e-4f) foundStd3 = true;
+            if ((v - Vec3(0.46943665f, -0.06014295f, -0.84538692f)).length < 1e-4f) foundStd5 = true;
+        }
+        assert(foundStd1, "grouped-standalone vertex near orig-vert 1 should be bit-exact against poly_bevel_G2_apex_v3's dump[8]");
+        assert(foundStd3, "grouped-standalone vertex near orig-vert 3 should be bit-exact against poly_bevel_G2_apex_v3's dump[10]");
+        assert(foundStd5, "grouped-standalone vertex near orig-vert 5 should be bit-exact against poly_bevel_G2_apex_v3's dump[12]");
+    }
+
+    unittest { // bevelFacesByMask: GROUP accumulator, finding G3 (partial,
+               // internalCnt>=2 && anyBoundary) — task 0458 Phase 1 (+
+               // follow-up). Before Phase 1 the branch fell through entirely,
+               // so a partial vertex got the STANDALONE per-face formula
+               // applied once per incident face — 3 SEPARATE vertices instead
+               // of the reference's ONE shared vertex (a topology divergence,
+               // not just numeric). Valence-4 fan, only 3 of 4 quads selected,
+               // so the shared apex has 2 internal + 2 boundary edges.
+               //
+               // This asserts BOTH the topology fix (one shared vertex,
+               // referenced by every incident new face, matching the
+               // reference's vertex/face counts) AND — since the follow-up —
+               // the exact position via the recovered `bevGenInset`
+               // mitered-corner offset (`boundaryContourInset`/
+               // `findGroupBoundaryContour`, findings.md §1/§5): `orig +
+               // shift·AVE_N + boundaryInset`, bit-exact against
+               // `poly_bevel_G3_partial_fan`'s shared apex vertex (1.1e-8).
+        import std.conv : to;
+        auto m = buildRawMesh(
+            [Vec3(1.0f, 0.0f, 0.0f), Vec3(0.7f, -0.1f, 0.8f), Vec3(0.0f, 0.05f, 1.2f),
+             Vec3(-0.9f, -0.05f, 0.7f), Vec3(-1.1f, 0.1f, -0.1f), Vec3(-0.6f, -0.15f, -0.9f),
+             Vec3(0.2f, 0.05f, -1.1f), Vec3(0.8f, -0.2f, -0.7f), Vec3(0.05f, 0.9f, 0.0f)],
+            // reference dump used reverse_winding=true — pre-reversed.
+            [[2u,1,0,8], [4u,3,2,8], [6u,5,4,8], [0u,7,6,8]]);
+        bool[] mask = [true, true, true, false]; // only 3 of 4 quads selected
+        size_t n = m.bevelFacesByMask(mask, 0.1f, 0.1f, true, 0);
+        assert(n == 3);
+        // Reference: 9 orig + 8 new = 17 verts; 12 faces (3 final quads + the
+        // 4th untouched quad + bridges over the 4 remaining boundary edges of
+        // the 3-face selection — matches poly_bevel_G3_partial_fan's 17v/12f).
+        assert(m.vertices.length == 17, "partial-fan topology should match the reference vertex count (shared, not split)");
+        assert(m.faces.length    == 12);
+
+        // The shared partial vertex must sit at the bit-exact recovered
+        // position (poly_bevel_G3_partial_fan's dump[16]) AND be referenced by
+        // every incident new face exactly once (not duplicated into 3 separate
+        // vertices, one per selected face, the pre-0458 fallback's behavior).
+        immutable Vec3 expectedShared = Vec3(-0.07055401f, 1.00857651f, 0.10307505f);
+        uint sharedIdx = uint.max;
+        foreach (i, v; m.vertices)
+            if ((v - expectedShared).length < 1e-4f) { sharedIdx = cast(uint)i; break; }
+        assert(sharedIdx != uint.max,
+            "expected the shared partial vertex bit-exact at orig + shift*AVE_N + boundaryInset (poly_bevel_G3_partial_fan's dump[16])");
+        size_t refCount = 0;
+        foreach (f; m.faces)
+            foreach (v; f)
+                if (v == sharedIdx) { ++refCount; break; }
+        assert(refCount == 5, "the shared partial vertex should be referenced by all 5 incident faces (3 final + 2 bridges), got " ~ refCount.to!string);
+
+        // STANDALONE corners (orig 0/1/3/5/6 — each internalCnt==0, touching one
+        // selected face). Grouped-standalone per-corner-AVE_N regime: bit-exact
+        // against poly_bevel_G3_partial_fan's dump[9]/[10]/[12]/[14]/[15]
+        // (parity task).
+        bool fStd0=false, fStd1=false, fStd3=false, fStd5=false, fStd6=false;
+        foreach (v; m.vertices) {
+            if ((v - Vec3(0.95582151f, 0.12657540f, 0.12734687f)).length < 1e-4f) fStd0 = true;
+            if ((v - Vec3(0.65931493f, 0.03504139f, 0.75914669f)).length < 1e-4f) fStd1 = true;
+            if ((v - Vec3(-0.84032083f, 0.08062109f, 0.66145885f)).length < 1e-4f) fStd3 = true;
+            if ((v - Vec3(-0.57754570f, -0.00480662f, -0.87185556f)).length < 1e-4f) fStd5 = true;
+            if ((v - Vec3(0.06068159f, 0.16000065f, -1.05715966f)).length < 1e-4f) fStd6 = true;
+        }
+        assert(fStd0, "grouped-standalone vertex near orig-vert 0 should be bit-exact against poly_bevel_G3_partial_fan's dump[9]");
+        assert(fStd1, "grouped-standalone vertex near orig-vert 1 should be bit-exact against poly_bevel_G3_partial_fan's dump[10]");
+        assert(fStd3, "grouped-standalone vertex near orig-vert 3 should be bit-exact against poly_bevel_G3_partial_fan's dump[12]");
+        assert(fStd5, "grouped-standalone vertex near orig-vert 5 should be bit-exact against poly_bevel_G3_partial_fan's dump[14]");
+        assert(fStd6, "grouped-standalone vertex near orig-vert 6 should be bit-exact against poly_bevel_G3_partial_fan's dump[15]");
+    }
+
+    unittest { // bevelFacesByMask: WARPED single quad, ISOLATED-face inset law —
+               // captured-reference parity (task 0467). A symmetric saddle quad
+               // (z alternates ±0.2 around the ring → strongly non-planar; its
+               // whole-face Newell normal is exactly +Z) beveled as a SINGLE
+               // face. This is the `poly_bevel_W1_warped_standalone` oracle,
+               // rr/gdb-grounded (findings.md §6): the reference places each inset
+               // corner by a mitered offset in the tangent plane ⟂ the WHOLE-FACE
+               // normal (`boundaryContourInset(faceNormal)`) plus `faceNormal·
+               // shift`, NOT by the old `offsetMeet` line-intersection (which
+               // slides off the tilted edges and lands ~0.06 off in the normal
+               // direction). The captured reference output (v4..v7) is bit-exact.
+        auto m = buildRawMesh(
+            [Vec3(-0.5f,-0.5f, 0.2f), Vec3(0.5f,-0.5f,-0.2f),
+             Vec3( 0.5f, 0.5f, 0.2f), Vec3(-0.5f, 0.5f,-0.2f)],
+            [[0u,1,2,3]]);
+        immutable float inset = 0.15f, shift = 0.1f;
+        const Vec3 n = m.faceNormal(0);
+        assert((n - Vec3(0, 0, 1)).length < 1e-6f, "saddle quad's Newell normal must be +Z");
+        size_t nb = m.bevelFacesByMask([true], inset, shift, false, 0);
+        assert(nb == 1);
+        // Captured reference (poly_bevel_W1_warped_standalone_group): the 4 inset
+        // cap corners. XY = the in-tangent-plane 90° miter (±0.35); Z = orig ±0.2
+        // shifted by +0.1 along the whole-face +Z normal (→ 0.30 / -0.10).
+        immutable Vec3[4] refCap = [
+            Vec3(-0.35f, -0.35f,  0.30f), Vec3( 0.35f, -0.35f, -0.10f),
+            Vec3( 0.35f,  0.35f,  0.30f), Vec3(-0.35f,  0.35f, -0.10f)];
+        // The old off-plane `offsetMeet` law (what the corner would get without
+        // the fix): same XY, but Z = orig ± (inset-slide) + shift — lands ~0.06
+        // off in Z. Assert the mesh is on the reference value and NOT the old one.
+        foreach (mc; refCap) {
+            bool found = false;
+            foreach (v; m.vertices) if ((v - mc).length < 1e-4f) { found = true; break; }
+            assert(found, "warped isolated-face cap corner must be bit-exact to the captured reference (poly_bevel_W1)");
+        }
+        // Guard the fix is actually engaged (not accidentally the old law): the
+        // old whole-face `offsetMeet` corner for v0 would sit at z≈0.24, absent.
+        bool foundOld = false;
+        foreach (v; m.vertices)
+            if ((v - Vec3(-0.35f, -0.35f, 0.24f)).length < 1e-3f) foundOld = true;
+        assert(!foundOld, "the pre-0467 off-plane offsetMeet corner (z≈0.24) must be gone");
+    }
+
+    unittest { // bevelFacesByMask: FLAT quad stays on the OLD whole-face law
+               // (task 0467 planarity gate — flat-face byte-identity guard). A
+               // planar quad's per-corner normal equals its face normal, so the
+               // gate (`dot(cn,n) >= 1-1e-6`) keeps the exact pre-0467
+               // `insetCorner + n·shift` expression — every flat-face bevel
+               // fixture is unaffected.
+        auto m = buildRawMesh(
+            [Vec3(-0.5f,-0.5f, 0.0f), Vec3(0.5f,-0.5f, 0.0f),
+             Vec3( 0.5f, 0.5f, 0.0f), Vec3(-0.5f, 0.5f, 0.0f)],
+            [[0u,1,2,3]]);
+        immutable float inset = 0.2f, shift = 0.13f;
+        Vec3[] origPos = [m.vertices[0], m.vertices[1], m.vertices[2], m.vertices[3]];
+        const Vec3 n = m.faceNormal(0);
+        Vec3[4] expOld;
+        foreach (i; 0 .. 4) {
+            immutable Vec3 cn = m.cornerNormalAt(0, cast(uint)i);
+            assert(dot(cn, n) >= 1.0f - 1e-6f, "flat quad corner normal must equal the face normal");
+            expOld[i] = m.insetCorner(origPos, cast(int)i, n, inset) + n * shift;
+        }
+        assert(m.bevelFacesByMask([true], inset, shift, false, 0) == 1);
+        foreach (i; 0 .. 4) {
+            bool exact = false;
+            foreach (v; m.vertices) if (v == expOld[i]) { exact = true; break; } // byte-exact
+            assert(exact, "flat cap corner must be BYTE-IDENTICAL to the pre-0467 insetCorner+n*shift law");
+        }
     }
 
     /// Per-face spikey: for each face flagged true in `mask`, add a new apex
@@ -9899,6 +10640,100 @@ struct Mesh {
         }
     }
 
+    unittest { // the forward-only seed scans answer EXACTLY what head-restart did
+        SlRng rng;
+        size_t cases = 0;
+
+        void check(string shape, ref Mesh m, uint frac) {
+            import std.format : format;
+            slSelectFaces(m, rng, frac);
+            auto gotF  = m.selectLoopFaces();
+            auto wantF = m.selectLoopFacesHeadRestart();
+            assert(gotF == wantF,
+                format("%s (frac %d/16), polygon mode: %s", shape, frac, slDiff(gotF, wantF)));
+
+            slSelectVerts(m, rng, frac);
+            auto gotV  = m.selectLoopVertices();
+            auto wantV = m.selectLoopVerticesHeadRestart();
+            assert(gotV == wantV,
+                format("%s (frac %d/16), vertex mode: %s", shape, frac, slDiff(gotV, wantV)));
+            ++cases;
+        }
+
+        foreach (frac; [16u, 12u, 8u, 4u, 2u]) {
+            auto a = slGrid(6, false);       check("quad grid 6",        a, frac);
+            auto b = slGrid(6, true);        check("tri grid 6",         b, frac);
+            auto c = slDisjoint(9, 4);       check("9 disjoint quads",   c, frac);
+            auto d = slDisjoint(9, 3);       check("9 disjoint tris",    d, frac);
+            auto e = slDisjoint(6, 6);       check("6 disjoint hexes",   e, frac);
+            auto f = slMixedGrid(6, rng);    check("mixed-parity grid",  f, frac);
+            auto g = slNonManifoldFan(5);    check("non-manifold fan",   g, frac);
+            foreach (s; 0 .. 12) {
+                auto h = slSoup(24, 20, rng);
+                check("random soup", h, frac);
+            }
+        }
+        assert(cases == 5 * 19, "the corpus ran end to end");
+    }
+
+    unittest { // …and they cost O(selected), not O(selected^2)
+        import std.format : format;
+
+        // Both shapes below are measured at two sizes, the second with FOUR TIMES
+        // the selected elements of the first. A linear scan grows ~4x; a scan that
+        // restarts at the head grows ~16x. The gate is 6x — comfortably above the
+        // real ratio and far below the quadratic one, so it does not depend on the
+        // per-element constant and cannot flake (the counter is deterministic; a
+        // wall-clock threshold would not be).
+        enum RATIO_GATE = 6;
+
+        // Polygon mode on a triangulated grid: selectBandTrace skips odd-sided
+        // neighbours, so a triangle never advances and every one of them is a
+        // group of its own — head-restart walked the whole selection once PER
+        // SELECTED FACE, twice (NEXT_GROUP and the partner scan).
+        size_t polySteps(int n) {
+            auto m = slGrid(n, true);
+            m.resizeFaceSelection();
+            m.faceSelectionOrder.length = m.faces.length;
+            foreach (i; 0 .. m.faces.length) m.selectFace(cast(int)i);
+            Mesh.gSelectLoopSeedScanSteps = 0;
+            m.selectLoopFaces();
+            return Mesh.gSelectLoopSeedScanSteps;
+        }
+        const p1 = polySteps(20);   //   800 triangles
+        const p2 = polySteps(40);   //  3200 triangles
+        assert(p2 <= RATIO_GATE * p1,
+            format("polygon seed scan is superlinear: 4x the selected polygons cost "
+                 ~ "%.1fx the seed-scan steps (%d -> %d). Head-restart scored ~16x. "
+                 ~ "Something reintroduced a scan that does not start where the last "
+                 ~ "one stopped.", cast(double)p2 / p1, p1, p2));
+
+        // Vertex mode with many small components: one pass per component, and each
+        // pass used to re-walk every vertex ahead of it. Note the dead-end pairs a
+        // consumed edge leaves behind are NOT marked, so the leading-run cursor
+        // alone does not save this shape — the burn memo does.
+        size_t vertSteps(int k) {
+            auto m = slDisjoint(k, 4);
+            m.resizeVertexSelection();
+            foreach (i; 0 .. m.vertices.length) m.selectVertex(cast(int)i);
+            Mesh.gSelectLoopSeedScanSteps = 0;
+            m.selectLoopVertices();
+            return Mesh.gSelectLoopSeedScanSteps;
+        }
+        const v1 = vertSteps(250);   // 1000 vertices
+        const v2 = vertSteps(1000);  // 4000 vertices
+        assert(v2 <= RATIO_GATE * v1,
+            format("vertex seed scan is superlinear: 4x the selected vertices cost "
+                 ~ "%.1fx the seed-scan steps (%d -> %d). Head-restart scored ~16x.",
+                   cast(double)v2 / v1, v1, v2));
+
+        // A per-element ceiling as well, so a linear-but-absurd scan is caught too.
+        // Measured: ~8 steps/polygon (cursor + A's edges x their face degree) and
+        // ~3 steps/vertex.
+        assert(p2 <= 24 * 3200, format("polygon seed scan: %d steps for 3200 polygons", p2));
+        assert(v2 <= 24 * 4000, format("vertex seed scan: %d steps for 4000 vertices", v2));
+    }
+
     // Loop-slice ring walk + insertion kernel family (loopSliceRingEdges /
     // collectEdgeRing / insertEdgeLoops / insertEdgeLoopsMulti) + capShellCycles
     // — see source/mesh_ops/loop_slice.d (task 0417, 0407 §B.V2).
@@ -10614,6 +11449,112 @@ struct Mesh {
         return chains;
     }
 
+    unittest { // extractSelectedEdgeChains: two open arcs, single open chain,
+               // two closed cycles, degree-3 rejection, mixed open+closed
+        import std.conv : to;
+
+        void selectAll(ref Mesh m) {
+            m.resizeEdgeSelection();
+            foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
+        }
+
+        // (1) Two disjoint open arcs (2 edges each, 3 verts each).
+        {
+            Mesh m;
+            foreach (i; 0 .. 6) m.addVertex(Vec3(cast(float)i, 0, 0));
+            m.addEdge(0, 1); m.addEdge(1, 2);
+            m.addEdge(3, 4); m.addEdge(4, 5);
+            m.buildLoops();
+            selectAll(m);
+
+            auto chains = m.extractSelectedEdgeChains();
+            assert(chains.length == 2,
+                "two open arcs: expected 2 chains, got " ~ chains.length.to!string);
+            foreach (c; chains) {
+                assert(!c.closed, "two open arcs: both chains must be open");
+                assert(c.verts.length == 3,
+                    "two open arcs: expected 3 verts/chain, got " ~ c.verts.length.to!string);
+            }
+        }
+
+        // (2) Single open chain alone — one component, no second group.
+        {
+            Mesh m;
+            foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+            m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(2, 3);
+            m.buildLoops();
+            selectAll(m);
+
+            auto chains = m.extractSelectedEdgeChains();
+            assert(chains.length == 1,
+                "single chain: expected 1 chain, got " ~ chains.length.to!string);
+            assert(!chains[0].closed, "single chain: must be open");
+            assert(chains[0].verts.length == 4,
+                "single chain: expected 4 verts, got " ~ chains[0].verts.length.to!string);
+        }
+
+        // (3) Two closed 4-cycles — must match extractSelectedEdgeCycles' own count.
+        {
+            Mesh m;
+            m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
+            m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
+            m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
+            m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
+            m.addFace([0u,1u,2u,3u]);
+            m.addFace([4u,5u,6u,7u]);
+            m.buildLoops();
+            m.syncSelection();
+            foreach (ei; 0 .. m.edges.length) m.selectEdge(cast(int)ei);
+
+            auto chains = m.extractSelectedEdgeChains();
+            assert(chains.length == 2,
+                "two closed cycles: expected 2 chains, got " ~ chains.length.to!string);
+            foreach (c; chains) {
+                assert(c.closed, "two closed cycles: both must be closed");
+                assert(c.verts.length == 4,
+                    "two closed cycles: expected 4 verts/cycle, got " ~ c.verts.length.to!string);
+            }
+            auto cycles = m.extractSelectedEdgeCycles();   // untouched extractor, same selection
+            assert(cycles.length == chains.length,
+                "extractSelectedEdgeChains must agree with extractSelectedEdgeCycles on an all-closed selection");
+        }
+
+        // (4) Branching vertex (degree 3) anywhere → whole call rejected.
+        {
+            Mesh m;
+            foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+            m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(1, 3);
+            m.buildLoops();
+            selectAll(m);
+
+            auto chains = m.extractSelectedEdgeChains();
+            assert(chains.length == 0,
+                "degree-3 branching: expected rejection, got " ~ chains.length.to!string);
+        }
+
+        // (5) Mixed: one open chain + one closed cycle selected together.
+        {
+            Mesh m;
+            // Open chain: verts 0-1-2.
+            m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0)); m.addVertex(Vec3(2,0,0));
+            // Closed cycle: verts 3-4-5-6.
+            m.addVertex(Vec3(0,1,0)); m.addVertex(Vec3(1,1,0));
+            m.addVertex(Vec3(1,2,0)); m.addVertex(Vec3(0,2,0));
+            m.addEdge(0, 1); m.addEdge(1, 2);
+            m.addEdge(3, 4); m.addEdge(4, 5); m.addEdge(5, 6); m.addEdge(6, 3);
+            m.buildLoops();
+            selectAll(m);
+
+            auto chains = m.extractSelectedEdgeChains();
+            assert(chains.length == 2,
+                "mixed open+closed: expected 2 chains, got " ~ chains.length.to!string);
+            int openCount = 0, closedCount = 0;
+            foreach (c; chains) { if (c.closed) ++closedCount; else ++openCount; }
+            assert(openCount == 1 && closedCount == 1,
+                "mixed open+closed: expected exactly 1 open + 1 closed chain");
+        }
+    }
+
     // Bridge kernel family (bridgeLoopsPaired / bridgeLoops / bridgeLoopsSpans /
     // bridgeStripPaired / bridgeOpenRows) — see source/mesh_ops/bridge.d
     // (task 0417, 0407 §B.V2, continuation of the task-0412 pilot).
@@ -10761,6 +11702,55 @@ struct Mesh {
         return F0 + rimTotal;
     }
 
+    unittest { // thickenSurface: 2×2 grid → 16-face watertight shell
+        Mesh m;
+        foreach (j; 0 .. 3)
+            foreach (i; 0 .. 3)
+                m.addVertex(Vec3(cast(float)i, cast(float)j, 0));
+        foreach (j; 0 .. 2)
+            foreach (i; 0 .. 2) {
+                uint a = cast(uint)(i     + 3 * j    );
+                uint b = cast(uint)(i + 1 + 3 * j    );
+                uint c = cast(uint)(i + 1 + 3 * (j+1));
+                uint d = cast(uint)(i     + 3 * (j+1));
+                m.addFace([a, b, c, d]);
+            }
+        m.buildLoops();
+
+        const size_t r = m.thickenSurface(0.2f);
+        assert(r > 0, "thicken 2×2: non-zero result");
+        assert(m.vertices.length == 18, "thicken 2×2: 18 verts");
+        assert(m.faces.length == 16, "thicken 2×2: 16 faces");
+        assert(m.boundaryLoops().length == 0, "thicken 2×2: watertight");
+        assert(countOpenEdges(m) == 0, "thicken 2×2: no open edges");
+    }
+
+    unittest { // thickenSurface: 3×3 holed grid → 32-face watertight shell
+        // 16 verts, 8 quads (center quad skipped).
+        Mesh m;
+        foreach (j; 0 .. 4)
+            foreach (i; 0 .. 4)
+                m.addVertex(Vec3(cast(float)i, cast(float)j, 0));
+        size_t fi = 0;
+        foreach (j; 0 .. 3)
+            foreach (i; 0 .. 3) {
+                uint a = cast(uint)(i     + 4 * j    );
+                uint b = cast(uint)(i + 1 + 4 * j    );
+                uint c = cast(uint)(i + 1 + 4 * (j+1));
+                uint d = cast(uint)(i     + 4 * (j+1));
+                if (fi != 4) m.addFace([a, b, c, d]);
+                fi++;
+            }
+        m.buildLoops();
+
+        const size_t r = m.thickenSurface(0.2f);
+        assert(r > 0, "thicken holed: non-zero result");
+        assert(m.vertices.length == 32, "thicken holed: 32 verts");
+        assert(m.faces.length == 32, "thicken holed: 32 faces (8+8+12+4)");
+        assert(m.boundaryLoops().length == 0, "thicken holed: watertight");
+        assert(countOpenEdges(m) == 0, "thicken holed: no open edges");
+    }
+
     // ------------------------------------------------------------------
     // Profile extraction and revolve (surface of revolution)
     // ------------------------------------------------------------------
@@ -10849,6 +11839,93 @@ struct Mesh {
             if (v !in visited) { isClosed = false; return []; }
 
         return chain;
+    }
+
+    unittest { // extractSelectedEdgeChain: open chain, closed cycle, branching + multi-component rejections, empty
+        import std.conv : to;
+
+        // (1) Open chain: v0-v1-v2-v3 (3 edges, endpoints at v0 and v3).
+        {
+            Mesh m;
+            foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+            m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(2, 3);
+            m.buildLoops();
+            m.resizeEdgeSelection();
+            foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
+
+            bool closed;
+            auto chain = m.extractSelectedEdgeChain(closed);
+            assert(!closed, "open chain: expected isClosed=false");
+            assert(chain.length == 4,
+                "open chain: expected 4 verts, got " ~ chain.length.to!string);
+            assert((chain[0] == 0 && chain[$-1] == 3)
+                || (chain[0] == 3 && chain[$-1] == 0),
+                "open chain: endpoints must be v0 and v3");
+        }
+
+        // (2) Closed cycle: v0-v1-v2-v3-v0 (4 edges, all degree 2).
+        {
+            Mesh m;
+            foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+            m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(2, 3); m.addEdge(3, 0);
+            m.buildLoops();
+            m.resizeEdgeSelection();
+            foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
+
+            bool closed;
+            auto chain = m.extractSelectedEdgeChain(closed);
+            assert(closed, "closed cycle: expected isClosed=true");
+            assert(chain.length == 4,
+                "closed cycle: expected 4 verts, got " ~ chain.length.to!string);
+        }
+
+        // (3) Branching vertex (degree 3): v0-v1, v1-v2, v1-v3 → must reject.
+        {
+            Mesh m;
+            foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+            m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(1, 3);
+            m.buildLoops();
+            m.resizeEdgeSelection();
+            foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
+
+            bool closed;
+            auto chain = m.extractSelectedEdgeChain(closed);
+            assert(chain.length == 0,
+                "branching vertex: expected rejection (empty chain), got length "
+                ~ chain.length.to!string);
+        }
+
+        // (4) Two disconnected edges (multi-component, 4 degree-1 endpoints) → must reject.
+        {
+            Mesh m;
+            foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+            m.addEdge(0, 1); m.addEdge(2, 3);
+            m.buildLoops();
+            m.resizeEdgeSelection();
+            foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
+
+            bool closed;
+            auto chain = m.extractSelectedEdgeChain(closed);
+            assert(chain.length == 0,
+                "multi-component: expected rejection, got length "
+                ~ chain.length.to!string);
+        }
+
+        // (5) No edges selected → empty result.
+        {
+            Mesh m;
+            foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
+            m.addEdge(0, 1); m.addEdge(1, 2);
+            m.buildLoops();
+            m.resizeEdgeSelection();
+            // edgeMarks grown to cover 2 edges but Select bit NOT set.
+
+            bool closed;
+            auto chain = m.extractSelectedEdgeChain(closed);
+            assert(chain.length == 0,
+                "no selection: expected empty chain, got length "
+                ~ chain.length.to!string);
+        }
     }
 
     // Radial Sweep / Revolve + Path-follow extrude kernel family — see
@@ -11534,6 +12611,368 @@ struct Mesh {
         return edgeSliceEx(edgeA, edgeB, tA, tB, splitPolygons, eps).facesSplit;
     }
 
+    // ---------------------------------------------------------------------------
+    // rebuildFacesWithChordSplits: keep-selection unittests (cut-keep-split-faces
+    // -selected task) — the shared kernel now INHERITS each parent face's
+    // Marks.Select bit onto every emitted slot (whole-copy AND both split
+    // halves) instead of unconditionally clearing it. Asserted by GEOMETRY /
+    // count, not fixed index — a split appends the second half right after the
+    // first, shifting later face indices.
+    // ---------------------------------------------------------------------------
+
+
+    unittest { // edgeSlice (splitPolygons=true path): selected parent → BOTH halves selected
+        Mesh m;
+        m.vertices = [
+            Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),
+        ];
+        m.addFace([0u, 1u, 2u, 3u]);
+        m.buildLoops();
+        m.resetSelection();
+        m.selectFace(0);
+
+        uint eA = m.edgeIndexOfVerts(0, 1);
+        uint eB = m.edgeIndexOfVerts(2, 3);
+        assert(eA != ~0u && eB != ~0u, "both edges must exist on the quad");
+
+        size_t n = m.edgeSlice(eA, eB, 0.5f, 0.5f, /*splitPolygons*/true);
+
+        assert(n == 1, "single-face edgeSlice chords once");
+        assert(m.faces.length == 2, "2 sub-faces after the slice");
+        assert(m.isFaceSelected(0) && m.isFaceSelected(1),
+               "edgeSlice split path: both halves of a selected parent must stay selected");
+    }
+
+    // ---------------------------------------------------------------------------
+    // edgeSlice unittests
+    // ---------------------------------------------------------------------------
+
+    unittest { // edgeSlice: 3×1 quad strip — index-share (no T-junction) + 6 faces / 12 verts
+        // Grid:
+        //  4--5--6--7
+        //  |  |  |  |
+        //  0--1--2--3
+        Mesh m;
+        m.vertices = [
+            Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0), Vec3(3,0,0),
+            Vec3(0,1,0), Vec3(1,1,0), Vec3(2,1,0), Vec3(3,1,0),
+        ];
+        m.addFace([0u,1u,5u,4u]);
+        m.addFace([1u,2u,6u,5u]);
+        m.addFace([2u,3u,7u,6u]);
+        m.buildLoops();
+        m.resetSelection();
+
+        uint eLeft  = m.edgeIndexOfVerts(0, 4);
+        uint eRight = m.edgeIndexOfVerts(3, 7);
+        assert(eLeft  != ~0u, "edge(0,4) must exist");
+        assert(eRight != ~0u, "edge(3,7) must exist");
+
+        size_t nSplit = m.edgeSlice(eLeft, eRight);
+
+        assert(nSplit == 3, "3 quads split → nSplit==3");
+        assert(m.faces.length  == 6,  "3×2 = 6 faces after strip cut");
+        assert(m.vertices.length == 12, "8 + 4 cut-points = 12 verts");
+
+        // No orphan vertices.
+        import std.conv : to;
+        bool[] refd = new bool[](m.vertices.length);
+        foreach (face; m.faces) foreach (vi; face) refd[vi] = true;
+        foreach (i, r; refd) assert(r, "vertex " ~ i.to!string ~ " is orphaned after edgeSlice");
+
+        // No degenerate faces.
+        foreach (face; m.faces) assert(face.length >= 3, "no degenerate face after edgeSlice");
+
+        // Index-share: the cut point on interior edge (1,5) must be referenced
+        // by exactly 2 sub-faces with the SAME vertex index (no T-junction).
+        uint cutMid15 = ~0u;
+        foreach (vi; 0 .. cast(uint)m.vertices.length) {
+            auto v = m.vertices[vi];
+            if (v.x > 0.99f && v.x < 1.01f &&
+                v.y > 0.49f && v.y < 0.51f && v.z == 0)
+                cutMid15 = vi;
+        }
+        assert(cutMid15 != ~0u, "cut point on edge(1,5) must exist");
+        int cnt15 = 0;
+        foreach (face; m.faces) foreach (vi; face) if (vi == cutMid15) cnt15++;
+        // v9 is shared by both sub-faces of face0 AND both sub-faces of face1
+        // (it is the entry point of one and exit point of the other across the
+        // shared half-edge).  4 references = 1 unique index across all 4 users.
+        assert(cnt15 == 4,
+            "interior cut vertex (1,5 mid) must appear in exactly 4 sub-faces (index-share)");
+
+        // Likewise for interior edge (2,6).
+        uint cutMid26 = ~0u;
+        foreach (vi; 0 .. cast(uint)m.vertices.length) {
+            auto v = m.vertices[vi];
+            if (v.x > 1.99f && v.x < 2.01f &&
+                v.y > 0.49f && v.y < 0.51f && v.z == 0)
+                cutMid26 = vi;
+        }
+        assert(cutMid26 != ~0u, "cut point on edge(2,6) must exist");
+        int cnt26 = 0;
+        foreach (face; m.faces) foreach (vi; face) if (vi == cutMid26) cnt26++;
+        // Same reasoning: v10 is shared by both sub-faces of face1 AND face2.
+        assert(cnt26 == 4,
+            "interior cut vertex (2,6 mid) must appear in exactly 4 sub-faces (index-share)");
+    }
+
+    unittest { // edgeSlice: single shared face (cube bottom) — 7 faces, 10 verts
+        auto m = makeCube();
+        // Face 5 = [0,1,5,4] (bottom).  Edge(0,1) and edge(4,5) are both on it.
+        uint eA = m.edgeIndexOfVerts(0, 1);
+        uint eB = m.edgeIndexOfVerts(4, 5);
+        assert(eA != ~0u, "edge(0,1) must exist on cube");
+        assert(eB != ~0u, "edge(4,5) must exist on cube");
+
+        size_t nSplit = m.edgeSlice(eA, eB);
+
+        assert(nSplit == 1, "single shared face: 1 split");
+        assert(m.faces.length  == 7,  "6 faces → 7 after single split");
+        assert(m.vertices.length == 10, "8 + 2 cut-points = 10 verts");
+
+        foreach (face; m.faces) assert(face.length >= 3, "no degenerate faces");
+
+        import std.conv : to;
+        bool[] refd2 = new bool[](m.vertices.length);
+        foreach (face; m.faces) foreach (vi; face) refd2[vi] = true;
+        foreach (i, r; refd2) assert(r, "vertex " ~ i.to!string ~ " orphaned after single-face edgeSlice");
+    }
+
+    unittest { // edgeSlice: endpoint cut (t=0/1) reuses the corner, no new vertex — F1, task 0295
+        auto m = makeCube();
+        // Face 5 = [0,1,5,4] (bottom) — same face as the "single shared face"
+        // unittest above. Edge(0,1) and edge(4,5) are non-adjacent on it; their
+        // DIAGONAL corner combination is {0,5} (the other combination, {1,4}, is
+        // also a valid diagonal — {0,4}/{1,5} are the two ADJACENT/existing-edge
+        // pairs and would hit rebuildFacesWithChordSplits' adjacent-hit guard,
+        // i.e. a no-op). Read the stored edge direction to pick tA/tB so the cut
+        // lands on {0,5} regardless of edges[e][0]/[1]'s (opaque, dedup-order)
+        // storage direction.
+        uint eA = m.edgeIndexOfVerts(0, 1);
+        uint eB = m.edgeIndexOfVerts(4, 5);
+        assert(eA != ~0u, "edge(0,1) must exist on cube");
+        assert(eB != ~0u, "edge(4,5) must exist on cube");
+
+        size_t origVerts = m.vertices.length;
+        size_t origEdges = m.edges.length;
+        size_t origFaces = m.faces.length;
+
+        float tA = (m.edges[eA][0] == 0) ? 0.0f : 1.0f; // lands on vertex 0
+        float tB = (m.edges[eB][0] == 5) ? 0.0f : 1.0f; // lands on vertex 5
+
+        size_t nSplit = m.edgeSlice(eA, eB, tA, tB, /*splitPolygons*/true);
+
+        assert(nSplit == 1, "single shared face chorded once");
+        assert(m.faces.length == origFaces + 1, "6 -> 7 faces (one chord split)");
+        assert(m.vertices.length == origVerts,
+            "endpoint cut reuses BOTH corners — vertex count UNCHANGED (the F1 discriminator)");
+        assert(m.edges.length == origEdges + 1,
+            "only the new chord is a new edge — neither named edge is itself split");
+
+        foreach (face; m.faces) assert(face.length >= 3, "no degenerate face after endpoint edgeSlice");
+
+        // No coincident-position duplicate vertices (the "insert-then-weld"
+        // approach this stage deliberately avoids would leave one here).
+        foreach (i; 0 .. m.vertices.length)
+            foreach (j; i + 1 .. m.vertices.length)
+                assert((m.vertices[i] - m.vertices[j]).length() > 1e-6f,
+                    "endpoint cut must not create a coincident duplicate vertex");
+
+        // The chord connects the two REUSED corners (0, 5) directly.
+        assert(m.edgeIndexOfVerts(0, 5) != ~0u, "chord edge (0,5) must exist after endpoint cut");
+    }
+
+    unittest { // edgeSliceEx: mixed endpoint (t=0, reuse) + interior (t=0.5, new vert) — F1, task 0295
+        auto m = makeCube();
+        uint eA = m.edgeIndexOfVerts(0, 1);
+        uint eB = m.edgeIndexOfVerts(4, 5);
+        assert(eA != ~0u); assert(eB != ~0u);
+
+        size_t origVerts = m.vertices.length;
+        float tA = (m.edges[eA][0] == 0) ? 0.0f : 1.0f; // reuse vertex 0
+
+        auto r = m.edgeSliceEx(eA, eB, tA, 0.5f, /*splitPolygons*/true);
+
+        assert(r.facesSplit == 1, "single shared face chorded once");
+        assert(m.vertices.length == origVerts + 1,
+            "one endpoint (reused) + one interior (new) => +1 vertex only");
+        assert(r.cutVertA == 0, "cutVertA must be the REUSED corner (vertex 0), not a fresh index");
+        assert(r.cutVertB == origVerts, "cutVertB must be the newly appended interior vertex");
+    }
+
+    unittest { // edgeSliceEx: KEPT degenerate-chain edge-split, RE-DERIVED
+               // (mesh-robustness batch) — this is an INTENTIONAL REVERSAL of
+               // the 0303 always-rollback fix, re-derived from a frozen
+               // reference capture. It previously asserted the OLD (over-
+               // rollback) behaviour as correct — that encoded the bug this
+               // batch fixes. Do NOT read this as test-fitting.
+        //
+        // edge(0,1)@t=0.5 (genuine interior insert) chained to edge(1,5)@t=1.0
+        // (F1 endpoint-reuse landing on the SHARED corner, vertex 1). Both edges
+        // border face 5 ([0,1,5,4]); the interior cut vertex is spliced in
+        // immediately next to the reused corner in that face's winding, so the
+        // two cut positions are ADJACENT there — rebuildFacesWithChordSplits'
+        // adjacent-hit guard correctly refuses to CHORD-SPLIT it (facesSplit ==
+        // 0). But Pass 1 (insertEdgePoint) already spliced a REAL new vertex
+        // into both faces incident to edge(0,1) (faces 0 and 5) — that is a
+        // legitimate degenerate-chain edge-split (matches the reference: cube
+        // V8/E12/F6 -> V9/E13/F6, chi stays 2), and must be KEPT + finalized,
+        // not rolled back. Before this fix that insert was unconditionally
+        // discarded (over-rollback, task 0303's own fix — too broad).
+        import std.conv : to;
+        auto m = makeCube();
+        uint eA = m.edgeIndexOfVerts(0, 1);
+        uint eB = m.edgeIndexOfVerts(1, 5);
+        assert(eA != ~0u, "edge(0,1) must exist on cube");
+        assert(eB != ~0u, "edge(1,5) must exist on cube");
+
+        size_t origVerts = m.vertices.length;
+        size_t origEdges = m.edges.length;
+        size_t origFaces = m.faces.length;
+
+        float tB = (m.edges[eB][0] == 1) ? 0.0f : 1.0f; // land on the shared corner, vertex 1
+
+        auto r = m.edgeSliceEx(eA, eB, 0.5f, tB, /*splitPolygons*/true);
+
+        assert(r.facesSplit == 0,
+            "adjacent cut positions on the shared face must not CHORD-SPLIT any face");
+        assert(r.meshChanged,
+            "a kept degenerate-chain insert must report meshChanged == true");
+        assert(r.cutVertA == cast(uint)origVerts,
+            "cutVertA must be the newly inserted interior vertex on edge(0,1)");
+        assert(r.cutVertB == 1,
+            "cutVertB must be the REUSED shared corner (vertex 1), not a sentinel");
+
+        assert(m.vertices.length == origVerts + 1,
+            "kept insert: exactly one new vertex (the edge(0,1) interior cut)");
+        assert(m.edges.length == origEdges + 1,
+            "kept insert: edge(0,1) splits into two edges — net +1 edge");
+        assert(m.faces.length == origFaces,
+            "kept insert: no face is added or removed, only re-wound");
+        assert(cast(long)m.vertices.length - cast(long)m.edges.length + cast(long)m.faces.length == 2,
+            "Euler characteristic must stay 2 after a kept degenerate-chain insert");
+
+        // edge(0,1) itself is gone; the two half-edges (0,newV) and (newV,1) exist.
+        assert(m.edgeIndexOfVerts(0, 1) == ~0u,
+            "edge(0,1) must no longer exist as a single edge after the split");
+        assert(m.edgeIndexOfVerts(0, r.cutVertA) != ~0u,
+            "half-edge (0, newVert) must exist after the kept split");
+        assert(m.edgeIndexOfVerts(r.cutVertA, 1) != ~0u,
+            "half-edge (newVert, 1) must exist after the kept split");
+
+        // Manifold: every undirected edge used by at most 2 faces.
+        size_t[ulong] edgeUseCount;
+        foreach (fi; 0 .. m.faces.length) {
+            auto f = m.faces[fi];
+            foreach (k; 0 .. f.length) {
+                ulong key = edgeKey(f[k], f[(k + 1) % f.length]);
+                auto p = key in edgeUseCount;
+                if (p is null) edgeUseCount[key] = 1;
+                else           ++(*p);
+            }
+        }
+        foreach (key, count; edgeUseCount)
+            assert(count <= 2,
+                "kept degenerate-chain insert: non-manifold edge used by " ~
+                count.to!string ~ " faces");
+    }
+
+    unittest { // edgeSliceEx: TRUE no-op (both cuts reuse existing ADJACENT
+               // corners, nothing spliced in) must still roll back byte-
+               // identical — sibling of the KEPT-insert case above, guarding
+               // the regression requirement (mesh-robustness batch).
+        //
+        // edge(0,1)@t=0 (reuse vertex 0) chained to edge(1,5)@t=1 (reuse vertex
+        // 1). Both land on EXISTING corners that are already adjacent in face 5's
+        // winding ([0,1,5,4]) — the adjacent-hit guard refuses to split, and
+        // since NEITHER cut inserted anything new, vertices.length is untouched:
+        // a genuinely empty operation.
+        import std.conv : to;
+        auto m = makeCube();
+        uint eA = m.edgeIndexOfVerts(0, 1);
+        uint eB = m.edgeIndexOfVerts(1, 5);
+        assert(eA != ~0u, "edge(0,1) must exist on cube");
+        assert(eB != ~0u, "edge(1,5) must exist on cube");
+
+        size_t origVerts = m.vertices.length;
+        size_t origEdges = m.edges.length;
+        size_t origFaces = m.faces.length;
+        uint[][] origFaceWindings = m.faces._store.dup;
+
+        float tA = (m.edges[eA][0] == 0) ? 0.0f : 1.0f; // reuse vertex 0
+        float tB = (m.edges[eB][0] == 1) ? 0.0f : 1.0f; // reuse vertex 1
+
+        auto r = m.edgeSliceEx(eA, eB, tA, tB, /*splitPolygons*/true);
+
+        assert(r.facesSplit == 0,
+            "adjacent reused corners on the shared face must be a no-op (adjacent-hit guard)");
+        assert(!r.meshChanged,
+            "a true no-op (nothing spliced in) must report meshChanged == false");
+        assert(r.cutVertA == ~0u && r.cutVertB == ~0u,
+            "a true no-op result must not surface stale cut-vertex indices");
+        assert(m.vertices.length == origVerts,
+            "true no-op must not add any vertex — both cuts were pure corner reuse");
+        assert(m.edges.length == origEdges, "true no-op must not touch edges[]");
+        assert(m.faces.length == origFaces, "true no-op must not touch face count");
+        foreach (fi; 0 .. origFaces)
+            assert(m.faces[fi] == origFaceWindings[fi],
+                "true no-op must not leave any winding change in face " ~ fi.to!string);
+        assert(cast(long)m.vertices.length - cast(long)m.edges.length + cast(long)m.faces.length == 2,
+            "Euler characteristic must stay 2 after a true no-op cut");
+    }
+
+    unittest { // edgeSlice: no-op guards — same edge, out-of-bounds index → returns 0
+        auto m = makeCube();
+        size_t origFaces = m.faces.length;
+        size_t origVerts = m.vertices.length;
+
+        uint e0 = m.edgeIndexOfVerts(0, 1);
+
+        // Same edge: always a no-op.
+        assert(m.edgeSlice(e0, e0) == 0, "same edge must return 0");
+        assert(m.faces.length    == origFaces, "mesh unchanged after same-edge no-op");
+        assert(m.vertices.length == origVerts, "mesh unchanged after same-edge no-op");
+
+        // Out-of-bounds edge index: no-op.
+        uint oob = cast(uint)m.edges.length;
+        assert(m.edgeSlice(oob, e0) == 0, "oob edgeA must return 0");
+        assert(m.edgeSlice(e0, oob) == 0, "oob edgeB must return 0");
+        assert(m.faces.length    == origFaces, "mesh unchanged after oob no-op");
+        assert(m.vertices.length == origVerts, "mesh unchanged after oob no-op");
+    }
+
+    unittest { // edgeSlice: splitPolygons=false — points only, no chord, no face split
+        import std.conv : to;
+        auto m = makeCube();
+        // Face 5 = [0,1,5,4] (bottom).  Edge(0,1) and edge(4,5) are both on it,
+        // but are NOT adjacent (mirrors the shared-face unittest above).
+        uint eA = m.edgeIndexOfVerts(0, 1);
+        uint eB = m.edgeIndexOfVerts(4, 5);
+        assert(eA != ~0u, "edge(0,1) must exist on cube");
+        assert(eB != ~0u, "edge(4,5) must exist on cube");
+
+        size_t origEdges = m.edges.length;
+        assert(origEdges == 12, "cube starts with 12 edges");
+
+        size_t n = m.edgeSlice(eA, eB, 0.5f, 0.5f, /*splitPolygons*/false);
+
+        assert(n == 2, "points-only branch returns 2 (nonzero success marker)");
+        assert(m.faces.length == 6, "face count UNCHANGED with splitPolygons=false");
+        assert(m.vertices.length == 10, "8 + 2 cut-points = 10 verts");
+        // The discriminator for the finalize bug: a missing rebuildEdges() would
+        // leave edges.length at 12 (the two new half-edges never registered) even
+        // though face==6 / verts==10 / no-orphans / no-degenerate all still pass.
+        assert(m.edges.length == 14,
+            "edge count must be 12 -> 14 (two non-shared edges each split once); got "
+            ~ m.edges.length.to!string);
+
+        bool[] refd = new bool[](m.vertices.length);
+        foreach (face; m.faces) foreach (vi; face) refd[vi] = true;
+        foreach (i, r; refd) assert(r, "vertex " ~ i.to!string ~ " orphaned after points-only edgeSlice");
+        foreach (face; m.faces) assert(face.length >= 3, "no degenerate face after points-only edgeSlice");
+    }
+
     // -----------------------------------------------------------------------
     // splitFaceByVertices — split a face along a chord between two of its
     // existing, non-adjacent winding vertices.
@@ -12079,6 +13518,98 @@ struct EdgeFaceRange {
 }
 
 // ---------------------------------------------------------------------------
+// EdgeFaceRange — other-endpoint retry on a corrupted half-edge fan (task 0394)
+// ---------------------------------------------------------------------------
+//
+// Reproduces the observed symptom (a real user model, see task 0394): a
+// same-direction shared edge SOMEWHERE in a vertex's fan corrupts the
+// half-edge rotation anchored at that vertex (vertLoop[v] can end up
+// pointing at a dart that doesn't even belong to v — buildLoops' anchor
+// walk follows twin(cur) directly instead of twin(prev(cur)), so a
+// mispaired twin at the corrupted edge derails it). A perfectly ordinary,
+// uncorrupted edge elsewhere in the SAME fan can then have its default
+// (edges[ei][0]-first) facesAroundEdge lookup walk straight into the dead
+// end and find nothing — exactly what turned Loop Slice into a silent
+// no-op. The retry from the OTHER endpoint (whose own fan is untouched)
+// recovers the correct, verified-against-ground-truth face set.
+
+unittest { // corrupted fan elsewhere in the SAME hub vertex recovers a clean
+           // bystander edge's incident faces via the other-endpoint retry
+    Mesh m;
+    m.vertices = [
+        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,2,0), Vec3(-1,1,0), Vec3(-1,-1,0),
+        Vec3(1,-1,0), Vec3(9,9,0),
+    ];
+    m.faces = [
+        [0u,1u,2u],   // face0 -- query edge (0,1) lives here
+        [0u,2u,3u],   // face1
+        [0u,3u,4u],   // face2
+        [0u,4u,5u],   // face3
+        [0u,5u,6u],   // face4
+        [0u,6u,1u],   // face5 -- closes the fan back to vertex1
+        [3u,0u,7u],   // faceBad -- reuses spoke (0,3) in the SAME direction (3→0)
+                      // as face1's (3,0): a genuine same-direction shared edge,
+                      // corrupting the vertex-0 half-edge fan elsewhere.
+    ];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.resetSelection();
+
+    uint ei01 = m.edgeIndex(0, 1);
+    assert(ei01 != ~0u, "edge (0,1) must exist");
+    assert(m.edges[ei01][] == [0u, 1u], "sanity: default direction is va=0, vb=1");
+
+    // Non-vacuous: the OLD single-direction lookup (default endpoint only,
+    // no retry) genuinely fails on this corrupted fan -- the bug this fixes.
+    {
+        EdgeFaceRange pOld;
+        bool okOld = pOld._tryFrom(m.loops, m.vertLoop, m.edges[ei01][0], m.edges[ei01][1]);
+        assert(!okOld, "sanity: single-direction lookup from the default endpoint "
+            ~ "must fail on this corrupted fan -- otherwise this test proves nothing");
+    }
+
+    // The retry-equipped public API must recover both true incident faces.
+    uint[] found;
+    foreach (fi; m.facesAroundEdge(ei01)) found ~= fi;
+    import std.algorithm : sort, canFind;
+    sort(found);
+    assert(found == [0u, 5u],
+        "facesAroundEdge must recover both faces incident on edge (0,1) via the "
+        ~ "other-endpoint retry, not silently report zero");
+
+    // collectEdgeRing (the direct cause of the Loop Slice no-op) is a thin
+    // wrapper over facesAroundEdge (mesh.d ~9949) -- it inherits this fix
+    // automatically. Not separately re-derived here: constructing a corrupted
+    // fan where the retry ALSO recovers a clean quad-quad ring (rather than
+    // just triangle incidence) needs a larger fixture without adding coverage
+    // over what's proven above; see the follow-up note in the task file.
+}
+
+unittest { // well-formed mesh: retry is inert (never fires; the default
+           // single-direction lookup always succeeds on its own, so
+           // facesAroundEdge's result is byte-identical to before this fix)
+    Mesh m = makeCube();
+    m.buildLoops();
+    foreach (ei; 0 .. cast(uint)m.edges.length) {
+        EdgeFaceRange direct;
+        bool okDirect = direct._tryFrom(m.loops, m.vertLoop, m.edges[ei][0], m.edges[ei][1]);
+        assert(okDirect, "well-formed mesh: default single-direction lookup must "
+            ~ "already succeed on every edge -- the retry must never be needed here");
+
+        uint[] viaPublicApi;
+        foreach (fi; m.facesAroundEdge(ei)) viaPublicApi ~= fi;
+        import std.algorithm : sort;
+        auto direct2 = direct._faces[0 .. direct._count].dup;
+        sort(direct2);
+        auto viaSorted = viaPublicApi.dup;
+        sort(viaSorted);
+        assert(direct2 == viaSorted,
+            "well-formed mesh: facesAroundEdge result must match the plain "
+            ~ "single-direction lookup exactly -- the retry must not alter it");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // AdjacentFaceRange
 // ---------------------------------------------------------------------------
 
@@ -12138,47 +13669,6 @@ ulong edgeKey(uint a, uint b) {
 
 
 
-// ---------------------------------------------------------------------------
-// Task 0401 — negative/regression check: a TOPOLOGY-keyed cache must NOT
-// rebuild on a position-only edit. vertexAdjacencyCSR keys purely on
-// `mutationVersion` by design (topology never changed by a vertex move) —
-// unlike the 3 caches this task fixes (subpatch preview / symmetry pairing /
-// snap grid), which needed a Position-bus-driven invalidation ON TOP of
-// their existing mutationVersion key. This test proves the fix did not
-// widen — the version-silent noteChange(Position) contract stays exactly as
-// silent to mutationVersion as before, so vertexAdjacencyCSR provably does
-// not thrash on every gizmo drag frame.
-// ---------------------------------------------------------------------------
-unittest {
-    import change_bus : MeshEditScope;
-
-    Mesh m = makeCube();
-    const(size_t)[] offA;
-    const(uint)[]    nbA;
-    m.vertexAdjacencyCSR(offA, nbA);
-    ulong csrVerAfterBuild = m._adjCsrVer;
-    ulong mutVerBefore     = m.mutationVersion;
-
-    // Version-silent edit — exactly what an interactive gizmo drag/commit
-    // does: mutate a vertex, note the Position change class, never bump
-    // mutationVersion.
-    m.vertices[0] = m.vertices[0] + Vec3(0.5f, 0, 0);
-    m.noteChange(MeshEditScope.Position);
-    assert(m.mutationVersion == mutVerBefore,
-        "test setup must stay version-silent to mirror the gizmo path");
-
-    const(size_t)[] offB;
-    const(uint)[]    nbB;
-    m.vertexAdjacencyCSR(offB, nbB);
-    assert(m._adjCsrVer == csrVerAfterBuild,
-        "task 0401: a position-only edit must NOT force the adjacency CSR "
-        ~ "to rebuild — it stays topology-keyed by design and must be "
-        ~ "unaffected by the Position-bus invalidation this task adds to "
-        ~ "the subpatch preview / symmetry pairing / snap grid caches");
-    assert(offA is offB && nbA is nbB,
-        "no rebuild occurred ⇒ vertexAdjacencyCSR must hand back the "
-        ~ "exact same cached arrays, not freshly rebuilt ones");
-}
 
 Mesh makeCube() {
     Mesh m;
@@ -12366,142 +13856,6 @@ Mesh subdivideCube(int levels) {
 
 
 
-unittest { // noteSelectionChange / marks-setter accumulation (change-bus Stage 5)
-    import change_bus : SelDomain;
-    import mesh_edit_delta : MeshEditScope;
-
-    // Single setters accumulate Marks + the matching domain bit, and stay
-    // version-stable (selection is not a version-bumping geometry change).
-    {
-        Mesh m = makeCube();
-        m.resetSelection();
-        m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
-        const ver0 = m.mutationVersion;
-        const top0 = m.topologyVersion;
-
-        m.selectVertex(0);
-        assert(m.pendingChanges_ & MeshEditScope.Marks, "selectVertex notes Marks");
-        assert(m.pendingSelDomains_ & SelDomain.Vertex, "selectVertex notes Vertex domain");
-
-        m.selectEdge(0);
-        assert(m.pendingSelDomains_ & SelDomain.Edge, "selectEdge notes Edge domain");
-
-        m.selectFace(0);
-        assert(m.pendingSelDomains_ & SelDomain.Face, "selectFace notes Face domain");
-
-        // All three domains accumulate (OR), and NO version bump occurred —
-        // marks setters must remain version-stable.
-        assert(m.pendingSelDomains_ ==
-            (SelDomain.Vertex | SelDomain.Edge | SelDomain.Face),
-            "domains OR-accumulate");
-        assert(m.mutationVersion == ver0, "selection must NOT bump mutationVersion");
-        assert(m.topologyVersion == top0, "selection must NOT bump topologyVersion");
-    }
-
-    // Bulk setXSelectedFrom compares-before-set: a no-op re-apply of the SAME
-    // selection does not publish; a real change does.
-    {
-        Mesh m = makeCube();
-        m.resetSelection();
-        m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
-        bool[] sel; sel.length = m.vertices.length;
-        sel[2] = true;
-
-        m.setVerticesSelectedFrom(sel);           // real change
-        assert(m.pendingSelDomains_ & SelDomain.Vertex, "first apply publishes");
-
-        m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
-        m.setVerticesSelectedFrom(sel);           // identical re-apply: no-op
-        assert(m.pendingSelDomains_ == 0,
-            "re-applying identical selection must NOT publish");
-        assert((m.pendingChanges_ & MeshEditScope.Marks) == 0,
-            "no-op restore must NOT note Marks");
-
-        sel[2] = false; sel[5] = true;            // actual change
-        m.setVerticesSelectedFrom(sel);
-        assert(m.pendingSelDomains_ & SelDomain.Vertex,
-            "a real selection change publishes again");
-    }
-
-    // Bulk setXSelectedFrom restores the "deselected => order==0" invariant
-    // for elements it deselects, matching the per-element select*/deselect*
-    // setters. Establishes rank via the per-element path FIRST (so the
-    // deselected element carries a real nonzero order, unlike the no-op
-    // test above where index 2's order was already 0 from init) then
-    // bulk-deselects it and checks: (a) its order is zeroed, (b) the
-    // surviving element's rank is untouched, and (c) the order-counter
-    // itself is untouched by the bulk call (proving rank monotonicity
-    // isn't reset — a later per-element select continues from the prior
-    // high-water mark rather than restarting).
-    {
-        Mesh m = makeCube();
-        m.resetSelection();
-
-        m.selectFace(0);
-        m.selectFace(1);
-        assert(m.faceSelectionOrder[0] == 1, "face 0 gets rank 1");
-        assert(m.faceSelectionOrder[1] == 2, "face 1 gets rank 2");
-        assert(m.faceSelectionOrderCounter == 2, "counter at 2 after two selects");
-
-        bool[] fsel; fsel.length = m.faces.length;
-        fsel[0] = true;                            // keep face 0, drop face 1
-        m.setFacesSelectedFrom(fsel);
-
-        assert(m.faceSelectionOrder[1] == 0,
-            "bulk-deselected face's order is zeroed (the invariant)");
-        assert(m.faceSelectionOrder[0] == 1,
-            "surviving face keeps its rank");
-        assert(m.selectedFaces[0] == true && m.selectedFaces[1] == false,
-            "marks reflect the bulk apply");
-        assert(m.faceSelectionOrderCounter == 2,
-            "bulk deselect must NOT touch the order counter");
-
-        m.selectFace(2);
-        assert(m.faceSelectionOrder[2] == 3,
-            "next per-element select continues the rank sequence (counter wasn't reset)");
-        assert(m.faceSelectionOrderCounter == 3);
-
-        // Mirror for the other two domains (vertex + edge) so all three
-        // bulk setters are covered directly.
-        m.selectVertex(0);
-        m.selectVertex(1);
-        assert(m.vertexSelectionOrder[0] == 1 && m.vertexSelectionOrder[1] == 2);
-        assert(m.vertexSelectionOrderCounter == 2);
-        bool[] vsel; vsel.length = m.vertices.length;
-        vsel[0] = true;
-        m.setVerticesSelectedFrom(vsel);
-        assert(m.vertexSelectionOrder[1] == 0, "bulk-deselected vertex order zeroed");
-        assert(m.vertexSelectionOrder[0] == 1, "surviving vertex keeps rank");
-        assert(m.vertexSelectionOrderCounter == 2, "vertex counter untouched by bulk deselect");
-
-        m.selectEdge(0);
-        m.selectEdge(1);
-        assert(m.edgeSelectionOrder[0] == 1 && m.edgeSelectionOrder[1] == 2);
-        assert(m.edgeSelectionOrderCounter == 2);
-        bool[] esel; esel.length = m.edges.length;
-        esel[0] = true;
-        m.setEdgesSelectedFrom(esel);
-        assert(m.edgeSelectionOrder[1] == 0, "bulk-deselected edge order zeroed");
-        assert(m.edgeSelectionOrder[0] == 1, "surviving edge keeps rank");
-        assert(m.edgeSelectionOrderCounter == 2, "edge counter untouched by bulk deselect");
-    }
-
-    // clear* compares-before-set: clearing an already-empty selection is inert.
-    {
-        Mesh m = makeCube();
-        m.resetSelection();
-        m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
-        m.clearFaceSelection();                   // nothing selected → inert
-        assert(m.pendingSelDomains_ == 0,
-            "clearing empty face selection must NOT publish");
-
-        m.selectFace(1);
-        m.pendingChanges_ = 0; m.pendingSelDomains_ = 0;
-        m.clearFaceSelection();                   // drops a live selection
-        assert(m.pendingSelDomains_ & SelDomain.Face,
-            "clearing a live face selection publishes Face");
-    }
-}
 
 // ===========================================================================
 // Twin-graph invariant tests — cube control guard (R1) + non-manifold book.
@@ -13235,248 +14589,6 @@ version (unittest) private Mesh buildRawMesh(Vec3[] verts, uint[][] faceList) {
     return m;
 }
 
-unittest { // bevelFacesByMask: GROUP accumulator on ASYMMETRIC geometry —
-           // task 0458 Phase 1, finding G1 (internalCnt==1, half-shared).
-           // poly_bevel_corner.json's 3-face cube corner is axis-aligned —
-           // its incident normals are mutually orthogonal, where the
-           // reference's AVE_N=k·N/|N|² degenerates to the naive
-           // Σ(unit normal) sum (the SAME 0453-class symmetry trap this
-           // task's brief warns about). This raw mesh is a deliberately
-           // asymmetric "tent" (non-90° dihedral, unequal adjacent-edge
-           // lengths) — a naive-sum accumulator FAILS it; bit-exact
-           // against the frozen reference dump (`poly_bevel_
-           // G1_halfshared_tent`, 6.2e-9 on the reference side) is the
-           // discriminator. See tests/fixtures/poly_bevel_G1_halfshared_
-           // tent.json for the same case run through the HTTP fixture path.
-    auto m = buildRawMesh(
-        [Vec3(0.0f, 0.0f, 0.0f), Vec3(0.0f, 0.0f, 2.0f), Vec3(1.5f, 0.8f, 2.0f),
-         Vec3(1.5f, 0.8f, 0.0f), Vec3(-0.7f, 1.0f, 0.0f), Vec3(-0.7f, 1.0f, 2.0f)],
-        [[0u,1,2,3], [1u,0,4,5]]);
-    bool[] mask = [true, true];
-    size_t n = m.bevelFacesByMask(mask, 0.1f, 0.1f, true, 0);
-    assert(n == 2);
-    assert(m.vertices.length == 12, "6 orig (unchanged) + 2 shared ridge + 4 standalone");
-    assert(m.faces.length    == 8,  "2 final quads + 2 faces x 3 remaining boundary bridges");
-
-    bool foundA = false, foundB = false;
-    foreach (v; m.vertices) {
-        if ((v - Vec3(0.03111569f, 0.12992836f, 0.1f)).length < 1e-4f) foundA = true;
-        if ((v - Vec3(0.03111569f, 0.12992836f, 1.9f)).length < 1e-4f) foundB = true;
-    }
-    assert(foundA, "shared ridge endpoint A should land at the AVE_N-amplified shift + inset-along-ridge position");
-    assert(foundB, "shared ridge endpoint B (same accumulator, mirrored) should match too");
-}
-
-unittest { // bevelFacesByMask: GROUP accumulator, finding G2 (fully-enclosed
-           // apex, internalCnt>=2 && !anyBoundary) — task 0458 Phase 1
-           // (+ follow-up). Valence-3 apex surrounded by 3 irregular
-           // NON-planar, non-orthogonal quads (all selected); the apex has
-           // 3 internal edges and no boundary edge. `orig + shift·AVE_N`
-           // (no inset term) is bit-exact against the reference dump
-           // (`poly_bevel_G2_apex_v3`, 2.6e-8) for the apex vertex itself.
-           // The SAME dump's ring vertices (each internalCnt==1, shared
-           // between 2 of the 3 faces) are now ALSO bit-exact via the
-           // recovered `bevGenInset` mitered-corner offset
-           // (`boundaryContourInset`/`findGroupBoundaryContour`, task 0458
-           // follow-up, findings.md §1/§5) — the position gap this
-           // unittest used to document is closed.
-    auto m = buildRawMesh(
-        [Vec3(1.0f, 0.0f, 0.0f), Vec3(0.6f, -0.1f, 1.1f), Vec3(-0.5f, 0.05f, 1.3f),
-         Vec3(-1.2f, -0.05f, 0.2f), Vec3(-0.7f, 0.1f, -1.0f), Vec3(0.5f, -0.2f, -0.9f),
-         Vec3(0.1f, 1.0f, 0.05f)],
-        // reference dump used reverse_winding=true for +Y outward normals —
-        // pre-reversed here so vibe3d's own faceNormal() convention matches.
-        [[2u,1,0,6], [4u,3,2,6], [0u,5,4,6]]);
-    bool[] mask = [true, true, true];
-    size_t n = m.bevelFacesByMask(mask, 0.1f, 0.1f, true, 0);
-    assert(n == 3);
-    bool foundApex = false;
-    foreach (v; m.vertices)
-        if ((v - Vec3(0.13126321f, 1.18738139f, 0.04756028f)).length < 1e-4f) foundApex = true;
-    assert(foundApex, "fully-enclosed apex should sit at orig + shift*AVE_N (bit-exact against poly_bevel_G2_apex_v3)");
-
-    // Ring vertices (dump[7]/[9]/[11], near orig-vert 0/2/4): bit-exact
-    // against `poly_bevel_G2_apex_v3` via the recovered mitered-corner
-    // offset (task 0458 follow-up).
-    bool foundRing0 = false, foundRing2 = false, foundRing4 = false;
-    foreach (v; m.vertices) {
-        if ((v - Vec3(1.01231349f, 0.14855729f, -0.00942456f)).length < 1e-4f) foundRing0 = true;
-        if ((v - Vec3(-0.48344547f, 0.20435742f, 1.27598262f)).length < 1e-4f) foundRing2 = true;
-        if ((v - Vec3(-0.67538124f, 0.25805962f, -0.98621768f)).length < 1e-4f) foundRing4 = true;
-    }
-    assert(foundRing0, "ring vertex near orig-vert 0 should be bit-exact against poly_bevel_G2_apex_v3's dump[7]");
-    assert(foundRing2, "ring vertex near orig-vert 2 should be bit-exact against poly_bevel_G2_apex_v3's dump[9]");
-    assert(foundRing4, "ring vertex near orig-vert 4 should be bit-exact against poly_bevel_G2_apex_v3's dump[11]");
-    // STANDALONE ring vertices (dump[8]/[10]/[12], near orig-vert 1/3/5 —
-    // each touches only ONE selected face, internalCnt==0). These sit in the
-    // grouped-standalone per-corner-AVE_N regime: `orig + shift*cn +
-    // boundaryContourInset(eNext,ePrev, cn)` with `cn` the corner's own shift
-    // normal (NOT the whole-face Newell normal, which is measurably worse).
-    // Bit-exact against poly_bevel_G2_apex_v3's dump[8]/[10]/[12] (parity task).
-    bool foundStd1 = false, foundStd3 = false, foundStd5 = false;
-    foreach (v; m.vertices) {
-        if ((v - Vec3(0.54333192f, 0.02258310f, 1.02778912f)).length < 1e-4f) foundStd1 = true;
-        if ((v - Vec3(-1.10951495f, 0.07091790f, 0.19473825f)).length < 1e-4f) foundStd3 = true;
-        if ((v - Vec3(0.46943665f, -0.06014295f, -0.84538692f)).length < 1e-4f) foundStd5 = true;
-    }
-    assert(foundStd1, "grouped-standalone vertex near orig-vert 1 should be bit-exact against poly_bevel_G2_apex_v3's dump[8]");
-    assert(foundStd3, "grouped-standalone vertex near orig-vert 3 should be bit-exact against poly_bevel_G2_apex_v3's dump[10]");
-    assert(foundStd5, "grouped-standalone vertex near orig-vert 5 should be bit-exact against poly_bevel_G2_apex_v3's dump[12]");
-}
-
-unittest { // bevelFacesByMask: GROUP accumulator, finding G3 (partial,
-           // internalCnt>=2 && anyBoundary) — task 0458 Phase 1 (+
-           // follow-up). Before Phase 1 the branch fell through entirely,
-           // so a partial vertex got the STANDALONE per-face formula
-           // applied once per incident face — 3 SEPARATE vertices instead
-           // of the reference's ONE shared vertex (a topology divergence,
-           // not just numeric). Valence-4 fan, only 3 of 4 quads selected,
-           // so the shared apex has 2 internal + 2 boundary edges.
-           //
-           // This asserts BOTH the topology fix (one shared vertex,
-           // referenced by every incident new face, matching the
-           // reference's vertex/face counts) AND — since the follow-up —
-           // the exact position via the recovered `bevGenInset`
-           // mitered-corner offset (`boundaryContourInset`/
-           // `findGroupBoundaryContour`, findings.md §1/§5): `orig +
-           // shift·AVE_N + boundaryInset`, bit-exact against
-           // `poly_bevel_G3_partial_fan`'s shared apex vertex (1.1e-8).
-    import std.conv : to;
-    auto m = buildRawMesh(
-        [Vec3(1.0f, 0.0f, 0.0f), Vec3(0.7f, -0.1f, 0.8f), Vec3(0.0f, 0.05f, 1.2f),
-         Vec3(-0.9f, -0.05f, 0.7f), Vec3(-1.1f, 0.1f, -0.1f), Vec3(-0.6f, -0.15f, -0.9f),
-         Vec3(0.2f, 0.05f, -1.1f), Vec3(0.8f, -0.2f, -0.7f), Vec3(0.05f, 0.9f, 0.0f)],
-        // reference dump used reverse_winding=true — pre-reversed.
-        [[2u,1,0,8], [4u,3,2,8], [6u,5,4,8], [0u,7,6,8]]);
-    bool[] mask = [true, true, true, false]; // only 3 of 4 quads selected
-    size_t n = m.bevelFacesByMask(mask, 0.1f, 0.1f, true, 0);
-    assert(n == 3);
-    // Reference: 9 orig + 8 new = 17 verts; 12 faces (3 final quads + the
-    // 4th untouched quad + bridges over the 4 remaining boundary edges of
-    // the 3-face selection — matches poly_bevel_G3_partial_fan's 17v/12f).
-    assert(m.vertices.length == 17, "partial-fan topology should match the reference vertex count (shared, not split)");
-    assert(m.faces.length    == 12);
-
-    // The shared partial vertex must sit at the bit-exact recovered
-    // position (poly_bevel_G3_partial_fan's dump[16]) AND be referenced by
-    // every incident new face exactly once (not duplicated into 3 separate
-    // vertices, one per selected face, the pre-0458 fallback's behavior).
-    immutable Vec3 expectedShared = Vec3(-0.07055401f, 1.00857651f, 0.10307505f);
-    uint sharedIdx = uint.max;
-    foreach (i, v; m.vertices)
-        if ((v - expectedShared).length < 1e-4f) { sharedIdx = cast(uint)i; break; }
-    assert(sharedIdx != uint.max,
-        "expected the shared partial vertex bit-exact at orig + shift*AVE_N + boundaryInset (poly_bevel_G3_partial_fan's dump[16])");
-    size_t refCount = 0;
-    foreach (f; m.faces)
-        foreach (v; f)
-            if (v == sharedIdx) { ++refCount; break; }
-    assert(refCount == 5, "the shared partial vertex should be referenced by all 5 incident faces (3 final + 2 bridges), got " ~ refCount.to!string);
-
-    // STANDALONE corners (orig 0/1/3/5/6 — each internalCnt==0, touching one
-    // selected face). Grouped-standalone per-corner-AVE_N regime: bit-exact
-    // against poly_bevel_G3_partial_fan's dump[9]/[10]/[12]/[14]/[15]
-    // (parity task).
-    bool fStd0=false, fStd1=false, fStd3=false, fStd5=false, fStd6=false;
-    foreach (v; m.vertices) {
-        if ((v - Vec3(0.95582151f, 0.12657540f, 0.12734687f)).length < 1e-4f) fStd0 = true;
-        if ((v - Vec3(0.65931493f, 0.03504139f, 0.75914669f)).length < 1e-4f) fStd1 = true;
-        if ((v - Vec3(-0.84032083f, 0.08062109f, 0.66145885f)).length < 1e-4f) fStd3 = true;
-        if ((v - Vec3(-0.57754570f, -0.00480662f, -0.87185556f)).length < 1e-4f) fStd5 = true;
-        if ((v - Vec3(0.06068159f, 0.16000065f, -1.05715966f)).length < 1e-4f) fStd6 = true;
-    }
-    assert(fStd0, "grouped-standalone vertex near orig-vert 0 should be bit-exact against poly_bevel_G3_partial_fan's dump[9]");
-    assert(fStd1, "grouped-standalone vertex near orig-vert 1 should be bit-exact against poly_bevel_G3_partial_fan's dump[10]");
-    assert(fStd3, "grouped-standalone vertex near orig-vert 3 should be bit-exact against poly_bevel_G3_partial_fan's dump[12]");
-    assert(fStd5, "grouped-standalone vertex near orig-vert 5 should be bit-exact against poly_bevel_G3_partial_fan's dump[14]");
-    assert(fStd6, "grouped-standalone vertex near orig-vert 6 should be bit-exact against poly_bevel_G3_partial_fan's dump[15]");
-}
-
-unittest { // bevelFacesByMask: WARPED single quad, ISOLATED-face inset law —
-           // captured-reference parity (task 0467). A symmetric saddle quad
-           // (z alternates ±0.2 around the ring → strongly non-planar; its
-           // whole-face Newell normal is exactly +Z) beveled as a SINGLE
-           // face. This is the `poly_bevel_W1_warped_standalone` oracle,
-           // rr/gdb-grounded (findings.md §6): the reference places each inset
-           // corner by a mitered offset in the tangent plane ⟂ the WHOLE-FACE
-           // normal (`boundaryContourInset(faceNormal)`) plus `faceNormal·
-           // shift`, NOT by the old `offsetMeet` line-intersection (which
-           // slides off the tilted edges and lands ~0.06 off in the normal
-           // direction). The captured reference output (v4..v7) is bit-exact.
-    auto m = buildRawMesh(
-        [Vec3(-0.5f,-0.5f, 0.2f), Vec3(0.5f,-0.5f,-0.2f),
-         Vec3( 0.5f, 0.5f, 0.2f), Vec3(-0.5f, 0.5f,-0.2f)],
-        [[0u,1,2,3]]);
-    immutable float inset = 0.15f, shift = 0.1f;
-    const Vec3 n = m.faceNormal(0);
-    assert((n - Vec3(0, 0, 1)).length < 1e-6f, "saddle quad's Newell normal must be +Z");
-    size_t nb = m.bevelFacesByMask([true], inset, shift, false, 0);
-    assert(nb == 1);
-    // Captured reference (poly_bevel_W1_warped_standalone_group): the 4 inset
-    // cap corners. XY = the in-tangent-plane 90° miter (±0.35); Z = orig ±0.2
-    // shifted by +0.1 along the whole-face +Z normal (→ 0.30 / -0.10).
-    immutable Vec3[4] refCap = [
-        Vec3(-0.35f, -0.35f,  0.30f), Vec3( 0.35f, -0.35f, -0.10f),
-        Vec3( 0.35f,  0.35f,  0.30f), Vec3(-0.35f,  0.35f, -0.10f)];
-    // The old off-plane `offsetMeet` law (what the corner would get without
-    // the fix): same XY, but Z = orig ± (inset-slide) + shift — lands ~0.06
-    // off in Z. Assert the mesh is on the reference value and NOT the old one.
-    foreach (mc; refCap) {
-        bool found = false;
-        foreach (v; m.vertices) if ((v - mc).length < 1e-4f) { found = true; break; }
-        assert(found, "warped isolated-face cap corner must be bit-exact to the captured reference (poly_bevel_W1)");
-    }
-    // Guard the fix is actually engaged (not accidentally the old law): the
-    // old whole-face `offsetMeet` corner for v0 would sit at z≈0.24, absent.
-    bool foundOld = false;
-    foreach (v; m.vertices)
-        if ((v - Vec3(-0.35f, -0.35f, 0.24f)).length < 1e-3f) foundOld = true;
-    assert(!foundOld, "the pre-0467 off-plane offsetMeet corner (z≈0.24) must be gone");
-}
-
-unittest { // bevelFacesByMask: FLAT quad stays on the OLD whole-face law
-           // (task 0467 planarity gate — flat-face byte-identity guard). A
-           // planar quad's per-corner normal equals its face normal, so the
-           // gate (`dot(cn,n) >= 1-1e-6`) keeps the exact pre-0467
-           // `insetCorner + n·shift` expression — every flat-face bevel
-           // fixture is unaffected.
-    auto m = buildRawMesh(
-        [Vec3(-0.5f,-0.5f, 0.0f), Vec3(0.5f,-0.5f, 0.0f),
-         Vec3( 0.5f, 0.5f, 0.0f), Vec3(-0.5f, 0.5f, 0.0f)],
-        [[0u,1,2,3]]);
-    immutable float inset = 0.2f, shift = 0.13f;
-    Vec3[] origPos = [m.vertices[0], m.vertices[1], m.vertices[2], m.vertices[3]];
-    const Vec3 n = m.faceNormal(0);
-    Vec3[4] expOld;
-    foreach (i; 0 .. 4) {
-        immutable Vec3 cn = m.cornerNormalAt(0, cast(uint)i);
-        assert(dot(cn, n) >= 1.0f - 1e-6f, "flat quad corner normal must equal the face normal");
-        expOld[i] = m.insetCorner(origPos, cast(int)i, n, inset) + n * shift;
-    }
-    assert(m.bevelFacesByMask([true], inset, shift, false, 0) == 1);
-    foreach (i; 0 .. 4) {
-        bool exact = false;
-        foreach (v; m.vertices) if (v == expOld[i]) { exact = true; break; } // byte-exact
-        assert(exact, "flat cap corner must be BYTE-IDENTICAL to the pre-0467 insetCorner+n*shift law");
-    }
-}
-
-unittest { // boundaryContourInset degeneracy gate (task 0467 reviewer NIT):
-           // when e_b is PARALLEL to aveN the U-direction is undefined and
-           // safeNormalize would fabricate a bogus finite (0,1,0); the
-           // source-level |cross(e_b,aveN)| gate must reject it (return
-           // false) so the caller falls back — NOT return bogus geometry.
-    Vec3 res;
-    // e_b ∥ aveN (both along +Y, different magnitudes): must gate out.
-    assert(!Mesh.boundaryContourInset(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,2,0), 0.1f, res),
-        "e_b ∥ aveN must fall to the fallback (degenerate U)");
-    // Anti-parallel projection (G1-style D→0): D sums to ~zero, |D·U| gate.
-    assert(!Mesh.boundaryContourInset(Vec3(1,0,0), Vec3(-1,0,0), Vec3(0,0,1), 0.1f, res),
-        "anti-parallel tangent-plane edges (D→0) must fall to the fallback");
-    // A well-conditioned 90° corner in a plane returns a finite miter.
-    assert(Mesh.boundaryContourInset(Vec3(1,0,0), Vec3(0,1,0), Vec3(0,0,1), 0.1f, res),
-        "a well-conditioned corner should yield a finite mitered offset");
-}
 
 
 
@@ -13491,111 +14603,7 @@ unittest { // boundaryContourInset degeneracy gate (task 0467 reviewer NIT):
 
 
 
-unittest { // extractSelectedEdgeChains: two open arcs, single open chain,
-           // two closed cycles, degree-3 rejection, mixed open+closed
-    import std.conv : to;
 
-    void selectAll(ref Mesh m) {
-        m.resizeEdgeSelection();
-        foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
-    }
-
-    // (1) Two disjoint open arcs (2 edges each, 3 verts each).
-    {
-        Mesh m;
-        foreach (i; 0 .. 6) m.addVertex(Vec3(cast(float)i, 0, 0));
-        m.addEdge(0, 1); m.addEdge(1, 2);
-        m.addEdge(3, 4); m.addEdge(4, 5);
-        m.buildLoops();
-        selectAll(m);
-
-        auto chains = m.extractSelectedEdgeChains();
-        assert(chains.length == 2,
-            "two open arcs: expected 2 chains, got " ~ chains.length.to!string);
-        foreach (c; chains) {
-            assert(!c.closed, "two open arcs: both chains must be open");
-            assert(c.verts.length == 3,
-                "two open arcs: expected 3 verts/chain, got " ~ c.verts.length.to!string);
-        }
-    }
-
-    // (2) Single open chain alone — one component, no second group.
-    {
-        Mesh m;
-        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
-        m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(2, 3);
-        m.buildLoops();
-        selectAll(m);
-
-        auto chains = m.extractSelectedEdgeChains();
-        assert(chains.length == 1,
-            "single chain: expected 1 chain, got " ~ chains.length.to!string);
-        assert(!chains[0].closed, "single chain: must be open");
-        assert(chains[0].verts.length == 4,
-            "single chain: expected 4 verts, got " ~ chains[0].verts.length.to!string);
-    }
-
-    // (3) Two closed 4-cycles — must match extractSelectedEdgeCycles' own count.
-    {
-        Mesh m;
-        m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0));
-        m.addVertex(Vec3(1,1,0)); m.addVertex(Vec3(0,1,0));
-        m.addVertex(Vec3(0,0,1)); m.addVertex(Vec3(1,0,1));
-        m.addVertex(Vec3(1,1,1)); m.addVertex(Vec3(0,1,1));
-        m.addFace([0u,1u,2u,3u]);
-        m.addFace([4u,5u,6u,7u]);
-        m.buildLoops();
-        m.syncSelection();
-        foreach (ei; 0 .. m.edges.length) m.selectEdge(cast(int)ei);
-
-        auto chains = m.extractSelectedEdgeChains();
-        assert(chains.length == 2,
-            "two closed cycles: expected 2 chains, got " ~ chains.length.to!string);
-        foreach (c; chains) {
-            assert(c.closed, "two closed cycles: both must be closed");
-            assert(c.verts.length == 4,
-                "two closed cycles: expected 4 verts/cycle, got " ~ c.verts.length.to!string);
-        }
-        auto cycles = m.extractSelectedEdgeCycles();   // untouched extractor, same selection
-        assert(cycles.length == chains.length,
-            "extractSelectedEdgeChains must agree with extractSelectedEdgeCycles on an all-closed selection");
-    }
-
-    // (4) Branching vertex (degree 3) anywhere → whole call rejected.
-    {
-        Mesh m;
-        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
-        m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(1, 3);
-        m.buildLoops();
-        selectAll(m);
-
-        auto chains = m.extractSelectedEdgeChains();
-        assert(chains.length == 0,
-            "degree-3 branching: expected rejection, got " ~ chains.length.to!string);
-    }
-
-    // (5) Mixed: one open chain + one closed cycle selected together.
-    {
-        Mesh m;
-        // Open chain: verts 0-1-2.
-        m.addVertex(Vec3(0,0,0)); m.addVertex(Vec3(1,0,0)); m.addVertex(Vec3(2,0,0));
-        // Closed cycle: verts 3-4-5-6.
-        m.addVertex(Vec3(0,1,0)); m.addVertex(Vec3(1,1,0));
-        m.addVertex(Vec3(1,2,0)); m.addVertex(Vec3(0,2,0));
-        m.addEdge(0, 1); m.addEdge(1, 2);
-        m.addEdge(3, 4); m.addEdge(4, 5); m.addEdge(5, 6); m.addEdge(6, 3);
-        m.buildLoops();
-        selectAll(m);
-
-        auto chains = m.extractSelectedEdgeChains();
-        assert(chains.length == 2,
-            "mixed open+closed: expected 2 chains, got " ~ chains.length.to!string);
-        int openCount = 0, closedCount = 0;
-        foreach (c; chains) { if (c.closed) ++closedCount; else ++openCount; }
-        assert(openCount == 1 && closedCount == 1,
-            "mixed open+closed: expected exactly 1 open + 1 closed chain");
-    }
-}
 
 
 // ---------------------------------------------------------------------------
@@ -13649,109 +14657,6 @@ version (unittest) private int[] naiveWeldRemap_(const Vec3[] verts, double epsS
     return remap;
 }
 
-unittest { // spatial-hash rewrite reproduces the naive remap exactly, incl.
-    // cell-boundary crossings and the non-transitive chaining quirk.
-    //
-    // Layout (eps = 0.1, epsSq = 0.01, cellSize = 0.1):
-    //   0,1: far anchors (A,B) — never welded, used to recover each cluster
-    //        vertex's applied remap target via its face's 3rd corner.
-    //   2:   v0 = (0,0,0)            — representative of a 3-cluster
-    //   3:   v1 = (0.02,0,0)         — welds to v0 (dist 0.02 < eps)
-    //   4:   v2 = (0.05,0,0)         — welds to v0 (dist 0.05 < eps)
-    //   5:   b0 = (5.099,0,0)        — cell 50; welds b1 (adjacent-cell pair)
-    //   6:   b1 = (5.101,0,0)        — cell 51; dist to b0 = 0.002 < eps
-    //   7:   f0 = (20,0,0)           — independent (dist to f1 = 0.5 > eps)
-    //   8:   f1 = (20.5,0,0)         — independent
-    //   9:   P  = (50,0,0)           — claims Q; NOT within eps of R
-    //   10:  Q  = (50.06,0,0)        — welds to P (dist 0.06 < eps)
-    //   11:  R  = (50.12,0,0)        — dist to Q = 0.06 < eps, dist to P =
-    //        0.12 >= eps; since Q is claimed (not a representative) by the
-    //        time R is considered, R must stay UNWELDED — non-transitive.
-    import std.conv : to;
-    Mesh m;
-    m.vertices = [
-        Vec3(1000, 1000, 1000),   // 0: anchor A
-        Vec3(1000, 1000, 1001),   // 1: anchor B
-        Vec3(0, 0, 0),            // 2: v0
-        Vec3(0.02f, 0, 0),        // 3: v1
-        Vec3(0.05f, 0, 0),        // 4: v2
-        Vec3(5.099f, 0, 0),       // 5: b0
-        Vec3(5.101f, 0, 0),       // 6: b1
-        Vec3(20, 0, 0),           // 7: f0
-        Vec3(20.5f, 0, 0),        // 8: f1
-        Vec3(50, 0, 0),           // 9: P
-        Vec3(50.06f, 0, 0),       // 10: Q
-        Vec3(50.12f, 0, 0),       // 11: R
-    ];
-    // One triangle per cluster vertex: [A, B, v]. A and B are never welded
-    // and never coincide with any cluster vertex or each other, so the 3rd
-    // corner after weld directly reveals remap[v] (no corner-collapse can
-    // touch a 3-distinct-corner face).
-    foreach (k; 2 .. m.vertices.length)
-        m.faces ~= [0u, 1u, cast(uint)k];
-    m.rebuildEdgesFromFaces();
-    m.buildLoops();
-    m.resetSelection();
-
-    immutable double epsSq = 0.01; // eps = 0.1
-
-    // Reference remap via the naive O(V²) scan, computed BEFORE any mutation.
-    int[] refRemap = naiveWeldRemap_(m.vertices, epsSq, 0);
-    int[] expected = [0,1, 2,2,2, 5,5, 7,8, 9,9,11];
-    assert(refRemap == expected,
-        "naive reference remap sanity check failed: " ~ refRemap.to!string
-        ~ " vs " ~ expected.to!string);
-
-    size_t refWelded = 0;
-    foreach (i, r; refRemap) if (r != cast(int)i) ++refWelded;
-
-    size_t welded = m.weldCoincidentVertices(epsSq);
-    assert(welded == refWelded,
-        "spatial-hash weld count must match naive: got " ~ uintToStr(welded)
-        ~ " vs " ~ uintToStr(refWelded));
-    assert(m.vertices.length == 12, "weldCoincidentVertices must not touch vertices[]");
-    assert(m.faces.length == 10, "no face should be dropped (all corners stay distinct)");
-
-    // Recover the APPLIED remap from each face's 3rd corner and compare to
-    // the naive reference element-by-element — this catches a wrong
-    // representative choice even when the welded COUNT happens to match.
-    foreach (fi, ref f; m.faces) {
-        uint origV = cast(uint)(fi + 2);
-        uint appliedTarget = f[2];
-        uint expectedTarget = cast(uint)refRemap[origV];
-        assert(appliedTarget == expectedTarget,
-            "face for orig vertex " ~ origV.to!string ~ ": applied remap target "
-            ~ appliedTarget.to!string ~ " != naive " ~ expectedTarget.to!string);
-    }
-}
-
-unittest { // protectBelow: both-below pair must NOT weld; below/above pair must
-    Mesh m;
-    m.vertices = [
-        Vec3(0, 0, 0),   // 0: below protectBelow
-        Vec3(0, 0, 0),   // 1: below protectBelow, coincident with 0
-        Vec3(0, 0, 0),   // 2: at/above protectBelow, coincident with 0 and 1
-    ];
-    m.faces = [[0u, 1u, 2u]];  // degenerate on purpose; weld doesn't care about area
-    m.rebuildEdgesFromFaces();
-    m.buildLoops();
-    m.resetSelection();
-
-    immutable double epsSq = 0.01;
-    immutable size_t protectBelow = 2;
-
-    int[] refRemap = naiveWeldRemap_(m.vertices, epsSq, protectBelow);
-    // 0,1 both < protectBelow → skip. 0,2: 0<protectBelow but 2>=protectBelow → eligible → weld.
-    assert(refRemap == [0, 1, 0],
-        "reference: vert 1 stays independent (protected pair), vert 2 welds to 0");
-
-    size_t refWelded = 0;
-    foreach (i, r; refRemap) if (r != cast(int)i) ++refWelded;
-
-    size_t welded = m.weldCoincidentVertices(epsSq, protectBelow);
-    assert(welded == refWelded, "protectBelow weld count must match naive reference");
-    assert(welded == 1, "exactly one weld (2→0) expected under protectBelow=2");
-}
 
 
 // Helper: convert size_t to string for assert messages.
@@ -13914,464 +14819,12 @@ Vec3[] edgeSlidePositions(const ref Mesh m, const bool[] edgeMask, float t)
 
 
 
-// ---------------------------------------------------------------------------
-// EdgeFaceRange — other-endpoint retry on a corrupted half-edge fan (task 0394)
-// ---------------------------------------------------------------------------
-//
-// Reproduces the observed symptom (a real user model, see task 0394): a
-// same-direction shared edge SOMEWHERE in a vertex's fan corrupts the
-// half-edge rotation anchored at that vertex (vertLoop[v] can end up
-// pointing at a dart that doesn't even belong to v — buildLoops' anchor
-// walk follows twin(cur) directly instead of twin(prev(cur)), so a
-// mispaired twin at the corrupted edge derails it). A perfectly ordinary,
-// uncorrupted edge elsewhere in the SAME fan can then have its default
-// (edges[ei][0]-first) facesAroundEdge lookup walk straight into the dead
-// end and find nothing — exactly what turned Loop Slice into a silent
-// no-op. The retry from the OTHER endpoint (whose own fan is untouched)
-// recovers the correct, verified-against-ground-truth face set.
 
-unittest { // corrupted fan elsewhere in the SAME hub vertex recovers a clean
-           // bystander edge's incident faces via the other-endpoint retry
-    Mesh m;
-    m.vertices = [
-        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,2,0), Vec3(-1,1,0), Vec3(-1,-1,0),
-        Vec3(1,-1,0), Vec3(9,9,0),
-    ];
-    m.faces = [
-        [0u,1u,2u],   // face0 -- query edge (0,1) lives here
-        [0u,2u,3u],   // face1
-        [0u,3u,4u],   // face2
-        [0u,4u,5u],   // face3
-        [0u,5u,6u],   // face4
-        [0u,6u,1u],   // face5 -- closes the fan back to vertex1
-        [3u,0u,7u],   // faceBad -- reuses spoke (0,3) in the SAME direction (3→0)
-                      // as face1's (3,0): a genuine same-direction shared edge,
-                      // corrupting the vertex-0 half-edge fan elsewhere.
-    ];
-    m.rebuildEdgesFromFaces();
-    m.buildLoops();
-    m.resetSelection();
 
-    uint ei01 = m.edgeIndex(0, 1);
-    assert(ei01 != ~0u, "edge (0,1) must exist");
-    assert(m.edges[ei01][] == [0u, 1u], "sanity: default direction is va=0, vb=1");
 
-    // Non-vacuous: the OLD single-direction lookup (default endpoint only,
-    // no retry) genuinely fails on this corrupted fan -- the bug this fixes.
-    {
-        EdgeFaceRange pOld;
-        bool okOld = pOld._tryFrom(m.loops, m.vertLoop, m.edges[ei01][0], m.edges[ei01][1]);
-        assert(!okOld, "sanity: single-direction lookup from the default endpoint "
-            ~ "must fail on this corrupted fan -- otherwise this test proves nothing");
-    }
 
-    // The retry-equipped public API must recover both true incident faces.
-    uint[] found;
-    foreach (fi; m.facesAroundEdge(ei01)) found ~= fi;
-    import std.algorithm : sort, canFind;
-    sort(found);
-    assert(found == [0u, 5u],
-        "facesAroundEdge must recover both faces incident on edge (0,1) via the "
-        ~ "other-endpoint retry, not silently report zero");
 
-    // collectEdgeRing (the direct cause of the Loop Slice no-op) is a thin
-    // wrapper over facesAroundEdge (mesh.d ~9949) -- it inherits this fix
-    // automatically. Not separately re-derived here: constructing a corrupted
-    // fan where the retry ALSO recovers a clean quad-quad ring (rather than
-    // just triangle incidence) needs a larger fixture without adding coverage
-    // over what's proven above; see the follow-up note in the task file.
-}
 
-unittest { // well-formed mesh: retry is inert (never fires; the default
-           // single-direction lookup always succeeds on its own, so
-           // facesAroundEdge's result is byte-identical to before this fix)
-    Mesh m = makeCube();
-    m.buildLoops();
-    foreach (ei; 0 .. cast(uint)m.edges.length) {
-        EdgeFaceRange direct;
-        bool okDirect = direct._tryFrom(m.loops, m.vertLoop, m.edges[ei][0], m.edges[ei][1]);
-        assert(okDirect, "well-formed mesh: default single-direction lookup must "
-            ~ "already succeed on every edge -- the retry must never be needed here");
-
-        uint[] viaPublicApi;
-        foreach (fi; m.facesAroundEdge(ei)) viaPublicApi ~= fi;
-        import std.algorithm : sort;
-        auto direct2 = direct._faces[0 .. direct._count].dup;
-        sort(direct2);
-        auto viaSorted = viaPublicApi.dup;
-        sort(viaSorted);
-        assert(direct2 == viaSorted,
-            "well-formed mesh: facesAroundEdge result must match the plain "
-            ~ "single-direction lookup exactly -- the retry must not alter it");
-    }
-}
-
-
-
-
-
-
-// ---------------------------------------------------------------------------
-// rebuildFacesWithChordSplits: keep-selection unittests (cut-keep-split-faces
-// -selected task) — the shared kernel now INHERITS each parent face's
-// Marks.Select bit onto every emitted slot (whole-copy AND both split
-// halves) instead of unconditionally clearing it. Asserted by GEOMETRY /
-// count, not fixed index — a split appends the second half right after the
-// first, shifting later face indices.
-// ---------------------------------------------------------------------------
-
-
-unittest { // edgeSlice (splitPolygons=true path): selected parent → BOTH halves selected
-    Mesh m;
-    m.vertices = [
-        Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0),
-    ];
-    m.addFace([0u, 1u, 2u, 3u]);
-    m.buildLoops();
-    m.resetSelection();
-    m.selectFace(0);
-
-    uint eA = m.edgeIndexOfVerts(0, 1);
-    uint eB = m.edgeIndexOfVerts(2, 3);
-    assert(eA != ~0u && eB != ~0u, "both edges must exist on the quad");
-
-    size_t n = m.edgeSlice(eA, eB, 0.5f, 0.5f, /*splitPolygons*/true);
-
-    assert(n == 1, "single-face edgeSlice chords once");
-    assert(m.faces.length == 2, "2 sub-faces after the slice");
-    assert(m.isFaceSelected(0) && m.isFaceSelected(1),
-           "edgeSlice split path: both halves of a selected parent must stay selected");
-}
-
-// ---------------------------------------------------------------------------
-// edgeSlice unittests
-// ---------------------------------------------------------------------------
-
-unittest { // edgeSlice: 3×1 quad strip — index-share (no T-junction) + 6 faces / 12 verts
-    // Grid:
-    //  4--5--6--7
-    //  |  |  |  |
-    //  0--1--2--3
-    Mesh m;
-    m.vertices = [
-        Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0), Vec3(3,0,0),
-        Vec3(0,1,0), Vec3(1,1,0), Vec3(2,1,0), Vec3(3,1,0),
-    ];
-    m.addFace([0u,1u,5u,4u]);
-    m.addFace([1u,2u,6u,5u]);
-    m.addFace([2u,3u,7u,6u]);
-    m.buildLoops();
-    m.resetSelection();
-
-    uint eLeft  = m.edgeIndexOfVerts(0, 4);
-    uint eRight = m.edgeIndexOfVerts(3, 7);
-    assert(eLeft  != ~0u, "edge(0,4) must exist");
-    assert(eRight != ~0u, "edge(3,7) must exist");
-
-    size_t nSplit = m.edgeSlice(eLeft, eRight);
-
-    assert(nSplit == 3, "3 quads split → nSplit==3");
-    assert(m.faces.length  == 6,  "3×2 = 6 faces after strip cut");
-    assert(m.vertices.length == 12, "8 + 4 cut-points = 12 verts");
-
-    // No orphan vertices.
-    import std.conv : to;
-    bool[] refd = new bool[](m.vertices.length);
-    foreach (face; m.faces) foreach (vi; face) refd[vi] = true;
-    foreach (i, r; refd) assert(r, "vertex " ~ i.to!string ~ " is orphaned after edgeSlice");
-
-    // No degenerate faces.
-    foreach (face; m.faces) assert(face.length >= 3, "no degenerate face after edgeSlice");
-
-    // Index-share: the cut point on interior edge (1,5) must be referenced
-    // by exactly 2 sub-faces with the SAME vertex index (no T-junction).
-    uint cutMid15 = ~0u;
-    foreach (vi; 0 .. cast(uint)m.vertices.length) {
-        auto v = m.vertices[vi];
-        if (v.x > 0.99f && v.x < 1.01f &&
-            v.y > 0.49f && v.y < 0.51f && v.z == 0)
-            cutMid15 = vi;
-    }
-    assert(cutMid15 != ~0u, "cut point on edge(1,5) must exist");
-    int cnt15 = 0;
-    foreach (face; m.faces) foreach (vi; face) if (vi == cutMid15) cnt15++;
-    // v9 is shared by both sub-faces of face0 AND both sub-faces of face1
-    // (it is the entry point of one and exit point of the other across the
-    // shared half-edge).  4 references = 1 unique index across all 4 users.
-    assert(cnt15 == 4,
-        "interior cut vertex (1,5 mid) must appear in exactly 4 sub-faces (index-share)");
-
-    // Likewise for interior edge (2,6).
-    uint cutMid26 = ~0u;
-    foreach (vi; 0 .. cast(uint)m.vertices.length) {
-        auto v = m.vertices[vi];
-        if (v.x > 1.99f && v.x < 2.01f &&
-            v.y > 0.49f && v.y < 0.51f && v.z == 0)
-            cutMid26 = vi;
-    }
-    assert(cutMid26 != ~0u, "cut point on edge(2,6) must exist");
-    int cnt26 = 0;
-    foreach (face; m.faces) foreach (vi; face) if (vi == cutMid26) cnt26++;
-    // Same reasoning: v10 is shared by both sub-faces of face1 AND face2.
-    assert(cnt26 == 4,
-        "interior cut vertex (2,6 mid) must appear in exactly 4 sub-faces (index-share)");
-}
-
-unittest { // edgeSlice: single shared face (cube bottom) — 7 faces, 10 verts
-    auto m = makeCube();
-    // Face 5 = [0,1,5,4] (bottom).  Edge(0,1) and edge(4,5) are both on it.
-    uint eA = m.edgeIndexOfVerts(0, 1);
-    uint eB = m.edgeIndexOfVerts(4, 5);
-    assert(eA != ~0u, "edge(0,1) must exist on cube");
-    assert(eB != ~0u, "edge(4,5) must exist on cube");
-
-    size_t nSplit = m.edgeSlice(eA, eB);
-
-    assert(nSplit == 1, "single shared face: 1 split");
-    assert(m.faces.length  == 7,  "6 faces → 7 after single split");
-    assert(m.vertices.length == 10, "8 + 2 cut-points = 10 verts");
-
-    foreach (face; m.faces) assert(face.length >= 3, "no degenerate faces");
-
-    import std.conv : to;
-    bool[] refd2 = new bool[](m.vertices.length);
-    foreach (face; m.faces) foreach (vi; face) refd2[vi] = true;
-    foreach (i, r; refd2) assert(r, "vertex " ~ i.to!string ~ " orphaned after single-face edgeSlice");
-}
-
-unittest { // edgeSlice: endpoint cut (t=0/1) reuses the corner, no new vertex — F1, task 0295
-    auto m = makeCube();
-    // Face 5 = [0,1,5,4] (bottom) — same face as the "single shared face"
-    // unittest above. Edge(0,1) and edge(4,5) are non-adjacent on it; their
-    // DIAGONAL corner combination is {0,5} (the other combination, {1,4}, is
-    // also a valid diagonal — {0,4}/{1,5} are the two ADJACENT/existing-edge
-    // pairs and would hit rebuildFacesWithChordSplits' adjacent-hit guard,
-    // i.e. a no-op). Read the stored edge direction to pick tA/tB so the cut
-    // lands on {0,5} regardless of edges[e][0]/[1]'s (opaque, dedup-order)
-    // storage direction.
-    uint eA = m.edgeIndexOfVerts(0, 1);
-    uint eB = m.edgeIndexOfVerts(4, 5);
-    assert(eA != ~0u, "edge(0,1) must exist on cube");
-    assert(eB != ~0u, "edge(4,5) must exist on cube");
-
-    size_t origVerts = m.vertices.length;
-    size_t origEdges = m.edges.length;
-    size_t origFaces = m.faces.length;
-
-    float tA = (m.edges[eA][0] == 0) ? 0.0f : 1.0f; // lands on vertex 0
-    float tB = (m.edges[eB][0] == 5) ? 0.0f : 1.0f; // lands on vertex 5
-
-    size_t nSplit = m.edgeSlice(eA, eB, tA, tB, /*splitPolygons*/true);
-
-    assert(nSplit == 1, "single shared face chorded once");
-    assert(m.faces.length == origFaces + 1, "6 -> 7 faces (one chord split)");
-    assert(m.vertices.length == origVerts,
-        "endpoint cut reuses BOTH corners — vertex count UNCHANGED (the F1 discriminator)");
-    assert(m.edges.length == origEdges + 1,
-        "only the new chord is a new edge — neither named edge is itself split");
-
-    foreach (face; m.faces) assert(face.length >= 3, "no degenerate face after endpoint edgeSlice");
-
-    // No coincident-position duplicate vertices (the "insert-then-weld"
-    // approach this stage deliberately avoids would leave one here).
-    foreach (i; 0 .. m.vertices.length)
-        foreach (j; i + 1 .. m.vertices.length)
-            assert((m.vertices[i] - m.vertices[j]).length() > 1e-6f,
-                "endpoint cut must not create a coincident duplicate vertex");
-
-    // The chord connects the two REUSED corners (0, 5) directly.
-    assert(m.edgeIndexOfVerts(0, 5) != ~0u, "chord edge (0,5) must exist after endpoint cut");
-}
-
-unittest { // edgeSliceEx: mixed endpoint (t=0, reuse) + interior (t=0.5, new vert) — F1, task 0295
-    auto m = makeCube();
-    uint eA = m.edgeIndexOfVerts(0, 1);
-    uint eB = m.edgeIndexOfVerts(4, 5);
-    assert(eA != ~0u); assert(eB != ~0u);
-
-    size_t origVerts = m.vertices.length;
-    float tA = (m.edges[eA][0] == 0) ? 0.0f : 1.0f; // reuse vertex 0
-
-    auto r = m.edgeSliceEx(eA, eB, tA, 0.5f, /*splitPolygons*/true);
-
-    assert(r.facesSplit == 1, "single shared face chorded once");
-    assert(m.vertices.length == origVerts + 1,
-        "one endpoint (reused) + one interior (new) => +1 vertex only");
-    assert(r.cutVertA == 0, "cutVertA must be the REUSED corner (vertex 0), not a fresh index");
-    assert(r.cutVertB == origVerts, "cutVertB must be the newly appended interior vertex");
-}
-
-unittest { // edgeSliceEx: KEPT degenerate-chain edge-split, RE-DERIVED
-           // (mesh-robustness batch) — this is an INTENTIONAL REVERSAL of
-           // the 0303 always-rollback fix, re-derived from a frozen
-           // reference capture. It previously asserted the OLD (over-
-           // rollback) behaviour as correct — that encoded the bug this
-           // batch fixes. Do NOT read this as test-fitting.
-    //
-    // edge(0,1)@t=0.5 (genuine interior insert) chained to edge(1,5)@t=1.0
-    // (F1 endpoint-reuse landing on the SHARED corner, vertex 1). Both edges
-    // border face 5 ([0,1,5,4]); the interior cut vertex is spliced in
-    // immediately next to the reused corner in that face's winding, so the
-    // two cut positions are ADJACENT there — rebuildFacesWithChordSplits'
-    // adjacent-hit guard correctly refuses to CHORD-SPLIT it (facesSplit ==
-    // 0). But Pass 1 (insertEdgePoint) already spliced a REAL new vertex
-    // into both faces incident to edge(0,1) (faces 0 and 5) — that is a
-    // legitimate degenerate-chain edge-split (matches the reference: cube
-    // V8/E12/F6 -> V9/E13/F6, chi stays 2), and must be KEPT + finalized,
-    // not rolled back. Before this fix that insert was unconditionally
-    // discarded (over-rollback, task 0303's own fix — too broad).
-    import std.conv : to;
-    auto m = makeCube();
-    uint eA = m.edgeIndexOfVerts(0, 1);
-    uint eB = m.edgeIndexOfVerts(1, 5);
-    assert(eA != ~0u, "edge(0,1) must exist on cube");
-    assert(eB != ~0u, "edge(1,5) must exist on cube");
-
-    size_t origVerts = m.vertices.length;
-    size_t origEdges = m.edges.length;
-    size_t origFaces = m.faces.length;
-
-    float tB = (m.edges[eB][0] == 1) ? 0.0f : 1.0f; // land on the shared corner, vertex 1
-
-    auto r = m.edgeSliceEx(eA, eB, 0.5f, tB, /*splitPolygons*/true);
-
-    assert(r.facesSplit == 0,
-        "adjacent cut positions on the shared face must not CHORD-SPLIT any face");
-    assert(r.meshChanged,
-        "a kept degenerate-chain insert must report meshChanged == true");
-    assert(r.cutVertA == cast(uint)origVerts,
-        "cutVertA must be the newly inserted interior vertex on edge(0,1)");
-    assert(r.cutVertB == 1,
-        "cutVertB must be the REUSED shared corner (vertex 1), not a sentinel");
-
-    assert(m.vertices.length == origVerts + 1,
-        "kept insert: exactly one new vertex (the edge(0,1) interior cut)");
-    assert(m.edges.length == origEdges + 1,
-        "kept insert: edge(0,1) splits into two edges — net +1 edge");
-    assert(m.faces.length == origFaces,
-        "kept insert: no face is added or removed, only re-wound");
-    assert(cast(long)m.vertices.length - cast(long)m.edges.length + cast(long)m.faces.length == 2,
-        "Euler characteristic must stay 2 after a kept degenerate-chain insert");
-
-    // edge(0,1) itself is gone; the two half-edges (0,newV) and (newV,1) exist.
-    assert(m.edgeIndexOfVerts(0, 1) == ~0u,
-        "edge(0,1) must no longer exist as a single edge after the split");
-    assert(m.edgeIndexOfVerts(0, r.cutVertA) != ~0u,
-        "half-edge (0, newVert) must exist after the kept split");
-    assert(m.edgeIndexOfVerts(r.cutVertA, 1) != ~0u,
-        "half-edge (newVert, 1) must exist after the kept split");
-
-    // Manifold: every undirected edge used by at most 2 faces.
-    size_t[ulong] edgeUseCount;
-    foreach (fi; 0 .. m.faces.length) {
-        auto f = m.faces[fi];
-        foreach (k; 0 .. f.length) {
-            ulong key = edgeKey(f[k], f[(k + 1) % f.length]);
-            auto p = key in edgeUseCount;
-            if (p is null) edgeUseCount[key] = 1;
-            else           ++(*p);
-        }
-    }
-    foreach (key, count; edgeUseCount)
-        assert(count <= 2,
-            "kept degenerate-chain insert: non-manifold edge used by " ~
-            count.to!string ~ " faces");
-}
-
-unittest { // edgeSliceEx: TRUE no-op (both cuts reuse existing ADJACENT
-           // corners, nothing spliced in) must still roll back byte-
-           // identical — sibling of the KEPT-insert case above, guarding
-           // the regression requirement (mesh-robustness batch).
-    //
-    // edge(0,1)@t=0 (reuse vertex 0) chained to edge(1,5)@t=1 (reuse vertex
-    // 1). Both land on EXISTING corners that are already adjacent in face 5's
-    // winding ([0,1,5,4]) — the adjacent-hit guard refuses to split, and
-    // since NEITHER cut inserted anything new, vertices.length is untouched:
-    // a genuinely empty operation.
-    import std.conv : to;
-    auto m = makeCube();
-    uint eA = m.edgeIndexOfVerts(0, 1);
-    uint eB = m.edgeIndexOfVerts(1, 5);
-    assert(eA != ~0u, "edge(0,1) must exist on cube");
-    assert(eB != ~0u, "edge(1,5) must exist on cube");
-
-    size_t origVerts = m.vertices.length;
-    size_t origEdges = m.edges.length;
-    size_t origFaces = m.faces.length;
-    uint[][] origFaceWindings = m.faces._store.dup;
-
-    float tA = (m.edges[eA][0] == 0) ? 0.0f : 1.0f; // reuse vertex 0
-    float tB = (m.edges[eB][0] == 1) ? 0.0f : 1.0f; // reuse vertex 1
-
-    auto r = m.edgeSliceEx(eA, eB, tA, tB, /*splitPolygons*/true);
-
-    assert(r.facesSplit == 0,
-        "adjacent reused corners on the shared face must be a no-op (adjacent-hit guard)");
-    assert(!r.meshChanged,
-        "a true no-op (nothing spliced in) must report meshChanged == false");
-    assert(r.cutVertA == ~0u && r.cutVertB == ~0u,
-        "a true no-op result must not surface stale cut-vertex indices");
-    assert(m.vertices.length == origVerts,
-        "true no-op must not add any vertex — both cuts were pure corner reuse");
-    assert(m.edges.length == origEdges, "true no-op must not touch edges[]");
-    assert(m.faces.length == origFaces, "true no-op must not touch face count");
-    foreach (fi; 0 .. origFaces)
-        assert(m.faces[fi] == origFaceWindings[fi],
-            "true no-op must not leave any winding change in face " ~ fi.to!string);
-    assert(cast(long)m.vertices.length - cast(long)m.edges.length + cast(long)m.faces.length == 2,
-        "Euler characteristic must stay 2 after a true no-op cut");
-}
-
-unittest { // edgeSlice: no-op guards — same edge, out-of-bounds index → returns 0
-    auto m = makeCube();
-    size_t origFaces = m.faces.length;
-    size_t origVerts = m.vertices.length;
-
-    uint e0 = m.edgeIndexOfVerts(0, 1);
-
-    // Same edge: always a no-op.
-    assert(m.edgeSlice(e0, e0) == 0, "same edge must return 0");
-    assert(m.faces.length    == origFaces, "mesh unchanged after same-edge no-op");
-    assert(m.vertices.length == origVerts, "mesh unchanged after same-edge no-op");
-
-    // Out-of-bounds edge index: no-op.
-    uint oob = cast(uint)m.edges.length;
-    assert(m.edgeSlice(oob, e0) == 0, "oob edgeA must return 0");
-    assert(m.edgeSlice(e0, oob) == 0, "oob edgeB must return 0");
-    assert(m.faces.length    == origFaces, "mesh unchanged after oob no-op");
-    assert(m.vertices.length == origVerts, "mesh unchanged after oob no-op");
-}
-
-unittest { // edgeSlice: splitPolygons=false — points only, no chord, no face split
-    import std.conv : to;
-    auto m = makeCube();
-    // Face 5 = [0,1,5,4] (bottom).  Edge(0,1) and edge(4,5) are both on it,
-    // but are NOT adjacent (mirrors the shared-face unittest above).
-    uint eA = m.edgeIndexOfVerts(0, 1);
-    uint eB = m.edgeIndexOfVerts(4, 5);
-    assert(eA != ~0u, "edge(0,1) must exist on cube");
-    assert(eB != ~0u, "edge(4,5) must exist on cube");
-
-    size_t origEdges = m.edges.length;
-    assert(origEdges == 12, "cube starts with 12 edges");
-
-    size_t n = m.edgeSlice(eA, eB, 0.5f, 0.5f, /*splitPolygons*/false);
-
-    assert(n == 2, "points-only branch returns 2 (nonzero success marker)");
-    assert(m.faces.length == 6, "face count UNCHANGED with splitPolygons=false");
-    assert(m.vertices.length == 10, "8 + 2 cut-points = 10 verts");
-    // The discriminator for the finalize bug: a missing rebuildEdges() would
-    // leave edges.length at 12 (the two new half-edges never registered) even
-    // though face==6 / verts==10 / no-orphans / no-degenerate all still pass.
-    assert(m.edges.length == 14,
-        "edge count must be 12 -> 14 (two non-shared edges each split once); got "
-        ~ m.edges.length.to!string);
-
-    bool[] refd = new bool[](m.vertices.length);
-    foreach (face; m.faces) foreach (vi; face) refd[vi] = true;
-    foreach (i, r; refd) assert(r, "vertex " ~ i.to!string ~ " orphaned after points-only edgeSlice");
-    foreach (face; m.faces) assert(face.length >= 3, "no degenerate face after points-only edgeSlice");
-}
 
 
 
@@ -14390,54 +14843,6 @@ version (unittest) private size_t countOpenEdges(ref Mesh m) {
     return cnt;
 }
 
-unittest { // thickenSurface: 2×2 grid → 16-face watertight shell
-    Mesh m;
-    foreach (j; 0 .. 3)
-        foreach (i; 0 .. 3)
-            m.addVertex(Vec3(cast(float)i, cast(float)j, 0));
-    foreach (j; 0 .. 2)
-        foreach (i; 0 .. 2) {
-            uint a = cast(uint)(i     + 3 * j    );
-            uint b = cast(uint)(i + 1 + 3 * j    );
-            uint c = cast(uint)(i + 1 + 3 * (j+1));
-            uint d = cast(uint)(i     + 3 * (j+1));
-            m.addFace([a, b, c, d]);
-        }
-    m.buildLoops();
-
-    const size_t r = m.thickenSurface(0.2f);
-    assert(r > 0, "thicken 2×2: non-zero result");
-    assert(m.vertices.length == 18, "thicken 2×2: 18 verts");
-    assert(m.faces.length == 16, "thicken 2×2: 16 faces");
-    assert(m.boundaryLoops().length == 0, "thicken 2×2: watertight");
-    assert(countOpenEdges(m) == 0, "thicken 2×2: no open edges");
-}
-
-unittest { // thickenSurface: 3×3 holed grid → 32-face watertight shell
-    // 16 verts, 8 quads (center quad skipped).
-    Mesh m;
-    foreach (j; 0 .. 4)
-        foreach (i; 0 .. 4)
-            m.addVertex(Vec3(cast(float)i, cast(float)j, 0));
-    size_t fi = 0;
-    foreach (j; 0 .. 3)
-        foreach (i; 0 .. 3) {
-            uint a = cast(uint)(i     + 4 * j    );
-            uint b = cast(uint)(i + 1 + 4 * j    );
-            uint c = cast(uint)(i + 1 + 4 * (j+1));
-            uint d = cast(uint)(i     + 4 * (j+1));
-            if (fi != 4) m.addFace([a, b, c, d]);
-            fi++;
-        }
-    m.buildLoops();
-
-    const size_t r = m.thickenSurface(0.2f);
-    assert(r > 0, "thicken holed: non-zero result");
-    assert(m.vertices.length == 32, "thicken holed: 32 verts");
-    assert(m.faces.length == 32, "thicken holed: 32 faces (8+8+12+4)");
-    assert(m.boundaryLoops().length == 0, "thicken holed: watertight");
-    assert(countOpenEdges(m) == 0, "thicken holed: no open edges");
-}
 
 
 
@@ -14456,27 +14861,6 @@ unittest { // thickenSurface: 3×3 holed grid → 32-face watertight shell
 
 
 
-unittest {
-    // A preview-style wipe (subpatch_osd's contract): markDerivedEmpty()
-    // reads DeliberatelyEmpty, not Valid and not (bare) Stale.
-    auto m = makeCube();
-    m.markDerivedEmpty();
-    assert(!m.loopsValid(),    "trace: markDerivedEmpty must read loops NOT valid");
-    assert(!m.edgeMapUsable(), "trace: markDerivedEmpty must read edgeMap NOT usable");
-    assert(m.loopsState_   == Mesh.DerivedState.DeliberatelyEmpty);
-    assert(m.edgeMapState_ == Mesh.DerivedState.DeliberatelyEmpty);
-}
-
-unittest {
-    // A never-built mesh (fresh Mesh.init) must NOT read as valid by the
-    // `structVersion == loopsStamp == 0` coincidence — the enum state
-    // starts Stale precisely to guard this off-by-one.
-    Mesh m;
-    assert(m.structVersion == 0 && m.loopsStamp == 0,
-        "trace: fresh Mesh.init sanity — both stamps start at 0");
-    assert(!m.loopsValid(),    "trace: fresh Mesh.init must NOT read loopsValid");
-    assert(!m.edgeMapUsable(), "trace: fresh Mesh.init must NOT read edgeMapUsable");
-}
 
 
 // splitFaceByVertices unittests
@@ -14496,92 +14880,6 @@ unittest {
 
 
 
-unittest { // extractSelectedEdgeChain: open chain, closed cycle, branching + multi-component rejections, empty
-    import std.conv : to;
-
-    // (1) Open chain: v0-v1-v2-v3 (3 edges, endpoints at v0 and v3).
-    {
-        Mesh m;
-        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
-        m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(2, 3);
-        m.buildLoops();
-        m.resizeEdgeSelection();
-        foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
-
-        bool closed;
-        auto chain = m.extractSelectedEdgeChain(closed);
-        assert(!closed, "open chain: expected isClosed=false");
-        assert(chain.length == 4,
-            "open chain: expected 4 verts, got " ~ chain.length.to!string);
-        assert((chain[0] == 0 && chain[$-1] == 3)
-            || (chain[0] == 3 && chain[$-1] == 0),
-            "open chain: endpoints must be v0 and v3");
-    }
-
-    // (2) Closed cycle: v0-v1-v2-v3-v0 (4 edges, all degree 2).
-    {
-        Mesh m;
-        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
-        m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(2, 3); m.addEdge(3, 0);
-        m.buildLoops();
-        m.resizeEdgeSelection();
-        foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
-
-        bool closed;
-        auto chain = m.extractSelectedEdgeChain(closed);
-        assert(closed, "closed cycle: expected isClosed=true");
-        assert(chain.length == 4,
-            "closed cycle: expected 4 verts, got " ~ chain.length.to!string);
-    }
-
-    // (3) Branching vertex (degree 3): v0-v1, v1-v2, v1-v3 → must reject.
-    {
-        Mesh m;
-        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
-        m.addEdge(0, 1); m.addEdge(1, 2); m.addEdge(1, 3);
-        m.buildLoops();
-        m.resizeEdgeSelection();
-        foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
-
-        bool closed;
-        auto chain = m.extractSelectedEdgeChain(closed);
-        assert(chain.length == 0,
-            "branching vertex: expected rejection (empty chain), got length "
-            ~ chain.length.to!string);
-    }
-
-    // (4) Two disconnected edges (multi-component, 4 degree-1 endpoints) → must reject.
-    {
-        Mesh m;
-        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
-        m.addEdge(0, 1); m.addEdge(2, 3);
-        m.buildLoops();
-        m.resizeEdgeSelection();
-        foreach (ref mk; m.edgeMarks) mk |= Mesh.Marks.Select;
-
-        bool closed;
-        auto chain = m.extractSelectedEdgeChain(closed);
-        assert(chain.length == 0,
-            "multi-component: expected rejection, got length "
-            ~ chain.length.to!string);
-    }
-
-    // (5) No edges selected → empty result.
-    {
-        Mesh m;
-        foreach (i; 0 .. 4) m.addVertex(Vec3(cast(float)i, 0, 0));
-        m.addEdge(0, 1); m.addEdge(1, 2);
-        m.buildLoops();
-        m.resizeEdgeSelection();
-        // edgeMarks grown to cover 2 edges but Select bit NOT set.
-
-        bool closed;
-        auto chain = m.extractSelectedEdgeChain(closed);
-        assert(chain.length == 0,
-            "no selection: expected empty chain, got length "
-            ~ chain.length.to!string);
-    }
-}
 
 
 
@@ -14608,98 +14906,6 @@ version (unittest) private Mesh makeWeldPairStrip() {
     return m;
 }
 
-unittest { // the EDGE-grab cell: two pairs, welded independently, in ONE call
-    import std.conv : to;
-    import std.math : abs;
-    Mesh m = makeWeldPairStrip();
-    assert(m.vertices.length == 6 && m.edges.length == 7 && m.faces.length == 2,
-        "strip rig: expected V=6 E=7 F=2, got V=" ~ m.vertices.length.to!string
-        ~ " E=" ~ m.edges.length.to!string ~ " F=" ~ m.faces.length.to!string);
-
-    // Drag the middle edge 1-4 onto the right edge 2-5: vertex 1 is absorbed
-    // by 2 and vertex 4 by 5, each into its OWN target. This is the measured
-    // delta (task 0545): dV -2, dE -3, dF -1.
-    uint[2][] pairs = [[2u, 1u], [5u, 4u]];
-    assert(m.weldVertexPairs(pairs) == 2,
-        "both endpoints must be absorbed, independently — one call, two welds");
-
-    assert(m.vertices.length == 4,
-        "edge-grab weld: expected V=4 (dV -2), got " ~ m.vertices.length.to!string);
-    assert(m.edges.length == 4,
-        "edge-grab weld: expected E=4 (dE -3), got " ~ m.edges.length.to!string);
-    assert(m.faces.length == 1,
-        "edge-grab weld: expected F=1 (dF -1) — the quad the grabbed edge was "
-        ~ "dragged across collapses; got " ~ m.faces.length.to!string);
-
-    // The survivors sit where the TARGETS were, never at a midpoint: the grab
-    // is absorbed INTO the target, the target does not move to meet it.
-    bool at10 = false, at11 = false;
-    foreach (v; m.vertices) {
-        if (abs(v.x - 1.0f) < 1e-6f && abs(v.y)        < 1e-6f) at10 = true;
-        if (abs(v.x - 1.0f) < 1e-6f && abs(v.y - 1.0f) < 1e-6f) at11 = true;
-    }
-    assert(at10 && at11, "both weld targets must survive at their own positions");
-    foreach (v; m.vertices)
-        assert(abs(v.x) > 1e-6f,
-            "no survivor may sit at x=0 — that is where the absorbed grab was");
-}
-
-unittest { // the VERTEX-grab cell: one pair, and BOTH quads become triangles
-    import std.conv : to;
-    Mesh m = makeWeldPairStrip();
-    uint[2][] pairs = [[4u, 1u]];      // vertex 1 dragged onto vertex 4
-    assert(m.weldVertexPairs(pairs) == 1, "the single grab must be absorbed");
-    assert(m.vertices.length == 5,
-        "vertex-grab weld: expected V=5 (dV -1), got " ~ m.vertices.length.to!string);
-    assert(m.faces.length == 2,
-        "vertex-grab weld: both faces survive, got " ~ m.faces.length.to!string);
-    foreach (i, ref f; m.faces)
-        assert(f.length == 3,
-            "vertex-grab weld: face " ~ i.to!string ~ " must be a TRIANGLE (the "
-            ~ "measured 'two quads become triangles'), got length " ~ f.length.to!string);
-}
-
-unittest { // a CHAIN is refused whole, not silently followed one link deep
-    import std.conv : to;
-    Mesh m = makeWeldPairStrip();
-    // [4,1] absorbs 1 into 4 while [1,0] absorbs 0 into 1 — vertex 1 is both a
-    // target and a casualty. BOTH links are refused rather than one being
-    // applied and the other left pointing at a dead vertex: the rewrite reads
-    // the remap once per corner and does not chase, so a surviving link would
-    // be silent corruption. Order-independent by construction.
-    uint[2][] pairs = [[4u, 1u], [1u, 0u]];
-    immutable size_t welded = m.weldVertexPairs(pairs);
-    assert(welded == 0,
-        "a chain must be refused whole — expected 0 welds, got " ~ welded.to!string);
-    assert(m.vertices.length == 6 && m.faces.length == 2,
-        "chain reject: the mesh must be untouched, got V="
-        ~ m.vertices.length.to!string ~ " F=" ~ m.faces.length.to!string);
-}
-
-unittest { // non-adjacent same-face pairs are refused, exactly as weldVertexPair
-    import std.conv : to;
-    Mesh m = makeWeldPairStrip();
-    // 0 and 4 are the diagonal of F0 = [0,1,4,3] — welding them would leave a
-    // self-touching polygon.
-    uint[2][] pairs = [[4u, 0u]];
-    assert(m.weldVertexPairs(pairs) == 0,
-        "a non-adjacent same-face pair must be refused");
-    assert(m.vertices.length == 6 && m.faces.length == 2,
-        "non-adjacent reject: the mesh must be untouched, got V="
-        ~ m.vertices.length.to!string ~ " F=" ~ m.faces.length.to!string);
-}
-
-
-
-unittest { // one vertex cannot be absorbed twice; the first pair wins
-    import std.conv : to;
-    Mesh m = makeWeldPairStrip();
-    uint[2][] pairs = [[4u, 1u], [2u, 1u]];
-    assert(m.weldVertexPairs(pairs) == 1,
-        "a second claim on the same drop must be refused — expected 1 weld");
-    assert(m.vertices.length == 5,
-        "double-absorb reject: expected V=5, got " ~ m.vertices.length.to!string);
-}
 
 // The extracted tail (`applyVertexRemapAndRebuild`) deliberately gets no test
 // of its own: it is `weldVerticesByMask`'s own body, unchanged, and the
@@ -14784,105 +14990,7 @@ version (unittest) private Mesh makeGridWithLooseGeometry(int n) {
     return m;
 }
 
-unittest { // removeEdgesByMask: one interior dissolve, loose geometry untouched
-    Mesh m = makeGridWithLooseGeometry(2);   // 3x3 verts / 4 quads + 3 loose verts
-    immutable size_t vBefore = m.vertices.length;
 
-    auto mask = new bool[](m.edges.length);
-    mask[m.edgeIndex(1, 4)] = true;          // an INTERIOR grid edge, nowhere near
-    assert(m.removeEdgesByMask(mask) == 1, "setup: the interior edge must dissolve");
-
-    assert(m.faces.length == 3, "the two quads either side merged into one");
-    assert(looseTestVertAt(m, kLoosePoint) >= 0,
-        "FAILS ON THE OLD BEHAVIOUR: the tail compactUnreferenced dropped every "
-      ~ "face-less vertex in the mesh, including this one 10 units away");
-    assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
-        "FAILS ON THE OLD BEHAVIOUR: the tail rebuildEdges re-derived edges[] from "
-      ~ "faces[] alone, so a bare wire edge anywhere in the mesh vanished");
-    assert(m.vertices.length == vBefore,
-        "the dissolve consumed no vertex, so none may go — not the grid's, not the loose ones");
-}
-
-unittest { // …and the same through the EDGE-REMOVE COMMAND's exact kernel pair
-    // `MeshRemove`/`MeshDelete` in Edges mode run removeEdgesByMask and then
-    // dissolveDegree2Verts over the touched region (commands/mesh/{remove,delete}.d).
-    // The second call is its own dissolve with its own mesh-wide tail, so the
-    // pair has to be pinned together — fixing only the first one leaves the
-    // shipped commands still wiping the wire.
-    Mesh m = makeGridWithLooseGeometry(2);
-
-    auto mask = new bool[](m.edges.length);
-    mask[m.edgeIndex(1, 4)] = true;
-    immutable size_t n = m.removeEdgesByMask(mask);
-    assert(n == 1, "setup");
-    m.dissolveDegree2Verts(m.edgeDeleteRegion(), /*keepOrphans*/true);
-
-    assert(looseTestVertAt(m, kLoosePoint) >= 0,
-        "the loose point must survive the command's SECOND dissolve too");
-    assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
-        "FAILS ON THE OLD BEHAVIOUR at dissolveVerticesByMask's own rebuildEdges: "
-      ~ "the wire survives the edge dissolve only to be wiped by the 2-valent cleanup");
-}
-
-unittest { // dissolveVerticesByMask, BOTH keepOrphans arms
-    foreach (keepOrphans; [false, true]) {
-        Mesh m = makeGridWithLooseGeometry(2);
-        auto vmask = new bool[](m.vertices.length);
-        vmask[4] = true;                     // the grid's centre vertex
-        assert(m.dissolveVerticesByMask(vmask, keepOrphans) == 1, "setup");
-
-        assert(m.faces.length == 4, "the four quads reshaped to triangles");
-        assert(looseTestVertAt(m, kLoosePoint) >= 0,
-            "a pre-existing loose point is not this call's collateral, at either keepOrphans");
-        assert(looseTestHasWire(m, kLooseWireA, kLooseWireB),
-            "FAILS ON THE OLD BEHAVIOUR (both arms): keepOrphans only ever protected "
-          ~ "floating VERTICES; the rebuildEdges above it wiped floating EDGES regardless");
-    }
-}
-
-unittest { // keepOrphans:false still sweeps the orphans THIS call created
-    // The preservation is scoped to what was face-less BEFORE the call — it is
-    // not a blanket "never compact". Without this pin, a fix that simply
-    // pinned every vertex would pass every block above.
-    Mesh m;
-    foreach (p; [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0)]) m.addVertex(p);
-    m.addFace([0u, 1u, 2u]);
-    m.addVertex(kLoosePoint);
-    m.buildLoops();
-    m.syncSelection();
-
-    auto vmask = new bool[](m.vertices.length);
-    vmask[0] = true;                         // the triangle degenerates away
-    assert(m.dissolveVerticesByMask(vmask, /*keepOrphans*/false) == 1);
-    assert(m.faces.length == 0, "setup: the only face dropped below 3 corners");
-    assert(looseTestVertAt(m, Vec3(1, 0, 0)) < 0 && looseTestVertAt(m, Vec3(0, 1, 0)) < 0,
-        "verts THIS call orphaned still go — that is what keepOrphans:false means");
-    assert(looseTestVertAt(m, kLoosePoint) >= 0,
-        "…but the point that was already loose before the call is not its collateral");
-}
-
-unittest { // a wire the edit ITSELF consumed stays gone — no resurrection
-    // A wire hanging off the grid's centre vertex, which the dissolve then
-    // removes. Preservation restores UNRELATED geometry; it must not put back
-    // an edge whose endpoint the caller deliberately deleted.
-    Mesh m = makeGridPlane(2);
-    immutable uint tip = m.addVertex(Vec3(0, 5, 0));
-    m.addEdge(4, tip);                        // wire off the centre vertex
-    m.buildLoops();
-    m.syncSelection();
-    assert(looseTestHasWire(m, m.vertices[4], Vec3(0, 5, 0)), "fixture");
-    immutable Vec3 centre = m.vertices[4];
-
-    auto vmask = new bool[](m.vertices.length);
-    vmask[4] = true;
-    assert(m.dissolveVerticesByMask(vmask, /*keepOrphans*/true) == 1);
-
-    assert(looseTestVertAt(m, centre) < 0, "the masked vertex is gone");
-    assert(looseTestVertAt(m, Vec3(0, 5, 0)) >= 0,
-        "its far tip was already face-less, so it stays as a loose point");
-    assert(!looseTestHasWire(m, centre, Vec3(0, 5, 0)),
-        "but the wire itself cannot come back — one of its endpoints was deleted");
-}
 
 
 
@@ -15045,96 +15153,3 @@ version (unittest) private {
     }
 }
 
-unittest { // the forward-only seed scans answer EXACTLY what head-restart did
-    SlRng rng;
-    size_t cases = 0;
-
-    void check(string shape, ref Mesh m, uint frac) {
-        import std.format : format;
-        slSelectFaces(m, rng, frac);
-        auto gotF  = m.selectLoopFaces();
-        auto wantF = m.selectLoopFacesHeadRestart();
-        assert(gotF == wantF,
-            format("%s (frac %d/16), polygon mode: %s", shape, frac, slDiff(gotF, wantF)));
-
-        slSelectVerts(m, rng, frac);
-        auto gotV  = m.selectLoopVertices();
-        auto wantV = m.selectLoopVerticesHeadRestart();
-        assert(gotV == wantV,
-            format("%s (frac %d/16), vertex mode: %s", shape, frac, slDiff(gotV, wantV)));
-        ++cases;
-    }
-
-    foreach (frac; [16u, 12u, 8u, 4u, 2u]) {
-        auto a = slGrid(6, false);       check("quad grid 6",        a, frac);
-        auto b = slGrid(6, true);        check("tri grid 6",         b, frac);
-        auto c = slDisjoint(9, 4);       check("9 disjoint quads",   c, frac);
-        auto d = slDisjoint(9, 3);       check("9 disjoint tris",    d, frac);
-        auto e = slDisjoint(6, 6);       check("6 disjoint hexes",   e, frac);
-        auto f = slMixedGrid(6, rng);    check("mixed-parity grid",  f, frac);
-        auto g = slNonManifoldFan(5);    check("non-manifold fan",   g, frac);
-        foreach (s; 0 .. 12) {
-            auto h = slSoup(24, 20, rng);
-            check("random soup", h, frac);
-        }
-    }
-    assert(cases == 5 * 19, "the corpus ran end to end");
-}
-
-unittest { // …and they cost O(selected), not O(selected^2)
-    import std.format : format;
-
-    // Both shapes below are measured at two sizes, the second with FOUR TIMES
-    // the selected elements of the first. A linear scan grows ~4x; a scan that
-    // restarts at the head grows ~16x. The gate is 6x — comfortably above the
-    // real ratio and far below the quadratic one, so it does not depend on the
-    // per-element constant and cannot flake (the counter is deterministic; a
-    // wall-clock threshold would not be).
-    enum RATIO_GATE = 6;
-
-    // Polygon mode on a triangulated grid: selectBandTrace skips odd-sided
-    // neighbours, so a triangle never advances and every one of them is a
-    // group of its own — head-restart walked the whole selection once PER
-    // SELECTED FACE, twice (NEXT_GROUP and the partner scan).
-    size_t polySteps(int n) {
-        auto m = slGrid(n, true);
-        m.resizeFaceSelection();
-        m.faceSelectionOrder.length = m.faces.length;
-        foreach (i; 0 .. m.faces.length) m.selectFace(cast(int)i);
-        Mesh.gSelectLoopSeedScanSteps = 0;
-        m.selectLoopFaces();
-        return Mesh.gSelectLoopSeedScanSteps;
-    }
-    const p1 = polySteps(20);   //   800 triangles
-    const p2 = polySteps(40);   //  3200 triangles
-    assert(p2 <= RATIO_GATE * p1,
-        format("polygon seed scan is superlinear: 4x the selected polygons cost "
-             ~ "%.1fx the seed-scan steps (%d -> %d). Head-restart scored ~16x. "
-             ~ "Something reintroduced a scan that does not start where the last "
-             ~ "one stopped.", cast(double)p2 / p1, p1, p2));
-
-    // Vertex mode with many small components: one pass per component, and each
-    // pass used to re-walk every vertex ahead of it. Note the dead-end pairs a
-    // consumed edge leaves behind are NOT marked, so the leading-run cursor
-    // alone does not save this shape — the burn memo does.
-    size_t vertSteps(int k) {
-        auto m = slDisjoint(k, 4);
-        m.resizeVertexSelection();
-        foreach (i; 0 .. m.vertices.length) m.selectVertex(cast(int)i);
-        Mesh.gSelectLoopSeedScanSteps = 0;
-        m.selectLoopVertices();
-        return Mesh.gSelectLoopSeedScanSteps;
-    }
-    const v1 = vertSteps(250);   // 1000 vertices
-    const v2 = vertSteps(1000);  // 4000 vertices
-    assert(v2 <= RATIO_GATE * v1,
-        format("vertex seed scan is superlinear: 4x the selected vertices cost "
-             ~ "%.1fx the seed-scan steps (%d -> %d). Head-restart scored ~16x.",
-               cast(double)v2 / v1, v1, v2));
-
-    // A per-element ceiling as well, so a linear-but-absurd scan is caught too.
-    // Measured: ~8 steps/polygon (cursor + A's edges x their face degree) and
-    // ~3 steps/vertex.
-    assert(p2 <= 24 * 3200, format("polygon seed scan: %d steps for 3200 polygons", p2));
-    assert(v2 <= 24 * 4000, format("vertex seed scan: %d steps for 4000 vertices", v2));
-}
