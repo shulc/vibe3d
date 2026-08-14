@@ -4,7 +4,7 @@ module mesh_ops.bevel_vertex;
 // MeshBevelVertexOps — `bevelVerticesByMask` (vertex bevel / vertex chamfer),
 // mixed into struct Mesh (source/mesh.d) via `mixin MeshBevelVertexOps;`.
 //
-// Split out of source/mesh_ops/bevel.d (task 0717, audit 0678 §2B-M2 step C).
+// Split out of source/mesh_ops/edge_bevel.d (task 0717, audit 0678 §2B-M2 step C).
 // It shared a file with the edge bevel because both are called "bevel"; it
 // shares no code with it — a different acceptance test (interior-manifold
 // vertex, valence >= 3), a different topology (split ring + cap N-gon) and a

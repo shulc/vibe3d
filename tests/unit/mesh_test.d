@@ -16,7 +16,7 @@ import mesh_ops.loop_slice : MeshLoopSliceOps;
 import mesh_ops.decimate : MeshDecimateOps;
 import mesh_ops.revolve : MeshRevolveOps;
 import mesh_ops.cleanup : MeshCleanupOps;
-import mesh_ops.bevel : MeshBevelOps;
+import mesh_ops.edge_bevel : MeshEdgeBevelOps;
 import mesh_ops.extrude : MeshExtrudeOps;
 import mesh_ops.connected_mask : MeshConnectedMaskOps;
 import std.algorithm.sorting : sort;

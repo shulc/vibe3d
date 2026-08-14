@@ -13,7 +13,7 @@ import mesh_ops.loop_slice : MeshLoopSliceOps;
 import mesh_ops.decimate : MeshDecimateOps;
 import mesh_ops.revolve : MeshRevolveOps;
 import mesh_ops.cleanup : MeshCleanupOps;
-import mesh_ops.bevel : MeshBevelOps;
+import mesh_ops.edge_bevel : MeshEdgeBevelOps;
 import mesh_ops.bevel_fin : MeshBevelFinOps;
 import mesh_ops.bevel_vertex : MeshBevelVertexOps;
 import mesh_ops.extrude : MeshExtrudeOps;
@@ -9474,23 +9474,24 @@ struct Mesh {
     // source/mesh_ops/cut.d (task 0412, 0407 §B.V2 pilot).
     mixin MeshCutOps;
 
-    // Edge/vertex bevel kernel family (bevelEdgesByMask / bevelVerticesByMask /
-    // bevelIsolatedFinBundleSpine / bevelFinBundleSpineMultiEdge /
-    // centerNormalProject + the valence-4 free-end cap parity fields) — see
-    // source/mesh_ops/bevel.d (0407 §B.V2).
-    // Polygon bevel / inset / spike family — see source/mesh_ops/poly_bevel.d
-    // (task 0717, 0678 §2B-M4: "bevel" used to live in two homes, one of them
-    // the middle of this file).
+    // The four bevel families. Until task 0717 the word "bevel" named one
+    // module plus a thousand lines in the middle of THIS file, which is the
+    // search trap audit 0678 §2B-M4 recorded; each family now has one home:
+    //
+    //   edge_bevel.d   bevelEdgesByMask + the valence-4 free-end cap parity
+    //                  fields it owns (0407 §B.V2 — this is the old bevel.d)
+    //   poly_bevel.d   bevelFacesByMask / insetFacesByMask / spikeFacesByMask
+    //                  + their corner, normal and boundary-contour helpers
+    //   bevel_fin.d    the two non-manifold fin-bundle spine kernels
+    //                  bevelEdgesByMask hands a fin bundle over to
+    //   bevel_vertex.d bevelVerticesByMask
+    //
+    // (the curve math they share — boundary Béziers, the fillet-rail law, the
+    // two junction Gregory-ring evaluators — is plain functions in
+    // source/mesh_ops/bevel_curves.d, not a mixin)
+    mixin MeshEdgeBevelOps;
     mixin MeshPolyBevelOps;
-
-    mixin MeshBevelOps;
-
-    // The two non-manifold fin-bundle spine kernels bevelEdgesByMask hands off
-    // to — see source/mesh_ops/bevel_fin.d (task 0717, 0678 §2B-M2).
     mixin MeshBevelFinOps;
-
-    // Vertex bevel — a family of its own, sharing only the word "bevel" with
-    // the edge kernels; see source/mesh_ops/bevel_vertex.d (task 0717).
     mixin MeshBevelVertexOps;
 
     // Extrude kernel family (extrudeEdgesByMask / extrudeVerticesByMask /

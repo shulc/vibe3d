@@ -5,7 +5,7 @@ module mesh_ops.bevel_fin;
 // (`bevelIsolatedFinBundleSpine`, `bevelFinBundleSpineMultiEdge`), mixed into
 // struct Mesh (source/mesh.d) via `mixin MeshBevelFinOps;`.
 //
-// Split out of source/mesh_ops/bevel.d (task 0717, audit 0678 §2B-M2 step B).
+// Split out of source/mesh_ops/edge_bevel.d (task 0717, audit 0678 §2B-M2 step B).
 // They are a separate family from the manifold edge bevel that calls them:
 // `bevelEdgesByMask` detects the fin-bundle shape and hands the whole edit
 // over (the call sites are its only two early returns of that kind), and

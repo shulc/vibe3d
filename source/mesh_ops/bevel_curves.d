@@ -5,7 +5,7 @@ module mesh_ops.bevel_curves;
 // junction Gregory-ring evaluators. Pure functions of their arguments — no
 // Mesh, no topology, no selection, no allocation beyond the output arrays.
 //
-// Split out of source/mesh_ops/bevel.d (task 0717, audit 0678 §2B-M2 step A).
+// Split out of source/mesh_ops/edge_bevel.d (task 0717, audit 0678 §2B-M2 step A).
 // Bodies are a verbatim cut/paste; the only edits are the dedent and dropping
 // the `static` keyword, which a module-level function cannot carry. Three of
 // these were nested inside `bevelEdgesByMask` and one was a `static` member of

@@ -1,7 +1,7 @@
 // Module unittests for the edge/vertex bevel kernel family
-// (`mesh_ops.bevel`, mixed into `struct Mesh` as `MeshBevelOps`).
+// (`mesh_ops.edge_bevel`, mixed into `struct Mesh` as `MeshEdgeBevelOps`).
 //
-// Moved VERBATIM out of source/mesh_ops/bevel.d by task 0706, when the `tests`
+// Moved VERBATIM out of source/mesh_ops/edge_bevel.d (then bevel.d) by 0706, when the `tests`
 // dub configuration gave module unittests somewhere to live other than
 // `source/`. Nothing about the assertions changed -- the blocks are in their
 // original order, the `version (unittest)` helpers they call came with them,
@@ -13,7 +13,7 @@
 // and fields are public members of Mesh, and `makeCube`/`makeDisk` and friends
 // are public factories. That is why the whole test region could move; a block
 // that needed a private member would have had to stay behind.
-module tests.unit.mesh_ops.bevel_test;
+module tests.unit.mesh_ops.edge_bevel_test;
 
 import mesh;
 import math;

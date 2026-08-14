@@ -1,22 +1,22 @@
-module mesh_ops.bevel;
+module mesh_ops.edge_bevel;
 
 import mesh;
 import math;
 
 // ---------------------------------------------------------------------------
-// MeshBevelOps — edge/vertex bevel kernel family (bevelEdgesByMask,
+// MeshEdgeBevelOps — edge/vertex bevel kernel family (bevelEdgesByMask,
 // bevelVerticesByMask, the non-manifold fin-bundle spine kernels
 // bevelIsolatedFinBundleSpine / bevelFinBundleSpineMultiEdge, the
 // centerNormalProject helper, and the edge.bevel valence-4 free-end cap
 // parity fields bevelPinnedOrphans_ / bevelCapCoincidentPos_ /
 // bevelCapOrphanPos_), mixed into struct Mesh (source/mesh.d) via
-// `mixin MeshBevelOps;`. Split out of mesh.d as part of the mesh.d
+// `mixin MeshEdgeBevelOps;`. Split out of mesh.d as part of the mesh.d
 // decomposition campaign (0407 §B.V2 — see task 0412's doc for the
 // architectural decision: mixin template over a package move or UFCS
 // free-functions). Method bodies below are verbatim cut/paste from mesh.d
 // (only the extraction boundary is new).
 // ---------------------------------------------------------------------------
-mixin template MeshBevelOps() {
+mixin template MeshEdgeBevelOps() {
     // Scoped, NOT a module-level import of this file: a mixin template's body
     // is looked up in the INSTANTIATION scope (struct Mesh, in mesh.d), so an
     // import written at the top of THIS module does not reach the kernels
