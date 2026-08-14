@@ -84,7 +84,12 @@ class Tool : ParamProvider {
     // Deliver one interactive parameter notification.  This is deliberately
     // narrower than the raw `tool.attr` path: callers must have established
     // that their write originated in an interactive control first.
-    void notifyInteractiveParamChanged(string name) {
+    //
+    // `final` since task 0705: it is a fixed wrapper around `onParamChanged`
+    // — set the flag, delegate, restore — and had zero overriders. It was
+    // virtual only by omission, and that omission was the audit's off-by-one
+    // (33 counted, 34 present).
+    final void notifyInteractiveParamChanged(string name) {
         bool wasInteractive = interactiveParamEdit;
         interactiveParamEdit = true;
         scope(exit) interactiveParamEdit = wasInteractive;
@@ -141,56 +146,23 @@ class Tool : ParamProvider {
     bool onKeyDown        (ref const SDL_KeyboardEvent     e, ref VectorStack vts) { return false; }
     bool onKeyUp          (ref const SDL_KeyboardEvent     e, ref VectorStack vts) { return false; }
 
-    // ----- Centralized tool-input / modifier dispatch (Phase 1, ADDITIVE +
-    // INERT — doc/tool_input_dispatch_design.md) -----------------------------
+    // ----- Centralized tool-input / modifier dispatch
+    // (doc/tool_input_dispatch_design.md) ------------------------------------
     //
-    // A shared alternative to hand-rolling a button×modifier grid inside a
-    // tool: a tool DECLARES its (button, modifier) → action table via
-    // `bindings()` instead of writing its own DOWN-side classifier, and
-    // implements `onToolAction()` instead of writing its own UP-side
-    // arm-flag cascade. `dispatchInput()` below is the shared per-button
-    // state machine every opted-in tool reuses.
+    // A shared alternative to hand-rolling a button x modifier grid inside a
+    // tool: a tool DECLARES its (button, modifier) -> action table instead of
+    // writing its own DOWN-side classifier, and implements one action handler
+    // instead of an UP-side arm-flag cascade. `dispatchInput()` below is the
+    // shared per-button state machine every opted-in tool reuses.
     //
-    // Every method here defaults to the INERT no-op shown: `bindings()`
-    // empty means `resolveToolAction` always answers `PassThrough` for this
-    // tool, so `dispatchInput()` always returns `false` without ever calling
-    // `onToolAction()`. A tool that does not override any of this trio, and
-    // does not call `dispatchInput()` from its own `onMouseButtonDown`/`Up`,
-    // is completely unaffected by this seam existing — its own
-    // `onMouseButtonDown`/`onMouseButtonUp`/`onMouseMotion` overrides above
-    // keep running exactly as before. No tool opts in during Phase 1.
-
-    /// Declarative (button, exact modifier combo) → `ToolAction` table for
-    /// this tool. Default: empty, so nothing this tool binds to
-    /// `dispatchInput` ever resolves to anything but `PassThrough`.
-    const(InputBinding)[] bindings() const { return []; }
-
-    /// Deliver one resolved action at one phase. DOWN and UP for the SAME
-    /// gesture arrive with the SAME `a` (the id `dispatchInput` armed on
-    /// Down) — never re-derived from which of several bool flags happens to
-    /// be set, so a tool's `final switch (a)` here can't have one case's
-    /// early return silently shadow another's. Default: unhandled.
-    bool onToolAction(ToolAction a, InputPhase p, ref const SDL_MouseButtonEvent e, ref VectorStack vts) { return false; }
-
-    /// Hook fired when a binding row declares `ResetScope.AllButtons` (and by
-    /// tools that also wire it to external history navigation moving the
-    /// mesh out from under an open gesture): clears whatever per-gesture
-    /// SEED state the tool itself keeps (e.g. a cached start-vertex index).
-    ///
-    /// This does NOT clear any button's `armed_` slot — `dispatchInput`
-    /// never clears a DIFFERENT button's armed action from here, only ever
-    /// (re)arms the SAME button it is processing this Down on. That
-    /// per-button isolation is REQUIRED for the two-button-chord property (a
-    /// chord on one button must never cancel a gesture in progress on a
-    /// different button — see the chord unittest below) and holds regardless
-    /// of which `ResetScope` fired this hook.
-    ///
-    /// To drop EVERY button's armed action in one call regardless of button
-    /// (the seam external resync — e.g. an undo/redo that invalidates cached
-    /// indices — needs), call `resetAllArmed()` instead; it is a distinct
-    /// primitive from this hook, not something this default should do.
-    /// Default: no-op.
-    void onInputResetAll() {}
+    // The three hooks that seam needs live on `InputBindable` (below this
+    // class), NOT on `Tool`. Task 0705 (audit 4, T6) moved them: one tool of
+    // the ~43 in the build implements them, and three base virtuals carried
+    // for one implementor is exactly the "zoo of hooks" the 0428 moratorium
+    // was written against. `dispatchInput` resolves the capability with one
+    // `cast` and answers `false` for a tool that does not implement it —
+    // which is byte-identical to the old defaults (an empty `bindings()`
+    // made every phase return `false` without ever calling the other two).
 
     // One armed `ToolAction` slot per physical button (`InputButton.Left`/
     // `Middle`/`Right`), set at Down and read back (then cleared) at Up.
@@ -231,29 +203,36 @@ class Tool : ParamProvider {
         // no row for the button, and to the pre-dispatch behavior where such
         // buttons were ignored.
         if (button == InputButton.None) return false;
+        // The capability, resolved ONCE per dispatch. A tool that does not
+        // implement `InputBindable` has no table, so nothing can resolve to
+        // anything but `PassThrough` and nothing can be armed — the same
+        // answer the empty-`bindings()` default used to produce, reached
+        // without three virtual slots on the base.
+        auto ib = cast(InputBindable) this;
+        if (ib is null) return false;
         final switch (phase) {
         case InputPhase.Down: {
             // bindings() scanned ONCE and shared by both resolvers below —
             // a migrated tool returning an array literal would otherwise
             // allocate twice per Down for no reason (NIT-2).
-            auto table = bindings();
+            auto table = ib.bindings();
             auto a = resolveToolAction(table, button, mods);
             if (a == PassThrough) return false;
             if (resolveResetScope(table, button, mods) == ResetScope.AllButtons)
-                onInputResetAll();
+                ib.onInputResetAll();
             armed_[button] = a;
-            return onToolAction(a, InputPhase.Down, e, vts);
+            return ib.onToolAction(a, InputPhase.Down, e, vts);
         }
         case InputPhase.Up: {
             auto a = armed_[button];
             if (a == PassThrough) return false;
             armed_[button] = PassThrough;
-            return onToolAction(a, InputPhase.Up, e, vts);
+            return ib.onToolAction(a, InputPhase.Up, e, vts);
         }
         case InputPhase.Move: {
             auto a = armed_[button];
             if (a == PassThrough) return false;
-            return onToolAction(a, InputPhase.Move, e, vts);
+            return ib.onToolAction(a, InputPhase.Move, e, vts);
         }
         }
     }
@@ -490,6 +469,133 @@ class Tool : ParamProvider {
 }
 
 // ---------------------------------------------------------------------------
+// InputBindable — the declarative input-dispatch capability (task 0705, T6).
+//
+// A tool that wants `Tool.dispatchInput`'s per-button state machine implements
+// this; every other tool does not mention it and is unaffected. These three
+// were base-class virtuals until task 0705 with ONE implementor between them
+// out of ~43 tools in the build, which is precisely the shape task 0428's
+// moratorium named ("новый одно-тульный хук допускается только с записанным
+// инвариант-тестом" — no invariant test was ever written, and the surface grew
+// 28 -> 34 anyway).
+//
+// The downgrade is free of call-site churn because all five dispatch points
+// live inside `dispatchInput`, which is `final`: one `cast` there replaces
+// three virtual slots on every tool in the program. Behaviour is unchanged —
+// a tool that does not implement this reaches `dispatchInput`'s `ib is null`
+// arm, which returns `false` exactly as the empty-`bindings()` default did in
+// all three phases.
+//
+// Precedent: the five session capabilities in `edit_session.d`
+// (LiveEvalClient / RefireClient / KeepAliveOnCancel / SessionStepUndo /
+// LifecycleUndoEmitter), all discovered the same way.
+// ---------------------------------------------------------------------------
+interface InputBindable {
+    /// Declarative (button, exact modifier combo) -> `ToolAction` table.
+    const(InputBinding)[] bindings() const;
+
+    /// Deliver one resolved action at one phase. DOWN and UP for the SAME
+    /// gesture arrive with the SAME `a` (the id `dispatchInput` armed on
+    /// Down) — never re-derived from which of several bool flags happens to
+    /// be set, so a tool's `final switch (a)` here cannot have one case's
+    /// early return silently shadow another's.
+    bool onToolAction(ToolAction a, InputPhase p,
+                      ref const SDL_MouseButtonEvent e, ref VectorStack vts);
+
+    /// Hook fired when a binding row declares `ResetScope.AllButtons` (and by
+    /// tools that also wire it to external history navigation moving the mesh
+    /// out from under an open gesture): clears whatever per-gesture SEED state
+    /// the tool itself keeps (e.g. a cached start-vertex index).
+    ///
+    /// This does NOT clear any button's `armed_` slot — `dispatchInput` never
+    /// clears a DIFFERENT button's armed action from here, only ever (re)arms
+    /// the SAME button it is processing this Down on. That per-button
+    /// isolation is REQUIRED for the two-button-chord property and holds
+    /// regardless of which `ResetScope` fired this hook. To drop EVERY
+    /// button's armed action in one call, use `Tool.resetAllArmed()`; it is a
+    /// distinct primitive, not something this hook should do.
+    void onInputResetAll();
+}
+
+// ---------------------------------------------------------------------------
+// THE MORATORIUM, as a build error (task 0705, T6).
+//
+// Task 0428 cut `Tool`'s virtual surface 44 -> 28 and wrote down a moratorium:
+// a new one-tool hook is admissible "only with a recorded invariant test". No
+// such test was written, the rule lived only in a `done/` task file, and the
+// surface grew back to 34 — six additions, none of which honoured the clause
+// that admitted them. A rule with no mechanism is a rule that measures nothing.
+//
+// The list below is that mechanism. It is a hand-written whitelist ON PURPOSE:
+// the point is not to describe the class (the compiler can already do that,
+// which is what `toolVirtuals` does) but to make GROWING it an explicit,
+// reviewable edit. Deriving both sides would assert nothing.
+//
+// Adding a virtual to `Tool` now fails the BUILD with the message below.
+// Before you add a name here, check the alternative: if fewer than about three
+// tools will override it, it belongs on a capability interface (see
+// `InputBindable` above and the five in `edit_session.d`), not on the base.
+// ---------------------------------------------------------------------------
+private enum string[] kToolVirtualWhitelist = [
+    // Wide contracts — dozens of overriders each. These are what a base class
+    // is for.
+    "name", "activate", "deactivate", "update",
+    "onMouseButtonDown", "onMouseButtonUp", "onMouseMotion",
+    "draw", "drawProperties",
+    "params", "onParamChanged", "paramEnabled",
+    "evaluate", "applyHeadless", "supportedModes",
+    "toolHandlesJson", "toolStateJson",
+    // The wide SESSION contract (task 0428) — ~30 overriders each.
+    "hasUncommittedEdit", "cancelUncommittedEdit", "resyncSession",
+    "commitUncommittedEdit",
+    // Middling — 4 to 8 overriders. Fine on the base; listed so the next
+    // reader can see where the line currently sits.
+    "flags", "isDragging", "onKeyDown",
+    // NARROW, and each one is a standing question rather than a settled
+    // answer. They are on the base today because moving them costs call-site
+    // churn that task 0705 judged not worth spending in a hygiene wave:
+    //   onKeyUp                 1 overrider  — and NO dispatch site at all;
+    //                                          see task 0709, this is a live
+    //                                          bug, not merely a narrow hook.
+    //   wantsHoverForType       1 runtime overrider, but its BASE body is real
+    //                                          logic over the ToolFlag.Hover*
+    //                                          bits four tools set, and it is
+    //                                          read on the per-frame hover
+    //                                          path from 9 sites.
+    //   wantsEdgeLoopHover      2 overriders, 3 per-frame call sites.
+    //   edgeLoopHoverSliceRing  1 overrider.
+    //   renderParamsAsPanel     1 overrider, 1 cold site.
+    //   needsEditTarget         0 Tool overriders; its own doc admits it is
+    //                                          "TRUE for every tool in the
+    //                                          build today". Read once and
+    //                                          cached at registration.
+    "onKeyUp", "wantsHoverForType", "wantsEdgeLoopHover",
+    "edgeLoopHoverSliceRing", "renderParamsAsPanel", "needsEditTarget",
+];
+
+/// Every virtual (overridable) method `Tool` declares, in declaration order,
+/// derived by the compiler. `final`, `static` and `private` members are not
+/// virtual and do not appear; a name with several overloads appears once.
+private enum string[] toolVirtuals = () {
+    string[] r;
+    static foreach (m; __traits(derivedMembers, Tool)) {
+        static if (__traits(compiles, __traits(getOverloads, Tool, m))) {
+            static foreach (ov; __traits(getOverloads, Tool, m)) {
+                static if (__traits(isVirtualMethod, ov)) {
+                    {
+                        bool seen = false;
+                        foreach (x; r) if (x == m) seen = true;
+                        if (!seen) r ~= m;
+                    }
+                }
+            }
+        }
+    }
+    return r;
+}();
+
+
+// ---------------------------------------------------------------------------
 // Centralized tool-input dispatch — Tool-base seam tests (Phase 1, ADDITIVE +
 // INERT, doc/tool_input_dispatch_design.md). No SDL runtime call, no GL, no
 // live vibe3d instance: `SDL_MouseButtonEvent` is a plain POD struct and
@@ -503,7 +609,7 @@ version(unittest) {
     /// Test-only stub: a non-empty bindings() table plus a recording
     /// onToolAction/onInputResetAll, so the tests below can assert exactly
     /// which (action, phase) pairs dispatchInput delivered.
-    private class RecordingTool : Tool {
+    private class RecordingTool : Tool, InputBindable {
         override const(InputBinding)[] bindings() const {
             return [
                 InputBinding(InputButton.Left,   InputMod.None,  TestActionMove),
@@ -702,4 +808,32 @@ unittest {
     // LEFT's armed slot survived untouched: its Up still routes to onToolAction.
     assert(t.dispatchInput(InputButton.Left, InputMod.None, InputPhase.Up, e, vts));
     assert(t.log.length == 1);
+}
+
+
+static assert(sameSet(toolVirtuals, kToolVirtualWhitelist),
+    "Tool's virtual surface no longer matches kToolVirtualWhitelist.\n"
+  ~ "  added, not in the whitelist: " ~ missingFrom(toolVirtuals, kToolVirtualWhitelist) ~ "\n"
+  ~ "  whitelisted, no longer present: " ~ missingFrom(kToolVirtualWhitelist, toolVirtuals) ~ "\n"
+  ~ "This is task 0428's moratorium, finally enforced (task 0705). REMOVING a "
+  ~ "virtual is good news — delete its line. ADDING one is the question: if "
+  ~ "fewer than about three tools will override it, put it on a capability "
+  ~ "interface (see InputBindable above, and the five in edit_session.d) and "
+  ~ "reach it with a cast, instead of giving every tool in the program a slot "
+  ~ "it does not use.");
+
+private bool sameSet(const(string)[] a, const(string)[] b) pure {
+    return missingFrom(a, b).length == 0 && missingFrom(b, a).length == 0;
+}
+
+/// Names present in `a` but not in `b`, comma-joined (CTFE, so a `static
+/// assert` can name the offender instead of just failing).
+private string missingFrom(const(string)[] a, const(string)[] b) pure {
+    string r;
+    foreach (x; a) {
+        bool found = false;
+        foreach (y; b) if (x == y) { found = true; break; }
+        if (!found) r ~= (r.length ? ", " : "") ~ x;
+    }
+    return r;
 }

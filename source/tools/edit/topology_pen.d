@@ -805,7 +805,7 @@ private enum string[] kGestureArmFields = () {
     return r;
 }();
 
-class TopologyPenTool : Tool {
+class TopologyPenTool : Tool, InputBindable {
 
     /// Click-vs-drag gate, in pixels, shared by EVERY gesture in this tool:
     /// a release within this distance of the press pixel is a click, not a
