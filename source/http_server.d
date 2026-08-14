@@ -23,6 +23,30 @@ import app_version : appVersion, appBuildConfig, appPlatform, appBuildDate,
                      appAboutLines;
 
 // ---------------------------------------------------------------------------
+// jsonEsc — escape `s` for embedding BETWEEN the quotes of a JSON string
+// literal in a hand-assembled response body.
+//
+// This file builds most of its error bodies by concatenation, and it used to
+// escape them by hand: 45 of the 49 escape sites replaced the double-quote and
+// NOTHING else (audit №4, D11). That is not a style problem. Exception
+// messages here interpolate caller-controlled text verbatim —
+// `unknown layer kind 'X'`, `unknown command id 'X'`, file paths from a failed
+// load — so a single backslash in X emitted a body that is not JSON at all
+// (`\z` is a hard parse error, `\b` parses as a BACKSPACE and silently
+// changes the message), and a newline in a message broke it outright.
+//
+// std.json does the escaping, because it is the same escaper the correct
+// sites in this tree already reach for and it covers control characters, not
+// just the two everyone remembers. It returns a QUOTED literal; the slice
+// drops the quotes so this stays a drop-in for the `.replace` it replaced —
+// call sites keep supplying their own quotes.
+// ---------------------------------------------------------------------------
+private string jsonEsc(string s) {
+    auto lit = JSONValue(s).toString();
+    return lit.length >= 2 ? lit[1 .. $ - 1] : "";
+}
+
+// ---------------------------------------------------------------------------
 // versionJson — the GET /api/version payload (task 0641).
 //
 // All compile-time constants, so this is safe to build on the HTTP thread
@@ -1816,7 +1840,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = "{\"error\": \"Failed to retrieve model data\", \"message\": \""
-                                   ~ modelBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                                   ~ jsonEsc(modelBridge.resp.error) ~ "\"}";
                 }
             }
         } else if (request.path == "/api/selection") {
@@ -1828,7 +1852,7 @@ class HttpServer {
                 } catch (Exception e) {
                     response.statusCode = 500;
                     response.body = "{\"error\": \"Failed to retrieve selection data\", \"message\": \"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                                   jsonEsc(e.msg) ~ "\"}";
                     response.headers["Content-Type"] = "application/json";
                 }
             } else {
@@ -1860,7 +1884,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = "{\"error\": \"Failed to retrieve tool handles\", \"message\": \"" ~
-                                   toolHandlesBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                                   jsonEsc(toolHandlesBridge.resp.error) ~ "\"}";
                 }
             }
         } else if (request.path == "/api/tool/state" && request.method == "GET") {
@@ -1876,7 +1900,7 @@ class HttpServer {
                 } catch (Exception e) {
                     response.statusCode = 500;
                     response.body = "{\"error\": \"Failed to retrieve tool state\", \"message\": \"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                                   jsonEsc(e.msg) ~ "\"}";
                 }
             }
         } else if (request.path == "/api/toolprops/ids" && request.method == "GET") {
@@ -1901,7 +1925,7 @@ class HttpServer {
             } catch (Exception e) {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Failed to retrieve tool props ids\", \"message\": \"" ~
-                               e.msg.replace("\"", "\\\"") ~ "\"}";
+                               jsonEsc(e.msg) ~ "\"}";
             }
         } else if (request.path == "/api/buttons/availability" && request.method == "GET") {
             // Task 0669 — every button the last complete frame drew, with the
@@ -1926,7 +1950,7 @@ class HttpServer {
             } catch (Exception e) {
                 response.statusCode = 500;
                 response.body = "{\"error\": \"Failed to retrieve button availability\", \"message\": \"" ~
-                               e.msg.replace("\"", "\\\"") ~ "\"}";
+                               jsonEsc(e.msg) ~ "\"}";
             }
         } else if (request.path == "/api/layers" && request.method == "GET") {
             // Layer list. MARSHALED (task 0612 Stage 3) — it used to be served
@@ -1949,7 +1973,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = "{\"error\": \"Failed to retrieve layers\", \"message\": \"" ~
-                                   layersBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                                   jsonEsc(layersBridge.resp.error) ~ "\"}";
                 }
             }
         } else if (request.path == "/api/perf/reset" && request.method == "POST") {
@@ -1972,7 +1996,7 @@ class HttpServer {
             } catch (Exception e) {
                 response.statusCode = 500;
                 response.body = "{\"error\":\"perf probe read failed\",\"message\":\"" ~
-                               e.msg.replace("\"", "\\\"") ~ "\"}";
+                               jsonEsc(e.msg) ~ "\"}";
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/frames/counts/reset" && request.method == "POST") {
@@ -2012,7 +2036,7 @@ class HttpServer {
             } catch (Exception e) {
                 response.statusCode = 500;
                 response.body = "{\"error\":\"frame-count probe read failed\",\"message\":\"" ~
-                               e.msg.replace("\"", "\\\"") ~ "\"}";
+                               jsonEsc(e.msg) ~ "\"}";
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/frames/reset" && request.method == "POST") {
@@ -2038,7 +2062,7 @@ class HttpServer {
             } catch (Exception e) {
                 response.statusCode = 500;
                 response.body = "{\"error\":\"frame probe read failed\",\"message\":\"" ~
-                               e.msg.replace("\"", "\\\"") ~ "\"}";
+                               jsonEsc(e.msg) ~ "\"}";
                 response.headers["Content-Type"] = "application/json";
             }
         } else if (request.path == "/api/changes" && request.method == "GET") {
@@ -2106,7 +2130,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = "{\"error\":\"toolpipe eval provider failed\",\"message\":\""
-                                   ~ pipeEvalBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                                   ~ jsonEsc(pipeEvalBridge.resp.error) ~ "\"}";
                 }
             }
         } else if (request.path.startsWith("/api/path")) {
@@ -2146,7 +2170,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = `{"error":"path query failed","message":"` ~
-                                   pathBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                   jsonEsc(pathBridge.resp.error) ~ `"}`;
                 }
             }
         } else if (request.path == "/api/toolpipe") {
@@ -2172,7 +2196,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = "{\"error\":\"toolpipe provider failed\",\"message\":\""
-                                   ~ toolpipeBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                                   ~ jsonEsc(toolpipeBridge.resp.error) ~ "\"}";
                 }
             }
         } else if (request.path == "/api/ai/analyze" && request.method == "GET") {
@@ -2195,7 +2219,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = "{\"error\":\"ai analyze provider failed\",\"message\":\""
-                                   ~ aiAnalyzeBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                                   ~ jsonEsc(aiAnalyzeBridge.resp.error) ~ "\"}";
                 }
             }
         } else if (request.path.startsWith("/api/registry") && request.method == "GET") {
@@ -2208,7 +2232,7 @@ class HttpServer {
                 } catch (Exception e) {
                     response.statusCode = 500;
                     response.body = "{\"error\":\"registry provider failed\",\"message\":\"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                                   jsonEsc(e.msg) ~ "\"}";
                     response.headers["Content-Type"] = "application/json";
                 }
             } else {
@@ -2225,7 +2249,7 @@ class HttpServer {
                 } catch (Exception e) {
                     response.statusCode = 500;
                     response.body = "{\"error\":\"snap last provider failed\",\"message\":\"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                                   jsonEsc(e.msg) ~ "\"}";
                     response.headers["Content-Type"] = "application/json";
                 }
             } else {
@@ -2258,7 +2282,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = "{\"error\":\"snap query failed\",\"message\":\"" ~
-                                   snapQueryBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                                   jsonEsc(snapQueryBridge.resp.error) ~ "\"}";
                 }
             }
         } else if (request.path == "/api/constrain" && request.method == "POST") {
@@ -2280,7 +2304,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = "{\"error\":\"constrain query failed\",\"message\":\"" ~
-                                   constrainQueryBridge.resp.error.replace("\"", "\\\"") ~ "\"}";
+                                   jsonEsc(constrainQueryBridge.resp.error) ~ "\"}";
                 }
             }
         } else if (request.path.startsWith("/api/camera") && request.method == "POST") {
@@ -2303,12 +2327,12 @@ class HttpServer {
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ cameraSetBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                        ~ jsonEsc(cameraSetBridge.resp.error) ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(e.msg) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2327,7 +2351,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = `{"error":"`
-                                    ~ gpuSurfaceBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(gpuSurfaceBridge.resp.error) ~ `"}`;
                 }
                 response.headers["Content-Type"] = "application/json";
             }
@@ -2350,7 +2374,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = `{"error":"`
-                                    ~ vpDisplayBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(vpDisplayBridge.resp.error) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2371,7 +2395,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = `{"error":"`
-                                    ~ imagesBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(imagesBridge.resp.error) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2395,7 +2419,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = `{"error":"`
-                                    ~ planeBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(planeBridge.resp.error) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2431,7 +2455,7 @@ class HttpServer {
                 } else {
                     response.statusCode = 500;
                     response.body = `{"error":"`
-                                    ~ vpProbeBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(vpProbeBridge.resp.error) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2453,7 +2477,7 @@ class HttpServer {
                     response.body = pickBridge.resp.result;
                 } else {
                     response.statusCode = 500;
-                    response.body = `{"error":"` ~ pickBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                    response.body = `{"error":"` ~ jsonEsc(pickBridge.resp.error) ~ `"}`;
                 }
                 response.headers["Content-Type"] = "application/json";
             }
@@ -2476,7 +2500,7 @@ class HttpServer {
                     response.body = surfaceRaycastBridge.resp.result;
                 } else {
                     response.statusCode = 500;
-                    response.body = `{"error":"` ~ surfaceRaycastBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                    response.body = `{"error":"` ~ jsonEsc(surfaceRaycastBridge.resp.error) ~ `"}`;
                 }
                 response.headers["Content-Type"] = "application/json";
             }
@@ -2490,7 +2514,7 @@ class HttpServer {
                 } catch (Exception e) {
                     response.statusCode = 500;
                     response.body = "{\"error\": \"Failed to retrieve camera data\", \"message\": \"" ~
-                                   e.msg.replace("\"", "\\\"") ~ "\"}";
+                                   jsonEsc(e.msg) ~ "\"}";
                     response.headers["Content-Type"] = "application/json";
                 }
             } else {
@@ -2563,12 +2587,12 @@ class HttpServer {
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ transformBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                        ~ jsonEsc(transformBridge.resp.error) ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(e.msg) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2606,12 +2630,12 @@ class HttpServer {
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ loadMeshBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                        ~ jsonEsc(loadMeshBridge.resp.error) ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(e.msg) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2647,12 +2671,12 @@ class HttpServer {
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ injectLayerBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                        ~ jsonEsc(injectLayerBridge.resp.error) ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(e.msg) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2684,12 +2708,12 @@ class HttpServer {
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ selectionBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                        ~ jsonEsc(selectionBridge.resp.error) ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(e.msg) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2745,12 +2769,12 @@ class HttpServer {
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ commandBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                        ~ jsonEsc(commandBridge.resp.error) ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(e.msg) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2825,11 +2849,11 @@ class HttpServer {
                     if (i > 0) sb.put(',');
                     sb.put(format(`{"line":%d,"command":"%s","status":"%s"`,
                                   r.lineNo,
-                                  r.command.replace("\"", "\\\""),
+                                  jsonEsc(r.command),
                                   r.ok ? "ok" : "error"));
                     if (!r.ok && r.message.length > 0) {
                         sb.put(`,"message":"`);
-                        sb.put(r.message.replace("\\", "\\\\").replace("\"", "\\\""));
+                        sb.put(jsonEsc(r.message));
                         sb.put('"');
                     }
                     sb.put('}');
@@ -2884,12 +2908,12 @@ class HttpServer {
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ refireBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                        ~ jsonEsc(refireBridge.resp.error) ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(e.msg) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2923,12 +2947,12 @@ class HttpServer {
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ blockBridge.resp.error.replace("\"", "\\\"") ~ `"}`;
+                                        ~ jsonEsc(blockBridge.resp.error) ~ `"}`;
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                    ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                                    ~ jsonEsc(e.msg) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -2995,7 +3019,7 @@ class HttpServer {
                 } catch (Exception e) {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                  ~ e.msg.replace("\"", "\\\"") ~ `"}`;
+                                  ~ jsonEsc(e.msg) ~ `"}`;
                 }
             }
             response.headers["Content-Type"] = "application/json";
@@ -3052,19 +3076,19 @@ class HttpServer {
                         if (commandBridge.resp.error.length == 0) {
                             response.statusCode = 200;
                             response.body = `{"status":"ok","line":"`
-                                          ~ line.replace("\\", "\\\\").replace("\"", "\\\"")
+                                          ~ jsonEsc(line)
                                           ~ `"}`;
                         } else {
                             response.statusCode = 200;
                             response.body = `{"status":"error","message":"`
-                                          ~ commandBridge.resp.error.replace("\\", "\\\\").replace("\"", "\\\"")
+                                          ~ jsonEsc(commandBridge.resp.error)
                                           ~ `"}`;
                         }
                     }
                 } catch (Exception e) {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                  ~ e.msg.replace("\\", "\\\\").replace("\"", "\\\"") ~ `"}`;
+                                  ~ jsonEsc(e.msg) ~ `"}`;
                 }
                 response.headers["Content-Type"] = "application/json";
             }
@@ -3404,7 +3428,7 @@ string meshToJsonDetailed(ref const(Mesh) m) {
         json ~= format(
             "{\"name\":\"%s\",\"baseColor\":[%f,%f,%f],\"diffuseAmount\":%f," ~
             "\"specularAmount\":%f,\"glossiness\":%f,\"opacity\":%f}",
-            name.replace("\"", "\\\""),
+            jsonEsc(name),
             s.baseColor.x, s.baseColor.y, s.baseColor.z,
             s.diffuseAmount, s.specularAmount, s.glossiness, s.opacity);
     }
