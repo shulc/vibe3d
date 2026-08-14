@@ -775,14 +775,11 @@ public:
         cancelSnap = userPin;
     }
 
-    /// Switch into Manual mode and pin the center. Mirror of
-    /// `setAutoUserPlaced` for callers that want strict "stay here"
-    /// semantics regardless of selection changes.
-    void setManualCenter(Vec3 worldPos) {
-        mode         = Mode.Manual;
-        manualCenter = worldPos;
-        publishState();
-    }
+    // `setManualCenter(Vec3)` lived here — "switch into Manual mode and pin
+    // the center". Removed (audit №4): zero callers ever appeared. Manual mode
+    // is still fully reachable, just not through a one-shot setter: the mode
+    // comes from the ACEN pulldown / `actr.manual` preset and the point from
+    // the `cenX`/`cenY`/`cenZ` attrs, which write `manualCenter` directly.
 
 public:
     // Returns the actual Vec3 the next pipeline.evaluate would publish.

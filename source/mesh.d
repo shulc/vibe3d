@@ -823,7 +823,8 @@ struct Mesh {
     bool isRecordingEdits() const { return editRecorder_ !is null; }
 
     // Resize selection arrays to match geometry and clear them.
-    // Call after catmullClark / importLWO / reset.
+    // Call after any wholesale geometry replacement — `catmullClarkOsd`,
+    // an importer building a fresh Mesh, `reset`.
     //
     // Deliberately does NOT clear subpatch (task 0389): this is a
     // SELECTION reset, not a subpatch reset — a topology-editing command
@@ -4897,18 +4898,11 @@ struct Mesh {
         assert(m3.interiorEdgesOfSelectedFaces().length == 0,
             "a lone selected face yields no seed");
     }
-    /// True iff every face is subpatch-marked AND there's at least one
-    /// face. Gates the OSD-accelerated SubpatchPreview fast path:
-    /// OpenSubdiv subdivides the WHOLE mesh, so selective subpatch
-    /// (some faces marked, others not) keeps the existing vibe3d
-    /// catmullClarkSelected path.
-    bool allSubpatch() const {
-        if (faces.length == 0) return false;
-        if (faceMarks.length < faces.length) return false;
-        foreach (i; 0 .. faces.length)
-            if ((faceMarks[i] & Marks.Subpatch) == 0) return false;
-        return true;
-    }
+    // `allSubpatch()` lived here: "true iff every face is subpatch-marked".
+    // Removed (audit №4) — zero callers, and its doc gated a fast path against
+    // a `catmullClarkSelected` CPU function that no longer exists. OsdAccel
+    // takes the marked SUBSET either way; whether that subset happens to be
+    // the whole cage is not a case anyone branches on.
 
     void setSubpatch(size_t idx, bool on) {
         if (idx >= faceMarks.length) return;
@@ -10279,7 +10273,8 @@ struct Mesh {
     }
 
     /// Rebuild the half-edge loop structure from the current faces/vertices.
-    /// Must be called after any topology change (addFace, catmullClark, bevel, etc.).
+    /// Must be called after any topology change (addFace, catmullClarkOsd,
+    /// bevel, etc.).
     ///
     /// CONTRACT (task 0447 §7): this re-syncs `loops`/`loopEdge`/`vertLoop`
     /// against the CURRENT `edges[]` — it does NOT rebuild the edge set. A
@@ -13807,8 +13802,8 @@ struct SubpatchPreview {
         cageVertPreview.length = 0;
         osdAccel.clear();
 
-        // OsdAccel.buildPreview extracts the subpatch-marked subset
-        // (the whole cage when `allSubpatch`, just a slice otherwise),
+        // OsdAccel.buildPreview extracts the subpatch-marked subset (which is
+        // the whole cage when every face is marked, a slice otherwise),
         // feeds it to OpenSubdiv, and emits the limit Mesh + trace.
         // Non-subpatch faces of the cage do not appear in the preview
         // in the selective case — see OsdAccel.buildPreview for the
