@@ -92,10 +92,27 @@ abstract class Stage : ParamProvider {
     /// stateful stages override.
     void reset() {}
 
-    // Whether this stage is currently enabled in the pipe. Disabled
-    // stages are skipped during evaluation but stay in the pipe (the
-    // E column in the tool pipe panel).
-    bool enabled = true;
+    /// Whether this stage is currently REGISTERED-and-live in the pipe.
+    /// Disabled stages are skipped during evaluation but stay in the pipe (the
+    /// E column in the tool pipe panel).
+    ///
+    /// Renamed from `enabled` by task 0705 (audit 4, P8). It is a different
+    /// boolean from the user-facing master toggles some stages own — SNAP's
+    /// `enabled` (the X key), SYMMETRY's `enabled` — and those DERIVED fields
+    /// shadowed this one rather than replacing it. Shadowing is silent both
+    /// ways: `Stage`-typed code reading `s.enabled` got the pipe flag while
+    /// `SnapStage`-typed code reading the same spelling got the user toggle,
+    /// and app.d had to carry a paragraph explaining which was which at one of
+    /// the three sites. The distinct name is what that paragraph was for.
+    ///
+    /// It also unblocked embedding the config as a sub-struct
+    /// (`SnapConfig`/`FalloffConfig`): an `alias this` LOSES to an inherited
+    /// member of the same name, so with both called `enabled` the alias would
+    /// have silently redirected every `enabled` in and around SnapStage to
+    /// this flag — which defaults to TRUE, i.e. snapping on with the toggle
+    /// off. `FalloffConfig` escaped that only because it happens to have no
+    /// field called `enabled`.
+    bool pipeEnabled = true;
 
     // ------------------------------------------------------------------
     // Schema (Phase 7.9): typed `Param[]` registry — same shape as

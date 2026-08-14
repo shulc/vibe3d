@@ -2161,7 +2161,7 @@ void main(string[] args) {
         if (g_pipeCtx is null) return false;
         foreach (s; g_pipeCtx.pipeline.findAllByTask(TaskCode.Wght))
             if (auto fo = cast(FalloffStage) s)
-                if (fo.enabled && fo.isActive())   // type != None; alloc-free
+                if (fo.pipeEnabled && fo.isActive())   // type != None; alloc-free
                     return true;
         return false;
     }
@@ -6628,7 +6628,7 @@ void main(string[] args) {
                     // collapse to nothing.
                     if (g_pipeCtx !is null) {
                         foreach (s; g_pipeCtx.pipeline.all()) {
-                            if (!s.enabled) continue;
+                            if (!s.pipeEnabled) continue;
                             auto stage = cast(Stage)s;
                             if (stage is null) continue;
                             if (stage.params().length == 0) continue;
@@ -6672,13 +6672,14 @@ void main(string[] args) {
                 // Drawn whether or not the SNAP stage's master toggle is on:
                 // that toggle is the FIRST row, and a page that emptied itself
                 // when you switched snapping off would leave no way to switch
-                // it back on. (The loop above gates on `Stage.enabled`, the
-                // pipe REGISTRATION flag, which SnapStage's own `enabled`
-                // field shadows rather than replaces — two different booleans
-                // that have to stay told apart.)
+                // it back on. (The loop above gates on `Stage.pipeEnabled`,
+                // the pipe REGISTRATION flag — a different boolean from
+                // SnapStage's user-facing `enabled` master toggle. Task 0705
+                // renamed the pipe flag; the two used to share a spelling, and
+                // this paragraph existed to tell them apart.)
                 if (!inMain && g_pipeCtx !is null) {
                     foreach (s; g_pipeCtx.pipeline.all()) {
-                        if (!s.enabled) continue;
+                        if (!s.pipeEnabled) continue;
                         auto stage = cast(Stage)s;
                         if (stage is null) continue;
                         if (stage.taskCode() != TaskCode.Snap) continue;

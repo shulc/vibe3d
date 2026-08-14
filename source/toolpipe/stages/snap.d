@@ -7,7 +7,7 @@ import std.algorithm : canFind;
 
 import toolpipe.stage    : Stage, TaskCode, ordSnap;
 // pipeline imports moved to packet-only — Phase 6 cleanup
-import toolpipe.packets  : SnapPacket, SnapHitPacket, SnapType, SnapMode;
+import toolpipe.packets  : SnapPacket, SnapConfig, SnapHitPacket, SnapType, SnapMode;
 import toolpipe.guide    : SnapGuide, GuideDrawState;
 import operator          : Operator, Task, VectorStack, PacketKind;
 import popup_state       : setStatePath;
@@ -110,13 +110,7 @@ class SnapStage : Stage, Operator {
         if (!this.enabled) return false;
         import toolpipe.packets : WorkplanePacket;
         SnapPacket pkt;
-        pkt.enabled       = enabled;
-        pkt.enabledTypes  = enabledTypes;
-        pkt.snapScope     = snapScope;
-        pkt.innerRangePx  = innerRangePx;
-        pkt.outerRangePx  = outerRangePx;
-        pkt.fixedGrid     = fixedGrid;
-        pkt.fixedGridSize = fixedGridSize;
+        pkt.config = config;
         if (auto wp = vts.get!WorkplanePacket()) {
             pkt.workplaneCenter = wp.center;
             pkt.workplaneNormal = wp.normal;
@@ -360,16 +354,23 @@ class SnapStage : Stage, Operator {
     // back by `onParamChanged`. NOT state: `enabledTypes` is.
     private bool[snapTypeRows.length] _typeMirror;
 
-    bool     enabled       = false;
-    // Vertex alone — see `SnapPacket.enabledTypes` for why the extra three
-    // bits were a broken default rather than a generous one. The unittest at
-    // the bottom of this file pins this to the packet's copy.
-    uint     enabledTypes  = SnapType.Vertex;
-    SnapMode snapScope     = SnapMode.Global;
-    float    innerRangePx  = 24.0f;
-    float    outerRangePx  = 40.0f;
-    bool     fixedGrid     = false;
-    float    fixedGridSize = 1.0f;
+    /// The stage's user-facing config — the SAME seven fields `SnapPacket`
+    /// carries, because it is literally the same struct (task 0705, P8). The
+    /// stage used to redeclare all seven with its own initialisers, and the
+    /// two sets had already drifted once (see `SnapConfig`'s own note). There
+    /// is nothing left to keep in step: `alias this` means every existing
+    /// `enabled` / `innerRangePx` reference inside this class still resolves.
+    SnapConfig config;
+    alias config this;
+
+    /// The one obstacle this split hit, and why `Stage.enabled` is now
+    /// `Stage.pipeEnabled`: an `alias this` LOSES to an inherited member of
+    /// the same name. While the base still spelled its pipe-registration flag
+    /// `enabled`, aliasing the config in would have silently redirected every
+    /// `enabled` in and around this stage to that flag — which defaults to
+    /// TRUE, i.e. a stage in the pipe reading "snapping on" with the user's
+    /// toggle off. The pin unittest at the bottom of this file is what caught
+    /// it; nothing else would have.
 
     // ---- startup arming: the tool-activation save/restore pair -------------
     //
@@ -527,13 +528,10 @@ class SnapStage : Stage, Operator {
     /// Match every default field initialiser at declaration time —
     /// invoked via Stage.reset() by SceneReset / `/api/reset`.
     override void reset() {
-        enabled       = false;
-        enabledTypes  = SnapType.Vertex;
-        snapScope     = SnapMode.Global;
-        innerRangePx  = 24.0f;
-        outerRangePx  = 40.0f;
-        fixedGrid     = false;
-        fixedGridSize = 1.0f;
+        // One assignment, and it CANNOT fall behind the declaration: the
+        // initialisers it restores are the struct's own (task 0705). This used
+        // to restate all seven by hand and was the third copy of the set.
+        config = SnapConfig.init;
         // Drop the last per-cursor result too, so a scene reset cannot leave a
         // stale hit behind the stage's pointer (mirrors the CONS stage).
         _hitPkt       = SnapHitPacket.init;
@@ -568,13 +566,7 @@ class SnapStage : Stage, Operator {
     /// are re-derived by evaluate() from the upstream WORK stage.
     SnapPacket snapshotConfigToPacket() const {
         SnapPacket p;
-        p.enabled       = enabled;
-        p.enabledTypes  = enabledTypes;
-        p.snapScope     = snapScope;
-        p.innerRangePx  = innerRangePx;
-        p.outerRangePx  = outerRangePx;
-        p.fixedGrid     = fixedGrid;
-        p.fixedGridSize = fixedGridSize;
+        p.config = config;
         return p;
     }
 
@@ -587,13 +579,7 @@ class SnapStage : Stage, Operator {
     /// session. Does NOT restore the workplane cache / gridStep (evaluate()
     /// re-derives those from the upstream WORK stage).
     void restoreConfigFromPacket(const ref SnapPacket p) {
-        enabled       = p.enabled;
-        enabledTypes  = p.enabledTypes;
-        snapScope     = p.snapScope;
-        innerRangePx  = p.innerRangePx;
-        outerRangePx  = p.outerRangePx;
-        fixedGrid     = p.fixedGrid;
-        fixedGridSize = p.fixedGridSize;
+        config = p.config;
         publishState();
     }
 
@@ -761,52 +747,59 @@ private:
     }
 }
 
-unittest { // ONE set of snap defaults — the packet's must equal the stage's
-    // `SnapPacket.init` is not a second opinion about the snap config: it is
-    // the FALLBACK four call sites serve when the pipeline has no SNAP packet
-    // (`tools/create/create_common.d` twice, `tools/transform/transform.d`
-    // twice), so it is read as if the stage had published it. The two sets
-    // disagreed — the packet carried inner 8 / outer 40's ancestor 24, the
-    // stage 24 / 40 — which made a packet-less consumer snap with a 3x
-    // narrower acceptance and a 1.67x narrower gather, silently. Nothing
-    // announced the divergence because no test compared them.
+unittest { // The snap config is ONE declaration — and `enabled` is the
+    // USER toggle, not the pipe flag.
     //
-    // This block is that comparison. It deliberately checks EVERY config field
-    // rather than only the two ranges: whichever default drifts next, the
-    // fallback is wrong in exactly the same silent way.
+    // The previous version of this block compared the stage's seven defaults
+    // to `SnapPacket.init`'s seven, field by field, because the two sets were
+    // written out twice and had drifted (the packet carried inner 8 against
+    // the stage's 24, so the four call sites that serve `SnapPacket.init` as a
+    // fallback snapped with a 3x narrower acceptance, silently). Since task
+    // 0705 both sides ARE `SnapConfig`, so that comparison would be a
+    // tautology — an assertion that can no longer fail is not a guard, it is
+    // decoration. What it is replaced with is the one thing the split made
+    // fragile, and it is not hypothetical: this test is what caught it.
     auto st = new SnapStage();
 
-    assert(st.innerRangePx == SnapPacket.init.innerRangePx,
-        "the SNAP stage owns innerRangePx; SnapPacket.init is the fallback four "
-        ~ "call sites serve for it, so the two defaults must be one number");
-    assert(st.outerRangePx == SnapPacket.init.outerRangePx,
-        "same for outerRangePx — a packet-less consumer must gather exactly as "
-        ~ "far as one holding the stage's packet");
+    // TWO booleans, and a fresh stage must disagree about them. `pipeEnabled`
+    // is `Stage`'s registration flag (default TRUE — the stage is in the pipe);
+    // `enabled` is the user's master snap toggle (default FALSE — snapping
+    // ships off). They were BOTH spelled `enabled` until task 0705, the
+    // derived one shadowing the base one. Embedding the config as a sub-struct
+    // then broke it: an `alias this` loses to an inherited member, so every
+    // `enabled` in and around this stage silently became the pipe flag, and a
+    // fresh stage read as "snapping ON".
+    assert(st.pipeEnabled,
+        "a freshly constructed stage is registered-and-live in the pipe");
+    assert(!st.enabled,
+        "...and its USER snap toggle is off. If this fires and pipeEnabled "
+        ~ "above passed, `enabled` has stopped resolving to SnapConfig's field "
+        ~ "and is reading Stage's pipe flag instead");
+    assert(&st.enabled is &st.config.enabled,
+        "SnapStage.enabled must BE the config's storage — the panel checkbox "
+        ~ "binds to its address");
 
-    assert(st.enabled       == SnapPacket.init.enabled,       "enabled default drifted");
-    assert(st.enabledTypes  == SnapPacket.init.enabledTypes,  "enabledTypes default drifted");
-    assert(st.snapScope     == SnapPacket.init.snapScope,     "snapScope default drifted");
-    assert(st.fixedGrid     == SnapPacket.init.fixedGrid,     "fixedGrid default drifted");
-    assert(st.fixedGridSize == SnapPacket.init.fixedGridSize, "fixedGridSize default drifted");
+    // Writing one must not move the other.
+    st.enabled = true;
+    assert(st.config.enabled && st.pipeEnabled,
+        "toggling snapping must not touch the pipe registration flag");
+    st.enabled = false;
 
-    // Whole-struct form, and it is not redundant: `snapshotConfigToPacket`
-    // starts from `SnapPacket.init` and overwrites only the config fields, so
-    // a fresh stage's snapshot is bit-identical to the init packet iff every
-    // config default agrees. This catches a field ADDED to one side only.
-    assert(st.snapshotConfigToPacket() == SnapPacket.init,
-        "a fresh SNAP stage's config snapshot must BE the init packet — if a "
-        ~ "new config field lands on one side only, the fallback silently "
-        ~ "diverges again");
-
-    // `reset()` restates every initialiser by hand (SceneReset / /api/reset go
-    // through it), so it is a third copy of the same set and it drifts too.
+    // The config round-trip, which is now a property of one struct rather than
+    // an agreement between two. Still worth asserting: `snapshotConfigToPacket`
+    // and `reset` are the undo/redo and scene-reset paths, and a future edit
+    // could reintroduce a hand-written field list in either.
     st.innerRangePx = 1.0f;
     st.outerRangePx = 2.0f;
     st.enabled      = true;
+    assert(st.snapshotConfigToPacket() != SnapPacket.init,
+        "the rig must actually change the config, or the reset below proves "
+        ~ "nothing");
     st.reset();
     assert(st.snapshotConfigToPacket() == SnapPacket.init,
-        "SnapStage.reset() must restore exactly the declaration initialisers, "
-        ~ "which are exactly SnapPacket.init's");
+        "SnapStage.reset() must restore exactly the declaration initialisers");
+    assert(st.pipeEnabled,
+        "and reset() must NOT switch the stage out of the pipe");
 }
 
 // ---------------------------------------------------------------------------

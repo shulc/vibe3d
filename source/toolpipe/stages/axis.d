@@ -54,7 +54,7 @@ class AxisStage : Stage, Operator {
     PacketKind[] requiredPackets() const { return [PacketKind.Subject]; }
 
     bool evaluate(ref VectorStack vts) {
-        if (!enabled) return false;
+        if (!pipeEnabled) return false;
         import toolpipe.packets : SubjectPacket, WorkplanePacket,
                                   ActionCenterPacket;
         // Cache upstream state — both the viewport (subject) and the

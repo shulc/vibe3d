@@ -67,13 +67,12 @@ struct SnapResult {
 bool snapPacketsEqual(const ref SnapPacket a, const ref SnapPacket b)
     pure nothrow @nogc @safe
 {
-    return a.enabled       == b.enabled
-        && a.enabledTypes  == b.enabledTypes
-        && a.snapScope     == b.snapScope
-        && a.innerRangePx  == b.innerRangePx
-        && a.outerRangePx  == b.outerRangePx
-        && a.fixedGrid     == b.fixedGrid
-        && a.fixedGridSize == b.fixedGridSize;
+    // The compiler's `==` over the config sub-struct, exactly as
+    // `falloffPacketsEqual` does (task 0705, P8). The seven-way conjunction
+    // this replaces was a sixth hand-written enumeration of the same field
+    // names, and the one that fails SILENTLY: a config field left out here
+    // makes a mid-run change to it invisible to the refire trigger.
+    return a.config == b.config;
 }
 
 // ---------------------------------------------------------------------------

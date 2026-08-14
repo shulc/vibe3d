@@ -355,7 +355,7 @@ class FalloffStage : Stage, Operator {
     }
 
     override bool evaluate(ref VectorStack vts) {
-        if (!enabled) return false;
+        if (!pipeEnabled) return false;
         import toolpipe.packets : SubjectPacket, WorkplanePacket,
                                   ActionCenterPacket;
         // Cache upstream WORK normal + viewport for autoSize() callers

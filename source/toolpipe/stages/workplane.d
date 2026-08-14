@@ -47,7 +47,7 @@ class WorkplaneStage : Stage, Operator {
     PacketKind[] requiredPackets() const { return [PacketKind.Subject]; }
 
     bool evaluate(ref VectorStack vts) {
-        if (!enabled) return false;
+        if (!pipeEnabled) return false;
         import toolpipe.packets : SubjectPacket;
         if (isAuto) {
             // WORK is the first slot — `subject.viewport` carries the

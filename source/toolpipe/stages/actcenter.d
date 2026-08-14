@@ -68,7 +68,7 @@ class ActionCenterStage : Stage, Operator {
     PacketKind[] requiredPackets() const { return [PacketKind.Subject]; }
 
     bool evaluate(ref VectorStack vts) {
-        if (!enabled) return false;
+        if (!pipeEnabled) return false;
         import toolpipe.packets : SubjectPacket, WorkplanePacket,
                                   SymmetryPacket;
         // Cache live viewport + upstream workplane so listAttrs

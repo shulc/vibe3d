@@ -852,7 +852,28 @@ enum SnapMode { Global, Component, Item }
 /// 7.3c: also caches the upstream WORK stage's workplane state +
 /// the resolved grid step, so snap.d's Grid / Workplane candidate
 /// generators don't need to walk the pipeline themselves.
-struct SnapPacket {
+/// The SNAP stage's user-facing CONFIG — the seven fields a panel, an
+/// argstring, a preset or an undo step can set, split out of `SnapPacket` by
+/// task 0705 (audit 4, P8) on the `FalloffConfig` pattern.
+///
+/// It exists so that "the snap config" is ONE declaration instead of two.
+/// `SnapPacket` and `SnapStage` each used to declare all seven, with their own
+/// initialisers, and the two sets HAD already diverged once: the packet
+/// carried inner 8 / outer 40 against the stage's 24 / 40, so the four call
+/// sites that serve `SnapPacket.init` as a fallback snapped with a 3x narrower
+/// acceptance and a 1.67x narrower gather, silently. That was patched with a
+/// unittest comparing the two sets field by field and a comment in each
+/// declaration telling the reader to "change them THERE and here in one edit".
+/// Now there is no second place to change: one struct, one set of
+/// initialisers, and the compiler's `==` for the comparison.
+///
+/// Five bodies collapse with it — `evaluate`'s seven assignments,
+/// `reset`, `snapshotConfigToPacket`, `restoreConfigFromPacket` and
+/// `snapPacketsEqual` were each a hand-written enumeration of the same seven
+/// names, so a new config field cost eleven edits. It now costs one
+/// declaration plus its wire rows (`listAttrs` / `applySetAttr` / `params`),
+/// which is the same bill `FalloffConfig` leaves.
+struct SnapConfig {
     bool     enabled       = false;     // master on/off (X key)
     // ONE TYPE ON BY DEFAULT, AND IT IS VERTEX. The reference ships a
     // per-type boolean SET exactly like this mask (twelve types x three
@@ -901,21 +922,28 @@ struct SnapPacket {
     // Stage 1: snap scope (Global/Component/Item). Named `snapScope` because
     // `scope` is a D reserved keyword. Default Global = all types eligible.
     SnapMode snapScope     = SnapMode.Global;
-    // THE ONE PAIR. These two defaults MUST equal SnapStage's declaration
-    // initialisers (`toolpipe/stages/snap.d`) — the stage owns the field, this
-    // struct only carries it, and four call sites serve `SnapPacket.init` as a
-    // silent fallback when the pipeline has no packet
-    // (`tools/create/create_common.d`, `tools/transform/transform.d`). They
-    // used to disagree (8 / 24 here against 24 / 40 there), so a fallback got a
-    // 3x narrower acceptance and a 1.67x narrower gather with no diagnostic —
-    // and the 8 was not even an acceptance radius, it was the unrelated
-    // press-pick reach sitting in this slot by coincidence. The unittest at the
-    // bottom of `toolpipe/stages/snap.d` pins the two sets together so they can
-    // never drift apart again; change them THERE and here in one edit.
+    // THE ONE PAIR — and since task 0705 there is genuinely only one pair.
+    // These initialisers are the stage's too: `SnapStage` embeds this struct
+    // rather than redeclaring the fields, and four call sites serve
+    // `SnapPacket.init` as a silent fallback when the pipeline has no packet
+    // (`tools/create/create_common.d`, `tools/transform/transform.d`). The two
+    // sets used to be written twice and disagreed (8 / 24 here against 24 / 40
+    // there), so a fallback got a 3x narrower acceptance and a 1.67x narrower
+    // gather with no diagnostic — and the 8 was not even an acceptance radius,
+    // it was the unrelated press-pick reach sitting in that slot by
+    // coincidence.
     float  innerRangePx  = 24.0f;      // snap fires when cursor within this
     float  outerRangePx  = 40.0f;      // candidate highlights when within this
     bool   fixedGrid     = false;      // grid uses fixedGridSize, not dynamic
     float  fixedGridSize = 1.0f;       // world units per grid step (when fixedGrid)
+}
+
+struct SnapPacket {
+    /// The seven config fields, embedded. `alias this` so every existing
+    /// `pkt.enabled` / `pkt.innerRangePx` reader is untouched by the split.
+    SnapConfig config;
+    alias config this;
+
     // Workplane snapshot (mirrors WorkplanePacket fields). Used by
     // SnapType.Grid (grid lies on the workplane) and SnapType.Workplane
     // (cursor ray ∩ workplane plane).

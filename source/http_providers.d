@@ -1272,7 +1272,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                     buf.put(format(
                         `{"task":"%s","id":"%s","ordinal":%d,"enabled":%s,"attrs":{`,
                         taskStr.idup, s.id(), s.ordinal(),
-                        s.enabled ? "true" : "false"));
+                        s.pipeEnabled ? "true" : "false"));
                     bool firstAttr = true;
                     foreach (kv; s.listAttrs()) {
                         if (!firstAttr) buf.put(",");
