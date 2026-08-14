@@ -117,7 +117,11 @@ public:
 
     override Param[] params() {
         return [
-            Param.bool_ ("pipeEnabled", "Enabled", &pipeEnabled, false),
+            // WIRE NAME stays "enabled" — `tool.pipe.attr path enabled …`
+            // and /api/path's `enabled` key are a published contract. Only the
+            // D field was renamed (task 0705): PATH has no master toggle of
+            // its own and uses `Stage.pipeEnabled` as one.
+            Param.bool_ ("enabled", "Enabled", &pipeEnabled, false),
             Param.int_  ("index",   "Source",  &index,   0),
             Param.float_("start",   "Start",   &start,   0.0f),
             Param.float_("end",     "End",     &end,     1.0f),
