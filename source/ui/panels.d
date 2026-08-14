@@ -578,15 +578,54 @@ void popButtonBarStyle() {
 // function, wrapped in `with (app) { ... }` per the 0415 seam.
 // =============================================================================
 
+// ── THE PANEL PROLOGUE, FOR EVERY TOP-LEVEL PANEL IN THIS FILE ──────────────
+//
+// Task 0719 (audit 4, finding A6). This file used to spell the prologue two
+// ways: seven panels pushed the chrome style and called `ImGui.End()` +
+// `popPanelChromeStyle()` as plain statements at the bottom, two registered
+// them as `scope(exit)`. All nine now do the latter, and the rule is written
+// here once instead of nine times:
+//
+//     pushPanelChromeStyle();
+//     scope(exit) popPanelChromeStyle();   // registered FIRST => runs LAST
+//     ...anything that computes flags or sets the next window rect...
+//     scope(exit) ImGui.End();             // registered adjacent to Begin
+//     if (ImGui.Begin(...)) { ...body... }
+//
+// `End()` is unconditional by ImGui's own contract -- it is owed even when
+// `Begin` returns false -- so it was never inside the `if`, and moving it to a
+// `scope(exit)` changes nothing about a normal frame. What it changes is the
+// abnormal one: ImGui keeps a window stack and a style stack, and a frame that
+// left either one deep reports it on the NEXT frame, as an assertion inside
+// ImGui with no link to the code that unwound. `drawImagesPanel` and
+// `drawChannelsPanel` (the two that already did this) carry the measured
+// version of that argument, including the throwing calls that make it real
+// rather than defensive; every panel here reaches similar ones through
+// `commandHandlerDelegate` / `applyOrRefire`.
+//
+// Registration ORDER is the behaviour: `popPanelChromeStyle` first and
+// `ImGui.End` second means they unwind End-then-pop, which is the order the
+// seven hand-written tails had. And the pop is registered immediately after
+// its push, not next to `End`, so a throw from the flag/rect statements in
+// between cannot strand the style stack either.
+//
+// NOT a helper, and the reason is a language fact rather than a preference:
+// `scope(exit)` is a STATEMENT, so a `mixin template` -- which may only carry
+// declarations -- cannot hold it. The only way to reduce this to one token is
+// a string mixin, which would trade two greppable lines for a body no search
+// can see. A named rule beats an invisible one.
+// ────────────────────────────────────────────────────────────────────────────
 void drawTabPanel(EditorApp app) {
     with (app) {
     pushPanelChromeStyle();
+    scope(exit) popPanelChromeStyle();
     if (testMode) {
         ImGui.SetNextWindowPos(layout.tabPos, ImGuiCond.Always);
         ImGui.SetNextWindowSize(layout.tabSize, ImGuiCond.Always);
     }
     int tabFlags = ImGuiWindowFlags.NoCollapse;
     if (testMode) tabFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+    scope(exit) ImGui.End();
     if (ImGui.Begin("Tab bar", null, tabFlags))
     {
         pushButtonBarStyle();
@@ -602,8 +641,6 @@ void drawTabPanel(EditorApp app) {
                 ImGui.SameLine();
         }
     }
-    ImGui.End();
-    popPanelChromeStyle();
     }
 }
 
@@ -634,6 +671,8 @@ void drawViewportPropsPanel(EditorApp app) {
     import std.conv : to;
 
     pushPanelChromeStyle();
+    scope(exit) popPanelChromeStyle();
+    scope(exit) ImGui.End();
     if (ImGui.Begin("Viewport Properties")) {
         auto v = vpm.views[vpm.activeId];
 
@@ -873,8 +912,6 @@ void drawViewportPropsPanel(EditorApp app) {
             g_forceLayoutReseed = !restored;
         }
     }
-    ImGui.End();
-    popPanelChromeStyle();
     }
 }
 
@@ -903,7 +940,9 @@ void drawAboutPanel(EditorApp app) {
     import commands.ui.about : g_aboutShown;
 
     pushPanelChromeStyle();
+    scope(exit) popPanelChromeStyle();
     // AlwaysAutoResize: the window is exactly as big as the facts in it.
+    scope(exit) ImGui.End();
     if (ImGui.Begin("About", &g_aboutShown, ImGuiWindowFlags.AlwaysAutoResize)) {
         // TextUnformatted, never Text-as-format — these rows are data, and a
         // stray `%` in a future one must not be read as a conversion.
@@ -916,8 +955,6 @@ void drawAboutPanel(EditorApp app) {
             ImGui.SetClipboardText(appAboutLines.join("\n"));
         }
     }
-    ImGui.End();
-    popPanelChromeStyle();
     }
 }
 
@@ -1022,6 +1059,7 @@ void drawLayerListPanel(EditorApp app) {
     import io.doc_state   : currentDocPath, docDirty;
 
     pushPanelChromeStyle();
+    scope(exit) popPanelChromeStyle();
     // SetNextWindowPos/Size dropped — the dock slot controls position;
     // DockBuilderDockWindow("Layers", rightId) pre-assigns the window.
     //
@@ -1031,6 +1069,7 @@ void drawLayerListPanel(EditorApp app) {
     // that id, so the visible name can change without orphaning a single
     // user's saved layout — which a plain rename to `Begin("Items")` would do,
     // silently, to everyone.
+    scope(exit) ImGui.End();
     if (ImGui.Begin("Items###Layers")) {
         // ---- Metrics -----------------------------------------------------
         // Derived from the ROW HEIGHT rather than written as pixel constants:
@@ -1600,8 +1639,6 @@ void drawLayerListPanel(EditorApp app) {
             }
         }
     }
-    ImGui.End();
-    popPanelChromeStyle();
     }
 }
 
@@ -2443,6 +2480,7 @@ string hiddenReadoutCompact(int hiddenVerts, int hiddenEdges, int hiddenFaces) {
 void drawSidePanel(EditorApp app) {
     with (app) {
     pushPanelChromeStyle();
+    scope(exit) popPanelChromeStyle();
     // In --test: fixed rect + immovable flags reproduce today's exact
     // layout (picking rect unchanged → byte-identical).
     // Interactive: no fixed pos/size → floats/docks freely.
@@ -2452,6 +2490,7 @@ void drawSidePanel(EditorApp app) {
     }
     int sidePanelFlags = ImGuiWindowFlags.NoCollapse;
     if (testMode) sidePanelFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+    scope(exit) ImGui.End();
     if (ImGui.Begin("Mesh Info", null, sidePanelFlags))
     {
         pushButtonBarStyle();
@@ -2630,20 +2669,20 @@ void drawSidePanel(EditorApp app) {
             if (hid.length > 0) ImGui.TextUnformatted(hid);
         }
     }
-    ImGui.End();
-    popPanelChromeStyle();
     }
 }
 
 void drawStatusBar(EditorApp app) {
     with (app) {
     pushPanelChromeStyle();
+    scope(exit) popPanelChromeStyle();
     if (testMode) {
         ImGui.SetNextWindowPos(layout.statusPos, ImGuiCond.Always);
         ImGui.SetNextWindowSize(layout.statusSize, ImGuiCond.Always);
     }
     int statusFlags = ImGuiWindowFlags.NoCollapse;
     if (testMode) statusFlags |= ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoMove;
+    scope(exit) ImGui.End();
     if (ImGui.Begin("Status line", null, statusFlags))
     {
         pushButtonBarStyle();
@@ -2897,8 +2936,6 @@ void drawStatusBar(EditorApp app) {
             }
         }
     }
-    ImGui.End();
-    popPanelChromeStyle();
     }
 }
 
@@ -4240,9 +4277,11 @@ void drawCommandHistoryPanel(EditorApp app) {
         // row keeps the `>` replay button.
         if (showHistoryPanel) {
             pushPanelChromeStyle();
+            scope(exit) popPanelChromeStyle();
             ImGui.SetNextWindowPos(ImVec2(layout.sideW + 10, 130), ImGuiCond.FirstUseEver);
             ImGui.SetNextWindowSize(ImVec2(320, 380), ImGuiCond.FirstUseEver);
             bool open = showHistoryPanel;
+            scope(exit) ImGui.End();
             if (ImGui.Begin("Command History", &open)) {
                 import imgui_style : pushPopupStyle, popPopupStyle;
                 auto undoArr = history.undoEntries();
@@ -4574,10 +4613,8 @@ void drawCommandHistoryPanel(EditorApp app) {
                     }
                 }
             }
-            ImGui.End();
             // Honor the [x] close button on the window.
             if (!open) showHistoryPanel = false;
-            popPanelChromeStyle();
         }
     }
 }
