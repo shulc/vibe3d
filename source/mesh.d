@@ -14,6 +14,7 @@ import mesh_ops.decimate : MeshDecimateOps;
 import mesh_ops.revolve : MeshRevolveOps;
 import mesh_ops.cleanup : MeshCleanupOps;
 import mesh_ops.bevel : MeshBevelOps;
+import mesh_ops.bevel_fin : MeshBevelFinOps;
 import mesh_ops.extrude : MeshExtrudeOps;
 import mesh_ops.connected_mask : MeshConnectedMaskOps;
 // ---------------------------------------------------------------------------
@@ -11969,6 +11970,10 @@ struct Mesh {
     // centerNormalProject + the valence-4 free-end cap parity fields) — see
     // source/mesh_ops/bevel.d (0407 §B.V2).
     mixin MeshBevelOps;
+
+    // The two non-manifold fin-bundle spine kernels bevelEdgesByMask hands off
+    // to — see source/mesh_ops/bevel_fin.d (task 0717, 0678 §2B-M2).
+    mixin MeshBevelFinOps;
 
     // Extrude kernel family (extrudeEdgesByMask / extrudeVerticesByMask /
     // extendEdgesByMask / extrudeFacesByMask / smoothShiftFacesByMask) — see
