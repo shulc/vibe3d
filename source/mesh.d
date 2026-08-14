@@ -8017,9 +8017,43 @@ struct Mesh {
     /// so this is safe to call mid-op, before a `buildLoops()` has re-stamped
     /// the map. Returns a zero-filled `int[edges.length]` when there are no
     /// faces (every edge is then a wire, and 0 is the true answer).
+    ///
+    /// The count is the same one either arm below produces; only the way the
+    /// corner→edge mapping is obtained differs (task 0694):
+    ///
+    ///   VALID loops — `loopEdge[li]` already IS "the edge of the corner that
+    ///   dart `li` starts", filled by `buildLoops` from this same `edges[]`
+    ///   through this same last-wins key table, and `loops.length` is exactly
+    ///   Σ face arity. So one dart is one corner: tallying `++n[loopEdge[li]]`
+    ///   over the darts visits every corner exactly once and lands on the same
+    ///   edge index, with no hashing at all. `~0u` (buildLoops' missing-edge
+    ///   sentinel) fails the bounds guard, matching the `in idx` miss below.
+    ///
+    ///   STALE loops — the hashed path, unchanged. It is the reason this
+    ///   function exists (it answers off `faces[]` alone, mid-op, before any
+    ///   rebuild has run), so it stays the fallback rather than being traded
+    ///   away: `captureLooseGeometry` calls this at the TOP of a dissolve, and
+    ///   the Topology Pen calls it between its own edits.
+    ///
+    /// `faceLoop.length == faces.length` is part of the gate, not decoration:
+    /// `appendFaceRaw` grows `faces[]` with NO version bump by design, so the
+    /// stamp alone would still read Valid while the darts no longer cover
+    /// every face. That check is O(1) and rejects exactly that window.
+    ///
+    /// Measured on the perf lane's 99 856-face / 200 344-edge grid: the hashed
+    /// arm costs ~12-17 ms per call (200 344 keyed inserts + 399 424 lookups)
+    /// and was 47% of `dissolveVerticesByMask`; the dart arm is ~0.5 ms.
     int[] edgePolygonCounts() const {
         auto n = new int[](edges.length);
         if (edges.length == 0 || faces.length == 0) return n;
+        if (loopsValid() && loopEdge.length == loops.length
+                         && faceLoop.length == faces.length) {
+            foreach (li; 0 .. loopEdge.length) {
+                immutable uint e = loopEdge[li];
+                if (e < n.length) ++n[e];
+            }
+            return n;
+        }
         uint[ulong] idx;
         foreach (i; 0 .. edges.length)
             idx[edgeKey(edges[i][0], edges[i][1])] = cast(uint)i;
@@ -18593,6 +18627,58 @@ unittest {
     m.addVertex(Vec3(9, 9, 8));
     m.addEdge(8, 9);
     assert(m.edgePolygonCounts()[m.edgeIndex(8, 9)] == 0, "a bare wire edge borders nothing");
+}
+
+// Task 0694 — `edgePolygonCounts` has TWO arms (darts when the loops are
+// valid, the hashed key table when they are not) and they must return the
+// same array element for element. The fast arm is what a dissolve pays on a
+// 200 000-edge cage, so a divergence here would be a silent topology answer,
+// not a crash: a wire counted as bordered is geometry a dissolve then eats.
+//
+// `markDerivedEmpty` is the lever that forces the fallback: it flips the loop
+// VALIDITY state without touching `faces`/`edges`, so both arms are asked the
+// identical question about the identical mesh.
+unittest {
+    Mesh m;
+    foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(0,1,0), Vec3(1,1,0),
+                 Vec3(0,0,1), Vec3(1,0,1), Vec3(0,-1,0), Vec3(1,-1,0)])
+        m.addVertex(p);
+    m.addFace([0u, 1u, 3u, 2u]);      // quad
+    m.addFace([0u, 1u, 5u, 4u]);      // second quad on edge 0-1
+    m.addFace([0u, 1u, 7u, 6u]);      // third — a NON-MANIFOLD fan
+    m.addFace([2u, 3u, 5u]);          // a triangle: mixed arity
+    m.addVertex(Vec3(9, 9, 9));
+    m.addVertex(Vec3(9, 9, 8));
+    m.addEdge(8, 9);                  // a bare wire, bordered by nothing
+    m.buildLoops();
+
+    assert(m.loopsValid(), "setup: the dart arm is the one that answers first");
+    auto viaDarts = m.edgePolygonCounts();
+    m.markDerivedEmpty();
+    assert(!m.loopsValid(), "setup: now the hashed arm answers");
+    auto viaHash = m.edgePolygonCounts();
+    assert(viaDarts == viaHash,
+        "the dart tally and the hashed tally are the same count, per edge");
+    // ...and the answers the counter has to get right are actually in there,
+    // so the equality above cannot be satisfied by two empty arrays.
+    assert(viaDarts[m.edgeIndex(0, 1)] == 3, "the fan is reported at its true size");
+    assert(viaDarts[m.edgeIndex(1, 3)] == 1, "a border edge of one quad");
+    assert(viaDarts[m.edgeIndex(8, 9)] == 0, "a bare wire borders nothing");
+
+    // The `faceLoop.length == faces.length` half of the gate. `appendFaceRaw`
+    // grows `faces[]` with NO version bump by design, so the stamp still reads
+    // Valid while the darts no longer cover every face. The appended face
+    // re-uses edges that already exist, so a dart arm taken in this window
+    // would under-count them — the guard has to send this to the hashed arm.
+    m.buildLoops();
+    assert(m.loopsValid() && m.faceLoop.length == m.faces.length, "setup");
+    auto before = m.edgePolygonCounts();
+    m.appendFaceRaw([0u, 1u, 3u, 2u].dup);   // a duplicate of face 0
+    assert(m.loopsValid(), "setup: appendFaceRaw deliberately does not bump");
+    auto after = m.edgePolygonCounts();
+    assert(after[m.edgeIndex(0, 1)] == before[m.edgeIndex(0, 1)] + 1,
+        "the un-bumped appended face is counted — the dart arm must have "
+      ~ "stood down (its darts do not cover that face)");
 }
 
 // ---------------------------------------------------------------------------
