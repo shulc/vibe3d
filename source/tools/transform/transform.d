@@ -1075,11 +1075,30 @@ protected:
     }
 
     /// True iff the current ACEN mode lets click-outside-gizmo relocate
-    /// the gizmo. Only Auto, None and Screen do — the other
-    /// modes (Select / SelectAuto / Element / Local / Origin / Manual /
-    /// Border) keep the gizmo pinned to a selection-derived or fixed
-    /// point and ignore the click. With no ACEN stage registered we
-    /// behave as Auto (legacy default).
+    /// the gizmo. Only Auto, None and Screen do — the other modes keep the
+    /// gizmo pinned to a selection-derived or fixed point and ignore the
+    /// click. With no ACEN stage registered we behave as Auto (legacy
+    /// default).
+    ///
+    /// KNOWN DISAGREEMENT, deliberately preserved (task 0706): this answers
+    /// FALSE for Pivot and Parent, while `ActionCenterStage.relocateAllowed`
+    /// — the stage-side predicate for the same question — answers TRUE for
+    /// them, and says so in its own comment ("Pivot/Parent ARE included by
+    /// task 0187: an explicit relocation to a chosen point is defensible even
+    /// for the live item pivot"). The two were written five weeks apart: this
+    /// one predates Pivot/Parent existing and was never revisited, and its old
+    /// doc comment enumerated 10 of the 12 modes — Pivot and Parent appeared
+    /// in neither the allowed nor the refused list, which is what an omission
+    /// looks like rather than a decision. It is not dead: `relocateAllowed`
+    /// IS reachable for Pivot/Parent through `notifyAcenUserPlaced`, which has
+    /// no mode gate of its own. Reconciling the two changes what an
+    /// off-gizmo click does in two modes, so it is an owner call, filed as
+    /// 0706 — task 0705 only made the classification exhaustive.
+    ///
+    /// `final switch` since task 0705: the OR-chain form is exactly how the
+    /// disagreement got in. The commit that added Pivot/Parent was FORCED to
+    /// classify them 260 lines below, in `relocatePlaneHit`'s `final switch`,
+    /// and sailed past this chain without a word.
     bool acenAllowsClickRelocate() {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
@@ -1088,10 +1107,24 @@ protected:
         auto ac = cast(ActionCenterStage)
                   g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
         if (ac is null) return true;
-        auto m = ac.mode;
-        return m == ActionCenterStage.Mode.Auto
-            || m == ActionCenterStage.Mode.None
-            || m == ActionCenterStage.Mode.Screen;
+        alias M = ActionCenterStage.Mode;
+        final switch (ac.mode) {
+            case M.Auto:
+            case M.None:
+            case M.Screen:
+                return true;
+            case M.Select:
+            case M.SelectAuto:
+            case M.Element:
+            case M.Local:
+            case M.Origin:
+            case M.Manual:
+            case M.Border:
+                return false;
+            case M.Pivot:
+            case M.Parent:
+                return false;   // see KNOWN DISAGREEMENT above — task 0706
+        }
     }
 
     /// True iff an off-gizmo click already MEANS something else in the current

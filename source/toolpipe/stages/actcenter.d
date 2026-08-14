@@ -137,19 +137,22 @@ class ActionCenterStage : Stage, Operator {
         // vertex-geometry centroid with no awareness of that redirect.
         // With an item subject there is no selected geometry to restrict
         // to a symmetry side of, so this override must not fire at all —
-        // `subjType != SelType.Item` closes that gap. The existing
+        // `subjType != SelType.Item` closes that gap. The
         // Element/Local/Origin/Manual/Pivot/Parent exclusions are or-
         // thogonal (those modes never want a centroid override, in any
-        // subject mode) and stay as-is.
+        // subject mode) — and since task 0705 they are not listed here at
+        // all: restricting a centroid only makes sense where the published
+        // centre IS that centroid, which is exactly
+        // `centerIsSelectionCentroid`. The six-mode list used to be written
+        // out inline right here AND again in `settlePinHonored`, two
+        // hand-maintained spellings of one set.
         if (auto sym = vts.get!SymmetryPacket()) {
             if (sym.enabled
              && sym.vertSign.length == sym.pairOf.length
              && sym.vertSign.length > 0
              && !userPin.placed
              && subjType != SelType.Item
-             && mode != Mode.Origin && mode != Mode.Manual
-             && mode != Mode.Element && mode != Mode.Local
-             && mode != Mode.Pivot  && mode != Mode.Parent)
+             && centerIsSelectionCentroid(mode))
             {
                 Vec3 baseCen;
                 if (baseSideCentroid(*sym, baseCen))
@@ -805,8 +808,69 @@ public:
     /// This is NOT a mode allow-list: every OTHER mode (Auto / None / Screen /
     /// Select / SelectAuto / Border / Origin / Manual) consults softPlaced, so the
     /// freeze generalizes with no `mode==border` branch.
-    bool acenSettleAllowed() const {
-        return mode != Mode.Element && mode != Mode.Local;
+    ///
+    /// A `final switch` since task 0705 (audit 4, P5): as an OR-chain, a Mode
+    /// added later silently joined the ALLOWED side — the permissive default
+    /// for a predicate that exists to withhold permission.
+    bool acenSettleAllowed() const { return settleWriteAllowed(mode); }
+
+    private static bool settleWriteAllowed(Mode m) pure nothrow @nogc @safe {
+        final switch (m) {
+            case Mode.Element:
+            case Mode.Local:
+                return false;
+            case Mode.Auto:
+            case Mode.None:
+            case Mode.Screen:
+            case Mode.Select:
+            case Mode.SelectAuto:
+            case Mode.Border:
+            case Mode.Origin:
+            case Mode.Manual:
+            case Mode.Pivot:
+            case Mode.Parent:
+                return true;
+        }
+    }
+
+    /// The modes whose published centre IS the selection centroid this stage
+    /// computes — i.e. no fixed point (Origin, Manual), no live per-element or
+    /// per-cluster source (Element, Local) and no live item pivot (Pivot,
+    /// Parent) stands in front of it. Equivalently
+    /// {Auto, Select, SelectAuto, Screen, Border, None}.
+    ///
+    /// ONE predicate where task 0705 found TWO spellings of the same six-way
+    /// exclusion: `settlePinHonored()` below, and the symmetry base-side
+    /// override inside `evaluate()`, which listed the six modes inline. Both
+    /// were checked member by member across all twelve modes and were
+    /// extensionally equal — but equal by coincidence of maintenance, not by
+    /// construction: the `evaluate()` chain was hand-extended when
+    /// Pivot/Parent were added, and `settlePinHonored` merely happened to be
+    /// written later, already aware of them. The next member would have had to
+    /// be added to both by hand, and nothing would have said so.
+    ///
+    /// The two consumers ask different QUESTIONS of this set ("may a drop
+    /// point freeze the centre?" / "may a symmetry base side restrict it?"),
+    /// and both reduce to "is the published centre that centroid at all?".
+    /// Should they ever need to diverge, splitting this predicate is then a
+    /// deliberate act — editing one of two OR-chains was not.
+    private static bool centerIsSelectionCentroid(Mode m) pure nothrow @nogc @safe {
+        final switch (m) {
+            case Mode.Auto:
+            case Mode.Select:
+            case Mode.SelectAuto:
+            case Mode.Screen:
+            case Mode.Border:
+            case Mode.None:
+                return true;
+            case Mode.Element:
+            case Mode.Local:
+            case Mode.Origin:
+            case Mode.Manual:
+            case Mode.Pivot:
+            case Mode.Parent:
+                return false;
+        }
     }
 
     // Task 0187 (B3) — the pin-precedence hoist. `computeCenter` used to
@@ -826,9 +890,29 @@ public:
     // explicit relocation to a chosen point is defensible even for the live
     // item pivot — the settle pin is a different story, see
     // `settlePinHonored` below.
+    //
+    // A `final switch` since task 0705 (audit 4, P5) — as an OR-chain a new
+    // Mode silently landed on the "not relocatable" side, which is the safe
+    // default but still an UNDECLARED one; and it is precisely this set that
+    // `transform.acenAllowsClickRelocate` was measured to disagree with (see
+    // task 0706 and that function's own note).
     private static bool relocateAllowed(Mode m) pure nothrow @nogc @safe {
-        return m == Mode.Auto  || m == Mode.Screen || m == Mode.None
-            || m == Mode.Pivot || m == Mode.Parent;
+        final switch (m) {
+            case Mode.Auto:
+            case Mode.Screen:
+            case Mode.None:
+            case Mode.Pivot:
+            case Mode.Parent:
+                return true;
+            case Mode.Select:
+            case Mode.SelectAuto:
+            case Mode.Element:
+            case Mode.Local:
+            case Mode.Border:
+            case Mode.Origin:
+            case Mode.Manual:
+                return false;
+        }
     }
 
     // Modes that honor an AUTO gesture SETTLE (soft pin) = `acenSettleAllowed()`
@@ -844,10 +928,16 @@ public:
     // instead of continuing to track the live item pivot (same class as
     // Element's `liveElementCenter` / Local's per-cluster pivots, which
     // `acenSettleAllowed()` already excludes from the settle write itself).
+    //
+    // Task 0705: the six exclusions are no longer written out here — this IS
+    // `centerIsSelectionCentroid`, and so is the symmetry base-side gate in
+    // `evaluate()` that used to spell the same six inline. `acenSettleAllowed()`
+    // remains the strictly WIDER write-side predicate (it excludes only
+    // Element/Local); the containment `settlePinHonored ⊆ acenSettleAllowed`
+    // is now a property of the two tables rather than of this expression, and
+    // a unittest below asserts it over every Mode.
     bool settlePinHonored() const {
-        return acenSettleAllowed()
-            && mode != Mode.Origin && mode != Mode.Manual
-            && mode != Mode.Pivot  && mode != Mode.Parent;
+        return centerIsSelectionCentroid(mode);
     }
 
     // Item mode 0614 (doc/item_mode_transform_plan.md §Q3 / §(a)). Modes
@@ -2461,4 +2551,59 @@ unittest {
         assert(valueForWireTag(ActionCenterStage.modeEntries, tag, v),
                "statusline actr." ~ tag ~ " has no matching panel mode entry");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Task 0705 (audit 4, wave 2, P5) — the mode classifiers are now `final
+// switch`, so the COMPILER refuses a thirteenth `Mode` that nobody classified.
+// What the compiler still cannot see is the RELATION between two of the
+// tables, so that is pinned here.
+//
+// This test is deliberately NOT a copy of the tables. Restating the six
+// members of `centerIsSelectionCentroid` here would be the sixth spelling of
+// the set this task went and removed. It asserts the two things that are
+// properties OF the tables and cannot be read off either one alone.
+unittest {
+    import std.traits : EnumMembers;
+    alias M = ActionCenterStage.Mode;
+
+    // (1) Containment. `acenSettleAllowed()` is the WRITE side (may a gesture
+    // settle store a drop point?) and `settlePinHonored()` is the READ side
+    // (may `computeCenter` return it?). A mode that reads a pin it was never
+    // allowed to write is a pin that can never fire; the write side must
+    // therefore be the wider of the two, in every mode.
+    Mesh mesh;
+    Mesh* meshPtr = &mesh;
+    EditMode em = EditMode.Vertices;
+    auto st = new ActionCenterStage(() => meshPtr, &em);
+    foreach (m; EnumMembers!M) {
+        st.mode = m;
+        if (st.settlePinHonored())
+            assert(st.acenSettleAllowed(),
+                "ACEN mode is honored on read but refused on write — the "
+                ~ "settle pin can never fire in it");
+    }
+
+    // (2) The two spellings this task merged were extensionally equal, and
+    // the merge must not have quietly changed either answer. `settlePinHonored`
+    // excludes exactly the modes with a fixed centre (Origin, Manual), a live
+    // per-element/per-cluster centre (Element, Local) or a live item pivot
+    // (Pivot, Parent) — six in, six out, on a twelve-member enum.
+    int honored = 0;
+    foreach (m; EnumMembers!M) {
+        st.mode = m;
+        if (st.settlePinHonored()) ++honored;
+    }
+    assert(honored == 6,
+        "the settle-honored set changed size — if that is intended, say which "
+        ~ "mode moved and why, because `evaluate()`'s symmetry base-side "
+        ~ "override reads the SAME predicate");
+
+    // (3) Element and Local are the two the write side itself refuses; they
+    // are the reason `acenSettleAllowed` exists as a separate, wider table.
+    st.mode = M.Element; assert(!st.acenSettleAllowed());
+    st.mode = M.Local;   assert(!st.acenSettleAllowed());
+    st.mode = M.Origin;  assert(st.acenSettleAllowed() && !st.settlePinHonored(),
+        "Origin is the shape that needs two tables: it may be WRITTEN and must "
+        ~ "not be READ");
 }
