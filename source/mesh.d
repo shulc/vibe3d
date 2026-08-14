@@ -5655,8 +5655,15 @@ struct Mesh {
                     // Q = P + (d·w/sinθ)·(ê1 + ê2): the meet of the two offset
                     // edges. The SIGNED sine carries convexity, `w` the winding,
                     // so one expression covers convex and reflex corners in both
-                    // windings.
-                    const float s = d * wd / crs;
+                    // windings. A needle-sharp UV corner sends 1/sinθ to
+                    // infinity and would throw the ring corner across the map,
+                    // so the factor is miter-LIMITED — the measured cases are
+                    // right angles (1/sinθ == 1) and never approach it.
+                    enum float kUvMiterLimit = 8.0f;
+                    float inv = 1.0f / crs;
+                    if (inv >  kUvMiterLimit) inv =  kUvMiterLimit;
+                    if (inv < -kUvMiterLimit) inv = -kUvMiterLimit;
+                    const float s = d * wd * inv;
                     m.data[dst]     = P[0] + s * (e1x + e2x);
                     m.data[dst + 1] = P[1] + s * (e1y + e2y);
                 } else {
