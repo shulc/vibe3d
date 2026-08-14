@@ -182,6 +182,60 @@ struct PolyVertexBlend {
     }
 }
 
+/// A per-corner value an operation GENERATES rather than inherits — mechanism
+/// (e), task 0697. Some measured laws are not a weighted sum of any existing
+/// corner: a face bevel's inset ring is the source face's UV POLYGON inset by
+/// its own distance, and an extrude wall's swept coordinate is a fresh 0→1
+/// parameterisation. Both are still anchored in the source face's own island
+/// (`srcFace` + `srcCorner`), which is what keeps them per-island — the value
+/// is computed from that face's corner values, never from a global projection.
+///
+/// Applies to a 2-component (UV-shaped) PolyVertex map ONLY. Both laws are
+/// statements about a plane — "inset this polygon", "sweep this coordinate" —
+/// and neither has a meaning for a 1-D weight channel or a 3-D colour, so a map
+/// of any other `dim` leaves the corner at the honest zero. v1 registers exactly
+/// one PolyVertex map (`kUvMapName`, dim 2), so today that branch is unreachable
+/// in practice and exists to keep a future channel from being silently mangled.
+struct PolyVertexGen {
+    enum Law : ubyte {
+        /// Inset the source face's UV polygon so every UV edge moves inward by
+        /// `amount * uvPerimeter`, and take the vertex at `srcCorner`.
+        /// `amount` is the GEOMETRIC ratio `insetDistance / geometricPerimeter`,
+        /// computed by the kernel; the map supplies its own `uvPerimeter`, so
+        /// the same record serves every 2-D map. Frozen law, fixture cases
+        /// `face_bevel_connected*`.
+        InsetRing,
+        /// Component 0 becomes `amount` (the swept coordinate: 0 on the base
+        /// ring, 1 on the top ring); component 1 keeps the value the source
+        /// corner already had. Frozen law, fixture case
+        /// `face_extrude_uv_sweep_u`.
+        SweepU,
+    }
+    size_t newLoop;    /// which NEW corner, in new-face/new-corner order
+    uint   srcFace;    /// OLD face whose island the law reads
+    uint   srcCorner;  /// corner index inside that old face
+    Law    law;
+    float  amount;
+}
+
+/// Which measured per-corner UV law an extrude gives its WALLS (task 0697).
+/// Both are frozen in tests/fixtures/uv_corner_transfer.json; the reference
+/// exposes the choice as a tool attribute, active only while a per-corner map is
+/// the current one — which for us is simply "a per-corner map exists", the same
+/// condition that makes the carry run at all.
+enum UvWallLaw : ubyte {
+    /// Each wall corner keeps the value of the base corner it stands over, so a
+    /// wall is DEGENERATE in UV (zero area) and no existing value is rewritten.
+    /// Frozen as `face_extrude_no_uv_sweep`.
+    Copy,
+    /// Fresh wall parameterisation: u = 0 on the base ring, u = 1 on the top
+    /// ring, v = the base corner's own v. The base corners' original u is
+    /// discarded ON THE WALLS (the faces that share those vertices keep theirs).
+    /// Frozen as `face_extrude_uv_sweep_u`, and the reference's factory setting —
+    /// hence the default.
+    SweepU,
+}
+
 /// Half-edge dart: represents the directed edge vert → next(vert) inside one face.
 struct Loop {
     uint vert;   // start vertex of this dart
@@ -748,6 +802,23 @@ struct Mesh {
     //       edge-split law) and `spikeFacesByMask` (task 0690; no blends — the
     //       rim corners copy, the apex is left at the honest zero). The law is
     //       frozen in tests/fixtures/uv_corner_transfer.json.
+    //       (c') PER-CORNER source — `carryPolyVertexMapsByCorner` (task 0697).
+    //       The same mechanism with the source old face given per NEW CORNER
+    //       instead of per new face, because a chamfer strip's two sides come
+    //       from the two faces the beveled edge separated: one source per face
+    //       would put one side in the wrong island. The per-face entry above is
+    //       now a wrapper that expands its array and delegates, so Loop Slice
+    //       cannot drift from it. Wired in `bevelEdgesByMask`,
+    //       `bevelFacesByMask` and `extrudeFacesByMask`.
+    //   (e) GENERATED corner values — `PolyVertexGen`, applied by the same call
+    //       (task 0697). Two measured laws are not a weighted sum of any
+    //       existing corner and cannot ride (c): a face bevel's inset ring is
+    //       the source face's UV POLYGON inset by
+    //       `inset * uvPerimeter / geomPerimeter` (`InsetRing`), and an extrude
+    //       wall's swept coordinate is a fresh 0→1 parameterisation
+    //       (`SweepU`, selected by `UvWallLaw` — the other measured wall law,
+    //       `Copy`, needs no gen at all). Both are anchored in a source face +
+    //       corner, so they stay per-island; both apply to 2-D maps only.
     //   append — `addFace`/`addFaceFast` grow+zero-fill the new corners
     //       ATOMICALLY (GAP-3, no element-count window). Bulk kernels that
     //       cannot use `addFace` (they rebuild edges once and commit one
@@ -777,20 +848,29 @@ struct Mesh {
     // ZEROED, a documented limitation, each covered by a "dropped, no crash"
     // test): subdivide (Catmull-Clark UV interpolation is a non-goal), every
     // primitive factory rebuild, `extrudeEdgesByMask` / `extrudeVerticesByMask`
-    // / `extrudeFacesByMask` / `smoothShiftFacesByMask`, edge-extend, bridge,
-    // path-extrude (revolve), subpatch cage build, the bevel family, the
-    // plane-cut / edge-slice chord split (`rebuildFacesWithChordSplits`) and
-    // the vertex-merge tail (`applyVertexRemapAndRebuild`). These end in
-    // `buildLoops`, so `resizePolyVertexMaps` makes them length-correct +
-    // zeroed. (The delta undo/redo replay LEFT this set in task 0689 — see
-    // mechanism (d) above; what remains there is a fallback, not a policy.)
-    // The reference law for the bevel and extrude families IS measured
-    // (same fixture, cases `edge_bevel_*` / `face_extrude_*` / `face_bevel_*`)
-    // — they stay in the drop set because their carry needs machinery mechanism
-    // (c) does not yet have: a per-CORNER source face (a chamfer strip has two
-    // source faces, one per side) and, for extrude, a fresh wall
-    // parameterisation that is not a blend of any existing corner. See
-    // doc/uv_maps_plan.md D5.
+    // / `smoothShiftFacesByMask`, edge-extend, bridge, path-extrude (revolve),
+    // subpatch cage build, `bevelVerticesByMask`, the plane-cut / edge-slice
+    // chord split (`rebuildFacesWithChordSplits`) and the vertex-merge tail
+    // (`applyVertexRemapAndRebuild`). These end in `buildLoops`, so
+    // `resizePolyVertexMaps` makes them length-correct + zeroed. (The delta
+    // undo/redo replay LEFT this set in task 0689 — see mechanism (d) above;
+    // what remains there is a fallback, not a policy.)
+    //
+    // `bevelEdgesByMask`, `bevelFacesByMask` and `extrudeFacesByMask` LEFT the
+    // set in task 0697 via (c') + (e); their laws are frozen in the same
+    // fixture (`edge_bevel_*` / `face_bevel_*` / `face_extrude_*`) and asserted
+    // by tests/test_uv_carry_bevel_extrude.d. What is still zero inside those
+    // three, deliberately and locally rather than mesh-wide:
+    //   * an edge bevel's MITER corner (both bordering edges beveled) — it sits
+    //     inside the face, on no original edge, and no capture measures it. A
+    //     bevel of a TURNING edge chain would settle it;
+    //   * a rounded profile's arc points and the junction/Gregory patches, for
+    //     the same reason (every frozen case is Round Level 0);
+    //   * a face bevel's SQUARE cap ring and grouped-corner sharing beyond what
+    //     `sharedCornerPos` registers first.
+    // Those are the honest zero of mechanism (c), not a whole-mesh drop: the
+    // faces the operation never touched keep their values byte for byte.
+    // See doc/uv_maps_plan.md D5.
     //
     // The drop set is deliberately about NEW corners. A kernel whose corner
     // count changes drops the map for the WHOLE mesh, so the two are only the
@@ -5245,7 +5325,7 @@ struct Mesh {
     //     `remapPolyVertexMaps` (mechanism a/b) or the atomic `addFace` append,
     //     or are simply unchanged across a benign rebuild — so KEEP them.
     //   * Otherwise the face/loop topology was rewritten WITHOUT a relocate (the
-    //     DROP class: primitive rebuilds, subdivide, extrude, edge-extend,
+    //     DROP class: primitive rebuilds, subdivide, EDGE extrude, edge-extend,
     //     bridge, subpatch cage). The old per-corner values are meaningless in
     //     the new corner space, so ZERO the whole map at the new length. This is
     //     the conscious, length-correct, value-dropped behaviour (D5 drop set);
@@ -5395,12 +5475,59 @@ struct Mesh {
     // Call BEFORE the tail `buildLoops` and BEFORE `faces` is replaced (it
     // reads the old `faces` through `oldFaces`); the map is left length-correct
     // for the new corner count, so `resizePolyVertexMaps` then no-ops.
+    //
+    // PER-FACE ENTRY. A new face reads ONE old face's island, which is true of
+    // every op that only SUBDIVIDES existing faces (Loop Slice, addEdgePoint,
+    // spike). It is not true of a chamfer strip, whose two sides come from the
+    // two faces the beveled edge separated — that caller takes the per-CORNER
+    // entry below. This one expands its per-face array into the per-corner form
+    // and delegates, so the two can never drift apart: whatever the per-corner
+    // implementation does, this is exactly it with a constant source per face.
     void carryPolyVertexMaps(const(uint[])[] newFaces,
                              const(uint)[]   srcFaceOfNewFace,
                              const(uint[])[] oldFaces,
                              const(uint)[]   oldFaceLoop,
                              const PolyVertexBlend[uint] blendOfNewVertex) {
         if (!hasPolyVertexMap()) return;
+        size_t total = 0;
+        foreach (nf; newFaces) total += nf.length;
+        uint[] srcFaceOfNewCorner = new uint[](total);
+        size_t at = 0;
+        foreach (nfi, nf; newFaces) {
+            const uint sf = (nfi < srcFaceOfNewFace.length)
+                          ? srcFaceOfNewFace[nfi] : ~0u;
+            foreach (_; nf) srcFaceOfNewCorner[at++] = sf;
+        }
+        carryPolyVertexMapsByCorner(newFaces, srcFaceOfNewCorner, oldFaces,
+                                    oldFaceLoop, blendOfNewVertex);
+    }
+
+    // Mechanism (c), PER-CORNER entry (task 0697). Same contract as the per-face
+    // form above, except that the source old face is given for each NEW CORNER
+    // (flat, in new-face/new-corner order — the order `buildLoops` will lay
+    // down), so different corners of one new face may read different islands.
+    // `~0u` for a corner with no source ⇒ the honest zero.
+    //
+    // Two callers need that: the edge bevel's chamfer strip takes its two sides
+    // from the two faces the beveled edge separated, and its corner cap takes
+    // each corner from the face whose slide produced it. Resolving such a face
+    // against ONE source would put one side of the strip in the wrong island —
+    // silent corruption on a seam, invisible on a mesh without one.
+    //
+    // `gens` is mechanism (e): corners whose value the KERNEL computes from its
+    // source face's polygon rather than inheriting (see `PolyVertexGen`). The
+    // gen pass runs LAST and OVERWRITES whatever the copy/blend passes wrote at
+    // that corner — an extrude wall's base corner is a corner of its source face
+    // (so the funnel copies it) and is then swept to u=0, and the sweep is the
+    // measured answer.
+    void carryPolyVertexMapsByCorner(const(uint[])[] newFaces,
+                                     const(uint)[]   srcFaceOfNewCorner,
+                                     const(uint[])[] oldFaces,
+                                     const(uint)[]   oldFaceLoop,
+                                     const PolyVertexBlend[uint] blendOfNewVertex,
+                                     const(PolyVertexGen)[] gens = null) {
+        if (!hasPolyVertexMap()) return;
+        import std.math : fabs;
 
         // One resolved interpolation: which NEW corner, from which OLD corners,
         // at which weights. Built in the same pass as `oldLoopOfNewLoop` so the
@@ -5418,10 +5545,10 @@ struct Mesh {
         oldLoopOfNewLoop.reserve(newFaces.length * 4);
 
         foreach (nfi, nf; newFaces) {
-            const uint oldFi = (nfi < srcFaceOfNewFace.length)
-                             ? srcFaceOfNewFace[nfi] : ~0u;
-            const(uint)[] of = (oldFi < oldFaces.length) ? oldFaces[oldFi] : null;
             foreach (v; nf) {
+                const uint oldFi = (newLoop < srcFaceOfNewCorner.length)
+                                 ? srcFaceOfNewCorner[newLoop] : ~0u;
+                const(uint)[] of = (oldFi < oldFaces.length) ? oldFaces[oldFi] : null;
                 uint copyFrom = ~0u;
                 if (of !is null) {
                     const uint c = cornerOfVertexInFace(of, v);
@@ -5473,6 +5600,71 @@ struct Mesh {
                 }
                 if (!complete)
                     foreach (d; 0 .. dim) m.data[dst + d] = 0.0f;
+            }
+
+            // Mechanism (e) — GENERATED corners, last so they win over a copy
+            // (see the doc comment). Plane laws only: a map that is not 2-D has
+            // no polygon to inset and no second component to keep, so its
+            // corners stay whatever the copy/blend passes left.
+            if (dim != 2) continue;
+            foreach (ref g; gens) {
+                const size_t dst = g.newLoop * 2;
+                if (dst + 2 > m.data.length) continue;              // defensive
+                if (g.srcFace >= oldFaces.length) continue;
+                const(uint)[] of = oldFaces[g.srcFace];
+                const size_t N = of.length;
+                if (N < 3 || g.srcCorner >= N) continue;
+                const uint base = (g.srcFace < oldFaceLoop.length)
+                                ? oldFaceLoop[g.srcFace] : ~0u;
+                if (base == ~0u || (cast(size_t)base + N) * 2 > src.length) continue;
+                float[2] uvAt(size_t k) {
+                    const size_t o = (cast(size_t)base + k) * 2;
+                    float[2] r;
+                    r[0] = src[o]; r[1] = src[o + 1];
+                    return r;
+                }
+                if (g.law == PolyVertexGen.Law.SweepU) {
+                    m.data[dst]     = g.amount;
+                    m.data[dst + 1] = uvAt(g.srcCorner)[1];
+                    continue;
+                }
+                // InsetRing: offset every UV edge inward by `d` and take the
+                // vertex at `srcCorner`. `d` is the kernel's geometric ratio
+                // times THIS map's own perimeter — the measured
+                // `inset * uvPerimeter / geomPerimeter`.
+                float perim = 0.0f, area2 = 0.0f;
+                foreach (k; 0 .. N) {
+                    const float[2] p = uvAt(k), q = uvAt((k + 1) % N);
+                    const float dx = q[0] - p[0], dy = q[1] - p[1];
+                    perim += sqrt(dx * dx + dy * dy);
+                    area2 += p[0] * q[1] - q[0] * p[1];
+                }
+                const float d  = g.amount * perim;
+                const float wd = (area2 >= 0.0f) ? 1.0f : -1.0f;  // polygon winding
+                const float[2] P  = uvAt(g.srcCorner);
+                const float[2] Pn = uvAt((g.srcCorner + 1) % N);
+                const float[2] Pp = uvAt((g.srcCorner + N - 1) % N);
+                float e1x = Pn[0] - P[0], e1y = Pn[1] - P[1];
+                float e2x = Pp[0] - P[0], e2y = Pp[1] - P[1];
+                const float l1 = sqrt(e1x * e1x + e1y * e1y);
+                const float l2 = sqrt(e2x * e2x + e2y * e2y);
+                if (l1 < 1e-9f || l2 < 1e-9f) continue;  // degenerate UV edge
+                e1x /= l1; e1y /= l1; e2x /= l2; e2y /= l2;
+                const float crs = e1x * e2y - e1y * e2x;   // sin of the corner angle
+                if (fabs(crs) > 1e-6f) {
+                    // Q = P + (d·w/sinθ)·(ê1 + ê2): the meet of the two offset
+                    // edges. The SIGNED sine carries convexity, `w` the winding,
+                    // so one expression covers convex and reflex corners in both
+                    // windings.
+                    const float s = d * wd / crs;
+                    m.data[dst]     = P[0] + s * (e1x + e2x);
+                    m.data[dst + 1] = P[1] + s * (e1y + e2y);
+                } else {
+                    // Straight-through corner: the bisector is undefined, the
+                    // offset is the edge's own inward normal.
+                    m.data[dst]     = P[0] + d * wd * (-e1y);
+                    m.data[dst + 1] = P[1] + d * wd * ( e1x);
+                }
             }
         }
     }
@@ -7539,6 +7731,36 @@ struct Mesh {
         // absorption pass so the mesh stays watertight (findings.md §3).
         uint[ulong] squareSplitAt;
 
+        // --- Per-corner map carry (task 0697) ------------------------------
+        // The frozen law (fixture cases `face_bevel_connected*`): the inset ring
+        // takes the SOURCE FACE'S OWN UV polygon, inset by
+        // `inset * uvPerimeter / geomPerimeter` — a computed value, not a blend
+        // of corners, so it rides mechanism (e) (`PolyVertexGen.InsetRing`). The
+        // kernel supplies the purely GEOMETRIC ratio `inset / geomPerimeter` and
+        // each map insets its own polygon by that fraction of its own perimeter.
+        // Walls need nothing of their own: their base corners are corners of the
+        // source face (a copy) and their top corners stand on ring vertices (the
+        // same gen, resolved once per vertex, so cap and wall agree by
+        // construction).
+        //
+        // Before this the map was not even DROPPED here — the cap face keeps its
+        // arity and `addFace` grows the tail, so `resizePolyVertexMaps` saw a
+        // length-correct map and KEPT it: the cap silently carried the UN-inset
+        // source values (correct only at inset==0) while every wall read 0.
+        struct RingGen { uint srcFace; uint srcCorner; float amount; }
+        RingGen[uint]         ringGenOfVertex;  // new ring vertex → its law
+        PolyVertexBlend[uint] vertBlend;        // square split points
+        uint[]                faceSrcOf;        // final face → source old face
+        const bool remapUv = hasPolyVertexMap();
+        uint[][] oldFaces;
+        if (remapUv) {
+            oldFaces.reserve(nFaces);
+            foreach (ref f; faces) oldFaces ~= f.dup;
+            faceSrcOf.length = nFaces;
+            foreach (fi; 0 .. nFaces) faceSrcOf[fi] = cast(uint)fi;
+        }
+        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+
         foreach (fi; 0 .. nFaces) {
             if (fi >= mask.length || !mask[fi]) continue;
             const uint[] origFaceVerts = faces[fi].dup;
@@ -7559,6 +7781,28 @@ struct Mesh {
                 if (capT <= effInset) { effInset = capT; anyClamped = true; }
             }
 
+            // Geometric perimeter of the source face — the denominator of the
+            // frozen UV inset ratio (task 0697). Zero on a degenerate face; the
+            // ratio is then left at 0 so the ring reads the un-inset polygon
+            // rather than a division by zero.
+            float geomPerim = 0.0f;
+            if (remapUv)
+                foreach (i; 0 .. Nc)
+                    geomPerim += (origPos[(i + 1) % Nc] - origPos[i]).length;
+            const float insetRatio = (remapUv && geomPerim > 1e-12f)
+                                   ? effInset / geomPerim : 0.0f;
+            // Register a ring vertex's law. Level `t` of `Nseg` insets by its own
+            // share of the distance — the measured law applied at that ring's own
+            // inset, which is what its POSITION is (the ring is a linear lerp
+            // toward the final corner). Only Nseg==1 is measured; deeper rings
+            // are that same law read at their own t, not a second law.
+            void noteRing(uint nv, int i, int t) {
+                if (!remapUv) return;
+                if (nv in ringGenOfVertex) return;   // group-shared: creator wins
+                ringGenOfVertex[nv] = RingGen(cast(uint)fi, cast(uint)i,
+                                              insetRatio * cast(float)t / cast(float)Nseg);
+            }
+
             // Final (t=Nseg) corner per index — group-aware: a shared
             // corner is created ONCE and reused across every face it touches.
             uint[] finalVerts = new uint[](Nc);
@@ -7574,6 +7818,7 @@ struct Mesh {
                         sharedVertIdxByLevel[Nseg][origV] = nv;
                         finalVerts[i] = nv;
                     }
+                    noteRing(finalVerts[i], i, Nseg);
                 } else {
                     // Standalone (non-group-shared) corner: touched by only
                     // ONE selected face (`internalCnt==0`, so it never got a
@@ -7645,6 +7890,7 @@ struct Mesh {
                         finalPos[i] = insetCorner(origPos, i, n, effInset) + n * shift;
                     }
                     finalVerts[i] = addVertex(finalPos[i]);
+                    noteRing(finalVerts[i], i, Nseg);
                 }
             }
 
@@ -7675,6 +7921,7 @@ struct Mesh {
                     } else {
                         ring[i] = addVertex(origPos[i] + (finalPos[i] - origPos[i]) * f);
                     }
+                    noteRing(ring[i], i, t);
                 }
                 ringVerts[t] = ring;
             }
@@ -7710,6 +7957,23 @@ struct Mesh {
                     splitToPrev[i] = addVertex(origPos[i] + dirPrev * splitStep);
                     squareSplitAt[(cast(ulong)origV << 32) | origFaceVerts[nxt]] = splitToNext[i];
                     squareSplitAt[(cast(ulong)origV << 32) | origFaceVerts[prv]] = splitToPrev[i];
+                    if (remapUv) {
+                        // A split point sits ON an original edge, so it is an
+                        // ordinary edge-split blend — the same law the rest of
+                        // the family uses, in whichever face reads it (its own
+                        // panel, or the unselected neighbour it is spliced into).
+                        void noteSplit(uint nv, int far) {
+                            const float len = (origPos[far] - origPos[i]).length;
+                            if (len < 1e-12f) return;
+                            const float t = splitStep / len;
+                            PolyVertexBlend b;
+                            b.add(origFaceVerts[i],   1.0f - t);
+                            b.add(origFaceVerts[far], t);
+                            vertBlend[nv] = b;
+                        }
+                        noteSplit(splitToNext[i], nxt);
+                        noteSplit(splitToPrev[i], prv);
+                    }
                 }
             }
 
@@ -7756,6 +8020,11 @@ struct Mesh {
             // Ring quads inherit Subpatch from the beveled source face.
             resizeSubpatch();
             foreach (rfi; ringStart .. faces.length) setFaceSubpatch(rfi, srcSub);
+            // Every face this source face appended reads its island (task 0697).
+            if (remapUv) {
+                faceSrcOf.length = faces.length;
+                foreach (rfi; ringStart .. faces.length) faceSrcOf[rfi] = cast(uint)fi;
+            }
             ++processed;
         }
         if (processed == 0) return 0;
@@ -7792,6 +8061,29 @@ struct Mesh {
         // reference topology (byte-verified against the fuzz repro's
         // 12v/10f all-quad dump). A non-clamped bevel never reaches here
         // (`anyClamped` stays false), so normal poly-bevel is byte-identical.
+        // Per-corner map carry (task 0697) — BEFORE `compactUnreferenced`, which
+        // renumbers vertices and would break the lookups into `oldFaces`, and
+        // before the tail `buildLoops`. `faces` is already final here: the cap
+        // was replaced in place, the ring quads appended, the square splice
+        // done. `addFace` has grown each map at the TAIL, so the original values
+        // still sit at their original offsets and `oldFaceLoop` still resolves.
+        if (remapUv) {
+            uint[]          srcOfCorner;
+            PolyVertexGen[] gens;
+            size_t loop = 0;
+            foreach (fi, f; faces) {
+                const uint sf = (fi < faceSrcOf.length) ? faceSrcOf[fi] : ~0u;
+                foreach (v; f) {
+                    srcOfCorner ~= sf;
+                    if (auto g = v in ringGenOfVertex)
+                        gens ~= PolyVertexGen(loop, g.srcFace, g.srcCorner,
+                                              PolyVertexGen.Law.InsetRing, g.amount);
+                    ++loop;
+                }
+            }
+            carryPolyVertexMapsByCorner(faces.range, srcOfCorner, oldFaces,
+                                        oldFaceLoop, vertBlend, gens);
+        }
         if (anyClamped || group) {
             // group's fully-enclosed apex vertices (every incident edge
             // internal) are never referenced by any surviving face or ring

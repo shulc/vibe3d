@@ -313,6 +313,35 @@ mixin template MeshBevelOps() {
             }
         }
 
+        // --- Per-corner map carry (task 0697) ------------------------------
+        // The chamfer strip is WHY mechanism (c) grew a per-CORNER source: its
+        // two sides come from the two faces the beveled edge separated, so one
+        // source face per new FACE cannot describe it — resolving the whole
+        // strip against one side would put the other side's corners in the wrong
+        // island (silent on a mesh with no seam, wrong on one with).
+        //
+        // What resolves, and what deliberately does not:
+        //   * every SLIDE corner is a point ON an original edge ⇒ the ordinary
+        //     two-source blend, in the island of the face reading it (frozen:
+        //     `edge_bevel_offset02/04`, `edge_bevel_nonuniform`);
+        //   * a MITER corner (both bordering edges beveled) is inside the face,
+        //     not on any edge, and no capture measures it ⇒ left at zero rather
+        //     than guessed;
+        //   * a rounded profile's arc points and the junction/Gregory patches
+        //     are likewise off every original edge ⇒ zero. `srcByNewFace` is
+        //     consulted by index and DEFAULTS to "no source", so a face emitted
+        //     by a path that does not register one drops to that honest zero
+        //     instead of inheriting a neighbour's island.
+        const bool remapUvB = hasPolyVertexMap();
+        uint[][] oldFacesB;
+        if (remapUvB) {
+            oldFacesB.reserve(faces.length);
+            foreach (ref f; faces) oldFacesB ~= f.dup;
+        }
+        const uint[] oldFaceLoopB = remapUvB ? captureFaceLoop() : null;
+        PolyVertexBlend[uint] vertBlendB;   // new vertex → blend of ORIGINALS
+        uint[][size_t]        srcByNewFace; // index in `newFaces` → per-corner source
+
         // Step 2: affected vertices = endpoints of any qualifying edge.
         bool[] affected = new bool[](vertices.length);
         foreach (i; 0 .. edges.length) {
@@ -444,6 +473,9 @@ mixin template MeshBevelOps() {
         // boundary arcs round — see Decision B in the same plan.
         uint[][uint] freeEndCapRing;
         uint[uint]   freeEndCapSrc;
+        // Per-CORNER source face of that ring, parallel to it (task 0697) —
+        // populated only when a per-corner map exists.
+        uint[][uint] freeEndCapCornerSrc;
 
         // Round-Level ≥ 1 K==2 "narrow notch" cap interior tessellation
         // (parity task). A closed-fan vertex with exactly two selected edges
@@ -1158,6 +1190,16 @@ mixin template MeshBevelOps() {
                 uint nv = addVertex(vpos + dir * w);
                 slideVert[k]    = nv;
                 slideClamped[k] = (w < effW);
+                // The slide lands ON the edge V→vNbrs[k] at fraction w/farLen —
+                // an ordinary edge-split blend of two ORIGINAL vertices, which
+                // is the whole measured law for this family (task 0697).
+                if (remapUvB && farLen > 1e-9f) {
+                    immutable float t = w / farLen;
+                    PolyVertexBlend b;
+                    b.add(V, 1.0f - t);
+                    b.add(vNbrs[k], t);
+                    vertBlendB[nv] = b;
+                }
                 return nv;
             }
             Vec3 slideDir(int k) { return safeNormalize(vertices[vNbrs[k]] - vpos); }
@@ -1250,8 +1292,19 @@ mixin template MeshBevelOps() {
             // removing it lets a vertex emit BOTH this cap and the hub cap.
             if (!openFan && K > 0 && K < nE) {
                 uint[] cap;
+                // Per-corner island for the cap (task 0697). A slide on edge
+                // slot k borders BOTH f_{k-1} and f_k, so a corner cap standing
+                // on it has two equally adjacent islands and the reference's own
+                // answer (measured, `edge_bevel_uv_seam`) matches NEITHER — it
+                // writes a value from a construction nothing here reproduces.
+                // We take f_k, one deterministic side, which is exact wherever
+                // the two agree (every mesh without a seam through this vertex,
+                // and every frozen non-seam case) and continuous with one island
+                // where they do not.
+                uint[] capSrc;
                 foreach (k; 0 .. nE) {
                     if (!selE[k]) {
+                        if (remapUvB) capSrc ~= (k < d) ? vFaces[k] : ~0u;
                         // On the valence-4 full-hub free-end cap, the
                         // opposite-edge corner of the ring is the retained
                         // free-end vertex V (matching the side faces above),
@@ -1263,12 +1316,15 @@ mixin template MeshBevelOps() {
                         cap ~= (k4feCap && k == k4feOppSlot) ? V : getSlide(k);
                     }
                     immutable int kNext = (k + 1) % nE;
-                    if (k < d && selE[k] && selE[kNext])
+                    if (k < d && selE[k] && selE[kNext]) {
                         cap ~= cornerAtVF[vfKey(V, vFaces[k])].vert;   // miter of face f_k
+                        if (remapUvB) capSrc ~= vFaces[k];
+                    }
                 }
                 if (cap.length >= 3) {
                     freeEndCapRing[V] = cap;
                     freeEndCapSrc[V]  = vFaces[0];
+                    if (remapUvB) freeEndCapCornerSrc[V] = capSrc;
 
                     if (k4feCap) {
                         // Materialize the opposite-edge slide the reference
@@ -1530,8 +1586,26 @@ mixin template MeshBevelOps() {
         int[]    newOrd;
         uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
+        // Per-corner island of the face `newFaces[i]` reads, for the paths that
+        // have one (task 0697). Registered by index, never in lockstep, so an
+        // emission path that registers nothing keeps the honest zero.
+        void noteSrc(size_t nfi, uint[] perCorner) {
+            if (remapUvB) srcByNewFace[nfi] = perCorner;
+        }
+        uint[] uniformSrc(size_t n, uint src) {
+            uint[] s = new uint[](n);
+            s[] = src;
+            return s;
+        }
+
         foreach (fi; 0 .. baseFaces.length) {
             newFaces ~= threadRails(baseFaces[fi]);
+            // A rebuilt original face keeps reading its own island; its slide
+            // corners blend inside it, and any rail interior threaded in has no
+            // source of its own and falls to zero.
+            if (remapUvB)
+                noteSrc(newFaces.length - 1,
+                        uniformSrc(newFaces[$ - 1].length, cast(uint)fi));
             newMat  ~=faceAttrOr(faceMaterial, fi);
             newPart ~=faceAttrOr(facePart, fi);
             newOrd  ~=faceAttrOr(faceSelectionOrder, fi);
@@ -1560,6 +1634,10 @@ mixin template MeshBevelOps() {
 
             if (roundLevel == 0 || !roundedSpan[si]) {
                 newFaces ~= [cV0L.vert, cV1L.vert, cV1R.vert, cV0R.vert];
+                // THE per-corner case: each side of the strip reads the face it
+                // slid out of (task 0697).
+                if (remapUvB)
+                    noteSrc(newFaces.length - 1, [sp.fL, sp.fL, sp.fR, sp.fR]);
                 newMat ~= 0u; newPart ~= 0u; newOrd ~= 0; newWord ~= word;
                 continue;
             }
@@ -1578,6 +1656,15 @@ mixin template MeshBevelOps() {
 
             foreach (t; 0 .. n) {
                 newFaces ~= [r0[t], r1[t], r1[t + 1], r0[t + 1]];
+                // Only the two END rings of a rounded strip stand on original
+                // edges; every interior arc point is off them and has no
+                // measured value, so it stays zero.
+                uint srcAt(int tt) {
+                    return (tt == 0) ? sp.fL : ((tt == n) ? sp.fR : ~0u);
+                }
+                if (remapUvB)
+                    noteSrc(newFaces.length - 1,
+                            [srcAt(t), srcAt(t), srcAt(t + 1), srcAt(t + 1)]);
                 newMat ~= 0u; newPart ~= 0u; newOrd ~= 0; newWord ~= word;
             }
         }
@@ -2276,13 +2363,36 @@ mixin template MeshBevelOps() {
                 Vec3 fn = faceNormal(cast(uint)fi);
                 avgFaceN.x += fn.x; avgFaceN.y += fn.y; avgFaceN.z += fn.z;
             }
+            // The per-corner islands travel with the ring through the winding
+            // flip and the rail threading (task 0697); a threaded-in rail
+            // interior gets no source and stays zero. Built defensively — a
+            // length that does not match the emitted face is dropped whole at
+            // the carry rather than shifting every island by one corner.
+            uint[] ringSrc;
+            if (remapUvB)
+                if (auto cs = V in freeEndCapCornerSrc)
+                    ringSrc = (*cs).length == ring.length ? (*cs).dup : null;
             if (dot(newellN, avgFaceN) < 0) {
                 for (int lo = 0, hi = Ncap - 1; lo < hi; ++lo, --hi) {
                     uint tmp = ring[lo]; ring[lo] = ring[hi]; ring[hi] = tmp;
+                    if (ringSrc.length == cast(size_t)Ncap) {
+                        uint ts = ringSrc[lo]; ringSrc[lo] = ringSrc[hi]; ringSrc[hi] = ts;
+                    }
                 }
             }
             immutable uint srcFi = freeEndCapSrc[V];
             newFaces ~= threadRails(ring);
+            if (ringSrc.length == cast(size_t)Ncap) {
+                uint[] threadedSrc;
+                foreach (k; 0 .. ring.length) {
+                    threadedSrc ~= ringSrc[k];
+                    immutable ulong rk = pairKey(ring[k], ring[(k + 1) % ring.length]);
+                    if (roundLevel > 0 && ring.length >= 2)
+                        if (auto p = rk in railInteriorMemo)
+                            foreach (_; *p) threadedSrc ~= ~0u;
+                }
+                noteSrc(newFaces.length - 1, threadedSrc);
+            }
             newMat  ~=faceAttrOr(faceMaterial, srcFi);
             newPart ~=faceAttrOr(facePart, srcFi);
             newOrd  ~= 0;
@@ -2396,10 +2506,19 @@ mixin template MeshBevelOps() {
         mergedFaces.reserve(faces.length);
         int[] faceRemap = new int[](faces.length);
         bool anyMerge = false;
+        // The map's per-corner islands ride the same drops (task 0697): a corner
+        // this pass discards takes its source with it, so the survivors stay
+        // aligned. A face whose registered array does not match its corner count
+        // (an emission path changed shape underneath) falls back to no source at
+        // all rather than to a shifted one.
+        uint[][] mergedSrc;
         foreach (fi, f; faces) {
             uint[] kept;
+            uint[] keptSrc;
+            const uint[] faceSrc = srcByNewFace.get(fi, null);
+            const bool   haveSrc = remapUvB && faceSrc.length == f.length;
             kept.reserve(f.length);
-            foreach (vid0; f) {
+            foreach (ci, vid0; f) {
                 immutable uint vid = resolvePool(vid0);
                 if (kept.length > 0 && vid == kept[$ - 1]) {
                     anyMerge = true;
@@ -2410,15 +2529,28 @@ mixin template MeshBevelOps() {
                     continue; // dup of FIRST kept corner (incl. loop closure): drop
                 }
                 kept ~= vid;
+                if (remapUvB) keptSrc ~= haveSrc ? faceSrc[ci] : ~0u;
             }
             if (kept.length >= 3) {
                 faceRemap[fi] = cast(int)mergedFaces.length;
                 mergedFaces ~= kept;
+                if (remapUvB) mergedSrc ~= keptSrc;
             } else {
                 faceRemap[fi] = -1; // whole face collapsed below 3 corners (Case C)
             }
         }
         faces = mergedFaces;
+
+        // Relocate the per-corner map now that `faces` is final and BEFORE the
+        // tail `buildLoops`, which would otherwise see a length-wrong map and
+        // zero the whole mesh's UV. Vertex indices are still the pre-compaction
+        // ones the capture was taken against.
+        if (remapUvB) {
+            uint[] srcOfCorner;
+            foreach (s; mergedSrc) srcOfCorner ~= s;
+            carryPolyVertexMapsByCorner(faces.range, srcOfCorner, oldFacesB,
+                                        oldFaceLoopB, vertBlendB);
+        }
         if (anyMerge) {
             if (selectedFaces.length > faces.length) resizeFaceSelection();
             if (faceSelectionOrder.length > faces.length) faceSelectionOrder.length = faces.length;

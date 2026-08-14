@@ -18,7 +18,9 @@
 //   - PolyVertex (per-corner) domain: accept + size to loops.length*dim;
 //     faceCornerLoop addressing; the two-mechanism remap lifecycle matrix
 //     (delete/compact (a); dissolve/dissolve-edge/weld (b)); GAP-3 atomic
-//     append; snapshot round-trip; the drop class (subdivide/primitive/extrude)
+//     append; snapshot round-trip; the drop class (subdivide / primitive /
+//     EDGE extrude — the FACE families left it in task 0697, see
+//     tests/test_uv_carry_bevel_extrude.d)
 
 import std.math : fabs;
 
@@ -564,6 +566,14 @@ unittest {
 // ---------------------------------------------------------------------------
 // DROP class: extrudeEdgesByMask → uv dropped (length-correct, zeroed), no
 // crash. Additive side faces have no stable corner correspondence.
+//
+// EDGE extrude specifically, and it is the only extrude still here: task 0697
+// took `extrudeFacesByMask` out of the drop set (cap verbatim, walls by the
+// measured wall law) and `bevelEdgesByMask` / `bevelFacesByMask` with it. This
+// case is therefore no longer "the family drops" — it is the ONE member that
+// still does, and it stays a real assertion until an edge-extrude capture
+// exists to port. Its own law is unmeasured: an edge extrude's side faces are
+// not a subdivision of any source face, so there is no island to read.
 // ---------------------------------------------------------------------------
 unittest {
     auto m = makeCube();

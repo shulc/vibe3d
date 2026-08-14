@@ -12,6 +12,25 @@
   "task": "0682",
   "notes": "vibe3d's loop-slice / bevel / extrude do not touch the UV plane at all today, so this fixture is NEW target behaviour, not a regression lock. The `edge_bevel_uv_seam` case records reference behaviour that looks like a defect (the new strip collapses a seam onto one island, and the corner caps get values from neither island) -- it is frozen as MEASURED, and a port should decide deliberately whether to copy it."
  },
+ "classification": {
+  "_comment": "vibe3d-side annotation (task 0697), NOT part of the capture above. One entry per behaviour we deliberately do not reproduce; `status` is one of open (a gap we intend to close), closed (already closed, entry retired), permanent (we diverge on purpose and will not converge). tests/test_uv_carry_bevel_extrude.d reads these and refuses to run an open/closed branch for a permanent entry.",
+  "divergences": {
+   "seam_strip_far_side": {
+    "status": "permanent",
+    "case": "edge_bevel_uv_seam",
+    "reference": "The chamfer strip takes ONE island on BOTH of its sides -- the far side is the near island's parameterisation extrapolated ACROSS the seam (u = 4.4 at x = 0.8, continuing the right island's -1.0 per unit x).",
+    "vibe3d": "Each side of the strip reads the island of the face it slid out of, so the far side lerps inside the LEFT island (0.66 at x = 0.8) and the seam survives the bevel.",
+    "why_permanent": "The reference's own capture note calls this a defect (`MEASURED, NOT ENDORSED`). Reproducing it would mean deliberately collapsing a user's UV seam onto one island; a per-corner source is exactly the machinery that makes not doing so possible. There is no future in which we converge, so this is not a gap to close."
+   },
+   "seam_corner_caps": {
+    "status": "permanent",
+    "case": "edge_bevel_uv_seam",
+    "reference": "The two corner-cap triangles get values that match NEITHER island -- a similarity transform of the geometric triangle (the UV edges come out 0.98489x the geometric ones), from a construction nothing else in the capture exhibits.",
+    "vibe3d": "Each cap corner takes the edge lerp in the island of one adjacent face (f_k, the deterministic side), so every cap value belongs to a real island of the mesh.",
+    "why_permanent": "Same root as `seam_strip_far_side` and the same reasoning: no island membership at all is worse than a deterministic one, and the reference value is not reconstructible from any law the rest of this fixture pins."
+   }
+  }
+ },
  "tolerance": 1e-06,
  "uv_map": "uv",
  "cases": [

@@ -348,6 +348,66 @@ unittest { // TWO crossing rings — the grid-split path, which the frozen captu
            "grid split produced no interior vertex — the bilerp path never ran");
 }
 
+unittest { // the per-CORNER entry (task 0697) IS the per-face one, generalised
+    // `carryPolyVertexMaps` now expands its per-FACE source array and delegates
+    // to `carryPolyVertexMapsByCorner`, which is what keeps Loop Slice's frozen
+    // result safe from the extension the bevel family needed. The fixture cases
+    // above already run the real kernel through that path; this pins the
+    // equivalence directly, so a future re-implementation of the per-face entry
+    // as its own copy of the walk cannot silently diverge.
+    //
+    // The rewrite below is a hand-built one-edge split of two quads sharing an
+    // edge, with the two faces disagreeing at the shared vertices (a seam) — so
+    // the comparison covers a copy, a blend, and a corner with no source at all.
+    import mesh : PolyVertexBlend;
+
+    Mesh build() {
+        Mesh m;
+        m.addVertex(Vec3(0, 0, 0)); m.addVertex(Vec3(1, 0, 0));
+        m.addVertex(Vec3(1, 1, 0)); m.addVertex(Vec3(0, 1, 0));
+        m.addVertex(Vec3(2, 0, 0)); m.addVertex(Vec3(2, 1, 0));
+        m.addFace([0u, 1u, 2u, 3u]);
+        m.addFace([1u, 4u, 5u, 2u]);
+        m.rebuildEdges();
+        m.buildLoops();
+        auto uv = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+        foreach (i; 0 .. uv.data.length) uv.data[i] = 0.25f + 0.5f * i;  // all distinct
+        return m;
+    }
+
+    // A new vertex at the middle of edge 1→2, spliced into both faces.
+    Mesh a = build(), b = build();
+    const uint mid = a.addVertex(Vec3(1, 0.5f, 0));
+    assert(b.addVertex(Vec3(1, 0.5f, 0)) == mid);
+    const uint[] oldFaceLoop = a.captureFaceLoop();
+    uint[][] oldFaces = [[0u, 1u, 2u, 3u], [1u, 4u, 5u, 2u]];
+    uint[][] newFaces = [[0u, 1u, mid, 2u, 3u], [1u, 4u, 5u, 2u, mid]];
+    uint[]   srcFace  = [0u, 1u];
+    PolyVertexBlend[uint] blend;
+    PolyVertexBlend pb;
+    pb.add(1u, 0.5f); pb.add(2u, 0.5f);
+    blend[mid] = pb;
+
+    a.carryPolyVertexMaps(newFaces, srcFace, oldFaces, oldFaceLoop, blend);
+
+    uint[] perCorner;
+    foreach (nfi, nf; newFaces) foreach (_; nf) perCorner ~= srcFace[nfi];
+    b.carryPolyVertexMapsByCorner(newFaces, perCorner, oldFaces, oldFaceLoop, blend);
+
+    auto ua = a.meshMap(kUvMapName), ub = b.meshMap(kUvMapName);
+    assert(ua.data.length == ub.data.length && ua.data.length == 10 * 2,
+           "the two entries produced different lengths");
+    size_t nonZero = 0;
+    foreach (i; 0 .. ua.data.length) {
+        assert(ua.data[i] == ub.data[i],
+               "per-face and per-corner entries disagree at float " ~ i.to!string
+             ~ ": " ~ ua.data[i].to!string ~ " != " ~ ub.data[i].to!string);
+        if (ua.data[i] != 0.0f) ++nonZero;
+    }
+    assert(nonZero >= 16, "the comparison is vacuous — the relocation produced "
+                        ~ "almost nothing but zeros");
+}
+
 unittest { // a mesh with NO per-corner map must be unaffected (and not crash)
     import mesh : makeCube;
     Mesh m = makeCube();

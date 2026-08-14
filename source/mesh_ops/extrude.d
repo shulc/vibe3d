@@ -2742,7 +2742,13 @@ mixin template MeshExtrudeOps() {
     /// total), the whole call is a clean no-op (returns 0) rather than risk
     /// winding/coincident corruption from extruding into an already-invalid
     /// neighborhood.
-    size_t extrudeFacesByMask(in bool[] maskIn, float distance, bool smooth = false) {
+    ///
+    /// `uvWall` picks the measured per-corner UV law for the WALLS when the mesh
+    /// carries a per-corner map (task 0697; both laws are frozen in
+    /// tests/fixtures/uv_corner_transfer.json). The cap is the same under both:
+    /// it keeps the source face's corner values verbatim. See `UvWallLaw`.
+    size_t extrudeFacesByMask(in bool[] maskIn, float distance, bool smooth = false,
+                              UvWallLaw uvWall = UvWallLaw.SweepU) {
         const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
         size_t selCount = 0;
@@ -2911,6 +2917,19 @@ mixin template MeshExtrudeOps() {
         // translate the whole mesh.
         if (bEdges.length == 0) return 0;
 
+        // Per-corner map carry (task 0697): capture the OLD face array + CSR
+        // offsets before anything is rewritten. A cloned cap vertex is a
+        // one-source "blend" of the original it was lifted from, so the cap and
+        // the walls' top corners resolve against their source face's own island.
+        const bool remapUv = hasPolyVertexMap();
+        uint[][] oldFaces;
+        if (remapUv) {
+            oldFaces.reserve(faces.length);
+            foreach (ref f; faces) oldFaces ~= f.dup;
+        }
+        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        PolyVertexBlend[uint] vertBlend;
+
         // Clone each (island,vertex) used by a selected face (once per
         // island,vertex pair — see the ivKey comment above for why a corner
         // shared between two islands needs two separate clones). Offset
@@ -2921,8 +2940,15 @@ mixin template MeshExtrudeOps() {
             int island = islandOf[fi];
             foreach (vid; faces[fi]) {
                 ulong k = ivKey(island, vid);
-                if (k !in vertMap)
-                    vertMap[k] = addVertex(vertices[vid] + vertOffset[k]);
+                if (k !in vertMap) {
+                    immutable uint nv = addVertex(vertices[vid] + vertOffset[k]);
+                    vertMap[k] = nv;
+                    if (remapUv) {
+                        PolyVertexBlend b;
+                        b.add(vid, 1.0f);
+                        vertBlend[nv] = b;
+                    }
+                }
             }
         }
 
@@ -2938,10 +2964,22 @@ mixin template MeshExtrudeOps() {
         int[]    newOrd;
         uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
+        // Per-NEW-CORNER map provenance, appended in lockstep with `newFaces`
+        // (task 0697). Every corner here has a source: an untouched face reads
+        // itself, a cap reads the face it was cloned from, a wall reads the one
+        // selected face its boundary edge borders.
+        uint[]          srcOfCorner;
+        PolyVertexGen[] gens;
+        void pushSrc(const uint[] f, size_t src) {
+            if (!remapUv) return;
+            foreach (_; f) srcOfCorner ~= cast(uint)src;
+        }
+
         // Non-selected originals, kept as-is.
         foreach (fi; 0 .. faces.length) {
             if (mask[fi]) continue;
             newFaces ~= faces[fi];
+            pushSrc(faces[fi], fi);
             newMat   ~=faceAttrOr(faceMaterial, fi);
             newPart  ~=faceAttrOr(facePart, fi);
             newOrd   ~=faceAttrOr(faceSelectionOrder, fi);
@@ -2957,6 +2995,7 @@ mixin template MeshExtrudeOps() {
             int island = islandOf[fi];
             foreach (k, vid; src) cloned[k] = vertMap[ivKey(island, vid)];
             newFaces ~= cloned;
+            pushSrc(cloned, fi);
             newMat   ~=faceAttrOr(faceMaterial, fi);
             newPart  ~=faceAttrOr(facePart, fi);
             newOrd   ~= 0;
@@ -2983,6 +3022,27 @@ mixin template MeshExtrudeOps() {
             // Wall traverses the shared top edge in the opposite direction.
             if (origAtoB) newFaces ~= [cloneB, cloneA, a, b];
             else          newFaces ~= [cloneA, cloneB, b, a];
+            if (remapUv) {
+                // The wall skirts exactly ONE selected face — its island is the
+                // one every corner of this wall reads.
+                const size_t wallLoop0 = srcOfCorner.length;
+                pushSrc(newFaces[$ - 1], be.selFi);
+                if (uvWall == UvWallLaw.SweepU) {
+                    // Fresh wall parameterisation (frozen: `face_extrude_uv_sweep_u`)
+                    // — u = 0 on the base ring, u = 1 on the top ring, v = the
+                    // BASE corner's own v in the source face's island. The base
+                    // corners' original u is discarded ON THE WALL ONLY; the
+                    // faces that share those vertices keep their own corners.
+                    foreach (k, v; newFaces[$ - 1]) {
+                        const bool top  = (v == cloneA || v == cloneB);
+                        const uint baseV = (v == cloneA || v == a) ? a : b;
+                        const uint sc = Mesh.cornerOfVertexInFace(oldFaces[be.selFi], baseV);
+                        if (sc == ~0u) continue;    // no source corner ⇒ honest zero
+                        gens ~= PolyVertexGen(wallLoop0 + k, cast(uint)be.selFi, sc,
+                                              PolyVertexGen.Law.SweepU, top ? 1.0f : 0.0f);
+                    }
+                }
+            }
             newMat  ~=faceAttrOr(faceMaterial, be.selFi);
             newPart ~=faceAttrOr(facePart, be.selFi);
             newOrd  ~= 0;
@@ -2991,6 +3051,13 @@ mixin template MeshExtrudeOps() {
             // now the whole word, so Hide inherits the same way).
             newWord ~= faceAttrOr(faceMarks, be.selFi);
         }
+
+        // Relocate the per-corner map BEFORE `faces` is replaced — the carry
+        // reads the old windings — and before the tail `buildLoops`, which would
+        // otherwise see a length-wrong map and zero the WHOLE mesh's UV.
+        if (remapUv)
+            carryPolyVertexMapsByCorner(newFaces, srcOfCorner, oldFaces,
+                                        oldFaceLoop, vertBlend, gens);
 
         // Assign reconstructed arrays.
         faces              = newFaces;
