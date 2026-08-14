@@ -208,8 +208,8 @@ private void drawCursorMarker(ImGui.ImDrawList* dl,
     ImVec2 pos;
     if (!projectWorld(result.highlightPos, vp, pos)) return;
 
-    // Yellow (matches the existing test-mode cursor colour at
-    // app.d:3235).
+    // Yellow (matches the existing test-mode cursor-ring colour app.d draws
+    // with `dl.AddCircle(..., IM_COL32(255, 220, 0, 220), ...)`).
     enum uint outlineCol = IM_COL32(255, 220,   0, 230);
     enum uint fillCol    = IM_COL32(255, 220,   0, 140);
 

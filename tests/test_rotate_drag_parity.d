@@ -21,8 +21,8 @@
 // the B2 commit-hook work in MS-5 once a tool-attr read endpoint exists.
 //
 // Drag construction: replicate SemicircleHandler's arc geometry for the Y arc
-//   right, up = localFrame(axisY)            (handler.d:89-94)
-//   startAngle via applyStart(arcY, axisY)   (handler.d:731-742)
+//   right, up = localFrame(axisY)            (handles/gl_util.d, `localFrame`)
+//   startAngle via applyStart(arcY, axisY)   (handles/shapes.d, RotateHandler.applyStart)
 //   click the camera-facing midpoint (a = startAngle + PI/2) at world radius
 //   gizmoSize(center); drag tangentially along the arc to a second param.
 
@@ -136,7 +136,7 @@ void localFrame(Vec3 normal, out Vec3 right, out Vec3 up) {
     up    = cross(right, fwd);
 }
 
-// Replica of RotateHandler.applyStart's start direction (handler.d:731-742),
+// Replica of RotateHandler.applyStart's start direction (handles/shapes.d),
 // returning the chosen startAngle in the arc's (right, up) frame.
 float arcStartAngle(Vec3 n, Vec3 camFwd, Vec3 right, Vec3 up) {
     Vec3 dir = cross(n, camFwd);

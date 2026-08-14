@@ -65,7 +65,8 @@ private void v3dReject(string msg) nothrow { g_v3dRejectReason = msg; v3dWarn("r
 // Native .v3d document format (JSON)
 // ---------------------------------------------------------------------------
 // `.v3d` is vibe3d's own document format — the source of truth. Unlike the
-// LWO bridge in lwo.d (a lossy interchange format) it round-trips the full
+// LWO bridge in io/lwo_import.d + io/lwo_export.d (a lossy interchange
+// format) it round-trips the full
 // editor model: vertices, n-gon faces, per-face subpatch flags, the surface
 // registry and per-face material indices.
 //

@@ -13,7 +13,7 @@ module uv_relax;
 /// `commitChange(MeshEditScope.Material)`.
 ///
 /// Mirrors the Jacobi-from-snapshot approach of mesh.smooth (smooth.d:261-283)
-/// and smoothSubdivide (mesh.d:10120-10134), lifted into UV space.  The exact
+/// and `Mesh.smoothSubdivide`, lifted into UV space.  The exact
 /// smoothing law is a vibe3d-divergence; capture-gated parity deferred.
 
 import mesh     : Mesh, MeshMap;

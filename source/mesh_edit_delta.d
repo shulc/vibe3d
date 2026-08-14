@@ -1151,7 +1151,7 @@ private void removeFacesForward(ref Mesh m, in uint[] idx) {
     // word at each surviving index stale, and a face's Hide bit silently
     // lands on whichever OTHER face slides into its old slot. Same class of
     // bug already fixed at deleteFacesByMask's own compaction
-    // (mesh.d:2149-2164, `keptWord`). Reached on the apply/redo path of
+    // (`keptWord`, in `Mesh.finalizeTopologyEdit`). Reached on the apply/redo path of
     // MeshSessionEdit-backed tools (bevel, loop-slice, reduce,
     // topology-pen-remove — commands/mesh/session_edit.d:108); delete/remove
     // dodge it because their own revert() re-overlays the full pre-op word

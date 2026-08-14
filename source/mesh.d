@@ -1574,7 +1574,7 @@ struct Mesh {
     /// face's own corners are unioned to each other first so a face is
     /// always wholly inside one island even before any cross-face union
     /// happens. Same union-find shape as `collapseEdgesByMask`
-    /// (mesh.d:877) / `collapseFacesByMask` (mesh.d:956) — parent[] +
+    /// / `collapseFacesByMask` (both in this file) — parent[] +
     /// findRoot + unite — but this walks EVERY face in the mesh (not just a
     /// masked subset), since island membership isn't selection-driven here.
     ///
@@ -6788,8 +6788,11 @@ struct Mesh {
         markDerivedEmpty();
     }
 
-    /// Compute the unit normal of face fi using the first triangle (v0, v1, v2).
-    /// Returns (0,1,0) for degenerate or tiny faces.
+    /// Compute the unit normal of face fi by NEWELL's method over the whole
+    /// polygon (the summary line here used to say "using the first triangle
+    /// (v0, v1, v2)", contradicting its own body two lines down — and that is
+    /// the distinction the picking/snap divergence turns on, see CLAUDE.md's
+    /// Picking Strategy). Returns (0,1,0) for degenerate or tiny faces.
     Vec3 faceNormal(uint fi) const {
         // Newell's method: sums signed cross-product contributions from every
         // consecutive vertex pair. Robust to (a) collinear leading triples

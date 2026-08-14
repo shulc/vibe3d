@@ -28,7 +28,7 @@ bool approxEqual(double a, double b, double eps = 1e-4) {
 }
 
 // ---------------------------------------------------------------------------
-// LWO2 byte writers — inline copies of lwo.d's helpers (which are `private`).
+// LWO2 byte writers — inline copies of the io/lwo_export.d helpers (private).
 // ---------------------------------------------------------------------------
 
 void writeU16BE(ref ubyte[] buf, ushort v) {

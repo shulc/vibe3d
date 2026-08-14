@@ -50,8 +50,9 @@ import document : primaryModelSpace;
 //     `applyMovePanelDelta`.
 // ---------------------------------------------------------------------------
 
-// Byte-identical extraction of the axis-selection math from ctrlConstrain
-// (move.d:691-727 pre-refactor).  Takes integer tdx/tdy exactly as the live
+// Byte-identical extraction of the axis-selection math from `ctrlConstrain`
+// (which is still in this file and still the only caller).  Takes integer
+// tdx/tdy exactly as the live
 // path does (int arithmetic, no float reassociation).  The <25 wait-gate is
 // NOT in here — it stays in ctrlConstrain.  Arguments mirror the live read
 // sites verbatim so the call in ctrlConstrain is a cut-paste of the inputs
@@ -460,7 +461,11 @@ public:
 
         // Constraint line: drawn along the locked axis through the pivot
         // when a Ctrl-lock is active.  Depth disabled so it reads as an
-        // overlay (mirrors CrossGizmo.draw handler.d:1402-1406).
+        // overlay. (This used to cite a `CrossGizmo.draw` in handler.d for the
+        // same depth-off trick — no such class exists in the tree, and
+        // handler.d is now a 17-line facade over handles/*.d. The live
+        // depth-off overlay primitive is `handles/gl_util.d`'s
+        // `drawWorldSegment`.)
         // No arrow setState override — the arbiter already highlights the
         // captured arrow in the scheme's active colour via setHaul+update.
         if (ctrlLockActive && dragAxis >= 0 && dragAxis <= 2) {

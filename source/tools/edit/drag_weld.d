@@ -162,7 +162,7 @@ public:
 
         // Re-locate the survivor by its layer-local position and select it.
         // resizeVertexSelection is already called inside compactUnreferenced
-        // (mesh.d:1267) — do NOT call it again here.
+        // (inside `Mesh.compactUnreferenced`) — do NOT call it again here.
         mesh.clearVertexSelection();
         {
             float bestDist2 = 1e-9f * 1e-9f;   // 1 nm tolerance (well inside float eps)

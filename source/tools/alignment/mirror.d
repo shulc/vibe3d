@@ -35,8 +35,8 @@ alias MirrorEditFactory = MeshSessionEdit delegate();
 //
 // `baseSnap.restore(previewMesh)` fully overwrites `previewMesh` with the
 // pristine base (deep-copied geometry) EVERY call — this is the guarantee
-// that N successive calls never accumulate N mirrors (mirrorFaces APPENDS;
-// see mesh.d:4172-4310).
+// that N successive calls never accumulate N mirrors
+// (`Mesh.mirrorFacesPlane` APPENDS).
 // ---------------------------------------------------------------------------
 void rebuildMirrorPreview(const ref MeshSnapshot baseSnap, ref Mesh previewMesh,
                          in bool[] baseMask, in MirrorParams params_)
@@ -217,7 +217,8 @@ private:
     // ----- Plane visualization (M4) — a wire quad ⟂ normal + a dashed line
     // along the normal through center, both rebuilt (world-space vertex data
     // re-uploaded) every draw() call — mirrors MoveTool's constraintLineVao
-    // pattern (tools/move.d:492-506): lazy VAO init, GL_DYNAMIC_DRAW update.
+    // pattern (`constraintLineVao` in tools/transform/move.d): lazy VAO init,
+    // GL_DYNAMIC_DRAW update.
     GLuint planeQuadVao, planeQuadVbo;
     GLuint axisLineVao,  axisLineVbo;
 
@@ -479,7 +480,7 @@ public:
     /// Wire quad ⟂ `normal` at `center` + a dashed line along `normal` through
     /// `center` — the mirror-plane visualization (task 0230 M4). Lazy VAO
     /// init + `GL_DYNAMIC_DRAW` re-upload every call, mirroring MoveTool's
-    /// `constraintLineVao` pattern (tools/move.d:492-506): the geometry (world
+    /// `constraintLineVao` pattern (tools/transform/move.d): the geometry (world
     /// positions) changes every frame the plane tilts or moves, so there is no
     /// static VAO to reuse — only the buffer OBJECT is cached.
     private void drawPlaneViz(const ref Viewport vp, Vec3 center, Vec3 normal, float gs,
@@ -664,9 +665,10 @@ public:
     }
 
     /// Mirrors BoxTool.moverHitTest (box.d:2768) — Arrow.hitTest is
-    /// `protected` (handler.d), so the segment-distance test is duplicated
-    /// here rather than called; BoxHandler.hitTest is re-exported public
-    /// (handler.d:1086) so centerBox/rotateBox can be hit-tested directly.
+    /// `protected` (see `Handler` in handles/shapes.d), so the
+    /// segment-distance test is duplicated here rather than called;
+    /// `BoxHandler.hitTest` (handles/shapes.d) is public so centerBox /
+    /// rotateBox can be hit-tested directly.
     /// rotateBox is tested FIRST — it is the smaller target and (depending on
     /// camera distance) can sit close to the enlarged centerBox's screen area.
     private int moverHitTest(int mx, int my) {

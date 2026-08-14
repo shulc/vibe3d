@@ -584,8 +584,8 @@ public:
     // applyTRS call — a transient parameter is sufficient.
 
     // Task 0614 — the item-mode write target SET. Mirrors the `primarySrc_`
-    // pattern `ActionCenterStage`/`AxisStage` already use (actcenter.d:301,
-    // axis.d): a live delegate, never cached across calls, so a layer-select
+    // pattern `ActionCenterStage`/`AxisStage` already use (`primarySrc_` in
+    // stages/actcenter.d and stages/axis.d): a live delegate, never cached across calls, so a layer-select
     // mid-session is picked up on the next apply. Null in tests / call sites
     // that never engage item mode (edge_extend.d's embedded wrapper — its own
     // apply path never reaches `applyTRS` here, same reasoning as
@@ -668,9 +668,10 @@ public:
         super(meshSrc, gpu, editMode, selTypeSrc);
         this.itemTargetsSrc_ = itemTargetsSrc;
         // Blocker 1 (0614 review): the sub-tools each have their OWN
-        // buildLocalVts call sites (applyHeadless / property-panel replay —
-        // scale.d:320,1217,1311, rotate.d:224,1226,1316), so the same live
-        // selType source must reach every one of them, not just the wrapper.
+        // `buildLocalVts` call sites (the property-panel replay entries in
+        // scale.d / rotate.d), so the same live selType source must reach
+        // every one of them, not just the wrapper. (The applyHeadless call
+        // sites this used to cite as well are gone — audit №4, T3.)
         moveSub   = new MoveTool  (meshSrc, gpu, editMode, selTypeSrc);
         rotateSub = new RotateTool(meshSrc, gpu, editMode, selTypeSrc);
         scaleSub  = new ScaleTool (meshSrc, gpu, editMode, selTypeSrc);
@@ -3426,15 +3427,15 @@ noBankConsumed:
                 // P-F Phase 3a — run.s is RUN-ABSOLUTE: it holds the
                 // run-total factor = run-start base ⊗ this-gesture factor. The
                 // producer's `pendingScale` (f) is the WITHIN-GESTURE absolute
-                // factor only (dragScaleAccum, reset to 1 at this drag's start,
-                // scale.d:510), so the drain multiplies it per-axis by the run
+                // factor only (`dragScaleAccum`, reset to 1 at this drag's start
+                // in ScaleTool's drag-begin), so the drain multiplies it per-axis by the run
                 // total captured at this gesture's mouse-down (gestureStart.s, the
                 // scale component of the per-gesture run snapshot). For a fresh run
                 // the snapshot is identity ⇒ run.s = f (byte-identical to pre-3a).
                 // For a same-bank repeat the snapshot is the held run total ⇒ the
                 // factors multiply into the run total (mirrors the producer's own
-                // scaleAccum.x = dragStartScaleAccum.x * scaleFactor at
-                // scale.d:694). Per-axis factors commute ⇒ no cross-axis hazard.
+                // `scaleAccum.x = dragStartScaleAccum.x * scaleFactor` in
+                // scale.d). Per-axis factors commute ⇒ no cross-axis hazard.
                 // The held T/R are NOT touched — they compose into the fold via
                 // the preset flags. composeFor (3253) reads this FULL run-absolute
                 // run.s against the FROZEN dragBaseline — no divide.
@@ -5094,8 +5095,8 @@ noBankConsumed:
 
     // Per-gesture Move commit (record+consolidate, addendum-2): attach PIN HOOKS
     // to the recorded entry, exactly as RotateTool/ScaleTool attach their
-    // accumulator hooks (rotate.d:264-271 verbatim shape: build cmd → setHooks →
-    // recordCommit). The wrapper only ever commits the MOVE slot (R/S gestures
+    // accumulator hooks (RotateTool's own commit path, verbatim shape: build
+    // cmd → setHooks → recordCommit). The wrapper only ever commits the MOVE slot (R/S gestures
     // self-commit through their own sub-tool commitEdit via commitSessionIfOpen),
     // so this override is Move-exclusive and leaves R/S routing untouched.
     //
@@ -5121,8 +5122,8 @@ noBankConsumed:
         // (post-drag) xform, mirroring buildEditCmd's `if (!changed) return
         // null` so a no-op gesture records nothing, and routes the result
         // through the SAME `recordCommit` chokepoint every vertex
-        // commitEdit override uses (recordViaInSession ? recordInSession :
-        // record — command.d:365-370).
+        // commitEdit override uses (`recordViaInSession ? recordInSession :
+        // record` — `TransformTool.recordCommit`, tools/transform/transform.d).
         if (itemSubjectActive()) {
             if (suppressCommit) {
                 itemEditCapturing_      = false;
@@ -6261,7 +6262,7 @@ private:
 
     // Gesture chaining — is the ACTIVE drag the Move center-box free-plane drag
     // (dragAxis == 3)? That drag is BASIS-FREE: its input decompose passes the full
-    // 3D snap delta (constrainSnapDelta returns delta unchanged, move.d:586) and
+    // 3D snap delta (`MoveTool.constrainSnapDelta` returns delta unchanged) and
     // pendingTranslateDelta decomposes against the LIVE inputBasis (the wrapped
     // input channel is NOT pushed for axis 3 in beginMoveDragSession). So it must be
     // EXCLUDED from the gesture-frame chaining on the APPLY side (runFrame B0) and

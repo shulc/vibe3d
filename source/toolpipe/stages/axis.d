@@ -1249,7 +1249,8 @@ unittest {
         st.mode = m;
         assert(st.axisTracksSelection(),
             m.to!string ~ ": Vertex subject must keep tracking the selection "
-            ~ "(the guard is item-mode-only, R6/axis.d:152-156 unaffected)");
+            ~ "(the guard is item-mode-only, `axisTracksSelection`'s own R6 gate "
+            ~ "in this file is unaffected)");
     }
 
     // The REAL production path: drive evaluate() with an explicit

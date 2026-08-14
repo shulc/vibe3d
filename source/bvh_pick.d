@@ -14,7 +14,8 @@ import perf_probe : g_perf, Cat, g_fc;
 // and shared across all viewports; only the ray is per-viewport.
 //
 // Build geometry: the identical v0 fan the GPU rasterizes (face[0], face[i],
-// face[i+1]; mesh.d:11893-11897). Source mesh = subpatch preview mesh when
+// face[i+1]; see `GpuMesh.upload` / `refreshPositions` in mesh_gpu.d).
+// Source mesh = subpatch preview mesh when
 // a preview is active; cage mesh otherwise.
 //
 // Pick invariant: equivalent to GPU face pick for any (mesh, camera, pixel)
@@ -307,7 +308,8 @@ private:
             verts[vi * 3 + 2] = v.z;
         }
 
-        // Fan-triangulate each face from face[0] — identical to mesh.d:11893-11897.
+        // Fan-triangulate each face from face[0] — identical to the fan
+        // `GpuMesh.upload` rasterises (mesh_gpu.d).
         // _triToFace[t] maps BVH triangle t to cage face index.
         uint[] indices = new uint[](triCount * 3);
         _triToFace     = new uint[](triCount);

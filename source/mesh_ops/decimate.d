@@ -106,7 +106,7 @@ mixin template MeshDecimateOps() {
         }
 
         // mappedCorners: apply find() + v→u substitution + consecutive+wraparound dedup.
-        // Mirrors weldVerticesByMask face-rewrite logic (mesh.d:543-547).
+        // Mirrors `Mesh.weldVerticesByMask`'s face-rewrite logic.
         uint[] mappedCorners(const uint[] faceCorners, uint u, uint v) {
             uint[] f;
             foreach (c; faceCorners) {

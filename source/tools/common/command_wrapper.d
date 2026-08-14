@@ -46,7 +46,7 @@ import ImGui = d_imgui;
 ///    otherwise).
 ///
 /// Commit semantics (matching `TransformTool.deactivate` →
-/// `commitEdit("Move")` pattern in source/tools/move.d:120):
+/// `commitEdit("Move")` pattern in source/tools/transform/move.d):
 ///  - `setUndoBindings(history, vxEditFactory)` injects the undo
 ///    plumbing at construction time. The factory builds a fresh
 ///    `MeshVertexEdit` pre-wired to the same gpu/caches the inner

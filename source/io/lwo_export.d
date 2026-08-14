@@ -13,11 +13,11 @@ import math     : Vec3, matrixMirrorsWinding, transformPoint;
 // Maps the vibe3d `Mesh` onto lwo2-writer's `Lwo2Object` and serializes it with
 // `writeLwo2File`. The library emits a faithful LWO2 IFF container
 // (LAYR/TAGS/PNTS/BBOX/POLS FACE+PTCH/PTAG/SURF), so the output round-trips
-// through our own `importLWO` reader (source/lwo.d) and through other
+// through our own reader (`sceneFromLwo`, source/io/lwo_import.d) and through other
 // .lwo-aware DCC tools.
 //
 // Coordinates are written verbatim (no handedness flip) — same as the previous
-// hand-rolled exporter, so our own importLWO round-trips exactly.
+// hand-rolled exporter, so our own reader round-trips exactly.
 //
 // Two entry points:
 //   * exportLwo(ref const Mesh, path)          — single mesh, one LAYR 0.

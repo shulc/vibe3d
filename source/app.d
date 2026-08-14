@@ -8260,7 +8260,7 @@ void main(string[] args) {
             // the shared pipeGizmoHost.ownPool(), used by both the wrapper-
             // primitive and no-tool-falloff cases), so app.d scope has no
             // single field to read directly — this small dispatcher is the
-            // seam. `hot` is a public int (handler.d:1565).
+            // seam. `hot` is a public int on `ToolHandles` (handles/arbiter.d).
             int currentHotPart() {
                 if (auto xf = cast(XfrmTransformTool) activeTool) return xf.hotPart();
                 if (auto cw = cast(CommandWrapperTool) activeTool) return pipeGizmoHost.ownPool().hot;

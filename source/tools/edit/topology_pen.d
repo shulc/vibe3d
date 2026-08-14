@@ -2558,13 +2558,13 @@ public:
         ///     line numbers moved, the argument did not.);
         ///   * `math.d:495-512` — `toWorldNormal`'s doc: do NOT "fix" a
         ///     mirror-flipped normal by cross-producting world points;
-        ///   * `app.d:4742-4752` (lasso `frontFacing`), `mesh.d:8146`
-        ///     (`visibleVertices`' cull) and `snap.d:1185` (`faceVisible`) —
-        ///     the three sites 0617 converted to exactly this law, each
-        ///     carrying its reason inline. (The plan cites the first two as
-        ///     `app.d:4644` / `mesh.d:6883`; those lines have since moved.
-        ///     Re-derived by searching for `ms.mirrored`, which is still read
-        ///     nowhere in production.)
+        ///   * app.d's RMB-lasso `frontFacing` closure, `Mesh.visibleVertices`'
+        ///     inline cull, and snap.d's `faceVisible` — the three sites 0617
+        ///     converted to exactly this law, each carrying its reason inline.
+        ///     (Cited by SYMBOL on purpose: this comment previously carried
+        ///     four line numbers and all four had rotted. Re-derivable by
+        ///     searching for `ms.mirrored`, which is still read nowhere in
+        ///     production.)
         ///
         /// Two laws that are NOT this one, rejected on purpose:
         ///   * the world WINDING normal (`sign(det M)` times this) — a true
@@ -11271,7 +11271,7 @@ unittest {
 // ---------------------------------------------------------------------------
 // commitSplit — T1 (P9, doc/topopen_p9_split_plan.md §Testing): QUAD
 // diagonal split (v0->v2). Independent expected — cross-checked against
-// `mesh.d`'s own `splitFaceByVertices` unittest (`mesh.d:27551-27563`), but
+// `mesh.d`'s own `splitFaceByVertices` unittest, but
 // re-derived here rather than re-asserted, since `commitSplit` is the thing
 // under test (the snapshot/undo bracket + factory wiring around the kernel
 // call, not the kernel itself).

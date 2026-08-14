@@ -8,7 +8,8 @@
 //   • per-vertex coordinate preservation, not just topology counts
 //   • idempotent multiple save / load cycles (no float drift)
 //   • PTCH subpatch chunk on a manually-crafted LWO sets isSubpatch flags
-//     (the engine's own export writes FACE only — see source/lwo.d:32 —
+//     (the engine's own export writes FACE only — see `exportLwo` in
+//     source/io/lwo_export.d —
 //     so this validates the LOAD path independently)
 
 import std.net.curl;
@@ -37,8 +38,10 @@ JSONValue model() {
     return parseJSON(cast(string)get(baseUrl ~ "/api/model"));
 }
 
-// Empty-mesh round-trip: importLWO rejects polygon-less files
-// (source/lwo.d:175 — "no polygons" early-out). The save still produces
+// Empty-mesh round-trip: the LWO reader (`sceneFromLwo`,
+// source/io/lwo_import.d) rejects polygon-less files — it skips a layer with
+// no geometry, and a file of nothing but such layers imports nothing.
+// The save still produces
 // a syntactically valid FORM/PNTS chunk, but reloading it is treated as
 // invalid and the prior mesh stays. This pin documents that behaviour
 // so a future change to support genuinely empty LWO files will trip

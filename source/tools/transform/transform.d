@@ -113,8 +113,8 @@ protected:
     // the CURRENT subject" — the SAME authority app.d's buildToolVts uses
     // (`currentSelType(selTypeOrder)`, app.d's `buildToolVts`). Wired at
     // construction (registration.d); null in tests / geometry-only tools
-    // (e.g. EdgeExtendTool's embedded `xfrm` — edge_extend.d:153 constructs
-    // it with no selTypeSrc). NIT (0614 review, 3rd instance of this class
+    // (e.g. EdgeExtendTool's embedded `xfrm` — its ctor in
+    // tools/edit/edge_extend.d constructs it with no selTypeSrc). NIT (0614 review, 3rd instance of this class
     // of over-claim in this task): the omission there is harmless, but NOT
     // because "there is no item subject to misreport" — item-select does
     // NOT drop an armed tool (see below), so an item subject can very much

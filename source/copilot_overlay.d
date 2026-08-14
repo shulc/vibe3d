@@ -8,12 +8,12 @@ version (WithAI):
 // copilot_overlay — a lightweight, decoupled ghost-overlay drawer for the
 // AI Modeling Copilot's ACTIVE finding (task 0402 Phase 3,
 // doc/ai_copilot_plan.md). Harvested from the abandoned A1 branch's
-// ghost-draw pattern (`support_loops_tool.d:224-248`, ~20 lines: a
-// `drawWorldSegment(a, b, vp, color, width, program)` loop with depth-test
-// off) — NOT a merge of that branch and NOT a `mesh.d` change: this is a
-// pure, standalone overlay PASS reusing the same `drawWorldSegment`
-// primitive (`handler.d:370`) every other ghost/preview overlay in the
-// codebase already uses.
+// ghost-draw pattern (its `support_loops_tool.d` never landed in-tree; ~20
+// lines: a `drawWorldSegment(a, b, vp, color, width, program)` loop with
+// depth-test off) — NOT a merge of that branch and NOT a `mesh.d` change:
+// this is a pure, standalone overlay PASS reusing the same
+// `drawWorldSegment` primitive (`handles/gl_util.d`) every other
+// ghost/preview overlay in the codebase already uses.
 //
 // Passive by construction (the copilot never mutates geometry — see
 // `ai.analysis`'s and `copilot_panel`'s doc comments): this module has NO

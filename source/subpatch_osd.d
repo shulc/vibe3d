@@ -2006,7 +2006,8 @@ unittest {
     // the interactive-gizmo contract requires — the fix must not "solve"
     // staleness by quietly bumping the very counter it was designed
     // around (that would re-trip the transform tool's mutation-boundary
-    // poll and cancel an in-session falloff re-grade, mesh.d:17393-17399).
+    // poll and cancel an in-session falloff re-grade — see the
+    // mutation-boundary note on `Mesh.mutationVersion`'s consumers).
     assert(cage.topologyVersion == topoVerBefore,
         "position-only edit must not bump the cage's topologyVersion "
         ~ "(would spuriously invalidate topology-keyed caches: adjacency "

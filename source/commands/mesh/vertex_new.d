@@ -52,11 +52,11 @@ class MeshVertexNew : Command, Operator {
         snap = MeshSnapshot.capture(*mesh);
 
         uint vi = mesh.addVertex(pos_);
-        // CRITICAL: addVertex (mesh.d:480) only appends to vertices[]; it does
+        // CRITICAL: `Mesh.addVertex` only appends to vertices[]; it does
         // NOT grow vertexMarks / vertexSelectionOrder. Indexing either array at
         // the new index before resizing causes an out-of-bounds RangeError (an
         // Error, not an Exception — the dispatch catch will NOT swallow it).
-        // resizeVertexSelection() (mesh.d:4782) grows both arrays to
+        // `Mesh.resizeVertexSelection()` grows both arrays to
         // vertices.length before any selectVertex call.
         mesh.resizeVertexSelection();
         mesh.clearVertexSelection();

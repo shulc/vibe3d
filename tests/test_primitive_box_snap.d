@@ -2,7 +2,7 @@
 //
 // Each SnapType is verified through the LIVE BoxTool base-corner click:
 // the first click in BoxState.Idle runs `snapLocalHit` against the
-// toolpipe SNAP stage (source/tools/box.d:2084), rewrites the base
+// toolpipe SNAP stage (`snapLocalHit` in source/tools/create/box.d), rewrites the base
 // corner to the snapped target, and publishes the result to
 // /api/snap/last via `publishLastSnap`. That published world-space
 // SnapResult is our observable — `snapped==true` proves the box's base

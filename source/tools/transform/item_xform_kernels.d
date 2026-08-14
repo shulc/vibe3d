@@ -220,7 +220,7 @@ bool applyGestureToItems(Layer[] targets, const(ItemXform)[] baselines,
         next.rot   = rotNew;
         next.scl   = sclNew;
         // pos' = P_final - pivot: the local pivot is a fixed point of R*S
-        // for ANY rot/scl (document.d:68, snap.d:170-172), so the local
+        // for ANY rot/scl (see `ItemXform` in document.d), so the local
         // pivot channel never needs a compensating write, for any bank.
         next.pos   = Pfinal - next.pivot;
 
