@@ -1,3 +1,15 @@
+// The Topology Pen is a PACKAGE, not a lone module -- this file is its
+// `package.d`, so the module name (`tools.edit.topology_pen`) and every
+// importer of it are unchanged by the directory.
+//
+// The package exists for one reason: visibility granularity. A member marked
+// `package(tools.edit.topology_pen)` is reachable from this package's own
+// modules -- its implementation submodules and its white-box unittest modules
+// under `tests/unit/tools/edit/topology_pen/` -- and the compiler REFUSES it
+// to everything else, the sibling tools in `tools/edit/` included. Plain
+// `package` would have handed the pen's internals to all of `tools.edit` and,
+// transitively, to every sub-package under it; that is the widening this
+// layout exists to avoid (task 0718; measured on dmd 2.112 and ldc 1.42).
 module tools.edit.topology_pen;
 
 import bindbc.sdl;
