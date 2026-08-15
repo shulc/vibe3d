@@ -225,6 +225,49 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// A WINDING FLIP is the live kernel whose correspondence nothing was checking.
+//
+// This block exists because of a measurement, not a hunch: with every other
+// converted site, deleting its declaration turns a lane red. Deleting
+// `flipFacesByMask`'s left `test_uv_untouched_faces`, `test_mesh_map`,
+// `test_uv_undo_delta` and `test_uv_pipeline` all GREEN — no test flips a face
+// on a mesh that carries a per-corner map. Task 0689 already named this site as
+// the residual its own rule could not reach (an equal-arity reshape that
+// PERMUTES a face's corners); it turns out the relocation that answers it was
+// never proven either.
+//
+// The flip is also the shape that makes the point: reversing a quad's winding
+// leaves the corner TOTAL untouched, so the length test cannot tell the
+// difference between a relocation and a scramble.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m = twoQuadsWithCornerMap();
+    const float[] before = uvOf(m).dup;
+
+    bool[] mask = new bool[](m.faces.length);
+    mask[0] = true;                       // flip face 0 only
+    assert(m.flipFacesByMask(mask) == 1);
+
+    const(float)[] after = uvOf(m);
+    assert(after.length == before.length, "a flip cannot change the corner total");
+
+    // Face 0's corners are reversed WITH the winding: new corner j wears what
+    // old corner (N-1-j) wore.
+    foreach (j; 0 .. 4) {
+        const size_t src = 3 - j;
+        assert(after[j * 2]     == before[src * 2],
+               "a flipped face's corner values must follow its corners");
+        assert(after[j * 2 + 1] == before[src * 2 + 1]);
+    }
+    // Face 1 was not in the mask and must be byte-identical.
+    foreach (i; 4 .. 8) {
+        assert(after[i * 2]     == before[i * 2],
+               "an unflipped face pays nothing for its neighbour's flip");
+        assert(after[i * 2 + 1] == before[i * 2 + 1]);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The declaration is consumed EXACTLY once. A second rebuild must not re-apply
 // a correspondence whose old corner space is long gone.
 // ---------------------------------------------------------------------------
