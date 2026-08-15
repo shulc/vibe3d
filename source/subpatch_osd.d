@@ -322,6 +322,18 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
     } else {
         // ---- Selective: stitch OSD output with un-marked cage faces.
         //
+        // Settled-cage precondition (debug-only, stripped from release builds
+        // — task 0724 / audit-4 M6). Placed HERE and not at the function's
+        // first line on purpose: the full-refinement arm above never touches
+        // `cage.edgeIndexMap`, so an entry-wide assert would refuse a
+        // perfectly legal whole-cage call on a mesh whose map was never
+        // built. This arm cannot proceed without it — a stale map mis-keys
+        // the cage-edge → OSD-edge-point table below, and the stitched
+        // boundary silently loses its edge points (visible as a crack
+        // between the refined subset and the un-marked cage faces), which is
+        // exactly the class of failure an exception would have surfaced and
+        // a wrong lookup does not.
+        cage.assertEdgeMapValid();
         // 1. Build cage-vert → result-vert idx map:
         //      In-subset cage verts map to their OSD vert-point idx
         //      (corner-pinned, sitting at the original cage position
@@ -959,6 +971,15 @@ struct OsdAccel {
         enum float SHARP_INF = 10.0f;     // OSD treats >= 10 as infinity
 
         if (anyUnmarked) {
+            // Settled-cage precondition (debug-only — task 0724 / audit-4 M6).
+            // Same branch-local placement and same reasoning as the twin in
+            // `catmullClarkOsd`: only the MIXED cage needs the map, and only
+            // to key `edgeFaces[*p]`. A stale map here mis-attributes the
+            // marked/un-marked adjacency counts, so the INF-crease set comes
+            // out wrong and the preview smooths across a boundary it was
+            // supposed to hold sharp — a silently different limit surface,
+            // never an error.
+            cage.assertEdgeMapValid();
             // Tag verts that ANY un-marked face touches.
             bool[] vertHasUnmarked = new bool[](nv);
             // Per-edge: count marked vs un-marked adjacency to decide

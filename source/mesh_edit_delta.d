@@ -1412,6 +1412,14 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
 // with no matching edge (geometry diverged) is silently skipped.
 private void applyEdgeSelByEnds(ref Mesh m, in uint[] ends) {
     import mesh : edgeKey;
+    // Settled-mesh precondition (debug-only, stripped from release builds —
+    // task 0724 / audit-4 M6). "Freshly-rebuilt" in the doc comment above is
+    // exactly `edgeMapUsable()`: this helper resolves endpoint pairs THROUGH
+    // the map, and a stale map does not fail loudly — it resolves the pair to
+    // whatever edge index the PREVIOUS topology had, silently selecting the
+    // wrong edge. The only caller is the delta finalizer below, which runs
+    // rebuildEdges() + buildLoops() first.
+    m.assertEdgeMapValid();
     for (size_t i = 0; i + 1 < ends.length; i += 2) {
         const a = ends[i], b = ends[i + 1];
         if (auto p = edgeKey(a, b) in m.edgeIndexMap)
@@ -1447,6 +1455,13 @@ uint[] captureSelectedEdgeEnds(in Mesh m) {
 // edgeIndexMap. The caller is expected to have cleared the edge selection
 // first (so the result is exactly the recorded set).
 void restoreSelectedEdgeEnds(ref Mesh m, in uint[] ends) {
+    // Settled-mesh precondition (debug-only — task 0724 / audit-4 M6). Same
+    // silent-wrong-answer shape as applyEdgeSelByEnds: "the live
+    // edgeIndexMap" in the doc comment above IS the stamp. This one is
+    // module-PUBLIC, so unlike its private twin the set of callers is open —
+    // the assert is what keeps a future destructive command from restoring
+    // the edge selection against a map its kernel never rebuilt.
+    m.assertEdgeMapValid();
     for (size_t i = 0; i + 1 < ends.length; i += 2) {
         const a = ends[i], b = ends[i + 1];
         if (auto p = edgeKey(a, b) in m.edgeIndexMap)

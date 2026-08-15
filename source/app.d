@@ -2117,6 +2117,15 @@ void main(string[] args) {
     // valence-3 / boundary / non-quad edge `edgeLoopRing` falls back to the
     // seed edge, so the mask just lights the single hovered edge.
     const(bool)[] rebuildLoopHoverMask(int hovEdge) {
+        // Settled-mesh precondition (debug-only, stripped from release builds
+        // — task 0724 / audit-4 M6). Both arms below read structVersion-
+        // derived state off the LIVE mesh: `loopSliceRingEdges` /
+        // `edgeLoopRing` walk the loops family, and the ring→edge-index
+        // mapping goes through edgeIndexMap. This runs once per frame at
+        // hover, i.e. AFTER whatever command last touched topology has
+        // returned, so every mutator's terminal buildLoops() has landed.
+        mesh.assertLoopsValid();
+        mesh.assertEdgeMapValid();
         // `sliceRing`: highlight the ring the loop-SLICE lands on (seed +
         // quad-ring exit rails) instead of the classic edge LOOP. Those run
         // perpendicular, so the Loop Slice tool needs this or the highlighted

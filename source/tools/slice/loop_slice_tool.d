@@ -421,6 +421,16 @@ public:
     // set (that preview is the STANDING cut itself once armed; the hover
     // ring is only ever shown pre-arm, per `wantsEdgeLoopHover`).
     public override JSONValue toolStateJson() const {
+        // Settled-mesh precondition (debug-only, stripped from release builds
+        // — task 0724 / audit-4 M6). The `ringEdges` field below reproduces
+        // app.d's `rebuildLoopHoverMask` (loops-family walk + edgeIndexMap
+        // resolve) so the two agree; the precondition has to travel with the
+        // copy, or the two spellings agree on the code and disagree on when
+        // it is legal to run. Serving an /api/tool/state read is a
+        // between-commands moment, so the live mesh is settled by the same
+        // argument as the app.d twin.
+        mesh.assertLoopsValid();
+        mesh.assertEdgeMapValid();
         auto root = JSONValue.emptyObject;
         root["tool"]        = JSONValue("loopSlice");
         root["hoveredEdge"] = JSONValue(g_hoveredEdge);

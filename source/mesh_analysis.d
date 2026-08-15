@@ -168,6 +168,15 @@ uint[] nonManifoldEdgeIndices(const ref AnalyzeContext ctx) {
 /// (converted from `Mesh.boundaryLoops`'s vertex chains via `edgeIndexMap`).
 /// One entry per open loop/hole; [] for a closed mesh.
 uint[][] nakedBoundaryLoopEdges(const ref Mesh mesh) {
+    // Settled-mesh precondition (debug-only, stripped from release builds —
+    // task 0724 / audit-4 M6). This entry point is `const ref`, so it CANNOT
+    // rebuild what it needs; a caller that hands it an unsettled mesh gets a
+    // silently SHORT answer, not an error — `boundaryLoopToEdgeIndices` drops
+    // every pair the map fails to resolve, so a null/stale map turns a real
+    // hole into "no boundary loops". The `const` reader that legitimately
+    // tolerates an unbuilt map returns a sentinel instead of asserting (see
+    // `constraint.nearestFaceEdge`); this one has no sentinel to return.
+    mesh.assertEdgeMapValid();
     auto vertLoops = mesh.boundaryLoops();
     uint[][] result;
     result.reserve(vertLoops.length);
