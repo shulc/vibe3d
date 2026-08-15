@@ -621,6 +621,11 @@ public:
         size_t firstNewFace = mesh.faces.length;
         if (!buildByMethod(mesh)) return false;
         applyFrameToMeshRange(mesh, firstNewVert, firstNewFace);
+        // Task 0901: `buildByMethod` only calls `addFace` — a pure tail
+        // append into the live scene mesh. This override bypasses the
+        // inherited `appendBuildInto()` (see the class doc above), so it
+        // needs its own `declareCornerAppend()` cross-check declaration.
+        mesh.declareCornerAppend();
         mesh.buildLoops();
         gpu.upload(*mesh);
         return true;

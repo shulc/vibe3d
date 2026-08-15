@@ -979,6 +979,11 @@ private:
             mesh.addFace(face);
         }
 
+        // Task 0901: both branches above only call `addFace` — a pure tail
+        // append into the live scene mesh (same convention every other
+        // create-tool commit site documents). Declared for the cross-check
+        // (task 0830's `declareCornerAppend`).
+        mesh.declareCornerAppend();
         mesh.buildLoops();
         gpu.upload(*mesh);
     }

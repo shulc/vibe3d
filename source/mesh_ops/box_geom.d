@@ -1177,6 +1177,17 @@ void buildCuboidParametric(Mesh* dst, const ref BoxParams p)
 {
     import std.typecons : Tuple, tuple;
 
+    // Task 0901: every path below (the rounded-cube/-plane delegates and the
+    // flat/segmented-cuboid body) only ever calls `dst.addFace` — this is a
+    // pure tail APPEND into `dst`, which the create-tools' own commit sites
+    // call directly on the LIVE scene mesh ("existing geometry survives" is
+    // every leaf tool's documented convention). Declared for the
+    // `declareCornerAppend()` cross-check (task 0830), same reasoning as
+    // `mesh_ops/bridge.d`'s conversion. `scope(exit)` because this function
+    // has several early `return`s and none of them is a partial/aborted
+    // build — every one already finished appending before returning.
+    scope(exit) dst.declareCornerAppend();
+
     // Rounded cube path: radius > epsilon → delegate to rounded generator.
     // Rounded plane (any size = 0) also delegates when radius > epsilon.
     bool anyZeroSize = abs(p.sizeX) < 1e-9f || abs(p.sizeY) < 1e-9f || abs(p.sizeZ) < 1e-9f;

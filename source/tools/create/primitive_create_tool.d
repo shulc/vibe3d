@@ -480,6 +480,13 @@ protected:
         size_t firstNewFace = mesh.faces.length;
         buildInto(mesh);
         applyFrameToMeshRange(mesh, firstNewVert, firstNewFace);
+        // Task 0901: `buildInto` (cylinder/cone/capsule/tube/torus's own
+        // generator) only ever calls `addFace` — a pure tail append into the
+        // live scene mesh, same shape as `mesh_ops/bridge.d`'s conversion.
+        // Declared for the cross-check (task 0830's `declareCornerAppend`);
+        // this is the single shared commit path every leaf tool here uses,
+        // both interactively and via the inherited `applyHeadless`.
+        mesh.declareCornerAppend();
         mesh.buildLoops();
         gpu.upload(*mesh);
     }
