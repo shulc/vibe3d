@@ -4313,3 +4313,56 @@ unittest {
       ~ "stood down (its darts do not cover that face)");
 }
 
+// ---------------------------------------------------------------------------
+// TASK 0920 — `compactUnreferenced` builds a full old->new `remap` and
+// permutes `vertices` by it, but used to leave `vertexMarks` /
+// `vertexSelectionOrder` / every Point-domain MeshMap (vertex weight, vertex
+// color) behind: the tail `resizeVertexSelection()` only grows/shrinks these
+// arrays by LENGTH, it does not move a value between slots, so dropping a
+// vertex out of the MIDDLE of the array left every survivor after it wearing
+// the weight/selection-order stamp that used to sit at its NEW index, not its
+// own. Its own inverse (`applyReindexForward`, mesh_edit_delta.d) already
+// permutes `vertexMarks`/`vertexSelectionOrder` correctly for this exact
+// compaction; this pins the forward kernel doing the same.
+//
+// Fixture measured by task 0831: 7 vertices — a triangle [0,1,2], a hanging
+// (unreferenced) vertex 3 in the middle, a second triangle [4,5,6]. A weight
+// map filled value == index. `compactUnreferenced` drops only v3, so v4..v6
+// shift down to slots 3..5 while v0..v2 keep theirs — a MIDDLE drop, not a
+// tail drop: on a tail drop, truncation and permutation agree and the test
+// would prove nothing (the same "one dropped face" trap task 0703 hid behind).
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m;
+    foreach (i; 0 .. 7) m.addVertex(Vec3(cast(float)i, 0, 0));
+    m.addFace([0u, 1u, 2u]);
+    m.addFace([4u, 5u, 6u]);
+    m.buildLoops();
+    m.syncSelection();
+
+    m.addWeightMap("w");
+    foreach (i; 0 .. 7) m.setVertexWeight("w", i, cast(float)i);
+    // A non-hidden vertex's manual selection-order stamp — the same
+    // discriminator the mesh_edit_delta S3 test uses for
+    // vertexSelectionOrder, exercised here on the FORWARD kernel instead of
+    // its undo/redo inverse.
+    m.vertexSelectionOrder[6] = 9;
+
+    const removed = m.compactUnreferenced();
+    assert(removed == 1, "setup: only the hanging vertex 3 is unreferenced");
+    assert(m.vertices.length == 6);
+
+    // Expected post-compaction order: old [0,1,2,4,5,6] -> new [0,1,2,3,4,5].
+    static immutable int[6] oldOfNew = [0, 1, 2, 4, 5, 6];
+    foreach (newIdx, oldIdx; oldOfNew)
+        assert(m.vertexWeight("w", newIdx) == cast(float)oldIdx,
+            format("compactUnreferenced: new slot %d must carry old v%d's own "
+                 ~ "weight (%d), not a neighbour's truncated-from-the-tail "
+                 ~ "value (got %s)", newIdx, oldIdx, oldIdx,
+                 m.vertexWeight("w", newIdx)));
+
+    assert(m.vertexSelectionOrder[5] == 9,
+        "compactUnreferenced: old v6's selection-order stamp must land at "
+      ~ "its new slot (5), not stay behind at its old slot (6) or truncate "
+      ~ "away entirely");
+}

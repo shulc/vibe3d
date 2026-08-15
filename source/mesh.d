@@ -2533,6 +2533,43 @@ struct Mesh {
         foreach (ref face; faces)
             foreach (ref vid; face)
                 if (vid < remap.length) vid = remap[vid];
+        // Task 0920: `vertexMarks` / `vertexSelectionOrder` / every
+        // Point-domain MeshMap (vertex weight, vertex color) must ride the
+        // SAME `remap` as `vertices` itself. The tail `resizeVertexSelection()`
+        // below only grows/shrinks these arrays by LENGTH — it does not move a
+        // value between slots — so leaving it to do the work alone is exactly
+        // the truncate-from-the-tail bug: a vertex dropped from the middle of
+        // the array left every survivor after it wearing the mark/weight that
+        // used to sit at ITS new index, not its own. Gather each survivor's own
+        // value from its OLD index into its NEW slot here, BEFORE `vertices` is
+        // overwritten — the same gather `applyReindexForward` (mesh_edit_delta.d)
+        // already runs for `vertexMarks`/`vertexSelectionOrder` on the undo/redo
+        // side of this exact compaction; this is that shape, extended to the
+        // Point-domain map registry it does not reach.
+        uint[] newMarks;
+        newMarks.length = newVerts.length;
+        int[] newOrder;
+        newOrder.length = newVerts.length;
+        foreach (old, p; remap) {
+            if (p == cast(uint)~0u) continue;
+            if (old < vertexMarks.length) newMarks[p] = vertexMarks[old];
+            if (old < vertexSelectionOrder.length) newOrder[p] = vertexSelectionOrder[old];
+        }
+        vertexMarks          = newMarks;
+        vertexSelectionOrder = newOrder;
+        foreach (ref mm; meshMaps) {
+            if (mm.domain != MapDomain.Point) continue;
+            const ubyte dim = mm.dim;
+            float[] nd;
+            nd.length = newVerts.length * dim;
+            foreach (old, p; remap) {
+                if (p == cast(uint)~0u) continue;
+                const size_t ob = cast(size_t)old * dim;
+                if (ob + dim > mm.data.length) continue; // defensive
+                nd[p * dim .. p * dim + dim] = mm.data[ob .. ob + dim];
+            }
+            mm.data = nd;
+        }
         vertices = newVerts;
         // Re-derive edges from faces (remap can break edge endpoints).
         rebuildEdges();
