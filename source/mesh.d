@@ -25,6 +25,16 @@ import mesh_ops.poly_bevel : MeshPolyBevelOps;
 // (task 0717). Re-exported so every `import mesh : Loop;` / `mesh.EdgeFaceRange`
 // call site resolves unchanged.
 public import mesh_topo;
+
+// The per-CORNER map vocabulary — `PolyVertexBlend` / `PolyVertexGen` /
+// `UvWallLaw`, and since task 0830 the obligation type `CornerProvenance` +
+// its reason enum `CornerDrop` → extracted to source/mesh_corner_maps.d.
+// Re-exported for the same reason `mesh_topo` is: every existing
+// `import mesh : PolyVertexBlend;` / `import mesh : UvWallLaw;` resolves
+// unchanged. The Mesh-COUPLED half of the obligation (`CornerRewrite`, which
+// captures the old corner space and arms the drop) stays here — it holds a
+// `Mesh*`, so it cannot live in a module Mesh imports.
+public import mesh_corner_maps;
 // ---------------------------------------------------------------------------
 // Mesh
 // ---------------------------------------------------------------------------
@@ -162,89 +172,6 @@ struct MeshMap {
         return MeshMap(name, dim, domain, data.dup);
     }
 }
-
-/// Provenance of ONE vertex an operation inserted: the blend of ORIGINAL
-/// vertices that produced it, as up to four (vertex, weight) pairs with the
-/// weights summing to 1 — an edge midpoint uses two, a quad bilerp four.
-///
-/// Consumed by `Mesh.carryPolyVertexMaps` (per-corner map carry, mechanism (c),
-/// task 0682): a corner sitting on an inserted vertex takes the SAME weighted
-/// combination of the source face's corner VALUES that its position took of the
-/// source face's corner POSITIONS. Four is the ceiling because it covers every
-/// insertion the mesh kernels perform (edge split, bilerp); a hypothetical
-/// wider blend is rejected by `add` rather than silently truncated to a
-/// non-normalised subset (see `full`).
-struct PolyVertexBlend {
-    uint[4]  src = [~0u, ~0u, ~0u, ~0u];
-    float[4] w   = [0.0f, 0.0f, 0.0f, 0.0f];
-    ubyte    n   = 0;
-    /// True once a 5th source was refused — the record is then unusable and
-    /// `carryPolyVertexMaps` leaves such a corner at zero rather than applying
-    /// a partial (weights < 1) blend.
-    bool     overflow = false;
-
-    void add(uint vertex, float weight) {
-        if (n >= 4) { overflow = true; return; }
-        src[n] = vertex;
-        w[n]   = weight;
-        ++n;
-    }
-}
-
-/// A per-corner value an operation GENERATES rather than inherits — mechanism
-/// (e), task 0697. Some measured laws are not a weighted sum of any existing
-/// corner: a face bevel's inset ring is the source face's UV POLYGON inset by
-/// its own distance, and an extrude wall's swept coordinate is a fresh 0→1
-/// parameterisation. Both are still anchored in the source face's own island
-/// (`srcFace` + `srcCorner`), which is what keeps them per-island — the value
-/// is computed from that face's corner values, never from a global projection.
-///
-/// Applies to a 2-component (UV-shaped) PolyVertex map ONLY. Both laws are
-/// statements about a plane — "inset this polygon", "sweep this coordinate" —
-/// and neither has a meaning for a 1-D weight channel or a 3-D colour, so a map
-/// of any other `dim` leaves the corner at the honest zero. v1 registers exactly
-/// one PolyVertex map (`kUvMapName`, dim 2), so today that branch is unreachable
-/// in practice and exists to keep a future channel from being silently mangled.
-struct PolyVertexGen {
-    enum Law : ubyte {
-        /// Inset the source face's UV polygon so every UV edge moves inward by
-        /// `amount * uvPerimeter`, and take the vertex at `srcCorner`.
-        /// `amount` is the GEOMETRIC ratio `insetDistance / geometricPerimeter`,
-        /// computed by the kernel; the map supplies its own `uvPerimeter`, so
-        /// the same record serves every 2-D map. Frozen law, fixture cases
-        /// `face_bevel_connected*`.
-        InsetRing,
-        /// Component 0 becomes `amount` (the swept coordinate: 0 on the base
-        /// ring, 1 on the top ring); component 1 keeps the value the source
-        /// corner already had. Frozen law, fixture case
-        /// `face_extrude_uv_sweep_u`.
-        SweepU,
-    }
-    size_t newLoop;    /// which NEW corner, in new-face/new-corner order
-    uint   srcFace;    /// OLD face whose island the law reads
-    uint   srcCorner;  /// corner index inside that old face
-    Law    law;
-    float  amount;
-}
-
-/// Which measured per-corner UV law an extrude gives its WALLS (task 0697).
-/// Both are frozen in tests/fixtures/uv_corner_transfer.json; the reference
-/// exposes the choice as a tool attribute, active only while a per-corner map is
-/// the current one — which for us is simply "a per-corner map exists", the same
-/// condition that makes the carry run at all.
-enum UvWallLaw : ubyte {
-    /// Each wall corner keeps the value of the base corner it stands over, so a
-    /// wall is DEGENERATE in UV (zero area) and no existing value is rewritten.
-    /// Frozen as `face_extrude_no_uv_sweep`.
-    Copy,
-    /// Fresh wall parameterisation: u = 0 on the base ring, u = 1 on the top
-    /// ring, v = the base corner's own v. The base corners' original u is
-    /// discarded ON THE WALLS (the faces that share those vertices keep theirs).
-    /// Frozen as `face_extrude_uv_sweep_u`, and the reference's factory setting —
-    /// hence the default.
-    SweepU,
-}
-
 
 /// Cache-validity key for a version-keyed cache that lives OUTSIDE the
 /// `Mesh` it was built from (e.g. a toolpipe stage's per-drag cluster or
@@ -2382,8 +2309,14 @@ struct Mesh {
         // here from `oldFaceLoop` captured before `faces` is rewritten. (This is
         // the same corner-drop logic the positional import-weld uses; getting it
         // right here is exactly the GAP-4 keying.)
-        const bool remapUv = hasPolyVertexMap();
-        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        // Task 0830: this capture is the obligation handle. `beginCornerRelocate`
+        // takes the OFFSETS only — a relocation names each source corner by
+        // index and never looks a vertex up in an old winding — and it ARMS the
+        // drop: a path out of here that rewrites `faces` without declaring loses
+        // the plane rather than keeping values on foreign corners.
+        auto rw = beginCornerRelocate();
+        const bool remapUv = rw.active();
+        const(uint)[] oldFaceLoop = rw.oldFaceLoop();
         uint[] oldLoopOfNewLoop;
 
         uint[][] newFaces;
@@ -2417,7 +2350,7 @@ struct Mesh {
             }
         }
         faces = newFaces;
-        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
+        if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
 
         rebuildEdges();
 
@@ -2629,8 +2562,14 @@ struct Mesh {
         // count, so corner `c` of a kept face maps to old loop
         // oldFaceLoop[oldFi]+c. Build `oldLoopOfNewLoop` in NEW-face/new-corner
         // (CSR) order while filtering, then relocate before the tail buildLoops.
-        const bool remapUv = hasPolyVertexMap();
-        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        // Task 0830: this capture is the obligation handle. `beginCornerRelocate`
+        // takes the OFFSETS only — a relocation names each source corner by
+        // index and never looks a vertex up in an old winding — and it ARMS the
+        // drop: a path out of here that rewrites `faces` without declaring loses
+        // the plane rather than keeping values on foreign corners.
+        auto rw = beginCornerRelocate();
+        const bool remapUv = rw.active();
+        const(uint)[] oldFaceLoop = rw.oldFaceLoop();
         uint[] oldLoopOfNewLoop;
         foreach (i, ref f; faces) {
             if (mask[i]) {
@@ -2693,7 +2632,7 @@ struct Mesh {
         // corners. Done now (before the tail buildLoops); the loop layout this
         // produces is exactly what buildLoops rebuilds from the new `faces`, so
         // its resizePolyVertexMaps is then a length-correct no-op.
-        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
+        if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
         // Selection bits don't survive index changes; clear and let caller
         // restore as needed.
         clearFaceSelectionResize();
@@ -2738,7 +2677,13 @@ struct Mesh {
         const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         import std.algorithm.mutation : reverse;
         if (mask.length != faces.length) return 0;
-        const bool needUV = hasPolyVertexMap();
+        // Task 0830: a winding flip is a corner PERMUTATION — the one shape
+        // that leaves the corner total untouched, so the length test has
+        // nothing to say about it and every value would be kept, each on the
+        // corner that used to be its mirror. Open the rewrite before the first
+        // `reverse` so that silence here costs the plane instead.
+        auto rw = beginCornerRelocate();
+        const bool needUV = rw.active();
         size_t flipped = 0;
         foreach (fi; 0 .. faces.length) {
             if (!mask[fi]) continue;
@@ -2754,14 +2699,19 @@ struct Mesh {
             // Non-flipped and degenerate faces use the identity mapping.
             auto oldLoopOfNewLoop = new uint[](loops.length);
             foreach (fi; 0 .. faces.length) {
-                const uint base = faceLoop[fi];
+                // The capture's offsets, not `faceLoop` — same numbers here
+                // (arity is preserved, so the pre- and post-flip CSR agree),
+                // but sourced from the windings the correspondence is about
+                // rather than from a cache that a different kernel could leave
+                // stale.
+                const uint base = rw.oldFaceLoop()[fi];
                 const uint n    = cast(uint) faces[fi].length;
                 if (mask[fi] && n >= 3)
                     foreach (j; 0 .. n) oldLoopOfNewLoop[base + j] = base + (n - 1 - j);
                 else
                     foreach (j; 0 .. n) oldLoopOfNewLoop[base + j] = base + j;
             }
-            remapPolyVertexMaps(oldLoopOfNewLoop); // BEFORE buildLoops ⇒ resize no-ops
+            declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
         }
         buildLoops();   // re-sync loops/loopEdge; NOT rebuildEdges (edge set invariant)
         commitChange(MeshEditScope.Geometry);
@@ -2847,8 +2797,14 @@ struct Mesh {
         // specific OLD corner `k` (its position in the old face). Build
         // `oldLoopOfNewLoop` in NEW-face/new-corner (CSR) order so a planted UV
         // follows the surviving corner even as the face changes arity.
-        const bool remapUv = hasPolyVertexMap();
-        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        // Task 0830: this capture is the obligation handle. `beginCornerRelocate`
+        // takes the OFFSETS only — a relocation names each source corner by
+        // index and never looks a vertex up in an old winding — and it ARMS the
+        // drop: a path out of here that rewrites `faces` without declaring loses
+        // the plane rather than keeping values on foreign corners.
+        auto rw = beginCornerRelocate();
+        const bool remapUv = rw.active();
+        const(uint)[] oldFaceLoop = rw.oldFaceLoop();
         uint[] oldLoopOfNewLoop;
         foreach (fi, ref f; faces) {
             uint[] kept;
@@ -2906,7 +2862,7 @@ struct Mesh {
         facePart           = newPart;
         // PolyVertex relocate (b): per-corner values follow surviving corners
         // through the arity change. Before the tail buildLoops/compact.
-        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
+        if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
         clearFaceSelectionResize();
 
         // Rebuild edges from the new faces (some edges are gone, some
@@ -3343,8 +3299,14 @@ struct Mesh {
         // offsets so each merged-poly corner — and each kept face's corner — can
         // be traced to an old loop index. Built into `oldLoopOfNewLoop` in the
         // final [kept ++ merged] face order below.
-        const bool remapUv = hasPolyVertexMap();
-        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        // Task 0830: this capture is the obligation handle. `beginCornerRelocate`
+        // takes the OFFSETS only — a relocation names each source corner by
+        // index and never looks a vertex up in an old winding — and it ARMS the
+        // drop: a path out of here that rewrites `faces` without declaring loses
+        // the plane rather than keeping values on foreign corners.
+        auto rw = beginCornerRelocate();
+        const bool remapUv = rw.active();
+        const(uint)[] oldFaceLoop = rw.oldFaceLoop();
 
         // Build face → face union-find via selected edges.
         size_t nFaces = faces.length;
@@ -3634,7 +3596,7 @@ struct Mesh {
         facePart           = keptPart;
         // PolyVertex relocate (b): per-corner values follow the merged/kept
         // corners. Before the tail buildLoops (which then no-ops the resize).
-        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
+        if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
         clearFaceSelectionResize();
 
         // Rebuild edges + compact orphan verts. The pre-existing loose verts
@@ -3716,8 +3678,14 @@ struct Mesh {
         // PolyVertex remap, mechanism (b): triangulation changes arity — each
         // n-gon splits into (n-2) triangles; each triangle corner comes from a
         // specific OLD face corner.
-        const bool remapUv = hasPolyVertexMap();
-        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        // Task 0830: this capture is the obligation handle. `beginCornerRelocate`
+        // takes the OFFSETS only — a relocation names each source corner by
+        // index and never looks a vertex up in an old winding — and it ARMS the
+        // drop: a path out of here that rewrites `faces` without declaring loses
+        // the plane rather than keeping values on foreign corners.
+        auto rw = beginCornerRelocate();
+        const bool remapUv = rw.active();
+        const(uint)[] oldFaceLoop = rw.oldFaceLoop();
         uint[] oldLoopOfNewLoop;
 
         uint[][] newFaces;
@@ -3779,7 +3747,7 @@ struct Mesh {
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
-        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
+        if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
         clearFaceSelectionResize();
         rebuildEdges();
         clearEdgeSelectionResize();
@@ -4517,19 +4485,17 @@ struct Mesh {
                 // The CSR offsets are recomputed here rather than read from
                 // `faceLoop`: `weldCoincidentVertices` just above rewrites face
                 // windings WITHOUT a `buildLoops`, so the cached offsets are
-                // stale by this point.
-                const bool remapUv = hasPolyVertexMap();
-                uint[] dedupFaceLoop;
+                // stale by this point. Task 0830: that recomputation IS what
+                // `beginCornerRelocate` does — prefix-sum the live windings —
+                // so the hand-rolled `dedupFaceLoop` is now the handle's own
+                // offsets, and opening the rewrite here arms the drop for the
+                // dedup pass below.
+                auto rw = beginCornerRelocate();
+                const bool remapUv = rw.active();
                 uint[] oldLoopOfNewLoop;
-                if (remapUv) {
-                    dedupFaceLoop.length = faces.length;
-                    uint acc = 0;
-                    foreach (fi, ref f; faces) {
-                        dedupFaceLoop[fi] = acc;
-                        acc += cast(uint)f.length;
-                    }
-                    oldLoopOfNewLoop.reserve(acc);
-                }
+                if (remapUv && faces.length > 0)
+                    oldLoopOfNewLoop.reserve(rw.oldFaceLoop()[$ - 1]
+                                             + faces[$ - 1].length);
                 foreach (fi, ref f; faces) {
                     auto sorted = f.dup;
                     sort(sorted);
@@ -4538,7 +4504,7 @@ struct Mesh {
                     seenFp[fp] = true;
                     if (remapUv)
                         foreach (c; 0 .. f.length)
-                            oldLoopOfNewLoop ~= dedupFaceLoop[fi] + cast(uint)c;
+                            oldLoopOfNewLoop ~= rw.oldFaceLoop()[fi] + cast(uint)c;
                     keptFaces    ~= f;
                     keptWord     ~= faceAttrOr(faceMarks, fi);
                     keptOrder    ~= faceAttrOr(faceSelectionOrder, fi);
@@ -4547,7 +4513,7 @@ struct Mesh {
                     keptPart     ~= faceAttrOr(facePart, fi);
                 }
                 faces              = keptFaces;
-                if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
+                if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
                 // keptSelected is applied right after via setFacesSelectedFrom,
                 // so Select's bit in keptWord is irrelevant either way; drop it
                 // here anyway to match every other compaction site's convention.
@@ -5081,6 +5047,23 @@ struct Mesh {
             if (m.domain != MapDomain.PolyVertex) continue;
             const size_t old = m.data.length;
             m.data.length = old + nCorners * m.dim;
+            m.data[old .. $] = 0.0f; // float.init is NaN
+        }
+    }
+
+    // The same growth stated as a DESTINATION rather than a delta — how the
+    // `Appended` declaration is applied (task 0830). Idempotent by
+    // construction: a kernel that already grew face-by-face through
+    // `appendFaceRaw` is already at (or past) `totalCorners` and this does
+    // nothing, while a kernel that appended with a bare `faces ~= …` and states
+    // the growth ONCE at the end gets it here, in one pass instead of n.
+    private void growPolyVertexMapsTo(size_t totalCorners) {
+        foreach (ref m; meshMaps) {
+            if (m.domain != MapDomain.PolyVertex) continue;
+            const size_t want = totalCorners * m.dim;
+            if (m.data.length >= want) continue;
+            const size_t old = m.data.length;
+            m.data.length = want;
             m.data[old .. $] = 0.0f; // float.init is NaN
         }
     }
@@ -5632,6 +5615,60 @@ struct Mesh {
     //
     // No-op when no PolyVertex map is registered.
     void resizePolyVertexMaps() {
+        // --- the DECLARATION is the arbiter (task 0830) -------------------
+        // Consume exactly once: a declaration describes ONE `faces` rewrite,
+        // and a second `buildLoops` must not re-apply it.
+        const CornerProvenance decl = pendingCornerProvenance_;
+        const bool wasArmed         = cornerRewriteArmed_;
+        pendingCornerProvenance_    = CornerProvenance.init;
+        cornerRewriteArmed_         = false;
+
+        if (decl.kind() == CornerProvenance.Kind.Dropped) {
+            // Stated loss. Deferred to here rather than applied at declaration
+            // time because the length it must come out at is the NEW
+            // `loops.length`, which only exists once this rebuild has run.
+            dropPolyVertexMaps();
+            return;
+        }
+        if (decl.declared() && decl.corners() != size_t.max
+                            && decl.corners() != loops.length) {
+            // The kernel described a corner space it did not end in — it
+            // relocated N corners and then changed the corner total again
+            // before the rebuild. Its correspondence addresses corners that do
+            // not exist, so the honest end state is the stated drop (which is
+            // also, exactly, what the length insurance below would have
+            // produced).
+            //
+            // The drop runs FIRST and the shout second, deliberately: a
+            // diagnostic that pre-empts the repair leaves the mesh holding a
+            // length-wrong map, which is a worse state than the one being
+            // reported. Under `-release` the shout is gone and the repair is
+            // all that is left, which is the correct behaviour either way.
+            dropPolyVertexMaps();
+            debug assert(decl.corners() == loops.length,
+                "corner provenance: declared for a different corner space than "
+                ~ "the one buildLoops rebuilt");
+            return;
+        }
+        if (wasArmed && !decl.declared()) {
+            // A kernel OPENED a corner rewrite and never said what became of
+            // the corners. This is the 0697 failure with its teeth pulled: a
+            // corner-count-NEUTRAL rewrite lands here with the length still
+            // matching, and the insurance below would KEEP every value — each
+            // one now sitting on a foreign corner. Silence is a drop.
+            dropPolyVertexMaps();
+            debug assert(!wasArmed,
+                "corner provenance: a face rewrite reached buildLoops without "
+                ~ "declaring what became of the corners");
+            return;
+        }
+
+        // --- length: the INSURANCE, no longer the arbiter ------------------
+        // Reached by a `buildLoops` that follows no declared rewrite at all —
+        // the overwhelming majority (a rebuild after a vertex move, a fresh
+        // mesh, a snapshot restore). It keeps a length-correct map and zeroes a
+        // length-wrong one, exactly as before task 0830. Every kernel converted
+        // to declare passes through the branches above and never reaches here.
         foreach (ref m; meshMaps) {
             if (m.domain != MapDomain.PolyVertex) continue;
             const size_t want = loops.length * m.dim;
@@ -5641,6 +5678,247 @@ struct Mesh {
             m.data[] = 0.0f;
         }
     }
+
+    // --- The corner-provenance obligation (task 0830) ---------------------
+    // The declaration a kernel owes, and the capture it is resolved against.
+    //
+    // THE SHAPE. A kernel that is about to renumber corners opens the rewrite:
+    //
+    //     auto rw = beginCornerRewrite();      // captures the OLD corner space
+    //     …rebuild `faces`…
+    //     declareCornerProvenance(rw.carried(newFaces, srcOfCorner, blends));
+    //     rebuildEdges();
+    //     buildLoops();                        // consumes the declaration
+    //
+    // `beginCornerRewrite` is not ceremony: it returns the two things every
+    // correspondence is resolved against — the old windings and the old CSR
+    // offsets — which five kernels used to capture by hand, five times, with
+    // five different guards. The kernel calls it because it NEEDS the capture;
+    // the obligation rides along.
+    //
+    // WHAT THE ARMING BUYS. From the moment the capture is taken until the
+    // declaration lands, the per-corner plane is IN FLIGHT and its default
+    // outcome is the DROP — not the length test. That is the half of the class
+    // a length check can never see (task 0697): a rewrite that leaves the corner
+    // TOTAL unchanged has a length-correct map at the end, so the insurance
+    // keeps every value, and every value is now on a foreign corner. Under the
+    // arming, saying nothing loses the values instead of scrambling them.
+    //
+    // WHY THE HANDLE HAS A DESTRUCTOR. A kernel may bail after the capture and
+    // before it rewrites anything (an empty mask, a degenerate input). The
+    // destructor disarms, so an abandoned rewrite leaves the plane exactly as it
+    // found it. The two failure directions are deliberately asymmetric:
+    // disarming too EARLY falls back to the length insurance (the pre-0830
+    // behaviour), disarming too LATE drops a plane and goes loudly red in the
+    // UV lanes. Neither can silently keep a wrong value.
+    //
+    // INERT WITHOUT A MAP. With no PolyVertex map registered the capture is
+    // skipped, nothing is armed, and every declaration is a no-op — the same
+    // "don't pay for what isn't there" rule the carry sites already applied by
+    // hand with `if (hasPolyVertexMap())`.
+    struct CornerRewrite {
+        private Mesh*    mesh_;
+        private bool     active_;
+        private bool     haveWindings_;
+        private uint[][] oldFaces_;
+        private uint[]   oldFaceLoop_;
+
+        // One owner. A copied handle would disarm the mesh when the copy died,
+        // leaving the original's declaration to be judged by length again.
+        @disable this(this);
+
+        ~this() {
+            if (mesh_ !is null) mesh_.disarmCornerRewrite();
+        }
+
+        /// True iff there is a per-corner plane to owe anything to AND the
+        /// capture describes it. False makes every builder below produce
+        /// `unchanged()` — a declaration that costs nothing and claims nothing.
+        bool active() const { return active_; }
+
+        /// The windings as they were at capture time. Every correspondence
+        /// resolves its source corners against THESE, never against the live
+        /// `faces` (which the kernel is in the middle of rewriting).
+        const(uint[])[] oldFaces() const { return oldFaces_; }
+
+        /// CSR offsets for `oldFaces`, computed by prefix sum over the captured
+        /// windings rather than copied from `faceLoop`. That is deliberate:
+        /// `weldCoincidentVertices` rewrites windings WITHOUT a `buildLoops`, so
+        /// `faceLoop` can be stale exactly where a kernel needs offsets, and a
+        /// prefix sum over what was captured cannot be (task 0690's stale
+        /// `faceLoop` trap).
+        const(uint)[] oldFaceLoop() const { return oldFaceLoop_; }
+
+        // --- the declarations, bound to this capture ----------------------
+
+        /// Mechanism (c') — per-CORNER source, plus blends for corners standing
+        /// on inserted vertices and `gens` for corners the kernel computes.
+        CornerProvenance carried(const(uint[])[] newFaces,
+                                 const(uint)[]   srcFaceOfNewCorner,
+                                 PolyVertexBlend[uint] blendOfNewVertex,
+                                 const(PolyVertexGen)[] gens = null) {
+            if (!active_) return CornerProvenance.unchanged();
+            assert(haveWindings_,
+                   "a carry resolves its sources by looking a VERTEX up in an "
+                   ~ "old face — open it with beginCornerRewrite(), not "
+                   ~ "beginCornerRelocate()");
+            CornerProvenance.Carry c;
+            c.newFaces           = newFaces;
+            c.srcFaceOfNewCorner = srcFaceOfNewCorner;
+            c.oldFaces           = oldFaces_;
+            c.oldFaceLoop        = oldFaceLoop_;
+            c.blendOfNewVertex   = blendOfNewVertex;
+            c.gens               = gens;
+            return CornerProvenance.carried(c);
+        }
+
+        /// Mechanism (c) — the same, with ONE source face per new FACE. Expands
+        /// to the per-corner form here so the two entries can never drift: what
+        /// the per-corner path does IS what this does, with a constant source
+        /// across each face's corners.
+        CornerProvenance carriedPerFace(const(uint[])[] newFaces,
+                                        const(uint)[]   srcFaceOfNewFace,
+                                        PolyVertexBlend[uint] blendOfNewVertex,
+                                        const(PolyVertexGen)[] gens = null) {
+            if (!active_) return CornerProvenance.unchanged();
+            size_t total = 0;
+            foreach (nf; newFaces) total += nf.length;
+            uint[] srcFaceOfNewCorner = new uint[](total);
+            size_t at = 0;
+            foreach (nfi, nf; newFaces) {
+                const uint sf = (nfi < srcFaceOfNewFace.length)
+                              ? srcFaceOfNewFace[nfi] : ~0u;
+                foreach (_; nf) srcFaceOfNewCorner[at++] = sf;
+            }
+            return carried(newFaces, srcFaceOfNewCorner, blendOfNewVertex, gens);
+        }
+
+        /// Mechanisms (a)/(b) — one old corner per new corner, `~0u` for new.
+        CornerProvenance relocated(const(uint)[] oldLoopOfNewLoop) {
+            if (!active_) return CornerProvenance.unchanged();
+            return CornerProvenance.relocated(oldLoopOfNewLoop);
+        }
+
+        /// The corner space was not renumbered after all.
+        CornerProvenance unchanged() { return CornerProvenance.unchanged(); }
+
+        /// No correspondence can be stated, and here is why.
+        CornerProvenance dropped(CornerDrop why) {
+            return CornerProvenance.dropped(why);
+        }
+    }
+
+    // The declaration the next `buildLoops` will consume, and whether a rewrite
+    // is open. Both are TRANSIENT — they live for the span of one kernel, are
+    // cleared by `resizePolyVertexMaps`, and mean nothing across a copy of the
+    // `Mesh` value (a copy taken mid-kernel is already pathological).
+    private CornerProvenance pendingCornerProvenance_;
+    private bool             cornerRewriteArmed_;
+
+    /// Open a corner rewrite: capture the old corner space and arm the drop.
+    /// See the block comment above for what the arming means.
+    CornerRewrite beginCornerRewrite() {
+        return openCornerRewrite(true);
+    }
+
+    /// Open a rewrite that will be described by a RELOCATION rather than a
+    /// carry. Captures the old CSR offsets and arms the drop, but NOT the old
+    /// windings — and that is a statement about the mechanism, not a saving:
+    /// a relocation names each source corner BY INDEX, so it never looks a
+    /// vertex up in an old face, while a carry does exactly that (which is what
+    /// lets it resolve a corner standing on an inserted vertex). Asking for a
+    /// `carried()` declaration off this handle trips an assert rather than
+    /// resolving every corner against an empty winding list.
+    ///
+    /// The saving is real too: the windings dup is O(corners) and the delete /
+    /// dissolve / remove-edges family runs on whole-mesh selections.
+    CornerRewrite beginCornerRelocate() {
+        return openCornerRewrite(false);
+    }
+
+    private CornerRewrite openCornerRewrite(bool captureWindings) {
+        CornerRewrite rw;
+        rw.mesh_ = &this;
+        // Nothing to carry, nothing to lose: skip the capture entirely.
+        if (!hasPolyVertexMap()) return rw;
+        // The map is ALREADY out of step with `faces` (a kernel caught mid-
+        // rewrite). Offsets captured now would address a corner space no map
+        // is in, so decline to arm and let the length insurance state the loss.
+        if (!polyVertexMapsInStepWithFaces()) return rw;
+
+        // Note what is deliberately NOT a precondition: that `loops` describes
+        // the same space. `addEdgePoint` used to require it (`acc !=
+        // loops.length ⇒ do not carry`) and hoisting that guard here turned
+        // `arrayFacesGrid`'s dedup pass red — measured, task 0830. `loops` is a
+        // cache rebuilt only by `buildLoops`, so a MID-kernel capture routinely
+        // runs while it still describes the previous corner space (that kernel
+        // has already appended faces through `appendFaceRaw`, which grows the
+        // map but does not rebuild loops). What the capture's offsets have to
+        // agree with is the MAP, and that is exactly what
+        // `polyVertexMapsInStepWithFaces` asks — the same reasoning its own doc
+        // comment gives for not consulting `loops`.
+        rw.active_       = true;
+        rw.haveWindings_ = captureWindings;
+        if (captureWindings) {
+            rw.oldFaces_.reserve(faces.length);
+            foreach (ref f; faces) rw.oldFaces_ ~= f.dup;
+        }
+        rw.oldFaceLoop_.length = faces.length;
+        uint acc = 0;
+        foreach (fi, ref f; faces) {
+            rw.oldFaceLoop_[fi] = acc;
+            acc += cast(uint)f.length;
+        }
+        cornerRewriteArmed_ = true;
+        return rw;
+    }
+
+    /// State what became of the corners. Applies the correspondence to every
+    /// PolyVertex map NOW (it reads the OLD map data and the OLD windings, both
+    /// of which the tail `buildLoops` would have moved on from) and records the
+    /// declaration for that rebuild to consume.
+    ///
+    /// The one shape applied LATER is `Dropped`: its end state is a zeroed map
+    /// at the NEW `loops.length`, a number that does not exist yet.
+    void declareCornerProvenance(CornerProvenance p) {
+        assert(p.declared(),
+               "declareCornerProvenance: Undeclared is not a declaration — "
+               ~ "name one of the five shapes");
+        cornerRewriteArmed_ = false;
+        final switch (p.kind()) {
+            case CornerProvenance.Kind.Undeclared:
+                break;                                   // refused by the assert
+            case CornerProvenance.Kind.Unchanged:
+                break;                                   // nothing moves
+            case CornerProvenance.Kind.Appended:
+                growPolyVertexMapsTo(p.corners());
+                break;
+            case CornerProvenance.Kind.Relocated:
+                remapPolyVertexMaps(p.oldLoopOfNewLoop());
+                break;
+            case CornerProvenance.Kind.Carried:
+                auto c = p.carry();
+                carryPolyVertexMapsByCorner(c.newFaces, c.srcFaceOfNewCorner,
+                                            c.oldFaces, c.oldFaceLoop,
+                                            c.blendOfNewVertex, c.gens);
+                break;
+            case CornerProvenance.Kind.Dropped:
+                break;                                   // applied at the rebuild
+        }
+        pendingCornerProvenance_ = p;
+    }
+
+    /// Declare the stated loss without opening a rewrite — the shape a kernel in
+    /// the drop set uses. It needs no capture (there is nothing to resolve
+    /// against), so it must not pay for one.
+    void dropCornerProvenance(CornerDrop why) {
+        declareCornerProvenance(CornerProvenance.dropped(why));
+    }
+
+    // Called by `CornerRewrite`'s destructor. Clears ONLY the arming: a
+    // declaration already made stands, and clearing it here would undo the very
+    // thing the handle exists to obtain.
+    private void disarmCornerRewrite() { cornerRewriteArmed_ = false; }
 
     // STATED drop of every PolyVertex map: length-correct for the current
     // loops, values zeroed (task 0689). The same END STATE `resizePolyVertexMaps`
@@ -9592,27 +9870,13 @@ struct Mesh {
         if (ei >= edges.length)        return uint.max;
         if (t <= 0.0f || t >= 1.0f)   return uint.max;
 
-        // Capture the pre-splice corner space (only when a per-corner map
-        // exists — otherwise this whole path is skipped, as everywhere else).
+        // Open the corner rewrite (task 0830). The capture — old windings + old
+        // CSR offsets — is what the correspondence below resolves against, and
+        // its own precondition ("the map, `faces` and `loops` all describe one
+        // corner space") is the guard this site used to spell out by hand.
         const uint ea = edges[ei][0], eb = edges[ei][1];
-        bool     carryUv = hasPolyVertexMap();
-        uint[][] oldFaces;
-        uint[]   oldFaceLoop;
-        if (carryUv) {
-            oldFaces.reserve(faces.length);
-            foreach (ref f; faces) oldFaces ~= f.dup;
-            oldFaceLoop.length = faces.length;
-            uint acc = 0;
-            foreach (fi, ref f; faces) {
-                oldFaceLoop[fi] = acc;
-                acc += cast(uint)f.length;
-            }
-            // The captured offsets describe the map's own corner space only if
-            // `loops` is in step with `faces` right now. If it is not, the map
-            // is already out of step with the geometry and the honest answer is
-            // the drop, not a relocate against offsets we cannot trust.
-            if (acc != loops.length) carryUv = false;
-        }
+        auto rw = beginCornerRewrite();
+        const bool carryUv = rw.active();
 
         bool[] isCutVert; // local throwaway — not used outside this call
         uint vi = insertEdgePoint(ei, t, isCutVert);
@@ -9635,8 +9899,15 @@ struct Mesh {
             uint[] srcFaceOfNewFace;
             srcFaceOfNewFace.length = faces.length;
             foreach (fi; 0 .. faces.length) srcFaceOfNewFace[fi] = cast(uint)fi;
-            carryPolyVertexMaps(faces.range, srcFaceOfNewFace, oldFaces,
-                                oldFaceLoop, blend);
+            declareCornerProvenance(
+                rw.carriedPerFace(faces.range, srcFaceOfNewFace, blend));
+        } else if (carryUv) {
+            // The parameter snapped to an existing endpoint: `insertEdgePoint`
+            // spliced nothing, so every corner keeps its slot AND its meaning.
+            // This branch is not decoration — an OPEN rewrite that reaches
+            // `buildLoops` without a declaration drops the plane by design
+            // (task 0830), so the no-op path has to say it is a no-op.
+            declareCornerProvenance(rw.unchanged());
         }
 
         // Re-derive edges from faces (deduped via edgeIndexMap).

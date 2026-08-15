@@ -2935,13 +2935,12 @@ mixin template MeshExtrudeOps() {
         // offsets before anything is rewritten. A cloned cap vertex is a
         // one-source "blend" of the original it was lifted from, so the cap and
         // the walls' top corners resolve against their source face's own island.
-        const bool remapUv = hasPolyVertexMap();
-        uint[][] oldFaces;
-        if (remapUv) {
-            oldFaces.reserve(faces.length);
-            foreach (ref f; faces) oldFaces ~= f.dup;
-        }
-        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        // Task 0830: that capture IS the obligation handle now, and it arms the
+        // drop — a path out of this kernel that rewrites `faces` without
+        // declaring loses the plane instead of keeping values on foreign corners.
+        auto rw = beginCornerRewrite();
+        const bool remapUv = rw.active();
+        const(uint[])[] oldFaces = rw.oldFaces();  // read by the SweepU gen below
         PolyVertexBlend[uint] vertBlend;
 
         // Clone each (island,vertex) used by a selected face (once per
@@ -3070,8 +3069,8 @@ mixin template MeshExtrudeOps() {
         // reads the old windings — and before the tail `buildLoops`, which would
         // otherwise see a length-wrong map and zero the WHOLE mesh's UV.
         if (remapUv)
-            carryPolyVertexMapsByCorner(newFaces, srcOfCorner, oldFaces,
-                                        oldFaceLoop, vertBlend, gens);
+            declareCornerProvenance(
+                rw.carried(newFaces, srcOfCorner, vertBlend, gens));
 
         // Assign reconstructed arrays.
         faces              = newFaces;

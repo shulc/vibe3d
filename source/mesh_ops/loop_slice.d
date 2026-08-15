@@ -672,8 +672,14 @@ mixin template MeshLoopSliceOps() {
         // source), and the blend of original vertices behind every inserted
         // vertex (`vertBlend`). Both are skipped entirely when no per-corner map
         // is registered — the common case pays nothing.
-        immutable bool carryUv = hasPolyVertexMap();
-        const uint[] oldFaceLoop = carryUv ? captureFaceLoop() : null;
+        //
+        // Task 0830: the capture is now the OBLIGATION handle. From here to the
+        // declaration below the per-corner plane is in flight and its default
+        // outcome is the drop; `rw.active()` is the old `hasPolyVertexMap()`
+        // plus the "the map is in step with `faces` right now" precondition the
+        // capture is only meaningful under.
+        auto rw = beginCornerRewrite();
+        immutable bool carryUv = rw.active();
         PolyVertexBlend[uint] vertBlend;
 
         static void reverseInPlace(uint[] a) {
@@ -1245,15 +1251,16 @@ mixin template MeshLoopSliceOps() {
 
         if (splitPairsOut !is null) *splitPairsOut = splitSeams;
 
-        // Carry the corner-indexed planes (UV) across the rebuild BEFORE
-        // `faces` is replaced — the helper reads the OLD faces to find each
-        // corner's island (task 0682). Leaves every map length-correct for the
-        // new corner count, so the tail `buildLoops`'s `resizePolyVertexMaps`
-        // sees a placed map and no-ops instead of zeroing it.
+        // Declare what became of the corners (task 0830). The correspondence is
+        // resolved against the capture `rw` took at entry — the OLD windings and
+        // their CSR offsets — so it must be stated BEFORE `faces` is replaced in
+        // the sense that the SOURCE must still be the old space; `rw` owns that
+        // copy, so the only real ordering rule left is "before the tail
+        // `buildLoops`", which consumes the declaration.
         if (carryUv) {
             assert(newSrc.length == newFaces.length,
                    "insertEdgeLoopsMulti: newSrc/newFaces length mismatch");
-            carryPolyVertexMaps(newFaces, newSrc, faces.range, oldFaceLoop, vertBlend);
+            declareCornerProvenance(rw.carriedPerFace(newFaces, newSrc, vertBlend));
         }
 
         faces = newFaces;

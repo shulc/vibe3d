@@ -164,8 +164,14 @@ mixin template MeshCleanupOps() {
     size_t cleanDegenerateFaces() {
         if (faces.length == 0) return 0;
 
-        const bool remapUv = hasPolyVertexMap();
-        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
+        // Task 0830: this capture is the obligation handle. `beginCornerRelocate`
+        // takes the OFFSETS only — a relocation names each source corner by
+        // index and never looks a vertex up in an old winding — and it ARMS the
+        // drop: a path out of here that rewrites `faces` without declaring loses
+        // the plane rather than keeping values on foreign corners.
+        auto rw = beginCornerRelocate();
+        const bool remapUv = rw.active();
+        const(uint)[] oldFaceLoop = rw.oldFaceLoop();
         uint[] oldLoopOfNewLoop;
 
         uint[][] newFaces;
@@ -223,7 +229,7 @@ mixin template MeshCleanupOps() {
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
-        if (remapUv) remapPolyVertexMaps(oldLoopOfNewLoop);
+        if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
 
         clearFaceSelectionResize();
         rebuildEdges();

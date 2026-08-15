@@ -349,13 +349,12 @@ mixin template MeshEdgeBevelOps() {
         //     consulted by index and DEFAULTS to "no source", so a face emitted
         //     by a path that does not register one drops to that honest zero
         //     instead of inheriting a neighbour's island.
-        const bool remapUvB = hasPolyVertexMap();
-        uint[][] oldFacesB;
-        if (remapUvB) {
-            oldFacesB.reserve(faces.length);
-            foreach (ref f; faces) oldFacesB ~= f.dup;
-        }
-        const uint[] oldFaceLoopB = remapUvB ? captureFaceLoop() : null;
+        //
+        // Task 0830: `rwB` is the obligation handle — the capture this kernel
+        // used to take by hand, plus the arming that makes the DROP the default
+        // outcome of saying nothing between here and the declaration.
+        auto rwB = beginCornerRewrite();
+        const bool remapUvB = rwB.active();
         PolyVertexBlend[uint] vertBlendB;   // new vertex → blend of ORIGINALS
         uint[][size_t]        srcByNewFace; // index in `newFaces` → per-corner source
 
@@ -2109,8 +2108,8 @@ mixin template MeshEdgeBevelOps() {
         if (remapUvB) {
             uint[] srcOfCorner;
             foreach (s; mergedSrc) srcOfCorner ~= s;
-            carryPolyVertexMapsByCorner(faces.range, srcOfCorner, oldFacesB,
-                                        oldFaceLoopB, vertBlendB);
+            declareCornerProvenance(
+                rwB.carried(faces.range, srcOfCorner, vertBlendB));
         }
         if (anyMerge) {
             if (selectedFaces.length > faces.length) resizeFaceSelection();

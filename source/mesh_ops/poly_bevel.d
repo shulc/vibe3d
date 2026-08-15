@@ -695,15 +695,18 @@ mixin template MeshPolyBevelOps() {
         RingGen[uint]         ringGenOfVertex;  // new ring vertex → its law
         PolyVertexBlend[uint] vertBlend;        // square split points
         uint[]                faceSrcOf;        // final face → source old face
-        const bool remapUv = hasPolyVertexMap();
-        uint[][] oldFaces;
+        // Task 0830: the hand-rolled capture (dup the windings, prefix-sum the
+        // offsets, guard the whole thing on `hasPolyVertexMap`) is now the
+        // obligation handle. It arms the drop: from here until the declaration
+        // at the bottom of the kernel, saying nothing loses the plane instead of
+        // keeping stale values — which is precisely the failure this kernel
+        // shipped before task 0697.
+        auto rw = beginCornerRewrite();
+        const bool remapUv = rw.active();
         if (remapUv) {
-            oldFaces.reserve(nFaces);
-            foreach (ref f; faces) oldFaces ~= f.dup;
             faceSrcOf.length = nFaces;
             foreach (fi; 0 .. nFaces) faceSrcOf[fi] = cast(uint)fi;
         }
-        const uint[] oldFaceLoop = remapUv ? captureFaceLoop() : null;
 
         foreach (fi; 0 .. nFaces) {
             if (fi >= mask.length || !mask[fi]) continue;
@@ -1025,8 +1028,8 @@ mixin template MeshPolyBevelOps() {
                     ++loop;
                 }
             }
-            carryPolyVertexMapsByCorner(faces.range, srcOfCorner, oldFaces,
-                                        oldFaceLoop, vertBlend, gens);
+            declareCornerProvenance(
+                rw.carried(faces.range, srcOfCorner, vertBlend, gens));
         }
         if (anyClamped || group) {
             // group's fully-enclosed apex vertices (every incident edge
@@ -1296,14 +1299,10 @@ mixin template MeshPolyBevelOps() {
         // atomic growth via `addFace` is therefore NOT enough, and without a
         // relocate the tail `buildLoops` zeroes the map WHOLE — spiking one face
         // would cost every other face its UV. Captured before the first mutation.
-        const bool carryUv = hasPolyVertexMap();
-        uint[][] oldFaces;
-        uint[]   oldFaceLoop;
-        if (carryUv) {
-            oldFaces.reserve(nFaces);
-            foreach (ref f; faces) oldFaces ~= f.dup;
-            oldFaceLoop = captureFaceLoop();
-        }
+        // Task 0830: the capture is the obligation handle; the drop is what
+        // happens if this kernel reaches `buildLoops` having said nothing.
+        auto rw = beginCornerRewrite();
+        const bool carryUv = rw.active();
 
         // Parallel lists: for each appended fan tri, record its face index
         // (captured at addFace time = faces.length-1) and its source face fi.
@@ -1374,7 +1373,11 @@ mixin template MeshPolyBevelOps() {
         // this port does not claim to know (the fixture measures edge splits and
         // bilerps, not a fan apex), so it is left at zero — the honest drop, for
         // one corner per spiked face instead of for the whole mesh.
-        if (carryUv && oldFaceLoop.length == nFaces) {
+        // (The pre-0830 `oldFaceLoop.length == nFaces` guard is gone with the
+        // hand-rolled capture that needed it: `captureFaceLoop()` copied a
+        // `faceLoop` that could be stale, whereas `rw`'s offsets are prefix-
+        // summed from the very `faces` array `nFaces` was measured on.)
+        if (carryUv) {
             uint[] srcFaceOfNewFace;
             srcFaceOfNewFace.length = faces.length;
             foreach (fi; 0 .. faces.length)
@@ -1382,9 +1385,9 @@ mixin template MeshPolyBevelOps() {
             foreach (k, newFi; appendedFi)
                 if (newFi < srcFaceOfNewFace.length)
                     srcFaceOfNewFace[newFi] = fanSrc[k];
-            const PolyVertexBlend[uint] noBlends;
-            carryPolyVertexMaps(faces.range, srcFaceOfNewFace, oldFaces,
-                                oldFaceLoop, noBlends);
+            PolyVertexBlend[uint] noBlends;
+            declareCornerProvenance(
+                rw.carriedPerFace(faces.range, srcFaceOfNewFace, noBlends));
         }
 
         // Tail — correct order: syncSelection BEFORE selectFace so that
