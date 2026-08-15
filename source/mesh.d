@@ -3977,6 +3977,11 @@ struct Mesh {
             }
         }
 
+        // Task 0830: a tail append, stated. `appendFaceRaw` already grew the
+        // per-corner plane face by face; this states the resulting TOTAL so the
+        // rebuild can check it against the corner space it actually lays down.
+        declareCornerAppend();
+
         // Re-derive edges from the new face list.
         rebuildEdges();
 
@@ -4010,10 +4015,14 @@ struct Mesh {
         // orphaned welded-away vert slots — matching arrayFaces / mirrorFaces.
         if (weld > 0.0f) {
             double epsSq = cast(double)weld * cast(double)weld;
+            const size_t cornersBeforeWeld = cornerCount();
             if (weldCoincidentVertices(epsSq) > 0) {
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
+                // What the weld did to the CORNERS is decided by the only
+                // thing it leaves behind — the total (task 0830).
+                declareCornerWeld(cornersBeforeWeld);
             }
         }
 
@@ -4133,6 +4142,8 @@ struct Mesh {
             }
         }
 
+        declareCornerAppend();   // tail append, stated (task 0830)
+
         // Re-derive edges from the new face list.
         rebuildEdges();
 
@@ -4184,8 +4195,12 @@ struct Mesh {
         // this line-array path matches the reference's face count instead.
         if (weld > 0.0f) {
             double epsSq = cast(double)weld * cast(double)weld;
+            const size_t cornersBeforeWeld = cornerCount();
             if (weldCoincidentVertices(epsSq) > 0) {
                 compactUnreferenced();
+                // What the weld did to the CORNERS is decided by the only
+                // thing it leaves behind — the total (task 0830).
+                declareCornerWeld(cornersBeforeWeld);
             }
         }
 
@@ -4426,6 +4441,13 @@ struct Mesh {
             }
         }
 
+        // Tail append, stated (task 0830). When Merge Vertices is on, the dedup
+        // pass further down opens its own rewrite and REPLACES this declaration
+        // with the relocation that describes it — which is the right order:
+        // each declaration describes the corner space as it stands when it is
+        // made, and the last one before the rebuild is the one that holds.
+        declareCornerAppend();
+
         rebuildEdges();
 
         resizeSubpatch();
@@ -4609,6 +4631,8 @@ struct Mesh {
             vertices[newVid] = v - normal * (2.0f * d);
         }
 
+        declareCornerAppend();   // tail append, stated (task 0830)
+
         // Re-derive edges from the (now larger) face list.
         rebuildEdges();
 
@@ -4698,10 +4722,14 @@ struct Mesh {
             // the (now vertex-merged) faces, and drop only the orphaned
             // welded-away vert slots via compactUnreferenced — the same
             // keep-doubled convention as arrayFaces / radialArrayFaces.
+            const size_t cornersBeforeWeld = cornerCount();
             if (weldCoincidentVertices(epsSq, origVertexCount) > 0) {
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
+                // What the weld did to the CORNERS is decided by the only
+                // thing it leaves behind — the total (task 0830).
+                declareCornerWeld(cornersBeforeWeld);
             }
 
             if (isEmpty()) {
@@ -4722,6 +4750,12 @@ struct Mesh {
                 faceMaterial         = rbFaceMaterial;
                 facePart             = rbFacePart;
                 meshMaps             = rbMeshMaps;
+                // The rollback put back the very maps that describe the
+                // restored windings, so the corner space this rebuild will
+                // lay down is the un-welded one and nothing moved in it.
+                // Without this the weld's drop above would still be pending
+                // and would zero maps that are already correct.
+                declareCornerProvenance(CornerProvenance.unchanged());
             }
         }
 
@@ -4807,6 +4841,7 @@ struct Mesh {
         // wholesale is simpler and faster than tracking which edges are
         // new — and stays consistent with the dedup'd-edge invariant
         // used by delete / dissolve.
+        declareCornerAppend();   // tail append, stated (task 0830)
         rebuildEdges();
 
         // Subpatch + face-order arrays follow the new face count.
@@ -4879,6 +4914,8 @@ struct Mesh {
             // survive the paste. task 0690.
             appendFaceRaw(remapped);
         }
+
+        declareCornerAppend();   // tail append, stated (task 0830)
 
         // Re-derive edges from the (now larger) face list.
         rebuildEdges();
@@ -5645,9 +5682,15 @@ struct Mesh {
             // reported. Under `-release` the shout is gone and the repair is
             // all that is left, which is the correct behaviour either way.
             dropPolyVertexMaps();
-            debug assert(decl.corners() == loops.length,
-                "corner provenance: declared for a different corner space than "
-                ~ "the one buildLoops rebuilt");
+            debug {
+                import std.conv : to;
+                assert(decl.corners() == loops.length,
+                    "corner provenance: declared for a different corner space than "
+                    ~ "the one buildLoops rebuilt (kind "
+                    ~ to!string(decl.kind()) ~ ": declared "
+                    ~ to!string(decl.corners()) ~ " corners, rebuilt "
+                    ~ to!string(loops.length) ~ ")");
+            }
             return;
         }
         if (wasArmed && !decl.declared()) {
@@ -5885,6 +5928,13 @@ struct Mesh {
                "declareCornerProvenance: Undeclared is not a declaration — "
                ~ "name one of the five shapes");
         cornerRewriteArmed_ = false;
+        // No per-corner plane ⇒ no obligation, and nothing to record. Without
+        // this the mechanism stops being inert on the common path: a bulk
+        // append would leave a corner TOTAL pending on a mesh with no map, a
+        // later pass would legitimately change that total, and the rebuild
+        // would report a mismatch about a plane that does not exist. Measured
+        // — `arrayFacesGrid` on a map-less mesh, 48 declared vs 44 rebuilt.
+        if (!hasPolyVertexMap()) return;
         final switch (p.kind()) {
             case CornerProvenance.Kind.Undeclared:
                 break;                                   // refused by the assert
@@ -5913,6 +5963,55 @@ struct Mesh {
     /// against), so it must not pay for one.
     void dropCornerProvenance(CornerDrop why) {
         declareCornerProvenance(CornerProvenance.dropped(why));
+    }
+
+    /// Declare a TAIL append, measuring the resulting corner total off `faces`.
+    /// The bulk-append kernels (array ×3, mirror, duplicate, clipboard paste,
+    /// cut caps) already grew the plane face-by-face through `appendFaceRaw`,
+    /// so this applies nothing — its work is the CROSS-CHECK it earns them.
+    /// `resizePolyVertexMaps` now compares the stated total against the
+    /// `loops.length` the rebuild produced, so a kernel that appends some faces
+    /// through `appendFaceRaw` and others through a bare `faces ~= …` — the
+    /// exact shape of task 0690 — trips a diagnostic instead of silently zeroing
+    /// the UV of every face it never touched.
+    ///
+    /// No capture, no arming: a tail append does not renumber anything.
+    void declareCornerAppend() {
+        declareCornerProvenance(CornerProvenance.appended(cornerCount()));
+    }
+
+    /// Σ face arity — the size of the corner space `faces` currently describes,
+    /// and the number `loops.length` will be after the next `buildLoops`.
+    /// Derived from `faces` on purpose: `loops` is rebuilt only by
+    /// `buildLoops`, so mid-kernel it answers about the PREVIOUS space.
+    size_t cornerCount() const {
+        size_t total = 0;
+        foreach (fi; 0 .. faces.length) total += faces[fi].length;
+        return total;
+    }
+
+    /// State what a WELD pass did to the corners. A weld rewrites windings in
+    /// place and only ever REMOVES a corner (a winding that named the same
+    /// vertex twice after the merge), so the corner TOTAL decides it and
+    /// nothing else has to be tracked:
+    ///
+    ///   * unchanged ⇒ no winding lost a corner, so every corner is still at
+    ///     its own slot. The vertex a corner NAMES may have changed, which is
+    ///     not a corner move — per-corner values are addressed by (face,
+    ///     corner). `Unchanged`.
+    ///   * changed ⇒ the space after the first removal is re-laid, and the weld
+    ///     keeps no record of where each corner went. The stated drop — which
+    ///     is also exactly what the length test produced here before task 0830.
+    ///
+    /// This is measured, not assumed: it was written the other way first (a
+    /// blanket drop after any weld) and turned `test_uv_untouched_faces`'s
+    /// `mirrorFaces+weld` case red, because that weld merges verts BETWEEN the
+    /// original and its mirror image and removes no corner at all.
+    void declareCornerWeld(size_t cornersBeforeWeld) {
+        if (cornerCount() == cornersBeforeWeld)
+            declareCornerProvenance(CornerProvenance.unchanged());
+        else
+            dropCornerProvenance(CornerDrop.WeldTailNoSource);
     }
 
     // Called by `CornerRewrite`'s destructor. Clears ONLY the arming: a

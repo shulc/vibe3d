@@ -775,6 +775,7 @@ mixin template MeshCutOps() {
             // terms, and becomes load-bearing the moment the cut itself carries.
             foreach (cyc; capShellCycles(faces, loSet)) appendFaceRaw(cyc);
             foreach (cyc; capShellCycles(faces, hiSet)) appendFaceRaw(cyc);
+            declareCornerAppend();   // tail append, stated (task 0830)
         }
         rebuildEdges();
         clearEdgeSelectionResize();
