@@ -7,7 +7,7 @@ import math    : Vec3, Pin, Viewport, screenRay, screenPointToRay, rayPlaneInter
 import mesh    : Mesh, MeshCacheKey;
 import editmode : EditMode;
 import seltype : SelType;
-import toolpipe.stage    : Stage, TaskCode, ordAcen;
+import toolpipe.stage    : Stage, TaskCode, ordAcen, ToolSwitchTransient;
 import params           : Param, IntEnumEntry, wireTagForValue, valueForWireTag;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : SymmetryPacket, ActionCenterPacket;
@@ -58,7 +58,7 @@ import document          : Layer;
 // 7.2a implements Auto + Select + SelectAuto only — Origin is trivial
 // (constant), the others land in subsequent subphases.
 // ---------------------------------------------------------------------------
-class ActionCenterStage : Stage, Operator {
+class ActionCenterStage : Stage, Operator, ToolSwitchTransient {
     // Phase 1 of doc/operator_refactor_plan.md: persistent packet for
     // VectorStack publishing. Updated in evaluate(VectorStack) from the
     // ToolState result of the legacy evaluate path.
@@ -408,7 +408,7 @@ public:
     /// resetTransient: same as reset() but respects userLocked.
     /// Called by resetTransientPipeStages (tool.set / tool switch) so
     /// an explicit `actr.*` user setting survives switching tools.
-    void resetTransient() {
+    override void resetTransient() {
         if (userLocked) return;
         reset();
     }

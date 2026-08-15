@@ -28,52 +28,59 @@ import perf_probe : g_perf, Cat, g_fc;
 // ---------------------------------------------------------------------------
 struct Pipeline {
 private:
-    Stage[] stages_;
-
-    // VectorStack-side dispatch storage. Slot-as-list: most slots hold
-    // 0 or 1 operators today, but WGHT can stack (Phase 8 Mix Mode).
+    // The single index over registered stages, sorted by ordinal (stable —
+    // same-ordinal, same-task stacked instances keep insertion order). This
+    // used to be ONE OF TWO parallel structures: `stages_` here plus a
+    // Task-slot-indexed `Operator[][Task.max+1] operators_` that
+    // `evaluate(VectorStack)` walked instead, in Task-enum DECLARATION
+    // order rather than ordinal order (fast O(1)-by-slot dispatch, at the
+    // cost of a second index every mutator had to keep in sync).
     //
-    // Lives in parallel with `stages_` — NOT "until Phase 6 cleanup" (that
-    // was stale: doc/operator_refactor_plan.md's Phase 6, done, retired the
-    // legacy `evaluate(SubjectPacket, Viewport) → ToolState` path, never
-    // this duality). `operators_` is what `evaluate(VectorStack)` actually
-    // walks (O(1) by Task slot); `stages_` is the ordinal-sorted list every
-    // other query (findByTask/findById/all/allMut/reset) uses. Every
-    // mutator — add/addStacked/removeStage/removeByTask — keeps both in
-    // sync (plug/unplug); nothing else may write `operators_` directly.
-    // Collapsing to one structure is tracked as a follow-up
-    // (doc/tasks/work/0407-source-dedup-architecture-vectors.md §B.V6) —
-    // only safe once `evaluate`'s Task-slot walk order is proven
-    // equivalent to `stages_`'s ordinal-byte sort for every pipeline
-    // configuration; not attempted here.
-    Operator[][Task.max + 1] operators_;
+    // Task 0980 (audit-4 P7) collapsed the two. The measured reason it was
+    // SAFE: ordinal order and Task-declaration order agreed for every
+    // registered stage except one pair — PathStage (ordinal 0x80) and
+    // FalloffStage/WGHT (ordinal 0x90) — because PathStage's Task slot
+    // (Task.Path = 8) was appended to the Task enum after AXIS/WGHT/ACTR,
+    // while its ordinal was deliberately chosen to sit BETWEEN Axis (0x70)
+    // and Wght (0x90) — see toolpipe/stages/path.d's own doc comment
+    // ("Ordinal 0x80; evaluates between AXIS and WGHT"), which the old
+    // Task-order walk silently contradicted (Path actually ran LAST, after
+    // WGHT, not between AXIS and WGHT). Neither stage's evaluate() reads a
+    // packet the other publishes (FalloffStage never calls
+    // `vts.get!PathPacket`; PathStage's only declared required packet is
+    // Subject, and it reads nothing else off `vts`), and neither mutates
+    // shared state the other reads (both touch `Mesh` read-only), so the
+    // two possible orders are provably indistinguishable for every input —
+    // proven with the real production Operator bodies, not stand-ins, in
+    // `tests/unit/toolpipe/pipeline_order_test.d`. `evaluate()` below now
+    // walks `stages_` directly, in ordinal order — the order the field's
+    // own name always claimed to mean, and the order path.d's comment
+    // already assumed.
+    Stage[] stages_;
 
 public:
     /// Insert `s` at the position determined by its ordinal. If a stage
     /// with the same TaskCode already exists, it is REPLACED — single-
     /// slot-per-task constraint (swap, not stack).
     ///
-    /// When `s` also implements the Operator interface (every concrete
-    /// Stage subclass does — only the test-only NopStage doesn't), this
-    /// unplugs any previous same-task Operator and plugs `s` into
-    /// `operators_`, the storage `evaluate(VectorStack)` actually walks
-    /// (see the `operators_` field comment). No-op on the operators_ side
-    /// for Stages that don't implement Operator.
+    /// `op.reset()` is called on `s` when it implements Operator (every
+    /// concrete Stage subclass does — only the test-only NopStage doesn't),
+    /// mirroring the old plug-time reset (task 0980 folded `plug`/`unplug`
+    /// away — `stages_` is the only registration index now, see this
+    /// struct's field doc).
     void add(Stage s) {
         // Replace same-task slot if present.
         foreach (i, ref existing; stages_) {
             if (existing.taskCode() == s.taskCode()) {
-                // Unplug the previous Operator side too if it had one.
-                if (auto prevOp = cast(Operator)existing) unplug(prevOp);
                 stages_[i] = s;
-                stages_.sort!((a, b) => a.ordinal() < b.ordinal());
-                if (auto op = cast(Operator)s) plug(op, /*replace=*/true);
+                stages_.sort!((a, b) => a.ordinal() < b.ordinal(), SwapStrategy.stable);
+                if (auto op = cast(Operator)s) op.reset();
                 return;
             }
         }
         stages_ ~= s;
-        stages_.sort!((a, b) => a.ordinal() < b.ordinal());
-        if (auto op = cast(Operator)s) plug(op, /*replace=*/true);
+        stages_.sort!((a, b) => a.ordinal() < b.ordinal(), SwapStrategy.stable);
+        if (auto op = cast(Operator)s) op.reset();
     }
 
     /// Register an ADDITIONAL stage of an existing task WITHOUT replacing
@@ -89,43 +96,33 @@ public:
     ///
     /// `s` is appended to `stages_` and the list re-sorted by ordinal.
     /// The sort is STABLE, so same-ordinal same-task instances keep their
-    /// insertion order (deterministic pipeline order). When `s` also
-    /// implements Operator it is APPENDED to its task slot (`plug` with
-    /// `replace=false`) — the slot-list keeps every plugged operator so
-    /// `evaluate(VectorStack)` walks all stacked instances in order.
+    /// insertion order (deterministic pipeline order, and the order
+    /// `evaluate(VectorStack)` walks them in).
     void addStacked(Stage s) {
         stages_ ~= s;
         // STABLE so same-ordinal same-task instances keep insertion order
         // (the primary, added first, stays ahead of later-stacked extras).
         stages_.sort!((a, b) => a.ordinal() < b.ordinal(), SwapStrategy.stable);
-        if (auto op = cast(Operator)s) plug(op, /*replace=*/false);
+        if (auto op = cast(Operator)s) op.reset();
     }
 
     /// Remove a stage (matched by reference identity). Returns true if
-    /// found and removed. Unplugs the Operator side too when `existing`
-    /// implements Operator — `stages_` and `operators_` are two indexes
-    /// over the same registration and must never diverge (see the
-    /// `operators_` field comment). Before this fix, a bare `stages_`
-    /// removal left a zombie Operator plugged in, still walked by every
-    /// `evaluate(VectorStack)` pass after the stage was supposedly gone.
+    /// found and removed.
     bool removeStage(Stage s) {
         foreach (i, existing; stages_) {
             if (existing is s) {
                 stages_ = stages_.remove(i);
-                if (auto op = cast(Operator)existing) unplug(op);
                 return true;
             }
         }
         return false;
     }
 
-    /// Remove the stage occupying `task`'s slot (if any). Unplugs the
-    /// Operator side too — same fix, same reason as `removeStage`.
+    /// Remove the stage occupying `task`'s slot (if any).
     bool removeByTask(TaskCode task) {
         foreach (i, existing; stages_) {
             if (existing.taskCode() == task) {
                 stages_ = stages_.remove(i);
-                if (auto op = cast(Operator)existing) unplug(op);
                 return true;
             }
         }
@@ -182,19 +179,22 @@ public:
         return stages_;
     }
 
-    /// VectorStack-based evaluation. Slot-chain dispatch: for every
-    /// Task slot in declaration order, walk the operators
-    /// plugged into that slot and call `Operator.evaluate(vts)`. Operators
-    /// publish their packets into `vts.put()`; downstream operators read
-    /// them via `vts.get()`.
+    /// VectorStack-based evaluation. Walks `stages_` — ordinal order, low →
+    /// high — and calls `Operator.evaluate(vts)` on every entry that
+    /// implements Operator (skipping ones that don't, e.g. the test-only
+    /// NopStage). Operators publish their packets into `vts.put()`;
+    /// downstream operators (later in ordinal order) read them via
+    /// `vts.get()`.
     ///
-    /// Slot-as-list: each slot holds a `[]` of operators, so WGHT can
-    /// stack multiple FalloffStages with Mix Mode (Phase 8 of
-    /// doc/operator_refactor_plan.md). Other slots typically hold one
-    /// operator but the list shape is uniform.
+    /// Same-task stacking (WGHT can hold multiple FalloffStages for Mix
+    /// Mode, Phase 8 of doc/operator_refactor_plan.md) falls out of
+    /// `stages_` itself: `addStacked` appends and re-sorts with a STABLE
+    /// sort, so same-ordinal stacked instances stay in insertion order and
+    /// are walked in that order here — no separate per-slot list needed.
     void evaluate(ref VectorStack vts) {
-        // Perf: time the whole pipeline pass, then each stage by its slot.
-        // No-op in the default build (g_perf.scope_ → empty struct).
+        // Perf: time the whole pipeline pass, then each operator by its
+        // Task's category. No-op in the default build (g_perf.scope_ →
+        // empty struct).
         auto zTotal = g_perf.scope_(Cat.pipeTotal);
         // Perf (always-on): one pass, and the number of operators it actually
         // ran. `stageEvals` is the counter that would have caught a stage
@@ -202,29 +202,29 @@ public:
         // operator shows up in the count with no matching consumer-side work,
         // which a timer never surfaces because the stage itself is cheap.
         g_fc.bumpPipeEval();
-        // Iterate slots in declared Task order: Work → Symm → Snap →
-        // Acen → Axis → Wght → Actr. static foreach so the dispatch
-        // unrolls to seven straight-line array walks; no runtime
-        // overhead beyond the array bounds check.
-        static foreach (member; __traits(allMembers, Task)) {{
-            enum Task slot = __traits(getMember, Task, member);
-            auto slotOps = operators_[slot];
-            // Map the slot to a perf category. Slots without a dedicated
-            // bucket (Work, Actr) don't open a timer — Actr's mesh mutation
-            // is timed separately in the kernels as Cat.kernelApply.
-            enum hasCat = perfCatFor(slot) != -1;
-            static if (hasCat)
-                auto zStage = g_perf.scope_(cast(Cat)perfCatFor(slot));
-            foreach (op; slotOps) {
+        foreach (s; stages_) {
+            auto op = cast(Operator)s;
+            if (op is null) continue; // e.g. NopStage — registered, not an Operator
+            // Map the operator's Task to a perf category. Slots without a
+            // dedicated bucket (Work, Cons, Actr, Path) don't open a timer —
+            // Actr's mesh mutation is timed separately in the kernels as
+            // Cat.kernelApply.
+            const cat = perfCatFor(op.task());
+            if (cat != -1) {
+                auto zStage = g_perf.scope_(cast(Cat)cat);
+                checkRequiredPackets(op, vts);
+                g_fc.bumpStageEval();
+                op.evaluate(vts);
+            } else {
                 checkRequiredPackets(op, vts);
                 g_fc.bumpStageEval();
                 op.evaluate(vts);
             }
-        }}
+        }
     }
 
-    // Compile-time Task → perf Cat map. Returns -1 for slots with no
-    // dedicated timer category (Work, Wght-as-actor, Actr).
+    // Task → perf Cat map. Returns -1 for slots with no dedicated timer
+    // category (Work, Cons, Wght-as-actor, Actr, Path).
     private static int perfCatFor(Task slot) pure nothrow @nogc @safe {
         final switch (slot) {
             case Task.Work: return -1;
@@ -268,36 +268,35 @@ public:
         }
     }
 
-    /// Insert an Operator into its `task()` slot. When `replace=true`
-    /// the slot is cleared first (single-operator semantics). When
-    /// `replace=false` the operator is appended (Phase 8 Mix Mode
-    /// stacking). `op.reset()` is called immediately after plug.
-    void plug(Operator op, bool replace = false) {
-        auto slot = op.task();
-        if (replace) operators_[slot].length = 0;
-        operators_[slot] ~= op;
-        op.reset();
-    }
-
-    /// Remove an operator by reference identity. Returns true on hit.
-    bool unplug(Operator op) {
-        auto slot = op.task();
-        foreach (i, existing; operators_[slot]) {
-            if (existing is op) {
-                operators_[slot] = operators_[slot].remove(i);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /// Read-only view of operators in a slot (in registration order).
+    /// Read-only view of the operators registered in a Task slot, in
+    /// pipeline (ordinal) order — derived from `stages_` by filtering on
+    /// `op.task() == slot`, since task 0980 removed the separate
+    /// Task-indexed `operators_` storage this used to read directly.
     const(Operator)[] operatorsInSlot(Task slot) const {
-        return operators_[slot];
+        Operator[] out_;
+        foreach (s; stages_) {
+            auto op = cast(Operator)s;
+            if (op !is null && op.task() == slot) out_ ~= op;
+        }
+        return out_;
     }
 
     /// Number of stages registered (regardless of enabled state).
     size_t length() const { return stages_.length; }
+}
+
+/// Reset every stage in `p` that opts into "clear on tool switch unless the
+/// user explicitly locked it" — i.e. implements `ToolSwitchTransient`
+/// (toolpipe/stage.d; see that interface's doc for why this replaced a
+/// hand-written switch on `s.id()`). Free function rather than a Pipeline
+/// method so it is unit-testable without a running EditorApp — app.d's
+/// `resetTransientPipeStages()` (tool.set / tool switch) is a one-line
+/// caller (task 0980 / audit-4 P7).
+void resetToolSwitchTransientStages(ref Pipeline p) {
+    import toolpipe.stage : ToolSwitchTransient;
+    foreach (s; p.allMut())
+        if (auto r = cast(ToolSwitchTransient)s)
+            r.resetTransient();
 }
 
 // ---------------------------------------------------------------------------
@@ -314,22 +313,26 @@ final class ToolPipeContext {
 __gshared ToolPipeContext g_pipeCtx;
 
 // ---------------------------------------------------------------------------
-// Pipeline unit tests — stages_ / operators_ registration invariant.
+// Pipeline unit tests — registration invariant.
 //
-// `evaluate(VectorStack)` walks `operators_`; every other Pipeline query
-// (findByTask/findById/all/allMut/length) walks `stages_`. The two are two
-// indexes over the same registration set and must never diverge: a Stage
-// that implements Operator appears in `operators_[its task-slot]` exactly
-// once while registered in `stages_`, and nowhere once removed. Before this
-// test (and the removeStage/removeByTask fix landed alongside it),
-// removeStage/removeByTask dropped only the `stages_` entry — a "removed"
-// stage kept a zombie Operator plugged in, silently evaluated by every
-// future `evaluate(VectorStack)` pass. `source/commands/falloff.d` used to
-// work around this by hand-calling `unplug()` before every `removeStage()`
-// call; that workaround is gone now that `removeStage` does it internally.
+// Historically this section pinned "stages_ / operators_ must never
+// diverge" — two parallel indexes (evaluate() walked one, every other query
+// walked the other) that a removeStage/removeByTask bug could desync,
+// leaving a zombie Operator plugged in and evaluated after its Stage was
+// supposedly gone. `source/commands/falloff.d` used to work around exactly
+// that by hand-calling `unplug()` before every `removeStage()` call.
+//
+// Task 0980 removed the second index outright (see `stages_`'s field doc):
+// there is only one registration list now, so the two-structure divergence
+// this block used to guard against cannot recur BY CONSTRUCTION. The tests
+// below are kept as-is (they exercise the public add/addStacked/
+// removeStage/removeByTask/operatorsInSlot contract, which is unchanged)
+// and still pass — they now assert an invariant that holds trivially
+// instead of one two structures had to be kept in sync to satisfy, which is
+// the point: nothing here can drift again the way it did before.
 // ---------------------------------------------------------------------------
 version (unittest) {
-    import toolpipe.stage : ordAcen, ordAxis, ordSnap, ordWght;
+    import toolpipe.stage : ordAcen, ordAxis, ordSnap, ordWght, ToolSwitchTransient;
 
     // Minimal Stage+Operator double, shaped like every concrete Stage
     // subclass (falloff/actcenter/axis/snap/symmetry/workplane/constrain/
@@ -471,4 +474,78 @@ unittest {
 
     // stages_ agrees: 4 live stages (acen, axisReplacement, wght0, wght2).
     assert(p.length() == 4);
+}
+
+// ---------------------------------------------------------------------------
+// resetToolSwitchTransientStages — task 0980 / audit-4 P7 reset-switch fix.
+//
+// app.d's resetTransientPipeStages() used to be a hand-written
+// `switch (s.id())` naming exactly three literals ("actionCenter" / "axis" /
+// "constrain") plus a separate `s.taskCode() == TaskCode.Wght` branch for
+// falloff — four special cases for four stages, with no way to tell "no
+// case matches because this stage genuinely persists across tool switches
+// (Snap/Symmetry/Workplane/Path)" apart from "no case matches because this
+// is a NEW tool-driven stage nobody wired a case for yet". Both looked
+// identical: silence.
+//
+// The test below proves the replacement fixes exactly that gap, with both
+// halves of the comparison live: a stage that implements
+// `ToolSwitchTransient` under an id/taskCode NONE of the four old special
+// cases would have matched is (a) reached by the new
+// `resetToolSwitchTransientStages` and (b) NOT reached by the old switch,
+// reproduced verbatim as a negative control.
+// ---------------------------------------------------------------------------
+unittest {
+    final class NewToolDrivenStage : Stage, Operator, ToolSwitchTransient {
+        bool userLocked;
+        bool resetTransientCalled;
+        bool fullResetCalled;
+
+        override TaskCode taskCode() const pure nothrow @nogc @safe { return TaskCode.Cont; }
+        override string   id()       const                          { return "somethingNew"; }
+        override ubyte    ordinal()  const pure nothrow @nogc @safe { return 0x50; }
+
+        Task         task()            const { return Task.Symm; } // any non-Wght slot
+        PacketKind[] requiredPackets() const { return []; }
+        bool         evaluate(ref VectorStack vts) { return true; }
+        override void reset() { fullResetCalled = true; }
+
+        // Same contract every real implementor (ActionCenter/Axis/
+        // Constrain/Falloff) uses: skip when explicitly locked, else defer
+        // to the ordinary reset().
+        void resetTransient() {
+            resetTransientCalled = true;
+            if (userLocked) return;
+            reset();
+        }
+    }
+
+    Pipeline p;
+    auto s = new NewToolDrivenStage();
+    p.add(s);
+
+    // ---- Positive: the NEW generic walk reaches it. ----
+    resetToolSwitchTransientStages(p);
+    assert(s.resetTransientCalled,
+        "resetToolSwitchTransientStages must reach every ToolSwitchTransient "
+        ~ "stage regardless of id()/taskCode(), not just the ones an old "
+        ~ "hand-written switch happened to name");
+    assert(s.fullResetCalled, "userLocked is false, so resetTransient() "
+        ~ "must fall through to the ordinary reset()");
+
+    // ---- Negative control: the OLD id()-keyed switch, reproduced exactly
+    // (app.d's shape before this task, minus the separate Wght-taskCode
+    // branch this stage doesn't use), does NOT recognise this stage. This
+    // is the silent-skip defect task 0980 replaced.
+    bool oldSwitchWouldHaveReset;
+    switch (s.id()) {
+        case "actionCenter": case "axis": case "constrain":
+            oldSwitchWouldHaveReset = true;
+            break;
+        default: break;
+    }
+    assert(!oldSwitchWouldHaveReset,
+        "negative control failed: the id()-keyed switch this task replaced "
+        ~ "was NOT supposed to recognise an id it never named — if this "
+        ~ "assert fires, the reproduction above no longer matches the bug");
 }

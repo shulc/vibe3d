@@ -1,6 +1,6 @@
 module toolpipe.stages.constrain;
 
-import toolpipe.stage   : Stage, TaskCode, ordCons;
+import toolpipe.stage   : Stage, TaskCode, ordCons, ToolSwitchTransient;
 import toolpipe.packets : ConstrainPacket, ConstrainGeom, ConstrainHitPacket,
                           SubjectPacket;
 import operator         : Operator, Task, VectorStack, PacketKind;
@@ -68,7 +68,7 @@ private static immutable IntEnumEntry[] constrainGeomEntries = [
 //   `dblSided` : "true" / "false" (default false)
 // ---------------------------------------------------------------------------
 
-class ConstrainStage : Stage, Operator {
+class ConstrainStage : Stage, Operator, ToolSwitchTransient {
 private:
     ConstrainPacket _publishedPacket;
 
@@ -448,7 +448,7 @@ public:
     /// CONS+Point on activate() without locking it) cleanly reverts.
     /// Mirrors ActionCenterStage.resetTransient / AxisStage.resetTransient
     /// (topology-pen P0 REV-2).
-    void resetTransient() {
+    override void resetTransient() {
         if (userLocked) return;
         reset();
     }

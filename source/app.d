@@ -2205,57 +2205,21 @@ void main(string[] args) {
         return loopHoverEdgesCache;
     }
 
+    // Reset every pipe stage that opts into "clear on tool switch unless
+    // the user explicitly locked it" — ActionCenter / Axis / Constrain /
+    // Falloff today (userLocked survives; reference parity captured
+    // 2026-06-16). Snap / Symmetry / Workplane / Path deliberately do NOT
+    // opt in: their state is a user SETTING, not a tool session, and
+    // survives a tool switch. The dispatch itself lives in
+    // toolpipe.pipeline.resetToolSwitchTransientStages (task 0980 / audit-4
+    // P7) — a generic walk keyed on the `ToolSwitchTransient` interface,
+    // replacing a hand-written `switch (s.id())` that silently skipped any
+    // stage whose id/taskCode it didn't happen to name (see that
+    // function's doc for what this fixes).
     void resetTransientPipeStages() {
-        import toolpipe.pipeline             : g_pipeCtx;
-        import toolpipe.stage                : TaskCode;
-        import toolpipe.stages.actcenter     : ActionCenterStage;
-        import toolpipe.stages.axis          : AxisStage;
-        import toolpipe.stages.falloff       : FalloffStage;
-        import toolpipe.stages.constrain     : ConstrainStage;
+        import toolpipe.pipeline : g_pipeCtx, resetToolSwitchTransientStages;
         if (g_pipeCtx is null) return;
-        foreach (s; g_pipeCtx.pipeline.allMut()) {
-            // Every WGHT-task stage (the primary "falloff" AND any stacked
-            // "falloff#N" extras) resets the same way: a user-selected
-            // falloff (userLocked) survives a tool switch — reference parity
-            // (captured 2026-06-16). Keyed by task, not by the literal id,
-            // so stacked extras get the same treatment as the primary
-            // instead of surviving by omission.
-            if (s.taskCode() == TaskCode.Wght) {
-                if (auto fo = cast(FalloffStage)s)
-                    fo.resetTransient();
-                else
-                    s.reset();
-                continue;
-            }
-            switch (s.id()) {
-                case "actionCenter":
-                    // Skip reset when the user explicitly set a mode via
-                    // actr.* — userLocked survives tool switches.
-                    if (auto ac = cast(ActionCenterStage)s)
-                        ac.resetTransient();
-                    else
-                        s.reset();
-                    break;
-                case "axis":
-                    if (auto ax = cast(AxisStage)s)
-                        ax.resetTransient();
-                    else
-                        s.reset();
-                    break;
-                case "constrain":
-                    // Topology-pen P0 (REV-2): a tool that composes CONS
-                    // transiently (TopologyPenTool enabling CONS+Point on
-                    // activate() without locking it) cleanly reverts on tool
-                    // switch; an explicit user `tool.pipe.attr constrain ...`
-                    // lock (userLocked) survives, same funnel as actionCenter/axis.
-                    if (auto cs = cast(ConstrainStage)s)
-                        cs.resetTransient();
-                    else
-                        s.reset();
-                    break;
-                default: break;
-            }
-        }
+        resetToolSwitchTransientStages(g_pipeCtx.pipeline);
     }
 
     // FULL pipe reset used only by a SCENE / DOCUMENT reset (/api/reset,

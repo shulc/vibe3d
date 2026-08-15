@@ -10,7 +10,7 @@ import document : primaryModelSpace;
 import std.math : sqrt;
 import mesh : Mesh, MapDomain, MeshCacheKey;
 import editmode : EditMode;
-import toolpipe.stage    : Stage, TaskCode, ordWght;
+import toolpipe.stage    : Stage, TaskCode, ordWght, ToolSwitchTransient;
 import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.packets  : FalloffConfig, FalloffPacket, FalloffType, FalloffShape,
                             FalloffMix, LassoStyle, ElementConnect, ElementMode;
@@ -122,7 +122,7 @@ private static immutable IntEnumEntry[] shapeEntries = [
 //   `in`           : float, custom-shape tangent at t=0
 //   `out`          : float, custom-shape tangent at t=1
 // ---------------------------------------------------------------------------
-class FalloffStage : Stage, Operator {
+class FalloffStage : Stage, Operator, ToolSwitchTransient {
     // Config field-set (type/shape/start/end/center/size/normal/pickedRadius/
     // connect/elementMode/steps/anchorRing/screenCx/…/mapName) — the SAME
     // struct FalloffPacket embeds, so evaluate()/snapshotConfigToPacket()/
@@ -338,7 +338,7 @@ class FalloffStage : Stage, Operator {
     /// UNLESS the user explicitly locked the falloff (userLocked), in which case
     /// it is preserved across the tool switch. Called by app.d's
     /// resetTransientPipeStages on every tool activation.
-    void resetTransient() {
+    override void resetTransient() {
         if (userLocked) return;
         reset();
     }

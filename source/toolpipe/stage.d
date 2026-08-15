@@ -223,6 +223,44 @@ abstract class Stage : ParamProvider {
 }
 
 // ---------------------------------------------------------------------------
+// ToolSwitchTransient — marker for stages whose session config is TOOL-
+// DRIVEN: a tool switch should wipe it UNLESS the user explicitly locked it
+// in place (each implementor carries its own `userLocked`-style field and a
+// `resetTransient()` that checks it before falling back to `reset()`).
+// Implemented today by ActionCenterStage, AxisStage, ConstrainStage and
+// FalloffStage (task 0980 / audit-4 P7).
+//
+// Persistent-config stages — Snap, Symmetry, Workplane, Path — do NOT
+// implement this: their state is a user SETTING, not a tool session, and
+// deliberately survives a tool switch (captured 2026-06-16, matches the
+// reference editor).
+//
+// This replaced a hand-written `switch (s.id())` in app.d's
+// `resetTransientPipeStages()` that matched three string literals
+// ("actionCenter" / "axis" / "constrain") plus a separate `s.taskCode() ==
+// TaskCode.Wght` branch for falloff. That shape has exactly one failure
+// mode: a stage that SHOULD reset-on-switch but whose `id()` doesn't match
+// one of the hardcoded literals (a renamed stage, or — the case WGHT
+// already had to escape by matching on taskCode instead — a second same-
+// task instance under a different id, e.g. a stacked "falloff#1") falls
+// through the `default: break;` arm and is never reset again, silently, for
+// the life of the process. `toolpipe.pipeline.resetToolSwitchTransientStages`
+// walks every registered stage and dispatches by `cast(ToolSwitchTransient)`
+// instead: a TYPE check, not a name/taskCode match, so it is exact for every
+// instance of every implementor regardless of id() — including stacked
+// same-task extras — and a stage that does NOT implement the interface is
+// left alone (the same outcome a forgotten switch case gives today), rather
+// than silently mis-firing either way.
+// ---------------------------------------------------------------------------
+interface ToolSwitchTransient {
+    /// Same contract as `Stage.reset()` but respects the implementor's own
+    /// `userLocked`-style flag. Called by
+    /// `toolpipe.pipeline.resetToolSwitchTransientStages` (in turn called by
+    /// app.d's `resetTransientPipeStages()`) on every tool activation.
+    void resetTransient();
+}
+
+// ---------------------------------------------------------------------------
 // Convenience: a "no-op" placeholder stage. Useful as a default insert
 // for a task slot before a concrete stage is registered, and as a smoke
 // test in tests/test_toolpipe_skeleton.d.

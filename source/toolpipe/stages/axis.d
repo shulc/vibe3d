@@ -8,7 +8,7 @@ import math    : Vec3, Viewport, cross, dot, normalize, frameMatrix, frameMatrix
 import mesh    : Mesh;
 import editmode : EditMode;
 import seltype : SelType;
-import toolpipe.stage    : Stage, TaskCode, ordAxis;
+import toolpipe.stage    : Stage, TaskCode, ordAxis, ToolSwitchTransient;
 // pipeline imports moved to packet-only — Phase 6 cleanup
 import toolpipe.packets  : AxisPacket;
 import operator          : Operator, Task, VectorStack, PacketKind;
@@ -46,7 +46,7 @@ import params            : IntEnumEntry, wireTagForValue, valueForWireTag,
 // -1 in 7.2 — populated when an axis-locked tool needs the principal
 // axis index (out of scope for 7.2).
 // ---------------------------------------------------------------------------
-class AxisStage : Stage, Operator {
+class AxisStage : Stage, Operator, ToolSwitchTransient {
     // Phase 1 of doc/operator_refactor_plan.md.
     private AxisPacket _publishedPacket;
 
@@ -297,7 +297,7 @@ public:
     /// resetTransient: same as reset() but respects userLocked.
     /// Called by resetTransientPipeStages (tool.set / tool switch) so
     /// an explicit `actr.*` user setting survives switching tools.
-    void resetTransient() {
+    override void resetTransient() {
         if (userLocked) return;
         reset();
     }
