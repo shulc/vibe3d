@@ -302,9 +302,10 @@ final class PenSnapGuide : SnapGuide {
     ///     line numbers moved, the argument did not.);
     ///   * `math.d:495-512` — `toWorldNormal`'s doc: do NOT "fix" a
     ///     mirror-flipped normal by cross-producting world points;
-    ///   * app.d's RMB-lasso `frontFacing` closure, `Mesh.visibleVertices`'
-    ///     inline cull, and snap.d's `faceVisible` — the three sites 0617
-    ///     converted to exactly this law, each carrying its reason inline.
+    ///   * `math.frontFacingLocal` — the three sites 0617 converted to
+    ///     exactly this law (app.d's RMB-lasso `frontFacing` closure,
+    ///     `Mesh.visibleVertices`' cull, snap.d's `faceVisible`) became
+    ///     ONE function in 0832, and the reason lives in its comment.
     ///     (Cited by SYMBOL on purpose: this comment previously carried
     ///     four line numbers and all four had rotted. Re-derivable by
     ///     searching for `ms.mirrored`, which is still read nowhere in
