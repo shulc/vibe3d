@@ -1858,20 +1858,20 @@ void main(string[] args) {
         });
     }
 
-    // VisibilityCache (`mesh.visibleVertices`) is no longer used — the
-    // lasso path that consumed it switched to `gpuSelect.elementVisibility`
-    // (see `doc/lasso_gpu_pick_buffer_fix.md`). The CPU
-    // `Mesh.visibleVertices` implementation in `source/mesh.d` and the
-    // `VisibilityCache` wrapper in `source/visibility_cache.d` stay
-    // around — they're still useful for headless / non-GL test paths
-    // and are tested directly by their unittests — but the live
-    // lasso path no longer hits them.
+    // `Mesh.visibleVertices` is not used from this loop — the lasso path
+    // that consumed it switched to `gpuSelect.elementVisibility` (see
+    // `doc/lasso_gpu_pick_buffer_fix.md`). It stays in `source/mesh.d`
+    // regardless: `snap.d`'s walkSource and the picking-vs-snap facing
+    // predicate (see CLAUDE.md's Picking Strategy section) are live callers,
+    // and it carries its own tests.
     //
-    // TASK 0833 — "tested by their unittests" was true of
-    // `Mesh.visibleVertices` and NOT of the wrapper: `visibility_cache.d` had
-    // no unittest of its own, so its per-mesh-address cache key (the term that
-    // stops two same-version layers aliasing) was unexercised while the module
-    // sat callerless. It now has one — `tests/unit/visibility_cache_test.d`.
+    // TASK 0861 — the `VisibilityCache` wrapper that used to sit here
+    // (`source/visibility_cache.d`) is gone. It had no caller of its own —
+    // "useful for headless / non-GL test paths" was never true, just an
+    // untested claim — and its per-mesh-address cache-key term (the one that
+    // stops two same-version layers aliasing) went unexercised the whole time
+    // it sat callerless (task 0833 found this and added the coverage the
+    // deletion has since taken with it).
 
     GpuMesh gpu;
     gpu.init();

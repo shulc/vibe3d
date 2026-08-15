@@ -245,7 +245,7 @@ struct MeshMap {
 /// different `Mesh`es can legitimately carry an equal `mutationVersion`
 /// (both default-initialize to 0, or two same-op-count histories collide).
 /// Folding `cast(size_t)&m` in — the same address-key convention already
-/// used by `visibility_cache.d` / `snap.d` / `bvh_pick.d` — closes that hole:
+/// used by `snap.d` / `bvh_pick.d` — closes that hole:
 /// two distinct `Mesh` instances can never satisfy `matches()` for the same
 /// key, no matter how their `mutationVersion`s line up. (A cache that is
 /// itself co-located ON the `Mesh`, like `vertexAdjacencyCSR` above, needs

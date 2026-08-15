@@ -36,3 +36,10 @@
 # WHAT DOES NOT BELONG HERE. "The extraction lost some blocks, unclear which"
 # is not a declaration, it is the 0706 incident with a number attached. If you
 # cannot say what was removed, the answer is to find it, not to declare it.
+
+# tests/unit/visibility_cache_test.d deleted along with the VisibilityCache
+# wrapper it tested (source/visibility_cache.d): the wrapper had no live
+# caller (the lasso path it served moved to gpuSelect.elementVisibility).
+# Mesh.visibleVertices, the one thing it wrapped, stays with its own tests
+# and live callers (snap, the facing predicate).
+drop 1 7 0861 deleted the VisibilityCache wrapper (source/visibility_cache.d) and its test — no live caller
