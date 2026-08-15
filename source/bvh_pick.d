@@ -73,6 +73,20 @@ struct SurfaceHit {
 /// `bvhPick` only calls `pickFace`; the CONS stage's per-background-layer
 /// instances only call `pickSurface`), so the split costs nothing today
 /// and removes any risk of the two caches interacting.
+///
+/// TASK 0833 — the two caches' ADDRESS terms are not equally load-bearing,
+/// which is worth knowing before anyone "simplifies" either:
+///   * `_meshAddr` (face pick) IS load-bearing. app.d holds ONE instance and
+///     feeds it the cage, the subpatch preview mesh, or another layer's cage
+///     after a primary switch — different objects that can share an
+///     `uploadVersion`. Pinned by a stale-read block in
+///     tests/unit/bvh_pick_test.d: delete the term and it goes red.
+///   * `_surfMeshAddr` (surface pick) is redundant TODAY: its only caller,
+///     `ConstrainStage`, already keys its `BvhPick[size_t]` map BY mesh
+///     address (toolpipe/stages/constrain.d), so a given instance never sees
+///     a second mesh. Kept, because the key belongs to the cache rather than
+///     to one caller's bookkeeping — but a test for it would be asserting
+///     `constrain.d`'s AA, not this cache, so none was written.
 class BvhPick {
 private:
     dbvh_t* _handle;

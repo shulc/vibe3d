@@ -304,3 +304,194 @@ unittest {
         "rebuildIfStale must not mutate the CAGE's mutationVersion — only "
         ~ "the preview's own internal mesh may bump its own version");
 }
+
+// ---------------------------------------------------------------------------
+// Task 0833 — the settled-cage precondition inside `catmullClarkOsd`'s
+// SELECTIVE arm is LIVE, i.e. it CAN fail, and it stays branch-local.
+//
+// 0724 placed this assert on the branch rather than at the function entry,
+// because the full-refinement arm never touches `cage.edgeIndexMap` and an
+// entry-wide assert would refuse a legal whole-cage call on a never-built
+// map. That placement is a claim about two different call shapes, so this
+// block exercises BOTH against the same stale cage: the mixed call throws,
+// the whole-cage call does not.
+//
+// Legal sequence for the stale cage: `addFaceFast` is the importers' append
+// primitive — it fills `edges` from the CALLER's scratch lookup and defers the
+// canonical map to a terminal `buildLoops()`. Nothing here writes a private
+// field.
+//
+// What the assert stands in for is silent, not loud: a stale map mis-keys the
+// cage-edge → OSD-edge-point table, and the stitched boundary loses its edge
+// points — a crack in the limit surface, never an error.
+//
+// `debug`-wrapped: `assertEdgeMapValid` is a `debug assert`, so this shows the
+// guard is live in the builds that CARRY it (dub test / dub build). It is
+// stripped from `-release`; the shipped binary has no such guard.
+// ---------------------------------------------------------------------------
+unittest {
+    debug {
+        import core.exception : AssertError;
+        import std.exception  : assertThrown;
+
+        // Two-quad strip sharing edge (1,2), assembled the way an importer
+        // assembles one.
+        Mesh cage;
+        uint[ulong] scratch;
+        cage.vertices = [
+            Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 1),
+            Vec3(2, 0, 0), Vec3(2, 0, 1),
+        ];
+        cage.addFaceFast(scratch, [0u, 1u, 2u, 3u]);
+        cage.addFaceFast(scratch, [1u, 4u, 5u, 2u]);
+        assert(cage.edges.length == 7,
+            "setup: the shared edge must dedup to 7 edges across the strip");
+        assert(!cage.edgeMapUsable(),
+            "setup: addFaceFast defers the canonical map, so it must read unusable");
+
+        // MIXED cage (face 0 marked, face 1 not) — the arm that stitches OSD
+        // output against un-marked cage faces THROUGH the map.
+        bool[] mixed = [true, false];
+        assertThrown!AssertError(catmullClarkOsd(cage, mixed),
+            "the selective arm must refuse a cage whose edgeIndexMap was never "
+            ~ "rebuilt -- if this stops throwing, the precondition has become "
+            ~ "decoration");
+
+        // ...and the WHOLE-cage call on that same unsettled cage must still
+        // work: this is what an entry-wide assert would have wrongly refused,
+        // and it is why the check sits on the branch.
+        Mesh whole = catmullClarkOsd(cage);
+        assert(whole.faces.length > 0,
+            "the full-refinement arm reads no edgeIndexMap, so it must accept "
+            ~ "an unsettled cage");
+
+        // The mixed call is fine once the caller settles the cage, so the
+        // assert discriminates between two states rather than refusing the arm.
+        cage.buildLoops();
+        assert(cage.edgeMapUsable(), "setup: buildLoops must restore the map");
+        Mesh refined = catmullClarkOsd(cage, mixed);
+        assert(refined.faces.length > 0,
+            "the selective arm must produce a stitched result on a settled cage");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task 0833 — the twin precondition inside `OsdAccel.buildPreview`'s
+// mixed-cage arm is LIVE too, and is reached through a DIFFERENT door: the
+// per-face Subpatch bits rather than a caller-supplied face mask.
+//
+// Same silent-failure shape as its `catmullClarkOsd` twin: a stale map
+// mis-attributes the marked/un-marked adjacency counts, so the INF-crease set
+// comes out wrong and the preview smooths across a boundary it was supposed to
+// hold sharp. A wrong limit surface, never an error.
+//
+// `debug`-wrapped for the same reason as every block in this family — the
+// guard exists only in builds that keep `debug assert`.
+// ---------------------------------------------------------------------------
+unittest {
+    debug {
+        import core.exception : AssertError;
+        import std.exception  : assertThrown;
+
+        Mesh cage;
+        uint[ulong] scratch;
+        cage.vertices = [
+            Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 1),
+            Vec3(2, 0, 0), Vec3(2, 0, 1),
+        ];
+        cage.addFaceFast(scratch, [0u, 1u, 2u, 3u]);
+        cage.addFaceFast(scratch, [1u, 4u, 5u, 2u]);
+        cage.resizeSubpatch();
+        cage.setFaceSubpatch(0, true);    // MIXED: face 1 stays un-marked
+        assert(cage.isFaceSubpatch(0) && !cage.isFaceSubpatch(1),
+            "setup: the cage must be mixed for the crease arm to run");
+        assert(!cage.edgeMapUsable(),
+            "setup: the Subpatch write must not have settled the map");
+
+        OsdAccel      accel;
+        Mesh          preview;
+        SubpatchTrace trace;
+        assertThrown!AssertError(accel.buildPreview(cage, 2, preview, trace),
+            "buildPreview's mixed-cage arm must refuse a cage whose "
+            ~ "edgeIndexMap was never rebuilt -- if this stops throwing, the "
+            ~ "precondition has become decoration");
+
+        cage.buildLoops();
+        assert(cage.edgeMapUsable(), "setup: buildLoops must restore the map");
+        Mesh          preview2;
+        SubpatchTrace trace2;
+        assert(accel.buildPreview(cage, 2, preview2, trace2),
+            "the same mixed-cage preview must build once the cage is settled");
+        assert(preview2.faces.length > 0,
+            "a settled mixed cage must yield a non-empty preview");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task 0833, cache half — `SubpatchPreview.rebuildIfStale`'s
+// (sourceMeshAddr, mutationVersion, depth) key must not let two DIFFERENT
+// cages at an equal mutationVersion alias.
+//
+// This is the class that has already produced a live bug in this tree: two
+// same-version layers aliased in the version-keyed caches until a per-mesh-
+// address term went into the key. So unlike the `assert*Valid` guards above,
+// the stale read here is not hypothetical — it is what the address term was
+// added to stop, and this constructs it.
+//
+// The production sequence is a layer switch: `Layer` holds its own `Mesh`, so
+// the primary's address changes when the primary changes, while both meshes
+// can trivially sit at the same `mutationVersion` (two cubes; or an undo that
+// walks a background layer back onto a version another layer also holds).
+// Nothing but the address separates them here — same topology, same depth,
+// same version, same vertex count — which is exactly what makes the term's
+// removal observable.
+//
+// NOT `debug`-wrapped, unlike the guard blocks: this is a live cache key, not
+// a `debug assert`. It holds in every build, release included.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : SubpatchPreview;
+    import std.conv : to;
+    import std.math : fabs;
+
+    static Mesh subpatchedCube(float dx) {
+        Mesh c = makeCube();
+        c.resizeSubpatch();
+        foreach (fi; 0 .. c.faces.length) c.setSubpatch(fi, true);
+        // Direct position write — no commitChange, so the two cages stay at
+        // the SAME mutationVersion. (A gizmo drag is version-silent in exactly
+        // this way; see the task-0401 block above.)
+        foreach (ref v; c.vertices) v = v + Vec3(dx, 0, 0);
+        return c;
+    }
+
+    Mesh cageA = subpatchedCube(0.0f);
+    Mesh cageB = subpatchedCube(10.0f);
+    assert(cageA.mutationVersion == cageB.mutationVersion,
+        "setup: the two cages must collide on mutationVersion — that collision "
+        ~ "IS the hazard, and with one layer it was invisible");
+    assert(cageA.vertices.length == cageB.vertices.length,
+        "setup: equal vertex counts, so no other key term separates them");
+
+    static float centroidX(const ref Mesh m) {
+        float sx = 0;
+        foreach (v; m.vertices) sx += v.x;
+        return m.vertices.length ? sx / m.vertices.length : 0;
+    }
+
+    SubpatchPreview preview;
+    preview.rebuildIfStale(cageA, 1, null, false);
+    assert(preview.active, "setup: a fully-subpatched cube must activate");
+    assert(fabs(centroidX(preview.mesh)) < 0.5f,
+        "setup: cage A's preview must sit at the origin, got "
+        ~ centroidX(preview.mesh).to!string);
+
+    // The switch. Only the SOURCE ADDRESS differs from the previous call.
+    preview.rebuildIfStale(cageB, 1, null, false);
+    assert(fabs(centroidX(preview.mesh) - 10.0f) < 0.5f,
+        "a second cage at the SAME mutationVersion and depth must re-derive "
+        ~ "the preview, not serve the first cage's — got centroid x "
+        ~ centroidX(preview.mesh).to!string
+        ~ "; the (address, version, depth) key has lost its address term and "
+        ~ "two same-version layers are aliasing again");
+}

@@ -1860,8 +1860,14 @@ void main(string[] args) {
     // `Mesh.visibleVertices` implementation in `source/mesh.d` and the
     // `VisibilityCache` wrapper in `source/visibility_cache.d` stay
     // around — they're still useful for headless / non-GL test paths
-    // and are tested directly by their inline unittests — but the live
+    // and are tested directly by their unittests — but the live
     // lasso path no longer hits them.
+    //
+    // TASK 0833 — "tested by their unittests" was true of
+    // `Mesh.visibleVertices` and NOT of the wrapper: `visibility_cache.d` had
+    // no unittest of its own, so its per-mesh-address cache key (the term that
+    // stops two same-version layers aliasing) was unexercised while the module
+    // sat callerless. It now has one — `tests/unit/visibility_cache_test.d`.
 
     GpuMesh gpu;
     gpu.init();
@@ -2124,6 +2130,24 @@ void main(string[] args) {
         // mapping goes through edgeIndexMap. This runs once per frame at
         // hover, i.e. AFTER whatever command last touched topology has
         // returned, so every mutator's terminal buildLoops() has landed.
+        //
+        // TASK 0833 — NOT demonstrable HERE, by construction: this function is
+        // nested inside `main()` (it is handed to `EditorApp` as a delegate),
+        // so no unit test can call it and no amount of fixture work would
+        // change that. What is demonstrated instead is the SAME pair over the
+        // SAME reads at the deliberate copy of this code,
+        // `LoopSliceTool.toolStateJson` — a stale-loops mesh makes it throw,
+        // and deleting its `assertLoopsValid()` turns
+        // tests/unit/tools/slice/loop_slice_tool_test.d red. The precondition
+        // travels with the copy precisely so the two spellings cannot disagree
+        // about when it is legal to run; that is also what makes the copy a
+        // fair stand-in for this one.
+        //
+        // The `assertEdgeMapValid()` below cannot be the sole failure on this
+        // tree (no producer of "loops valid, map stale" exists — see the note
+        // at commands/select/loop.d and case 7 of the stamp trace table in
+        // tests/unit/mesh_test.d). Kept as the guard that starts discriminating
+        // the day one appears.
         mesh.assertLoopsValid();
         mesh.assertEdgeMapValid();
         // `sliceRing`: highlight the ring the loop-SLICE lands on (seed +

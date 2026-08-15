@@ -429,6 +429,18 @@ public:
         // it is legal to run. Serving an /api/tool/state read is a
         // between-commands moment, so the live mesh is settled by the same
         // argument as the app.d twin.
+        //
+        // TASK 0833 — this is where that pair is actually DEMONSTRATED, for
+        // both copies. app.d's original is nested inside `main()` and no unit
+        // test can reach it; this one is a plain method on a tool a test can
+        // build, so it carries the proof for the shared precondition:
+        // tests/unit/tools/slice/loop_slice_tool_test.d hands it a mesh whose
+        // loops are stale (a plain `addFace` with no terminal buildLoops) and
+        // requires the throw. Deleting `assertLoopsValid()` turns that test
+        // red. `assertEdgeMapValid()` cannot be the sole failure today — no
+        // producer of (loops valid, map stale) exists; see the note at
+        // commands/select/loop.d and case 7 of the stamp trace table in
+        // tests/unit/mesh_test.d.
         mesh.assertLoopsValid();
         mesh.assertEdgeMapValid();
         auto root = JSONValue.emptyObject;

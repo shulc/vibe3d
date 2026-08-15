@@ -453,3 +453,66 @@ unittest {
         ~ "orientation; got " ~ hitFar.to!string);
 }
 
+// ---------------------------------------------------------------------------
+// Task 0833, cache half — the FACE-pick cache's key is (uploadVersion, source
+// mesh ADDRESS), and the address term must be load-bearing.
+//
+// app.d holds ONE `BvhPick` (app.d:1650) and feeds it whichever mesh the GPU
+// last rasterised: the cage, or the subpatch PREVIEW mesh when a preview is
+// active, or — since layers — a different layer's cage after a primary switch.
+// Those are different `Mesh` objects that can trivially share an
+// `uploadVersion`, so without the address term the second pick answers out of
+// the first mesh's BVH. That is the same aliasing class that already bit this
+// tree in the version-keyed caches, which is why the term is there; this
+// makes its removal observable instead of leaving it as a comment.
+//
+// Discriminator: the two meshes disagree about WHICH FACE INDEX sits under the
+// cursor (0 vs 1), so an aliased answer is a wrong number, not a near-miss.
+// Both are cast at the same pixel through the same viewport with the same
+// GpuMesh, so the address is the only key term that differs.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+    import std.math : PI;
+    import math : lookAt, perspectiveMatrix;
+
+    // Single quad at y = 0 — the face under the cursor is index 0.
+    Mesh one;
+    one.vertices = [
+        Vec3(-1f, 0f, -1f), Vec3( 1f, 0f, -1f),
+        Vec3( 1f, 0f,  1f), Vec3(-1f, 0f,  1f),
+    ];
+    one.faces = [ cast(uint[])[0, 3, 2, 1] ];
+
+    // Two stacked quads — the face under the cursor is index 1 (the near one).
+    Mesh two;
+    two.vertices = [
+        Vec3(-1f, 0f, -1f), Vec3( 1f, 0f, -1f),
+        Vec3( 1f, 0f,  1f), Vec3(-1f, 0f,  1f),
+        Vec3(-1f, 2f, -1f), Vec3( 1f, 2f, -1f),
+        Vec3( 1f, 2f,  1f), Vec3(-1f, 2f,  1f),
+    ];
+    two.faces = [ cast(uint[])[0, 3, 2, 1], cast(uint[])[4, 7, 6, 5] ];
+
+    assert(one.mutationVersion == two.mutationVersion,
+        "setup: the two meshes must collide on version — the collision IS the "
+        ~ "hazard");
+
+    Vec3 eye  = Vec3(0f, 5f, 0f);
+    float[16] view = lookAt(eye, Vec3(0f, 0f, 0f), Vec3(0f, 0f, -1f));
+    float[16] proj = perspectiveMatrix(45.0f * PI / 180.0f, 1.0f, 0.001f, 100.0f);
+    Viewport vp = Viewport(view, proj, 200, 200, 0, 0, eye);
+
+    GpuMesh gpu;
+    gpu.uploadVersion = 1;      // the SAME upload version for both picks
+
+    auto pick = new BvhPick();  // ONE instance, exactly as app.d holds one
+    assert(pick.pickFace(100, 100, vp, one, gpu, ModelSpace.world()) == 0,
+        "setup: the lone quad is face 0");
+    assert(pick.pickFace(100, 100, vp, two, gpu, ModelSpace.world()) == 1,
+        "a second source mesh at the SAME uploadVersion must force a BVH "
+        ~ "rebuild, not answer out of the first mesh's tree — got "
+        ~ pick.pickFace(100, 100, vp, two, gpu, ModelSpace.world()).to!string
+        ~ "; the (uploadVersion, mesh address) key has lost its address term");
+}
+

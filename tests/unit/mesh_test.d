@@ -3228,6 +3228,60 @@ unittest {
     assert(m.edgeMapUsable(), "trace: buildLoops after addFaceFast must validate edgeMap");
 }
 
+// ---------------------------------------------------------------------------
+// 7. Task 0833 — the two stamps are NOT symmetric, and that asymmetry decides
+//    which half of a paired `assertLoopsValid(); assertEdgeMapValid();` guard
+//    a test can ever demonstrate.
+//
+//    `addFace` maintains edgeIndexMap as it goes (every edge is inserted
+//    through `addEdge`) and re-stamps it Valid at the NEW structVersion, but
+//    it does not rebuild loops. So it is a producer of (loops STALE, edgeMap
+//    VALID) — the state that makes the loops assert of a pair fire alone.
+//
+//    The MIRROR state (loops valid, edgeMap stale) has no producer here: every
+//    primitive that leaves edgeIndexMap Stale — `addFaceFast` (case 6) and
+//    `rebuildEdgesFromFaces` (below) — bumps `structVersion` in the same
+//    breath, which invalidates the loops stamp too; `markDerivedEmpty()`
+//    invalidates both by construction; and `buildLoops(false)`, the one arm
+//    that would validate loops while deliberately emptying the map, has ZERO
+//    callers repo-wide (backlog 0790). So on this tree `loopsValid()` implies
+//    `edgeMapUsable()`, and the SECOND assert of a pair cannot be the sole
+//    failure. This block is the measurement behind that claim; the three
+//    paired call sites cite it (commands/select/loop.d, app.d
+//    rebuildLoopHoverMask, tools/slice/loop_slice_tool.d toolStateJson).
+// ---------------------------------------------------------------------------
+unittest {
+    auto m = makeCube();
+    assert(m.loopsValid() && m.edgeMapUsable(), "setup: makeCube is settled");
+
+    // A face on four FRESH vertices — a real face append, not a duplicate of
+    // an existing one. addVertex is Points-class and bumps no structVersion.
+    const uint a = m.addVertex(Vec3(2, 0, 0));
+    const uint b = m.addVertex(Vec3(3, 0, 0));
+    const uint c = m.addVertex(Vec3(3, 0, 1));
+    const uint d = m.addVertex(Vec3(2, 0, 1));
+    m.addFace([a, b, c, d]);
+
+    assert(!m.loopsValid(),
+        "trace: addFace without a following buildLoops must read loops STALE");
+    assert(m.edgeMapUsable(),
+        "trace: addFace maintains edgeIndexMap through addEdge and re-stamps "
+        ~ "it Valid — this asymmetry is what lets the loops half of a paired "
+        ~ "guard fire on its own");
+
+    // The other direction: the map-invalidating primitive takes the loops
+    // stamp down with it, so no legal call leaves (loops valid, map stale).
+    auto n = makeCube();
+    n.rebuildEdgesFromFaces();
+    assert(!n.edgeMapUsable(),
+        "trace: rebuildEdgesFromFaces reassigns `edges` directly and must "
+        ~ "leave edgeIndexMap Stale");
+    assert(!n.loopsValid(),
+        "trace: ...and it bumps structVersion, so the loops stamp goes stale "
+        ~ "in the same breath — the (loops valid, map stale) state this would "
+        ~ "have to produce for an edgeMap-only assert to fire has no producer");
+}
+
 unittest { // mergeFacesByMask: 2-quad strip → 1 six-corner n-gon; non-adjacent → no-op
     import std.algorithm : sort;
     import std.conv      : to;

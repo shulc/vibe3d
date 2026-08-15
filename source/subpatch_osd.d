@@ -333,6 +333,12 @@ Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
         // between the refined subset and the un-marked cage faces), which is
         // exactly the class of failure an exception would have surfaced and
         // a wrong lookup does not.
+        // TASK 0833 — demonstrated live, INCLUDING the branch-local placement:
+        // tests/unit/subpatch_osd_test.d refines an importer-shaped cage
+        // (`addFaceFast`, no terminal buildLoops) with a MIXED mask and
+        // requires the throw, then refines the SAME unsettled cage whole and
+        // requires that to succeed. Deleting this line turns that block red;
+        // hoisting it to the function entry turns the whole-cage half red.
         cage.assertEdgeMapValid();
         // 1. Build cage-vert → result-vert idx map:
         //      In-subset cage verts map to their OSD vert-point idx
@@ -979,6 +985,11 @@ struct OsdAccel {
             // out wrong and the preview smooths across a boundary it was
             // supposed to hold sharp — a silently different limit surface,
             // never an error.
+            // TASK 0833 — demonstrated live: tests/unit/subpatch_osd_test.d
+            // previews an importer-shaped cage (`addFaceFast`, no terminal
+            // buildLoops) with mixed Subpatch bits and requires the throw, then
+            // requires the same preview to build after buildLoops(). Deleting
+            // this line turns that block red.
             cage.assertEdgeMapValid();
             // Tag verts that ANY un-marked face touches.
             bool[] vertHasUnmarked = new bool[](nv);

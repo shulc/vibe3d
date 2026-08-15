@@ -87,3 +87,66 @@ unittest {
         "S3: old v1 (now at post-revert index 1) must NOT inherit v2's "
         ~ "stale stamp");
 }
+
+// ---------------------------------------------------------------------------
+// Task 0833 — the settled-mesh precondition on `restoreSelectedEdgeEnds` is
+// LIVE, i.e. it CAN fail.
+//
+// 0724 measured that no caller can trip it today (every stale-leaving mutator
+// ends in a terminal `buildLoops()` before any reader). This constructs the
+// stale read those callers never produce, so the guard is demonstrated rather
+// than argued — a check that cannot fail is indistinguishable from one that is
+// absent.
+//
+// Why THIS twin and not `applyEdgeSelByEnds` (the private one, same body):
+// this function is module-PUBLIC, so its caller set is open and a test can
+// reach it without widening anything. The private twin has exactly one caller,
+// the delta finalizer, which runs rebuildEdges()+buildLoops() on the lines
+// above it — see the note left at that assert.
+//
+// Legal sequence: `addFaceFast` is the importers' append primitive
+// (io/scene_ir.d, io/native.d, remesh) — it fills `edges` from the CALLER's
+// scratch lookup and defers the canonical map to a terminal `buildLoops()`.
+//
+// The failure it stands in for is silent: a stale map resolves an endpoint
+// pair to whatever edge index the PREVIOUS topology had, so the restore
+// selects the WRONG edge instead of failing.
+//
+// `debug`-wrapped because `assertEdgeMapValid` is a `debug assert` — this
+// proves the guard is live in the builds that carry it (dub test / dub build).
+// It is stripped from `-release`, so it is not a runtime guarantee in the
+// shipped binary.
+// ---------------------------------------------------------------------------
+unittest {
+    debug {
+        import core.exception : AssertError;
+        import std.exception  : assertThrown;
+
+        Mesh m;
+        uint[ulong] scratch;
+        m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 1)];
+        m.addFaceFast(scratch, [0u, 1u, 2u, 3u]);
+        assert(m.edges.length == 4,
+            "setup: addFaceFast must still append the quad's four edges");
+        assert(!m.edgeMapUsable(),
+            "setup: addFaceFast defers the canonical map, so it must read unusable");
+
+        assertThrown!AssertError(restoreSelectedEdgeEnds(m, [0u, 1u]),
+            "restoreSelectedEdgeEnds must refuse a mesh whose edgeIndexMap was "
+            ~ "never rebuilt -- if this stops throwing, the precondition has "
+            ~ "become decoration");
+
+        // ...and the SAME call lands the selection once the caller settles the
+        // mesh: the assert discriminates between two states, it does not refuse
+        // the restore outright.
+        m.buildLoops();
+        m.resizeEdgeSelection();
+        assert(m.edgeMapUsable(), "setup: buildLoops must restore the map");
+        restoreSelectedEdgeEnds(m, [0u, 1u]);
+        const uint ei = m.edgeIndex(0, 1);
+        assert(ei != ~0u, "setup: the rebuilt map must know edge (0,1)");
+        assert((m.edgeMarks[ei] & Mesh.Marks.Select) != 0,
+            "the endpoint pair (0,1) must come back selected through the "
+            ~ "rebuilt map");
+    }
+}

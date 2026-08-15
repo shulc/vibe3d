@@ -27,6 +27,24 @@ class SelectLoop : Command {
         // starting the next, so by the time this apply() begins the mesh is
         // always settled. Catches a hypothetical future topology mutator
         // that forgets its buildLoops() before the next select.loop runs.
+        //
+        // TASK 0833 — the FIRST of these two is demonstrated: a test in
+        // tests/unit/commands/select/loop_test.d hands apply() a mesh whose
+        // loops are stale (a plain `addFace` without a terminal buildLoops)
+        // and requires the throw; deleting the line turns that test red.
+        //
+        // The SECOND one cannot be the sole failure today, and that was
+        // measured, not assumed — deleting `assertEdgeMapValid()` alone leaves
+        // the same test GREEN. There is no producer of (loops valid, edgeMap
+        // stale) on this tree: every primitive that leaves the map Stale bumps
+        // structVersion and invalidates the loops stamp in the same breath,
+        // and `buildLoops(false)` (the one arm that would validate loops while
+        // emptying the map) has zero callers, backlog 0790. It is kept rather
+        // than deleted because it is a one-compare debug-only check that
+        // becomes independently meaningful the day such a producer appears —
+        // and case 7 of the stamp trace table in tests/unit/mesh_test.d is the
+        // tripwire that will say so (it goes red if a mutator stops bumping
+        // structVersion).
         mesh.assertLoopsValid();
         mesh.assertEdgeMapValid();
         snap = SelectionSnapshot.capture(*mesh);

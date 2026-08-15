@@ -342,3 +342,65 @@ unittest {
     immutable msecs = sw.peek.total!"msecs";
     assert(msecs < 1000, "Phase-4 detector sweep over a ~100k-face mesh took " ~ msecs.to!string ~ "ms, expected < 1000ms");
 }
+
+// ---------------------------------------------------------------------------
+// Task 0833 — the settled-mesh precondition on `nakedBoundaryLoopEdges` is
+// LIVE, i.e. it CAN fail.
+//
+// Task 0724 rolled the precondition out and measured that no CALLER can trip
+// it today: every mutator that leaves `edgeIndexMap` stale ends in a terminal
+// `buildLoops()` before any reader runs. That measurement says the invariant
+// holds by call ORDER, and a check that cannot fail is indistinguishable from
+// one that is absent — so this block constructs the stale read the callers
+// never produce, through the public API only.
+//
+// The legal sequence: `addFaceFast` is the importers' own append primitive
+// (io/scene_ir.d, io/native.d, remesh) — it fills `edges` from the CALLER's
+// scratch lookup and deliberately defers the canonical map to a terminal
+// `buildLoops()`, marking `edgeMapState_` Stale meanwhile. Nothing here pokes
+// a private field or fakes a state the product cannot reach.
+//
+// The failure this stands in for is silent, which is why the site asserts
+// rather than returning a sentinel: `boundaryLoopToEdgeIndices` DROPS every
+// endpoint pair the map fails to resolve, so a stale/never-built map turns a
+// real hole into "no boundary loops" — a short answer, not an error.
+//
+// Wrapped in `debug` because `assertEdgeMapValid` is a `debug assert`: under
+// `-release` there is nothing to throw, so this proves the guard is live in
+// the builds that CARRY it (dub test / dub build), NOT that the shipped
+// release binary refuses a stale read. It does not.
+// ---------------------------------------------------------------------------
+unittest {
+    debug {
+        import core.exception : AssertError;
+        import std.exception  : assertThrown;
+
+        Mesh m;
+        uint[ulong] scratch;
+        m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 1)];
+        m.addFaceFast(scratch, [0u, 1u, 2u, 3u]);
+        assert(m.edges.length == 4,
+            "setup: addFaceFast must still append the quad's four edges");
+        assert(!m.edgeMapUsable(),
+            "setup: addFaceFast defers the canonical map, so it must read unusable");
+
+        assertThrown!AssertError(nakedBoundaryLoopEdges(m),
+            "nakedBoundaryLoopEdges must refuse a mesh whose edgeIndexMap was "
+            ~ "never rebuilt -- if this stops throwing, the precondition has "
+            ~ "become decoration");
+
+        // ...and the SAME call is fine once the caller settles the mesh, so the
+        // assert discriminates between two states rather than refusing the
+        // reader outright. The quad's four boundary edges all resolve, which is
+        // exactly what a stale map would have silently dropped.
+        m.buildLoops();
+        assert(m.edgeMapUsable(), "setup: buildLoops must restore the map");
+        auto loops = nakedBoundaryLoopEdges(m);
+        assert(loops.length == 1,
+            "a lone quad has exactly one naked boundary loop, got "
+            ~ loops.length.to!string);
+        assert(loops[0].length == 4,
+            "the loop must resolve all four edges through the rebuilt map, got "
+            ~ loops[0].length.to!string);
+    }
+}

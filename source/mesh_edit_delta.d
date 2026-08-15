@@ -1419,6 +1419,17 @@ private void applyEdgeSelByEnds(ref Mesh m, in uint[] ends) {
     // whatever edge index the PREVIOUS topology had, silently selecting the
     // wrong edge. The only caller is the delta finalizer below, which runs
     // rebuildEdges() + buildLoops() first.
+    //
+    // TASK 0833 — NOT demonstrable, and deliberately left that way. This
+    // function is module-PRIVATE with exactly one caller, so the only way a
+    // test could hand it a stale map is to widen its visibility; making a
+    // guard reachable by loosening the very encapsulation that bounds its
+    // caller set answers the wrong question. The identical body one function
+    // down (`restoreSelectedEdgeEnds`) IS module-public, and its guard is
+    // pinned by a stale-read test in tests/unit/mesh_edit_delta_test.d — so
+    // the BEHAVIOUR is demonstrated; what is undemonstrated here is only the
+    // reachability of this copy. Kept because it costs one debug-only compare
+    // and it is what would catch a SECOND in-module caller added later.
     m.assertEdgeMapValid();
     for (size_t i = 0; i + 1 < ends.length; i += 2) {
         const a = ends[i], b = ends[i + 1];
@@ -1461,6 +1472,10 @@ void restoreSelectedEdgeEnds(ref Mesh m, in uint[] ends) {
     // module-PUBLIC, so unlike its private twin the set of callers is open —
     // the assert is what keeps a future destructive command from restoring
     // the edge selection against a map its kernel never rebuilt.
+    // TASK 0833 — demonstrated live: tests/unit/mesh_edit_delta_test.d hands
+    // this an importer-shaped mesh (`addFaceFast`, no terminal buildLoops) and
+    // requires the throw, then requires the same call to land the selection
+    // after buildLoops(). Deleting this line turns that block red.
     m.assertEdgeMapValid();
     for (size_t i = 0; i + 1 < ends.length; i += 2) {
         const a = ends[i], b = ends[i + 1];

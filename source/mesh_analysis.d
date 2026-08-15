@@ -176,6 +176,10 @@ uint[][] nakedBoundaryLoopEdges(const ref Mesh mesh) {
     // hole into "no boundary loops". The `const` reader that legitimately
     // tolerates an unbuilt map returns a sentinel instead of asserting (see
     // `constraint.nearestFaceEdge`); this one has no sentinel to return.
+    // TASK 0833 — demonstrated live: tests/unit/mesh_analysis_test.d builds an
+    // importer-shaped mesh (`addFaceFast`, no terminal buildLoops) and requires
+    // this to throw, then requires the same call to succeed after buildLoops().
+    // Deleting this line turns that block red.
     mesh.assertEdgeMapValid();
     auto vertLoops = mesh.boundaryLoops();
     uint[][] result;

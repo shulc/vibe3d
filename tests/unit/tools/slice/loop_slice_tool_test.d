@@ -105,3 +105,67 @@ unittest {
     assert(a.positionsArray()[0] == 0.3f,
         "building a second tool must not disturb the first one's positions_");
 }
+
+// ---------------------------------------------------------------------------
+// Task 0833 — the settled-mesh precondition on `toolStateJson()` is LIVE,
+// i.e. it CAN fail.
+//
+// This site is the deliberate COPY of app.d's `rebuildLoopHoverMask` (the
+// loops-family walk plus the ring → edge-index resolve through edgeIndexMap),
+// and 0724 made the precondition travel with the copy. app.d's original is a
+// function nested inside `main()`, so no unit test can reach it; this twin is
+// a plain method on a tool a test can build, which makes it the only place the
+// shared precondition is demonstrable at all.
+//
+// The legal sequence: `addVertex` ×4 (Points-class, bumps no structVersion)
+// then `addFace` — a plain public face append that maintains edgeIndexMap
+// through `addEdge` but does NOT rebuild loops, leaving (loops STALE, edgeMap
+// VALID). Nothing here touches a private field.
+//
+// Only the `assertLoopsValid` half is demonstrated: the mirror state (loops
+// valid, edgeMap stale) has no producer on this tree, so the
+// `assertEdgeMapValid` on the next line can only fire where the line above it
+// already threw. See case 7 of the stamp trace table in
+// `tests/unit/mesh_test.d` for that measurement.
+//
+// `debug`-wrapped because both are `debug assert` — live in dub test / dub
+// build, stripped from the shipped `-release` binary. This block says the
+// guard works where it exists; it does not claim the release binary has one.
+// ---------------------------------------------------------------------------
+unittest {
+    debug {
+        import core.exception : AssertError;
+        import std.exception  : assertThrown;
+        import math : Vec3;
+
+        Mesh m = makeCube();
+        EditMode em = EditMode.Edges;
+        g_hoveredEdge = -1;      // no hover: the ring branch stays empty
+
+        const uint a = m.addVertex(Vec3(2, 0, 0));
+        const uint b = m.addVertex(Vec3(3, 0, 0));
+        const uint c = m.addVertex(Vec3(3, 0, 1));
+        const uint d = m.addVertex(Vec3(2, 0, 1));
+        m.addFace([a, b, c, d]);
+        assert(!m.loopsValid(),
+            "setup: a face append without a terminal buildLoops must leave the "
+            ~ "loops family stale");
+
+        auto tool = new LoopSliceTool(() => &m, null, &em, null, null, null, null);
+        assertThrown!AssertError(tool.toolStateJson(),
+            "toolStateJson must refuse a mesh whose loops family was never "
+            ~ "rebuilt -- if this stops throwing, the precondition has become "
+            ~ "decoration");
+
+        // ...and the SAME read serves once the mesh is settled, so the
+        // precondition discriminates between two states rather than refusing
+        // the endpoint outright.
+        m.buildLoops();
+        m.resetSelection();
+        assert(m.loopsValid() && m.edgeMapUsable(),
+            "setup: buildLoops must settle both stamps");
+        auto js = tool.toolStateJson();
+        assert(js["tool"].str == "loopSlice",
+            "a settled mesh must produce the ordinary tool-state payload");
+    }
+}

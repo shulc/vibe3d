@@ -1915,6 +1915,90 @@ unittest {
         ~ "around, not papers over)");
 }
 
+// ---------------------------------------------------------------------------
+// Task 0833 — the candidate grid's `meshAddr` key term must be load-bearing.
+//
+// The grid table is GLOBAL and keyed by (slot, kind), not by mesh: the same
+// slot 0 vertex grid serves whichever mesh the snapper is currently walking.
+// Two different layers' meshes can sit at an equal `mutationVersion` (two
+// cubes; or an undo that walks a background layer back onto a version another
+// layer also holds), and they have equal `elemCount` too — so on a
+// layer.select with no intervening mutation, `meshAddr` is the ONLY key term
+// that separates them. Its absence is precisely the aliasing bug this class
+// already produced once in this tree, which is why the term exists; the block
+// below is what makes deleting it observable rather than a matter of reading
+// the comment above the field.
+//
+// This block lives in source/snap.d rather than tests/unit/ because
+// `queryCandidateGrid` and `CandidateGrid` are module-private — the same rule
+// task 0706 applied when it moved the rest out. It is not `debug`-wrapped:
+// a cache key is live in every build, unlike the `debug assert` guards this
+// task's other half exercises.
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh                    : makeCube;
+    import math                    : lookAt, perspectiveMatrix;
+    import std.math                : PI, sqrt;
+    import std.algorithm.searching : canFind;
+    import std.conv                : to;
+
+    invalidateSnapGrids();   // this block owns slot 0 for its duration
+
+    Mesh a = makeCube();
+    Mesh b = makeCube();
+    // Direct position writes — no commitChange, so the two meshes stay at the
+    // SAME mutationVersion (and the same vertex count).
+    foreach (ref v; b.vertices) v = v + Vec3(3.0f, 0, 0);
+    assert(a.mutationVersion == b.mutationVersion,
+        "setup: the two meshes must collide on mutationVersion — that "
+        ~ "collision IS the hazard, and with one layer it was invisible");
+    assert(a.vertices.length == b.vertices.length,
+        "setup: equal element counts, so `elemCount` cannot separate them "
+        ~ "either");
+
+    Viewport vp;
+    vp.eye    = Vec3(0, 0, 5);
+    vp.view   = lookAt(vp.eye, Vec3(0, 0, 0), Vec3(0, 1, 0));
+    vp.proj   = perspectiveMatrix(PI / 2, 1.0f, 0.1f, 100.0f);
+    vp.width  = 800;
+    vp.height = 800;
+
+    immutable float gatherPx = SnapPacket.init.outerRangePx;
+
+    float px, py, ndc;
+    assert(projectToWindowFull(a.vertices[0], vp, px, py, ndc),
+        "setup: mesh A's vertex 0 must project on-screen");
+
+    // Build + populate slot 0's grid against mesh A.
+    auto candsA = queryCandidateGrid(Kind.Vertex, 0, a, vp,
+                                     cast(int)px, cast(int)py, gatherPx, null);
+    assert(candsA.canFind(0),
+        "sanity: A's vertex 0 must be a candidate at its own screen position");
+
+    // Mesh B has no vertex anywhere near that pixel, so an honest rebuild
+    // answers with nothing at all.
+    foreach (i, v; b.vertices) {
+        float qx, qy, qndc;
+        assert(projectToWindowFull(v, vp, qx, qy, qndc),
+            "setup: B's vertex " ~ i.to!string ~ " must project on-screen");
+        immutable float dx = qx - px, dy = qy - py;
+        assert(sqrt(dx * dx + dy * dy) > 3.0f * gatherPx,
+            "setup: every B vertex must sit well outside the gather block "
+            ~ "around A's vertex-0 pixel, or this proves nothing");
+    }
+
+    auto candsB = queryCandidateGrid(Kind.Vertex, 0, b, vp,
+                                     cast(int)px, cast(int)py, gatherPx, null);
+    assert(candsB.length == 0,
+        "a second mesh at the SAME mutationVersion and element count must "
+        ~ "force a grid rebuild, not answer out of the first mesh's buckets — "
+        ~ "got " ~ candsB.length.to!string ~ " candidate(s); the grid's "
+        ~ "(meshAddr, meshVersion, …) key has lost its address term and two "
+        ~ "same-version layers are aliasing again");
+
+    invalidateSnapGrids();   // leave the shared table as this block found it
+}
+
 
 // ---------------------------------------------------------------------------
 // S4(a) of doc/toolpipe_architecture_plan.md — the guide registry, and the
