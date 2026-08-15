@@ -315,6 +315,63 @@ private string scalarArgToString(JSONValue v) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// oneStringArg — the single string argument of a `viewport.*` command, in
+// whichever spelling the caller used: a bare JSON string body, the first
+// `_positional` entry of an argstring parse, or a named key.
+//
+// Task 0720 (audit №4, D6). D6 reported this parsing "copied 3×". Measured,
+// the viewport block has SIX positional readers following THREE different
+// laws: this one (three arms — `viewport.view`, `viewport.layout` and the
+// three independence toggles), a scalar-of-any-type reader that searches an
+// ALIAS LIST of named keys (`displayStyle`/`wireOverlay`/`wireAlpha`,
+// `gridSteps`), and an int-or-string reader (`viewport.master`). Only the
+// first is one law written out repeatedly, so only the first is folded here;
+// folding the other three sites into this would have changed what they accept.
+//
+// Throws exactly where the inline copies threw: `parseJSON` on a malformed
+// body, which the command handler's own catch turns into
+// `{"status":"error"}`.
+// ---------------------------------------------------------------------------
+private string oneStringArg(string paramsJson, string namedKey) {
+    import std.json : parseJSON, JSONType;
+    string outv = "";
+    if (paramsJson.length > 0) {
+        auto pjv = parseJSON(paramsJson);
+        if (pjv.type == JSONType.string) {
+            outv = pjv.str;
+        } else if (pjv.type == JSONType.object) {
+            if (auto pp = "_positional" in pjv) {
+                if (pp.type == JSONType.array && pp.array.length >= 1
+                    && pp.array[0].type == JSONType.string)
+                    outv = pp.array[0].str;
+            }
+            if (outv.length == 0) {
+                if (auto pp = namedKey in pjv)
+                    if (pp.type == JSONType.string) outv = pp.str;
+            }
+        }
+    }
+    return outv;
+}
+
+unittest {
+    // The three spellings the three folded arms accepted, and the two
+    // non-answers. A positional entry WINS over the named key — that is the
+    // order the inline copies had, and swapping it would silently change
+    // which argument an argstring line with both actually applies.
+    assert(oneStringArg(`"Top"`, "preset") == "Top");
+    assert(oneStringArg(`{"_positional":["Top"]}`, "preset") == "Top");
+    assert(oneStringArg(`{"preset":"Top"}`, "preset") == "Top");
+    assert(oneStringArg(`{"_positional":["Top"],"preset":"Front"}`, "preset") == "Top");
+    assert(oneStringArg("", "preset") == "");
+    assert(oneStringArg(`{"other":"Top"}`, "preset") == "");
+    // Non-string positional entries are not coerced (the arms fall back to
+    // their own default rather than accept a number as a preset name).
+    assert(oneStringArg(`{"_positional":[7]}`, "preset") == "");
+    assert(oneStringArg(`{"preset":7}`, "preset") == "");
+}
+
 void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
     // Slots this build legitimately leaves empty. Appended BESIDE the
     // condition that decides each one, never collected in a list at the
@@ -2291,24 +2348,9 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
             if (id == "viewport.view") {
                 import view : ProjKind, ViewPreset;
                 import viewport : applyCellViewPreset;
-                string presetStr = "";
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    if (pjv.type == JSONType.string) {
-                        // Raw string param (e.g. from JSON {"command":"viewport.view","params":"Top"}).
-                        presetStr = pjv.str;
-                    } else if (pjv.type == JSONType.object) {
-                        if (auto pp = "_positional" in pjv) {
-                            if (pp.type == JSONType.array && pp.array.length >= 1
-                                && pp.array[0].type == JSONType.string)
-                                presetStr = pp.array[0].str;
-                        }
-                        if (presetStr.length == 0) {
-                            if (auto pp = "preset" in pjv)
-                                if (pp.type == JSONType.string) presetStr = pp.str;
-                        }
-                    }
-                }
+                // Raw string body, first `_positional`, or `preset:` — see
+                // oneStringArg (task 0720).
+                string presetStr = oneStringArg(paramsJson, "preset");
                 // Map string → preset. projKind is derived from the preset
                 // by the shared helper (Perspective/Camera → Perspective,
                 // every axis preset → Ortho) — same mapping this switch used
@@ -2335,23 +2377,7 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
             // viewport.layout <preset> — switch layout (Single/SplitH/SplitV/Quad).
             if (id == "viewport.layout") {
                 import viewport : LayoutPreset;
-                string presetStr = "";
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    if (pjv.type == JSONType.string) {
-                        presetStr = pjv.str;
-                    } else if (pjv.type == JSONType.object) {
-                        if (auto pp = "_positional" in pjv) {
-                            if (pp.type == JSONType.array && pp.array.length >= 1
-                                && pp.array[0].type == JSONType.string)
-                                presetStr = pp.array[0].str;
-                        }
-                        if (presetStr.length == 0) {
-                            if (auto pp = "preset" in pjv)
-                                if (pp.type == JSONType.string) presetStr = pp.str;
-                        }
-                    }
-                }
+                string presetStr = oneStringArg(paramsJson, "preset");
                 LayoutPreset lp = LayoutPreset.Single;
                 switch (presetStr) {
                     case "SplitH": lp = LayoutPreset.SplitH; break;
@@ -2372,22 +2398,8 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
             // flags, camera-only, no undo entry.
             if (id == "viewport.indCenter" || id == "viewport.indScale" || id == "viewport.indRotate") {
                 bool val = true;
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    string s = "";
-                    if (pjv.type == JSONType.string) {
-                        s = pjv.str;
-                    } else if (pjv.type == JSONType.object) {
-                        if (auto pp = "_positional" in pjv) {
-                            if (pp.type == JSONType.array && pp.array.length >= 1
-                                && pp.array[0].type == JSONType.string)
-                                s = pp.array[0].str;
-                        }
-                        if (s.length == 0) {
-                            if (auto pp = "value" in pjv)
-                                if (pp.type == JSONType.string) s = pp.str;
-                        }
-                    }
+                {
+                    string s = oneStringArg(paramsJson, "value");
                     // Tolerant parse: "no"/"false"/"0" → false; anything else → true
                     if (s == "no" || s == "false" || s == "0") val = false;
                 }
