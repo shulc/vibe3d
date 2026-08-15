@@ -14,7 +14,7 @@ import mesh : Mesh, Surface;
 // The JSON bodies and the escaper that assembles them (task 0720, D5). Public
 // re-export: http_providers.d reaches `meshToJsonDetailed` through this module
 // and did so before the split.
-public import http_json : jsonEsc, meshToJson, meshToJsonDetailed;
+public import http_json : jsonEsc, meshToJsonDetailed;
 import core.atomic;
 import perf_probe : g_perf, g_frames, g_fc;
 
@@ -135,11 +135,8 @@ class HttpServer {
     private bool isRunning;
     private ushort port;
     private Thread serverThread;
-    private alias ModelDataProvider = string delegate();
-    private ModelDataProvider modelDataProvider;
     private alias DetailedModelDataProvider = string delegate();
     private DetailedModelDataProvider detailedModelDataProvider;
-    private bool useDetailedProvider = false;
     private alias CameraDataProvider = string delegate(int);
     private CameraDataProvider cameraDataProvider;
     private alias SelectionDataProvider = string delegate();
@@ -765,7 +762,6 @@ class HttpServer {
     public this(ushort port = 8080) {
         this.port = port;
         this.isRunning = false;
-        this.modelDataProvider = null;
         this.eventPlayer = EventPlayer();
 
         resetBridge = new MainThreadBridge!(ResetReq, ResetResp)(this,
@@ -784,8 +780,6 @@ class HttpServer {
                         resp.result = layerModelProvider(req.layer);
                     else if (req.detailed && detailedModelDataProvider !is null)
                         resp.result = detailedModelDataProvider();
-                    else if (modelDataProvider !is null)
-                        resp.result = modelDataProvider();
                     else
                         resp.error = "model data provider not set";
                 } catch (Exception e) {
@@ -1143,19 +1137,10 @@ class HttpServer {
     }
 
     /**
-     * Set the model data provider callback
-     */
-    public void setModelDataProvider(ModelDataProvider provider) {
-        this.modelDataProvider = provider;
-        this.useDetailedProvider = false;
-    }
-
-    /**
      * Set the detailed model data provider callback
      */
     public void setDetailedModelDataProvider(DetailedModelDataProvider provider) {
         this.detailedModelDataProvider = provider;
-        this.useDetailedProvider = true;
     }
 
     /**
@@ -1827,8 +1812,7 @@ class HttpServer {
 
     private void route_apiModel(HttpRequest request, HttpResponse response) {
         bool haveProvider = (layerModelProvider !is null)
-                         || (useDetailedProvider && detailedModelDataProvider !is null)
-                         || (modelDataProvider !is null);
+                         || (detailedModelDataProvider !is null);
         response.headers["Content-Type"] = "application/json";
         if (!haveProvider) {
             response.statusCode = 500;
@@ -1840,7 +1824,7 @@ class HttpServer {
             // Marshal the serialisation onto the main thread (via the
             // bridge's tick) so the provider never walks the mesh
             // mid-mutation (torn read).
-            modelBridge.req.detailed = useDetailedProvider;
+            modelBridge.req.detailed = (detailedModelDataProvider !is null);
             modelBridge.resp.result  = "";
             modelBridge.resp.error   = "";
             if (!modelBridge.submitAndWait())
@@ -3259,6 +3243,42 @@ class HttpServer {
      */
     public void tickAll() {
         foreach (b; bridges) b.tick();
+    }
+
+    /**
+     * Every provider/handler slot this server owns that nothing has filled in.
+     *
+     * Task 0720 (audit №4, D5). `wireHttpProviders` installs 42 delegates in
+     * one 2872-line function; a domain that stops being wired — a whole group
+     * dropped by a bad merge, a `setXxxProvider` call lost while splitting the
+     * function — used to be invisible until some test asked the endpoint and
+     * got `{"error":"... provider not set"}`. There is no compile-time check
+     * available for it (a delegate field is null-by-default and assigning it
+     * is a runtime act), so this is the audit's other standing remedy: a
+     * STARTUP THROW, driven by an enumeration the compiler produces rather
+     * than a list a human maintains.
+     *
+     * `this.tupleof` is what makes it generic: it walks the FIELDS, so a new
+     * `fooProvider` is covered the moment it is declared. (`allMembers` would
+     * also have matched the `setFooProvider` METHODS, which are never null.)
+     *
+     * The inventory that produced this found one slot with no caller at all:
+     * `setModelDataProvider`, whose arm of `/api/model`'s provider election
+     * had been unreachable for as long as the layer-aware provider has
+     * existed. That arm, its field, its setter and its serialiser are gone —
+     * had they stayed, this check would have had to carry an exception list,
+     * which is the very thing it exists to avoid.
+     */
+    public string[] unwiredEndpoints() {
+        string[] missing;
+        foreach (i, ref slot; this.tupleof) {
+            enum n = __traits(identifier, HttpServer.tupleof[i]);
+            static if ((n.length > 8 && n[$ - 8 .. $] == "Provider")
+                    || (n.length > 7 && n[$ - 7 .. $] == "Handler")) {
+                if (slot is null) missing ~= n;
+            }
+        }
+        return missing;
     }
 
     /**

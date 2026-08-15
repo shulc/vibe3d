@@ -3187,4 +3187,18 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         });
         }
     }
+
+    // Every slot filled? Task 0720. This function installs 42 delegates and
+    // is the only thing that installs any of them, so a domain that stops
+    // being wired is a domain whose endpoints answer "provider not set" — at
+    // whatever later moment somebody happens to ask. Say it here instead,
+    // where the cause is one frame away, and enumerate the slots with
+    // `HttpServer.tupleof` rather than a list kept in step by hand.
+    auto unwired = httpServer.unwiredEndpoints();
+    if (unwired.length) {
+        import std.array : join;
+        throw new Exception(
+            "HTTP endpoint wiring is incomplete — nothing installed: "
+            ~ unwired.join(", "));
+    }
 }

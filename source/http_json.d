@@ -46,15 +46,12 @@ string jsonEsc(string s) {
     return lit.length >= 2 ? lit[1 .. $ - 1] : "";
 }
 
-/**
- * Convert mesh data to JSON string
- */
-string meshToJson(size_t vertexCount, size_t edgeCount, size_t faceCount) {
-    import std.format : format;
-    string res = format("{\"vertexCount\": %d, \"edgeCount\": %d, \"faceCount\": %d, \"timestamp\": \"%s\"}",
-                  vertexCount, edgeCount, faceCount, Clock.currTime.toISOExtString());
-    return res;
-}
+// `meshToJson(vertexCount, edgeCount, faceCount)` used to sit here — the
+// counts-only body of the plain (non-detailed) model provider. Task 0720
+// deleted it: the wiring inventory that produced `unwiredEndpoints()` showed
+// `setModelDataProvider` had no caller anywhere in source/, tests/ or tools/,
+// so its provider was permanently null, its arm of `/api/model`'s three-way
+// election was unreachable, and this was its only caller.
 
 /**
  * Convert detailed mesh data to JSON string
