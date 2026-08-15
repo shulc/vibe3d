@@ -1089,18 +1089,44 @@ protected:
     ///
     /// KNOWN DISAGREEMENT, deliberately preserved (task 0712): this answers
     /// FALSE for Pivot and Parent, while `ActionCenterStage.relocateAllowed`
-    /// — the stage-side predicate for the same question — answers TRUE for
-    /// them, and says so in its own comment ("Pivot/Parent ARE included by
-    /// task 0187: an explicit relocation to a chosen point is defensible even
-    /// for the live item pivot"). The two were written five weeks apart: this
-    /// one predates Pivot/Parent existing and was never revisited, and its old
-    /// doc comment enumerated 10 of the 12 modes — Pivot and Parent appeared
-    /// in neither the allowed nor the refused list, which is what an omission
-    /// looks like rather than a decision. It is not dead: `relocateAllowed`
-    /// IS reachable for Pivot/Parent through `notifyAcenUserPlaced`, which has
-    /// no mode gate of its own. Reconciling the two changes what an
-    /// off-gizmo click does in two modes, so it is an owner call, filed as
-    /// 0712 — task 0705 only made the classification exhaustive.
+    /// — the stage-side predicate for what LOOKS like the same question —
+    /// answers TRUE for them, and says so in its own comment ("Pivot/Parent
+    /// ARE included by task 0187: an explicit relocation to a chosen point is
+    /// defensible even for the live item pivot").
+    ///
+    /// The obvious reading of that — this predicate simply predates
+    /// Pivot/Parent and was never revisited, so unify onto the deliberate one
+    /// — was MEASURED AND REFUTED. Flipping these two arms to `true` makes
+    /// `tests/test_item_panel_gizmo_sync.d` fail: "an off-gizmo drag in a
+    /// relocate-DISALLOWED mode (`actr.pivot`) must still move the item ...
+    /// pos stayed at (1.3, 0.7, -0.9)". The refusal is load-bearing and was
+    /// chosen, in a later task and for a different reason than the one filed:
+    /// `XfrmTransformTool`'s Item-mode off-gizmo guard (task 0614 phase 5)
+    /// CONSUMES a plain off-gizmo press exactly when this predicate is true,
+    /// so the two modes answering FALSE here is what keeps the item's
+    /// off-gizmo drag alive — and `actr.pivot` is the natural item-mode action
+    /// centre, so it is that drag's main home. That test's own comment names
+    /// the coupling and says it picked `actr.pivot` BECAUSE the mode is
+    /// relocate-disallowed.
+    ///
+    /// So the two predicates are not two spellings of one question. This one
+    /// is the WRITE gate — "does a plain off-gizmo press PLACE a pin (and give
+    /// up its off-gizmo drag)?" — and `relocateAllowed` is the READ gate — "a
+    /// pin exists; does this mode honour it over its own centre?" Pivot/Parent
+    /// answer no to the first and yes to the second, and both answers are
+    /// pinned: this one by `test_item_panel_gizmo_sync.d`, the other by task
+    /// 0187's in-module characterization unittest in `actcenter.d`. The pin a
+    /// Pivot-mode click refuses to place can still arrive by another route —
+    /// `notifyAcenUserPlaced` has no mode gate, and the falloff element pick
+    /// calls it whatever the mode is — and is then honoured.
+    ///
+    /// What 0712 still owes an answer to is whether that split should be
+    /// NAMED (rename one predicate so the difference is legible) rather than
+    /// erased. `tests/test_acen_relocate_read_write_split.d` pins the split
+    /// itself — auto (both gates open) / pivot (write shut, read open) /
+    /// origin (both shut) — so neither half can be unified away by accident
+    /// while the naming question is open. Task 0705 only made the
+    /// classification exhaustive.
     ///
     /// `final switch` since task 0705: the OR-chain form is exactly how the
     /// disagreement got in. The commit that added Pivot/Parent was FORCED to
