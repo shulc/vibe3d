@@ -1742,7 +1742,7 @@ public:
         //    is load-bearing: `app.d` offers the camera chords (Alt+LMB orbit,
         //    Alt+Shift pan, Ctrl+Alt zoom) to the tool FIRST, and consuming one
         //    would kill camera navigation in Item mode.
-        //  - `acenAllowsClickRelocate()` — the relocate is the ONLY thing that
+        //  - `pressPlacesCenter()` — the relocate is the ONLY thing that
         //    needs suppressing, and this predicate is exactly where it can
         //    fire. Getting this term wrong is a live regression, not a corner
         //    case: in a relocate-DISALLOWED mode the same press relocates
@@ -1773,7 +1773,7 @@ public:
             && e.button == SDL_BUTTON_LEFT
             && hitPart < 0
             && (SDL_GetModState() & (KMOD_ALT | KMOD_CTRL | KMOD_SHIFT)) == 0
-            && acenAllowsClickRelocate();
+            && pressPlacesCenter();
 
         if (!itemOffGizmoDown && routeResolvedHandlePart(e, vts, hitPart))
             return true;
@@ -1786,7 +1786,7 @@ public:
         // (empty ⇒ whole mesh per the universal rule); the falloff
         // sphere now centred on the picked element attenuates the
         // per-vertex displacement. ACEN's normal click-relocate
-        // gate (acenAllowsClickRelocate refuses Element mode) does
+        // gate (pressPlacesCenter refuses Element mode) does
         // NOT apply here — Element mode IS the gate.
         //
         // Requires the T flag: with T off (TransformRotate /
@@ -3334,7 +3334,7 @@ public:
         // partial selection would otherwise drift off it after the rotation.
         // PER-BANK settle gate (preserves each bank's ORIGINAL main condition,
         // OR-ing in the flex/Border falloff branch). Rotate on main pinned in
-        // the RELOCATE modes (acenAllowsClickRelocate: Auto/None/Screen) — its
+        // the RELOCATE modes (pressPlacesCenter: Auto/None/Screen) — its
         // handler.center stays at the pivot during the gesture but the recomputed
         // bbox center after rotation is angle-dependent (asymmetric meshes), so
         // the pin is needed even WITHOUT falloff (test_acen_softpin_settle). We
@@ -3348,7 +3348,7 @@ public:
         // the next cross-bank Move's pivot: test_run_absolute_scale.)
         bool rotGestureMoved = rotAbsKnown && !xformRotEqual(xfStart, xfEnd);
         bool rotSettle = rotGestureMoved && acenSettleAllowed()
-                      && (acenAllowsClickRelocate() || currentFalloff(vts).enabled);
+                      && (pressPlacesCenter() || currentFalloff(vts).enabled);
         Pin softEnd = rotSettle
             ? settleGestureCenter(rotateSub.handler.center)
             : Pin.init;
@@ -3456,7 +3456,7 @@ public:
         // — the scale-then-move-under-None pivot drift (test_run_absolute_scale).
         // Scale's bbox center, UNLIKE rotate's, is NOT angle-dependent (scale about
         // the pivot keeps the centroid put), so the no-falloff pin the rotate bank
-        // needs is unnecessary — hence falloff-only here, NOT acenAllowsClickRelocate.
+        // needs is unnecessary — hence falloff-only here, NOT pressPlacesCenter.
         // WITH falloff (flex / Border, which always has falloff) the pin fires so
         // bug 1 + the basis persistence stay fixed. acenSettleAllowed() excludes
         // Element/Local as everywhere.
@@ -3610,7 +3610,7 @@ public:
         bool pureRotatePreset = flagR && !flagT && !flagS;
         applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
                  /*samplePipeFromBaseline=*/pureRotatePreset);
-        if (acenAllowsClickRelocate()) {
+        if (pressPlacesCenter()) {
             // The pin family is WORLD (see `lastFoldPivotWorld`) — feeding the
             // layer-space `lastFoldPivot` here would settle the gizmo `pos`
             // away from the geometry on a displaced layer.
@@ -4779,7 +4779,7 @@ private:
     // so a completed gesture leaves the gizmo at its drop pose, no jump-back
     // (the bug), persisting until selection/mode change clears the soft pin.
     //
-    // It DELIBERATELY drops the `acenAllowsClickRelocate()` gate the old per-bank
+    // It DELIBERATELY drops the `pressPlacesCenter()` gate the old per-bank
     // calls carried — that gate admits only Auto/None/Screen and is exactly what
     // excluded Border (the flex mode) today. The ONLY exclusion is the 2-entry
     // `acenSettleAllowed()` predicate (Element + Local — modes with a

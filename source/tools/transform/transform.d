@@ -1088,7 +1088,7 @@ protected:
     /// default).
     ///
     /// KNOWN DISAGREEMENT, deliberately preserved (task 0712): this answers
-    /// FALSE for Pivot and Parent, while `ActionCenterStage.relocateAllowed`
+    /// FALSE for Pivot and Parent, while `ActionCenterStage.honoursPlacedCenter`
     /// — the stage-side predicate for what LOOKS like the same question —
     /// answers TRUE for them, and says so in its own comment ("Pivot/Parent
     /// ARE included by task 0187: an explicit relocation to a chosen point is
@@ -1111,7 +1111,7 @@ protected:
     ///
     /// So the two predicates are not two spellings of one question. This one
     /// is the WRITE gate — "does a plain off-gizmo press PLACE a pin (and give
-    /// up its off-gizmo drag)?" — and `relocateAllowed` is the READ gate — "a
+    /// up its off-gizmo drag)?" — and `honoursPlacedCenter` is the READ gate — "a
     /// pin exists; does this mode honour it over its own centre?" Pivot/Parent
     /// answer no to the first and yes to the second, and both answers are
     /// pinned: this one by `test_item_panel_gizmo_sync.d`, the other by task
@@ -1144,9 +1144,9 @@ protected:
     ///
     /// `final switch` since task 0705: the OR-chain form is exactly how the
     /// disagreement got in. The commit that added Pivot/Parent was FORCED to
-    /// classify them 260 lines below, in `relocatePlaneHit`'s `final switch`,
+    /// classify them 260 lines below, in `computeClickRelocateHitRaw`'s `final switch`,
     /// and sailed past this chain without a word.
-    bool acenAllowsClickRelocate() {
+    bool pressPlacesCenter() {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
@@ -1184,7 +1184,7 @@ protected:
     /// already claimed the press. A click that misses every element in Element
     /// mode is the no-drag commit boundary, likewise owned by the wrapper.
     ///
-    /// Distinct from `acenAllowsClickRelocate()` on purpose: that predicate
+    /// Distinct from `pressPlacesCenter()` on purpose: that predicate
     /// answers "may this click move the pivot?", this one answers "is this
     /// click already spoken for?". Element answers no to the first and yes to
     /// the second, which is exactly why one predicate could not carry both.
@@ -1211,7 +1211,7 @@ protected:
     ///
     /// Returns false when relocation is not allowed in the current mode,
     /// or the click ray is parallel to the projection plane. Callers
-    /// must have already checked `acenAllowsClickRelocate()`.
+    /// must have already checked `pressPlacesCenter()`.
     bool computeClickRelocateHit(int sx, int sy, out Vec3 worldHit,
                                   ref VectorStack vts) {
         if (!computeClickRelocateHitRaw(sx, sy, worldHit)) return false;
@@ -1226,15 +1226,51 @@ protected:
         return true;
     }
 
+    /// The THIRD gate task 0712 found living inside `computeClickRelocateHitRaw`
+    /// below (see `pressPlacesCenter()`'s doc comment above for the full
+    /// three-way split). Distinct from both siblings on purpose: that one
+    /// asks "does a plain off-gizmo press PLACE a pin?" and
+    /// `ActionCenterStage.honoursPlacedCenter()` asks "is an already-placed
+    /// pin honoured?" — both are questions about the PIN. This one has
+    /// nothing to do with pins: it is purely geometric — "does this ACEN
+    /// mode even have a plane to project the click ray onto?" Auto/None and
+    /// Screen do (computed below); every other mode — including Pivot/Parent,
+    /// whose center is a live item pivot with no such plane — does not, and
+    /// the click is refused here regardless of what the other two gates say.
+    /// Measured (task 0712): flipping `pressPlacesCenter()` alone for
+    /// Pivot/Parent changes nothing observable, because the press still
+    /// reaches this gate and is refused here.
+    import toolpipe.stages.actcenter : ActionCenterStage;
+    private static bool hasProjectionSurface(ActionCenterStage.Mode m)
+        pure nothrow @nogc @safe
+    {
+        final switch (m) {
+            case ActionCenterStage.Mode.Auto:
+            case ActionCenterStage.Mode.None:
+            case ActionCenterStage.Mode.Screen:
+                return true;
+            case ActionCenterStage.Mode.Select:
+            case ActionCenterStage.Mode.SelectAuto:
+            case ActionCenterStage.Mode.Element:
+            case ActionCenterStage.Mode.Local:
+            case ActionCenterStage.Mode.Origin:
+            case ActionCenterStage.Mode.Manual:
+            case ActionCenterStage.Mode.Border:
+            case ActionCenterStage.Mode.Pivot:
+            case ActionCenterStage.Mode.Parent:
+                return false;
+        }
+    }
+
     // Geometry-only click-relocate: project the cursor ray onto the
     // appropriate plane for the current ACEN mode (active work plane —
     // through the camera focus, normal = the principal world axis the
     // camera most directly faces, by default, for Auto/None; camera-
     // perpendicular through selection center for Screen). Returns false
-    // in modes that don't allow click-relocate. No snap, no side-effects
-    // — pure geometry. Used by computeClickRelocateHit (which then
-    // optionally snaps the result) and by updateLiveSnapPreview (which
-    // decides separately what to do with the hit).
+    // in modes with no projection surface (`hasProjectionSurface` above). No
+    // snap, no side-effects — pure geometry. Used by computeClickRelocateHit
+    // (which then optionally snaps the result) and by updateLiveSnapPreview
+    // (which decides separately what to do with the hit).
     // Both projection kinds are handled: screenPointToRay builds a
     // perspective ray from the eye or an ortho ray parallel to the view
     // forward. Under ortho a plane edge-on to the view would hold that
@@ -1261,6 +1297,7 @@ protected:
                       g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
             if (ac !is null) mode = ac.mode;
         }
+        if (!hasProjectionSurface(mode)) return false;
         final switch (mode) {
             case ActionCenterStage.Mode.Auto:
             case ActionCenterStage.Mode.None: {
@@ -1431,11 +1468,16 @@ protected:
             case ActionCenterStage.Mode.Manual:
             case ActionCenterStage.Mode.Border:
             // Task 0712: Pivot/Parent refuse HERE as well as in
-            // `acenAllowsClickRelocate` above, and the two refusals are
+            // `pressPlacesCenter` above, and the two refusals are
             // independent — opening only that one leaves the click with no
             // plane and changes nothing. Anyone reconciling the click-relocate
             // predicates has to answer "which plane?" for these two modes
-            // before the question above even becomes live.
+            // before the question above even becomes live. Unreachable in
+            // practice since `hasProjectionSurface(mode)` above already
+            // returned false for every mode in this arm — kept (with the
+            // rest of this arm) because `final switch` requires every Mode
+            // classified here too, which is the property task 0705 relied on
+            // to catch a silently-unclassified new Mode.
             case ActionCenterStage.Mode.Pivot:
             case ActionCenterStage.Mode.Parent:
                 return false;
@@ -1485,7 +1527,7 @@ protected:
         scope(exit) publishSnap(fresh);
         if (dragAxis >= 0)            return;
         if (hitTestResult >= 0)        return;
-        if (!acenAllowsClickRelocate())return;
+        if (!pressPlacesCenter())return;
         Vec3 hit;
         if (!computeClickRelocateHitRaw(sx, sy, hit)) return;
         fresh = evaluateSnap(hit, sx, sy, vts);

@@ -774,7 +774,7 @@ public:
         // relocate ray missed its plane also falls through to the haul now,
         // instead of returning without doing anything.
         Vec3 center;
-        if (acenAllowsClickRelocate()
+        if (pressPlacesCenter()
             && computeClickRelocateHit(e.x, e.y, center, vts))
         {
             // Phase 7.5h: relocating to a new pivot is a new logical tool

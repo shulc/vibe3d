@@ -616,7 +616,7 @@ public:
         // the moving-set position (the whole-mesh centroid under an empty
         // selection), so the gizmo snapped back to the center on release. Skip
         // the follow there and the picked-element pin survives the gesture.
-        if (acenIsUserPlaced() && acenAllowsClickRelocate())
+        if (acenIsUserPlaced() && pressPlacesCenter())
             notifyAcenUserPlaced(handler.center);
         lastSelectionHash = computeSelectionHash();
         return true;
@@ -739,7 +739,7 @@ public:
         // and the wrapper starts the drag from the picked centre in a branch
         // that runs after this one. Claiming the press here would anchor the
         // drag at the PRE-pick pivot and strand the pick.
-        immutable bool relocates = acenAllowsClickRelocate();
+        immutable bool relocates = pressPlacesCenter();
         if (!relocates && acenClickPicksElement())
             return false;
         Vec3 anchor = handler.center;

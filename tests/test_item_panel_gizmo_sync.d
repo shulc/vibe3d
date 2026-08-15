@@ -303,7 +303,7 @@ unittest {
 //
 //     The guard exists to stop a press from pushing a `userPlaced` pin that
 //     outranks the item redirect (case 1). That pin is pushed only in a
-//     relocate-PERMITTED mode — `acenAllowsClickRelocate()`, which is Auto,
+//     relocate-PERMITTED mode — `pressPlacesCenter()`, which is Auto,
 //     None and Screen and nothing else. In every OTHER mode the same press
 //     relocates nothing and still arms a drag from the stable pinned pivot:
 //     move's `relocates == false` arm reaches `beginScreenPlaneDragAt(...,

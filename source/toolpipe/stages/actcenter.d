@@ -918,9 +918,9 @@ public:
     // A `final switch` since task 0705 (audit 4, P5) — as an OR-chain a new
     // Mode silently landed on the "not relocatable" side, which is the safe
     // default but still an UNDECLARED one; and it is precisely this set that
-    // `transform.acenAllowsClickRelocate` was measured to disagree with (see
+    // `transform.pressPlacesCenter` was measured to disagree with (see
     // task 0712 and that function's own note).
-    private static bool relocateAllowed(Mode m) pure nothrow @nogc @safe {
+    private static bool honoursPlacedCenter(Mode m) pure nothrow @nogc @safe {
         final switch (m) {
             case Mode.Auto:
             case Mode.Screen:
@@ -1069,7 +1069,7 @@ private:
     // call (review Blocker 2 — see evaluate()'s doc comment and
     // `liveSelType()` above).
     Vec3 computeCenter(SelType subjType) const {
-        if (relocateAllowed(mode) && userPin.placed) return userPin.center;
+        if (honoursPlacedCenter(mode) && userPin.placed) return userPin.center;
         if (settlePinHonored()    && softPin.placed) return softPin.center;
         // Item mode 0614: redirect the selection-derived modes to the
         // item's world pivot BEFORE the geometry-selection switch below —
@@ -1111,7 +1111,7 @@ private:
                 // No pick yet → fall back to the selection-element centroid
                 // (whole mesh per the universal "empty selection = all" rule).
                 // userPlaced stays an IN-ARM check here (below the live
-                // center) — Element is excluded from `relocateAllowed`.
+                // center) — Element is excluded from `honoursPlacedCenter`.
                 Vec3 elc;
                 if (liveElementCenter(elc)) return elc;
                 if (userPin.placed) return userPin.center;
@@ -1956,7 +1956,7 @@ unittest {
 // Task 0187 (B3) Stage-0 characterization — the pin-precedence hoist
 // byte-identity oracle. `computeCenter` used to repeat an
 // `if (userPlaced) …; if (softPlaced) …;` ladder across most mode arms; B3
-// collapses that into ONE pre-switch check gated by `relocateAllowed(mode)` /
+// collapses that into ONE pre-switch check gated by `honoursPlacedCenter(mode)` /
 // `settlePinHonored()`. This unittest pins every mode's result across three
 // pin states (no pin / userPlaced set / softPlaced set, driven by DIRECT
 // field writes — same-module private access — so states the public setters
@@ -2018,7 +2018,7 @@ unittest {
 
     alias Mode = ActionCenterStage.Mode;
 
-    // --- Auto / Screen / None: relocateAllowed T, settlePinHonored T --------
+    // --- Auto / Screen / None: honoursPlacedCenter T, settlePinHonored T ----
     // userPlaced 1st, softPlaced 2nd, else centroid fallback. Unchanged.
     foreach (m; [Mode.Auto, Mode.Screen, Mode.None]) {
         acs.mode = m;
@@ -2032,7 +2032,7 @@ unittest {
             m.to!string ~ ": userPlaced must WIN over softPlaced when both set");
     }
 
-    // --- Select / SelectAuto: relocateAllowed F, settlePinHonored T ---------
+    // --- Select / SelectAuto: honoursPlacedCenter F, settlePinHonored T -----
     // userPlaced must stay IGNORED (discriminator); softPlaced honored.
     foreach (m; [Mode.Select, Mode.SelectAuto]) {
         acs.mode = m;
@@ -2041,7 +2041,7 @@ unittest {
         setPins(true, false);  assert(vecEq(acs.currentCenter(), zero),
             m.to!string ~ " + userPlaced set: must stay on the selection center "
             ~ "(userPlaced ignored) — discriminator for the hoist's narrow "
-            ~ "relocateAllowed set");
+            ~ "honoursPlacedCenter set");
         setPins(false, true);  assert(vecEq(acs.currentCenter(), softPt),
             m.to!string ~ ": softPlaced must be honored");
         setPins(true, true);   assert(vecEq(acs.currentCenter(), softPt),
@@ -2049,17 +2049,17 @@ unittest {
             ~ "over the fallback when both are set");
     }
 
-    // --- Border: relocateAllowed F, settlePinHonored T ----------------------
+    // --- Border: honoursPlacedCenter F, settlePinHonored T ------------------
     acs.mode = Mode.Border;
     setPins(false, false); assert(vecEq(acs.currentCenter(), zero),
         "Border: no-pin fallback");
     setPins(true, false);  assert(vecEq(acs.currentCenter(), zero),
         "Border + userPlaced set: must stay on the border center (ignored) — "
-        ~ "discriminator for the hoist's narrow relocateAllowed set");
+        ~ "discriminator for the hoist's narrow honoursPlacedCenter set");
     setPins(false, true);  assert(vecEq(acs.currentCenter(), softPt),
         "Border: softPlaced must be honored");
 
-    // --- Origin / Manual: relocateAllowed F, settlePinHonored F -------------
+    // --- Origin / Manual: honoursPlacedCenter F, settlePinHonored F ---------
     // BOTH pins must stay ignored even when set — this is the case the naive
     // hoist (bare acenSettleAllowed() for softPlaced) would have REGRESSED,
     // since acenSettleAllowed() is true for Origin/Manual (only Element/Local
@@ -2083,7 +2083,7 @@ unittest {
         "Manual + softPlaced set: must stay on manualCenter (ignored) — the "
         ~ "case the naive acenSettleAllowed()-only hoist would have regressed");
 
-    // --- Element: NOT gated by the hoist at all (relocateAllowed F,          -
+    // --- Element: NOT gated by the hoist at all (honoursPlacedCenter F,      -
     // settlePinHonored F since acenSettleAllowed() excludes Element). Keeps   -
     // its own in-arm `liveElementCenter → userPlaced → elementCenter` ladder. -
     acs.mode = Mode.Element;
@@ -2098,7 +2098,7 @@ unittest {
         ~ "hoisted check is gated off since acenSettleAllowed() excludes "
         ~ "Element) — must fall back to elementCenter()");
 
-    // --- Local: NOT gated by the hoist at all (relocateAllowed F,           -
+    // --- Local: NOT gated by the hoist at all (honoursPlacedCenter F,       -
     // settlePinHonored F since acenSettleAllowed() excludes Local). D5       -
     // deferred — arm unchanged, both pins stay irrelevant.                  -
     acs.mode = Mode.Local;
@@ -2108,7 +2108,7 @@ unittest {
         ~ "fallback (0) — pins never consulted");
 
     // --- Pivot / Parent: task 0187's DELIBERATE change -----------------------
-    // relocateAllowed NOW TRUE (was false pre-0187) → userPlaced honored.
+    // honoursPlacedCenter NOW TRUE (was false pre-0187) → userPlaced honored.
     // settlePinHonored stays FALSE → softPlaced stays ignored (unchanged;
     // Pivot/Parent join Origin/Manual's "settle write, never read" class).
     acs.mode = Mode.Pivot;

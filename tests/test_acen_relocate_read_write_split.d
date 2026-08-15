@@ -5,13 +5,13 @@
 // times in the tree — task 0712 filed it as two, and the third is why the
 // first cannot be flipped on its own:
 //
-//   `ActionCenterStage.relocateAllowed(mode)`  (source/toolpipe/stages/actcenter.d)
+//   `ActionCenterStage.honoursPlacedCenter(mode)`  (source/toolpipe/stages/actcenter.d)
 //       the READ gate. "A user pin exists. Does this mode honour it over its
 //       own centre?"  Pivot/Parent: YES, deliberately, task 0187 — "an
 //       explicit relocation to a chosen point is defensible even for the live
 //       item pivot".
 //
-//   `TransformTool.acenAllowsClickRelocate()`  (source/tools/transform/transform.d)
+//   `TransformTool.pressPlacesCenter()`  (source/tools/transform/transform.d)
 //       the WRITE gate. "Does a plain off-gizmo press in this mode PLACE such
 //       a pin?"  Pivot/Parent: NO.
 //
@@ -23,7 +23,7 @@
 //       FORCED to classify them in, because it is exhaustive.
 //
 // The two write-side gates refuse INDEPENDENTLY, and that is measured, not
-// read: flipping `acenAllowsClickRelocate` alone leaves every assertion in
+// read: flipping `pressPlacesCenter` alone leaves every assertion in
 // this file green, because the press then reaches `computeClickRelocateHit`,
 // gets no plane, and the bank refuses it anyway. Only opening BOTH moves the
 // centre — at which point the `pivot` case below fails with
@@ -257,7 +257,7 @@ unittest {
     // off-gizmo guard and turns a legitimate item drag into a no-op.
     assert(!g.clickPlacedPin && near(g.afterClick, g.baseline),
         "actr.pivot: an off-gizmo click must NOT place a pin — "
-        ~ "`acenAllowsClickRelocate()` refuses this mode, and the Item-mode "
+        ~ "`pressPlacesCenter()` refuses this mode, and the Item-mode "
         ~ "off-gizmo drag depends on that refusal. userPlaced="
         ~ g.clickPlacedPin.to!string ~ ", centre " ~ show(g.baseline)
         ~ " -> " ~ show(g.afterClick));
@@ -265,7 +265,7 @@ unittest {
     // READ side: honours. Deliberate, task 0187.
     assert(near(g.afterPin, PIN),
         "actr.pivot: a pin placed by any route OTHER than the click must be "
-        ~ "honoured over the live item pivot — `relocateAllowed` includes "
+        ~ "honoured over the live item pivot — `honoursPlacedCenter` includes "
         ~ "Pivot on purpose (task 0187). Centre is " ~ show(g.afterPin)
         ~ ", pin is " ~ show(PIN) ~ ". If this now fails, the read side was "
         ~ "narrowed: that is option (B) of task 0712 and revokes 0187, so it "
@@ -276,8 +276,8 @@ unittest {
     assert(!g.clickPlacedPin && near(g.afterPin, PIN),
         "actr.pivot is the mode where the two spellings of 'may a click "
         ~ "relocate the action centre' disagree: the WRITE gate "
-        ~ "(`acenAllowsClickRelocate`) refuses, the READ gate "
-        ~ "(`ActionCenterStage.relocateAllowed`) honours. Compare with "
+        ~ "(`pressPlacesCenter`) refuses, the READ gate "
+        ~ "(`ActionCenterStage.honoursPlacedCenter`) honours. Compare with "
         ~ "`auto` (both open) and `origin` (both shut) above. Task 0712 is "
         ~ "the decision about whether that stays; this assertion exists so "
         ~ "the decision cannot be made by accident.");

@@ -710,7 +710,7 @@ public:
             // already spoken for — it PICKS the anchor element, in a wrapper
             // branch that runs after the bank dispatch — so claiming the press
             // here would strand the pick.
-            immutable bool relocates = acenAllowsClickRelocate();
+            immutable bool relocates = pressPlacesCenter();
             if (!relocates && acenClickPicksElement())
                 return false;
             Vec3 hit;
