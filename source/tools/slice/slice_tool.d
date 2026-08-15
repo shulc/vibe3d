@@ -1018,6 +1018,13 @@ public:
         // headless test observe the gap gizmo state without a screenshot).
         root["gapDragging"] = JSONValue(gapDrag_);
         root["snap"]      = JSONValue(snap_);
+        // Task 0709 — the X chord's TEMPORARY inversion, and the state the
+        // tool actually snaps by. `snap_` alone is the panel value and says
+        // nothing about whether X is currently held, so a headless test could
+        // observe neither the latch nor its release. These two make the chord
+        // a data assertion instead of a screenshot.
+        root["snapTempInvert"] = JSONValue(snapTempInvert_);
+        root["effectiveSnap"]  = JSONValue(effectiveSnap());
         root["snapAngle"] = JSONValue(snapAngle_);
         root["axis"]    = JSONValue(wireTagForValue(sliceAxisTable[], cast(int)axis_));
         root["vectorX"] = JSONValue(vector_.x);

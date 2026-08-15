@@ -4508,6 +4508,29 @@ void main(string[] args) {
         }
     }
 
+    // Key RELEASE dispatch (task 0709). `Tool.onKeyUp` has existed next to
+    // `onKeyDown` since the base class was written, but until this task no
+    // `case SDL_KEYUP` existed in `processEvent`'s switch at all, so no
+    // release ever reached a tool: the single overrider (`SliceTool`'s X
+    // chord — "while X is held, snapping is temporarily inverted") set its
+    // flag on the press and had no reachable path to clear it, latching the
+    // inversion for the rest of the tool session.
+    //
+    // THE ROUTE THIS OPENS, named deliberately rather than inherited as a
+    // side effect: the active tool now gets first refusal on EVERY key
+    // release, exactly as it already does on every key press. Nothing else
+    // in this handler acts on a release — there is no shortcut lookup, no
+    // edit-mode switch, no command dispatch on key-up — so a tool that does
+    // not override `onKeyUp` (every tool but `SliceTool`) falls through to
+    // the base `return false` and the release is discarded precisely as it
+    // was before. The consuming `return` is kept symmetric with
+    // `handleKeyDown` so a future release-side consumer has the same shape
+    // to extend.
+    void handleKeyUp(ref SDL_KeyboardEvent kev) {
+        SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+        if (activeTool && activeTool.onKeyUp(kev, vts)) return;
+    }
+
     // Open an interactive selection edit session. Idempotent — repeated
     // calls before commitInteractiveSelEdit() are no-ops. Snapshot must be
     // captured BEFORE any pick/lasso/clear mutates the selection.
@@ -5840,6 +5863,9 @@ void main(string[] args) {
             case SDL_QUIT:            quitRequested = true;               break;
             case SDL_WINDOWEVENT:     handleWindowEvent(ev.window);      break;
             case SDL_KEYDOWN:         handleKeyDown(ev.key);             break;
+            // Task 0709 — the release side of the pair above. Absent until
+            // this task, which is what made `Tool.onKeyUp` unreachable.
+            case SDL_KEYUP:           handleKeyUp(ev.key);               break;
             case SDL_MOUSEBUTTONDOWN: handleMouseButtonDown(ev.button);  break;
             case SDL_MOUSEBUTTONUP:   handleMouseButtonUp(ev.button);    break;
             case SDL_MOUSEWHEEL:      handleMouseWheel(ev.wheel);        break;
