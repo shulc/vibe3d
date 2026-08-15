@@ -316,6 +316,11 @@ private string scalarArgToString(JSONValue v) {
 }
 
 void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
+    // Slots this build legitimately leaves empty. Appended BESIDE the
+    // condition that decides each one, never collected in a list at the
+    // bottom — a list at the bottom is how such a list rots away from the
+    // condition it is supposed to describe. See the wiring check at the end.
+    string[] optionalSlots;
     with (app) {
         // Serialize ANY mesh to the detailed /api/model JSON. Extracted so the
         // active-layer provider and the layer-aware ?layer=N provider share one
@@ -1570,6 +1575,8 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
             import ai.analysis : analyzeMesh, findingsToJson;
             return findingsToJson(analyzeMesh(mesh()));
         });
+        else
+            optionalSlots ~= "aiAnalyzeProvider";
 
         // Phase 7.3a: /api/snap query bridge. Lets unit tests probe
         // the snap math directly with explicit cursor world pos +
@@ -3121,6 +3128,7 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         // INSTALLED under `--test` here, belt-and-suspenders, so a release
         // build never even wires a delegate capable of splicing an
         // undo-invisible layer into the live document.
+        if (!command.g_testMode) optionalSlots ~= "injectLayerHandler";
         if (command.g_testMode) {
         httpServer.setInjectLayerHandler((JSONValue params) {
             import document : ItemKind, kindFromToken;
@@ -3194,11 +3202,20 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
     // whatever later moment somebody happens to ask. Say it here instead,
     // where the cause is one frame away, and enumerate the slots with
     // `HttpServer.tupleof` rather than a list kept in step by hand.
-    auto unwired = httpServer.unwiredEndpoints();
-    if (unwired.length) {
-        import std.array : join;
+    //
+    // TWO slots are conditional, and both were found by running the binary
+    // rather than by reading: `aiAnalyzeProvider` does not exist in
+    // `modeling-noai`, and `injectLayerHandler` is deliberately not installed
+    // outside `--test` (belt-and-braces beside the route's own 403). A check
+    // that ignored them would have refused to start every non-test run — it
+    // did, once, which is why both exemptions are declared at their own
+    // `version`/`if` above instead of here.
+    import std.algorithm : canFind, filter;
+    import std.array     : array, join;
+    auto unwired = httpServer.unwiredEndpoints()
+                             .filter!(n => !optionalSlots.canFind(n)).array;
+    if (unwired.length)
         throw new Exception(
             "HTTP endpoint wiring is incomplete — nothing installed: "
             ~ unwired.join(", "));
-    }
 }
