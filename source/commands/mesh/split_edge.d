@@ -57,14 +57,16 @@ class MeshSplitEdge : Command, Operator {
             }
         }
 
-        // Re-derive edges from faces. addEdge dedupes via edgeIndexMap.
-        mesh.edges.length = 0;
-        mesh.edgeIndexMap.clear();
-        foreach (ref face; mesh.faces) {
-            foreach (k; 0 .. face.length) {
-                mesh.addEdge(face[k], face[(k + 1) % face.length]);
-            }
-        }
+        // Re-derive edges from faces. `rebuildEdges()` (task 0860) — not a
+        // hand-inlined copy of its body: the copy this replaced cleared
+        // `edgeIndexMap` and rebuilt it via the same `addEdge` calls, but
+        // did so OUTSIDE the mechanism `rebuildEdges()` is the one sanctioned
+        // home for — any future hardening of that mechanism (e.g. an
+        // explicit early invalidation before the rebuild loop, matching how
+        // `addFaceFast`/`rebuildEdgesFromFaces`/`markDerivedEmpty` each mark
+        // the edgeIndexMap validity stamp honestly STALE the moment they
+        // stop maintaining it) would silently not apply to a duplicate.
+        mesh.rebuildEdges();
 
         mesh.buildLoops();
         mesh.resetSelection();
