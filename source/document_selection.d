@@ -187,24 +187,71 @@ mixin template DocumentSelection() {
     /// this recomputes.
     inout(Layer) primary() inout { return nthEditTargetCandidate(0); }
 
-    /// The foreground layer list, in walk order — `nthEditTargetCandidate`
-    /// enumerated. Fills `outBuf` in place (the `selectedItemsInto` idiom).
+    /// The single FILTER `foregroundLayersInto`/`foregroundLayerCount` share
+    /// below (task 0770): is `l` a foreground candidate at all, independent of
+    /// order. Exactly the per-stage test inside `nthEditTargetCandidate`'s
+    /// inner loop, hoisted so the list and the count cannot filter
+    /// differently — the drift that walk's own doc comment warns about, one
+    /// level down from where it warns about it.
+    private bool isForegroundCandidate(const(Layer) l) const {
+        if (l is null) return false;
+        if (!kindInfo(l.kind).canBePrimary) return false;
+        if (selectionState(l) == SelState.None) return false;
+        return roleOf(l) == LayerRole.Foreground;
+    }
+
+    /// The foreground layer list, in walk order — ONE PASS (task 0770),
+    /// where this used to restart `nthEditTargetCandidate` once per rank.
     ///
-    /// The reference's own list query is this same enumeration, and its `main`
-    /// query is this list's head; keeping both here off one private walk is
-    /// what stops "which layers are foreground" and "which one is the target"
-    /// from being answered by two functions that agree today.
+    /// THE COST THAT MOVED. `nthEditTargetCandidate`'s inner loop is a
+    /// selection sort: each call re-scans `layers` for the smallest
+    /// (selSeat, index) key strictly after the one it returned last, so
+    /// pulling n answers out of it costs O(n·L). This function used to call
+    /// it once to COUNT and once more to FILL — both loops doing that same
+    /// O(n·L) climb — so a document with L layers all foreground paid O(L²)
+    /// twice. Measured (task 0721): 1.57 ms at 64 selected layers, and
+    /// `foregroundLayerCount` alone the same shape at half the constant.
+    ///
+    /// THE FIX is not a smarter walk, it is the walk's own inner loop turned
+    /// the right way round: that loop **is** a selection sort of the
+    /// candidates by (selSeat, index) — pulling one minimum at a time is what
+    /// makes it quadratic, and asking for all of them at once is an ordinary
+    /// sort. So: one filtering pass over `layers` collecting every candidate
+    /// with its (stage, selSeat, index) key, then one `sort` call — current
+    /// stage before history stage, exactly the order `nthEditTargetCandidate`
+    /// documents. `index` is already unique per layer, so `(stage, selSeat,
+    /// index)` is a strict total order and the sort never has to fall through
+    /// to a fourth key or worry about stability.
+    ///
+    /// `primary`/`nthEditTargetCandidate` are UNTOUCHED, deliberately. That
+    /// walk costs O(L) per call and is asked for ~103 times a frame at a
+    /// fraction of a microsecond even at 256 layers (0721 measured 7.8 ns –
+    /// 617 ns) — there is no quadratic there to fix, and giving it a second
+    /// implementation of the same order here would only risk the two
+    /// drifting apart for a win nothing measures.
     void foregroundLayersInto(ref Layer[] outBuf) {
-        size_t n = 0;
-        while (nthEditTargetCandidate(n) !is null) ++n;
-        if (outBuf.length != n) outBuf.length = n;
-        foreach (i; 0 .. n) outBuf[i] = nthEditTargetCandidate(i);
+        import std.algorithm : sort;
+        static struct Cand { int stage; long seat; size_t idx; }
+        Cand[] cands;
+        cands.reserve(layers.length);
+        foreach (i, l; layers)
+            if (isForegroundCandidate(l))
+                cands ~= Cand(selectionState(l) == SelState.Current ? 0 : 1, l.selSeat, i);
+        sort!((a, b) => a.stage != b.stage ? a.stage < b.stage
+                       : a.seat  != b.seat  ? a.seat  < b.seat
+                       :                      a.idx   < b.idx)(cands);
+        if (outBuf.length != cands.length) outBuf.length = cands.length;
+        foreach (i, c; cands) outBuf[i] = layers[c.idx];
     }
 
     /// How many layers are foreground — the count the frozen fixture reads.
+    /// ONE PASS (task 0770): the same filter as `foregroundLayersInto` above,
+    /// with no order to compute, so no sort is needed either — this one was
+    /// always answerable in O(L) and only inherited the quadratic cost by
+    /// sharing the restart-per-rank walk.
     size_t foregroundLayerCount() const {
         size_t n = 0;
-        while (nthEditTargetCandidate(n) !is null) ++n;
+        foreach (l; layers) if (isForegroundCandidate(l)) ++n;
         return n;
     }
 

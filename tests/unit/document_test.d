@@ -7,6 +7,7 @@ import mesh    : Mesh;
 import seltype : SelMode;
 import math    : Vec3, identityMatrix, translationMatrix, matrixFromEulerZYX,
                  pivotScaleMatrix, matMul4, ModelSpace;
+import std.conv : to;
 import document;
 
 unittest {
@@ -449,4 +450,86 @@ unittest {  // projectionSpace's forward-projection identity, exercised through
     assert(ok1 == ok2 && ok1);
     assert(isClose(px1, px2, 1e-3f, 1e-3f) && isClose(py1, py2, 1e-3f, 1e-3f),
         "projectionSpace(vp, x.modelSpace()) must agree with pre-transforming the point");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0770 — `foregroundLayersInto`/`foregroundLayerCount`, one pass instead
+// of N restarts of the walk. Both cases below are load-bearing for the same
+// reason: task 0721 grepped `source/` and found ZERO callers of either
+// function outside `document.d` — their own unittest blocks are the only
+// thing that will ever run this code, so a test is not a nice-to-have here,
+// it is the entire proof the fix did what it claims.
+// ---------------------------------------------------------------------------
+
+unittest {  // the rewrite must answer the SAME order the restart-per-rank walk
+            // did, including a selSeat TIE — the third key
+            // `nthEditTargetCandidate`'s own doc comment names — and BOTH
+            // stages (current selection, then the deselect history).
+    Mesh m0;
+    auto doc = Document.bootstrap(m0);   // layer 0 = A, real seat (via setActive)
+    auto a = doc.layers[0];
+    auto b = new Layer; b.name = "B";
+    auto c = new Layer; c.name = "C";
+    auto d = new Layer; d.name = "D";
+    doc.layers ~= [b, c, d];
+
+    // C gets a genuine seat through the mutator.
+    doc.selectItem(c, SelMode.Add);
+    // B and D are wired in with a raw field write instead — the shape
+    // several loaders and `revert()` paths use (document_selection.d's own
+    // comment on the walk) — so both keep the "never seated" value, 0, and
+    // TIE with each other.
+    b.selected = true;
+    d.selected = true;
+    // A moves into HISTORY: deselect it through the mutator so its selSeat
+    // survives into the bucket instead of the object simply vanishing.
+    doc.selectItem(a, SelMode.Remove);
+
+    Layer[] fg;
+    doc.foregroundLayersInto(fg);
+    assert(fg.length == 4 && fg[0] is b && fg[1] is d && fg[2] is c && fg[3] is a,
+        "current stage first, sorted by (selSeat, layers-index): B and D tie "
+        ~ "at seat 0 and split on index (B=1 before D=3); C's real seat "
+        ~ "sorts after both. A survives only in the HISTORY stage, which "
+        ~ "the walk places after the whole current stage, not merged into it");
+    assert(doc.foregroundLayerCount() == 4, "count agrees with the list length");
+}
+
+unittest {  // the quadratic-oracle regression. `foregroundLayersInto` used to
+            // restart the O(L) walk once per rank and pay for it TWICE (count,
+            // then fill) -- 1.57 ms measured at 64 selected layers (task
+            // 0721), growing roughly cubically in the layer count because both
+            // L (candidates) and the per-candidate restart cost scale with it:
+            // 84.6 ms at 256 layers, measured while proving this fix (same
+            // dmd -O -release -inline method 0721 used). At the size below,
+            // extrapolating that growth puts the restart-per-rank shape at
+            // low SECONDS for a single call -- nowhere near the bound this
+            // asserts, which the one-pass form clears with a wide margin
+            // (tens of microseconds, measured the same way).
+    import std.datetime.stopwatch : StopWatch, AutoStart;
+
+    Mesh m0;
+    auto doc = Document.bootstrap(m0);
+    enum layerCount = 800;
+    foreach (i; 1 .. layerCount) {
+        auto l = new Layer;
+        l.name = "L";
+        doc.layers ~= l;
+    }
+    foreach (i; 1 .. layerCount) doc.selectItem(doc.layers[i], SelMode.Add);
+
+    Layer[] fg;
+    doc.foregroundLayersInto(fg);              // warm-up + correctness smoke
+    assert(fg.length == layerCount);
+    assert(doc.foregroundLayerCount() == layerCount);
+
+    auto sw = StopWatch(AutoStart.yes);
+    foreach (i; 0 .. 20) doc.foregroundLayersInto(fg);
+    immutable msecs = sw.peek.total!"msecs";
+    assert(msecs < 200,
+        "20 calls to foregroundLayersInto at " ~ layerCount.to!string
+        ~ " selected layers took " ~ msecs.to!string ~ " ms -- the "
+        ~ "restart-per-rank walk this pins against needed low SECONDS for a "
+        ~ "SINGLE call at this size (extrapolated from the 84.6 ms measured "
+        ~ "at 256 layers)");
 }
