@@ -243,32 +243,29 @@ final class CommandHistory {
     private size_t maxDepth = 50;
     private UndoState _state = UndoState.Active;
 
-    this() {
-        // Allow emergency rollback of class-aware stepping via env var.
-        // VIBE3D_UNDO_CLASS_STEP=0 disables T-SEP-cursor; any other value (or
-        // absent) keeps the default ON. Removed in Stage 6 once burn-in is done.
-        import std.process : environment;
-        string ev = environment.get("VIBE3D_UNDO_CLASS_STEP", "");
-        if (ev == "0") _classAwareStepping = false;
-    }
-
     // Undo-epoch counter — bumped exactly once in the SUCCESS branch of undo()
-    // (after e.cmd.revert() succeeds, alongside redoStack ~= e). Never bumped
+    // (after e.cmd.revert() succeeds, alongside the redo push). Never bumped
     // by redo(), record*(), consolidate(), replaceInSessionTail(), or coalesce.
     // Purpose: gives the exploration controller a reliable undo signal that is
     // immune to consolidate/coalesce/replace side-effects on stack length.
     private ulong _undoEpoch = 0;
 
-    // Class-aware stepping (T-SEP-cursor). When true, undo()/redo() use the
-    // carried-suffix algorithm: a plain undo finds the nearest Model-class entry
-    // from the tail and moves the SUFFIX (that entry + any trailing UI entries)
-    // to the redo stack as a unit, calling revert() only on the Model entry (so
-    // interleaved selection entries are carried inert — the selection holds).
-    // When the tail is all-UI (B1 fallback), the UI head is reverted normally.
-    // redo() is the inverse block move.
-    // The env-var override (VIBE3D_UNDO_CLASS_STEP=0) provides an emergency
-    // rollback during burn-in; it is removed in Stage 6.
-    private bool _classAwareStepping = true;
+    // Class-aware stepping (T-SEP-cursor) is THE stepping law — there is one
+    // undo path, no flag and no fallback. undo()/redo() use the carried-suffix
+    // algorithm: a plain undo finds the nearest Model-class entry from the tail
+    // and moves the SUFFIX (that entry + any trailing UI entries) to the redo
+    // stack as a unit, calling revert() only on the Model entry (so interleaved
+    // selection entries are carried inert — the selection holds). When the tail
+    // is all-UI (B1 fallback), the UI head is reverted normally. redo() is the
+    // inverse block move.
+    //
+    // History: this landed behind a `_classAwareStepping` flag with an env-var
+    // kill-switch (VIBE3D_UNDO_CLASS_STEP=0) selecting a class-blind LIFO path,
+    // as a burn-in rollback hatch. Task 0727 deleted both — nothing in the tree
+    // ever set the var, no failure of this path routed to the other one, and the
+    // mechanisms that landed after it (ToolLifecycle entries, T-SEP depth
+    // reporting) were never taught to the LIFO arm, so the "rollback" would not
+    // have rolled back to anything anyone had validated.
 
     /// Read-only access to the undo epoch counter. Callers snapshot the value
     /// at "interesting" moments and compare later; a strict increase means at
@@ -350,14 +347,6 @@ final class CommandHistory {
     /// entry's flags. The macro recorder, when active, appends the
     /// line to its capture buffer. nullable.
     void delegate(string commandLine, uint flags) onRecord;
-
-    // ----- class-aware stepping -------------------------------------------
-
-    /// Enable or disable class-aware (T-SEP-cursor) stepping. Default ON.
-    /// Exposed for emergency rollback during burn-in via env var
-    /// VIBE3D_UNDO_CLASS_STEP=0, and for in-module unit tests.
-    void setClassAwareStepping(bool on) { _classAwareStepping = on; }
-    bool classAwareStepping() const { return _classAwareStepping; }
 
     // ----- state -----------------------------------------------------------
 
@@ -1005,10 +994,10 @@ final class CommandHistory {
     /// Guards mirror the record() family (record()/recordCoalescing()):
     /// refused under lockout, and refused while `_state != Active`. The state
     /// guard is what protects a stack step against re-entrant erasure: BOTH
-    /// directions apply/revert under Suspend — undo()'s wraps (legacy LIFO,
-    /// ToolLifecycle hard-step, Case A model revert, Case B UI fallback) and,
-    /// crucially for THIS method, redo()'s wraps (legacy LIFO, ToolLifecycle
-    /// head re-apply, T-SEP model re-apply) — so even an exotic preview
+    /// directions apply/revert under Suspend — undo()'s wraps (ToolLifecycle
+    /// hard-step, Case A model revert, Case B UI fallback) and, crucially for
+    /// THIS method, redo()'s wraps (ToolLifecycle head re-apply, T-SEP model
+    /// re-apply) — so even an exotic preview
     /// rebuild triggered from inside a step cannot erase the redo entry that
     /// step just created.
     ///
@@ -1072,7 +1061,6 @@ final class CommandHistory {
     // canUndoModel=true in that case so callers see "Model undo available"
     // rather than the misleading "UI undo available".
     bool canUndoModel() const {
-        if (!_classAwareStepping) return canUndo();
         size_t mi = nearestModelIndexFromTail();
         if (mi < undoStack.length) return true; // found a reachable Model entry
         // No reachable Model entry. Check whether the B1-fallback target (tail)
@@ -1087,19 +1075,6 @@ final class CommandHistory {
     bool undo() {
         if (_lockout) return false;
         if (undoStack.length == 0) return false;
-
-        if (!_classAwareStepping) {
-            // Legacy LIFO path (OFF branch — emergency rollback, Stage 6 removes).
-            auto e = undoStack[$ - 1];
-            undoStack.length -= 1;
-            auto prev = _state;
-            _state = UndoState.Suspend;
-            scope(exit) _state = prev;
-            if (!e.cmd.revert()) return false;
-            redoStack ~= e;
-            ++_undoEpoch;
-            return true;
-        }
 
         // T-SEP-cursor: carried-suffix move over the chronological stack.
         //
@@ -1206,18 +1181,6 @@ final class CommandHistory {
     bool redo() {
         if (_lockout) return false;
         if (redoStack.length == 0) return false;
-
-        if (!_classAwareStepping) {
-            // Legacy LIFO path.
-            auto e = redoStack[$ - 1];
-            redoStack.length -= 1;
-            auto prev = _state;
-            _state = UndoState.Suspend;
-            scope(exit) _state = prev;
-            if (!e.cmd.apply()) return false;
-            undoStack ~= e;
-            return true;
-        }
 
         // Mirror of (R1): a ToolLifecycle head on the redo stack is a lifecycle
         // step — re-apply it alone (re-drop the tool, geometry no-op), move it
@@ -1384,7 +1347,6 @@ final class CommandHistory {
 
     /// Whether the next undo would step a ToolLifecycle entry (re-activate tool).
     bool canUndoLifecycle() const {
-        if (!_classAwareStepping) return false;
         if (undoStack.length == 0) return false;
         uint tf = undoStack[$ - 1].flags;
         if (!(tf & HistoryFlags.ToolLifecycle)) return false;
@@ -1900,8 +1862,6 @@ unittest { // invalidateRedo (task 0429): kills redo; refused under Suspend/lock
 // Stack: [UI-A, UI-B] → undo → reverts UI-B → stack: [UI-A].
 unittest {
     auto h = new CommandHistory();
-    // Force env-var to ON regardless of the test environment.
-    h.setClassAwareStepping(true);
 
     auto uiA = new _TrackedCmd(CmdFlags.UiState);
     auto uiB = new _TrackedCmd(CmdFlags.UiState);
@@ -1928,7 +1888,6 @@ unittest {
 // Chronology: UI-B is never revert()'d during either model undo.
 unittest {
     auto h = new CommandHistory();
-    h.setClassAwareStepping(true);
 
     auto uiA  = new _TrackedCmd(CmdFlags.UiState);
     auto modA = new _TrackedCmd(CmdFlags.Model);
@@ -1971,7 +1930,6 @@ unittest {
 // model entries during model steps (UI entries carried inert).
 unittest {
     auto h = new CommandHistory();
-    h.setClassAwareStepping(true);
 
     auto uiA  = new _TrackedCmd(CmdFlags.UiState);
     auto modA = new _TrackedCmd(CmdFlags.Model);
@@ -2032,28 +1990,6 @@ unittest {
     assert(uiB.applyCalls  == 1, "CHRON redo: uiB apply()'d once (UI suffix of modA block, restores selection state)");
 }
 
-// OFF path: class-aware OFF → legacy LIFO, all 4 entries reverted in order.
-unittest {
-    auto h = new CommandHistory();
-    h.setClassAwareStepping(false);
-
-    auto uiA  = new _TrackedCmd(CmdFlags.UiState);
-    auto modA = new _TrackedCmd(CmdFlags.Model);
-    auto uiB  = new _TrackedCmd(CmdFlags.UiState);
-    auto modB = new _TrackedCmd(CmdFlags.Model);
-    recUi(uiA, h);
-    recModel(modA, h);
-    recUi(uiB, h);
-    recModel(modB, h);
-
-    // undo×4: legacy LIFO reverts every entry in reverse.
-    assert(h.undo()); assert(modB.revertCalls == 1);
-    assert(h.undo()); assert(uiB.revertCalls  == 1); // LIFO hits uiB
-    assert(h.undo()); assert(modA.revertCalls  == 1);
-    assert(h.undo()); assert(uiA.revertCalls   == 1);
-    assert(!h.undo(), "OFF: stack empty, undo must fail");
-}
-
 version(unittest) {
     // Hand-built stack matching the §Derived trace (two gestures A then B):
     // [SelA(UiUndo), geomA(Model), DeactA(ToolLifecycle),
@@ -2063,7 +1999,6 @@ version(unittest) {
         import std.stdio : writeln;
 
         auto h = new CommandHistory();
-        h.setClassAwareStepping(true);
 
         static class StubModel : Command {
             import mesh     : Mesh;

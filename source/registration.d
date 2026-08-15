@@ -1060,8 +1060,7 @@ private void registerToolLifecycleCommands(EditorApp app) {
     reg.commandFactories["tool.attr"] = () => cast(Command)
         new ToolAttrCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["tool.doApply"] = () => cast(Command)
-        new ToolDoApplyCommand(&mesh(), cameraView, editMode, toolHost,
-                               history);
+        new ToolDoApplyCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["tool.reset"] = () => cast(Command)
         new ToolResetCommand(&mesh(), cameraView, editMode, toolHost);
     reg.commandFactories["tool.pipe.attr"] = () => cast(Command)

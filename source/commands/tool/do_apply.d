@@ -6,7 +6,6 @@ import view;
 import editmode;
 import snapshot : MeshSnapshot;
 import commands.tool.host : ToolHost;
-import command_history : CommandHistory;
 
 // ---------------------------------------------------------------------------
 // ToolDoApplyCommand — `tool.doApply`
@@ -19,30 +18,28 @@ import command_history : CommandHistory;
 // revert() — restore snapshot, refresh caches.
 //
 // T-SEP class-aware stepping (task 0038):
-//   When _classAwareStepping is on (VIBE3D_UNDO_CLASS_STEP != "0"), revert()
-//   calls MeshSnapshot.restoreGeometryKeepSelection() instead of the full
-//   restore(). This preserves the live selection across a geometry-only undo,
-//   matching the T-SEP rule that selection is a separate timeline.
+//   revert() calls MeshSnapshot.restoreGeometryKeepSelection() instead of the
+//   full restore(). This preserves the live selection across a geometry-only
+//   undo, matching the T-SEP rule that selection is a separate timeline.
 //
 //   Topology safety: restoreGeometryKeepSelection() falls back to the full
 //   snapshot marks when element counts changed (edge.extrude / edge.extend
 //   path), so topology-creating tools are unaffected.
 //
-//   When _classAwareStepping is off (kill-switch), revert() uses the legacy
-//   full restore() so the kill-switch stays faithful to old behaviour.
+//   Until task 0727 this was a branch: the history's `classAwareStepping()`
+//   kill-switch selected the full restore() instead. Both the switch and the
+//   LIFO undo path behind it are gone, so the geometry-only revert is
+//   unconditional and this command no longer holds a CommandHistory.
 // ---------------------------------------------------------------------------
 class ToolDoApplyCommand : Command {
     private ToolHost         toolHost;
     private MeshSnapshot     snap;
     private string           appliedToolId;   // captured at apply() for label()
-    private CommandHistory   history;         // for classAwareStepping flag
 
-    this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host,
-         CommandHistory history)
+    this(Mesh* mesh, ref View view, EditMode editMode, ToolHost host)
     {
         super(mesh, view, editMode);
         this.toolHost = host;
-        this.history = history;
     }
 
     override string name()  const { return "tool.doApply"; }
@@ -65,12 +62,9 @@ class ToolDoApplyCommand : Command {
 
     override bool revert() {
         if (!snap.filled) return false;
-        // T-SEP: under class-aware stepping, keep the live selection across a
-        // geometry undo (topology-safe fallback built into the method).
-        if (history !is null && history.classAwareStepping())
-            snap.restoreGeometryKeepSelection(*mesh);
-        else
-            snap.restore(*mesh);
+        // T-SEP: keep the live selection across a geometry undo (topology-safe
+        // fallback built into the method).
+        snap.restoreGeometryKeepSelection(*mesh);
         return true;
     }
 }
