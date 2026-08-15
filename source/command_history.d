@@ -456,7 +456,8 @@ final class CommandHistory {
     ///
     /// Task 0705 (audit 4, D9). This body was written out FIVE times —
     /// `record`, `recordToolLifecycle`, `recordInSession`, `refireBegin`'s
-    /// dangling-commit branch, and `replaceInSessionTailWith`'s append arm —
+    /// dangling-commit branch (retired by task 0708, see below), and
+    /// `replaceInSessionTailWith`'s append arm —
     /// each under a comment of the form "identical to record() EXCEPT …".
     /// The copies were mechanically the same and had NOT drifted in what they
     /// stamp; what makes one home worth having is the next FIELD: `runId`
@@ -474,9 +475,15 @@ final class CommandHistory {
     /// What is NOT here: the guards. `_lockout` / `cmd is null` /
     /// `!cmd.isUndoable` / `_state != Active` / `blockDepth > 0` /
     /// `consolidateOpenRunIfForeign()` differ per recorder for reasons each
-    /// one documents — and in one case for a reason nobody documented, see
-    /// `refireBegin`. Hoisting them would have merged five deliberate policies
+    /// one documents. Hoisting them would have merged four deliberate policies
     /// into one accidental one.
+    ///
+    /// FOUR callers, not five, since task 0708: `refireBegin`'s
+    /// dangling-commit branch was the one whose guard set nobody had
+    /// documented, and the reason turned out to be that nobody chose it. It
+    /// now commits through `record()` — the same exit `refireEnd()` takes for
+    /// the same object — so the refire cycle has ONE commit path and no guard
+    /// set of its own to keep in step.
     private void pushEntry(Command cmd, string args, uint flags,
                            ulong runId, ulong tweakGen, long tMs,
                            bool fireHook) {
@@ -1427,20 +1434,37 @@ final class CommandHistory {
         if (_lockout) return;
         // Defensive: if a prior refire block was left dangling (e.g. tool
         // crashed mid-drag), commit it first so we don't lose the entry.
-        // UNDOCUMENTED DIVERGENCE, preserved as-is (task 0708): this branch
-        // commits `liveCmd` with NEITHER the `!cmd.isUndoable` gate NOR the
-        // `_state != Active` gate that every other recorder applies — while
-        // `refireEnd()`, which commits the SAME object through `record()`,
-        // states in its own comment that "record()'s flag-and-state checks
-        // (isUndoable, _state) apply". Two commit paths for one command, two
-        // gate sets, and no comment anywhere saying the difference is meant.
-        // Adding the gates would silently drop a dangling entry in a path that
-        // exists precisely to not lose one, so it is an owner call, not
-        // hygiene. Task 0705 only gave the append itself one home.
+        //
+        // Through `record()`, deliberately — task 0708. This arm used to
+        // append straight to the stack and applied NEITHER the
+        // `!cmd.isUndoable` gate NOR the `_state != Active` gate that every
+        // other recorder in this class applies, while `refireEnd()` — which
+        // commits the SAME object — states in its own comment that
+        // "record()'s flag-and-state checks (isUndoable, _state) apply". One
+        // command and one block had two exits with two different answers, and
+        // nothing anywhere said the difference was meant.
+        //
+        // The objection to closing it was that a defensive path exists
+        // precisely so a dangling entry is not lost, so gating it could lose
+        // one silently. Measured, the gates lose nothing that is the user's
+        // work: for an undoable command in the Active state — every real
+        // dangling drag — `record()` builds a byte-identical entry (same
+        // args, same flags, same macro-recorder hook, `runId`/`tweakGeneration`
+        // zero either way). The only entries it now drops are the two no
+        // recorder here would have kept: a command that declares itself
+        // NON-UNDOABLE, which `refireEnd()` already dropped on the normal
+        // exit, and a commit issued from a SUSPENDED context, which is the one
+        // context whose entire purpose is that its mutations never reach the
+        // user's stack.
+        //
+        // Two behaviours travel with the routing, both toward agreement with
+        // the normal exit rather than away from it: an open in-session run is
+        // consolidated first (`consolidateOpenRunIfForeign`), and an open
+        // command block adopts the entry as a child instead of letting a
+        // standalone entry appear beside the block. `refireEnd()` has done
+        // both since it was written.
         if (refireOpen && liveCmd !is null)
-            pushEntry(liveCmd, serializeParams(liveCmd.params()),
-                      historyFlagsFor(liveCmd), 0, 0, nowMs(),
-                      /*fireHook=*/true);
+            record(liveCmd);
         refireOpen = true;
         liveCmd    = null;
     }
