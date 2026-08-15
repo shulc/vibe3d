@@ -4366,3 +4366,65 @@ unittest {
       ~ "its new slot (5), not stay behind at its old slot (6) or truncate "
       ~ "away entirely");
 }
+
+// ---------------------------------------------------------------------------
+// TASK 0921 — `applyVertexRemap` (the weld path's real face compaction) drops
+// a face that degenerates below 3 corners after the merge and shifts every
+// surviving face after it, but used to only TRUNCATE `faceMaterial` /
+// `facePart` / Subpatch from the front instead of gathering them by the same
+// `faceRemap` it already builds. The site's own per-corner (UV) relocation two
+// lines above IS keyed by that remap correctly — this pins the four face
+// planes doing the same.
+//
+// Fixture measured by task 0831: three triangles; the first has two
+// coincident vertices (v2 == v0), so it degenerates to 2 distinct corners
+// after weld and is DROPPED entirely — not from the tail (it is face 0 of
+// 3), so a truncation and a correct gather disagree.
+// ---------------------------------------------------------------------------
+unittest {
+    Mesh m;
+    // Face 0 -- degenerate: vertex 2 coincides with vertex 0.
+    m.addVertex(Vec3(0, 0, 0));   // 0
+    m.addVertex(Vec3(1, 0, 0));   // 1
+    m.addVertex(Vec3(0, 0, 0));   // 2 -- coincides with 0
+    m.addFace([0u, 1u, 2u]);
+    // Face 1 -- ordinary, spatially isolated from face 0's cluster.
+    m.addVertex(Vec3(10, 0, 0));  // 3
+    m.addVertex(Vec3(11, 0, 0));  // 4
+    m.addVertex(Vec3(10, 1, 0));  // 5
+    m.addFace([3u, 4u, 5u]);
+    // Face 2 -- ordinary, spatially isolated from both.
+    m.addVertex(Vec3(20, 0, 0));  // 6
+    m.addVertex(Vec3(21, 0, 0));  // 7
+    m.addVertex(Vec3(20, 1, 0));  // 8
+    m.addFace([6u, 7u, 8u]);
+    m.buildLoops();
+    m.syncSelection();
+
+    m.faceMaterial = [100u, 111u, 122u];
+    m.facePart     = [10u, 11u, 12u];
+    m.setFaceSubpatch(0, false);
+    m.setFaceSubpatch(1, false);
+    m.setFaceSubpatch(2, true);
+
+    const welded = m.weldCoincidentVertices(1e-12);
+    assert(welded == 1, "setup: exactly v2 welds onto v0");
+    assert(m.faces.length == 2,
+        "setup: face 0's two coincident corners collapse it below 3 distinct "
+      ~ "corners, so weld must drop it entirely");
+
+    assert(m.faceMaterial == [111u, 122u],
+        format("applyVertexRemap: surviving faces must keep their OWN "
+             ~ "material via faceRemap, not a front-truncated slice of the "
+             ~ "original array (got %s)", m.faceMaterial));
+    assert(m.facePart == [11u, 12u],
+        format("applyVertexRemap: surviving faces must keep their OWN part "
+             ~ "id via faceRemap (got %s)", m.facePart));
+    assert(!m.isFaceSubpatch(0),
+        "surviving new face 0 (old face 1) must not inherit a Subpatch bit "
+      ~ "it never had");
+    assert(m.isFaceSubpatch(1),
+        "surviving new face 1 (old face 2) must keep its OWN Subpatch bit, "
+      ~ "not lose it to front-truncation");
+}
+

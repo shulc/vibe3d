@@ -2065,13 +2065,25 @@ mixin template MeshEdgeBevelOps() {
         uint[][] mergedFaces;
         mergedFaces.reserve(faces.length);
         int[] faceRemap = new int[](faces.length);
-        bool anyMerge = false;
         // The map's per-corner islands ride the same drops (task 0697): a corner
         // this pass discards takes its source with it, so the survivors stay
         // aligned. A face whose registered array does not match its corner count
         // (an emission path changed shape underneath) falls back to no source at
         // all rather than to a shifted one.
         uint[][] mergedSrc;
+        // Task 0921 twin: gathered in survivor order, keyed by each face's OLD
+        // index `fi` — the SAME shape (and the same defect) as the sibling
+        // collapse in `Mesh.applyVertexRemap` (source/mesh.d), which this merge
+        // pass otherwise duplicates verbatim. Without this, a face collapsed
+        // below 3 corners anywhere but the array's tail (Case C) left every
+        // survivor after it wearing a front-truncated slice of the
+        // pre-collapse material/part/marks arrays instead of its own values —
+        // the per-corner (UV) relocate just below already gets this right, so
+        // the site already knows the space moved.
+        uint[]   mergedWord;   // whole faceMarks word per survivor (Select dropped below)
+        int[]    mergedOrder;
+        uint[]   mergedMaterial;
+        uint[]   mergedPart;
         foreach (fi, f; faces) {
             uint[] kept;
             uint[] keptSrc;
@@ -2081,11 +2093,9 @@ mixin template MeshEdgeBevelOps() {
             foreach (ci, vid0; f) {
                 immutable uint vid = resolvePool(vid0);
                 if (kept.length > 0 && vid == kept[$ - 1]) {
-                    anyMerge = true;
                     continue; // dup of LAST kept corner: drop, don't update last/first
                 }
                 if (kept.length > 0 && vid == kept[0]) {
-                    anyMerge = true;
                     continue; // dup of FIRST kept corner (incl. loop closure): drop
                 }
                 kept ~= vid;
@@ -2094,12 +2104,24 @@ mixin template MeshEdgeBevelOps() {
             if (kept.length >= 3) {
                 faceRemap[fi] = cast(int)mergedFaces.length;
                 mergedFaces ~= kept;
+                mergedWord     ~= faceAttrOr(faceMarks, fi);
+                mergedOrder    ~= faceAttrOr(faceSelectionOrder, fi);
+                mergedMaterial ~= faceAttrOr(faceMaterial, fi);
+                mergedPart     ~= faceAttrOr(facePart, fi);
                 if (remapUvB) mergedSrc ~= keptSrc;
             } else {
                 faceRemap[fi] = -1; // whole face collapsed below 3 corners (Case C)
             }
         }
         faces = mergedFaces;
+        // Select is about to be fully re-derived below (chamfer + hub-cap
+        // faces via `selectFace`), so it is dropped here same as every other
+        // compaction site; Subpatch/Hide are NOT re-derived below and must
+        // ride the gather above.
+        setFaceMarksFrom(mergedWord, ~Marks.Select);
+        faceSelectionOrder = mergedOrder;
+        faceMaterial       = mergedMaterial;
+        facePart           = mergedPart;
 
         // Relocate the per-corner map now that `faces` is final and BEFORE the
         // tail `buildLoops`, which would otherwise see a length-wrong map and
@@ -2110,13 +2132,6 @@ mixin template MeshEdgeBevelOps() {
             foreach (s; mergedSrc) srcOfCorner ~= s;
             declareCornerProvenance(
                 rwB.carried(faces.range, srcOfCorner, vertBlendB));
-        }
-        if (anyMerge) {
-            if (selectedFaces.length > faces.length) resizeFaceSelection();
-            if (faceSelectionOrder.length > faces.length) faceSelectionOrder.length = faces.length;
-            if (isSubpatch.length > faces.length) resizeSubpatch();
-            if (faceMaterial.length > faces.length) faceMaterial.length = faces.length;
-            if (facePart.length     > faces.length) facePart.length     = faces.length;
         }
 
         // New selection = chamfer + hub-cap faces; clear vertex/edge

@@ -581,6 +581,72 @@ unittest { // Case C (task 0436, clamp_findings.md follow-up pass): two
         "case C w=0.5: merged right corner must be a single shared vertex (5-gon side face + 2 strips)");
 }
 
+// ---------------------------------------------------------------------------
+// TASK 0921 twin — the Step-2 merge pass above (`faceRemap[fi] = -1; // whole
+// face collapsed below 3 corners (Case C)`) used to TRUNCATE faceMaterial /
+// facePart / Subpatch from the front instead of gathering them by the
+// `faceRemap` it already builds — the verbatim twin of `Mesh.applyVertexRemap`
+// (source/mesh.d), closed the identical way (task 0921).
+//
+// Reuses Case C's exact geometry (two disjoint top-face edges of a unit cube
+// at w=0.5, where the shared top-face quad vanishes ENTIRELY — not from the
+// array's tail, so a truncation and a correct gather disagree) with each of
+// the cube's 6 initial faces given a distinct, identifiable material/part id.
+//
+// Measured directly against a real Mesh (both before and after this task's
+// fix, printed): right before this merge pass, `faceMaterial` is already
+// length-correct (8, matching the post-chamfer intermediate `faces`) at
+// [200,201,202,203,204,205,0,0] — the trailing two zeros are the two new
+// chamfer-strip faces' own material, which come out of an EARLIER, unrelated
+// pass and are not what this test pins (a separate, pre-existing gap in that
+// earlier inheritance, left alone here). The correct gather then drops
+// EXACTLY index 1 (201, the collapsing top face) and closes the gap:
+// [200,202,203,204,205,0,0]. The pre-fix code instead truncated the pre-step2
+// array from the TAIL: [200,201,202,203,204,205,0] — 201 wrongly survives
+// (its face is gone) and one of the two legitimate zeros is lost instead.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+
+    int findEdgeC(ref Mesh m, uint a, uint b) {
+        foreach (i, e; m.edges)
+            if ((e[0] == a && e[1] == b) || (e[0] == b && e[1] == a)) return cast(int)i;
+        return -1;
+    }
+    bool[] twoTopEdgeMaskC(ref Mesh m) {
+        bool[] mask; mask.length = m.edges.length; mask[] = false;
+        foreach (pair; [[4u, 5u], [6u, 7u]]) {
+            int ei = findEdgeC(m, pair[0], pair[1]);
+            assert(ei >= 0, "twin: top-face edge missing");
+            mask[ei] = true;
+        }
+        return mask;
+    }
+
+    auto m = makeCube();
+    assert(m.faces.length == 6, "setup: a fresh cube has 6 faces");
+    m.faceMaterial.length = m.faces.length;
+    m.facePart.length     = m.faces.length;
+    foreach (i; 0 .. m.faces.length) {
+        m.faceMaterial[i] = cast(uint)(200 + i);
+        m.facePart[i]     = cast(uint)(20 + i);
+    }
+
+    assert(m.bevelEdgesByMask(twoTopEdgeMaskC(m), 0.5f) == 2);
+    assert(m.vertices.length == 10 && m.faces.length == 7,
+        "twin setup: expected 10v/7f (top-face quad vanishes entirely), got " ~
+        m.vertices.length.to!string ~ "v/" ~ m.faces.length.to!string ~ "f");
+
+    assert(m.faceMaterial == [200u, 202u, 203u, 204u, 205u, 0u, 0u],
+        "applyVertexRemap's edge_bevel twin: surviving faces must keep their "
+      ~ "OWN material via faceRemap (material 201 belonged to the collapsed "
+      ~ "top face and must not survive on any face) -- got " ~
+        m.faceMaterial.to!string);
+    assert(m.facePart == [20u, 22u, 23u, 24u, 25u, 0u, 0u],
+        "applyVertexRemap's edge_bevel twin: surviving faces must keep their "
+      ~ "OWN part id via faceRemap -- got " ~ m.facePart.to!string);
+}
+
 unittest { // Case D (task 0436, clamp_findings.md follow-up pass):
            // coincidence WITHOUT merge. The reference fixture is two
            // disjoint single-FACE quads (each bare-end vertex touching only

@@ -2410,6 +2410,17 @@ struct Mesh {
         uint[] oldLoopOfNewLoop;
 
         uint[][] newFaces;
+        // Task 0921: gathered in survivor order, keyed by each face's OLD
+        // index `fi` — the same shape the per-corner (UV) relocate just below
+        // already uses for this exact drop, and byte-identical to the weld
+        // sibling `applyVertexRemapAndRebuild`'s own gather above in this
+        // file. Without this, a face dropped anywhere but the array's tail
+        // left every survivor after it wearing a FRONT-TRUNCATED slice of the
+        // pre-collapse material/part/marks arrays instead of its own values.
+        uint[]   newWord;   // whole faceMarks word per survivor (Select dropped below)
+        int[]    newOrder;
+        uint[]   newMaterial;
+        uint[]   newPart;
         newFaces.reserve(faces.length);
         int[] faceRemap = new int[](faces.length);
         foreach (fi, ref face; faces) {
@@ -2431,7 +2442,11 @@ struct Mesh {
             }
             if (f.length >= 3) {
                 faceRemap[fi] = cast(int)newFaces.length;
-                newFaces ~= f;
+                newFaces    ~= f;
+                newWord     ~= faceAttrOr(faceMarks, fi);
+                newOrder    ~= faceAttrOr(faceSelectionOrder, fi);
+                newMaterial ~= faceAttrOr(faceMaterial, fi);
+                newPart     ~= faceAttrOr(facePart, fi);
                 if (remapUv)
                     foreach (sc; srcCorner)
                         oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, sc);
@@ -2439,19 +2454,21 @@ struct Mesh {
                 faceRemap[fi] = -1;
             }
         }
-        faces = newFaces;
+        faces              = newFaces;
+        setFaceMarksFrom(newWord, ~Marks.Select);
+        faceSelectionOrder = newOrder;
+        faceMaterial       = newMaterial;
+        facePart           = newPart;
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
 
         rebuildEdges();
 
         clearEdgeSelectionResize();
-        // Face selection is potentially invalidated (face indices changed
-        // since collapsed faces are removed). Caller may re-derive.
-        if (selectedFaces.length > faces.length) resizeFaceSelection();
-        if (faceSelectionOrder.length > faces.length) faceSelectionOrder.length = faces.length;
-        if (isSubpatch.length > faces.length) resizeSubpatch();
-        if (faceMaterial.length > faces.length) faceMaterial.length = faces.length;
-        if (facePart.length     > faces.length) facePart.length     = faces.length;
+        // Face selection: setFaceMarksFrom above already dropped Select;
+        // this both re-asserts that and publishes the selection-domain
+        // change notification, same as every other face-compaction site
+        // (deleteFacesByMask, applyVertexRemapAndRebuild, cleanDegenerateFaces).
+        clearFaceSelectionResize();
 
         return faceRemap;
     }
