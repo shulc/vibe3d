@@ -84,12 +84,27 @@ private:
     // Standalone-only (`wrapperRef is null`): in the wrapped role the truth is
     // `run.s` on the wrapper. Every wrapped read is re-pointed to
     // `wrap.publishedScale()`; these fields are kept so the `wrapperRef is null`
-    // branches compile and the legacy FORMS=0 standalone panel continues to work.
+    // branches compile and the standalone panel continues to work.
+    // (`dragScaleAccum` below is the exception in this block — it is role-free:
+    // the WRAPPER drains it, through `pendingScale`, to fold the drag onto its
+    // own run total.)
     Vec3     scaleAccum     = Vec3(1, 1, 1);  // cumulative scale factor per axis since tool activated
     Vec3     dragScaleAccum = Vec3(1, 1, 1);  // scale within current drag (for yellow arrows)
     Vec3     propScale      = Vec3(1, 1, 1);  // persistent value shown in Tool Properties
     Vec3[]   activationVertices;              // mesh snapshot at tool activation (for props apply)
     Vec3     activationCenter;               // gizmo center at activation
+    // PER-DRAG TRANSIENT, not session state — the distinction task 0800 asked
+    // for. It is the `scaleAccum` base this drag multiplies onto, and its
+    // contract is: **every site that arms a drag assigns it first**. There are
+    // exactly two such sites (the handle press and `armPlaneDrag()` — the only
+    // two writes of a live `dragAxis`), each assigning it alongside
+    // `dragScaleAccum` / `dragScaleScalarDelta`, and its only consumer
+    // (`setDragAxisScale`) runs only while that drag is live. So, unlike its
+    // neighbours `scaleAccum` / `propScale`, it deliberately has NO `activate()`
+    // reset and NO undo/cancel hook: there is no moment at which a value left
+    // over from a previous session can be read. Measured, not argued — poisoning
+    // this default to a non-identity value changes nothing in the app or the
+    // suite, because no read ever precedes an arm-site write.
     Vec3     dragStartScaleAccum = Vec3(1, 1, 1);
     float    dragScaleScalarDelta;
     SDL_bool preDragRelativeMouse = SDL_FALSE;
@@ -1106,20 +1121,39 @@ public:
         }
     }
 
+    // Publish this motion's within-drag factor, and — STANDALONE ONLY — fold it
+    // into the run total.
+    //
+    // Task 0802. The run total is `drag-start base ⊗ this drag's factor`, and it
+    // has ONE owner per role, not two agreeing copies:
+    //   - WRAPPED: the wrapper owns it. It drains `dragScaleAccum` (published
+    //     just below, via `pendingScale`) and folds it onto ITS OWN drag-start
+    //     snapshot: `run.s = gestureStart.s ⊗ f` (xfrm_transform.d, the
+    //     `activeDrag is scaleSub` branch). Writing `scaleAccum` here as well was
+    //     a DEAD STORE — and not even a copy of the wrapper's number: its base
+    //     `dragStartScaleAccum` is this sub-tool's accumulator, which the wrapped
+    //     role stopped maintaining when the role split landed, so the two
+    //     "mirrored" products are computed from DIFFERENT bases and only the
+    //     wrapper's is ever read.
+    //   - STANDALONE: this sub-tool owns it; `scaleAccum` is the truth its kernel
+    //     and its Tool-Properties rows read, so the fold stays.
+    // The `dragScaleAccum` publication is role-free: the wrapper's drain and the
+    // standalone yellow-arrow display both read it.
     private void setDragAxisScale(bool scaleX, bool scaleY, bool scaleZ,
                                   float scaleFactor)
     {
+        immutable bool ownsRunTotal = wrapperRef is null;
         if (scaleX) {
             dragScaleAccum.x = scaleFactor;
-            scaleAccum.x = dragStartScaleAccum.x * scaleFactor;
+            if (ownsRunTotal) scaleAccum.x = dragStartScaleAccum.x * scaleFactor;
         }
         if (scaleY) {
             dragScaleAccum.y = scaleFactor;
-            scaleAccum.y = dragStartScaleAccum.y * scaleFactor;
+            if (ownsRunTotal) scaleAccum.y = dragStartScaleAccum.y * scaleFactor;
         }
         if (scaleZ) {
             dragScaleAccum.z = scaleFactor;
-            scaleAccum.z = dragStartScaleAccum.z * scaleFactor;
+            if (ownsRunTotal) scaleAccum.z = dragStartScaleAccum.z * scaleFactor;
         }
     }
 
@@ -1195,8 +1229,18 @@ public:
             beginEdit();   // idempotent
         }
 
-        // Update CPU vertices from activationVertices (fast, no GPU).
-        applyScaleFromActivationCpuOnly(propVts);
+        // Update CPU vertices (fast, no GPU) from THE VALUE THIS SLIDER JUST
+        // SET, not from whatever the run truth held before it (task 0801).
+        // `propScale` is the role-correct absolute factor at this point:
+        //   - STANDALONE: it equals `scaleAccum` (the writes just above keep the
+        //     two in lockstep, and every other site assigns them together), so
+        //     the kernel gets exactly what it got before.
+        //   - WRAPPED: it is the wrapper's run truth, re-seeded at the top of
+        //     this function, with this frame's edit folded in. Passing it is
+        //     what makes the wrapped slider drive geometry at all — the
+        //     truth-reading entry below would re-apply the UNCHANGED wrapper
+        //     value and the edit would be inert (it was, 2026-06-11..2026-08-15).
+        applyScaleAbsoluteCpuOnly(propVts, propScale);
 
         if (anyActive) {
             if (wholeMesh && wrapperRef is null) {
@@ -1288,10 +1332,15 @@ public:
             beginEdit();   // idempotent
         }
 
-        // Rebuild CPU vertices via the shared apply path. In the WRAPPED path
-        // this delegates to applyScaleAbsoluteFromRun → applyTRS(dragBaseline);
-        // standalone it runs the activationVertices kernel.
-        applyScaleFromActivationCpuOnly(propVts);
+        // Rebuild CPU vertices via the shared apply path, carrying THIS call's
+        // absolute value. In the WRAPPED path it delegates to
+        // applyScaleAbsoluteFromRun → applyTRS(dragBaseline); standalone it runs
+        // the activationVertices kernel. The forms caller
+        // (`reEvaluate()` → applyScalePanelValue(run.s)) passes the wrapper's own
+        // `run.s`, so publishing `factors` back to it is an identity write there;
+        // any other caller (the FORMS=0 legacy slider reaches the same value
+        // through drawProperties) gets its edit applied instead of discarded.
+        applyScaleAbsoluteCpuOnly(propVts, factors);
 
         if (wholeMesh && wrapperRef is null) {
             // STANDALONE whole-mesh: GPU bypass — upload base once, then only
@@ -1343,7 +1392,22 @@ private:
     // Standalone fallback (a bare ScaleTool with no wrapper — only unit-test
     // construction): the original `applyScaleFromActivation` kernel call,
     // numerically identical for the absolute scaleAccum apply.
-    void applyScaleFromActivationCpuOnly(ref VectorStack vts) {
+    //
+    // TWO ENTRIES, because the callers disagree about ONE thing: which value is
+    // the truth at the moment of the call (task 0801).
+    //   - `applyScaleAbsoluteCpuOnly(vts, factors)` — the caller HOLDS the new
+    //     absolute value (both panel arms: the legacy slider and the forms
+    //     `applyScalePanelValue`). It publishes `factors` to the wrapper, so the
+    //     edit is what lands.
+    //   - `applyScaleFromActivationCpuOnly(vts)` — the caller holds NOTHING new
+    //     (the idle falloff-refire arms in update()); the value is whatever the
+    //     run currently holds, re-applied under fresh falloff weights.
+    // Phase 5b collapsed both onto the second reading. That is right for the
+    // refire and wrong for a panel edit, and the FORMS=0 legacy slider — the one
+    // panel caller that does NOT write `run.s` before calling — was silently
+    // inert for it from 2026-06-11 to 2026-08-15: it wrote `scaleAccum` and this
+    // method then re-applied the UNCHANGED `run.s` over the top.
+    void applyScaleAbsoluteCpuOnly(ref VectorStack vts, Vec3 factors) {
         if (wrapperRef !is null) {
             import tools.transform.xfrm_transform : XfrmTransformTool;
             auto wrap = cast(XfrmTransformTool) wrapperRef;
@@ -1352,23 +1416,13 @@ private:
                 // baseline (`dragBaseline`), NOT activationVertices. After a
                 // cross-axis gizmo gesture the prior transform is baked into
                 // dragBaseline + mesh, not into activationVertices, so applying
-                // the full scaleAccum from activationVertices would discard it.
-                // The run-baseline entry reads the live wrapper `run.s` absolutely
-                // against dragBaseline-with-baked-history. The edit SESSION stays
-                // on this sub-tool — the run-baseline entry does NOT open the
-                // wrapper session (MS-5).
-                //
-                // Phase 5b — feed the WRAPPER TRUTH, not this sub-tool's
-                // `scaleAccum` second accumulator. The panel path
-                // (applyScalePanelValue) already wrote the wrapper's `run.s` to the
-                // same value it set `scaleAccum` to, so the two coincide there. But
-                // the falloff-refire ARM in update() re-enters here at idle on the
-                // PERSISTENT accumulator; `publishedScale()` is the wrapper's
-                // run-total factor (`run.s`, the panel-bound truth), so
-                // applyScaleAbsoluteFromRun re-applies the TRUE run scale (an
-                // identity re-publish of `run.s`). Standalone (no wrapper) still
-                // drives geometry from `scaleAccum` via the kernel below.
-                wrap.applyScaleAbsoluteFromRun(wrap.publishedScale());
+                // the full factor from activationVertices would discard it.
+                // The run-baseline entry sets `run.s = factors` (clamped there by
+                // the negScale rule) and applies it absolutely against
+                // dragBaseline-with-baked-history. The edit SESSION stays on this
+                // sub-tool — the run-baseline entry does NOT open the wrapper
+                // session (MS-5).
+                wrap.applyScaleAbsoluteFromRun(factors);
                 return;
             }
         }
@@ -1377,10 +1431,29 @@ private:
                                  activationVertices,
                                  activationCenter,
                                  handler.axisX, handler.axisY, handler.axisZ,
-                                 scaleAccum,
+                                 factors,
                                  dragFalloff, dragAimSpace(),
                                  queryClusterPivots(vts), queryClusterAxes(vts),
                                  dragSymmetry, toProcess);
+    }
+
+    // Re-apply THE CURRENT RUN TOTAL (no new value) — the idle falloff-refire
+    // arms in update(). In the WRAPPED role that total is the wrapper's
+    // `publishedScale()` (`run.s`, never stale after an undo), NOT this
+    // sub-tool's `scaleAccum`, which the wrapped role no longer maintains.
+    void applyScaleFromActivationCpuOnly(ref VectorStack vts) {
+        applyScaleAbsoluteCpuOnly(vts, currentRunScale());
+    }
+
+    // The run-total per-axis factor as of now: wrapper truth when wrapped, the
+    // sub-tool accumulator when standalone.
+    private Vec3 currentRunScale() {
+        if (wrapperRef !is null) {
+            import tools.transform.xfrm_transform : XfrmTransformTool;
+            if (auto wrap = cast(XfrmTransformTool) wrapperRef)
+                return wrap.publishedScale();
+        }
+        return scaleAccum;
     }
 
     int hitTestAxes(int mx, int my) {

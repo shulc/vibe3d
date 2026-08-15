@@ -1218,8 +1218,17 @@ public:
             beginEdit();   // idempotent
         }
 
-        // Update CPU vertices from origVertices (fast, no GPU).
-        applyAbsoluteFromOrigCpuOnly(propVts);
+        // Update CPU vertices (fast, no GPU) from THE VALUE THESE SLIDERS JUST
+        // SET, not from whatever the run truth held before them (task 0801).
+        // `angleAccum` carries all three axes here (the three writes above are
+        // unconditional), so it is the whole panel value in either role:
+        // standalone it is the accumulator the kernel reads anyway; WRAPPED it is
+        // the wrapper's run euler — re-seeded into `propDeg` at the top of this
+        // function — with this frame's edit folded in. Passing it is what makes
+        // the wrapped slider rotate anything: the truth-reading entry below would
+        // recompose the UNCHANGED wrapper euler and the edit would be inert (it
+        // was, 2026-06-11..2026-08-15).
+        applyRotateAbsoluteCpuOnly(propVts, angleAccum);
 
         if (anyActive) {
             if (wholeMesh && wrapperRef is null) {
@@ -1306,10 +1315,15 @@ public:
             beginEdit();   // idempotent
         }
 
-        // Rebuild CPU vertices via the shared apply path. In the WRAPPED path
-        // this delegates to applyRotateAbsoluteFromRun → applyTRS(dragBaseline);
-        // standalone it runs the origVertices kernel.
-        applyAbsoluteFromOrigCpuOnly(propVts);
+        // Rebuild CPU vertices via the shared apply path, carrying THIS call's
+        // absolute value. In the WRAPPED path it delegates to
+        // applyRotateAbsoluteFromRun → applyTRS(dragBaseline); standalone it runs
+        // the origVertices kernel. The forms caller (`reEvaluate()` →
+        // applyRotatePanelValue(headlessRotate)) passes the wrapper's own euler,
+        // so recomposing it there is an identity write; any other caller (the
+        // FORMS=0 legacy slider reaches the same value through drawProperties)
+        // gets its edit applied instead of discarded.
+        applyRotateAbsoluteCpuOnly(propVts, angleAccum);
 
         if (wholeMesh && wrapperRef is null) {
             // STANDALONE whole-mesh: GPU bypass — upload base once, then only
@@ -1392,7 +1406,24 @@ private:
     // single non-zero axis the two are numerically identical (weight at the
     // baseline position; per-cluster via pivotFor/axisFor), so behaviour is
     // preserved either way.
-    void applyAbsoluteFromOrigCpuOnly(ref VectorStack vts) {
+    //
+    // TWO ENTRIES, because the callers disagree about ONE thing: which value is
+    // the truth at the moment of the call (task 0801, scale.d carries the twin).
+    //   - `applyRotateAbsoluteCpuOnly(vts, anglesRad)` — the caller HOLDS the new
+    //     absolute euler (both panel arms: the legacy slider and the forms
+    //     `applyRotatePanelValue`). It recomposes `run.r` from `anglesRad`, so
+    //     the edit is what lands.
+    //   - `applyAbsoluteFromOrigCpuOnly(vts)` — the caller holds NOTHING new (the
+    //     idle falloff-refire arms in update()); the value is whatever the run
+    //     currently holds, re-applied under fresh falloff weights. That reading
+    //     matters here: `angleAccum` is a gizmo-basis decomposition and DRIFTS
+    //     from the matrix-truth euler across a cross-axis run, so the refire must
+    //     read `publishedRotate()`.
+    // Phase 5a collapsed both onto the second reading, which is right for the
+    // refire and wrong for a panel edit: the FORMS=0 legacy slider — the one
+    // panel caller that does NOT write `headlessRotate` before calling — was
+    // silently inert from 2026-06-11 to 2026-08-15.
+    void applyRotateAbsoluteCpuOnly(ref VectorStack vts, Vec3 anglesRad) {
         if (wrapperRef !is null) {
             import tools.transform.xfrm_transform : XfrmTransformTool;
             auto wrap = cast(XfrmTransformTool) wrapperRef;
@@ -1402,29 +1433,12 @@ private:
                 // gizmo gesture the prior axis is baked into dragBaseline + mesh,
                 // not into origVertices, so applying the full euler from
                 // origVertices would discard the baked axis. The run-baseline
-                // entry reads the live headlessRotate absolutely against
+                // entry writes `headlessRotate` from `anglesRad`, recomposes
+                // `run.r` from it and applies that absolutely against
                 // dragBaseline-with-baked-history. The edit SESSION stays on this
                 // sub-tool (its own beginEdit/commitEdit) — the run-baseline entry
                 // does NOT open the wrapper session (MS-5).
-                //
-                // Phase 5a — feed the WRAPPER TRUTH, not this sub-tool's
-                // `angleAccum` second accumulator. The panel path
-                // (applyRotatePanelValue) already wrote the wrapper's
-                // `headlessRotate` to the same value it set `angleAccum` to, so
-                // the two are equal there. But the falloff-refire ARM in update()
-                // re-enters here at idle on the PERSISTENT accumulator, where
-                // `angleAccum` (gizmo-basis decomposition) drifts from the
-                // matrix-truth euler across a cross-axis run. `publishedRotate()`
-                // is eulerZYXFromMatrix(run.r) in degrees → radians here, so
-                // applyRotateAbsoluteFromRun recomposes run.r against the TRUE run
-                // orientation (an identity recompose). Standalone (no wrapper)
-                // still drives geometry from `angleAccum` via the kernel below.
-                import std.math : PI;
-                Vec3 wrapDeg = wrap.publishedRotate();
-                wrap.applyRotateAbsoluteFromRun(
-                    Vec3(wrapDeg.x * cast(float)(PI / 180.0),
-                         wrapDeg.y * cast(float)(PI / 180.0),
-                         wrapDeg.z * cast(float)(PI / 180.0)));
+                wrap.applyRotateAbsoluteFromRun(anglesRad);
                 return;
             }
         }
@@ -1432,10 +1446,35 @@ private:
         applyRotateFromOrig(mesh, origVertices, toProcess,
                             handler.center,
                             handler.axisX, handler.axisY, handler.axisZ,
-                            angleAccum,
+                            anglesRad,
                             dragFalloff, dragAimSpace(),
                             queryClusterPivots(vts), queryClusterAxes(vts),
                             dragSymmetry, toProcess);
+    }
+
+    // Re-apply THE CURRENT RUN ORIENTATION (no new value) — the idle
+    // falloff-refire arms in update(). In the WRAPPED role that orientation is
+    // the wrapper's `publishedRotate()` (= eulerZYXFromMatrix(run.r), the
+    // matrix truth), NOT this sub-tool's `angleAccum`, which is a gizmo-basis
+    // decomposition and drifts from it across a cross-axis run.
+    void applyAbsoluteFromOrigCpuOnly(ref VectorStack vts) {
+        applyRotateAbsoluteCpuOnly(vts, currentRunAnglesRad());
+    }
+
+    // The run-total euler as of now, in RADIANS: wrapper truth when wrapped, the
+    // sub-tool accumulator when standalone.
+    private Vec3 currentRunAnglesRad() {
+        if (wrapperRef !is null) {
+            import tools.transform.xfrm_transform : XfrmTransformTool;
+            if (auto wrap = cast(XfrmTransformTool) wrapperRef) {
+                import std.math : PI;
+                Vec3 wrapDeg = wrap.publishedRotate();
+                return Vec3(wrapDeg.x * cast(float)(PI / 180.0),
+                            wrapDeg.y * cast(float)(PI / 180.0),
+                            wrapDeg.z * cast(float)(PI / 180.0));
+            }
+        }
+        return angleAccum;
     }
 
     // Compose the current angleAccum into a single 4x4 rotation matrix around the pivot.
