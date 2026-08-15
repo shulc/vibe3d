@@ -1,18 +1,39 @@
 // Action centre: the relocate pin has a WRITE gate and a READ gate, and they
 // are not the same predicate (task 0712).
 //
-// "May a click off the gizmo relocate the action centre?" is answered twice in
-// the tree, and on two modes — Pivot and Parent — the two answers differ:
+// "May a click off the gizmo relocate the action centre?" is answered THREE
+// times in the tree — task 0712 filed it as two, and the third is why the
+// first cannot be flipped on its own:
 //
 //   `ActionCenterStage.relocateAllowed(mode)`  (source/toolpipe/stages/actcenter.d)
-//       the READ side. "A user pin exists. Does this mode honour it over its
+//       the READ gate. "A user pin exists. Does this mode honour it over its
 //       own centre?"  Pivot/Parent: YES, deliberately, task 0187 — "an
 //       explicit relocation to a chosen point is defensible even for the live
 //       item pivot".
 //
 //   `TransformTool.acenAllowsClickRelocate()`  (source/tools/transform/transform.d)
-//       the WRITE side. "Does a plain off-gizmo press in this mode PLACE such
+//       the WRITE gate. "Does a plain off-gizmo press in this mode PLACE such
 //       a pin?"  Pivot/Parent: NO.
+//
+//   `TransformTool.computeClickRelocateHitRaw()` (same file, ~260 lines below)
+//       the PLANE gate. "Is there a surface in this mode to project the click
+//       ray onto at all?"  Pivot/Parent: NO — its own `final switch` puts them
+//       in the `return false` arm with Select/Local/Origin/Manual/Border. This
+//       is the switch task 0712's evidence notes the Pivot/Parent commit was
+//       FORCED to classify them in, because it is exhaustive.
+//
+// The two write-side gates refuse INDEPENDENTLY, and that is measured, not
+// read: flipping `acenAllowsClickRelocate` alone leaves every assertion in
+// this file green, because the press then reaches `computeClickRelocateHit`,
+// gets no plane, and the bank refuses it anyway. Only opening BOTH moves the
+// centre — at which point the `pivot` case below fails with
+// "userPlaced=true, centre (0,0,0) -> (-1.7268, 0.9997, 0)".
+//
+// So "unify onto the deliberate one" is not one edit to one predicate. It is a
+// design decision about which plane a Pivot-mode click would even project
+// onto, plus a second edit to a predicate that is separately load-bearing for
+// something else (see below). What this file guards is the OBSERVABLE — where
+// the published centre ends up — which is the conjunction of all three.
 //
 // This file does not decide which is right. It makes the split OBSERVABLE, so
 // that whichever way it is eventually settled, the settling is a visible

@@ -1120,6 +1120,20 @@ protected:
     /// `notifyAcenUserPlaced` has no mode gate, and the falloff element pick
     /// calls it whatever the mode is — and is then honoured.
     ///
+    /// AND THERE IS A THIRD GATE, which 0712 counted as part of the second.
+    /// `computeClickRelocateHitRaw` below has its own exhaustive `final
+    /// switch` and puts Pivot/Parent in its `return false` arm: no projection
+    /// plane, so no relocate, whatever THIS predicate says. Measured
+    /// consequence — flipping the two arms here alone changes NOTHING about
+    /// where a Pivot-mode click leaves the centre (the press reaches
+    /// `computeClickRelocateHit`, gets no plane, and the bank refuses it); its
+    /// only effect is to open the Item-mode guard and kill the item's
+    /// off-gizmo drag. So option (A) of 0712 is not one edit that unifies two
+    /// spellings: it is a fresh design decision about which plane a Pivot-mode
+    /// click should project onto, plus an edit here that costs a working
+    /// feature. That asymmetry is the strongest evidence the two sides are
+    /// answering different questions.
+    ///
     /// What 0712 still owes an answer to is whether that split should be
     /// NAMED (rename one predicate so the difference is legible) rather than
     /// erased. `tests/test_acen_relocate_read_write_split.d` pins the split
@@ -1416,6 +1430,12 @@ protected:
             case ActionCenterStage.Mode.Origin:
             case ActionCenterStage.Mode.Manual:
             case ActionCenterStage.Mode.Border:
+            // Task 0712: Pivot/Parent refuse HERE as well as in
+            // `acenAllowsClickRelocate` above, and the two refusals are
+            // independent — opening only that one leaves the click with no
+            // plane and changes nothing. Anyone reconciling the click-relocate
+            // predicates has to answer "which plane?" for these two modes
+            // before the question above even becomes live.
             case ActionCenterStage.Mode.Pivot:
             case ActionCenterStage.Mode.Parent:
                 return false;
