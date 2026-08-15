@@ -170,6 +170,10 @@ import registry;
 // host the command/tool factory registration moved out of main() below,
 // parameterized by the EditorApp ctx bag.
 import editor_app;
+// Task 0781 (campaign 0407 §V1 4.3): the input-router cluster. First slice
+// only -- handleWindowEvent + handleMouseWheel; see source/input_router.d's
+// module doc comment for why the other five handlers stay in main() for now.
+import input_router : InputRouter;
 import registration : registerTools, registerCommands;
 import http_providers : wireHttpProviders;
 import shortcuts;
@@ -3962,40 +3966,10 @@ void main(string[] args) {
     // Nested helpers — closures over main's locals
     // -------------------------------------------------------------------------
 
-    void handleWindowEvent(ref SDL_WindowEvent we) {
-        if (we.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-            if (playbackMode)
-                SDL_SetWindowSize(window, we.data1, we.data2);
-            SDL_GetWindowSize(window, &winW, &winH);
-            SDL_GL_GetDrawableSize(window, &fbW, &fbH);
-            layout.resize(winW, winH);
-            glViewport(0, 0, fbW, fbH);
-            initThickLineProgram(thickLineProgram, fbW, fbH);
-            // Keep replay-time pixel remapping calibrated to the new layout.
-            setReplayCurrentViewport(layout.vpX, layout.vpY,
-                                     layout.vpW, layout.vpH, kFovY);
-
-            // Single event-driven writer of the picking region (vpm.l*) and
-            // reflow of the live cells' rects on a resize.  This is a near-
-            // dead path in practice — the interactive ImGui window loop
-            // re-stamps every cell's rect from GetContentRegionAvail/
-            // GetCursorScreenPos on the very next frame, and --test never
-            // resizes the window — but it keeps vpm.l* (read by
-            // viewportUnderCursor/applyLayout) coherent for the narrow
-            // window between this event and that next stamp.  Only rects are
-            // touched (NOT a full applyLayout, which would also reset
-            // independence/preset).
-            vpm.lx = layout.vpX; vpm.ly = layout.vpY;
-            vpm.lw = layout.vpW; vpm.lh = layout.vpH;
-            int[4] _rxs, _rys, _rws, _rhs;
-            ViewportManager.cellRectsFor(vpm.layout, vpm.lx, vpm.ly, vpm.lw, vpm.lh,
-                                         _rxs, _rys, _rws, _rhs);
-            foreach (k; 0 .. vpm.cellCount) {
-                vpm.views[k].winX = _rxs[k]; vpm.views[k].winY = _rys[k];
-                vpm.views[k].winW = _rws[k]; vpm.views[k].winH = _rhs[k];
-            }
-        }
-    }
+    // Task 0781: handleWindowEvent moved to InputRouter (source/input_router.d),
+    // constructed as `router` below after EditorApp's own LATE ctx-wiring
+    // finishes (it needs app.layout, wired there). processEvent's
+    // SDL_WINDOWEVENT case now calls router.handleWindowEvent.
 
     // Run a Command through the same dispatch the HTTP /api/command path
     // uses: refire-aware apply, history.record on success. Used by both
@@ -4363,6 +4337,26 @@ void main(string[] args) {
     // (ui/panels.d's drawCommandHistoryPanel) drags its cursor row through
     // this chokepoint; declared HERE because navHistory only exists now.
     app.navHistory = &navHistory;
+
+    // Task 0781 — the input-router cluster's first slice
+    // (source/input_router.d): handleWindowEvent + handleMouseWheel.
+    // Constructed HERE, not earlier: `router.app = app` needs EditorApp's
+    // own LATE ctx-wiring finished first (app.layoutPtr, assigned above at
+    // the 0419 LATE block, is what handleWindowEvent reads through
+    // `app.layout`). `window`/`playbackMode`/`thickLineProgram` are
+    // assigned exactly once in main(), well before this point, so the
+    // by-value copies below are stable for the rest of the run;
+    // `winW`/`winH`/`fbW`/`fbH` are pointer-backed because
+    // handleWindowEvent mutates them via `&winW` etc.
+    InputRouter router;
+    router.app              = app;
+    router.window           = window;
+    router.playbackMode     = playbackMode;
+    router.thickLineProgram = thickLineProgram;
+    router.winWPtr          = &winW;
+    router.winHPtr          = &winH;
+    router.fbWPtr           = &fbW;
+    router.fbHPtr           = &fbH;
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         // Active tool gets first dibs on key events. Tools that handle keys
@@ -5324,15 +5318,8 @@ void main(string[] args) {
             dragMode = DragMode.None;
     }
 
-    void handleMouseWheel(ref SDL_MouseWheelEvent wheel) {
-        if (wheel.y == 0) return;
-        // Coupled zoom (task 0217): a wheel zoom over a default follower
-        // (e.g. an ortho Quad cell) writes the linkage owner's distance, not
-        // the hovered cell's own (which resolvedSnapshot never reads unless
-        // that cell has `viewport.indScale` on).
-        int hid = vpm.hoveredId >= 0 ? vpm.hoveredId : vpm.activeId;
-        vpm.scaleOwnerCamera(hid).zoom(wheel.y * 10);
-    }
+    // Task 0781: handleMouseWheel moved to InputRouter too (see the note
+    // above handleWindowEvent's removal site).
 
     void handleMouseMotion(ref SDL_MouseMotionEvent mot) {
         // Cooked once, before dispatch — see handleMouseButtonDown. This
@@ -5891,14 +5878,14 @@ void main(string[] args) {
             // outright (task 0434). The per-frame quit-guard prompts on
             // unsaved changes; keep processing this frame (return true).
             case SDL_QUIT:            quitRequested = true;               break;
-            case SDL_WINDOWEVENT:     handleWindowEvent(ev.window);      break;
+            case SDL_WINDOWEVENT:     router.handleWindowEvent(ev.window); break;
             case SDL_KEYDOWN:         handleKeyDown(ev.key);             break;
             // Task 0709 — the release side of the pair above. Absent until
             // this task, which is what made `Tool.onKeyUp` unreachable.
             case SDL_KEYUP:           handleKeyUp(ev.key);               break;
             case SDL_MOUSEBUTTONDOWN: handleMouseButtonDown(ev.button);  break;
             case SDL_MOUSEBUTTONUP:   handleMouseButtonUp(ev.button);    break;
-            case SDL_MOUSEWHEEL:      handleMouseWheel(ev.wheel);        break;
+            case SDL_MOUSEWHEEL:      router.handleMouseWheel(ev.wheel);   break;
             case SDL_MOUSEMOTION:     handleMouseMotion(ev.motion);      break;
             default: break;
         }
