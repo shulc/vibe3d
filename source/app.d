@@ -174,6 +174,12 @@ import editor_app;
 // only -- handleWindowEvent + handleMouseWheel; see source/input_router.d's
 // module doc comment for why the other five handlers stay in main() for now.
 import input_router : InputRouter;
+// Task 1040 (chain 0678 §2C A10 / 0722 / 0781 "ВАРИАНТ Г"): the input/frame
+// shared-state cluster -- the home for the five names 0781 found neither
+// the router nor the not-yet-extracted frame body owns outright (dragMode/
+// rmbPath/anySpinning/buildToolVts/viewportInputAllowed). See
+// source/input_frame_state.d's module doc comment.
+import input_frame_state : InputFrameState, DragMode;
 import registration : registerTools, registerCommands;
 import http_providers : wireHttpProviders;
 import shortcuts;
@@ -240,7 +246,12 @@ float readDepth(int winW, int winH, int fbW, int fbH, float px, float py) {
 // Enums shared across tools and main
 // ---------------------------------------------------------------------------
 
-enum DragMode { None, Orbit, Zoom, Pan, Roll, Select, SelectAdd, SelectRemove }
+// Task 1040 -- `DragMode` now declared in input_frame_state.d (the input/
+// frame shared-state cluster; `dragMode` itself, the sole field it types,
+// moved there too). Imported back here for the same reason `OverlayMode`
+// below already is: app.d still spells `DragMode.Xxx` at every one of
+// `dragMode`'s own read/write sites.
+import input_frame_state : DragMode;
 
 // Task 0206 (Quad/Split multi-cell overlays) — overlay draw mode for a
 // single viewport cell's renderViewportSceneToFbo() call. `OverlayMode`
@@ -1797,16 +1808,37 @@ void main(string[] args) {
     // (optional-parens applies; 0 address-of sites so no &gpuSelect() edits needed).
     auto gpuSelect() { return vpm.views[vpm.activeId].gpuSel; }
 
+    // Task 1040: the input/frame shared-state cluster (source/
+    // input_frame_state.d) -- home for `dragMode`/`rmbPath`/`anySpinning`/
+    // `buildToolVts`/`viewportInputAllowed`, none of which the not-yet-
+    // extracted input-router (0781) or the not-yet-extracted frame body
+    // (0782) owns outright. Declared here, ahead of ALL FIVE of those
+    // names' own original positions below (this is the earliest of them),
+    // because a nested function/closure in D cannot forward-reference a
+    // not-yet-declared sibling or local (probed standalone, see the task
+    // Log) -- every forwarder below needs `ifs` already in scope. `ifs.app`
+    // is wired later, once `EditorApp app` itself is fully assembled, at
+    // the same point `InputRouter.app` already is (~InputRouter router
+    // construction, below); nothing calls through `ifs` before then.
+    InputFrameState ifs;
+
     // Phase 2 — input seam.  `g_viewportWindowHovered` is set each frame
     // by the "Viewport" ImGui window's IsWindowHovered() result.  The seam
     // function replaces the scattered `!io.WantCaptureMouse` reads so a
     // single flag controls whether 3D input reaches the picking / camera
     // orbit code.  In --test: byte-identical to the prior per-site checks.
+    //
+    // NOT moved into `ifs` (task 1040): the not-yet-extracted frame body
+    // still writes this flag directly at three sites (~7135/~7943 below,
+    // both outside this task's scope) -- moving its storage would require
+    // touching that code. `ifs` holds a POINTER to it instead (wired
+    // alongside `ifs.app`, below), the same rule InputRouter already
+    // applies to winW/winH/fbW/fbH.
     bool g_viewportWindowHovered = false;
-    bool viewportInputAllowed() {
-        if (testMode) return !io.WantCaptureMouse;
-        return g_viewportWindowHovered;
-    }
+    // Body relocated to InputFrameState.viewportInputAllowed (task 1040);
+    // this forwarder keeps every one of its ~15 existing bare call sites
+    // (inside the not-yet-extracted mouse handlers) untouched.
+    bool viewportInputAllowed() { return ifs.viewportInputAllowed(); }
 
     // Change-notification bus, Stage 2 — pick-cache subscriber state.
     //
@@ -2045,7 +2077,11 @@ void main(string[] args) {
     ulong  loopHoverPrevTopo = ulong.max; // mesh.topologyVersion at last rebuild
     bool   loopHoverPrevSlice = false;    // ring KIND at last rebuild (slice vs edge-loop)
 
-    DragMode dragMode = DragMode.None;
+    // Task 1040: state relocated to InputFrameState.dragMode; this
+    // forwarder keeps every one of its ~46 existing bare read/write sites
+    // (inside the not-yet-extracted mouse handlers, pick* family, and
+    // frame body) untouched.
+    @property ref DragMode dragMode() { return ifs.dragMode; }
     // `editMode` is a MATERIALIZED VIEW of `selTypeOrder.mostRecentGeometry`.
     // It is written by exactly ONE path — `setEditModeFromOrder()` below —
     // called from the geometry-type funnel (`switchGeometryType` /
@@ -2063,7 +2099,13 @@ void main(string[] args) {
 
     // RMB path trail
     bool    rmbDragging = false;
-    ImVec2[] rmbPath;
+    // Task 1040: state relocated to InputFrameState.rmbPath; this forwarder
+    // keeps every one of its ~13 existing bare read/write sites (inside the
+    // not-yet-extracted mouse handlers and the frame body's lasso overlay)
+    // untouched. `rmbDragging` above stays a plain main() local -- it is
+    // router-exclusive state (0781's own classification), out of this
+    // task's scope.
+    @property ref ImVec2[] rmbPath() { return ifs.rmbPath; }
 
     // Phase C.x: interactive selection edit session. handleMouseButtonDown
     // captures the selection-snapshot before any picking/lasso/clear happens;
@@ -3906,24 +3948,28 @@ void main(string[] args) {
     // no walk over the cells. It is self-correcting rather than a counter that
     // must be kept balanced: the sweep below recomputes it from the cameras it
     // just ticked, so the worst a stale `true` can cost is one extra sweep.
-    bool anySpinning = false;
+    //
+    // Task 1040: state relocated to InputFrameState.anySpinning; this
+    // forwarder keeps every one of its ~6 existing bare read/write sites
+    // (the button-up handler's OR-in, the frame body's tick) untouched.
+    @property ref bool anySpinning() { return ifs.anySpinning; }
 
     // The cooked 2D event, and the bookkeeping behind it. `gestureTrack` is
     // advanced once per SDL mouse event at the TOP of each of the three
     // mouse handlers (see GestureTrack.event's doc for why the placement is
-    // load-bearing); `gestureSlot` is the storage buildToolVts publishes
-    // from, and it lives out here — not as a local inside buildToolVts —
-    // because VectorStack stores POINTERS and the stack it fills outlives
-    // the call (every caller holds its own `vts` across the dispatch that
-    // follows). main()'s frame lives for the whole run, exactly like the
-    // other bookkeeping above it.
+    // load-bearing).
     //
     // NOTHING READS THE PACKET. It is published so the shape exists at the
     // one place a gesture's pixel state is known; migrating the tools that
     // keep their own last-pixel bookkeeping onto it is a separate step, one
     // tool per commit, each under its own drag test.
+    //
+    // `gestureSlot` itself (task 1040: the storage buildToolVts publishes
+    // from — it must live out here rather than as a local inside
+    // buildToolVts because VectorStack stores POINTERS and the stack it
+    // fills outlives the call) moved into InputFrameState alongside
+    // buildToolVts's own body; see that struct's doc comment.
     GestureTrack  gestureTrack;
-    GesturePacket gestureSlot;
 
     // `running` is declared higher up so the file.quit factory
     // closure (registered earlier) can capture it.
@@ -4171,21 +4217,14 @@ void main(string[] args) {
     // published into the stack BEFORE pipeline.evaluate so a stage could
     // read it; none does, and that is the neutrality argument for the
     // commit that introduced it.
+    // Body relocated to InputFrameState.buildToolVts (task 1040), full six-
+    // parameter form preserved exactly (same defaults) -- this forwarder
+    // keeps every one of its ~25 existing call sites, both the bare 2-arg
+    // and the 4-trailing-arg forms, untouched.
     void buildToolVts(out SubjectPacket subj, ref VectorStack vts,
                       int curX = -1, int curY = -1, bool curValid = false,
                       GesturePacket gest = GesturePacket.init) {
-        subj.mesh             = &mesh();
-        subj.editMode         = editMode;
-        subj.selType          = currentSelType(selTypeOrder);
-        subj.viewport         = vpm.inputSnapshot();
-        subj.cursorX          = curX;
-        subj.cursorY          = curY;
-        subj.cursorValid      = curValid;
-        vts.put(&subj);
-        gestureSlot = gest;
-        vts.put(&gestureSlot);
-        if (g_pipeCtx !is null)
-            g_pipeCtx.pipeline.evaluate(vts);
+        ifs.buildToolVts(subj, vts, curX, curY, curValid, gest);
     }
 
     // -------------------------------------------------------------------------
@@ -4324,6 +4363,18 @@ void main(string[] args) {
     router.winHPtr          = &winH;
     router.fbWPtr           = &fbW;
     router.fbHPtr           = &fbH;
+
+    // Task 1040 — the input/frame shared-state cluster (source/
+    // input_frame_state.d). Wired HERE, same reasoning as `router.app`
+    // just above: `ifs.app = app` needs the SAME LATE ctx-wiring finished
+    // (buildToolVts's body reads app.mesh/.editMode/.selTypeOrder/.vpm,
+    // all wired well before this point; viewportInputAllowed reads app.io/
+    // .testMode, wired by the 0419 LATE block, also before this point).
+    // `ifs.viewportHoveredPtr` is pointer-backed for the same reason
+    // router's winW/fbW are: the not-yet-extracted frame body still writes
+    // `g_viewportWindowHovered` directly.
+    ifs.app                = app;
+    ifs.viewportHoveredPtr = &g_viewportWindowHovered;
 
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         // Active tool gets first dibs on key events. Tools that handle keys
