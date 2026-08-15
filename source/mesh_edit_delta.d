@@ -1034,6 +1034,29 @@ private void applyReindexForward(ref Mesh m, in uint[] perm) {
     m.vertices             = nv;
     m.vertexMarks          = nm;
     m.vertexSelectionOrder = no;
+    // Task 0930: every Point-domain MeshMap (vertex weight, vertex color)
+    // rides the SAME permutation as `vertices`/`vertexMarks` above — the gap
+    // this task closes. Before this, `m.meshMaps` was never touched by this
+    // function at all; the tail `finalize()`'s `resizeAllMeshMaps()` only
+    // grows/shrinks each map's `data` by LENGTH (a raw truncate/grow, not a
+    // permutation), so a vertex dropped from the middle of a compaction left
+    // every survivor after it wearing a neighbour's weight — the same
+    // truncate-from-the-tail bug `compactUnreferenced` itself carried before
+    // task 0920 fixed it there. This mirrors that fix's gather shape,
+    // extended to the undo/redo replay side of the SAME compaction.
+    foreach (ref mm; m.meshMaps) {
+        if (mm.domain != MapDomain.Point) continue;
+        const ubyte dim = mm.dim;
+        float[] nd;
+        nd.length = kept * dim;
+        foreach (old, p; perm) {
+            if (p == ~0u) continue;
+            const size_t ob = cast(size_t)old * dim;
+            if (ob + dim > mm.data.length) continue; // defensive
+            nd[p * dim .. p * dim + dim] = mm.data[ob .. ob + dim];
+        }
+        mm.data = nd;
+    }
     // Rewrite face vertex ids old->new.
     foreach (ref f; m.faces)
         foreach (ref vid; f)
@@ -1076,6 +1099,26 @@ private void applyReindexReverse(ref Mesh m, in uint[] perm) {
     m.vertices             = nv;
     m.vertexMarks          = nm;
     m.vertexSelectionOrder = no;
+    // Task 0930: every Point-domain MeshMap rides the SAME reverse
+    // permutation — see applyReindexForward's comment. Dropped slots are
+    // explicitly zeroed (not left at `float.init` == NaN, unlike `nm`/`no`'s
+    // default-0 `uint`/`int` gaps) and stay that way until the following
+    // RemoveVerts^-1 fills them — matching `nv`'s Vec3 gap and `nm`/`no`'s
+    // documented "not restored here" convention.
+    foreach (ref mm; m.meshMaps) {
+        if (mm.domain != MapDomain.Point) continue;
+        const ubyte dim = mm.dim;
+        float[] nd;
+        nd.length = perm.length * dim;
+        nd[] = 0f;
+        foreach (old, p; perm) {
+            if (p == ~0u) continue;
+            const size_t pb = cast(size_t)p * dim;
+            if (pb + dim > mm.data.length) continue; // defensive
+            nd[old * dim .. old * dim + dim] = mm.data[pb .. pb + dim];
+        }
+        mm.data = nd;
+    }
     // Inverse map: new -> old. Build it once, then rewrite face vids.
     uint[] inv;
     inv.length = m.vertices.length; // == perm.length now; safe upper bound for `new` ids
@@ -1122,6 +1165,21 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
     no.reserve(m.vertexSelectionOrder.length);
     foreach (i, o; m.vertexSelectionOrder) if (i >= drop.length || !drop[i]) no ~= o;
     m.vertexSelectionOrder = no;
+    // Task 0930: same parallel drop-filter for every Point-domain MeshMap —
+    // see applyReindexForward's comment for why a surviving vertex's own
+    // value must move with it rather than being left to finalize()'s tail
+    // length-only resize. Same `i >= drop.length || !drop[i]` survive
+    // condition as the three arrays above, scaled by the map's own `dim`.
+    foreach (ref mm; m.meshMaps) {
+        if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+        const size_t dim = mm.dim;
+        const size_t n   = mm.data.length / dim;
+        float[] nd;
+        nd.reserve(mm.data.length);
+        foreach (i; 0 .. n)
+            if (i >= drop.length || !drop[i]) nd ~= mm.data[i * dim .. i * dim + dim];
+        mm.data = nd;
+    }
 }
 
 // Reverse: restore the dropped verts at their recorded (pre-removal) indices.
@@ -1147,17 +1205,55 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
 // capture) therefore comes back VISIBLE, same as the reference's own convention that
 // selection bits do not survive an index change elsewhere in mesh.d
 // (`clearFaceSelectionResize` et al.) — not a regression, a documented limit.
+//
+// Task 0930: every Point-domain MeshMap gets the same treatment as
+// `vertexMarks` in all three branches (gap-fill / tail-append / standalone
+// insert) — length lock-step, value 0 (not a restored capture, same
+// documented limit; `MeshOpEntry.RemoveVerts` does not carry a removed
+// vertex's own map values any more than it carries its marks word).
+//
+// `vertexSelectionOrder` (task 0930, secondary finding) now gets the SAME
+// standalone-insert treatment `vertexMarks` already had: the gap-fill and
+// tail-append branches were already safe (the gap/tail slot arrives at 0 via
+// applyReindexReverse's own permute / finalize()'s tail length-resize), but
+// the standalone insertInPlace branch left it out of lock-step with
+// `vertices`' mid-array growth — the same hole this task closed for
+// `meshMaps` just above, on an array that already had the fix everywhere
+// else. No live producer reaches this branch yet (a standalone RemoveVerts
+// with no paired Reindex — see the doc comment above), so this is a
+// preventive close, not a measured-by-value fix; closed here because the
+// adjacent lines were already being touched for the meshMaps fix.
 private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
     foreach (i, vi; idx) {
         if (vi < m.vertices.length) {
             m.vertices[vi] = pos[i];          // fill the gap re-opened by Reindex^-1
             if (vi < m.vertexMarks.length) m.vertexMarks[vi] = 0;
+            foreach (ref mm; m.meshMaps) {
+                if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                const size_t dim = mm.dim;
+                if (vi * dim + dim <= mm.data.length) mm.data[vi * dim .. vi * dim + dim] = 0f;
+            }
         } else if (vi == m.vertices.length) {
             m.vertices ~= pos[i];             // contiguous append at the tail
             m.vertexMarks ~= 0u;
+            foreach (ref mm; m.meshMaps) {
+                if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                foreach (_; 0 .. mm.dim) mm.data ~= 0f;
+            }
         } else {
             m.vertices.insertInPlace(vi, pos[i]); // standalone removal (no Reindex)
             if (vi <= m.vertexMarks.length) m.vertexMarks.insertInPlace(vi, 0u);
+            if (vi <= m.vertexSelectionOrder.length) m.vertexSelectionOrder.insertInPlace(vi, 0);
+            foreach (ref mm; m.meshMaps) {
+                if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
+                const size_t dim = mm.dim;
+                if (vi * dim <= mm.data.length) {
+                    float[] zeros;
+                    zeros.length = dim;
+                    zeros[] = 0f;
+                    mm.data.insertInPlace(vi * dim, zeros);
+                }
+            }
         }
     }
 }

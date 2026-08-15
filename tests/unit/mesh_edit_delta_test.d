@@ -336,3 +336,89 @@ unittest {
       ~ "index the face actually landed at — got " ~
         m.faceSelectionOrder.to!string);
 }
+
+// ---------------------------------------------------------------------------
+// TASK 0930 — `applyReindexForward`/`applyReindexReverse` correctly permute
+// `vertices` / `vertexMarks` / `vertexSelectionOrder` by the recorded `perm`
+// (task 0613 §4.2/S3 — the already-correct siblings) but never touched
+// `m.meshMaps` at all: a Point-domain map (vertex weight, vertex color) was
+// left entirely to `finalize()`'s tail `resizeAllMeshMaps()` — a raw
+// truncate/grow, not a permutation. The exact class `compactUnreferenced`
+// itself carried before task 0920 fixed it on the FORWARD kernel; this pins
+// the same gather on the undo/redo REPLAY side of that identical compaction.
+// `removeVertsForward`/`removeVertsReverse` had the same gap.
+//
+// Fixture: byte-identical to 0920's (tests/unit/mesh_test.d) — 7 vertices, a
+// triangle [0,1,2], a hanging (unreferenced) vertex 3, a second triangle
+// [4,5,6]; a weight map filled value == index. Built through the REAL
+// producer (`beginEditBatch`/`endEditBatch` around a live
+// `compactUnreferenced()` call) — not a hand-built `MeshOpEntry` — so the
+// fixture exercises the actual recorder, not an assumption about its shape.
+//
+// `compactUnreferenced` drops only v3 — a MIDDLE drop, not a tail drop: a
+// tail drop would make truncation and permutation agree and prove nothing
+// (the same "one dropped face" trap task 0703 hid behind).
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+
+    Mesh m;
+    foreach (i; 0 .. 7) m.addVertex(Vec3(cast(float)i, 0, 0));
+    m.addFace([0u, 1u, 2u]);
+    m.addFace([4u, 5u, 6u]);
+    m.buildLoops();
+    m.syncSelection();
+
+    m.addWeightMap("w");
+    foreach (i; 0 .. 7) m.setVertexWeight("w", i, cast(float)i);
+
+    float[] weights() {
+        float[] w;
+        foreach (i; 0 .. m.vertices.length) w ~= m.vertexWeight("w", i);
+        return w;
+    }
+
+    MeshEditTracker rec;
+    m.beginEditBatch(&rec, MeshEditScope.Points);
+    const removed = m.compactUnreferenced();
+    auto delta = m.endEditBatch();
+    assert(removed == 1, "setup: only the hanging vertex 3 is unreferenced");
+    assert(m.vertices.length == 6);
+
+    // The direct (already-fixed, task 0920) kernel's own result — the
+    // reference this replay's redo must reproduce genuinely, not by luck.
+    assert(weights() == [0f, 1f, 2f, 4f, 5f, 6f],
+        "setup: direct compactUnreferenced must have already permuted the "
+      ~ "weight map (task 0920) — got " ~ weights().to!string);
+
+    // Undo (revert): Reindex^-1 restores the pre-compaction index space,
+    // perm-gathering the Point-map value of every KEPT vertex back to its
+    // own pre-compaction slot; RemoveVerts^-1 then fills the re-opened gap
+    // at index 3. The gap's own weight is NOT restored — the same documented
+    // limit `removeVertsReverse` already states for `vertexMarks` (a removed
+    // vertex's non-positional data is not captured by
+    // `MeshOpEntry.RemoveVerts`, which records only `vIdx` + `pos`) — but
+    // every OTHER (kept) vertex must carry its OWN weight back to its own
+    // slot, not a neighbour's.
+    assert(delta.revert(m), "reverse replay must succeed");
+    assert(m.vertices.length == 7);
+    assert(weights() == [0f, 1f, 2f, 0f, 4f, 5f, 6f],
+        "applyReindexReverse/removeVertsReverse: every KEPT vertex "
+      ~ "(0,1,2,4,5,6) must carry its OWN weight back to its pre-compaction "
+      ~ "slot — before this fix `m.meshMaps` was untouched by the replay "
+      ~ "entirely, so the array stayed at its post-compaction values and "
+      ~ "only grew a trailing zero pad (measured: [0,1,2,4,5,6,0]) instead "
+      ~ "of un-permuting — got " ~ weights().to!string);
+
+    // Redo (apply): must reproduce the direct kernel's result through a
+    // GENUINE gather (applyReindexForward now permutes `m.meshMaps` too),
+    // not by coincidence of the data never having moved — before this fix
+    // the redo step matched the direct result only because neither replay
+    // direction had touched `m.meshMaps` at all across the whole round trip.
+    assert(delta.apply(m), "forward replay must succeed");
+    assert(m.vertices.length == 6);
+    assert(weights() == [0f, 1f, 2f, 4f, 5f, 6f],
+        "applyReindexForward: redo must reproduce the direct kernel's "
+      ~ "compaction through the SAME perm-gather compactUnreferenced uses, "
+      ~ "not merely leave stale data untouched — got " ~ weights().to!string);
+}
