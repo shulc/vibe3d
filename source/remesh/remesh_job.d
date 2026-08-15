@@ -17,6 +17,15 @@ module remesh.remesh_job;
 // cancel) but is simpler: no HTTP, no worker thread — the "worker" is the
 // OS process itself, and "drain" is a single per-frame tryWait() poll
 // instead of an event queue.
+//
+// Corner-provenance (task 0901, `CornerDrop.ForeignTopology`): verified NOT
+// APPLICABLE anywhere in this module. Every intermediate `Mesh` value here
+// (e.g. `prepareCurrentComponent`'s `regionMesh`) is a fresh `Mesh.init` used
+// as a scratch topology helper and never registers a PolyVertex map; the
+// external subprocess's result comes back through OBJ marshalling as raw
+// vertex/face data (`resultVertices()`/`resultFaces()`), not a `Mesh`. The
+// document mesh is only ever touched once, by the landing command
+// (`commands/mesh/remesh.d`'s `*mesh = result`) — see that site's own note.
 // ---------------------------------------------------------------------------
 
 import std.algorithm.iteration : map;

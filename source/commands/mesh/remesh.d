@@ -103,6 +103,14 @@ final class Remesh : Command, Operator {
             return false;
         }
 
+        // Corner-provenance (task 0901, `CornerDrop.ForeignTopology`):
+        // verified NOT APPLICABLE. `result` is built fresh a few lines above
+        // (`Mesh result = Mesh.init; ... result.addFaceFast(...)`) and never
+        // had a PolyVertex map — `remesh.region_stitch`/`remesh.remesh_job`
+        // hand their output back as raw `Vec3[]`/`uint[][]` arrays, never a
+        // `Mesh`. `*mesh = result` REPLACES the whole value, same shape as
+        // `commands/mesh/subdivide.d`: the old map disappears with the old
+        // mesh rather than being zeroed by a face rewrite.
         *mesh = result;
         mesh.resetSelection();
         // `*mesh = result` swap reset the fresh struct's version counters to

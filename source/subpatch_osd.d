@@ -178,6 +178,15 @@ private bool isDegenerateSubdivFace_(ref const Mesh cage, size_t fi) {
 /// input or empty subset), or when any marked face is itself degenerate
 /// (zero-area / collinear / <3 distinct corners) — reject-whole rather
 /// than risk emitting coincident verts from a bad face.
+///
+/// Corner-provenance (task 0901, `CornerDrop.SubpatchCage` / `SubdivideNoLaw`):
+/// verified NOT APPLICABLE. `cage` is `ref const` — the language forbids
+/// mutating it — and the returned `Mesh` is a fresh value with no PolyVertex
+/// map of its own. Every caller that bakes this into an existing document
+/// mesh (`commands/mesh/subdivide.d`) does `*mesh = catmullClarkOsd(...)`, a
+/// whole-mesh replace: the old mesh's map disappears with the old mesh, it is
+/// not zeroed by anything in THIS function. Nothing here rewrites `faces` on
+/// a mesh that still owns a live map, so there is no declaration to make.
 Mesh catmullClarkOsd(ref const Mesh cage, const bool[] faceMask = null,
                      uint[]* faceOriginOut = null) {
     immutable int nv = cast(int)cage.vertices.length;
@@ -930,6 +939,14 @@ struct OsdAccel {
     ///
     /// Returns false (and clears state) on degenerate input or OSD
     /// topology-creation failure.
+    ///
+    /// Corner-provenance (task 0901): verified NOT APPLICABLE, same
+    /// reasoning as `catmullClarkOsd` above — `cage` is `const`, `outMesh` is
+    /// an `out` parameter (always freshly `.init`'d), and no caller ever
+    /// registers a PolyVertex map on a preview mesh. The hot per-frame
+    /// `refresh()` below only ever writes `preview.vertices`, never
+    /// `preview.faces`, so even a live map on a preview mesh would never
+    /// reach a face rewrite through this class.
     bool buildPreview(ref const Mesh cage, int level,
                        out Mesh outMesh, out SubpatchTrace outTrace)
     {

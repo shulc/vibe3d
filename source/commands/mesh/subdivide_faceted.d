@@ -36,6 +36,11 @@ package void runFacetedFamily(Mesh* mesh, EditMode editMode, bool smooth)
     const bool[] mask = hadSelection
         ? mesh.selectedFaces
         : mesh.visibleFaceMask();
+    // Corner-provenance (task 0901, `CornerDrop.SubdivideNoLaw`): verified NOT
+    // APPLICABLE, same shape as `commands/mesh/subdivide.d`'s ccsds mode —
+    // `facetedSubdivide`/`smoothSubdivide` return a fresh `Mesh result` with
+    // no PolyVertex map of its own, and this `*mesh = ...` REPLACES the whole
+    // value. The old map disappears with the old mesh; nothing here zeroes it.
     *mesh = smooth ? smoothSubdivide(*mesh, mask) : facetedSubdivide(*mesh, mask);
     mesh.resetSelection();
     // Rebuild the output selection: each selected cage face produced

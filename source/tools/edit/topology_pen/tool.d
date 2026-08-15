@@ -54,6 +54,17 @@ import d_imgui.imgui_h;
 
 import tools.edit.topology_pen.defs;
 
+// Corner-provenance (task 0901): verified NOT APPLICABLE across this package.
+// Every face this tool creates goes exclusively through `Mesh.makePolygonFromVerts`
+// (grep confirms zero `.faces ~=`/`.faces[i] =`/`.faces.length =` writes
+// anywhere under tools/edit/topology_pen/) -- a single-face kernel that calls
+// `addFace` exactly once per invocation, then `buildLoops()` in the same
+// call, with no loop across several appends for a maintenance edit to
+// accidentally split into a mixed addFace/bare-`faces~=` pattern (the
+// task-0690 shape). It is therefore safe by construction the same way
+// `addFace` itself is, and is not treated as a 0901 site needing its own
+// `declareCornerAppend()` -- unlike `mesh_ops/bridge.d`'s multi-face loops,
+// there is no drift for the cross-check to guard against here.
 
 /// The names of every `GestureArm` field of `TopologyPenTool`, in declaration
 /// order — derived by the compiler from the field declarations themselves.

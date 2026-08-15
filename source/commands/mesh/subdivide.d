@@ -103,6 +103,13 @@ class Subdivide : Command, Operator {
                 snap = MeshSnapshot.init;
                 return false;
             }
+            // Corner-provenance (task 0901, `CornerDrop.SubdivideNoLaw`):
+            // verified NOT APPLICABLE. `*mesh = sub` REPLACES the whole `Mesh`
+            // value — `sub` never had a PolyVertex map of its own (it comes
+            // fresh from `catmullClarkOsd`), so the old map disappears WITH
+            // the old mesh rather than being zeroed by a face rewrite. The
+            // `mesh.d` "D5 drop set" comment used to call this a drop; that
+            // was the inaccuracy task 0682 introduced, corrected in task 0901.
             *mesh = sub;
             // `catmullClarkOsd` propagates the Subpatch bit from each cage
             // face to its child faces (task 0389 audit) — that propagation

@@ -95,6 +95,11 @@ class MeshLoadRaw : Command {
         m.rebuildEdgesFromFaces();
         m.buildLoops();
         m.resetSelection();
+        // Corner-provenance (task 0901): verified NOT APPLICABLE. `m` is a
+        // fresh `Mesh` (declared a few lines above, never had a PolyVertex
+        // map) and `*mesh = m` REPLACES the whole value — same whole-mesh
+        // replace shape as `commands/mesh/subdivide.d`. The old map
+        // disappears with the old mesh; nothing here zeroes it.
         *mesh = m;
 
         // reset() now also normalizes the projection (Perspective + default

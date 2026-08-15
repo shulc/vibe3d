@@ -45,6 +45,17 @@ module remesh.region_stitch;
 // Multiple region boundary loops (e.g. an annulus-shaped selection) are
 // matched to their outer rim / inner loop by nearest centroid, and bridged
 // independently, exactly as in the reference.
+//
+// Corner-provenance (task 0901, `CornerDrop.ForeignTopology`): verified NOT
+// APPLICABLE. Every function in this module works in raw `Vec3[]`/`uint[][]`
+// arrays (`StitchResult`, `patchVerts`/`patchFaces`, `origVerts`/`keepFaces`)
+// -- there is no `Mesh` parameter anywhere in the public surface for a
+// PolyVertex map to live on. The occasional local `Mesh` value used by an
+// internal boundary-loop-walk helper (e.g. `patchBoundaryLoops`) is built
+// fresh from those same arrays and never has one registered either. The
+// caller (`remesh.remesh_job`) assembles the FINAL result into a document
+// mesh via `*mesh = result` (`commands/mesh/remesh.d`) -- a whole-mesh
+// replace, not a face rewrite this module could own.
 // ---------------------------------------------------------------------------
 
 import std.algorithm.iteration : map;

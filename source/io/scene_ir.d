@@ -98,6 +98,18 @@ private void populateUvMap(ref Mesh m, const float[] uv, bool hasUv) {
 /// one copy here). Vertices are concatenated with a running offset added to
 /// every face index; subpatch + material flags carry over with a global face
 /// counter keeping them aligned. An empty scene returns `Mesh.init`.
+///
+/// Corner-provenance (task 0901): verified NOT APPLICABLE. This function (and
+/// `flattenDocument` / the per-part `Mesh` builders below) always starts from
+/// a fresh `Mesh m = Mesh.init` and returns it BY VALUE — there is no
+/// existing document mesh for a face rewrite to lose a map from. A "uv"
+/// PolyVertex map may get SEEDED here from the imported per-corner data
+/// (`faceCornerLoop`, after `buildLoops`), but that is populating a brand-new
+/// map on a brand-new mesh, not carrying one forward across a rewrite — the
+/// corner-provenance obligation has nothing to apply to. Every caller that
+/// lands this into a document mesh does a whole-mesh replace (`*mesh =
+/// flattenToMesh(...)` / `commands/scene/load_mesh.d`'s equivalent), same
+/// shape as `commands/mesh/subdivide.d`.
 Mesh flattenToMesh(const ref ImportedScene scene) {
     // --- merge surfaces: dedup by name, first-seen order ---
     Surface[]   mergedSurfaces;
