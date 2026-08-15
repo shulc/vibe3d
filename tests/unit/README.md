@@ -35,6 +35,29 @@ Naming: `tests/unit/<module_path>_test.d` mirroring the `source/` layout, with
 `module tests.unit.<...>_test;` — the directory is a source root, so the module
 name starts at `tests.unit`.
 
+A file here without the `_test` suffix is a **harness** shared by the test
+modules around it (`census_gate.d`, `ui/headless_panel.d`), not a mirror of a
+`source/` module.
+
+## Driving an ImGui widget (task 0870)
+
+`ui/headless_panel.d` submits a panel body into a real ImGui context with a
+display size and an input queue and nothing else — no window, no GL, no display
+server — and drives its widgets with the same `ImGuiIO::AddXxxEvent` calls the
+SDL2 backend makes: hover, press, drag, ctrl+click, type, Enter. Rows are
+addressed by **index in submission order**, off ImGui's own layout cursor and
+frame pitch, so nothing here carries a pixel constant.
+
+It exists because a whole class of paths — anything whose input begins in a
+widget — had no automated lane at all: `/api/play-events` synthesises SDL events
+with no `windowID` (which the ImGui backend requires), `--test` drops real input,
+and `/api/toolprops/ids` records which rows exist, not what typing into one does.
+Task 0801 measured what that costs — a panel whose slider wrote a value the apply
+never read, shipped for two months behind two green gates.
+
+`ui/transform_panel_widget_test.d` is the worked example: it types `2.0` into the
+Scale X row and asserts the mesh. About 0.4 ms per gesture.
+
 ## The census gate (task 0835)
 
 `census_gate.d` counts `unittest` blocks and assertion tokens over
