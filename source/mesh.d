@@ -5935,31 +5935,32 @@ struct Mesh {
             const size_t want = loops.length * m.dim;
             if (m.data.length == want) continue; // relocate/append/unchanged → keep
             // Topology rewritten without a relocate ⇒ drop (length-correct, zeroed).
+            // The repair runs FIRST and the diagnostic second, same ordering
+            // rule as the two asserts above: a mesh must never be left holding
+            // a wrong-length map, in either build type.
             m.data.length = want;
             m.data[] = 0.0f;
             // A per-corner plane really did exist and really was thrown away,
-            // and nobody said so. Say it once per run, in debug builds only —
-            // the same shape as `buildLoops`'s one-time non-manifold warning.
-            //
-            // Not an assert, deliberately. The census is not finished: the
-            // bridge, the subpatch cage build and the remesh / import paths
-            // still rewrite corners without declaring, and none of them is
-            // exercised with a live map by either gate — measured, task 0830,
-            // zero hits across `dub test --config=tests` and the ten-test UV
-            // lane. An assert would therefore be green here and a crash on a
-            // user's mesh. Turning it into one is the last step, and it belongs
-            // with the sites that make it true (follow-up 0900).
-            debug {
-                static bool warnedUndeclaredCornerRewrite = false;
-                if (!warnedUndeclaredCornerRewrite) {
-                    warnedUndeclaredCornerRewrite = true;
-                    import core.stdc.stdio : fprintf, stderr;
-                    fprintf(stderr, "[mesh] per-corner map dropped by a face "
-                            ~ "rewrite that declared nothing — the length test "
-                            ~ "caught it, which means the values are gone and "
-                            ~ "no kernel owns the loss (task 0830)\n");
-                }
-            }
+            // and nobody said so — the census 0830 left open (bridge, the
+            // primitive-create commit paths, the subpatch cage build, the
+            // remesh / import paths) is now closed by task 0901: every one of
+            // those either declares (bridge, primitives — Appended) or is
+            // verified NOT APPLICABLE (subpatch cage, remesh, import, load-
+            // mesh, subdivide, topology pen — none of them rewrites a `Mesh`
+            // that still owns a live PolyVertex map). This was a one-time
+            // `fprintf` warning through task 0900; promoted to a `debug
+            // assert` here now that reaching this branch at all is the
+            // failure, not an expected, uncatalogued gap. Under `-release`
+            // this compiles out and the repair above is all that runs — the
+            // correct behaviour either way, matching the two asserts above.
+            debug assert(false,
+                "corner provenance: a face rewrite reached buildLoops without "
+                ~ "declaring what became of the corners, and without arming "
+                ~ "beginCornerRewrite()/beginCornerRelocate() either — a "
+                ~ "kernel outside the task 0830/0901 census. Open a "
+                ~ "beginCornerRewrite()/beginCornerRelocate() capture at the "
+                ~ "site and declare what happened to the corners "
+                ~ "(Unchanged/Appended/Relocated/Carried/Dropped(reason)).");
         }
     }
 
