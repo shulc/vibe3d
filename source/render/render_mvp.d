@@ -472,7 +472,7 @@ private void drawControls(const(Mesh)* m, View v)
                 g.phase = Phase.idle;
             }
             ImGui.SameLine();
-            ImGui.TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", g.errorMsg);
+            ImGui.TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), g.errorMsg);
             break;
     }
 }
@@ -497,10 +497,23 @@ private void drawCfgControls()
             break;
         }
     }
-    if (ImGui.Combo("Backend", &idx, BACKEND_OPTION_LABELS)) {
-        g.selectedBackend   = BACKEND_OPTIONS[idx].backend;
-        g.pendingCfg.device = BACKEND_OPTIONS[idx].device;
-        applyCfgChangeIfRunning();
+    // BeginCombo/Selectable, not the C-style `Combo(label, &idx, char*[])`:
+    // the binding's Combo takes `const(char*)[]`, our labels are `string[]`,
+    // and this is the idiom the rest of the tree already uses.
+    if (ImGui.BeginCombo("Backend",
+                         idx >= 0 && idx < BACKEND_OPTION_LABELS.length
+                             ? BACKEND_OPTION_LABELS[idx] : "?")) {
+        foreach (i, ref label; BACKEND_OPTION_LABELS) {
+            const bool selected = (cast(int)i == idx);
+            if (ImGui.Selectable(label, selected)) {
+                idx = cast(int)i;
+                g.selectedBackend   = BACKEND_OPTIONS[idx].backend;
+                g.pendingCfg.device = BACKEND_OPTIONS[idx].device;
+                applyCfgChangeIfRunning();
+            }
+            if (selected) ImGui.SetItemDefaultFocus();
+        }
+        ImGui.EndCombo();
     }
 
     // Samples slider -log scale; applies on slider release.
@@ -611,7 +624,7 @@ private void drawImage()
         auto cur = ImGui.GetCursorPos();
         ImGui.SetCursorPos(ImVec2(cur.x + padX, cur.y + padY));
 
-        ImGui.Image(cast(ImTextureID) g.glTex,
+        ImGui.Image(cast(ImGui.ImTextureID) g.glTex,
                     ImVec2(displayW, displayH),
                     uv0, uv1);
     } else {
