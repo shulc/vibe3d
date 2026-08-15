@@ -29,6 +29,40 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        # Full history, for ONE consumer: the test census gate (task 0835) needs
+        # a baseline, and its baseline is git. With the default one-revision
+        # clone there is nothing to compare a tree against but the revision it
+        # was checked out from, so the gate could not fail here — measured on
+        # this repository, in both shapes this workflow actually runs:
+        #
+        #   push to main, depth 1   ran=true degraded=FALSE ok=true  ← looked healthy
+        #   pull request, depth 1   ran=true degraded=true  ok=true
+        #
+        # The first is 53 of the last 60 runs, and it is the worse one: `main`
+        # exists and `merge-base HEAD main` answers HEAD, so the gate had no way
+        # to know it was blind and printed nothing.
+        #
+        # WHAT THIS COSTS, measured against origin over the runner's network
+        # (clone time / .git size):
+        #
+        #   depth 1 (before)                3.67 s   7.3 MB
+        #   fetch-depth: 0 (this)           4.82 s    20 MB     +1.15 s, +13 MB
+        #   warm workspace, one-time        5.07 s              ← the unshallow
+        #
+        # +1.15 s on a ~20-minute job. The two cheaper-looking options were
+        # measured and rejected, both for correctness rather than price:
+        #
+        #   a second `git fetch --depth=1 origin main` (+2.29 s) does not give a
+        #   baseline at all — the two shallow tips share no history, `merge-base`
+        #   exits 1, and `rev-list base..HEAD` answers 1 instead of the lane
+        #   length, i.e. it invents a wrong lane rather than reporting none;
+        #
+        #   `--filter=blob:none` (6.53 s, 9.5 MB) moves the cost instead of
+        #   removing it: the gate reads every blob under source/ + tests/unit at
+        #   every lane revision, and on a blobless clone that is a network round
+        #   trip each — 109 s for a 21-revision lane, against 0.23 s on this one.
+        fetch-depth: 0
 
     # nfde is now a VENDORED path dep (third_party/nfde, task 0431). Its C lib
     # (nativefiledialog-extended/out/src/libnfd.a) is produced by the package's
@@ -102,6 +136,23 @@ jobs:
       # binary it ran (`vibe3d-test-tests`) and prints druntime's
       # `N modules passed unittests` count — check those if this ever looks
       # suspiciously cheap.
+      #
+      # VIBE3D_CENSUS_BRANCH_POINT hands the census gate the one thing this
+      # checkout cannot work out for itself: where the work being tested began
+      # (task 0850). On a push that is the tip main had before it — everything
+      # in `before..HEAD` is what this run is judging. On a pull request it is
+      # the base the PR is proposed against; the checkout is a merge commit, so
+      # without this there is neither `main` nor `origin/main` to branch from.
+      # The gate walks from here to HEAD and takes the running maximum, so a
+      # loss inside the range cannot be paid for by a gain elsewhere in it.
+      #
+      # If this line is deleted the gate does not go quiet, it goes RED: it
+      # refuses to report a pass under GITHUB_ACTIONS when its only baseline is
+      # HEAD. Same if `fetch-depth: 0` above is dropped — the revision named
+      # here then does not resolve, which it says in as many words. A build with
+      # genuinely no baseline (a fork, a first commit) is spelled `none`.
+      env:
+        VIBE3D_CENSUS_BRANCH_POINT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
       run: xvfb-run -a dub test --config=tests --compiler=dmd
 
     - name: 'Integration tests (HTTP suite via run_all.d)'
