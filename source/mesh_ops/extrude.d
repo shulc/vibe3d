@@ -927,11 +927,19 @@ mixin template MeshExtrudeOps() {
         // about to rewrite in place, then the AFTER-image once rewritten. The
         // affected-face set is computed here, inside the body (doc §2.1(c)); the
         // capture is O(faces-touched). Recorded as a ReshapeFaces entry.
-        uint[]   nbrReshapeIdx;
+        // Task 0831: `FaceIdx[]`, like every recorded face-index list. The
+        // three accumulators in this kernel that walk `faces` directly mint
+        // through `faceIndices`; THIS one reads its indices out of an adjacency
+        // set (`affectedFaces`, keyed by `Edge.fA`/`fB`), which the type cannot
+        // vouch for — those keys are live face indices by construction, and
+        // `assumeFaceSpace` is where that construction gets asserted instead of
+        // assumed silently. Same for `windReshapeIdx` further down, whose keys
+        // come out of the `state` map.
+        FaceIdx[] nbrReshapeIdx;
         uint[][] nbrReshapeBefore;
         if (recExtrude) {
             foreach (fi, _; affectedFaces) {
-                nbrReshapeIdx    ~= cast(uint)fi;
+                nbrReshapeIdx    ~= FaceIdx.assumeFaceSpace(fi);
                 nbrReshapeBefore ~= faces[fi].dup;
             }
         }
@@ -1134,7 +1142,7 @@ mixin template MeshExtrudeOps() {
         // recorded AFTER the neighbour-face entry so LIFO revert undoes this loop
         // first, then the neighbour loop (each `before` is the true pre-loop
         // state, so the two compose even if a face is touched by both).
-        uint[]   sideReshapeIdx;
+        FaceIdx[] sideReshapeIdx;
         uint[][] sideReshapeBefore;
         uint[][] sideReshapeAfter;
         // Task 0317: unconditional twin of `sideReshapeIdx` (that one is only
@@ -1143,7 +1151,7 @@ mixin template MeshExtrudeOps() {
         //     safety net below needs the touched-face set on EVERY call, not
         //     just tracked ones.
         bool[uint] sideTouched;
-        foreach (fi; 0 .. faces.length) {
+        foreach (fi; faceIndices) {
             auto f = faces[fi].dup;
             // Snapshot the pre-rewrite normal so we can preserve orientation.
             bool touched = false;
@@ -1223,7 +1231,7 @@ mixin template MeshExtrudeOps() {
                 }
                 sideTouched[cast(uint)fi] = true;
                 if (recExtrude) {
-                    sideReshapeIdx    ~= cast(uint)fi;
+                    sideReshapeIdx    ~= fi;
                     sideReshapeBefore ~= f;            // loop-top dup = pre-rewrite list
                     sideReshapeAfter  ~= faces[fi].dup; // post-rewrite (incl. flip)
                 }
@@ -1234,7 +1242,7 @@ mixin template MeshExtrudeOps() {
 
         // --- Bridge faces. Helper: emit a quad, fixing winding so its normal
         //     points away from the neighbor-face interior (positive dot with ne).
-        size_t firstBridge = faces.length;
+        const firstBridge = faceAppendBase();   // task 0831: the AddFaces tail base, read PRE-append
         uint[] bridgeMaterialSrc;   // neighbor face id each bridge inherits from
         void emitBridge(uint[4] corners, Vec3 ne, int srcFace) {
             uint bfi = cast(uint)faces.length;
@@ -1478,8 +1486,8 @@ mixin template MeshExtrudeOps() {
         // appended block stays the tail [F0..F1) and reverts by truncation.)
         if (recExtrude && faces.length > firstBridge) {
             uint[][] bridgeLists;
-            foreach (fi; firstBridge .. faces.length) bridgeLists ~= faces[fi].dup;
-            editRecorder_.recordAddFaces(cast(uint)firstBridge, cast(uint)faces.length, bridgeLists);
+            foreach (fi; firstBridge.raw .. faces.length) bridgeLists ~= faces[fi].dup;
+            editRecorder_.recordAddFaces(firstBridge, cast(uint)faces.length, bridgeLists);
         }
 
         // --- Record the ridge endpoints BY POSITION for each extruded edge so we
@@ -1560,10 +1568,10 @@ mixin template MeshExtrudeOps() {
             // survives to the tail of LIFO revert is always fully overwritten by
             // an earlier ReshapeFaces^-1/AddFaces^-1 truncation regardless of
             // this intermediate content).
-            uint[]   reduceReshapeIdx;
+            FaceIdx[] reduceReshapeIdx;
             uint[][] reduceReshapeBefore;
             uint[][] reduceReshapeAfter;
-            foreach (fi; 0 .. faces.length) {
+            foreach (fi; faceIndices) {
                 auto f = faces[fi];
                 if (f.length < 3) continue;   // pre-existing invalid face — not ours to fix
                 uint[] reduced;
@@ -1578,7 +1586,7 @@ mixin template MeshExtrudeOps() {
                     reduced = reduced[0 .. $ - 1];
                 if (reduced.length != f.length) {
                     if (recExtrude && reduced.length >= 3) {
-                        reduceReshapeIdx    ~= cast(uint)fi;
+                        reduceReshapeIdx    ~= fi;
                         reduceReshapeBefore ~= f.dup;
                         reduceReshapeAfter  ~= reduced.dup;
                     }
@@ -1599,17 +1607,18 @@ mixin template MeshExtrudeOps() {
                 keptOrder.reserve(faces.length);
                 keptMaterial.reserve(faces.length);
                 keptPart.reserve(faces.length);
-                uint[]   droppedFaceIdx;
+                FaceIdx[] droppedFaceIdx;
                 uint[][] droppedFaceLists;
                 uint[]   droppedFaceMat;
                 uint[]   droppedFacePart;
                 uint[]   droppedFaceSub;
                 size_t newIdx = 0;
-                foreach (fi, ref f; faces) {
+                foreach (fi; faceIndices) {
+                    auto f = faces[fi];
                     if (dropFace[fi]) {
                         faceRemap[fi] = -1;
                         if (recExtrude) {
-                            droppedFaceIdx   ~= cast(uint)fi;
+                            droppedFaceIdx   ~= fi;
                             droppedFaceLists ~= f.dup;
                             droppedFaceMat   ~= faceAttrOr(faceMaterial, fi);
                             droppedFacePart  ~= faceAttrOr(facePart, fi);
@@ -1701,7 +1710,7 @@ mixin template MeshExtrudeOps() {
             }
             foreach (fi, _; affectedFaces) addCandidate(cast(size_t)fi);
             foreach (fi, _; sideTouched) addCandidate(fi);
-            foreach (fi; firstBridge .. facesLenBeforeCleanup) addCandidate(fi);
+            foreach (fi; firstBridge.raw .. facesLenBeforeCleanup) addCandidate(fi);
 
             // canonical(a,b) directed-edge sign: +1 if this face reads
             // lo→hi, -1 if hi→lo. Two faces sharing an undirected edge are
@@ -1796,7 +1805,7 @@ mixin template MeshExtrudeOps() {
             // on both forward replay and LIFO reverse. A call with an empty index
             // list (the common no-flip case) is a guaranteed no-op inside
             // recordReshapeFaces, so this adds nothing when nothing flipped.
-            uint[]   windReshapeIdx;
+            FaceIdx[] windReshapeIdx;
             uint[][] windReshapeBefore;
             uint[][] windReshapeAfter;
             foreach (fi, st; state) {
@@ -1804,7 +1813,7 @@ mixin template MeshExtrudeOps() {
                 auto r = faces[fi].dup;
                 foreach (j, vid; r) faces[fi][r.length - 1 - j] = vid;
                 if (recExtrude) {
-                    windReshapeIdx    ~= fi;
+                    windReshapeIdx    ~= FaceIdx.assumeFaceSpace(fi);
                     windReshapeBefore ~= r;
                     windReshapeAfter  ~= faces[fi].dup;
                 }
@@ -2605,7 +2614,7 @@ mixin template MeshExtrudeOps() {
         //     the single N=1 bridge: [innerA, outerA, outerB, innerB] where
         //     inner = ring k−1's pair, outer = ring k's pair, and A/B follow the
         //     source edge's DIRECTED traversal order within the orienting face.
-        size_t firstBridge = faces.length;
+        const firstBridge = faceAppendBase();   // task 0831: the AddFaces tail base, read PRE-append
         foreach (ref e; exEdges) {
             int orientFace = orientFaceOf(e);
             // Directed order of the source edge within orientFace.
@@ -2663,8 +2672,8 @@ mixin template MeshExtrudeOps() {
         // reverts by truncation.
         if (recExtend && faces.length > firstBridge) {
             uint[][] bridgeLists;
-            foreach (fi; firstBridge .. faces.length) bridgeLists ~= faces[fi].dup;
-            editRecorder_.recordAddFaces(cast(uint)firstBridge,
+            foreach (fi; firstBridge.raw .. faces.length) bridgeLists ~= faces[fi].dup;
+            editRecorder_.recordAddFaces(firstBridge,
                                          cast(uint)faces.length, bridgeLists);
         }
 

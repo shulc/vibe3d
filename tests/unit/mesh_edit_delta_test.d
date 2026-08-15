@@ -150,3 +150,66 @@ unittest {
             ~ "rebuilt map");
     }
 }
+
+// ---------------------------------------------------------------------------
+// TASK 0831 — the index space is in the TYPE, and here is the proof it bites.
+//
+// Task 0703's defect was that `RemoveFaces.fIdx` was a bare `uint` and two
+// kernels filled it with a position in the array they were BUILDING
+// (`keptFaces.length` / `newFaces.length`) instead of the live index. Both
+// spellings were `uint`, both compiled, and they read IDENTICALLY whenever
+// exactly one face is dropped — so the whole suite stayed green while an edge
+// dissolve came back with its faces reversed. The fix could only write the
+// rule in a comment. This block is the same rule, checked by the compiler.
+//
+// It is `static assert(!__traits(compiles, …))`, so it costs nothing at
+// runtime and fails at BUILD time — which is the point: the defect must stop
+// being expressible, not merely be detected once it has been written.
+//
+// The three checks are a set and only mean something together:
+//   (1) the 0703 expression must NOT compile;
+//   (2) the live mint MUST compile — without this, deleting `faceIndices`
+//       outright would leave (1) trivially green;
+//   (3) the SAME expression on a plain `uint[]` MUST compile — without this,
+//       (1) could be passing because the expression is malformed rather than
+//       because the type refuses it.
+//
+// A live mutation is wired at the real call site as well: build with
+//   dub build --config=modeling --d-version=MutateIndexSpace0831
+// and `source/mesh.d` fails to compile on the restored 0703 line.
+unittest {
+    // (1) the defect, verbatim: a position in the array being built.
+    static assert(!__traits(compiles, {
+        FaceIdx[] recorded;
+        uint[][]  keptFaces;
+        recorded ~= cast(uint)keptFaces.length;
+    }), "task 0831: recording a scratch-array position as a face index must be "
+      ~ "a COMPILE error — that expression is the 0703 defect verbatim");
+
+    // (2) positive control: the ordinary live mint still works, so (1) is a
+    //     refusal of the wrong thing rather than of everything.
+    static assert(__traits(compiles, {
+        Mesh m;
+        FaceIdx[] recorded;
+        foreach (fi; m.faceIndices) recorded ~= fi;
+    }), "task 0831: iterating the live face-index space must still be the "
+      ~ "ordinary, ceremony-free way to record an index");
+
+    // (3) discriminator: the refusal is the TYPE's, not the expression's.
+    static assert(__traits(compiles, {
+        uint[]   recorded;
+        uint[][] keptFaces;
+        recorded ~= cast(uint)keptFaces.length;
+    }), "task 0831: the same expression on a plain uint[] must compile — "
+      ~ "otherwise check (1) proves nothing about FaceIdx");
+
+    // And the escape is deliberate, named, and greppable: an AddFaces tail
+    // base genuinely IS a scratch-array length, so it has to remain sayable.
+    static assert(__traits(compiles, {
+        FaceIdx[] recorded;
+        uint[][]  keptFaces;
+        recorded ~= FaceIdx.assumeFaceSpace(keptFaces.length);
+    }), "task 0831: `assumeFaceSpace` is the one explicit conversion and must "
+      ~ "stay available — the criterion is 'not without an explicit "
+      ~ "conversion', not 'never'");
+}

@@ -64,6 +64,66 @@ struct FaceList {
     inout(uint[][]) range() inout return { return _store; }
 }
 
+/// A face index that is known to have been read out of a LIVE `faces` array —
+/// task 0831, the type that replaces the rule task 0703 could only write in a
+/// comment.
+///
+/// WHAT WENT WRONG WITHOUT IT. Every recorded index in a `MeshOpEntry` is in
+/// the space of the mesh immediately before that entry runs forward (see "THE
+/// INDEX SPACE OF AN ENTRY" in `mesh_edit_delta.d`). Two kernels recorded the
+/// position a dropped face would have held in the array being BUILT instead —
+/// `keptFaces.length` / `newFaces.length` rather than the live `fi`. Both
+/// expressions are a `uint`, both compiled, and the two spaces read IDENTICALLY
+/// whenever exactly one face is dropped, so every test in the suite was green
+/// while an edge dissolve returned its faces reversed on undo.
+///
+/// WHAT THE TYPE ACTUALLY BUYS, stated narrowly so it is not mistaken for more.
+/// There is NO implicit `uint` → `FaceIdx`, so a scratch array's `.length` (or
+/// any other computed integer) cannot be appended to a `FaceIdx[]` — that is a
+/// compile error, and it is exactly the shape of the 0703 defect. The only
+/// unremarkable way to obtain one is `Mesh.faceIndices` / `Mesh.faceAppendBase`,
+/// both of which read the live array. Anything else has to say
+/// `assumeFaceSpace`, which is greppable and reads as the assertion it is.
+///
+/// WHAT IT DOES NOT BUY. The tag says "minted from a live `faces`", NOT "minted
+/// from the RIGHT live `faces`": iterating the array again AFTER the kernel's
+/// own rewrite yields indices this type cannot tell from the pre-rewrite ones.
+/// That residue is a lifetime question, not a mint question, and no newtype
+/// closes it — see the task-0831 census note in `doc/tasks/`.
+///
+/// Reads are deliberately free. `alias raw this` forwards to `uint`, so
+/// `faces[fi]`, `fi < faces.length`, `insertInPlace(fi, …)` and every existing
+/// `uint`/`size_t` parameter keep working with no `.raw` at the call site — the
+/// same one-way-conversion trick `FaceList` above uses, for the same reason.
+struct FaceIdx {
+    private uint _v;
+    uint raw() const { return _v; }
+    alias raw this;
+
+    /// No default: a `FaceIdx` that nobody minted would be face 0, and face 0
+    /// is a real face. (Costs `FaceIdx[].length = n`, which nothing needs.)
+    @disable this();
+    private this(uint v) { _v = v; }
+
+    /// The named escape, for the one caller that genuinely has a raw index and
+    /// can justify the space it is in — a test fixture hand-building a delta,
+    /// or a decoder reading indices off disk. Deliberately verbose: an
+    /// `assumeFaceSpace` in a kernel is a review question, not a conversion.
+    static FaceIdx assumeFaceSpace(size_t v) { return FaceIdx(cast(uint)v); }
+}
+
+/// The live face-index space of a mesh, as a range — the ordinary mint for
+/// `FaceIdx`. `foreach (fi; m.faceIndices)` replaces `foreach (fi; 0 .. n)` /
+/// `foreach (fi, ref f; faces)` in the kernels that record a delta, and is what
+/// makes the recorded index un-fakeable from a scratch array's length.
+struct FaceIdxRange {
+    private uint i, n;
+    bool empty() const { return i >= n; }
+    FaceIdx front() const { return FaceIdx(i); }
+    void popFront() { ++i; }
+    size_t length() const { return n - i; }
+}
+
 /// Flat per-mesh surface (a "material"). One face references
 /// exactly one Surface by index into `Mesh.surfaces`. Designed to absorb
 /// the LWO `SURF` chunk fields verbatim and to act as the compile target
@@ -233,6 +293,17 @@ struct Mesh {
     // type with `alias this` to the underlying `uint[][]`, so every
     // existing read/write/foreach call site keeps working unchanged.
     FaceList faces;
+
+    /// The live face-index space (task 0831). Every kernel that records a
+    /// `RemoveFaces` / `ReshapeFaces` entry iterates THIS instead of
+    /// `0 .. faces.length`, so the index it records is one the type can vouch
+    /// came off the live array — `FaceIdx`'s doc comment has the full argument.
+    FaceIdxRange faceIndices() const { return FaceIdxRange(0, cast(uint)faces.length); }
+
+    /// The index the NEXT appended face will hold — the mint for an `AddFaces`
+    /// entry's `[F0,F1)` tail range, which is the one recorded index that is
+    /// deliberately NOT a live face yet. Read it BEFORE the append.
+    FaceIdx faceAppendBase() const { return FaceIdx.assumeFaceSpace(faces.length); }
 
     Loop[]     loops;        // all half-edge loops
     uint[]     faceLoop;     // faceLoop[fi] = index of first loop of face fi
@@ -2544,8 +2615,12 @@ struct Mesh {
         // Class B tracker hook — accumulate the dropped (filtered-out) faces so
         // a RemoveFaces entry can re-insert them on revert. Inert unless a batch
         // is open. Indices are the PRE-filter face indices (the space the entry
-        // is inverted in, before the tail compactUnreferenced reindexes verts).
-        uint[]   droppedFaceIdx;
+        // is inverted in, before the tail compactUnreferenced reindexes verts) —
+        // and since task 0831 that is the TYPE, not just this comment: a
+        // `FaceIdx` can only come off the live `faces` array (`faceIndices`
+        // below), so the scratch-array position the sibling kernels used to
+        // record here no longer type-checks.
+        FaceIdx[] droppedFaceIdx;
         uint[][] droppedFaceLists;
         uint[]   droppedFaceMat;
         uint[]   droppedFacePart;
@@ -2590,11 +2665,12 @@ struct Mesh {
         const bool remapUv = rw.active();
         const(uint)[] oldFaceLoop = rw.oldFaceLoop();
         uint[] oldLoopOfNewLoop;
-        foreach (i, ref f; faces) {
+        foreach (i; faceIndices) {
+            auto f = faces[i];
             if (mask[i]) {
                 ++removed;
                 if (recDelete) {
-                    droppedFaceIdx   ~= cast(uint)i;
+                    droppedFaceIdx   ~= i;
                     droppedFlat[flatFill .. flatFill + f.length] = f[];
                     droppedFaceLists ~= droppedFlat[flatFill .. flatFill + f.length];
                     flatFill += f.length;
@@ -2802,11 +2878,16 @@ struct Mesh {
         // already re-inserted the dropped faces — i.e. against an array that is
         // back in the pre-op space — so it landed on a re-inserted face and
         // overwrote it. Pinned by tests/test_mesh_edit_delta.d (g).
+        //
+        // Task 0831: both accumulators are `FaceIdx[]`, so the exact expression
+        // that caused it — `newFaces.length`, a position in the array being
+        // BUILT — is now a compile error here rather than a number that agrees
+        // with the right answer whenever only one face is dropped.
         const bool recDis = editRecorder_ !is null;
-        uint[]   reshapeIdx;
+        FaceIdx[] reshapeIdx;
         uint[][] reshapeBefore;
         uint[][] reshapeAfter;
-        uint[]   removedFaceIdx;
+        FaceIdx[] removedFaceIdx;
         uint[][] removedFaceLists;
         uint[]   removedFaceMat;
         uint[]   removedFacePart;
@@ -2825,7 +2906,8 @@ struct Mesh {
         const bool remapUv = rw.active();
         const(uint)[] oldFaceLoop = rw.oldFaceLoop();
         uint[] oldLoopOfNewLoop;
-        foreach (fi, ref f; faces) {
+        foreach (fi; faceIndices) {
+            auto f = faces[fi];
             uint[] kept;
             uint[] keptCorner; // old corner index of each kept corner (mech b)
             foreach (k, vid; f) {
@@ -2835,7 +2917,7 @@ struct Mesh {
             }
             if (kept.length >= 3) {
                 if (recDis && kept.length != f.length) {
-                    reshapeIdx    ~= cast(uint)fi;
+                    reshapeIdx    ~= fi;
                     reshapeBefore ~= f.dup;
                     reshapeAfter  ~= kept.dup;
                 }
@@ -2850,7 +2932,7 @@ struct Mesh {
             } else if (recDis) {
                 // Degenerate face dropped — reconstruct it on revert at the
                 // index it holds RIGHT NOW, in the pre-rewrite array.
-                removedFaceIdx   ~= cast(uint)fi;
+                removedFaceIdx   ~= fi;
                 removedFaceLists ~= f.dup;
                 removedFaceMat   ~= faceAttrOr(faceMaterial, fi);
                 removedFacePart  ~= faceAttrOr(facePart, fi);
@@ -3541,7 +3623,7 @@ struct Mesh {
         const bool recRemoveEdges = editRecorder_ !is null;
         // PRE-drop = the live index `fi`, so this doubles as the live-space
         // index list the per-corner payload capture needs (task 0689).
-        uint[]   droppedFaceIdx;
+        FaceIdx[] droppedFaceIdx;
         uint[][] droppedFaceLists;
         uint[]   droppedFaceMat;
         uint[]   droppedFacePart;
@@ -3553,14 +3635,32 @@ struct Mesh {
         uint[]   keptPart;
         // PolyVertex relocate accumulator, in final [kept ++ merged] CSR order.
         uint[] oldLoopOfNewLoop;
-        foreach (fi; 0 .. nFaces) {
+        foreach (fi; faceIndices) {
             if (dropFace[fi]) {
                 if (recRemoveEdges) {
                     // PRE-drop position = the live index `fi`. On revert
                     // RemoveFaces⁻¹ re-inserts ascending at exactly these
                     // indices, re-opening the slot each face vacated and so
                     // restoring the original ORDER, not merely the set.
-                    droppedFaceIdx   ~= cast(uint)fi;
+                    //
+                    // THE TASK-0831 MUTATION LIVES HERE, and it is the reason
+                    // the accumulator is a `FaceIdx[]`. The arm below is the
+                    // 0703 defect restored verbatim — `keptFaces.length`, the
+                    // slot this face WOULD have occupied in the array being
+                    // built. It compiled for months, agreed with the line above
+                    // on every fixture that dropped one face, and returned an
+                    // edge dissolve's faces reversed on undo. It no longer
+                    // compiles: there is no implicit `uint` → `FaceIdx`. Prove
+                    // it with
+                    //     dub build --config=modeling --d-version=MutateIndexSpace0831
+                    // which must FAIL, and fail on THIS line. (Same negative-
+                    // control convention as `UndoNegControlRemoveFaces` et al.
+                    // in mesh_edit_delta.d — compiled only under its own
+                    // version, so a normal build carries none of it.)
+                    version (MutateIndexSpace0831)
+                        droppedFaceIdx ~= cast(uint)keptFaces.length;
+                    else
+                        droppedFaceIdx ~= fi;
                     droppedFaceLists ~= faces[fi].dup;
                     droppedFaceMat   ~= faceAttrOr(faceMaterial, fi);
                     droppedFacePart  ~= faceAttrOr(facePart, fi);
@@ -3605,7 +3705,15 @@ struct Mesh {
             uint[][] mergedLists;
             mergedLists.length = newPolyList.length;
             foreach (i; 0 .. newPolyList.length) mergedLists[i] = newPolyList[i].dup;
-            editRecorder_.recordAddFaces(cast(uint)firstMerged,
+            // `assumeFaceSpace`, and this is the one call in the kernel that
+            // earns it (task 0831). An AddFaces' `[F0,F1)` is NOT a live face
+            // index — it is the tail base in the array `faces` is ABOUT to
+            // become, i.e. precisely the scratch-array length the mutation arm
+            // above is forbidden from recording. The two entry kinds carry
+            // genuinely different spaces in the same field, and the type cannot
+            // tell them apart; naming the conversion here is what keeps that
+            // visible instead of implicit.
+            editRecorder_.recordAddFaces(FaceIdx.assumeFaceSpace(firstMerged),
                                          cast(uint)keptFaces.length, mergedLists);
         }
         faces              = keptFaces;
@@ -5019,6 +5127,13 @@ struct Mesh {
                 addEdge(f[k], f[(k + 1) % f.length]);
     }
     void addFace(uint[] idx) {
+        // Task 0831: read the append base BEFORE the append. The tracker hook
+        // at the bottom used to say `faces.length - 1`, which is the same
+        // number read the other way round; taking it here is what makes it a
+        // `FaceIdx` without an `assumeFaceSpace`, and it is also how
+        // `MeshOpEntry`'s own comment describes an AddFaces range ("F0 is the
+        // length of `faces` before the append").
+        const appendBase = faceAppendBase();
         faces ~= idx.dup;
         for (uint i = 0; i < idx.length; i++)
             addEdge(idx[i], idx[(i+1) % idx.length]);
@@ -5043,10 +5158,11 @@ struct Mesh {
         commitChange(MeshEditScope.Geometry);
         // Class P tracker hook — inert unless a batch is open.
         if (editRecorder_ !is null)
-            editRecorder_.recordAddFace(cast(uint)(faces.length - 1), idx);
+            editRecorder_.recordAddFace(appendBase, idx);
     }
     // Fast version using hash lookup for duplicate checking
     void addFaceFast(ref uint[ulong] edgeLookup, uint[] idx) {
+        const appendBase = faceAppendBase();   // see addFace (task 0831)
         faces ~= idx.dup;
         for (uint i = 0; i < idx.length; i++)
             insertEdgeDedup(edgeLookup, idx[i], idx[(i+1) % idx.length]);
@@ -5063,7 +5179,7 @@ struct Mesh {
         commitChange(MeshEditScope.Geometry);
         // Class P tracker hook — inert unless a batch is open.
         if (editRecorder_ !is null)
-            editRecorder_.recordAddFace(cast(uint)(faces.length - 1), idx);
+            editRecorder_.recordAddFace(appendBase, idx);
     }
 
     /// Append one face to `faces` WITHOUT any of `addFace`'s bookkeeping —
@@ -6461,7 +6577,10 @@ struct Mesh {
     // is not ascending (the corner-base walk below is a single ordered sweep;
     // all three callers filter `faces` front-to-back, so ascending is what they
     // produce).
-    void recordPolyVertexPayload(in uint[] oldFaceIdx) {
+    /// Task 0831: `in FaceIdx[]`, matching the entry it is paired with — the
+    /// pairing is BY ADJACENCY and the two lists must be the same indices in
+    /// the same space, so they must be the same type.
+    void recordPolyVertexPayload(in FaceIdx[] oldFaceIdx) {
         if (editRecorder_ is null) return;
         if (oldFaceIdx.length == 0) return;
         if (!hasPolyVertexMap()) return;

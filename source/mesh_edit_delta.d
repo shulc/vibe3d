@@ -163,7 +163,14 @@ struct MeshOpEntry {
     enum SelDomain : ubyte { Vertex, Edge, Face }
     SelDomain selDomain;
 
-    uint[]    vIdx, fIdx;
+    uint[]    vIdx;
+    // Task 0831 — `fIdx` is a `FaceIdx[]`, not a `uint[]`, so the space the
+    // paragraph above states is now stated by the type as well: there is no
+    // implicit `uint` → `FaceIdx`, and the scratch-array `.length` both 0703
+    // kernels recorded is a compile error rather than a number that happens to
+    // agree whenever exactly one face is dropped. See `FaceIdx` in mesh.d for
+    // what the tag does and does not vouch for.
+    FaceIdx[] fIdx;
     Vec3[]    pos, posBefore, posAfter;
     uint[][]  faceLists, faceListsBefore, faceListsAfter;
     uint[]    faceMat;                 // RemoveFaces: per-face material
@@ -219,7 +226,7 @@ struct MeshEditDelta {
         size_t n = 0;
         foreach (ref e; log) {
             n += e.vIdx.length * uint.sizeof;
-            n += e.fIdx.length * uint.sizeof;
+            n += e.fIdx.length * FaceIdx.sizeof;
             n += e.pos.length * Vec3.sizeof;
             n += e.posBefore.length * Vec3.sizeof;
             n += e.posAfter.length * Vec3.sizeof;
@@ -394,7 +401,7 @@ private struct CornerCarry {
     // arity-count match is the guard against a payload drifting onto the wrong
     // entry — adjacency alone would silently mis-pair if a recorder ever
     // interleaved something between the two.
-    private int payloadFor(size_t i, in uint[] fIdx) const {
+    private int payloadFor(size_t i, in FaceIdx[] fIdx) const {
         if (i == 0) return -1;
         const p = &log[i - 1];
         if (p.kind != MeshOpEntry.Kind.MeshMapDelta) return -1;
@@ -444,7 +451,7 @@ private struct CornerCarry {
     }
 
     // Mirror of removeFacesForward's drop-filter, on the provenance array.
-    private void dropAt(in uint[] idx) {
+    private void dropAt(in FaceIdx[] idx) {
         bool[] drop;
         drop.length = src.length;
         foreach (i; idx) if (i < drop.length) drop[i] = true;
@@ -700,7 +707,7 @@ struct MeshEditTracker {
     }
 
     // addFace / addFaceFast append one face; consecutive AddFaces coalesce.
-    void recordAddFace(uint idx, in uint[] list) {
+    void recordAddFace(FaceIdx idx, in uint[] list) {
         if (log_.length > 0) {
             auto last = &log_[$ - 1];
             if (last.kind == MeshOpEntry.Kind.AddFaces
@@ -717,7 +724,7 @@ struct MeshEditTracker {
         log_ ~= e;
     }
 
-    void recordAddFaces(uint f0, uint f1, in uint[][] lists) {
+    void recordAddFaces(FaceIdx f0, uint f1, in uint[][] lists) {
         if (f1 <= f0) return;
         MeshOpEntry e;
         e.kind      = MeshOpEntry.Kind.AddFaces;
@@ -742,7 +749,7 @@ struct MeshEditTracker {
     /// the merge path, `extrudeFacesByMask`), so handing the buffers over is
     /// safe. A future caller that wants to KEEP its arrays must `.dup` at the
     /// call site — the cost then lands on the one caller that needs it.
-    void recordRemoveFaces(uint[] idx, uint[][] lists, uint[] mat, uint[] prt, uint[] sub) {
+    void recordRemoveFaces(FaceIdx[] idx, uint[][] lists, uint[] mat, uint[] prt, uint[] sub) {
         if (idx.length == 0) return;
         MeshOpEntry e;
         e.kind      = MeshOpEntry.Kind.RemoveFaces;
@@ -754,7 +761,7 @@ struct MeshEditTracker {
         log_ ~= e;
     }
 
-    void recordReshapeFaces(in uint[] idx, in uint[][] before, in uint[][] after) {
+    void recordReshapeFaces(in FaceIdx[] idx, in uint[][] before, in uint[][] after) {
         if (idx.length == 0) return;
         MeshOpEntry e;
         e.kind            = MeshOpEntry.Kind.ReshapeFaces;
@@ -1158,7 +1165,7 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
 // ---------------------------------------------------------------------------
 // RemoveFaces forward/reverse.
 // ---------------------------------------------------------------------------
-private void removeFacesForward(ref Mesh m, in uint[] idx) {
+private void removeFacesForward(ref Mesh m, in FaceIdx[] idx) {
     if (idx.length == 0) return;
     bool[] drop;
     drop.length = m.faces.length;
@@ -1188,7 +1195,7 @@ private void removeFacesForward(ref Mesh m, in uint[] idx) {
     m.faceMarks = nm;
 }
 
-private void removeFacesReverse(ref Mesh m, in uint[] idx, in uint[][] lists,
+private void removeFacesReverse(ref Mesh m, in FaceIdx[] idx, in uint[][] lists,
                                 in uint[] mat, in uint[] prt, in uint[] sub) {
     // NEGATIVE CONTROL (test only): stub RemoveFaces^-1 to a no-op under
     // -version=UndoNegControlRemoveFaces so the delete/remove round-trip proves
@@ -1555,8 +1562,11 @@ unittest {
 
     MeshOpEntry removeEntry;
     removeEntry.kind      = MeshOpEntry.Kind.RemoveFaces;
-    removeEntry.fIdx      = [0u];             // drop face0 — NOT the highest index,
-                                               // so every survivor must shift down
+    // `assumeFaceSpace` (task 0831): a hand-built entry has no live mesh walk
+    // to mint from, and a fixture asserting its own index space is exactly the
+    // caller the escape exists for.
+    removeEntry.fIdx      = [FaceIdx.assumeFaceSpace(0)];  // drop face0 — NOT the
+                                               // highest index, so every survivor must shift down
     removeEntry.faceLists = [[0u, 1u, 2u]];
     removeEntry.faceMat   = [0u];
     removeEntry.facePrt   = [0u];

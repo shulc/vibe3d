@@ -29,7 +29,7 @@
 
 import std.conv : to;
 
-import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
+import mesh : Mesh, MeshMap, MapDomain, kUvMapName, FaceIdx;
 import math : Vec3;
 import mesh_edit_delta : MeshEditDelta, MeshEditTracker, MeshOpEntry, MeshEditScope;
 
@@ -209,7 +209,7 @@ unittest {
 
     MeshOpEntry rem;
     rem.kind      = MeshOpEntry.Kind.RemoveFaces;
-    rem.fIdx      = [0u];
+    rem.fIdx      = [FaceIdx.assumeFaceSpace(0)];
     rem.faceLists = [[0u, 1u, 2u]];
     rem.faceMat   = [0u];
     rem.facePrt   = [0u];
@@ -217,7 +217,7 @@ unittest {
 
     MeshOpEntry add;
     add.kind      = MeshOpEntry.Kind.AddFaces;
-    add.fIdx      = [2u];                 // tail append, after the drop
+    add.fIdx      = [FaceIdx.assumeFaceSpace(2)];                 // tail append, after the drop
     add.faceLists = [[0u, 1u, 2u]];       // the same triangle, now LAST
 
     MeshEditDelta d;
@@ -274,7 +274,7 @@ unittest {
 
     MeshOpEntry rem;
     rem.kind      = MeshOpEntry.Kind.RemoveFaces;
-    rem.fIdx      = [0u];
+    rem.fIdx      = [FaceIdx.assumeFaceSpace(0)];
     rem.faceLists = [[0u, 1u, 2u]];
     rem.faceMat   = [0u];
     rem.facePrt   = [0u];
@@ -342,7 +342,7 @@ unittest {
 
     MeshOpEntry rs;
     rs.kind            = MeshOpEntry.Kind.ReshapeFaces;
-    rs.fIdx            = [0u];
+    rs.fIdx            = [FaceIdx.assumeFaceSpace(0)];
     rs.faceListsBefore = [[0u, 1u, 2u]];
     rs.faceListsAfter  = [[0u, 1u, spare]];     // same arity, one corner repointed
 
