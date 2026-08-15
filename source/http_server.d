@@ -1739,1361 +1739,1483 @@ class HttpServer {
     /**
      * Handle an HTTP request and generate a response
      */
+    /**
+     * Handle an HTTP request and generate a response.
+     *
+     * The chain this used to be is now generated from `kRoutes` — same order,
+     * same first-match-wins semantics, one registration point. See the table.
+     */
     private HttpResponse handleRequest(HttpRequest request) {
         HttpResponse response = new HttpResponse();
 
-        // Simple routing
-        if (request.path == "/") {
-            response.statusCode = 200;
-            response.body = "<html><body><h1>Welcome to Vibe3D HTTP Server</h1>" ~
-                           "<p>Server is running successfully!</p>" ~
-                           "<p>Available endpoints:</p>" ~
-                           "<ul><li>/status - Get application status</li>" ~
-                           "<li>/info - Get application information</li>" ~
-                           "<li>/api/version - Version, build configuration, platform and build date (same block `vibe3d --version` prints)</li>" ~
-                           "<li>/api/model - Get current model state</li>" ~
-                           "<li>/api/command - Execute one command (JSON {\"id\":...\"params\":...} OR argstring \"name arg:val ...\")</li>" ~
-                           "<li>/api/script - Execute multi-line script (line-by-line argstring)</li>" ~
-                           "<li>tool.set &lt;toolId&gt; [off] [name:val ...] - activate/deactivate a tool</li>" ~
-                           "<li>tool.attr &lt;toolId&gt; &lt;name&gt; &lt;value&gt; - set parameter on active tool</li>" ~
-                           "<li>tool.doApply - apply active tool one-shot (snapshot-based undo)</li>" ~
-                           "<li>tool.reset [&lt;toolId&gt;] - reset active tool's parameters</li>" ~
-                           "<li>/api/history/replay - POST {\"index\":N} — re-execute undoStack[N] against current state</li>" ~
-                           "<li>/api/trace - GET every discrete command since the last reset (command + args + selection in world positions + a full mesh snapshot); POST /api/trace/reset clears it</li></ul>" ~
-                           "</body></html>";
-            response.headers["Content-Type"] = "text/html";
-        } else if (request.path == "/status") {
-            response.statusCode = 200;
-            response.body = "{\"status\": \"running\", \"timestamp\": \"" ~
-                           Clock.currTime.toISOExtString() ~ "\"}";
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/info") {
-            // The "version": "1.0" this used to hardcode was never any release
-            // this program shipped — it was written once and then outlived
-            // every version that followed, which is the whole failure mode
-            // task 0641 exists to close. It now reads app_version like every
-            // other surface.
-            response.statusCode = 200;
-            response.body = "{\"name\": \"Vibe3D\", \"description\": "
-                          ~ "\"A 3D polygon mesh editor written in D\", "
-                          ~ "\"version\": \"" ~ appVersion ~ "\"}";
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/ping" && request.method == "GET") {
-            response.statusCode = 200;
-            response.body = `{"status": "ok"}`;
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/version" && request.method == "GET") {
-            // What this binary is (task 0641). Served straight off the HTTP
-            // thread with NO main-thread marshalling: every field is a
-            // compile-time constant, so there is no live state to tear.
-            //
-            // `lines` is `app_version.appAboutLines` verbatim — the same array
-            // the About window draws and `--version` prints. That is what makes
-            // tests/test_app_version.d able to prove the terminal and the UI
-            // read one source instead of two literals that agree today.
-            response.statusCode = 200;
-            response.body = versionJson();
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path.startsWith("/api/model")) {
-            bool haveProvider = (layerModelProvider !is null)
-                             || (useDetailedProvider && detailedModelDataProvider !is null)
-                             || (modelDataProvider !is null);
-            response.headers["Content-Type"] = "application/json";
-            if (!haveProvider) {
-                response.statusCode = 500;
-                response.body = "{\"error\": \"Model data provider not set\"}";
-            } else {
-                // ?layer=N selects a layer (default -1 → active). The
-                // layer-aware provider (when set) handles it on the main thread.
-                modelBridge.req.layer    = parseQueryInt(request.path, "layer", -1);
-                // Marshal the serialisation onto the main thread (via the
-                // bridge's tick) so the provider never walks the mesh
-                // mid-mutation (torn read).
-                modelBridge.req.detailed = useDetailedProvider;
-                modelBridge.resp.result  = "";
-                modelBridge.resp.error   = "";
-                if (!modelBridge.submitAndWait())
-                    modelBridge.resp.error = "timeout waiting for main thread";
-                if (modelBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = modelBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = "{\"error\": \"Failed to retrieve model data\", \"message\": \""
-                                   ~ jsonEsc(modelBridge.resp.error) ~ "\"}";
-                }
+        static foreach (r; kRoutes) {
+            if ((r.method.length == 0 || request.method == r.method)
+                && (r.match == Match.exact
+                        ? request.path == r.path
+                        : request.path.startsWith(r.path))) {
+                __traits(getMember, this, r.handler)(request, response);
+                return response;
             }
-        } else if (request.path == "/api/selection") {
-            if (selectionDataProvider !is null) {
-                try {
-                    response.statusCode = 200;
-                    response.body = selectionDataProvider();
-                    response.headers["Content-Type"] = "application/json";
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\": \"Failed to retrieve selection data\", \"message\": \"" ~
-                                   jsonEsc(e.msg) ~ "\"}";
-                    response.headers["Content-Type"] = "application/json";
-                }
-            } else {
-                response.statusCode = 500;
-                response.body = "{\"error\": \"Selection data provider not set\"}";
-                response.headers["Content-Type"] = "application/json";
-            }
-        } else if (request.path == "/api/tool/handles" && request.method == "GET") {
-            // Task 0234; marshaled onto the main thread by 0563. The registry
-            // this serializes is rebuilt from empty on every interactive draw,
-            // so it can be read neither concurrently nor before the draw that
-            // builds it — see the toolHandlesBridge declaration for the two
-            // failure modes that forced this.
-            response.headers["Content-Type"] = "application/json";
-            if (toolHandlesDataProvider is null) {
-                // Preserve the pre-marshaling null-provider contract exactly:
-                // 200 {"handles":null}, decided on the HTTP thread BEFORE ever
-                // touching the bridge.
+        }
+
+        response.statusCode = 404;
+        response.body = "<html><body><h1>404 Not Found</h1><p>The requested resource was not found.</p></body></html>";
+        response.headers["Content-Type"] = "text/html";
+        return response;
+    }
+
+    private void route_root(HttpRequest request, HttpResponse response) {
+        response.statusCode = 200;
+        response.body = "<html><body><h1>Welcome to Vibe3D HTTP Server</h1>" ~
+                       "<p>Server is running successfully!</p>" ~
+                       "<p>Available endpoints:</p>" ~
+                       "<ul><li>/status - Get application status</li>" ~
+                       "<li>/info - Get application information</li>" ~
+                       "<li>/api/version - Version, build configuration, platform and build date (same block `vibe3d --version` prints)</li>" ~
+                       "<li>/api/model - Get current model state</li>" ~
+                       "<li>/api/command - Execute one command (JSON {\"id\":...\"params\":...} OR argstring \"name arg:val ...\")</li>" ~
+                       "<li>/api/script - Execute multi-line script (line-by-line argstring)</li>" ~
+                       "<li>tool.set &lt;toolId&gt; [off] [name:val ...] - activate/deactivate a tool</li>" ~
+                       "<li>tool.attr &lt;toolId&gt; &lt;name&gt; &lt;value&gt; - set parameter on active tool</li>" ~
+                       "<li>tool.doApply - apply active tool one-shot (snapshot-based undo)</li>" ~
+                       "<li>tool.reset [&lt;toolId&gt;] - reset active tool's parameters</li>" ~
+                       "<li>/api/history/replay - POST {\"index\":N} — re-execute undoStack[N] against current state</li>" ~
+                       "<li>/api/trace - GET every discrete command since the last reset (command + args + selection in world positions + a full mesh snapshot); POST /api/trace/reset clears it</li></ul>" ~
+                       "</body></html>";
+        response.headers["Content-Type"] = "text/html";
+    }
+
+    private void route_status(HttpRequest request, HttpResponse response) {
+        response.statusCode = 200;
+        response.body = "{\"status\": \"running\", \"timestamp\": \"" ~
+                       Clock.currTime.toISOExtString() ~ "\"}";
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_info(HttpRequest request, HttpResponse response) {
+        // The "version": "1.0" this used to hardcode was never any release
+        // this program shipped — it was written once and then outlived
+        // every version that followed, which is the whole failure mode
+        // task 0641 exists to close. It now reads app_version like every
+        // other surface.
+        response.statusCode = 200;
+        response.body = "{\"name\": \"Vibe3D\", \"description\": "
+                      ~ "\"A 3D polygon mesh editor written in D\", "
+                      ~ "\"version\": \"" ~ appVersion ~ "\"}";
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiPing(HttpRequest request, HttpResponse response) {
+        response.statusCode = 200;
+        response.body = `{"status": "ok"}`;
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiVersion(HttpRequest request, HttpResponse response) {
+        // What this binary is (task 0641). Served straight off the HTTP
+        // thread with NO main-thread marshalling: every field is a
+        // compile-time constant, so there is no live state to tear.
+        //
+        // `lines` is `app_version.appAboutLines` verbatim — the same array
+        // the About window draws and `--version` prints. That is what makes
+        // tests/test_app_version.d able to prove the terminal and the UI
+        // read one source instead of two literals that agree today.
+        response.statusCode = 200;
+        response.body = versionJson();
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiModel(HttpRequest request, HttpResponse response) {
+        bool haveProvider = (layerModelProvider !is null)
+                         || (useDetailedProvider && detailedModelDataProvider !is null)
+                         || (modelDataProvider !is null);
+        response.headers["Content-Type"] = "application/json";
+        if (!haveProvider) {
+            response.statusCode = 500;
+            response.body = "{\"error\": \"Model data provider not set\"}";
+        } else {
+            // ?layer=N selects a layer (default -1 → active). The
+            // layer-aware provider (when set) handles it on the main thread.
+            modelBridge.req.layer    = parseQueryInt(request.path, "layer", -1);
+            // Marshal the serialisation onto the main thread (via the
+            // bridge's tick) so the provider never walks the mesh
+            // mid-mutation (torn read).
+            modelBridge.req.detailed = useDetailedProvider;
+            modelBridge.resp.result  = "";
+            modelBridge.resp.error   = "";
+            if (!modelBridge.submitAndWait())
+                modelBridge.resp.error = "timeout waiting for main thread";
+            if (modelBridge.resp.error.length == 0) {
                 response.statusCode = 200;
-                response.body = `{"handles":null}`;
+                response.body = modelBridge.resp.result;
             } else {
-                toolHandlesBridge.resp.result = "";
-                toolHandlesBridge.resp.error  = "";
-                if (!toolHandlesBridge.submitAndWait())
-                    toolHandlesBridge.resp.error = "timeout waiting for main thread";
-                if (toolHandlesBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = toolHandlesBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = "{\"error\": \"Failed to retrieve tool handles\", \"message\": \"" ~
-                                   jsonEsc(toolHandlesBridge.resp.error) ~ "\"}";
-                }
-            }
-        } else if (request.path == "/api/tool/state" && request.method == "GET") {
-            // Task 0234. Same read-only / no-lock contract as /api/tool/handles.
-            response.headers["Content-Type"] = "application/json";
-            if (toolStateDataProvider is null) {
-                response.statusCode = 200;
-                response.body = `{}`;
-            } else {
-                try {
-                    response.statusCode = 200;
-                    response.body = toolStateDataProvider();
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\": \"Failed to retrieve tool state\", \"message\": \"" ~
-                                   jsonEsc(e.msg) ~ "\"}";
-                }
-            }
-        } else if (request.path == "/api/toolprops/ids" && request.method == "GET") {
-            // Task 0640 — the ImGui id namespace of the last Tool Properties
-            // column drawn: one entry per section header and two per row (the
-            // widget's id, and a probe of the row's id-stack seed).
-            //
-            // NOT marshaled, and it does not need to be: the panel publishes a
-            // finished column under a lock in one assignment, and this reads it
-            // back under the same lock. There is no live structure to walk on
-            // the wrong thread — unlike /api/tool/handles, whose registry is
-            // rebuilt from empty mid-draw.
-            //
-            // Empty `items` is the honest answer when the panel has not drawn
-            // (hidden by default under --test until `ui.toolProperties show`),
-            // when it is collapsed, or in a non-test run where nothing records.
-            response.headers["Content-Type"] = "application/json";
-            try {
-                import property_panel : toolPropsIdsJson;
-                response.statusCode = 200;
-                response.body = toolPropsIdsJson();
-            } catch (Exception e) {
                 response.statusCode = 500;
-                response.body = "{\"error\": \"Failed to retrieve tool props ids\", \"message\": \"" ~
-                               jsonEsc(e.msg) ~ "\"}";
+                response.body = "{\"error\": \"Failed to retrieve model data\", \"message\": \""
+                               ~ jsonEsc(modelBridge.resp.error) ~ "\"}";
             }
-        } else if (request.path == "/api/buttons/availability" && request.method == "GET") {
-            // Task 0669 — every button the last complete frame drew, with the
-            // `disabled` flag and the reason it was drawn WITH. This is the
-            // rendered fact, not a re-computation: a test that asked the
-            // availability resolver again would prove the resolver and say
-            // nothing about whether the buttons still call it.
-            //
-            // NOT marshaled, on the same grounds as /api/toolprops/ids right
-            // above: the draw publishes a finished frame under a lock in one
-            // assignment (buttons AND the hasEditTarget they were drawn
-            // against), and this reads it back under the same lock. Nothing
-            // live is walked from this thread.
-            //
-            // Empty `buttons` is the honest answer before the first frame and
-            // in a non-`--test` run, where nothing records.
-            response.headers["Content-Type"] = "application/json";
-            try {
-                import ui.availability : buttonAvailabilityJson;
-                response.statusCode = 200;
-                response.body = buttonAvailabilityJson();
-            } catch (Exception e) {
-                response.statusCode = 500;
-                response.body = "{\"error\": \"Failed to retrieve button availability\", \"message\": \"" ~
-                               jsonEsc(e.msg) ~ "\"}";
-            }
-        } else if (request.path == "/api/layers" && request.method == "GET") {
-            // Layer list. MARSHALED (task 0612 Stage 3) — it used to be served
-            // straight from the HTTP thread on the grounds that "tests are
-            // quiescent when probing", which stopped being enough once the
-            // response had to resolve a link's target index by walking the
-            // same array the main thread splices. See the provider alias.
-            response.headers["Content-Type"] = "application/json";
-            if (layersDataProvider is null) {
-                response.statusCode = 500;
-                response.body = "{\"error\": \"Layers data provider not set\"}";
-            } else {
-                layersBridge.resp.result = "";
-                layersBridge.resp.error  = "";
-                if (!layersBridge.submitAndWait())
-                    layersBridge.resp.error = "timeout waiting for main thread";
-                if (layersBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = layersBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = "{\"error\": \"Failed to retrieve layers\", \"message\": \"" ~
-                                   jsonEsc(layersBridge.resp.error) ~ "\"}";
-                }
-            }
-        } else if (request.path == "/api/perf/reset" && request.method == "POST") {
-            // Zero all perf counters before a measured run. No-op in the
-            // default build (g_perf.reset compiles away).
-            g_perf.reset();
-            response.statusCode = 200;
-            response.body = "{\"status\":\"ok\"}";
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/perf" && request.method == "GET") {
-            // Per-category timing + counter breakdown. Direct read of the
-            // process-wide probe from the HTTP thread — plain counters, no
-            // lock needed for this diagnostic. Returns "{}" in the default
-            // (non-PerfProbe) build. Mesh vertex/face counts are available
-            // via /api/model, so they're intentionally not duplicated here.
+        }
+    }
+
+    private void route_apiSelection(HttpRequest request, HttpResponse response) {
+        if (selectionDataProvider !is null) {
             try {
                 response.statusCode = 200;
-                response.body = g_perf.toJson();
+                response.body = selectionDataProvider();
                 response.headers["Content-Type"] = "application/json";
             } catch (Exception e) {
                 response.statusCode = 500;
-                response.body = "{\"error\":\"perf probe read failed\",\"message\":\"" ~
+                response.body = "{\"error\": \"Failed to retrieve selection data\", \"message\": \"" ~
                                jsonEsc(e.msg) ~ "\"}";
                 response.headers["Content-Type"] = "application/json";
             }
-        } else if (request.path == "/api/frames/counts/reset" && request.method == "POST") {
-            // Zero the always-on frame WORK counters. Unlike its two siblings
-            // above this is NOT a no-op in the default build — see below.
-            g_fc.reset();
-            response.statusCode = 200;
-            response.body = "{\"status\":\"ok\"}";
+        } else {
+            response.statusCode = 500;
+            response.body = "{\"error\": \"Selection data provider not set\"}";
             response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/frames/counts" && request.method == "GET") {
-            // Per-frame WORK COUNTS: draw submissions and submitted vertices
-            // per pass, cells considered/rendered, GPU uploads, pick-cache
-            // rebuilds, pipeline + operator evaluations, and main-thread GC
-            // bytes. Live in EVERY build configuration, including the default
-            // `modeling` one that run_test.d builds — which is the whole
-            // reason it exists next to /api/perf and /api/frames, both of
-            // which return "{}" there and have done so for every test that
-            // ever tried to ask this question.
-            //
-            // READ `lastScene`, NOT `last`. The N-cell render loop skips cells
-            // whose dirty key is unchanged, so an arbitrary frame legitimately
-            // draws nothing; `lastScene` is the last frame that rendered at
-            // least one cell. (In --test the active cell renders every frame,
-            // so the two coincide there — do not let that habit leak into an
-            // interactive-mode assertion.)
-            //
-            // NOT A TIMING ENDPOINT. Nothing here is a duration. See the
-            // FrameWorkProbe header in source/perf_probe.d for what these
-            // numbers do and do not support.
-            //
-            // Same no-lock diagnostic-read contract as /api/perf and
-            // /api/frames: single main-thread writer, whole-record publish.
+        }
+    }
+
+    private void route_apiToolHandles(HttpRequest request, HttpResponse response) {
+        // Task 0234; marshaled onto the main thread by 0563. The registry
+        // this serializes is rebuilt from empty on every interactive draw,
+        // so it can be read neither concurrently nor before the draw that
+        // builds it — see the toolHandlesBridge declaration for the two
+        // failure modes that forced this.
+        response.headers["Content-Type"] = "application/json";
+        if (toolHandlesDataProvider is null) {
+            // Preserve the pre-marshaling null-provider contract exactly:
+            // 200 {"handles":null}, decided on the HTTP thread BEFORE ever
+            // touching the bridge.
+            response.statusCode = 200;
+            response.body = `{"handles":null}`;
+        } else {
+            toolHandlesBridge.resp.result = "";
+            toolHandlesBridge.resp.error  = "";
+            if (!toolHandlesBridge.submitAndWait())
+                toolHandlesBridge.resp.error = "timeout waiting for main thread";
+            if (toolHandlesBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = toolHandlesBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\": \"Failed to retrieve tool handles\", \"message\": \"" ~
+                               jsonEsc(toolHandlesBridge.resp.error) ~ "\"}";
+            }
+        }
+    }
+
+    private void route_apiToolState(HttpRequest request, HttpResponse response) {
+        // Task 0234. Same read-only / no-lock contract as /api/tool/handles.
+        response.headers["Content-Type"] = "application/json";
+        if (toolStateDataProvider is null) {
+            response.statusCode = 200;
+            response.body = `{}`;
+        } else {
             try {
                 response.statusCode = 200;
-                response.body = g_fc.toJson();
-                response.headers["Content-Type"] = "application/json";
+                response.body = toolStateDataProvider();
             } catch (Exception e) {
                 response.statusCode = 500;
-                response.body = "{\"error\":\"frame-count probe read failed\",\"message\":\"" ~
+                response.body = "{\"error\": \"Failed to retrieve tool state\", \"message\": \"" ~
                                jsonEsc(e.msg) ~ "\"}";
-                response.headers["Content-Type"] = "application/json";
             }
-        } else if (request.path == "/api/frames/reset" && request.method == "POST") {
-            // Zero the per-frame ring + counters before a measured run
-            // (task 0195). No-op in the default build (g_frames.reset
-            // compiles away).
-            g_frames.reset();
+        }
+    }
+
+    private void route_apiToolpropsIds(HttpRequest request, HttpResponse response) {
+        // Task 0640 — the ImGui id namespace of the last Tool Properties
+        // column drawn: one entry per section header and two per row (the
+        // widget's id, and a probe of the row's id-stack seed).
+        //
+        // NOT marshaled, and it does not need to be: the panel publishes a
+        // finished column under a lock in one assignment, and this reads it
+        // back under the same lock. There is no live structure to walk on
+        // the wrong thread — unlike /api/tool/handles, whose registry is
+        // rebuilt from empty mid-draw.
+        //
+        // Empty `items` is the honest answer when the panel has not drawn
+        // (hidden by default under --test until `ui.toolProperties show`),
+        // when it is collapsed, or in a non-test run where nothing records.
+        response.headers["Content-Type"] = "application/json";
+        try {
+            import property_panel : toolPropsIdsJson;
             response.statusCode = 200;
-            response.body = "{\"status\":\"ok\"}";
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/frames" && request.method == "GET") {
-            // Per-frame phase-timing + GC-delta breakdown (task 0195,
-            // doc/frame_probe_scenarios_plan.md). Direct read of the
-            // process-wide FrameProbe from the HTTP thread — same
-            // no-lock diagnostic contract as /api/perf above (single-writer
-            // main-loop, write-then-advance ring discipline makes a racy
-            // read tear-free at frame granularity). Returns "{}" in the
-            // default (non-PerfProbe) build.
-            try {
+            response.body = toolPropsIdsJson();
+        } catch (Exception e) {
+            response.statusCode = 500;
+            response.body = "{\"error\": \"Failed to retrieve tool props ids\", \"message\": \"" ~
+                           jsonEsc(e.msg) ~ "\"}";
+        }
+    }
+
+    private void route_apiButtonsAvailability(HttpRequest request, HttpResponse response) {
+        // Task 0669 — every button the last complete frame drew, with the
+        // `disabled` flag and the reason it was drawn WITH. This is the
+        // rendered fact, not a re-computation: a test that asked the
+        // availability resolver again would prove the resolver and say
+        // nothing about whether the buttons still call it.
+        //
+        // NOT marshaled, on the same grounds as /api/toolprops/ids right
+        // above: the draw publishes a finished frame under a lock in one
+        // assignment (buttons AND the hasEditTarget they were drawn
+        // against), and this reads it back under the same lock. Nothing
+        // live is walked from this thread.
+        //
+        // Empty `buttons` is the honest answer before the first frame and
+        // in a non-`--test` run, where nothing records.
+        response.headers["Content-Type"] = "application/json";
+        try {
+            import ui.availability : buttonAvailabilityJson;
+            response.statusCode = 200;
+            response.body = buttonAvailabilityJson();
+        } catch (Exception e) {
+            response.statusCode = 500;
+            response.body = "{\"error\": \"Failed to retrieve button availability\", \"message\": \"" ~
+                           jsonEsc(e.msg) ~ "\"}";
+        }
+    }
+
+    private void route_apiLayers(HttpRequest request, HttpResponse response) {
+        // Layer list. MARSHALED (task 0612 Stage 3) — it used to be served
+        // straight from the HTTP thread on the grounds that "tests are
+        // quiescent when probing", which stopped being enough once the
+        // response had to resolve a link's target index by walking the
+        // same array the main thread splices. See the provider alias.
+        response.headers["Content-Type"] = "application/json";
+        if (layersDataProvider is null) {
+            response.statusCode = 500;
+            response.body = "{\"error\": \"Layers data provider not set\"}";
+        } else {
+            layersBridge.resp.result = "";
+            layersBridge.resp.error  = "";
+            if (!layersBridge.submitAndWait())
+                layersBridge.resp.error = "timeout waiting for main thread";
+            if (layersBridge.resp.error.length == 0) {
                 response.statusCode = 200;
-                response.body = g_frames.toJson();
-                response.headers["Content-Type"] = "application/json";
-            } catch (Exception e) {
+                response.body = layersBridge.resp.result;
+            } else {
                 response.statusCode = 500;
-                response.body = "{\"error\":\"frame probe read failed\",\"message\":\"" ~
-                               jsonEsc(e.msg) ~ "\"}";
-                response.headers["Content-Type"] = "application/json";
+                response.body = "{\"error\": \"Failed to retrieve layers\", \"message\": \"" ~
+                               jsonEsc(layersBridge.resp.error) ~ "\"}";
             }
-        } else if (request.path == "/api/changes" && request.method == "GET") {
-            // Change-notification bus debug counters (Stage 1; test-only). Direct
-            // read of the process-wide __gshared bus from the HTTP thread — the
-            // counters are plain integers updated on the main thread at the
-            // per-frame flush, so a diagnostic racy read needs no lock (same
-            // contract as /api/perf). Tests read these counters as DELTAS across
-            // a step (the runner resets app state, not the bus, between test
-            // binaries — see the plan's reset caveat).
+        }
+    }
+
+    private void route_apiPerfReset(HttpRequest request, HttpResponse response) {
+        // Zero all perf counters before a measured run. No-op in the
+        // default build (g_perf.reset compiles away).
+        g_perf.reset();
+        response.statusCode = 200;
+        response.body = "{\"status\":\"ok\"}";
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiPerf(HttpRequest request, HttpResponse response) {
+        // Per-category timing + counter breakdown. Direct read of the
+        // process-wide probe from the HTTP thread — plain counters, no
+        // lock needed for this diagnostic. Returns "{}" in the default
+        // (non-PerfProbe) build. Mesh vertex/face counts are available
+        // via /api/model, so they're intentionally not duplicated here.
+        try {
+            response.statusCode = 200;
+            response.body = g_perf.toJson();
             response.headers["Content-Type"] = "application/json";
-            if (!testMode) {
-                response.statusCode = 403;
-                response.body = `{"error":"changes is only available in --test mode"}`;
-            } else {
-                import change_bus : changeBus;
-                import seltype    : selTypeToken;
-                import std.format : format;
-                response.statusCode = 200;
-                response.body = format(
-                    `{"flushCount":%d,"lastFlushFlags":%d,"lastSelDomains":%d,` ~
-                    `"lastLayerKinds":%d,` ~
-                    `"totalPosition":%d,"totalPoints":%d,"totalPolygons":%d,` ~
-                    `"totalMarks":%d,"totalMaterial":%d,` ~
-                    `"totalSelVertex":%d,"totalSelEdge":%d,"totalSelFace":%d,` ~
-                    `"totalSelItem":%d,` ~
-                    `"totalLayerAdded":%d,"totalLayerRemoved":%d,` ~
-                    `"totalLayerReordered":%d,"totalLayerRenamed":%d,` ~
-                    `"totalLayerVisible":%d,` ~
-                    `"totalLayerActive":%d,` ~
-                    `"missedPublishers":%d,` ~
-                    `"currentTypeChanged":%d,"lastCurrentType":"%s"}`,
-                    changeBus.flushCount, changeBus.lastFlushFlags,
-                    changeBus.lastSelDomains, changeBus.lastLayerKinds,
-                    changeBus.totalPosition, changeBus.totalPoints,
-                    changeBus.totalPolygons, changeBus.totalMarks,
-                    changeBus.totalMaterial,
-                    changeBus.totalSelVertex, changeBus.totalSelEdge,
-                    changeBus.totalSelFace,
-                    changeBus.totalSelItem,
-                    changeBus.totalLayerAdded, changeBus.totalLayerRemoved,
-                    changeBus.totalLayerReordered, changeBus.totalLayerRenamed,
-                    changeBus.totalLayerVisible,
-                    changeBus.totalLayerActive,
-                    changeBus.missedPublishers,
-                    changeBus.currentTypeChanged,
-                    selTypeToken(changeBus.lastCurrentType));
-            }
-        } else if (request.path == "/api/toolpipe/eval") {
+        } catch (Exception e) {
+            response.statusCode = 500;
+            response.body = "{\"error\":\"perf probe read failed\",\"message\":\"" ~
+                           jsonEsc(e.msg) ~ "\"}";
             response.headers["Content-Type"] = "application/json";
-            if (toolpipeEvalProvider is null) {
-                response.statusCode = 500;
-                response.body = "{\"error\":\"toolpipe eval provider not set\"}";
-            } else {
-                // Marshal the pipe evaluation onto the main thread (via the
-                // bridge's tick) so it never races the main thread's own
-                // evaluate().
-                pipeEvalBridge.resp.result = "";
-                pipeEvalBridge.resp.error  = "";
-                if (!pipeEvalBridge.submitAndWait())
-                    pipeEvalBridge.resp.error = "timeout waiting for main thread";
-                if (pipeEvalBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = pipeEvalBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = "{\"error\":\"toolpipe eval provider failed\",\"message\":\""
-                                   ~ jsonEsc(pipeEvalBridge.resp.error) ~ "\"}";
-                }
-            }
-        } else if (request.path.startsWith("/api/path")) {
+        }
+    }
+
+    private void route_apiFramesCountsReset(HttpRequest request, HttpResponse response) {
+        // Zero the always-on frame WORK counters. Unlike its two siblings
+        // above this is NOT a no-op in the default build — see below.
+        g_fc.reset();
+        response.statusCode = 200;
+        response.body = "{\"status\":\"ok\"}";
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiFramesCounts(HttpRequest request, HttpResponse response) {
+        // Per-frame WORK COUNTS: draw submissions and submitted vertices
+        // per pass, cells considered/rendered, GPU uploads, pick-cache
+        // rebuilds, pipeline + operator evaluations, and main-thread GC
+        // bytes. Live in EVERY build configuration, including the default
+        // `modeling` one that run_test.d builds — which is the whole
+        // reason it exists next to /api/perf and /api/frames, both of
+        // which return "{}" there and have done so for every test that
+        // ever tried to ask this question.
+        //
+        // READ `lastScene`, NOT `last`. The N-cell render loop skips cells
+        // whose dirty key is unchanged, so an arbitrary frame legitimately
+        // draws nothing; `lastScene` is the last frame that rendered at
+        // least one cell. (In --test the active cell renders every frame,
+        // so the two coincide there — do not let that habit leak into an
+        // interactive-mode assertion.)
+        //
+        // NOT A TIMING ENDPOINT. Nothing here is a duration. See the
+        // FrameWorkProbe header in source/perf_probe.d for what these
+        // numbers do and do not support.
+        //
+        // Same no-lock diagnostic-read contract as /api/perf and
+        // /api/frames: single main-thread writer, whole-record publish.
+        try {
+            response.statusCode = 200;
+            response.body = g_fc.toJson();
             response.headers["Content-Type"] = "application/json";
-            if (pathQueryProvider is null) {
-                response.statusCode = 500;
-                response.body = `{"error":"path query provider not set"}`;
-            } else {
-                // Parse t from POST body or GET query string.
-                float t = 0.5f;
-                try {
-                    if (request.method == "POST" && request.body.length > 0) {
-                        auto bj = parseJSON(request.body);
-                        if (auto tp = "t" in bj.object) {
-                            if      (tp.type == JSONType.float_)   t = cast(float)tp.floating;
-                            else if (tp.type == JSONType.integer)  t = cast(float)tp.integer;
-                            else if (tp.type == JSONType.uinteger) t = cast(float)tp.uinteger;
-                        }
-                    } else {
-                        string ts = parseQueryString(request.path, "t", "");
-                        if (ts.length > 0) {
-                            import std.conv : to;
-                            t = ts.to!float;
-                        }
-                    }
-                } catch (Exception) {}
-                // Marshal onto the main thread via the dedicated bridge — MUST
-                // NOT share pipeEval's epoch pair (see the bridge decl above).
-                pathBridge.req.t      = t;
-                pathBridge.resp.result = "";
-                pathBridge.resp.error  = "";
-                if (!pathBridge.submitAndWait())
-                    pathBridge.resp.error = "timeout waiting for main thread";
-                if (pathBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = pathBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = `{"error":"path query failed","message":"` ~
-                                   jsonEsc(pathBridge.resp.error) ~ `"}`;
-                }
-            }
-        } else if (request.path == "/api/toolpipe") {
+        } catch (Exception e) {
+            response.statusCode = 500;
+            response.body = "{\"error\":\"frame-count probe read failed\",\"message\":\"" ~
+                           jsonEsc(e.msg) ~ "\"}";
             response.headers["Content-Type"] = "application/json";
-            if (toolpipeProvider is null) {
-                // Preserve the pre-marshaling null-provider contract exactly:
-                // 200 {"stages":[]}, decided on the HTTP thread BEFORE ever
-                // touching the bridge (do NOT copy /api/toolpipe/eval's 500
-                // branch here).
-                response.statusCode = 200;
-                response.body = "{\"stages\":[]}";
-            } else {
-                // Marshal onto the main thread via its own bridge/epoch pair
-                // (see toolpipeBridge decl) so the display path never races
-                // the main thread's own evaluate() over the ACEN cluster cache.
-                toolpipeBridge.resp.result = "";
-                toolpipeBridge.resp.error  = "";
-                if (!toolpipeBridge.submitAndWait())
-                    toolpipeBridge.resp.error = "timeout waiting for main thread";
-                if (toolpipeBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = toolpipeBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = "{\"error\":\"toolpipe provider failed\",\"message\":\""
-                                   ~ jsonEsc(toolpipeBridge.resp.error) ~ "\"}";
-                }
-            }
-        } else if (request.path == "/api/ai/analyze" && request.method == "GET") {
+        }
+    }
+
+    private void route_apiFramesReset(HttpRequest request, HttpResponse response) {
+        // Zero the per-frame ring + counters before a measured run
+        // (task 0195). No-op in the default build (g_frames.reset
+        // compiles away).
+        g_frames.reset();
+        response.statusCode = 200;
+        response.body = "{\"status\":\"ok\"}";
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiFrames(HttpRequest request, HttpResponse response) {
+        // Per-frame phase-timing + GC-delta breakdown (task 0195,
+        // doc/frame_probe_scenarios_plan.md). Direct read of the
+        // process-wide FrameProbe from the HTTP thread — same
+        // no-lock diagnostic contract as /api/perf above (single-writer
+        // main-loop, write-then-advance ring discipline makes a racy
+        // read tear-free at frame granularity). Returns "{}" in the
+        // default (non-PerfProbe) build.
+        try {
+            response.statusCode = 200;
+            response.body = g_frames.toJson();
             response.headers["Content-Type"] = "application/json";
-            if (aiAnalyzeProvider is null) {
-                response.statusCode = 500;
-                response.body = `{"error":"ai analyze provider not set"}`;
-            } else {
-                // Marshal onto the main thread via its own bridge/epoch pair
-                // (see aiAnalyzeBridge decl) so this read-only analysis never
-                // races the main thread's own mesh mutations (risk #4,
-                // ai_copilot_plan.md Phase 1).
-                aiAnalyzeBridge.resp.result = "";
-                aiAnalyzeBridge.resp.error  = "";
-                if (!aiAnalyzeBridge.submitAndWait())
-                    aiAnalyzeBridge.resp.error = "timeout waiting for main thread";
-                if (aiAnalyzeBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = aiAnalyzeBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = "{\"error\":\"ai analyze provider failed\",\"message\":\""
-                                   ~ jsonEsc(aiAnalyzeBridge.resp.error) ~ "\"}";
-                }
-            }
-        } else if (request.path.startsWith("/api/registry") && request.method == "GET") {
-            if (registryProvider !is null) {
-                try {
-                    bool wantParams = parseQueryInt(request.path, "params", 0) != 0;
-                    response.statusCode = 200;
-                    response.body = registryProvider(wantParams);
-                    response.headers["Content-Type"] = "application/json";
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\":\"registry provider failed\",\"message\":\"" ~
-                                   jsonEsc(e.msg) ~ "\"}";
-                    response.headers["Content-Type"] = "application/json";
-                }
-            } else {
-                response.statusCode = 200;
-                response.body = "{\"commands\":[],\"tools\":[]}";
-                response.headers["Content-Type"] = "application/json";
-            }
-        } else if (request.path == "/api/snap/last" && request.method == "GET") {
-            if (snapLastProvider !is null) {
-                try {
-                    response.statusCode = 200;
-                    response.body = snapLastProvider();
-                    response.headers["Content-Type"] = "application/json";
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\":\"snap last provider failed\",\"message\":\"" ~
-                                   jsonEsc(e.msg) ~ "\"}";
-                    response.headers["Content-Type"] = "application/json";
-                }
-            } else {
-                response.statusCode = 500;
-                response.body = "{\"error\":\"snap last provider not set\"}";
-                response.headers["Content-Type"] = "application/json";
-            }
-        } else if (request.path == "/api/snap" && request.method == "POST") {
+        } catch (Exception e) {
+            response.statusCode = 500;
+            response.body = "{\"error\":\"frame probe read failed\",\"message\":\"" ~
+                           jsonEsc(e.msg) ~ "\"}";
             response.headers["Content-Type"] = "application/json";
-            // The null-provider verdict is decided HERE, on the HTTP thread,
-            // before the bridge is touched — otherwise an unwired provider
-            // would spin out the full submitAndWait timeout and report
-            // "timeout" instead of the historical "provider not set".
-            if (snapQueryProvider is null) {
-                response.statusCode = 500;
-                response.body = "{\"error\":\"snap query provider not set\"}";
-            } else {
-                // Marshal onto the main thread (task 0587). The provider runs
-                // pipeline.evaluate() and reads the live mesh; see the
-                // snapQueryBridge declaration for why that cannot be served
-                // from this thread.
-                snapQueryBridge.req.body_   = request.body;
-                snapQueryBridge.resp.result = "";
-                snapQueryBridge.resp.error  = "";
-                if (!snapQueryBridge.submitAndWait())
-                    snapQueryBridge.resp.error = "timeout waiting for main thread";
-                if (snapQueryBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = snapQueryBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = "{\"error\":\"snap query failed\",\"message\":\"" ~
-                                   jsonEsc(snapQueryBridge.resp.error) ~ "\"}";
-                }
-            }
-        } else if (request.path == "/api/constrain" && request.method == "POST") {
-            response.headers["Content-Type"] = "application/json";
-            if (constrainQueryProvider is null) {
-                response.statusCode = 500;
-                response.body = "{\"error\":\"constrain query provider not set\"}";
-            } else {
-                // Marshal onto the main thread (task 0587) — same reason as
-                // /api/snap above, minus the shared-buffer write.
-                constrainQueryBridge.req.body_   = request.body;
-                constrainQueryBridge.resp.result = "";
-                constrainQueryBridge.resp.error  = "";
-                if (!constrainQueryBridge.submitAndWait())
-                    constrainQueryBridge.resp.error = "timeout waiting for main thread";
-                if (constrainQueryBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = constrainQueryBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = "{\"error\":\"constrain query failed\",\"message\":\"" ~
-                                   jsonEsc(constrainQueryBridge.resp.error) ~ "\"}";
-                }
-            }
-        } else if (request.path.startsWith("/api/camera") && request.method == "POST") {
-            if (cameraSetHandler is null) {
-                response.statusCode = 200;
-                response.body = `{"status":"error","message":"camera-set handler not set"}`;
-            } else {
-                try {
-                    cameraSetBridge.req.params = parseJSON(request.body);
-                    // Inject ?viewport=N from query string into the JSON body
-                    // so the main-thread handler can target the correct cell.
-                    if (cameraSetBridge.req.params.type == JSONType.object)
-                        cameraSetBridge.req.params["_viewport"] = parseQueryInt(request.path, "viewport", -1);
-                    cameraSetBridge.resp.error = "";
-                    if (!cameraSetBridge.submitAndWait())
-                        cameraSetBridge.resp.error = "timeout waiting for main thread";
-                    if (cameraSetBridge.resp.error.length == 0) {
-                        response.statusCode = 200;
-                        response.body = `{"status":"ok"}`;
-                    } else {
-                        response.statusCode = 200;
-                        response.body = `{"status":"error","message":"`
-                                        ~ jsonEsc(cameraSetBridge.resp.error) ~ `"}`;
-                    }
-                } catch (Exception e) {
-                    response.statusCode = 200;
-                    response.body = `{"status":"error","message":"`
-                                    ~ jsonEsc(e.msg) ~ `"}`;
-                }
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/gpu/face-vbo" && request.method == "GET") {
-            if (gpuSurfaceProvider is null) {
-                response.statusCode = 500;
-                response.body = `{"error":"gpu-surface provider not set"}`;
-                response.headers["Content-Type"] = "application/json";
-            } else {
-                gpuSurfaceBridge.resp.error = "";
-                if (!gpuSurfaceBridge.submitAndWait())
-                    gpuSurfaceBridge.resp.error = "timeout waiting for main thread";
-                if (gpuSurfaceBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = gpuSurfaceBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = `{"error":"`
-                                    ~ jsonEsc(gpuSurfaceBridge.resp.error) ~ `"}`;
-                }
-                response.headers["Content-Type"] = "application/json";
-            }
-        } else if (request.path.startsWith("/api/viewport/display") && request.method == "GET") {
-            // Task 0559 — dump every cell's display state + resolved draw
-            // plans. Ordered BEFORE /api/viewport/probe is irrelevant (the
-            // paths differ past the prefix), but both must sit before any
-            // future bare "/api/viewport" prefix match.
-            if (viewportDisplayProvider is null) {
-                response.statusCode = 500;
-                response.body = `{"error":"viewport-display provider not set"}`;
-            } else {
-                vpDisplayBridge.resp.result = "";
-                vpDisplayBridge.resp.error  = "";
-                if (!vpDisplayBridge.submitAndWait())
-                    vpDisplayBridge.resp.error = "timeout waiting for main thread";
-                if (vpDisplayBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = vpDisplayBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = `{"error":"`
-                                    ~ jsonEsc(vpDisplayBridge.resp.error) ~ `"}`;
-                }
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path.startsWith("/api/images") && request.method == "GET") {
-            // Task 0612 Stage 1 — the image-clip rows and the pixel cache's
-            // residency counters, gathered in one main-thread pass.
-            if (imagesDataProvider is null) {
-                response.statusCode = 500;
-                response.body = `{"error":"images data provider not set"}`;
-            } else {
-                imagesBridge.resp.result = "";
-                imagesBridge.resp.error  = "";
-                if (!imagesBridge.submitAndWait())
-                    imagesBridge.resp.error = "timeout waiting for main thread";
-                if (imagesBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = imagesBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = `{"error":"`
-                                    ~ jsonEsc(imagesBridge.resp.error) ~ `"}`;
-                }
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path.startsWith("/api/imageplane") && request.method == "GET") {
-            // Task 0612 Stage 4 — one plane's resolved placement in one cell.
-            // (No prefix collision with `/api/images` above: the two paths
-            // differ at the tenth character, `p` vs `s`.)
-            if (imagePlaneProvider is null) {
-                response.statusCode = 500;
-                response.body = `{"error":"image-plane provider not set"}`;
-            } else {
-                planeBridge.req.index  = parseQueryInt(request.path, "index", -1);
-                planeBridge.req.cell   = parseQueryInt(request.path, "cell",  -1);
-                planeBridge.resp.result = "";
-                planeBridge.resp.error  = "";
-                if (!planeBridge.submitAndWait())
-                    planeBridge.resp.error = "timeout waiting for main thread";
-                if (planeBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = planeBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = `{"error":"`
-                                    ~ jsonEsc(planeBridge.resp.error) ~ `"}`;
-                }
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path.startsWith("/api/viewport/probe") && request.method == "GET") {
-            // Task 0559 — FBO pixel readback. `points` is "x,y;x,y;..." in
-            // TOP-LEFT-origin FBO pixels; `x`/`y` is sugar for a single
-            // point. `hash=1` additionally digests the WHOLE colour buffer,
-            // which is what makes "these two builds draw identical pixels" a
-            // checkable claim rather than an assertion.
-            if (viewportProbeProvider is null) {
-                response.statusCode = 500;
-                response.body = `{"error":"viewport-probe provider not set"}`;
-            } else {
-                vpProbeBridge.req.cell   = parseQueryInt(request.path, "cell", -1);
-                string _pts = parseQueryString(request.path, "points", "");
-                if (_pts.length == 0) {
-                    immutable int _px = parseQueryInt(request.path, "x", -1);
-                    immutable int _py = parseQueryInt(request.path, "y", -1);
-                    if (_px >= 0 && _py >= 0) {
-                        import std.conv : to;
-                        _pts = _px.to!string ~ "," ~ _py.to!string;
-                    }
-                }
-                vpProbeBridge.req.points   = _pts;
-                vpProbeBridge.req.wantHash = parseQueryInt(request.path, "hash", 0) != 0;
-                vpProbeBridge.resp.result  = "";
-                vpProbeBridge.resp.error   = "";
-                if (!vpProbeBridge.submitAndWait())
-                    vpProbeBridge.resp.error = "timeout waiting for main thread";
-                if (vpProbeBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = vpProbeBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = `{"error":"`
-                                    ~ jsonEsc(vpProbeBridge.resp.error) ~ `"}`;
-                }
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path.startsWith("/api/pick") && request.method == "GET") {
-            if (pickProvider is null) {
-                response.statusCode = 500;
-                response.body = `{"error":"pick provider not set"}`;
-                response.headers["Content-Type"] = "application/json";
-            } else {
-                pickBridge.req.x      = parseQueryInt(request.path, "x", 0);
-                pickBridge.req.y      = parseQueryInt(request.path, "y", 0);
-                pickBridge.req.engine = parseQueryString(request.path, "engine", "bvh");
-                pickBridge.resp.result = "";
-                pickBridge.resp.error  = "";
-                if (!pickBridge.submitAndWait())
-                    pickBridge.resp.error = "timeout waiting for main thread";
-                if (pickBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = pickBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = `{"error":"` ~ jsonEsc(pickBridge.resp.error) ~ `"}`;
-                }
-                response.headers["Content-Type"] = "application/json";
-            }
-        } else if (request.path.startsWith("/api/surface-raycast") && request.method == "GET") {
-            if (surfaceRaycastProvider is null) {
-                response.statusCode = 500;
-                response.body = `{"error":"surface-raycast provider not set"}`;
-                response.headers["Content-Type"] = "application/json";
-            } else {
-                surfaceRaycastBridge.req.x = parseQueryInt(request.path, "x", 0);
-                surfaceRaycastBridge.req.y = parseQueryInt(request.path, "y", 0);
-                surfaceRaycastBridge.req.thresholdPx =
-                    parseQueryFloat(request.path, "thresholdPx", -1.0f);
-                surfaceRaycastBridge.resp.result = "";
-                surfaceRaycastBridge.resp.error  = "";
-                if (!surfaceRaycastBridge.submitAndWait())
-                    surfaceRaycastBridge.resp.error = "timeout waiting for main thread";
-                if (surfaceRaycastBridge.resp.error.length == 0) {
-                    response.statusCode = 200;
-                    response.body = surfaceRaycastBridge.resp.result;
-                } else {
-                    response.statusCode = 500;
-                    response.body = `{"error":"` ~ jsonEsc(surfaceRaycastBridge.resp.error) ~ `"}`;
-                }
-                response.headers["Content-Type"] = "application/json";
-            }
-        } else if (request.path.startsWith("/api/camera") && request.method == "GET") {
-            if (cameraDataProvider !is null) {
-                try {
-                    int _vpIdx = parseQueryInt(request.path, "viewport", -1);
-                    response.statusCode = 200;
-                    response.body = cameraDataProvider(_vpIdx);
-                    response.headers["Content-Type"] = "application/json";
-                } catch (Exception e) {
-                    response.statusCode = 500;
-                    response.body = "{\"error\": \"Failed to retrieve camera data\", \"message\": \"" ~
-                                   jsonEsc(e.msg) ~ "\"}";
-                    response.headers["Content-Type"] = "application/json";
-                }
-            } else {
-                response.statusCode = 500;
-                response.body = "{\"error\": \"Camera data provider not set\"}";
-                response.headers["Content-Type"] = "application/json";
-            }
-        } else if (request.path == "/api/recorded-events" && request.method == "GET") {
-            if (recordedEventsProvider !is null) {
-                string data = recordedEventsProvider();
-                if (data is null) {
-                    response.statusCode = 404;
-                    response.body = `{"error":"no recording available — press F1 to start, F2 to stop"}`;
-                } else {
-                    response.statusCode = 200;
-                    response.body = data;
-                    response.headers["Content-Type"] = "text/plain";
-                }
-            } else {
-                response.statusCode = 500;
-                response.body = `{"error":"recorded events provider not set"}`;
-                response.headers["Content-Type"] = "application/json";
-            }
-        } else if (request.path.startsWith("/api/reset") && request.method == "POST") {
-            if (resetHandler !is null) {
-                resetBridge.req.type  = parseQueryString(request.path, "type", "");
-                string emptyParam = parseQueryString(request.path, "empty", "");
-                resetBridge.req.empty = (emptyParam == "true" || emptyParam == "1");
-                // Dense perf meshes take an int: grid → ?n=<int>,
-                // subdivcube → ?levels=<int>. -1 means "use the factory
-                // default" (n=316 / levels=7). Accept either key; n wins if
-                // both are somehow present.
-                int nParam = parseQueryInt(request.path, "n", -1);
-                int lvlParam = parseQueryInt(request.path, "levels", -1);
-                resetBridge.req.param = (nParam >= 0) ? nParam : lvlParam;
-                resetBridge.submitAndWait();  // timeout is silent-ok — no error body
-                response.statusCode = 200;
-                response.body = `{"status":"ok"}`;
-            } else {
-                response.statusCode = 500;
-                response.body = `{"error":"Reset handler not set"}`;
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/play-events/status" && request.method == "GET") {
+        }
+    }
+
+    private void route_apiChanges(HttpRequest request, HttpResponse response) {
+        // Change-notification bus debug counters (Stage 1; test-only). Direct
+        // read of the process-wide __gshared bus from the HTTP thread — the
+        // counters are plain integers updated on the main thread at the
+        // per-frame flush, so a diagnostic racy read needs no lock (same
+        // contract as /api/perf). Tests read these counters as DELTAS across
+        // a step (the runner resets app state, not the bus, between test
+        // binaries — see the plan's reset caveat).
+        response.headers["Content-Type"] = "application/json";
+        if (!testMode) {
+            response.statusCode = 403;
+            response.body = `{"error":"changes is only available in --test mode"}`;
+        } else {
+            import change_bus : changeBus;
+            import seltype    : selTypeToken;
             import std.format : format;
-            bool done = !eventPlayer.active;
             response.statusCode = 200;
-            response.body = format(`{"finished":%s,"total":%d,"remaining":%d}`,
-                done ? "true" : "false",
-                eventPlayer.entries.length,
-                done ? 0 : eventPlayer.entries.length - eventPlayer.idx);
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/transform" && request.method == "POST") {
-            if (transformHandler is null) {
-                response.statusCode = 200;
-                response.body = `{"status":"error","message":"transform handler not set"}`;
-            } else {
-                try {
-                    auto j = parseJSON(request.body);
-                    if ("kind" !in j || j["kind"].type != JSONType.string)
-                        throw new Exception("missing 'kind' string field");
-                    transformBridge.req.kind   = j["kind"].str;
-                    transformBridge.req.params = j;  // pass full request body for handler
-                    transformBridge.resp.error = "";
-                    if (!transformBridge.submitAndWait())
-                        transformBridge.resp.error = "timeout waiting for main thread";
-                    if (transformBridge.resp.error.length == 0) {
-                        response.statusCode = 200;
-                        response.body = `{"status":"ok"}`;
-                    } else {
-                        response.statusCode = 200;
-                        response.body = `{"status":"error","message":"`
-                                        ~ jsonEsc(transformBridge.resp.error) ~ `"}`;
-                    }
-                } catch (Exception e) {
-                    response.statusCode = 200;
-                    response.body = `{"status":"error","message":"`
-                                    ~ jsonEsc(e.msg) ~ `"}`;
-                }
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/load-mesh" && request.method == "POST") {
-            // Test-only raw-mesh injection. Validate the JSON shape on the
-            // HTTP thread (so we can report counts), then dispatch to the
-            // main thread via the same epoch bridge as /api/transform. The
-            // main-thread handler re-validates index range / degree before
-            // touching the live mesh and throws on bad input.
-            if (loadMeshHandler is null) {
-                response.statusCode = 200;
-                response.body = `{"status":"error","message":"load-mesh handler not set"}`;
-            } else {
-                try {
-                    auto j = parseJSON(request.body);
-                    if (j.type != JSONType.object)
-                        throw new Exception("body must be a JSON object");
-                    if ("vertices" !in j || j["vertices"].type != JSONType.array)
-                        throw new Exception("missing 'vertices' array field");
-                    if ("faces" !in j || j["faces"].type != JSONType.array)
-                        throw new Exception("missing 'faces' array field");
-                    long vCount = cast(long)j["vertices"].array.length;
-                    long fCount = cast(long)j["faces"].array.length;
+            response.body = format(
+                `{"flushCount":%d,"lastFlushFlags":%d,"lastSelDomains":%d,` ~
+                `"lastLayerKinds":%d,` ~
+                `"totalPosition":%d,"totalPoints":%d,"totalPolygons":%d,` ~
+                `"totalMarks":%d,"totalMaterial":%d,` ~
+                `"totalSelVertex":%d,"totalSelEdge":%d,"totalSelFace":%d,` ~
+                `"totalSelItem":%d,` ~
+                `"totalLayerAdded":%d,"totalLayerRemoved":%d,` ~
+                `"totalLayerReordered":%d,"totalLayerRenamed":%d,` ~
+                `"totalLayerVisible":%d,` ~
+                `"totalLayerActive":%d,` ~
+                `"missedPublishers":%d,` ~
+                `"currentTypeChanged":%d,"lastCurrentType":"%s"}`,
+                changeBus.flushCount, changeBus.lastFlushFlags,
+                changeBus.lastSelDomains, changeBus.lastLayerKinds,
+                changeBus.totalPosition, changeBus.totalPoints,
+                changeBus.totalPolygons, changeBus.totalMarks,
+                changeBus.totalMaterial,
+                changeBus.totalSelVertex, changeBus.totalSelEdge,
+                changeBus.totalSelFace,
+                changeBus.totalSelItem,
+                changeBus.totalLayerAdded, changeBus.totalLayerRemoved,
+                changeBus.totalLayerReordered, changeBus.totalLayerRenamed,
+                changeBus.totalLayerVisible,
+                changeBus.totalLayerActive,
+                changeBus.missedPublishers,
+                changeBus.currentTypeChanged,
+                selTypeToken(changeBus.lastCurrentType));
+        }
+    }
 
-                    loadMeshBridge.req.params = j;
-                    loadMeshBridge.resp.error = "";
-                    if (!loadMeshBridge.submitAndWait())
-                        loadMeshBridge.resp.error = "timeout waiting for main thread";
-                    if (loadMeshBridge.resp.error.length == 0) {
-                        import std.format : format;
-                        response.statusCode = 200;
-                        response.body = format(
-                            `{"status":"ok","vertexCount":%d,"faceCount":%d}`,
-                            vCount, fCount);
-                    } else {
-                        response.statusCode = 200;
-                        response.body = `{"status":"error","message":"`
-                                        ~ jsonEsc(loadMeshBridge.resp.error) ~ `"}`;
-                    }
-                } catch (Exception e) {
-                    response.statusCode = 200;
-                    response.body = `{"status":"error","message":"`
-                                    ~ jsonEsc(e.msg) ~ `"}`;
-                }
+    private void route_apiToolpipeEval(HttpRequest request, HttpResponse response) {
+        response.headers["Content-Type"] = "application/json";
+        if (toolpipeEvalProvider is null) {
+            response.statusCode = 500;
+            response.body = "{\"error\":\"toolpipe eval provider not set\"}";
+        } else {
+            // Marshal the pipe evaluation onto the main thread (via the
+            // bridge's tick) so it never races the main thread's own
+            // evaluate().
+            pipeEvalBridge.resp.result = "";
+            pipeEvalBridge.resp.error  = "";
+            if (!pipeEvalBridge.submitAndWait())
+                pipeEvalBridge.resp.error = "timeout waiting for main thread";
+            if (pipeEvalBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = pipeEvalBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"toolpipe eval provider failed\",\"message\":\""
+                               ~ jsonEsc(pipeEvalBridge.resp.error) ~ "\"}";
             }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/test/layer" && request.method == "POST") {
-            // Test-only layer injection (task 0615 Stage 6/7) — see the
-            // `injectLayerHandler` field doc comment above for the full
-            // rationale. Blocker (review round 2): unlike every sibling
-            // test-only endpoint (`/api/changes`, `/api/play-events` above),
-            // this route had NO test-mode gate — a release binary always
-            // constructs the HttpServer and always wires this handler
-            // (http_providers.d), and even `--http-port` without `--test`
-            // turns the listener on without turning test mode on (app.d).
-            // Gated here exactly like its siblings: 403 outside `--test`.
-            if (!testMode) {
-                response.statusCode = 403;
-                response.body = `{"error":"test/layer is only available in --test mode"}`;
+        }
+    }
+
+    private void route_apiPath(HttpRequest request, HttpResponse response) {
+        response.headers["Content-Type"] = "application/json";
+        if (pathQueryProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"path query provider not set"}`;
+        } else {
+            // Parse t from POST body or GET query string.
+            float t = 0.5f;
+            try {
+                if (request.method == "POST" && request.body.length > 0) {
+                    auto bj = parseJSON(request.body);
+                    if (auto tp = "t" in bj.object) {
+                        if      (tp.type == JSONType.float_)   t = cast(float)tp.floating;
+                        else if (tp.type == JSONType.integer)  t = cast(float)tp.integer;
+                        else if (tp.type == JSONType.uinteger) t = cast(float)tp.uinteger;
+                    }
+                } else {
+                    string ts = parseQueryString(request.path, "t", "");
+                    if (ts.length > 0) {
+                        import std.conv : to;
+                        t = ts.to!float;
+                    }
+                }
+            } catch (Exception) {}
+            // Marshal onto the main thread via the dedicated bridge — MUST
+            // NOT share pipeEval's epoch pair (see the bridge decl above).
+            pathBridge.req.t      = t;
+            pathBridge.resp.result = "";
+            pathBridge.resp.error  = "";
+            if (!pathBridge.submitAndWait())
+                pathBridge.resp.error = "timeout waiting for main thread";
+            if (pathBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = pathBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = `{"error":"path query failed","message":"` ~
+                               jsonEsc(pathBridge.resp.error) ~ `"}`;
+            }
+        }
+    }
+
+    private void route_apiToolpipe(HttpRequest request, HttpResponse response) {
+        response.headers["Content-Type"] = "application/json";
+        if (toolpipeProvider is null) {
+            // Preserve the pre-marshaling null-provider contract exactly:
+            // 200 {"stages":[]}, decided on the HTTP thread BEFORE ever
+            // touching the bridge (do NOT copy /api/toolpipe/eval's 500
+            // branch here).
+            response.statusCode = 200;
+            response.body = "{\"stages\":[]}";
+        } else {
+            // Marshal onto the main thread via its own bridge/epoch pair
+            // (see toolpipeBridge decl) so the display path never races
+            // the main thread's own evaluate() over the ACEN cluster cache.
+            toolpipeBridge.resp.result = "";
+            toolpipeBridge.resp.error  = "";
+            if (!toolpipeBridge.submitAndWait())
+                toolpipeBridge.resp.error = "timeout waiting for main thread";
+            if (toolpipeBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = toolpipeBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"toolpipe provider failed\",\"message\":\""
+                               ~ jsonEsc(toolpipeBridge.resp.error) ~ "\"}";
+            }
+        }
+    }
+
+    private void route_apiAiAnalyze(HttpRequest request, HttpResponse response) {
+        response.headers["Content-Type"] = "application/json";
+        if (aiAnalyzeProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"ai analyze provider not set"}`;
+        } else {
+            // Marshal onto the main thread via its own bridge/epoch pair
+            // (see aiAnalyzeBridge decl) so this read-only analysis never
+            // races the main thread's own mesh mutations (risk #4,
+            // ai_copilot_plan.md Phase 1).
+            aiAnalyzeBridge.resp.result = "";
+            aiAnalyzeBridge.resp.error  = "";
+            if (!aiAnalyzeBridge.submitAndWait())
+                aiAnalyzeBridge.resp.error = "timeout waiting for main thread";
+            if (aiAnalyzeBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = aiAnalyzeBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"ai analyze provider failed\",\"message\":\""
+                               ~ jsonEsc(aiAnalyzeBridge.resp.error) ~ "\"}";
+            }
+        }
+    }
+
+    private void route_apiRegistry(HttpRequest request, HttpResponse response) {
+        if (registryProvider !is null) {
+            try {
+                bool wantParams = parseQueryInt(request.path, "params", 0) != 0;
+                response.statusCode = 200;
+                response.body = registryProvider(wantParams);
                 response.headers["Content-Type"] = "application/json";
-            } else if (injectLayerHandler is null) {
+            } catch (Exception e) {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"registry provider failed\",\"message\":\"" ~
+                               jsonEsc(e.msg) ~ "\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else {
+            response.statusCode = 200;
+            response.body = "{\"commands\":[],\"tools\":[]}";
+            response.headers["Content-Type"] = "application/json";
+        }
+    }
+
+    private void route_apiSnapLast(HttpRequest request, HttpResponse response) {
+        if (snapLastProvider !is null) {
+            try {
                 response.statusCode = 200;
-                response.body = `{"status":"error","message":"inject-layer handler not set"}`;
+                response.body = snapLastProvider();
+                response.headers["Content-Type"] = "application/json";
+            } catch (Exception e) {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"snap last provider failed\",\"message\":\"" ~
+                               jsonEsc(e.msg) ~ "\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else {
+            response.statusCode = 500;
+            response.body = "{\"error\":\"snap last provider not set\"}";
+            response.headers["Content-Type"] = "application/json";
+        }
+    }
+
+    private void route_apiSnap(HttpRequest request, HttpResponse response) {
+        response.headers["Content-Type"] = "application/json";
+        // The null-provider verdict is decided HERE, on the HTTP thread,
+        // before the bridge is touched — otherwise an unwired provider
+        // would spin out the full submitAndWait timeout and report
+        // "timeout" instead of the historical "provider not set".
+        if (snapQueryProvider is null) {
+            response.statusCode = 500;
+            response.body = "{\"error\":\"snap query provider not set\"}";
+        } else {
+            // Marshal onto the main thread (task 0587). The provider runs
+            // pipeline.evaluate() and reads the live mesh; see the
+            // snapQueryBridge declaration for why that cannot be served
+            // from this thread.
+            snapQueryBridge.req.body_   = request.body;
+            snapQueryBridge.resp.result = "";
+            snapQueryBridge.resp.error  = "";
+            if (!snapQueryBridge.submitAndWait())
+                snapQueryBridge.resp.error = "timeout waiting for main thread";
+            if (snapQueryBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = snapQueryBridge.resp.result;
             } else {
-                try {
-                    auto j = parseJSON(request.body);
-                    if (j.type != JSONType.object)
-                        throw new Exception("body must be a JSON object");
-                    injectLayerBridge.req.params = j;
-                    injectLayerBridge.resp.error = "";
-                    if (!injectLayerBridge.submitAndWait())
-                        injectLayerBridge.resp.error = "timeout waiting for main thread";
-                    if (injectLayerBridge.resp.error.length == 0) {
-                        response.statusCode = 200;
-                        response.body = `{"status":"ok"}`;
-                    } else {
-                        response.statusCode = 200;
-                        response.body = `{"status":"error","message":"`
-                                        ~ jsonEsc(injectLayerBridge.resp.error) ~ `"}`;
-                    }
-                } catch (Exception e) {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"snap query failed\",\"message\":\"" ~
+                               jsonEsc(snapQueryBridge.resp.error) ~ "\"}";
+            }
+        }
+    }
+
+    private void route_apiConstrain(HttpRequest request, HttpResponse response) {
+        response.headers["Content-Type"] = "application/json";
+        if (constrainQueryProvider is null) {
+            response.statusCode = 500;
+            response.body = "{\"error\":\"constrain query provider not set\"}";
+        } else {
+            // Marshal onto the main thread (task 0587) — same reason as
+            // /api/snap above, minus the shared-buffer write.
+            constrainQueryBridge.req.body_   = request.body;
+            constrainQueryBridge.resp.result = "";
+            constrainQueryBridge.resp.error  = "";
+            if (!constrainQueryBridge.submitAndWait())
+                constrainQueryBridge.resp.error = "timeout waiting for main thread";
+            if (constrainQueryBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = constrainQueryBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = "{\"error\":\"constrain query failed\",\"message\":\"" ~
+                               jsonEsc(constrainQueryBridge.resp.error) ~ "\"}";
+            }
+        }
+    }
+
+    private void route_apiCameraPost(HttpRequest request, HttpResponse response) {
+        if (cameraSetHandler is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"camera-set handler not set"}`;
+        } else {
+            try {
+                cameraSetBridge.req.params = parseJSON(request.body);
+                // Inject ?viewport=N from query string into the JSON body
+                // so the main-thread handler can target the correct cell.
+                if (cameraSetBridge.req.params.type == JSONType.object)
+                    cameraSetBridge.req.params["_viewport"] = parseQueryInt(request.path, "viewport", -1);
+                cameraSetBridge.resp.error = "";
+                if (!cameraSetBridge.submitAndWait())
+                    cameraSetBridge.resp.error = "timeout waiting for main thread";
+                if (cameraSetBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"ok"}`;
+                } else {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                    ~ jsonEsc(e.msg) ~ `"}`;
+                                    ~ jsonEsc(cameraSetBridge.resp.error) ~ `"}`;
                 }
+            } catch (Exception e) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"`
+                                ~ jsonEsc(e.msg) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiGpuFaceVbo(HttpRequest request, HttpResponse response) {
+        if (gpuSurfaceProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"gpu-surface provider not set"}`;
+            response.headers["Content-Type"] = "application/json";
+        } else {
+            gpuSurfaceBridge.resp.error = "";
+            if (!gpuSurfaceBridge.submitAndWait())
+                gpuSurfaceBridge.resp.error = "timeout waiting for main thread";
+            if (gpuSurfaceBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = gpuSurfaceBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = `{"error":"`
+                                ~ jsonEsc(gpuSurfaceBridge.resp.error) ~ `"}`;
             }
             response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/select" && request.method == "POST") {
-            if (selectionHandler is null) {
+        }
+    }
+
+    private void route_apiViewportDisplay(HttpRequest request, HttpResponse response) {
+        // Task 0559 — dump every cell's display state + resolved draw
+        // plans. Ordered BEFORE /api/viewport/probe is irrelevant (the
+        // paths differ past the prefix), but both must sit before any
+        // future bare "/api/viewport" prefix match.
+        if (viewportDisplayProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"viewport-display provider not set"}`;
+        } else {
+            vpDisplayBridge.resp.result = "";
+            vpDisplayBridge.resp.error  = "";
+            if (!vpDisplayBridge.submitAndWait())
+                vpDisplayBridge.resp.error = "timeout waiting for main thread";
+            if (vpDisplayBridge.resp.error.length == 0) {
                 response.statusCode = 200;
-                response.body = `{"status":"error","message":"selection handler not set"}`;
+                response.body = vpDisplayBridge.resp.result;
             } else {
-                try {
-                    auto j = parseJSON(request.body);
-                    if ("mode" !in j || j["mode"].type != JSONType.string)
-                        throw new Exception("missing 'mode' string field");
-                    if ("indices" !in j || j["indices"].type != JSONType.array)
-                        throw new Exception("missing 'indices' array field");
-                    selectionBridge.req.mode = j["mode"].str;
-                    int[] idx;
-                    foreach (n; j["indices"].array) {
-                        if (n.type != JSONType.integer && n.type != JSONType.uinteger)
-                            throw new Exception("indices must be integers");
-                        idx ~= cast(int)n.integer;
-                    }
-                    selectionBridge.req.indices = idx;
-                    selectionBridge.resp.error  = "";
-                    if (!selectionBridge.submitAndWait())
-                        selectionBridge.resp.error = "timeout waiting for main thread";
-                    if (selectionBridge.resp.error.length == 0) {
-                        response.statusCode = 200;
-                        response.body = `{"status":"ok"}`;
-                    } else {
-                        response.statusCode = 200;
-                        response.body = `{"status":"error","message":"`
-                                        ~ jsonEsc(selectionBridge.resp.error) ~ `"}`;
-                    }
-                } catch (Exception e) {
+                response.statusCode = 500;
+                response.body = `{"error":"`
+                                ~ jsonEsc(vpDisplayBridge.resp.error) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiImages(HttpRequest request, HttpResponse response) {
+        // Task 0612 Stage 1 — the image-clip rows and the pixel cache's
+        // residency counters, gathered in one main-thread pass.
+        if (imagesDataProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"images data provider not set"}`;
+        } else {
+            imagesBridge.resp.result = "";
+            imagesBridge.resp.error  = "";
+            if (!imagesBridge.submitAndWait())
+                imagesBridge.resp.error = "timeout waiting for main thread";
+            if (imagesBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = imagesBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = `{"error":"`
+                                ~ jsonEsc(imagesBridge.resp.error) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiImageplane(HttpRequest request, HttpResponse response) {
+        // Task 0612 Stage 4 — one plane's resolved placement in one cell.
+        // (No prefix collision with `/api/images` above: the two paths
+        // differ at the tenth character, `p` vs `s`.)
+        if (imagePlaneProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"image-plane provider not set"}`;
+        } else {
+            planeBridge.req.index  = parseQueryInt(request.path, "index", -1);
+            planeBridge.req.cell   = parseQueryInt(request.path, "cell",  -1);
+            planeBridge.resp.result = "";
+            planeBridge.resp.error  = "";
+            if (!planeBridge.submitAndWait())
+                planeBridge.resp.error = "timeout waiting for main thread";
+            if (planeBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = planeBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = `{"error":"`
+                                ~ jsonEsc(planeBridge.resp.error) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiViewportProbe(HttpRequest request, HttpResponse response) {
+        // Task 0559 — FBO pixel readback. `points` is "x,y;x,y;..." in
+        // TOP-LEFT-origin FBO pixels; `x`/`y` is sugar for a single
+        // point. `hash=1` additionally digests the WHOLE colour buffer,
+        // which is what makes "these two builds draw identical pixels" a
+        // checkable claim rather than an assertion.
+        if (viewportProbeProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"viewport-probe provider not set"}`;
+        } else {
+            vpProbeBridge.req.cell   = parseQueryInt(request.path, "cell", -1);
+            string _pts = parseQueryString(request.path, "points", "");
+            if (_pts.length == 0) {
+                immutable int _px = parseQueryInt(request.path, "x", -1);
+                immutable int _py = parseQueryInt(request.path, "y", -1);
+                if (_px >= 0 && _py >= 0) {
+                    import std.conv : to;
+                    _pts = _px.to!string ~ "," ~ _py.to!string;
+                }
+            }
+            vpProbeBridge.req.points   = _pts;
+            vpProbeBridge.req.wantHash = parseQueryInt(request.path, "hash", 0) != 0;
+            vpProbeBridge.resp.result  = "";
+            vpProbeBridge.resp.error   = "";
+            if (!vpProbeBridge.submitAndWait())
+                vpProbeBridge.resp.error = "timeout waiting for main thread";
+            if (vpProbeBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = vpProbeBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = `{"error":"`
+                                ~ jsonEsc(vpProbeBridge.resp.error) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiPick(HttpRequest request, HttpResponse response) {
+        if (pickProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"pick provider not set"}`;
+            response.headers["Content-Type"] = "application/json";
+        } else {
+            pickBridge.req.x      = parseQueryInt(request.path, "x", 0);
+            pickBridge.req.y      = parseQueryInt(request.path, "y", 0);
+            pickBridge.req.engine = parseQueryString(request.path, "engine", "bvh");
+            pickBridge.resp.result = "";
+            pickBridge.resp.error  = "";
+            if (!pickBridge.submitAndWait())
+                pickBridge.resp.error = "timeout waiting for main thread";
+            if (pickBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = pickBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = `{"error":"` ~ jsonEsc(pickBridge.resp.error) ~ `"}`;
+            }
+            response.headers["Content-Type"] = "application/json";
+        }
+    }
+
+    private void route_apiSurfaceRaycast(HttpRequest request, HttpResponse response) {
+        if (surfaceRaycastProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"surface-raycast provider not set"}`;
+            response.headers["Content-Type"] = "application/json";
+        } else {
+            surfaceRaycastBridge.req.x = parseQueryInt(request.path, "x", 0);
+            surfaceRaycastBridge.req.y = parseQueryInt(request.path, "y", 0);
+            surfaceRaycastBridge.req.thresholdPx =
+                parseQueryFloat(request.path, "thresholdPx", -1.0f);
+            surfaceRaycastBridge.resp.result = "";
+            surfaceRaycastBridge.resp.error  = "";
+            if (!surfaceRaycastBridge.submitAndWait())
+                surfaceRaycastBridge.resp.error = "timeout waiting for main thread";
+            if (surfaceRaycastBridge.resp.error.length == 0) {
+                response.statusCode = 200;
+                response.body = surfaceRaycastBridge.resp.result;
+            } else {
+                response.statusCode = 500;
+                response.body = `{"error":"` ~ jsonEsc(surfaceRaycastBridge.resp.error) ~ `"}`;
+            }
+            response.headers["Content-Type"] = "application/json";
+        }
+    }
+
+    private void route_apiCameraGet(HttpRequest request, HttpResponse response) {
+        if (cameraDataProvider !is null) {
+            try {
+                int _vpIdx = parseQueryInt(request.path, "viewport", -1);
+                response.statusCode = 200;
+                response.body = cameraDataProvider(_vpIdx);
+                response.headers["Content-Type"] = "application/json";
+            } catch (Exception e) {
+                response.statusCode = 500;
+                response.body = "{\"error\": \"Failed to retrieve camera data\", \"message\": \"" ~
+                               jsonEsc(e.msg) ~ "\"}";
+                response.headers["Content-Type"] = "application/json";
+            }
+        } else {
+            response.statusCode = 500;
+            response.body = "{\"error\": \"Camera data provider not set\"}";
+            response.headers["Content-Type"] = "application/json";
+        }
+    }
+
+    private void route_apiRecordedEvents(HttpRequest request, HttpResponse response) {
+        if (recordedEventsProvider !is null) {
+            string data = recordedEventsProvider();
+            if (data is null) {
+                response.statusCode = 404;
+                response.body = `{"error":"no recording available — press F1 to start, F2 to stop"}`;
+            } else {
+                response.statusCode = 200;
+                response.body = data;
+                response.headers["Content-Type"] = "text/plain";
+            }
+        } else {
+            response.statusCode = 500;
+            response.body = `{"error":"recorded events provider not set"}`;
+            response.headers["Content-Type"] = "application/json";
+        }
+    }
+
+    private void route_apiReset(HttpRequest request, HttpResponse response) {
+        if (resetHandler !is null) {
+            resetBridge.req.type  = parseQueryString(request.path, "type", "");
+            string emptyParam = parseQueryString(request.path, "empty", "");
+            resetBridge.req.empty = (emptyParam == "true" || emptyParam == "1");
+            // Dense perf meshes take an int: grid → ?n=<int>,
+            // subdivcube → ?levels=<int>. -1 means "use the factory
+            // default" (n=316 / levels=7). Accept either key; n wins if
+            // both are somehow present.
+            int nParam = parseQueryInt(request.path, "n", -1);
+            int lvlParam = parseQueryInt(request.path, "levels", -1);
+            resetBridge.req.param = (nParam >= 0) ? nParam : lvlParam;
+            resetBridge.submitAndWait();  // timeout is silent-ok — no error body
+            response.statusCode = 200;
+            response.body = `{"status":"ok"}`;
+        } else {
+            response.statusCode = 500;
+            response.body = `{"error":"Reset handler not set"}`;
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiPlayEventsStatus(HttpRequest request, HttpResponse response) {
+        import std.format : format;
+        bool done = !eventPlayer.active;
+        response.statusCode = 200;
+        response.body = format(`{"finished":%s,"total":%d,"remaining":%d}`,
+            done ? "true" : "false",
+            eventPlayer.entries.length,
+            done ? 0 : eventPlayer.entries.length - eventPlayer.idx);
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiTransform(HttpRequest request, HttpResponse response) {
+        if (transformHandler is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"transform handler not set"}`;
+        } else {
+            try {
+                auto j = parseJSON(request.body);
+                if ("kind" !in j || j["kind"].type != JSONType.string)
+                    throw new Exception("missing 'kind' string field");
+                transformBridge.req.kind   = j["kind"].str;
+                transformBridge.req.params = j;  // pass full request body for handler
+                transformBridge.resp.error = "";
+                if (!transformBridge.submitAndWait())
+                    transformBridge.resp.error = "timeout waiting for main thread";
+                if (transformBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"ok"}`;
+                } else {
                     response.statusCode = 200;
                     response.body = `{"status":"error","message":"`
-                                    ~ jsonEsc(e.msg) ~ `"}`;
+                                    ~ jsonEsc(transformBridge.resp.error) ~ `"}`;
+                }
+            } catch (Exception e) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"`
+                                ~ jsonEsc(e.msg) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiLoadMesh(HttpRequest request, HttpResponse response) {
+        // Test-only raw-mesh injection. Validate the JSON shape on the
+        // HTTP thread (so we can report counts), then dispatch to the
+        // main thread via the same epoch bridge as /api/transform. The
+        // main-thread handler re-validates index range / degree before
+        // touching the live mesh and throws on bad input.
+        if (loadMeshHandler is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"load-mesh handler not set"}`;
+        } else {
+            try {
+                auto j = parseJSON(request.body);
+                if (j.type != JSONType.object)
+                    throw new Exception("body must be a JSON object");
+                if ("vertices" !in j || j["vertices"].type != JSONType.array)
+                    throw new Exception("missing 'vertices' array field");
+                if ("faces" !in j || j["faces"].type != JSONType.array)
+                    throw new Exception("missing 'faces' array field");
+                long vCount = cast(long)j["vertices"].array.length;
+                long fCount = cast(long)j["faces"].array.length;
+
+                loadMeshBridge.req.params = j;
+                loadMeshBridge.resp.error = "";
+                if (!loadMeshBridge.submitAndWait())
+                    loadMeshBridge.resp.error = "timeout waiting for main thread";
+                if (loadMeshBridge.resp.error.length == 0) {
+                    import std.format : format;
+                    response.statusCode = 200;
+                    response.body = format(
+                        `{"status":"ok","vertexCount":%d,"faceCount":%d}`,
+                        vCount, fCount);
+                } else {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ jsonEsc(loadMeshBridge.resp.error) ~ `"}`;
+                }
+            } catch (Exception e) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"`
+                                ~ jsonEsc(e.msg) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiTestLayer(HttpRequest request, HttpResponse response) {
+        // Test-only layer injection (task 0615 Stage 6/7) — see the
+        // `injectLayerHandler` field doc comment above for the full
+        // rationale. Blocker (review round 2): unlike every sibling
+        // test-only endpoint (`/api/changes`, `/api/play-events` above),
+        // this route had NO test-mode gate — a release binary always
+        // constructs the HttpServer and always wires this handler
+        // (http_providers.d), and even `--http-port` without `--test`
+        // turns the listener on without turning test mode on (app.d).
+        // Gated here exactly like its siblings: 403 outside `--test`.
+        if (!testMode) {
+            response.statusCode = 403;
+            response.body = `{"error":"test/layer is only available in --test mode"}`;
+            response.headers["Content-Type"] = "application/json";
+        } else if (injectLayerHandler is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"inject-layer handler not set"}`;
+        } else {
+            try {
+                auto j = parseJSON(request.body);
+                if (j.type != JSONType.object)
+                    throw new Exception("body must be a JSON object");
+                injectLayerBridge.req.params = j;
+                injectLayerBridge.resp.error = "";
+                if (!injectLayerBridge.submitAndWait())
+                    injectLayerBridge.resp.error = "timeout waiting for main thread";
+                if (injectLayerBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"ok"}`;
+                } else {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ jsonEsc(injectLayerBridge.resp.error) ~ `"}`;
+                }
+            } catch (Exception e) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"`
+                                ~ jsonEsc(e.msg) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiSelect(HttpRequest request, HttpResponse response) {
+        if (selectionHandler is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"selection handler not set"}`;
+        } else {
+            try {
+                auto j = parseJSON(request.body);
+                if ("mode" !in j || j["mode"].type != JSONType.string)
+                    throw new Exception("missing 'mode' string field");
+                if ("indices" !in j || j["indices"].type != JSONType.array)
+                    throw new Exception("missing 'indices' array field");
+                selectionBridge.req.mode = j["mode"].str;
+                int[] idx;
+                foreach (n; j["indices"].array) {
+                    if (n.type != JSONType.integer && n.type != JSONType.uinteger)
+                        throw new Exception("indices must be integers");
+                    idx ~= cast(int)n.integer;
+                }
+                selectionBridge.req.indices = idx;
+                selectionBridge.resp.error  = "";
+                if (!selectionBridge.submitAndWait())
+                    selectionBridge.resp.error = "timeout waiting for main thread";
+                if (selectionBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"ok"}`;
+                } else {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ jsonEsc(selectionBridge.resp.error) ~ `"}`;
+                }
+            } catch (Exception e) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"`
+                                ~ jsonEsc(e.msg) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiCommand(HttpRequest request, HttpResponse response) {
+        if (commandHandler is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"command handler not set"}`;
+        } else {
+            try {
+                string body_ = request.body;
+                // Detect JSON vs argstring by first non-whitespace character.
+                size_t bi = 0;
+                while (bi < body_.length &&
+                       (body_[bi] == ' '  || body_[bi] == '\t' ||
+                        body_[bi] == '\n'  || body_[bi] == '\r')) bi++;
+                if (bi >= body_.length)
+                    throw new Exception("empty body");
+                bool isJson = (body_[bi] == '{');
+
+                if (isJson) {
+                    auto j = parseJSON(body_);
+                    if ("id" !in j || j["id"].type != JSONType.string)
+                        throw new Exception("missing 'id' string field");
+                    commandBridge.req.id     = j["id"].str;
+                    // When the body has a nested "params" object, use it.
+                    // Otherwise treat the whole body as the param dict (flat
+                    // params style, matching the argstring convention).  The
+                    // "id" field is just ignored by injectParamsInto.
+                    commandBridge.req.params = ("params" in j) ? j["params"].toString : body_;
+                } else {
+                    auto parsed = parseArgstring(body_);
+                    if (parsed.isEmpty)
+                        throw new Exception("empty argstring");
+                    commandBridge.req.id     = parsed.commandId;
+                    commandBridge.req.params = parsed.params.toString();
+                }
+
+                commandBridge.resp.error   = "";
+                commandBridge.req.interactive = false;   // plain command = discrete
+                if (!commandBridge.submitAndWait())
+                    commandBridge.resp.error = "timeout waiting for main thread";
+                if (commandBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    // Forms-engine `?` query: when the handler stashed a
+                    // read-back value, surface it under "value"; otherwise
+                    // the plain ok body (byte-compatible with every
+                    // existing write test, which never sets the slot).
+                    if (commandBridge.resp.result.length > 0)
+                        response.body = `{"status":"ok","value":`
+                                        ~ commandBridge.resp.result ~ `}`;
+                    else
+                        response.body = `{"status":"ok"}`;
+                } else {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ jsonEsc(commandBridge.resp.error) ~ `"}`;
+                }
+            } catch (Exception e) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"`
+                                ~ jsonEsc(e.msg) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiScript(HttpRequest request, HttpResponse response) {
+        // Multi-line argstring script: execute each non-empty/non-comment
+        // line through the same main-thread bridge as /api/command.
+        // ?continue=true keeps running after errors; default stops on first.
+        bool continueOnError =
+            (parseQueryString(request.path, "continue", "") == "true");
+        // Test-only: ?interactive=true marks every line a continuous-scrub
+        // dispatch (shared tweak generation → REPLACE-coalesce), simulating a
+        // held falloff-handle / slider drag that /api/command's per-command
+        // generation bump otherwise splits into discrete steps.
+        immutable bool interactiveScript =
+            (parseQueryString(request.path, "interactive", "") == "true");
+
+        if (commandHandler is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"command handler not set"}`;
+        } else {
+            import std.array  : Appender;
+            import std.format : format;
+
+            struct LineResult {
+                int    lineNo;
+                string command;
+                bool   ok;
+                string message; // non-empty on error
+            }
+
+            LineResult[] results;
+            bool anyError = false;
+
+            auto lines_ = request.body.split('\n');
+            int lineNo  = 0;
+
+            outer: foreach (rawLine; lines_) {
+                ++lineNo;
+                try {
+                    auto parsed = parseArgstring(rawLine);
+                    if (parsed.isEmpty) continue; // blank / comment
+
+                    commandBridge.req.id          = parsed.commandId;
+                    commandBridge.req.params      = parsed.params.toString();
+                    commandBridge.resp.error      = "";
+                    commandBridge.req.interactive = interactiveScript;
+
+                    if (!commandBridge.submitAndWait())
+                        commandBridge.resp.error = "timeout waiting for main thread";
+
+                    if (commandBridge.resp.error.length == 0) {
+                        results ~= LineResult(lineNo, parsed.commandId, true, "");
+                    } else {
+                        anyError = true;
+                        results ~= LineResult(lineNo, parsed.commandId, false,
+                                              commandBridge.resp.error);
+                        if (!continueOnError) break outer;
+                    }
+                } catch (Exception e) {
+                    anyError = true;
+                    results ~= LineResult(lineNo, "", false, e.msg);
+                    if (!continueOnError) break outer;
                 }
             }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/command" && request.method == "POST") {
-            if (commandHandler is null) {
+
+            // Build JSON response
+            Appender!string sb;
+            sb.put(`{"status":"`);
+            sb.put(anyError ? "error" : "ok");
+            sb.put(`","results":[`);
+            foreach (i, r; results) {
+                if (i > 0) sb.put(',');
+                sb.put(format(`{"line":%d,"command":"%s","status":"%s"`,
+                              r.lineNo,
+                              jsonEsc(r.command),
+                              r.ok ? "ok" : "error"));
+                if (!r.ok && r.message.length > 0) {
+                    sb.put(`,"message":"`);
+                    sb.put(jsonEsc(r.message));
+                    sb.put('"');
+                }
+                sb.put('}');
+            }
+            sb.put("]}");
+
+            response.statusCode = 200;
+            response.body = sb.data;
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiUndoRedo(HttpRequest request, HttpResponse response) {
+        // Same main-thread sync pattern as /api/command, via the undo
+        // bridge. tickAll() drains it on the main thread, invoking the
+        // handler and writing resp.result.
+        bool isRedo = (request.path == "/api/redo");
+        auto handler = isRedo ? redoHandler : undoHandler;
+        if (handler is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"`
+                            ~ (isRedo ? "redo" : "undo")
+                            ~ ` handler not set"}`;
+        } else {
+            undoBridge.req.isRedo = isRedo;
+            undoBridge.resp.result = false;
+            undoBridge.submitAndWait();  // timeout is noop-false — no error body
+            response.statusCode = 200;
+            response.body = undoBridge.resp.result
+                ? `{"status":"ok"}`
+                : `{"status":"noop","message":"stack empty or revert failed"}`;
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiRefire(HttpRequest request, HttpResponse response) {
+        if (refireHandler is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"refire handler not set"}`;
+        } else {
+            try {
+                auto j = parseJSON(request.body);
+                if ("action" !in j || j["action"].type != JSONType.string)
+                    throw new Exception("missing 'action' string field");
+                string action = j["action"].str;
+                if (action != "begin" && action != "end")
+                    throw new Exception("'action' must be 'begin' or 'end'");
+                refireBridge.req.action = action;
+                refireBridge.resp.error = "";
+                if (!refireBridge.submitAndWait())
+                    refireBridge.resp.error = "timeout waiting for main thread";
+                if (refireBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"ok"}`;
+                } else {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ jsonEsc(refireBridge.resp.error) ~ `"}`;
+                }
+            } catch (Exception e) {
                 response.statusCode = 200;
-                response.body = `{"status":"error","message":"command handler not set"}`;
-            } else {
-                try {
-                    string body_ = request.body;
-                    // Detect JSON vs argstring by first non-whitespace character.
-                    size_t bi = 0;
-                    while (bi < body_.length &&
-                           (body_[bi] == ' '  || body_[bi] == '\t' ||
-                            body_[bi] == '\n'  || body_[bi] == '\r')) bi++;
-                    if (bi >= body_.length)
-                        throw new Exception("empty body");
-                    bool isJson = (body_[bi] == '{');
+                response.body = `{"status":"error","message":"`
+                                ~ jsonEsc(e.msg) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
 
-                    if (isJson) {
-                        auto j = parseJSON(body_);
-                        if ("id" !in j || j["id"].type != JSONType.string)
-                            throw new Exception("missing 'id' string field");
-                        commandBridge.req.id     = j["id"].str;
-                        // When the body has a nested "params" object, use it.
-                        // Otherwise treat the whole body as the param dict (flat
-                        // params style, matching the argstring convention).  The
-                        // "id" field is just ignored by injectParamsInto.
-                        commandBridge.req.params = ("params" in j) ? j["params"].toString : body_;
-                    } else {
-                        auto parsed = parseArgstring(body_);
-                        if (parsed.isEmpty)
-                            throw new Exception("empty argstring");
-                        commandBridge.req.id     = parsed.commandId;
-                        commandBridge.req.params = parsed.params.toString();
-                    }
+    private void route_apiHistoryBlock(HttpRequest request, HttpResponse response) {
+        // Command-block grouping: {"action":"begin","label":"..."} opens a
+        // block, {"action":"end"} closes it. N undoable commands recorded
+        // between begin and end collapse into ONE undo entry. Same
+        // main-thread bridge as /api/refire.
+        if (blockHandler is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"block handler not set"}`;
+        } else {
+            try {
+                auto j = parseJSON(request.body);
+                if ("action" !in j || j["action"].type != JSONType.string)
+                    throw new Exception("missing 'action' string field");
+                string action = j["action"].str;
+                if (action != "begin" && action != "end")
+                    throw new Exception("'action' must be 'begin' or 'end'");
+                string label = "";
+                if ("label" in j && j["label"].type == JSONType.string)
+                    label = j["label"].str;
+                blockBridge.req.action = action;
+                blockBridge.req.label  = label;
+                blockBridge.resp.error = "";
+                if (!blockBridge.submitAndWait())
+                    blockBridge.resp.error = "timeout waiting for main thread";
+                if (blockBridge.resp.error.length == 0) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"ok"}`;
+                } else {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"`
+                                    ~ jsonEsc(blockBridge.resp.error) ~ `"}`;
+                }
+            } catch (Exception e) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"`
+                                ~ jsonEsc(e.msg) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
 
-                    commandBridge.resp.error   = "";
-                    commandBridge.req.interactive = false;   // plain command = discrete
+    private void route_apiUndoStatus(HttpRequest request, HttpResponse response) {
+        // Read-only undo-service status: {state, lockout, canUndo, canRedo}.
+        // Snapshot at request time on the HTTP thread (same safety contract
+        // as /api/history GET — read-only access to the history service).
+        if (undoStatusProvider is null) {
+            response.statusCode = 200;
+            response.body = `{"state":"invalid","lockout":false,`
+                          ~ `"canUndo":false,"canRedo":false}`;
+        } else {
+            response.statusCode = 200;
+            response.body = undoStatusProvider();
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiHistory(HttpRequest request, HttpResponse response) {
+        if (historyProvider is null) {
+            response.statusCode = 200;
+            response.body = `{"undo":[],"redo":[]}`;
+        } else {
+            response.statusCode = 200;
+            response.body = historyProvider();
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiTrace(HttpRequest request, HttpResponse response) {
+        // Non-destructive per-step capture (task: step-trace). Returns
+        // every discrete command recorded since the last reset — see
+        // StepTrace / app.d's captureStepTrace for the entry shape.
+        response.statusCode = 200;
+        response.body = (traceProvider !is null) ? traceProvider() : "[]";
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiTraceReset(HttpRequest request, HttpResponse response) {
+        if (traceResetHandler !is null) traceResetHandler();
+        response.statusCode = 200;
+        response.body = `{"status":"ok"}`;
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiHistoryJump(HttpRequest request, HttpResponse response) {
+        // Multi-step jump (Phase 2). Body: {"target":N}. N is the
+        // DESIRED length of undoStack after the walk — 0 to
+        // undo.length+redo.length. Drives CommandHistory.jumpTo
+        // via the same main-thread sync bridge as /api/undo.
+        if (jumpHandler is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"jump handler not set"}`;
+        } else {
+            try {
+                auto j = parseJSON(request.body);
+                if ("target" !in j ||
+                    (j["target"].type != JSONType.integer &&
+                     j["target"].type != JSONType.uinteger))
+                    throw new Exception("missing 'target' integer field");
+                long t = (j["target"].type == JSONType.integer)
+                         ? j["target"].integer
+                         : cast(long)j["target"].uinteger;
+                if (t < 0) throw new Exception("'target' must be non-negative");
+                jumpBridge.req.target = cast(size_t)t;
+                jumpBridge.resp.result = false;
+                jumpBridge.submitAndWait();  // timeout is noop-false — no error body
+                response.statusCode = 200;
+                response.body = jumpBridge.resp.result
+                    ? `{"status":"ok"}`
+                    : `{"status":"noop","message":"jump aborted or out of range"}`;
+            } catch (Exception e) {
+                response.statusCode = 200;
+                response.body = `{"status":"error","message":"`
+                              ~ jsonEsc(e.msg) ~ `"}`;
+            }
+        }
+        response.headers["Content-Type"] = "application/json";
+    }
+
+    private void route_apiHistoryReplay(HttpRequest request, HttpResponse response) {
+        // Re-execute the argstring of undoStack[index] against the current
+        // mesh state. Reuses the same main-thread bridge as /api/command —
+        // the result is a brand-new history entry; the original is untouched.
+        //
+        // Caveats (by design, not bugs):
+        //  - Replay executes against the CURRENT mesh/selection state, not
+        //    the state at the time the original command ran. If the original
+        //    bevel targeted edge 5 but the selection has since changed, the
+        //    replay hits the current selection.
+        //  - Selection state is not stored per entry; if the replayed command
+        //    depends on selection (e.g. vert.merge), the caller must re-select
+        //    before calling this endpoint.
+        if (replayProvider is null) {
+            response.statusCode = 200;
+            response.body = `{"status":"error","message":"replay provider not set"}`;
+            response.headers["Content-Type"] = "application/json";
+        } else {
+            try {
+                auto j = parseJSON(request.body);
+                if ("index" !in j ||
+                    (j["index"].type != JSONType.integer &&
+                     j["index"].type != JSONType.uinteger))
+                    throw new Exception("missing 'index' integer field");
+
+                long idx = (j["index"].type == JSONType.integer)
+                           ? j["index"].integer
+                           : cast(long)j["index"].uinteger;
+                if (idx < 0) throw new Exception("'index' must be non-negative");
+
+                string line = replayProvider(cast(size_t)idx);
+                if (line.length == 0) {
+                    response.statusCode = 200;
+                    response.body = `{"status":"error","message":"no entry at given index"}`;
+                } else {
+                    // Parse the line and dispatch through the existing
+                    // main-thread bridge — identical path to argstring /api/command.
+                    auto parsed = parseArgstring(line);
+                    if (parsed.isEmpty)
+                        throw new Exception("entry parsed as empty");
+                    // NOTE: req.interactive is deliberately left untouched
+                    // here — the shared command bridge's req is a
+                    // PERSISTENT field, and history-replay inherits
+                    // whatever the previous dispatch left it at (exactly
+                    // as before this refactor).
+                    commandBridge.req.id     = parsed.commandId;
+                    commandBridge.req.params = parsed.params.toString();
+                    commandBridge.resp.error = "";
                     if (!commandBridge.submitAndWait())
                         commandBridge.resp.error = "timeout waiting for main thread";
                     if (commandBridge.resp.error.length == 0) {
                         response.statusCode = 200;
-                        // Forms-engine `?` query: when the handler stashed a
-                        // read-back value, surface it under "value"; otherwise
-                        // the plain ok body (byte-compatible with every
-                        // existing write test, which never sets the slot).
-                        if (commandBridge.resp.result.length > 0)
-                            response.body = `{"status":"ok","value":`
-                                            ~ commandBridge.resp.result ~ `}`;
-                        else
-                            response.body = `{"status":"ok"}`;
+                        response.body = `{"status":"ok","line":"`
+                                      ~ jsonEsc(line)
+                                      ~ `"}`;
                     } else {
                         response.statusCode = 200;
                         response.body = `{"status":"error","message":"`
-                                        ~ jsonEsc(commandBridge.resp.error) ~ `"}`;
-                    }
-                } catch (Exception e) {
-                    response.statusCode = 200;
-                    response.body = `{"status":"error","message":"`
-                                    ~ jsonEsc(e.msg) ~ `"}`;
-                }
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path.startsWith("/api/script") && request.method == "POST") {
-            // Multi-line argstring script: execute each non-empty/non-comment
-            // line through the same main-thread bridge as /api/command.
-            // ?continue=true keeps running after errors; default stops on first.
-            bool continueOnError =
-                (parseQueryString(request.path, "continue", "") == "true");
-            // Test-only: ?interactive=true marks every line a continuous-scrub
-            // dispatch (shared tweak generation → REPLACE-coalesce), simulating a
-            // held falloff-handle / slider drag that /api/command's per-command
-            // generation bump otherwise splits into discrete steps.
-            immutable bool interactiveScript =
-                (parseQueryString(request.path, "interactive", "") == "true");
-
-            if (commandHandler is null) {
-                response.statusCode = 200;
-                response.body = `{"status":"error","message":"command handler not set"}`;
-            } else {
-                import std.array  : Appender;
-                import std.format : format;
-
-                struct LineResult {
-                    int    lineNo;
-                    string command;
-                    bool   ok;
-                    string message; // non-empty on error
-                }
-
-                LineResult[] results;
-                bool anyError = false;
-
-                auto lines_ = request.body.split('\n');
-                int lineNo  = 0;
-
-                outer: foreach (rawLine; lines_) {
-                    ++lineNo;
-                    try {
-                        auto parsed = parseArgstring(rawLine);
-                        if (parsed.isEmpty) continue; // blank / comment
-
-                        commandBridge.req.id          = parsed.commandId;
-                        commandBridge.req.params      = parsed.params.toString();
-                        commandBridge.resp.error      = "";
-                        commandBridge.req.interactive = interactiveScript;
-
-                        if (!commandBridge.submitAndWait())
-                            commandBridge.resp.error = "timeout waiting for main thread";
-
-                        if (commandBridge.resp.error.length == 0) {
-                            results ~= LineResult(lineNo, parsed.commandId, true, "");
-                        } else {
-                            anyError = true;
-                            results ~= LineResult(lineNo, parsed.commandId, false,
-                                                  commandBridge.resp.error);
-                            if (!continueOnError) break outer;
-                        }
-                    } catch (Exception e) {
-                        anyError = true;
-                        results ~= LineResult(lineNo, "", false, e.msg);
-                        if (!continueOnError) break outer;
+                                      ~ jsonEsc(commandBridge.resp.error)
+                                      ~ `"}`;
                     }
                 }
-
-                // Build JSON response
-                Appender!string sb;
-                sb.put(`{"status":"`);
-                sb.put(anyError ? "error" : "ok");
-                sb.put(`","results":[`);
-                foreach (i, r; results) {
-                    if (i > 0) sb.put(',');
-                    sb.put(format(`{"line":%d,"command":"%s","status":"%s"`,
-                                  r.lineNo,
-                                  jsonEsc(r.command),
-                                  r.ok ? "ok" : "error"));
-                    if (!r.ok && r.message.length > 0) {
-                        sb.put(`,"message":"`);
-                        sb.put(jsonEsc(r.message));
-                        sb.put('"');
-                    }
-                    sb.put('}');
-                }
-                sb.put("]}");
-
-                response.statusCode = 200;
-                response.body = sb.data;
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if ((request.path == "/api/undo" || request.path == "/api/redo")
-                   && request.method == "POST") {
-            // Same main-thread sync pattern as /api/command, via the undo
-            // bridge. tickAll() drains it on the main thread, invoking the
-            // handler and writing resp.result.
-            bool isRedo = (request.path == "/api/redo");
-            auto handler = isRedo ? redoHandler : undoHandler;
-            if (handler is null) {
+            } catch (Exception e) {
                 response.statusCode = 200;
                 response.body = `{"status":"error","message":"`
-                                ~ (isRedo ? "redo" : "undo")
-                                ~ ` handler not set"}`;
-            } else {
-                undoBridge.req.isRedo = isRedo;
-                undoBridge.resp.result = false;
-                undoBridge.submitAndWait();  // timeout is noop-false — no error body
-                response.statusCode = 200;
-                response.body = undoBridge.resp.result
-                    ? `{"status":"ok"}`
-                    : `{"status":"noop","message":"stack empty or revert failed"}`;
+                              ~ jsonEsc(e.msg) ~ `"}`;
             }
             response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/refire" && request.method == "POST") {
-            if (refireHandler is null) {
-                response.statusCode = 200;
-                response.body = `{"status":"error","message":"refire handler not set"}`;
-            } else {
-                try {
-                    auto j = parseJSON(request.body);
-                    if ("action" !in j || j["action"].type != JSONType.string)
-                        throw new Exception("missing 'action' string field");
-                    string action = j["action"].str;
-                    if (action != "begin" && action != "end")
-                        throw new Exception("'action' must be 'begin' or 'end'");
-                    refireBridge.req.action = action;
-                    refireBridge.resp.error = "";
-                    if (!refireBridge.submitAndWait())
-                        refireBridge.resp.error = "timeout waiting for main thread";
-                    if (refireBridge.resp.error.length == 0) {
-                        response.statusCode = 200;
-                        response.body = `{"status":"ok"}`;
-                    } else {
-                        response.statusCode = 200;
-                        response.body = `{"status":"error","message":"`
-                                        ~ jsonEsc(refireBridge.resp.error) ~ `"}`;
-                    }
-                } catch (Exception e) {
-                    response.statusCode = 200;
-                    response.body = `{"status":"error","message":"`
-                                    ~ jsonEsc(e.msg) ~ `"}`;
-                }
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/history/block" && request.method == "POST") {
-            // Command-block grouping: {"action":"begin","label":"..."} opens a
-            // block, {"action":"end"} closes it. N undoable commands recorded
-            // between begin and end collapse into ONE undo entry. Same
-            // main-thread bridge as /api/refire.
-            if (blockHandler is null) {
-                response.statusCode = 200;
-                response.body = `{"status":"error","message":"block handler not set"}`;
-            } else {
-                try {
-                    auto j = parseJSON(request.body);
-                    if ("action" !in j || j["action"].type != JSONType.string)
-                        throw new Exception("missing 'action' string field");
-                    string action = j["action"].str;
-                    if (action != "begin" && action != "end")
-                        throw new Exception("'action' must be 'begin' or 'end'");
-                    string label = "";
-                    if ("label" in j && j["label"].type == JSONType.string)
-                        label = j["label"].str;
-                    blockBridge.req.action = action;
-                    blockBridge.req.label  = label;
-                    blockBridge.resp.error = "";
-                    if (!blockBridge.submitAndWait())
-                        blockBridge.resp.error = "timeout waiting for main thread";
-                    if (blockBridge.resp.error.length == 0) {
-                        response.statusCode = 200;
-                        response.body = `{"status":"ok"}`;
-                    } else {
-                        response.statusCode = 200;
-                        response.body = `{"status":"error","message":"`
-                                        ~ jsonEsc(blockBridge.resp.error) ~ `"}`;
-                    }
-                } catch (Exception e) {
-                    response.statusCode = 200;
-                    response.body = `{"status":"error","message":"`
-                                    ~ jsonEsc(e.msg) ~ `"}`;
-                }
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/undo/status" && request.method == "GET") {
-            // Read-only undo-service status: {state, lockout, canUndo, canRedo}.
-            // Snapshot at request time on the HTTP thread (same safety contract
-            // as /api/history GET — read-only access to the history service).
-            if (undoStatusProvider is null) {
-                response.statusCode = 200;
-                response.body = `{"state":"invalid","lockout":false,`
-                              ~ `"canUndo":false,"canRedo":false}`;
-            } else {
-                response.statusCode = 200;
-                response.body = undoStatusProvider();
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/history" && request.method == "GET") {
-            if (historyProvider is null) {
-                response.statusCode = 200;
-                response.body = `{"undo":[],"redo":[]}`;
-            } else {
-                response.statusCode = 200;
-                response.body = historyProvider();
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/trace" && request.method == "GET") {
-            // Non-destructive per-step capture (task: step-trace). Returns
-            // every discrete command recorded since the last reset — see
-            // StepTrace / app.d's captureStepTrace for the entry shape.
-            response.statusCode = 200;
-            response.body = (traceProvider !is null) ? traceProvider() : "[]";
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/trace/reset" && request.method == "POST") {
-            if (traceResetHandler !is null) traceResetHandler();
-            response.statusCode = 200;
-            response.body = `{"status":"ok"}`;
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/history/jump" && request.method == "POST") {
-            // Multi-step jump (Phase 2). Body: {"target":N}. N is the
-            // DESIRED length of undoStack after the walk — 0 to
-            // undo.length+redo.length. Drives CommandHistory.jumpTo
-            // via the same main-thread sync bridge as /api/undo.
-            if (jumpHandler is null) {
-                response.statusCode = 200;
-                response.body = `{"status":"error","message":"jump handler not set"}`;
-            } else {
-                try {
-                    auto j = parseJSON(request.body);
-                    if ("target" !in j ||
-                        (j["target"].type != JSONType.integer &&
-                         j["target"].type != JSONType.uinteger))
-                        throw new Exception("missing 'target' integer field");
-                    long t = (j["target"].type == JSONType.integer)
-                             ? j["target"].integer
-                             : cast(long)j["target"].uinteger;
-                    if (t < 0) throw new Exception("'target' must be non-negative");
-                    jumpBridge.req.target = cast(size_t)t;
-                    jumpBridge.resp.result = false;
-                    jumpBridge.submitAndWait();  // timeout is noop-false — no error body
-                    response.statusCode = 200;
-                    response.body = jumpBridge.resp.result
-                        ? `{"status":"ok"}`
-                        : `{"status":"noop","message":"jump aborted or out of range"}`;
-                } catch (Exception e) {
-                    response.statusCode = 200;
-                    response.body = `{"status":"error","message":"`
-                                  ~ jsonEsc(e.msg) ~ `"}`;
-                }
-            }
-            response.headers["Content-Type"] = "application/json";
-        } else if (request.path == "/api/history/replay" && request.method == "POST") {
-            // Re-execute the argstring of undoStack[index] against the current
-            // mesh state. Reuses the same main-thread bridge as /api/command —
-            // the result is a brand-new history entry; the original is untouched.
-            //
-            // Caveats (by design, not bugs):
-            //  - Replay executes against the CURRENT mesh/selection state, not
-            //    the state at the time the original command ran. If the original
-            //    bevel targeted edge 5 but the selection has since changed, the
-            //    replay hits the current selection.
-            //  - Selection state is not stored per entry; if the replayed command
-            //    depends on selection (e.g. vert.merge), the caller must re-select
-            //    before calling this endpoint.
-            if (replayProvider is null) {
-                response.statusCode = 200;
-                response.body = `{"status":"error","message":"replay provider not set"}`;
-                response.headers["Content-Type"] = "application/json";
-            } else {
-                try {
-                    auto j = parseJSON(request.body);
-                    if ("index" !in j ||
-                        (j["index"].type != JSONType.integer &&
-                         j["index"].type != JSONType.uinteger))
-                        throw new Exception("missing 'index' integer field");
-
-                    long idx = (j["index"].type == JSONType.integer)
-                               ? j["index"].integer
-                               : cast(long)j["index"].uinteger;
-                    if (idx < 0) throw new Exception("'index' must be non-negative");
-
-                    string line = replayProvider(cast(size_t)idx);
-                    if (line.length == 0) {
-                        response.statusCode = 200;
-                        response.body = `{"status":"error","message":"no entry at given index"}`;
-                    } else {
-                        // Parse the line and dispatch through the existing
-                        // main-thread bridge — identical path to argstring /api/command.
-                        auto parsed = parseArgstring(line);
-                        if (parsed.isEmpty)
-                            throw new Exception("entry parsed as empty");
-                        // NOTE: req.interactive is deliberately left untouched
-                        // here — the shared command bridge's req is a
-                        // PERSISTENT field, and history-replay inherits
-                        // whatever the previous dispatch left it at (exactly
-                        // as before this refactor).
-                        commandBridge.req.id     = parsed.commandId;
-                        commandBridge.req.params = parsed.params.toString();
-                        commandBridge.resp.error = "";
-                        if (!commandBridge.submitAndWait())
-                            commandBridge.resp.error = "timeout waiting for main thread";
-                        if (commandBridge.resp.error.length == 0) {
-                            response.statusCode = 200;
-                            response.body = `{"status":"ok","line":"`
-                                          ~ jsonEsc(line)
-                                          ~ `"}`;
-                        } else {
-                            response.statusCode = 200;
-                            response.body = `{"status":"error","message":"`
-                                          ~ jsonEsc(commandBridge.resp.error)
-                                          ~ `"}`;
-                        }
-                    }
-                } catch (Exception e) {
-                    response.statusCode = 200;
-                    response.body = `{"status":"error","message":"`
-                                  ~ jsonEsc(e.msg) ~ `"}`;
-                }
-                response.headers["Content-Type"] = "application/json";
-            }
-        } else if (request.path == "/api/play-events" && request.method == "POST") {
-            if (!testMode) {
-                response.statusCode = 403;
-                response.body = `{"error":"play-events is only available in --test mode"}`;
-                response.headers["Content-Type"] = "application/json";
-            } else if (eventPlayer.load(request.body) && eventPlayer.entries.length > 0) {
-                response.statusCode = 200;
-                response.body = `{"status": "success", "message": "Events loaded successfully"}`;
-                response.headers["Content-Type"] = "application/json";
-            } else {
-                response.statusCode = 400;
-                response.body = `{"status": "error", "message": "Failed to parse events"}`;
-                response.headers["Content-Type"] = "application/json";
-            }
-        } else {
-            response.statusCode = 404;
-            response.body = "<html><body><h1>404 Not Found</h1><p>The requested resource was not found.</p></body></html>";
-            response.headers["Content-Type"] = "text/html";
         }
-
-        return response;
     }
+
+    private void route_apiPlayEvents(HttpRequest request, HttpResponse response) {
+        if (!testMode) {
+            response.statusCode = 403;
+            response.body = `{"error":"play-events is only available in --test mode"}`;
+            response.headers["Content-Type"] = "application/json";
+        } else if (eventPlayer.load(request.body) && eventPlayer.entries.length > 0) {
+            response.statusCode = 200;
+            response.body = `{"status": "success", "message": "Events loaded successfully"}`;
+            response.headers["Content-Type"] = "application/json";
+        } else {
+            response.statusCode = 400;
+            response.body = `{"status": "error", "message": "Failed to parse events"}`;
+            response.headers["Content-Type"] = "application/json";
+        }
+    }
+
 
     /**
      * Format an HTTP response
@@ -3153,6 +3275,179 @@ class HttpServer {
         return port;
     }
 }
+
+
+// ===========================================================================
+// The route table (task 0720, audit №4 D5).
+//
+// `handleRequest` used to be a 1354-line chain of 53 `else if`s, and the
+// ORDER of that chain was load-bearing without ever saying so: a
+// `startsWith` branch swallows every later path that begins with the same
+// text, and the file guarded that by hand, in three separate comments, each
+// reasoning about a neighbour it happened to remember. The table below is the
+// single registration point, and the `static assert`s under it are the part
+// that earns the change — they turn three classes of routing mistake from
+// "silently unreachable code" into "does not build":
+//
+//   1. TWO ROUTES WITH THE SAME (method, path, match). Before: the second
+//      `else if` was dead and nothing said so.
+//   2. A ROUTE SWALLOWED BY AN EARLIER PREFIX. Before: the only guard was a
+//      comment. `/api/images` sits three rows above `/api/imageplane` today
+//      and is safe purely because the tenth character differs; add
+//      `/api/images/counts` under it and the old chain would have answered
+//      it from the `/api/images` handler with no diagnostic at all.
+//   3. A HANDLER THAT NO ROUTE REACHES, or a route naming a handler that
+//      does not exist. Both are structural integrity of THIS mechanism
+//      rather than a pre-existing defect — before the split a handler body
+//      could not exist apart from its condition — but they are what keeps
+//      the table from drifting away from the methods it names.
+//
+// What the table does NOT check, said plainly so nobody reads more into it:
+// the `Answered` column is DATA, not an assertion. The compiler cannot see
+// whether a handler's body reaches a bridge, so a row that says `mainThread`
+// is a claim by the author, exactly as the prose it replaces was. Its value
+// is that task 0611's question ("which endpoints answer off the main
+// thread?") now has an answer that is complete by construction — one row per
+// route — instead of one that has to be re-derived by reading 1354 lines.
+// ===========================================================================
+enum Match : ubyte {
+    exact,   // request.path == path
+    prefix,  // request.path.startsWith(path) — swallows everything below it
+}
+
+// Where the bytes of the answer are produced. See task 0611 and the
+// three-clause rule in the provider-field comments above: a provider may READ
+// resident plain data from the HTTP thread; the moment it needs `new`, a
+// factory, a per-frame structure, or a write to shared state, it belongs on a
+// bridge.
+enum Answered : ubyte {
+    httpThread,  // built straight on the HTTP thread
+    mainThread,  // marshaled through a MainThreadBridge
+}
+
+struct RouteSpec {
+    string   path;
+    string   method;    // "" = any method (five routes genuinely mean this)
+    Match    match;
+    Answered answered;
+    string   handler;   // name of the HttpServer member that answers it
+}
+
+private enum RouteSpec[] kRoutes = [
+    RouteSpec("/",                         "",     Match.exact,  Answered.httpThread, "route_root"),
+    RouteSpec("/status",                   "",     Match.exact,  Answered.httpThread, "route_status"),
+    RouteSpec("/info",                     "",     Match.exact,  Answered.httpThread, "route_info"),
+    RouteSpec("/api/ping",                 "GET",  Match.exact,  Answered.httpThread, "route_apiPing"),
+    RouteSpec("/api/version",              "GET",  Match.exact,  Answered.httpThread, "route_apiVersion"),
+    RouteSpec("/api/model",                "",     Match.prefix, Answered.mainThread, "route_apiModel"),
+    RouteSpec("/api/selection",            "",     Match.exact,  Answered.httpThread, "route_apiSelection"),
+    RouteSpec("/api/tool/handles",         "GET",  Match.exact,  Answered.mainThread, "route_apiToolHandles"),
+    RouteSpec("/api/tool/state",           "GET",  Match.exact,  Answered.httpThread, "route_apiToolState"),
+    RouteSpec("/api/toolprops/ids",        "GET",  Match.exact,  Answered.httpThread, "route_apiToolpropsIds"),
+    RouteSpec("/api/buttons/availability", "GET",  Match.exact,  Answered.httpThread, "route_apiButtonsAvailability"),
+    RouteSpec("/api/layers",               "GET",  Match.exact,  Answered.mainThread, "route_apiLayers"),
+    RouteSpec("/api/perf/reset",           "POST", Match.exact,  Answered.httpThread, "route_apiPerfReset"),
+    RouteSpec("/api/perf",                 "GET",  Match.exact,  Answered.httpThread, "route_apiPerf"),
+    RouteSpec("/api/frames/counts/reset",  "POST", Match.exact,  Answered.httpThread, "route_apiFramesCountsReset"),
+    RouteSpec("/api/frames/counts",        "GET",  Match.exact,  Answered.httpThread, "route_apiFramesCounts"),
+    RouteSpec("/api/frames/reset",         "POST", Match.exact,  Answered.httpThread, "route_apiFramesReset"),
+    RouteSpec("/api/frames",               "GET",  Match.exact,  Answered.httpThread, "route_apiFrames"),
+    RouteSpec("/api/changes",              "GET",  Match.exact,  Answered.httpThread, "route_apiChanges"),
+    RouteSpec("/api/toolpipe/eval",        "",     Match.exact,  Answered.mainThread, "route_apiToolpipeEval"),
+    RouteSpec("/api/path",                 "",     Match.prefix, Answered.mainThread, "route_apiPath"),
+    RouteSpec("/api/toolpipe",             "",     Match.exact,  Answered.mainThread, "route_apiToolpipe"),
+    RouteSpec("/api/ai/analyze",           "GET",  Match.exact,  Answered.mainThread, "route_apiAiAnalyze"),
+    RouteSpec("/api/registry",             "GET",  Match.prefix, Answered.httpThread, "route_apiRegistry"),
+    RouteSpec("/api/snap/last",            "GET",  Match.exact,  Answered.httpThread, "route_apiSnapLast"),
+    RouteSpec("/api/snap",                 "POST", Match.exact,  Answered.mainThread, "route_apiSnap"),
+    RouteSpec("/api/constrain",            "POST", Match.exact,  Answered.mainThread, "route_apiConstrain"),
+    RouteSpec("/api/camera",               "POST", Match.prefix, Answered.mainThread, "route_apiCameraPost"),
+    RouteSpec("/api/gpu/face-vbo",         "GET",  Match.exact,  Answered.mainThread, "route_apiGpuFaceVbo"),
+    RouteSpec("/api/viewport/display",     "GET",  Match.prefix, Answered.mainThread, "route_apiViewportDisplay"),
+    RouteSpec("/api/images",               "GET",  Match.prefix, Answered.mainThread, "route_apiImages"),
+    RouteSpec("/api/imageplane",           "GET",  Match.prefix, Answered.mainThread, "route_apiImageplane"),
+    RouteSpec("/api/viewport/probe",       "GET",  Match.prefix, Answered.mainThread, "route_apiViewportProbe"),
+    RouteSpec("/api/pick",                 "GET",  Match.prefix, Answered.mainThread, "route_apiPick"),
+    RouteSpec("/api/surface-raycast",      "GET",  Match.prefix, Answered.mainThread, "route_apiSurfaceRaycast"),
+    RouteSpec("/api/camera",               "GET",  Match.prefix, Answered.httpThread, "route_apiCameraGet"),
+    RouteSpec("/api/recorded-events",      "GET",  Match.exact,  Answered.httpThread, "route_apiRecordedEvents"),
+    RouteSpec("/api/reset",                "POST", Match.prefix, Answered.mainThread, "route_apiReset"),
+    RouteSpec("/api/play-events/status",   "GET",  Match.exact,  Answered.httpThread, "route_apiPlayEventsStatus"),
+    RouteSpec("/api/transform",            "POST", Match.exact,  Answered.mainThread, "route_apiTransform"),
+    RouteSpec("/api/load-mesh",            "POST", Match.exact,  Answered.mainThread, "route_apiLoadMesh"),
+    RouteSpec("/api/test/layer",           "POST", Match.exact,  Answered.mainThread, "route_apiTestLayer"),
+    RouteSpec("/api/select",               "POST", Match.exact,  Answered.mainThread, "route_apiSelect"),
+    RouteSpec("/api/command",              "POST", Match.exact,  Answered.mainThread, "route_apiCommand"),
+    RouteSpec("/api/script",               "POST", Match.prefix, Answered.mainThread, "route_apiScript"),
+    RouteSpec("/api/undo",                 "POST", Match.exact,  Answered.mainThread, "route_apiUndoRedo"),
+    RouteSpec("/api/redo",                 "POST", Match.exact,  Answered.mainThread, "route_apiUndoRedo"),
+    RouteSpec("/api/refire",               "POST", Match.exact,  Answered.mainThread, "route_apiRefire"),
+    RouteSpec("/api/history/block",        "POST", Match.exact,  Answered.mainThread, "route_apiHistoryBlock"),
+    RouteSpec("/api/undo/status",          "GET",  Match.exact,  Answered.httpThread, "route_apiUndoStatus"),
+    RouteSpec("/api/history",              "GET",  Match.exact,  Answered.httpThread, "route_apiHistory"),
+    RouteSpec("/api/trace",                "GET",  Match.exact,  Answered.httpThread, "route_apiTrace"),
+    RouteSpec("/api/trace/reset",          "POST", Match.exact,  Answered.httpThread, "route_apiTraceReset"),
+    RouteSpec("/api/history/jump",         "POST", Match.exact,  Answered.mainThread, "route_apiHistoryJump"),
+    RouteSpec("/api/history/replay",       "POST", Match.exact,  Answered.mainThread, "route_apiHistoryReplay"),
+    RouteSpec("/api/play-events",          "POST", Match.exact,  Answered.httpThread, "route_apiPlayEvents"),
+];
+
+// ---------------------------------------------------------------------------
+// The compile-time checks over kRoutes. Written as a CTFE function returning
+// the PROBLEM (null = clean) rather than a bare bool, so the build error names
+// the offending pair instead of pointing at the assert.
+// ---------------------------------------------------------------------------
+private bool methodsOverlap(string a, string b) {
+    return a.length == 0 || b.length == 0 || a == b;
+}
+
+private string routeTableProblem(const RouteSpec[] rs) {
+    foreach (i, a; rs) {
+        if (a.method.length != 0 && a.method != "GET" && a.method != "POST")
+            return "route " ~ a.path ~ ": method must be GET, POST, or \"\" (any)";
+        foreach (b; rs[i + 1 .. $]) {
+            if (!methodsOverlap(a.method, b.method)) continue;
+            if (a.path == b.path && a.match == b.match)
+                return "duplicate route: " ~ (a.method.length ? a.method : "ANY")
+                     ~ " " ~ a.path ~ " is registered twice";
+            if (a.match == Match.prefix && b.path.length >= a.path.length
+                && b.path[0 .. a.path.length] == a.path)
+                return "unreachable route: " ~ (b.method.length ? b.method : "ANY")
+                     ~ " " ~ b.path ~ " can never be reached — the earlier prefix "
+                     ~ "route " ~ a.path ~ " swallows it";
+        }
+    }
+    return null;
+}
+
+static assert(routeTableProblem(kRoutes) is null, routeTableProblem(kRoutes));
+
+// Every route names a member that exists, and every `route_` member is
+// reachable from at least one route. This has to live at module scope:
+// `__traits(allMembers, HttpServer)` cannot be asked about a type that is
+// still being defined.
+private string routeHandlerProblem() {
+    foreach (r; kRoutes) {
+        bool exists = false;
+        static foreach (m; __traits(allMembers, HttpServer))
+            if (m == r.handler) exists = true;
+        if (!exists)
+            return "route " ~ r.path ~ " names handler " ~ r.handler
+                 ~ ", which HttpServer does not have";
+    }
+    static foreach (m; __traits(allMembers, HttpServer)) {{
+        static if (m.length > 6 && m[0 .. 6] == "route_") {
+            bool routed = false;
+            foreach (r; kRoutes) if (r.handler == m) routed = true;
+            if (!routed)
+                return "handler " ~ m ~ " is in no route — it can never run";
+        }
+    }}
+    return null;
+}
+
+static assert(routeHandlerProblem() is null, routeHandlerProblem());
+
 
 /**
  * Simple HTTP request representation
