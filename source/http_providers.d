@@ -321,6 +321,48 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
     // bottom — a list at the bottom is how such a list rots away from the
     // condition it is supposed to describe. See the wiring check at the end.
     string[] optionalSlots;
+    // Seven domains, one call each (task 0720, audit №4 D5). This used to be
+    // a single 2872-line function body; the bodies below are unchanged, they
+    // are merely reachable by name now. `optionalSlots` is threaded through
+    // because two of the seven declare an exemption for the wiring check —
+    // see the end of this function.
+    wireModelProviders(httpServer, app, optionalSlots);
+    wireViewportProviders(httpServer, app, optionalSlots);
+    wireSelectionProviders(httpServer, app, optionalSlots);
+    wireToolpipeProviders(httpServer, app, optionalSlots);
+    wireCommandProviders(httpServer, app, optionalSlots);
+    wireHistoryProviders(httpServer, app, optionalSlots);
+    wireMutationHandlers(httpServer, app, optionalSlots);
+
+    // Every slot filled? Task 0720. This function installs 42 delegates and
+    // is the only thing that installs any of them, so a domain that stops
+    // being wired is a domain whose endpoints answer "provider not set" — at
+    // whatever later moment somebody happens to ask. Say it here instead,
+    // where the cause is one frame away, and enumerate the slots with
+    // `HttpServer.tupleof` rather than a list kept in step by hand.
+    //
+    // TWO slots are conditional, and both were found by running the binary
+    // rather than by reading: `aiAnalyzeProvider` does not exist in
+    // `modeling-noai`, and `injectLayerHandler` is deliberately not installed
+    // outside `--test` (belt-and-braces beside the route's own 403). A check
+    // that ignored them would have refused to start every non-test run — it
+    // did, once, which is why both exemptions are declared at their own
+    // `version`/`if` above instead of here.
+    import std.algorithm : canFind, filter;
+    import std.array     : array, join;
+    auto unwired = httpServer.unwiredEndpoints()
+                             .filter!(n => !optionalSlots.canFind(n)).array;
+    if (unwired.length)
+        throw new Exception(
+            "HTTP endpoint wiring is incomplete — nothing installed: "
+            ~ unwired.join(", "));
+}
+
+
+// wireModelProviders — `/api/model`, `/api/layers`, `/api/images`, `/api/imageplane` — the
+// document's geometry and its image clips.
+private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
+                           ref string[] optionalSlots) {
     with (app) {
         // Serialize ANY mesh to the detailed /api/model JSON. Extracted so the
         // active-layer provider and the layer-aware ?layer=N provider share one
@@ -704,6 +746,15 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 pl.brightness, pl.contrast, pl.transparency,
                 JSONValue(pl.sourcePath).toString());
         });
+    }
+}
+
+// wireViewportProviders — `/api/camera` (both verbs), `/api/gpu/face-vbo`,
+// `/api/viewport/display`, `/api/viewport/probe`, `/api/pick`,
+// `/api/surface-raycast` — everything that answers about a CELL.
+private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
+                              ref string[] optionalSlots) {
+    with (app) {
         httpServer.setCameraDataProvider((int vpIdx) {
             int _idx = (vpIdx >= 0 && vpIdx < vpm.cellCount) ? vpIdx : vpm.activeId;
             string base = vpm.resolvedCameraJson(_idx);
@@ -1174,6 +1225,15 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                     cast(int)floatFrom("height", targetCam.height));
             }
         });
+    }
+}
+
+// wireSelectionProviders — `/api/selection`, `/api/tool/handles`, `/api/tool/state`,
+// `/api/recorded-events` — read-only introspection of what is selected
+// and what the active tool is doing.
+private void wireSelectionProviders(HttpServer httpServer, ref EditorApp app,
+                               ref string[] optionalSlots) {
+    with (app) {
         httpServer.setSelectionDataProvider(() {
             // Derivation invariant: editMode is a materialized view of
             // selTypeOrder.mostRecentGeometry. Any bypassing writer (raw
@@ -1257,6 +1317,15 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         // stages currently registered with the global pipe (task FOURCC,
         // id, ordinal, enabled flag, plus per-stage attrs from
         // listAttrs).
+    }
+}
+
+// wireToolpipeProviders — `/api/toolpipe`, `/api/toolpipe/eval`, `/api/registry`,
+// `/api/ai/analyze`, `/api/snap`, `/api/snap/last`, `/api/constrain`,
+// `/api/path` — the tool pipeline and everything it elects.
+private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
+                              ref string[] optionalSlots) {
+    with (app) {
         httpServer.setToolPipeProvider(() {
             import std.array  : appender;
             import std.format : format;
@@ -1836,6 +1905,18 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         // Helper: inject _positional args from the argstring pipeline into
         // tool.* commands. Called from inside setCommandHandler after the
         // generic injectParamsInto pass. Extracted to keep the handler tidy.
+    }
+}
+
+// wireCommandProviders — `/api/command` and `/api/script`, plus the two delegates main()
+// reads back afterwards (`commandHandlerDelegate`,
+// `formsInteractiveDispatch`) and the forms tweak-end hook. This is the
+// largest domain by a wide margin and the one D6 is about — ten
+// `viewport.*` ids are still intercepted inside the delegate, ahead of
+// the registry (task 0761).
+private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
+                             ref string[] optionalSlots) {
+    with (app) {
         void injectToolCommandPositional(Command cmd, ref JSONValue pj)
         {
             import std.json : JSONType;
@@ -2795,7 +2876,14 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
                 // Replay is best-effort; the panel has no error-reporting UI.
             }
         };
+    }
+}
 
+// wireHistoryProviders — `/api/undo`, `/api/redo`, `/api/history*`, `/api/trace*`,
+// `/api/refire` — the undo service and its observables.
+private void wireHistoryProviders(HttpServer httpServer, ref EditorApp app,
+                             ref string[] optionalSlots) {
+    with (app) {
         httpServer.setUndoHandler(() {
             return history.undo();
         });
@@ -2934,6 +3022,14 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         // Phase A.5: dispatch /api/select through the unified Command path
         // (MeshSelect) so selection changes land on the undo stack and
         // share the same snapshot/revert mechanism as everything else.
+    }
+}
+
+// wireMutationHandlers — `/api/select`, `/api/transform`, `/api/reset`, `/api/load-mesh`,
+// `/api/test/layer` — the POST routes that change the document.
+private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
+                             ref string[] optionalSlots) {
+    with (app) {
         httpServer.setSelectionHandler((string mode, int[] indices) {
             auto cmd = cast(MeshSelect)reg.commandFactories["mesh.select"]();
             cmd.setMode(mode);
@@ -3195,27 +3291,4 @@ void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
         });
         }
     }
-
-    // Every slot filled? Task 0720. This function installs 42 delegates and
-    // is the only thing that installs any of them, so a domain that stops
-    // being wired is a domain whose endpoints answer "provider not set" — at
-    // whatever later moment somebody happens to ask. Say it here instead,
-    // where the cause is one frame away, and enumerate the slots with
-    // `HttpServer.tupleof` rather than a list kept in step by hand.
-    //
-    // TWO slots are conditional, and both were found by running the binary
-    // rather than by reading: `aiAnalyzeProvider` does not exist in
-    // `modeling-noai`, and `injectLayerHandler` is deliberately not installed
-    // outside `--test` (belt-and-braces beside the route's own 403). A check
-    // that ignored them would have refused to start every non-test run — it
-    // did, once, which is why both exemptions are declared at their own
-    // `version`/`if` above instead of here.
-    import std.algorithm : canFind, filter;
-    import std.array     : array, join;
-    auto unwired = httpServer.unwiredEndpoints()
-                             .filter!(n => !optionalSlots.canFind(n)).array;
-    if (unwired.length)
-        throw new Exception(
-            "HTTP endpoint wiring is incomplete — nothing installed: "
-            ~ unwired.join(", "));
 }
