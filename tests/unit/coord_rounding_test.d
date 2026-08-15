@@ -30,6 +30,18 @@ unittest {  // the wire values are the reference's, and the default is its own
     assert(kCoordRoundingDefault != CoordinateRounding.None);
 }
 
+unittest {  // an unrecognized name is REFUSED, not silently mapped to None
+    CoordinateRounding m = CoordinateRounding.Fine;
+    assert(!parseCoordRounding("",         m));
+    assert(!parseCoordRounding("Fine",     m));   // case matters
+    assert(!parseCoordRounding("forced",   m));
+    assert(!parseCoordRounding("2",        m));
+    assert(m == CoordinateRounding.Fine,
+           "a rejected parse must not disturb the caller's value — a typo "
+           ~ "that landed on None would switch the rounding off and look "
+           ~ "like the term was never ported");
+}
+
 unittest {  // set / reset round-trip on the live value
     const saved      = coordRounding();
     const savedFixed = coordRoundingFixedIncrement();
