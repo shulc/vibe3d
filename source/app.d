@@ -4265,7 +4265,7 @@ void main(string[] args) {
     // later a 4th for the cooked 2D event, but EditorApp.buildToolVts's
     // field type (editor_app.d) is still the
     // original 2-parameter delegate — every existing caller through that
-    // field (ui/panels.d's renderViewportSceneToFbo, a per-frame render-
+    // field (ui/viewport_render.d's renderViewportSceneToFbo, a per-frame render-
     // loop call) is exactly a "leave cursorValid=false" site anyway. A raw
     // `cast(void delegate(out SubjectPacket, ref VectorStack))&buildToolVts`
     // would silently reinterpret the pointer as a 2-arg ABI while the
@@ -5736,9 +5736,12 @@ void main(string[] args) {
     // local imports at their call sites, below.
     import ui.panels : drawSidePanel, drawStatusBar, drawTabPanel,
         pushPopupStyle, popPopupStyle, pushPanelChromeStyle,
-        popPanelChromeStyle, renderViewportSceneToFbo,
+        popPanelChromeStyle,
         drawAi3dModal, drawRemeshModal, drawQuitGuardModal,
         drawCommandHistoryPanel;
+    // Task 0722 (audit §2C A3): the FBO scene pass is not a panel and no
+    // longer lives with them -- 871 lines of GL with zero ImGui in it.
+    import ui.viewport_render : renderViewportSceneToFbo;
     // Task 0669 — the per-frame button-availability record (see ui/availability.d).
     import ui.availability : beginButtonAvailabilityFrame,
                              endButtonAvailabilityFrame;
