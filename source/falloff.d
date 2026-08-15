@@ -766,6 +766,26 @@ float applyShape(float t, FalloffShape shape, float in_, float out_) {
 bool falloffPacketsEqual(const ref FalloffPacket a, const ref FalloffPacket b) {
     if (a.enabled != b.enabled) return false;
     if (a.config  != b.config)  return false;
+    // Element sphere CENTRE — audit-4 P9 / task 0724. `pickedCenter` is not a
+    // `config` field (it is ACEN-owned, published per-evaluate), and it was
+    // excluded from this check on the reasoning that "the gizmo pivot has its
+    // own source of truth". It does — but `elementWeight` reads it, so the
+    // pivot's source of truth is ALSO a falloff input, and leaving it out
+    // reopened exactly the F1 hole this function was rewritten to close:
+    // relocating the centre mid-run changes which vertices are graded and no
+    // refire could see it. Reproduced before the fix, and now locked by the
+    // (PICKED-CENTER) case in tests/test_falloff_idle_refire.d.
+    //
+    // Element-gated, and that gate is load-bearing rather than an
+    // optimisation: `pickedCenter` is read by `elementWeight` and by the
+    // overlay, nowhere else. Under any other type the field is inert, and
+    // comparing it would make every Radial/Linear/Screen session refire
+    // whenever the gizmo pivot moved — including when it moves BECAUSE the
+    // tool just moved the geometry the centroid is derived from, which is a
+    // re-grade feeding its own trigger. Reading `a.type` alone is safe: the
+    // `config ==` above already proved the two types equal.
+    if (a.type == FalloffType.Element && a.pickedCenter != b.pickedCenter)
+        return false;
     // Composite contributors — refire correctness: a multi-falloff edit
     // (a contributor's config / mix changed, or one added/removed) must
     // be detected so the preview re-applies. Recurse field-wise; the

@@ -2312,6 +2312,35 @@ public:
     private GestureHooks buildGestureHooks(DragBank bank,
         XformState runEnd, GestureFrame frameEnd, Pin softEnd, Pin pinEnd)
     {
+        // P9 (task 0724) — re-baseline the element falloff's sphere CENTRE to
+        // the settled gesture state, at the one chokepoint all three banks
+        // commit through, and AFTER settleGestureCenter has run at every call
+        // site.
+        //
+        // `pickedCenter` became part of the refire trigger (falloff.d's
+        // `falloffPacketsEqual`, Element-gated) so that relocating the sphere
+        // at idle re-grades the preview. But unlike every other input to that
+        // trigger it is not a config the user typed and left alone: it is
+        // ACEN's centre, and ACEN's centre FOLLOWS the gesture -- the drop
+        // settles a soft pin, and a sticky Move rewrites userPlacedCenter to
+        // the post-drag handler position on mouse-up. So the snapshot taken at
+        // mouse-DOWN is guaranteed to disagree with the live centre by
+        // mouse-UP, through no user action at all, and the idle trigger would
+        // read that as "the user moved the sphere" and record one spurious
+        // extra in-session re-grade per gesture. Measured, not feared: without
+        // these three lines test_relocate_boundary_element ("gesture 1 records
+        // ONE in-session entry on mouse-up; got 2"), test_relocate_boundary_p5
+        // and test_falloff_idle_refire all go red.
+        //
+        // Re-baselining here draws the line where it belongs: a centre the
+        // GESTURE moved is the gesture's outcome, not an edit to re-grade
+        // against; only a change made after the gesture settled is a user
+        // edit. Same source (`currentCenter()`) that captureFalloffForDrag
+        // uses, so the two ends of the comparison stay like-for-like.
+        if (dragFalloff.enabled && dragFalloff.type == FalloffType.Element)
+            if (auto ac = activeAcenStage())
+                dragFalloff.pickedCenter = ac.currentCenter();
+
         auto rec = &recFor(bank);
 
         bool pinKnown = rec.pinKnown;

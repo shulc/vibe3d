@@ -421,8 +421,10 @@ enum LassoStyle : ubyte {
 /// reset AND break equality forever (`NaN != NaN` ⇒ `config != config`).
 ///
 /// Does NOT hold: `enabled` (derived = `type != None`, compared as its own
-/// scalar), `pickedCenter` (ACEN-owned, published per-evaluate, deliberately
-/// excluded from equality), or any of the derived/published buffers
+/// scalar), `pickedCenter` (ACEN-owned, published per-evaluate — outside
+/// `config`, but still compared by `falloffPacketsEqual` as its own
+/// Element-gated scalar since task 0724), or any of the derived/published
+/// buffers
 /// (`connectMask`, `anchorPos`, `selectionWeights`, `vertexMapWeights`,
 /// `compoundPasses`, `contributors`) — those stay direct members of
 /// `FalloffPacket` / `FalloffStage`, rebuilt every evaluate().
@@ -561,8 +563,10 @@ struct FalloffConfig {
 /// the embedded `FalloffConfig` (`alias config this` — every external
 /// `pkt.<field>` read/write below keeps resolving unqualified). The fields
 /// declared directly here are DERIVED / published-per-evaluate and
-/// deliberately excluded from `config` (and from `falloffPacketsEqual`'s
-/// `config ==` comparison), per FalloffConfig's doc comment.
+/// deliberately excluded from `config` (and so from `falloffPacketsEqual`'s
+/// `config ==` comparison), per FalloffConfig's doc comment — with
+/// `pickedCenter` the one exception, compared by its own explicit scalar
+/// check there (task 0724).
 struct FalloffPacket {
     FalloffConfig config;
     alias config this;
@@ -570,12 +574,19 @@ struct FalloffPacket {
     bool         enabled;
 
     // Element: spherical falloff centre. ACEN-owned (published per-evaluate
-    // from ActionCenterPacket) — NOT part of `config`, so it never
-    // participates in the live-change equality check (`falloffPacketsEqual`);
-    // the gizmo pivot has its own source of truth and its own pin hooks.
+    // from ActionCenterPacket) — NOT part of `config`, and the gizmo pivot
+    // does have its own source of truth and its own pin hooks. It IS
+    // nevertheless compared by `falloffPacketsEqual`, under an Element-type
+    // gate, because `elementWeight` reads it: being ACEN-owned makes it not a
+    // config field, it does not make it not an input (audit-4 P9 / task 0724
+    // — see that function for why the gate is load-bearing and not an
+    // optimisation).
     // Default centre at origin; relocated by XfrmTransformTool's click-to-
-    // pick (when falloff.element is active) or by the user via
-    // `tool.pipe.attr falloff pickedCenter "x,y,z"`.
+    // pick when falloff.element is active, or by moving the action centre
+    // itself — e.g. `tool.pipe.attr actionCenter userPlacedCenter "x,y,z"`.
+    // There is NO `tool.pipe.attr falloff pickedCenter` (this comment claimed
+    // one until 0724; the falloff stage's setAttr has no such case, so the
+    // route was always ACEN's).
     Vec3         pickedCenter  = Vec3(0, 0, 0);
 
     // BFS-precomputed component mask for the picked element: index

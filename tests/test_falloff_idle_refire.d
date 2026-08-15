@@ -289,6 +289,68 @@ unittest {
 }
 
 // ===========================================================================
+// (PICKED-CENTER) Element falloff's sphere CENTRE — audit-4 P9, task 0724.
+//
+// Every case above edits a field of `FalloffConfig`, which is what
+// `falloffPacketsEqual` compares. `pickedCenter` is the one input to
+// `elementWeight` that is NOT in the config: it lives directly on
+// FalloffPacket, is owned by ACEN, and was excluded from equality on the
+// grounds that "the gizmo pivot has its own source of truth". The
+// consequence is a hole of exactly the F1 shape this file was written to
+// lock: relocating the sphere centre while a run is open changes which
+// vertices the falloff grades, and the trigger cannot see it.
+//
+// The relocate here goes through `actionCenter userPlacedCenter`, so NOT ONE
+// falloff attr changes — which is the point. `dist` stays 1.2 throughout.
+//
+// Geometry is chosen so the two centres SWAP the roles of two corners:
+// with the centre at v0 (-0.5,-0.5,-0.5) the opposite corner v6 is
+// sqrt(3) ~= 1.732 away and sits outside the 1.2 sphere (weight 0, unmoved),
+// while v0 itself is at the centre (weight 1, full move). Relocating the
+// centre to v6 inverts both. No anchorRing is set, so `anchorPos` is empty
+// and `elementWeight` measures distance to `pickedCenter` itself — the
+// branch where the field is load-bearing rather than shadowed by the picked
+// element's geometry.
+// ===========================================================================
+unittest {
+    postJson("/api/reset", "");
+    cmd("tool.set move");
+    cmd("tool.pipe.attr falloff type element");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd(`tool.pipe.attr actionCenter userPlacedCenter "-0.5,-0.5,-0.5"`);
+    cmd("tool.pipe.attr falloff dist 1.2");
+    settle();
+    long floor = undoCount();
+
+    moveGestureOnArrow(floor + 1);
+    auto afterG = dumpVerts();
+    assert(!approxEq(afterG[0][0], -0.5, 1e-3),
+        "setup: v0 sits AT the sphere centre (weight 1) and must have moved; "
+        ~ "got v0.x=" ~ afterG[0][0].to!string);
+    assert(approxEq(afterG[6][0], 0.5, 1e-3),
+        "setup: v6 is sqrt(3) from the centre, outside the 1.2 sphere "
+        ~ "(weight 0) and must be unmoved; got v6.x=" ~ afterG[6][0].to!string);
+
+    // Idle relocate of the sphere centre to the opposite corner. Nothing in
+    // FalloffConfig changes.
+    cmd(`tool.pipe.attr actionCenter userPlacedCenter "0.5,0.5,0.5"`);
+    settle();
+    auto regraded = dumpVerts();
+    assert(!approxEq(regraded[6][0], afterG[6][0], 1e-3),
+        "idle relocate of the element sphere CENTRE must refresh the preview "
+        ~ "(audit-4 P9): v6 is now AT the centre and should take the full "
+        ~ "move; v6.x was " ~ afterG[6][0].to!string ~ ", still "
+        ~ regraded[6][0].to!string ~ " after userPlacedCenter -> 0.5,0.5,0.5");
+    assert(!approxEq(regraded[0][0], afterG[0][0], 1e-3),
+        "...and v0, now sqrt(3) from the centre, must fall back out of range; "
+        ~ "v0.x was " ~ afterG[0][0].to!string ~ ", still "
+        ~ regraded[0][0].to!string);
+
+    cmd("tool.set move off");
+    postJson("/api/reset", "");
+}
+
+// ===========================================================================
 // (MODE) Element falloff `elementMode` (wire attr `mode`) is a pure
 // click-pick restriction — grep of source/falloff.d confirms `elementMode`
 // is never read by evaluateFalloff/elementWeight, only by
