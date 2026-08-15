@@ -554,9 +554,21 @@ private enum string[] kToolVirtualWhitelist = [
     // NARROW, and each one is a standing question rather than a settled
     // answer. They are on the base today because moving them costs call-site
     // churn that task 0705 judged not worth spending in a hygiene wave:
-    //   onKeyUp                 1 overrider  — and NO dispatch site at all;
-    //                                          see task 0709, this is a live
-    //                                          bug, not merely a narrow hook.
+    //   onKeyUp                 1 overrider. Task 0709 gave it the dispatch
+    //                                          site it had never had (`app.d`
+    //                                          grew a `case SDL_KEYUP`); until
+    //                                          then the one overrider's body
+    //                                          was unreachable and its flag
+    //                                          latched. Narrow now, not broken.
+    //
+    // Task 0709 also re-ran the "which of these has NO caller" sweep over the
+    // whole list, since a virtual whose overriders never run is invisible to
+    // the compiler and `onKeyUp` had hidden in here for months. `onKeyUp` was
+    // the ONLY one. The near miss worth naming so it is not re-reported: `name`
+    // sits in the wide bucket above on 48 overriders, but it has exactly ONE
+    // call site in the tree — `tool_presets.applyToolAttrs`, building the text
+    // of an "unknown attr" exception. Dozens of overriders serving one cold
+    // error message is a different smell from this list's, and not a bug.
     //   wantsHoverForType       1 runtime overrider, but its BASE body is real
     //                                          logic over the ToolFlag.Hover*
     //                                          bits four tools set, and it is
