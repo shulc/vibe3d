@@ -973,17 +973,31 @@ struct Mesh {
     //       `removeEdgesByMask`. A new corner with no source in either state
     //       is left at zero. `dropPolyVertexMaps` remains the FALLBACK for the
     //       replays the carry declines — see task 0689 and the note there.
-    // v1 DROP set (write-once-then-lose tail — length-correct resize, values
-    // ZEROED, a documented limitation, each covered by a "dropped, no crash"
-    // test): subdivide (Catmull-Clark UV interpolation is a non-goal), every
-    // primitive factory rebuild, `extrudeEdgesByMask` / `extrudeVerticesByMask`
-    // / `smoothShiftFacesByMask`, edge-extend, bridge, path-extrude (revolve),
-    // subpatch cage build, `bevelVerticesByMask`, the plane-cut / edge-slice
-    // chord split (`rebuildFacesWithChordSplits`) and the vertex-merge tail
-    // (`applyVertexRemapAndRebuild`). These end in `buildLoops`, so
-    // `resizePolyVertexMaps` makes them length-correct + zeroed. (The delta
-    // undo/redo replay LEFT this set in task 0689 — see mechanism (d) above;
-    // what remains there is a fallback, not a policy.)
+    // v1 DROP set — since task 0830 this is no longer a LIST kept here. Each
+    // kernel that cannot state a correspondence says so where it runs, by type:
+    // `dropCornerProvenance(CornerDrop.…)`, and the reason enum in
+    // source/mesh_corner_maps.d carries the explanation. Grep `CornerDrop.` for
+    // the current membership; a family cannot enter or leave the set by an edit
+    // to this comment any more, which was the point.
+    //
+    // What the reasons MEAN, since that is what a comment is still good for:
+    //   * `SweptSurfaceNoLaw` — edge extrude, vertex extrude, edge extend,
+    //     smooth shift, path-extrude (revolve). A fresh surface whose
+    //     parameterisation no capture measures. (A FACE extrude's two wall laws
+    //     ARE frozen, task 0697, which is exactly why that sibling carries.)
+    //   * `VertexBevelNoCase` — `bevelVerticesByMask`. Its two siblings left the
+    //     set against frozen cases; this one has no frozen case at all.
+    //   * `ChordSplitNoSource` / `WeldTailNoSource` — the plane-cut / edge-slice
+    //     chord split and the vertex-merge tail. These are MACHINERY gaps, not
+    //     law gaps: the law is the same edge-split lerp Loop Slice already
+    //     carries, and what is missing is the record of which old face each
+    //     fragment came from.
+    //   * `SubdivideNoLaw` / `PrimitiveRebuild` / `SubpatchCage` /
+    //     `ForeignTopology` — kernels that REPLACE the mesh rather than edit it.
+    //     Declared for completeness of the vocabulary; a replaced mesh has no
+    //     old corner space at all, so most of them have nothing to declare.
+    // (The delta undo/redo replay LEFT this set in task 0689 — see mechanism (d)
+    // above; what remains there is a fallback, `DeltaReplayDeclined`.)
     //
     // `bevelEdgesByMask`, `bevelFacesByMask` and `extrudeFacesByMask` LEFT the
     // set in task 0697 via (c') + (e); their laws are frozen in the same
@@ -1333,6 +1347,11 @@ struct Mesh {
         rebuildEdges();
         clearEdgeSelectionResize();
         compactUnreferenced();
+        // Stated loss (task 0830). The remap rewrote every winding from a VERTEX
+        // map and kept no record of which old corner each survivor was — the
+        // machinery gap task 0690 named, not a law gap. Declared rather than
+        // left to the length test, which reached the same zeroing by accident.
+        dropCornerProvenance(CornerDrop.WeldTailNoSource);
         // See deleteFacesByMask: loops carry stale indices after face/vert
         // compaction.
         buildLoops();
@@ -5719,6 +5738,29 @@ struct Mesh {
             // Topology rewritten without a relocate ⇒ drop (length-correct, zeroed).
             m.data.length = want;
             m.data[] = 0.0f;
+            // A per-corner plane really did exist and really was thrown away,
+            // and nobody said so. Say it once per run, in debug builds only —
+            // the same shape as `buildLoops`'s one-time non-manifold warning.
+            //
+            // Not an assert, deliberately. The census is not finished: the
+            // bridge, the subpatch cage build and the remesh / import paths
+            // still rewrite corners without declaring, and none of them is
+            // exercised with a live map by either gate — measured, task 0830,
+            // zero hits across `dub test --config=tests` and the ten-test UV
+            // lane. An assert would therefore be green here and a crash on a
+            // user's mesh. Turning it into one is the last step, and it belongs
+            // with the sites that make it true (follow-up 0900).
+            debug {
+                static bool warnedUndeclaredCornerRewrite = false;
+                if (!warnedUndeclaredCornerRewrite) {
+                    warnedUndeclaredCornerRewrite = true;
+                    import core.stdc.stdio : fprintf, stderr;
+                    fprintf(stderr, "[mesh] per-corner map dropped by a face "
+                            ~ "rewrite that declared nothing — the length test "
+                            ~ "caught it, which means the values are gone and "
+                            ~ "no kernel owns the loss (task 0830)\n");
+                }
+            }
         }
     }
 
@@ -10144,6 +10186,11 @@ struct Mesh {
         // Writes ONLY the Select bit (Subpatch/Hide already written above).
         setFacesSelectedFrom(newSelected);
 
+        // Stated loss (task 0830): the chord fragments carry no record of the
+        // old face each came from. The LAW is known — it is the same edge-split
+        // lerp Loop Slice carries — so this reason marks available work, not an
+        // unmeasured behaviour.
+        dropCornerProvenance(CornerDrop.ChordSplitNoSource);
         rebuildEdges();
         clearEdgeSelectionResize();
         buildLoops();

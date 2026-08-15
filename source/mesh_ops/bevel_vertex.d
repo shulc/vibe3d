@@ -201,6 +201,11 @@ mixin template MeshBevelVertexOps() {
         clearVertexSelection();
         clearEdgeSelectionResize();
 
+        // Stated loss (task 0830). The edge and face bevels left the drop set
+        // in task 0697 against frozen cases; this one has no frozen case at all,
+        // so there is nothing to port it against and a guess would be worse than
+        // the zero.
+        dropCornerProvenance(CornerDrop.VertexBevelNoCase);
         finalizeTopologyEdit();
         commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
         return processed;

@@ -1816,6 +1816,10 @@ mixin template MeshExtrudeOps() {
         // --- Rebuild edges + loops; size selection arrays explicitly. Then drop
         //     dissolved free-end endpoints (and any other orphan) so the vertex
         //     count matches the reference exactly.
+        // Stated loss (task 0830): an EDGE extrude's wall is a fresh surface and
+        // no capture measures its parameterisation. (A FACE extrude's two wall
+        // laws ARE frozen — task 0697 — which is why that sibling carries.)
+        dropCornerProvenance(CornerDrop.SweptSurfaceNoLaw);
         finalizeTopologyEdit();   // compactUnreferenced remaps verts; rebuilds edges + edgeIndexMap
         resizeVertexSelection();
         resizeFaceSelection();
@@ -2083,6 +2087,7 @@ mixin template MeshExtrudeOps() {
         resizeVertexSelection();
         clearEdgeSelectionResize();
 
+        dropCornerProvenance(CornerDrop.SweptSurfaceNoLaw);   // stated loss (task 0830)
         rebuildEdges();
         buildLoops();
         commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);
@@ -2683,6 +2688,7 @@ mixin template MeshExtrudeOps() {
         //     source edge now has 3 adjacent faces (its 2 cube faces + the bridge);
         //     buildLoops emits a one-time non-manifold stderr warning and ring
         //     adjacency near that edge is known-degraded (acceptable v1).
+        dropCornerProvenance(CornerDrop.SweptSurfaceNoLaw);   // stated loss (task 0830)
         rebuildEdges();
         buildLoops();
         resizeVertexSelection();
@@ -3387,6 +3393,7 @@ mixin template MeshExtrudeOps() {
         clearVertexSelection();
         clearEdgeSelectionResize();
 
+        dropCornerProvenance(CornerDrop.SweptSurfaceNoLaw);   // stated loss (task 0830)
         finalizeTopologyEdit();
 
         commitChange(MeshEditScope.Geometry | MeshEditScope.Marks);

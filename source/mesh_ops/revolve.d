@@ -298,6 +298,9 @@ mixin template MeshRevolveOps() {
 
         if (facesAdded == 0) return 0;
 
+        // Stated loss (task 0830): a swept surface with no measured
+        // parameterisation, the same family as the edge extrude.
+        dropCornerProvenance(CornerDrop.SweptSurfaceNoLaw);
         // Finalise: rebuild half-edge maps and grow selection arrays.
         buildLoops();
         syncSelection();
@@ -540,6 +543,7 @@ mixin template MeshRevolveOps() {
         clearVertexSelection();
         clearEdgeSelectionResize();
 
+        dropCornerProvenance(CornerDrop.SweptSurfaceNoLaw);   // stated loss (task 0830)
         rebuildEdges();
         buildLoops();
         compactUnreferenced();   // drops orig verts no longer referenced (none here — walls keep them)
