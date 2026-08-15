@@ -1841,6 +1841,19 @@ class HttpServer {
     }
 
     private void route_apiSelection(HttpRequest request, HttpResponse response) {
+        // Task 0763 — `selectionDataProvider` (http_providers.d) walks
+        // `document.layers` with `foreach (l; document.layers)` directly on
+        // the HTTP thread, unguarded, while app.d splices that same array in
+        // four places (layer.add/delete/reorder/select). This is the EXACT
+        // argument task 0612 (Stage 3) used to marshal /api/layers onto the
+        // main thread — 0700 §2 already noted /api/layers and /api/selection
+        // walk `document.layers` as two independent, unsynchronized
+        // providers with no shared source of truth. /api/selection is the
+        // single most-called endpoint in the whole HTTP test surface, so
+        // marshaling it needs the FULL suite to validate the added
+        // submitAndWait() latency doesn't regress timing-sensitive tests —
+        // out of scope for this follow-up's narrow lanes. Deferred with the
+        // rest of this class to task 0950, not fixed here.
         if (selectionDataProvider !is null) {
             try {
                 response.statusCode = 200;
@@ -1988,6 +2001,17 @@ class HttpServer {
     private void route_apiPerfReset(HttpRequest request, HttpResponse response) {
         // Zero all perf counters before a measured run. No-op in the
         // default build (g_perf.reset compiles away).
+        //
+        // Task 0763 — writes from the HTTP thread into state the main thread
+        // concurrently reads/bumps every frame (`g_perf`'s per-category
+        // timers). Decision, written rather than implied: tolerable. Worst
+        // case is one straddling increment surviving the reset or one fresh
+        // sample landing a moment before it — a single-sample wobble in a
+        // diagnostic counter a caller is about to overwrite with a whole
+        // measured run's worth of data anyway. Marshaling this onto the main
+        // thread would add a frame of latency to the reset every perf-lane
+        // run pays for before its FIRST measured sample — a worse trade than
+        // the wobble it would remove.
         g_perf.reset();
         response.statusCode = 200;
         response.body = "{\"status\":\"ok\"}";
@@ -2015,6 +2039,20 @@ class HttpServer {
     private void route_apiFramesCountsReset(HttpRequest request, HttpResponse response) {
         // Zero the always-on frame WORK counters. Unlike its two siblings
         // above this is NOT a no-op in the default build — see below.
+        //
+        // Task 0763 — same HTTP-thread-writes-into-main-thread-state shape as
+        // /api/perf/reset and /api/frames/reset (its two siblings), decided
+        // the same way and written here rather than left implied:
+        // `FrameWorkProbe.reset()` zeroes four fields in sequence, not as one
+        // assignment, so a reset landing mid-`endFrame()` could leave a
+        // partially-zeroed record for one frame. Tolerable — every caller of
+        // this endpoint immediately follows it with the measured run it
+        // wants counted, and the always-on counters this drives
+        // (`/api/frames/counts`, used by the default `modeling` build's own
+        // test lane, not just the perf lane) have no invariant that a
+        // one-frame wobble at reset time would violate. Not marshaled for the
+        // same reason as its siblings: the round-trip cost lands on every
+        // measured run's setup, not just this diagnostic's accuracy.
         g_fc.reset();
         response.statusCode = 200;
         response.body = "{\"status\":\"ok\"}";
@@ -2060,6 +2098,11 @@ class HttpServer {
         // Zero the per-frame ring + counters before a measured run
         // (task 0195). No-op in the default build (g_frames.reset
         // compiles away).
+        //
+        // Task 0763 — see /api/perf/reset for the decision this shares:
+        // tolerable HTTP-thread write into main-thread-owned state, not
+        // marshaled because the latency would land on every perf run's
+        // setup, not just this diagnostic's accuracy.
         g_frames.reset();
         response.statusCode = 200;
         response.body = "{\"status\":\"ok\"}";
@@ -2094,6 +2137,17 @@ class HttpServer {
         // contract as /api/perf). Tests read these counters as DELTAS across
         // a step (the runner resets app state, not the bus, between test
         // binaries — see the plan's reset caveat).
+        //
+        // Task 0763 — this used to read `changeBus.<field>` TWENTY times
+        // live, one per key in the format() call. Nothing here asserts two of
+        // those fields must agree the way /api/frames/counts's `frames` and
+        // `totals.seq` do, so this was never observed producing a response
+        // that contradicts ITSELF the way that endpoint did — but it is the
+        // same shape of hazard (a flush landing mid-format mixes fields from
+        // two different flushes into one JSON object), so it gets the same
+        // fix on the same evidence-free-but-structurally-identical grounds:
+        // one copy of the whole struct up front (cheap — every field here is
+        // a scalar), then serialise from the copy.
         response.headers["Content-Type"] = "application/json";
         if (!testMode) {
             response.statusCode = 403;
@@ -2102,6 +2156,7 @@ class HttpServer {
             import change_bus : changeBus;
             import seltype    : selTypeToken;
             import std.format : format;
+            const snap = changeBus;
             response.statusCode = 200;
             response.body = format(
                 `{"flushCount":%d,"lastFlushFlags":%d,"lastSelDomains":%d,` ~
@@ -2116,21 +2171,21 @@ class HttpServer {
                 `"totalLayerActive":%d,` ~
                 `"missedPublishers":%d,` ~
                 `"currentTypeChanged":%d,"lastCurrentType":"%s"}`,
-                changeBus.flushCount, changeBus.lastFlushFlags,
-                changeBus.lastSelDomains, changeBus.lastLayerKinds,
-                changeBus.totalPosition, changeBus.totalPoints,
-                changeBus.totalPolygons, changeBus.totalMarks,
-                changeBus.totalMaterial,
-                changeBus.totalSelVertex, changeBus.totalSelEdge,
-                changeBus.totalSelFace,
-                changeBus.totalSelItem,
-                changeBus.totalLayerAdded, changeBus.totalLayerRemoved,
-                changeBus.totalLayerReordered, changeBus.totalLayerRenamed,
-                changeBus.totalLayerVisible,
-                changeBus.totalLayerActive,
-                changeBus.missedPublishers,
-                changeBus.currentTypeChanged,
-                selTypeToken(changeBus.lastCurrentType));
+                snap.flushCount, snap.lastFlushFlags,
+                snap.lastSelDomains, snap.lastLayerKinds,
+                snap.totalPosition, snap.totalPoints,
+                snap.totalPolygons, snap.totalMarks,
+                snap.totalMaterial,
+                snap.totalSelVertex, snap.totalSelEdge,
+                snap.totalSelFace,
+                snap.totalSelItem,
+                snap.totalLayerAdded, snap.totalLayerRemoved,
+                snap.totalLayerReordered, snap.totalLayerRenamed,
+                snap.totalLayerVisible,
+                snap.totalLayerActive,
+                snap.missedPublishers,
+                snap.currentTypeChanged,
+                selTypeToken(snap.lastCurrentType));
         }
     }
 
@@ -2620,13 +2675,31 @@ class HttpServer {
     }
 
     private void route_apiPlayEventsStatus(HttpRequest request, HttpResponse response) {
+        // Task 0763 — same defect shape FrameWorkProbe.toJson documents and
+        // tools/local/frame_counts_seq_race.sh measured for /api/frames/counts
+        // (89 self-contradictory responses / 40 000): this ran on the HTTP
+        // thread and read `eventPlayer.active`, `.entries.length` and `.idx`
+        // as THREE separate live reads, while the main thread's
+        // `tickEventPlayer()` mutates all three every frame. A commit landing
+        // between the reads did not just go stale by one — `remaining` is a
+        // size_t subtraction, so a length/idx pair from two different frames
+        // could underflow to a huge number instead of being off by one.
+        //
+        // Fix mirrors FrameWorkProbe.toJson exactly: one copy of each field up
+        // front, then derive the whole body from the copies. This does not
+        // make the read atomic (no lock here, same as /api/frames/counts) —
+        // it makes the RESPONSE internally consistent with itself, which is
+        // the actual property `finished`/`total`/`remaining` need to hold.
         import std.format : format;
-        bool done = !eventPlayer.active;
+        const bool   active  = eventPlayer.active;
+        const size_t total   = eventPlayer.entries.length;
+        const size_t idx     = eventPlayer.idx;
+        const bool   done    = !active;
         response.statusCode = 200;
         response.body = format(`{"finished":%s,"total":%d,"remaining":%d}`,
             done ? "true" : "false",
-            eventPlayer.entries.length,
-            done ? 0 : eventPlayer.entries.length - eventPlayer.idx);
+            total,
+            done ? 0 : total - idx);
         response.headers["Content-Type"] = "application/json";
     }
 
@@ -3040,6 +3113,23 @@ class HttpServer {
         // Read-only undo-service status: {state, lockout, canUndo, canRedo}.
         // Snapshot at request time on the HTTP thread (same safety contract
         // as /api/history GET — read-only access to the history service).
+        //
+        // Task 0763 — CHECKED, not benign by default: `CommandHistory`
+        // (command_history.d) has no Mutex and no lock-free publish
+        // discipline. `undoStatusProvider` (http_providers.d) makes FIVE
+        // separate calls into it (`state()`, `lockedOut()`, `canUndo()`,
+        // `canRedo()`, `undoDepthCounts()`), and the main thread pushes/pops
+        // `undoStack`/`redoStack` on every command. Same hazard CLASS as
+        // `document.layers` before task 0612 marshaled /api/layers — real,
+        // not fixed here. Deferred rather than marshaled in this pass:
+        // unlike /api/frames/counts (measured, isolated, one call site),
+        // /api/selection and /api/history share the same unguarded
+        // `history`/`document.layers` state and are two of the most-hit
+        // endpoints in the whole test suite; marshaling one without the
+        // others leaves the same object read from both threads by a
+        // different door, and validating the change needs the FULL suite,
+        // not the narrow lanes this follow-up ran. See task 0950
+        // (doc/tasks/backlog/0950-*) for the grouped fix.
         if (undoStatusProvider is null) {
             response.statusCode = 200;
             response.body = `{"state":"invalid","lockout":false,`
@@ -3052,6 +3142,11 @@ class HttpServer {
     }
 
     private void route_apiHistory(HttpRequest request, HttpResponse response) {
+        // Task 0763 — see route_apiUndoStatus above: `historyProvider` walks
+        // `history.undoEntriesVisible()` and `.redoEntriesVisible()`, two
+        // separate reads of the same unguarded `CommandHistory` the main
+        // thread mutates on every command. Same hazard, same deferral (task
+        // 0950); not fixed here.
         if (historyProvider is null) {
             response.statusCode = 200;
             response.body = `{"undo":[],"redo":[]}`;
@@ -3066,12 +3161,27 @@ class HttpServer {
         // Non-destructive per-step capture (task: step-trace). Returns
         // every discrete command recorded since the last reset — see
         // StepTrace / app.d's captureStepTrace for the entry shape.
+        //
+        // Task 0763 — one of 0611's two named HTTP-thread writers is this
+        // route's sibling below (POST /api/trace/reset), racing against the
+        // main thread's per-command append. CHECKED, not assumed: StepTrace
+        // (source/step_trace.d) holds a real `core.sync.mutex.Mutex` and
+        // append()/reset()/arm()/snapshotJson() all take it — this provider
+        // (`traceProvider` → `stepTrace.snapshotJson()`) is already correctly
+        // synchronized against the main thread's append(). No fix needed
+        // here; recorded so this pair does not get re-flagged as an open
+        // candidate by the next audit that only reads the route table.
         response.statusCode = 200;
         response.body = (traceProvider !is null) ? traceProvider() : "[]";
         response.headers["Content-Type"] = "application/json";
     }
 
     private void route_apiTraceReset(HttpRequest request, HttpResponse response) {
+        // Task 0763 — see route_apiTrace above: this writer
+        // (`traceResetHandler` → `stepTrace.arm()`) takes the same
+        // StepTrace mutex as every other StepTrace access, so it is already
+        // safe against the main thread's concurrent append(). Not a live
+        // candidate.
         if (traceResetHandler !is null) traceResetHandler();
         response.statusCode = 200;
         response.body = `{"status":"ok"}`;
@@ -3185,6 +3295,28 @@ class HttpServer {
     }
 
     private void route_apiPlayEvents(HttpRequest request, HttpResponse response) {
+        // Task 0763 — the second of 0611's two named HTTP-thread writers.
+        // `eventPlayer.load()` mutates `entries` in place
+        // (`entries.length = 0` then repeated `~=`) directly on the HTTP
+        // thread, unsynchronized, while the main thread's `tickEventPlayer()`
+        // reads `entries[idx]` every frame. Unlike a scalar counter this is
+        // a dynamic array: a torn read of the slice header (ptr+length) is
+        // possible, not just a stale value, which is a sharper hazard than
+        // /api/play-events/status's field-level race above.
+        //
+        // Not fixed here: the two callers never legitimately race in
+        // practice — every test/tool driving this endpoint POSTs, then polls
+        // /api/play-events/status for `finished:true` before POSTing again
+        // (the documented protocol), so tick() only ever sees an `entries`
+        // this call finished writing before the FIRST status poll returns.
+        // The hazard is real if a caller violates that protocol (loads a new
+        // log while a previous one is still ticking); grep of tests/ and
+        // tools/ found no caller that does. Recorded rather than fixed
+        // because the correct fix (marshal onto the main thread, like
+        // /api/reset) changes this route's Answered column from httpThread
+        // to mainThread — a route-table + wire-timing change needing the
+        // full suite, not this follow-up's narrow lanes. Grouped with
+        // /api/selection and /api/history under task 0950.
         if (!testMode) {
             response.statusCode = 403;
             response.body = `{"error":"play-events is only available in --test mode"}`;

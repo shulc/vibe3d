@@ -293,9 +293,18 @@ private enum SurfaceField[] kSurfaceFields = [
     SurfaceField("specular",   "specularAmount"),
     SurfaceField("glossiness", "glossiness"),
     SurfaceField("opacity",    "opacity"),
-    // Not carried by the format. A forward-compat hook for the shader tree
-    // (see mesh.d); no code writes it yet, so there is nothing to persist. If
-    // that changes, give it a key and bump kV3dFormatVersion — task 0762.
+    // Not carried by the format — decided, not deferred (task 0762).
+    // `compiledFromTreeId` is a forward-compat hook for the shader tree (see
+    // mesh.d): it is only meaningful paired with the ShaderTree graph it
+    // points into, and `.v3d` does not store that graph. A bare id with no
+    // graph behind it would be a dangling reference the next reader could
+    // not resolve, so persisting the id ALONE would not preserve anything —
+    // it would just move the loss from "field is empty" to "field points at
+    // nothing". `grep compiledFromTreeId` finds exactly its declaration: no
+    // code writes it today, so nothing is lost by this in practice either.
+    // The obligation for whoever adds the writer: land the ShaderTree graph
+    // codec and this field's key in the SAME change, and bump
+    // kV3dFormatVersion with it — see the reproduction unittest below.
     SurfaceField("",           "compiledFromTreeId"),
 ];
 
@@ -325,6 +334,30 @@ private string surfaceCodecProblem() {
 }
 
 static assert(surfaceCodecProblem() is null, surfaceCodecProblem());
+
+// Task 0762 — reproduce the loss the decision above is about, so it stays a
+// measured fact rather than a claim in a comment. A populated
+// `compiledFromTreeId` does NOT survive a `meshToJson`/`meshFromJson`
+// round-trip: `kSurfaceFields` gives it an empty JSON key, so the writer
+// skips it and the reader leaves the field at `Surface.init`. If a future
+// change starts writing this field without also giving it a key here, this
+// is the test that turns that silent loss into a red assertion instead of a
+// material coming back wrong after a save/load cycle.
+unittest {
+    import mesh : makeCube;
+
+    Mesh m = makeCube();
+    Surface s;
+    s.compiledFromTreeId = "tree-42";
+    m.surfaces ~= s;
+
+    Mesh back;
+    assert(meshFromJson(meshToJson(m), back));
+    assert(back.surfaces.length == 1);
+    assert(back.surfaces[0].compiledFromTreeId == "",
+           "compiledFromTreeId round-tripped — kSurfaceFields and this test "
+           ~ "must be updated together (task 0762)");
+}
 
 // ---------------------------------------------------------------------------
 // Write

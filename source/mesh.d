@@ -143,6 +143,10 @@ struct Surface {
     // points back to the source graph id so subsequent edits don't lose
     // node-graph state. Empty for surfaces sourced directly from LWO or
     // hand-edited.
+    //
+    // Deliberately NOT carried by the `.v3d` codec — see `kSurfaceFields` in
+    // io/native.d for why, and its paired unittest for the reproduction
+    // (task 0762). Nothing in the tree writes this field today.
     string compiledFromTreeId;
 }
 
