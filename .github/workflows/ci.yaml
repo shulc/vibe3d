@@ -51,6 +51,29 @@ jobs:
     - name: 'Drop cached nfde + lwo2-writer deps (force preBuild / re-fetch)'
       run: rm -rf ~/.dub/packages/nfde ~/.dub/cache/nfde ~/.dub/packages/lwo2-writer ~/.dub/cache/lwo2-writer || true
 
+    # Placed BEFORE 'Build' on purpose. 'Build' has no continue-on-error, so a
+    # step after it is SKIPPED when it fails — and a skipped check is the exact
+    # object this task exists to abolish (task 0723): indistinguishable from one
+    # that ran and passed. Here it always runs, and it is the cheapest signal in
+    # the job.
+    #
+    # Compile only. The full with-render build fetches a multi-gigabyte renderer
+    # checkout, compiles it and bundles runtime libraries, which is why it lives
+    # on workflow_dispatch in build.yml and why the configuration was free to rot
+    # between two manual runs. The breakage that surfaced this was at D
+    # COMPILATION, which needs no built artifacts at all — so compilation comes
+    # into the ordinary gate and linking stays on demand. See the script header.
+    #
+    # Measured: ~3s warm; ~18s / 9.7 MB from a completely empty DUB_HOME (it runs
+    # no dependency preBuildCommands, which is what makes both numbers small).
+    # timeout-minutes is a tripwire, not a budget: if this ever approaches it,
+    # something has started doing the expensive half and must be looked at.
+    - name: 'Render config compiles (--config=with-render, compile only)'
+      id: render_compile
+      continue-on-error: true
+      timeout-minutes: 10
+      run: tools/ci/render_compile_check.sh
+
     - name: 'Build'
       # The integration step below runs --no-build, whose guard refuses a
       # ./vibe3d it cannot tie to the sources on disk (task 0678: a gate that
@@ -130,6 +153,7 @@ jobs:
         {
           echo "## Test results"
           echo ""
+          echo "- Render config compiles (\`--config=with-render\`, compile only): **${{ steps.render_compile.outcome }}**"
           echo "- Embedded unit tests (\`dub test --config=tests\`): **${{ steps.unit.outcome }}**"
           echo ""
           echo "### Integration suite"
@@ -212,7 +236,8 @@ jobs:
       # summary/cleanup always run; this gate turns the job red afterwards.
       if: always()
       run: |
-        echo "unit=${{ steps.unit.outcome }} integration=${{ steps.integration.outcome }} frames=${{ steps.frames.outcome }}"
+        echo "render_compile=${{ steps.render_compile.outcome }} unit=${{ steps.unit.outcome }} integration=${{ steps.integration.outcome }} frames=${{ steps.frames.outcome }}"
+        [ "${{ steps.render_compile.outcome }}" = "success" ] && \
         [ "${{ steps.unit.outcome }}" = "success" ] && \
         [ "${{ steps.integration.outcome }}" = "success" ] && \
         [ "${{ steps.frames.outcome }}" = "success" ]
