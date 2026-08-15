@@ -252,6 +252,81 @@ private void v3dReject(string msg) nothrow { g_v3dRejectReason = msg; v3dWarn("r
 enum int kV3dFormatVersion = 8;
 
 // ---------------------------------------------------------------------------
+// The Surface sub-codec, as a descriptor table (task 0720, audit №4 D8).
+//
+// D8's framing was "33 keys described twice". Measured, the mesh codec has 16
+// distinct key literals and every one of them appears exactly twice, once in
+// `meshToJson` and once in `meshFromJson` — and the two sides agree today.
+// For the mesh-level keys that duplication is cosmetic: the only way it can go
+// wrong is a rename on one side, and a rename on one side breaks the .v3d
+// round-trip, which `tests/test_native_v3d.d` asserts on every run. Making
+// them share a constant would remove no risk that a test does not already
+// hold, so they are left alone.
+//
+// The SURFACE sub-object is a different case, and it is the one worth a table.
+// Its JSON names are the short editor names and its struct fields are the
+// verbose ones (`diffuse` → `diffuseAmount`), so the mapping is real and lived
+// in a comment. More to the point, NOTHING relates the set of keys to the set
+// of fields: add a field to `Surface` and the codec silently does not carry
+// it, the round-trip test still passes (both sides default it), and the loss
+// only shows up as a user's material coming back wrong.
+//
+// That is not hypothetical. `Surface.compiledFromTreeId` exists today and the
+// codec has never carried it. It is not a live bug — nothing in the tree ever
+// writes that field, so there is nothing to lose yet — but it is exactly the
+// shape of the defect, sitting in the code with every test green.
+//
+// The table below is therefore checked against `Surface.tupleof`: every field
+// must appear exactly once, and a field the format deliberately does not carry
+// must say so with an empty JSON name rather than by being absent. Adding a
+// field to `Surface` now fails the build until someone decides which it is.
+// ---------------------------------------------------------------------------
+private struct SurfaceField {
+    string json;    // key in the .v3d surface object; "" = deliberately not carried
+    string field;   // member of `Surface`
+}
+
+private enum SurfaceField[] kSurfaceFields = [
+    SurfaceField("name",       "name"),
+    SurfaceField("baseColor",  "baseColor"),
+    SurfaceField("diffuse",    "diffuseAmount"),
+    SurfaceField("specular",   "specularAmount"),
+    SurfaceField("glossiness", "glossiness"),
+    SurfaceField("opacity",    "opacity"),
+    // Not carried by the format. A forward-compat hook for the shader tree
+    // (see mesh.d); no code writes it yet, so there is nothing to persist. If
+    // that changes, give it a key and bump kV3dFormatVersion — task 0762.
+    SurfaceField("",           "compiledFromTreeId"),
+];
+
+private string surfaceCodecProblem() {
+    foreach (i, a; kSurfaceFields) {
+        bool onSurface = false;
+        static foreach (m; __traits(allMembers, Surface))
+            if (m == a.field) onSurface = true;
+        if (!onSurface)
+            return "kSurfaceFields names " ~ a.field ~ ", which Surface does not have";
+        foreach (b; kSurfaceFields[i + 1 .. $]) {
+            if (a.field == b.field)
+                return "kSurfaceFields lists " ~ a.field ~ " twice";
+            if (a.json.length && a.json == b.json)
+                return "kSurfaceFields maps two fields onto the key " ~ a.json;
+        }
+    }
+    static foreach (i, _; Surface.tupleof) {{
+        enum n = __traits(identifier, Surface.tupleof[i]);
+        bool covered = false;
+        foreach (k; kSurfaceFields) if (k.field == n) covered = true;
+        if (!covered)
+            return "Surface." ~ n ~ " has no row in kSurfaceFields — give it a"
+                 ~ " key, or an empty key to say the format does not carry it";
+    }}
+    return null;
+}
+
+static assert(surfaceCodecProblem() is null, surfaceCodecProblem());
+
+// ---------------------------------------------------------------------------
 // Write
 // ---------------------------------------------------------------------------
 
@@ -314,21 +389,27 @@ JSONValue meshToJson(ref const Mesh mesh)
         m["facePart"] = JSONValue(facePrt);
     }
 
-    // Surface registry. JSON keys are the short editor names; they map onto
-    // the Surface struct's verbose field names (diffuse → diffuseAmount, …).
+    // Surface registry. Both directions are generated from `kSurfaceFields`,
+    // which is where the short-editor-name ↔ verbose-struct-field mapping
+    // lives and which is checked against `Surface.tupleof` at compile time.
     JSONValue[] surfaces;
     surfaces.reserve(mesh.surfaces.length);
     foreach (ref s; mesh.surfaces) {
         JSONValue sj;
-        sj["name"]       = JSONValue(s.name);
-        sj["baseColor"]  = JSONValue([
-            JSONValue(s.baseColor.x),
-            JSONValue(s.baseColor.y),
-            JSONValue(s.baseColor.z)]);
-        sj["diffuse"]    = JSONValue(s.diffuseAmount);
-        sj["specular"]   = JSONValue(s.specularAmount);
-        sj["glossiness"] = JSONValue(s.glossiness);
-        sj["opacity"]    = JSONValue(s.opacity);
+        static foreach (k; kSurfaceFields) {{
+            static if (k.json.length) {
+                alias F = typeof(__traits(getMember, Surface, k.field));
+                static if (is(F == string) || is(F == float))
+                    sj[k.json] = JSONValue(__traits(getMember, s, k.field));
+                else static if (is(F == Vec3)) {
+                    const c = __traits(getMember, s, k.field);
+                    sj[k.json] = JSONValue([
+                        JSONValue(c.x), JSONValue(c.y), JSONValue(c.z)]);
+                } else
+                    static assert(false, "no .v3d surface codec for "
+                                       ~ F.stringof ~ " (" ~ k.field ~ ")");
+            }
+        }}
         surfaces ~= sj;
     }
     m["surfaces"] = JSONValue(surfaces);
@@ -1330,17 +1411,33 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
             foreach (sj; surfp.array) {
                 if (sj.type != JSONType.object) continue;  // tolerant: skip junk
                 Surface s;                                  // struct defaults
-                if (auto np = "name" in sj)
-                    if (np.type == JSONType.string) s.name = np.str;
-                if (auto cp = "baseColor" in sj)
-                    if (cp.type == JSONType.array && cp.array.length >= 3)
-                        s.baseColor = Vec3(jsonFloat(cp.array[0]),
-                                           jsonFloat(cp.array[1]),
-                                           jsonFloat(cp.array[2]));
-                if (auto dp = "diffuse" in sj)    s.diffuseAmount  = jsonFloat(*dp);
-                if (auto pp = "specular" in sj)   s.specularAmount = jsonFloat(*pp);
-                if (auto gp = "glossiness" in sj) s.glossiness     = jsonFloat(*gp);
-                if (auto op = "opacity" in sj)    s.opacity        = jsonFloat(*op);
+                // Generated from the same table as the writer — see
+                // kSurfaceFields. Per-type tolerance is unchanged: a string
+                // key of the wrong type is ignored, a colour needs three
+                // components, a scalar goes through jsonFloat (which already
+                // tolerates every numeric spelling).
+                static foreach (k; kSurfaceFields) {{
+                    static if (k.json.length) {
+                        alias F = typeof(__traits(getMember, Surface, k.field));
+                        if (auto kp = k.json in sj) {
+                            static if (is(F == string)) {
+                                if (kp.type == JSONType.string)
+                                    __traits(getMember, s, k.field) = kp.str;
+                            } else static if (is(F == Vec3)) {
+                                if (kp.type == JSONType.array
+                                    && kp.array.length >= 3)
+                                    __traits(getMember, s, k.field) =
+                                        Vec3(jsonFloat(kp.array[0]),
+                                             jsonFloat(kp.array[1]),
+                                             jsonFloat(kp.array[2]));
+                            } else static if (is(F == float)) {
+                                __traits(getMember, s, k.field) = jsonFloat(*kp);
+                            } else
+                                static assert(false, "no .v3d surface codec for "
+                                                   ~ F.stringof);
+                        }
+                    }
+                }}
                 surfaces ~= s;
             }
         } else {
