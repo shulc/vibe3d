@@ -1193,6 +1193,27 @@ private void removeFacesForward(ref Mesh m, in FaceIdx[] idx) {
     nm.reserve(m.faceMarks.length);
     foreach (i, w; m.faceMarks) if (i >= drop.length || !drop[i]) nm ~= w;
     m.faceMarks = nm;
+    // Task 0922: `faceMaterial` / `facePart` / `faceSelectionOrder` ride the
+    // SAME drop-filter as `faces`/`faceMarks` just above — the same class of
+    // bug, the same fix. Without this, `finalize()`'s tail
+    // `faceMaterial.length = m.faces.length` (a raw truncate/grow, not a
+    // compaction) left each of these three planes at their STALE pre-drop
+    // position instead of following their own face through the drop, so a
+    // face dropped anywhere but the array's tail left every survivor after
+    // it wearing a neighbour's material/part/pick-order stamp. Reached on
+    // the same apply/redo path as the faceMarks fix above.
+    uint[] nmat;
+    nmat.reserve(m.faceMaterial.length);
+    foreach (i, v; m.faceMaterial) if (i >= drop.length || !drop[i]) nmat ~= v;
+    m.faceMaterial = nmat;
+    uint[] nprt;
+    nprt.reserve(m.facePart.length);
+    foreach (i, v; m.facePart) if (i >= drop.length || !drop[i]) nprt ~= v;
+    m.facePart = nprt;
+    int[] nord;
+    nord.reserve(m.faceSelectionOrder.length);
+    foreach (i, v; m.faceSelectionOrder) if (i >= drop.length || !drop[i]) nord ~= v;
+    m.faceSelectionOrder = nord;
 }
 
 private void removeFacesReverse(ref Mesh m, in FaceIdx[] idx, in uint[][] lists,
@@ -1220,13 +1241,33 @@ private void removeFacesReverse(ref Mesh m, in FaceIdx[] idx, in uint[][] lists,
         // name just below) — same "not a regression, a documented limit" as
         // removeVertsReverse's vertexMarks insert above.
         if (fi <= m.faceMarks.length) m.faceMarks.insertInPlace(fi, 0u);
+        // faceSelectionOrder shifts in LOCKSTEP too (task 0922 — the reverse
+        // twin of the forward drop-filter fixed above). SelectionDelta only
+        // ever patches the Select BIT (see patchSelection below); it does not
+        // touch the pick-order stamp, so without this insert the order array
+        // would be left to finalize()'s tail length-grow — an append at the
+        // TAIL, not at `fi` — misaligning every surviving face's stamp after
+        // the re-inserted one, same as `faceMarks` would without its own
+        // insert just above. Insert 0 (not manually selected): a re-inserted
+        // face's own pick-order rank is not carried by this entry, same
+        // documented limit as its Select bit.
+        if (fi <= m.faceSelectionOrder.length) m.faceSelectionOrder.insertInPlace(fi, 0);
     }
-    // Restore parallel per-face arrays (material / part / subpatch) where carried.
-    // The face selection/order arrays are restored by the SelectionDelta /
-    // whole-array path, not here.
+    // Restore parallel per-face arrays (material / part / subpatch) where
+    // carried. The face SELECT bit is restored by the SelectionDelta /
+    // whole-array path, not here (see faceSelectionOrder's own insert above
+    // for why the pick-order STAMP is not restorable that way).
     if (mat.length == idx.length) {
         foreach (i, fi; idx) {
-            if (fi < m.faceMaterial.length) {
+            // `<=`, not `<` (task 0922): `fi == m.faceMaterial.length` is the
+            // legal TAIL-insert case `insertInPlace` accepts, and `facePart`
+            // just below already uses `<=` for the identical insert. The
+            // stricter `<` silently skipped exactly that tail re-insertion,
+            // leaving a re-inserted face's material lost — not merely
+            // deferred to finalize()'s tail pad, since that pad writes 0 at
+            // the array's OWN new tail, which after this skip is one slot
+            // short of where the restored face actually landed.
+            if (fi <= m.faceMaterial.length) {
                 m.faceMaterial.insertInPlace(fi, mat[i]);
             }
         }

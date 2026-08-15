@@ -213,3 +213,126 @@ unittest {
       ~ "stay available — the criterion is 'not without an explicit "
       ~ "conversion', not 'never'");
 }
+
+// ---------------------------------------------------------------------------
+// TASK 0922 — `removeFacesForward` (the FORWARD/redo half of a RemoveFaces
+// entry) filtered `faces` and `faceMarks` by the drop mask but left
+// `faceMaterial` / `facePart` / `faceSelectionOrder` untouched entirely; only
+// `finalize()`'s tail `.length = m.faces.length` ever resized them — a raw
+// truncate/grow, not a compaction, so a face dropped anywhere but the array's
+// tail left every survivor after it wearing a neighbour's material/part/
+// pick-order stamp. Reachable through redo of any MeshSessionEdit-backed
+// operation (bevel, loop-slice, reduce, topology-pen-remove —
+// commands/mesh/session_edit.d:108).
+//
+// Fixture measured by task 0831: three triangles, `RemoveFaces` drops face 0
+// (not the tail — a tail drop makes truncation and a correct filter agree,
+// the same trap task 0703 hid behind), forward (redo) replay.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                  Vec3(2, 0, 0), Vec3(3, 0, 0), Vec3(2, 1, 0),
+                  Vec3(4, 0, 0), Vec3(5, 0, 0), Vec3(4, 1, 0)];
+    m.addFace([0u, 1u, 2u]);
+    m.addFace([3u, 4u, 5u]);
+    m.addFace([6u, 7u, 8u]);
+    m.buildLoops();
+    m.syncSelection();
+    m.faceMaterial       = [100u, 111u, 122u];
+    m.facePart            = [10u, 11u, 12u];
+    m.faceSelectionOrder = [1, 2, 3];
+
+    MeshOpEntry removeEntry;
+    removeEntry.kind     = MeshOpEntry.Kind.RemoveFaces;
+    removeEntry.fIdx     = [FaceIdx.assumeFaceSpace(0)];   // pre-drop index, ascending
+    removeEntry.faceLists = [m.faces[0].dup];
+    removeEntry.faceMat  = [100u];
+    removeEntry.facePrt  = [10u];
+    removeEntry.faceSub  = [0u];
+
+    MeshEditDelta delta;
+    delta.scope_ = MeshEditScope.Polygons;
+    delta.log    = [removeEntry];
+
+    assert(delta.apply(m), "forward replay must succeed");
+    assert(m.faces.length == 2, "setup: face 0 must be dropped");
+
+    assert(m.faceMaterial == [111u, 122u],
+        "removeFacesForward: surviving faces must keep their OWN material, "
+      ~ "not a stale-position truncate/grow of the pre-drop array — got "
+      ~ m.faceMaterial.to!string);
+    assert(m.facePart == [11u, 12u],
+        "removeFacesForward: surviving faces must keep their OWN part id — "
+      ~ "got " ~ m.facePart.to!string);
+    assert(m.faceSelectionOrder == [2, 3],
+        "removeFacesForward: surviving faces must keep their OWN pick-order "
+      ~ "stamp — got " ~ m.faceSelectionOrder.to!string);
+}
+
+// ---------------------------------------------------------------------------
+// TASK 0922 — the neighbouring asymmetry in the REVERSE half.
+// `removeFacesReverse` inserted `facePart`/`faceMarks` under `fi <= length`
+// (the correct bound — `insertInPlace` accepts a tail index equal to the
+// array's current length) but `faceMaterial` under the stricter `fi < length`,
+// which silently skips exactly the tail-reinsertion case: a face dropped from
+// the END of the pre-drop mesh comes back on undo with `finalize()`'s tail pad
+// (`0`) instead of its recorded material. `faceSelectionOrder` was not
+// reinserted at all — the comment claimed SelectionDelta restores it, but
+// SelectionDelta only ever patches the Select BIT (see `patchSelection`), not
+// the pick-order stamp.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+
+    // `m` starts in the POST-drop state (2 faces): the third (tail) triangle
+    // of a 3-triangle mesh was already removed.
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(0, 1, 0),
+                  Vec3(2, 0, 0), Vec3(3, 0, 0), Vec3(2, 1, 0)];
+    m.addFace([0u, 1u, 2u]);
+    m.addFace([3u, 4u, 5u]);
+    m.buildLoops();
+    m.syncSelection();
+    m.faceMaterial       = [100u, 111u];
+    m.facePart            = [10u, 11u];
+    m.faceSelectionOrder = [1, 2];
+
+    MeshOpEntry removeEntry;
+    removeEntry.kind      = MeshOpEntry.Kind.RemoveFaces;
+    removeEntry.fIdx      = [FaceIdx.assumeFaceSpace(2)];   // the TAIL of the pre-drop, 3-face mesh
+    removeEntry.faceLists = [[6u, 7u, 8u]];
+    removeEntry.faceMat   = [122u];
+    removeEntry.facePrt   = [12u];
+    removeEntry.faceSub   = [0u];
+
+    MeshEditDelta delta;
+    delta.scope_ = MeshEditScope.Polygons;
+    delta.log    = [removeEntry];
+
+    // Extend `vertices` first so the re-inserted face's vertex ids resolve —
+    // this test targets the FACE-plane insert bounds only, not vertex revert.
+    m.vertices ~= [Vec3(4, 0, 0), Vec3(5, 0, 0), Vec3(4, 1, 0)];
+
+    assert(delta.revert(m), "reverse replay must succeed");
+    assert(m.faces.length == 3, "setup: the tail face must come back");
+
+    assert(m.faceMaterial == [100u, 111u, 122u],
+        "removeFacesReverse: a face re-inserted at the array's TAIL "
+      ~ "(fi == length) must still receive its recorded material — `<` "
+      ~ "silently skips exactly that case, `facePart` right below already "
+      ~ "uses the correct `<=` — got " ~ m.faceMaterial.to!string);
+    assert(m.facePart == [10u, 11u, 12u],
+        "removeFacesReverse: facePart's own tail re-insert — got " ~
+        m.facePart.to!string);
+    assert(m.faceSelectionOrder == [1, 2, 0],
+        "removeFacesReverse: faceSelectionOrder must shift in lockstep with "
+      ~ "faceMarks (both insert 0, not a restored value — the ORDER STAMP "
+      ~ "is not recorded by this entry, same documented limit as the "
+      ~ "re-inserted face's own Select bit), not be left to finalize()'s "
+      ~ "tail length-grow which pads the array's OWN new tail instead of the "
+      ~ "index the face actually landed at — got " ~
+        m.faceSelectionOrder.to!string);
+}
