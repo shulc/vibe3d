@@ -301,6 +301,23 @@ version (WithAI) {
 /// original text are Edit-class 1 (`&x` -> `&x()`, 47 &gpu + 28 &editMode
 /// sites -- see task doc for the exact count/rationale).
 void registerTools(EditorApp app) {
+    // Task 0722 (audit §2C A9): the 600-line flat body is four family
+    // functions below, called in the order the flat list wrote them in.
+    registerTransformTools(app);
+    registerGeneratorTools(app);
+    registerPrimitiveTools(app);
+    registerEditTools(app);
+}
+
+/// Transform, deform, align and convolve tools — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerTools`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerTransformTools(EditorApp app) {
     with (app) {
     reg.toolFactories["move"]   = () {
         import tools.transform.xfrm_transform : XfrmTransformTool;
@@ -445,6 +462,19 @@ void registerTools(EditorApp app) {
         t.setPipeGizmoHost(pipeGizmoHost);
         return cast(Tool)t;
     };
+    }
+}
+
+/// Generator-preview and topology tools — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerTools`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerGeneratorTools(EditorApp app) {
+    with (app) {
     reg.toolFactories["mesh.mirrorTool"] = () {
         auto t = new MirrorTool(() => &mesh(), &gpu(), litShader);
         t.setUndoBindings(history, bevelEditFactory);
@@ -565,6 +595,19 @@ void registerTools(EditorApp app) {
     reg.commandFactories["mesh.bridgeTool"] = () => cast(Command)
         new ToolHeadlessCommand(&mesh(), cameraView, editMode,
                                 "mesh.bridgeTool", reg.toolFactories["mesh.bridgeTool"]);
+    }
+}
+
+/// Primitive create tools, the pen and vertex place — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerTools`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerPrimitiveTools(EditorApp app) {
+    with (app) {
 
     reg.toolFactories["prim.cube"] = () {
         auto t = new BoxTool(() => &mesh(), &gpu(), litShader);
@@ -665,6 +708,19 @@ void registerTools(EditorApp app) {
         t.setUndoBindings(history, bevelEditFactory);
         return cast(Tool)t;
     };
+    }
+}
+
+/// Mesh edit, slice and duplication tools — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerTools`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerEditTools(EditorApp app) {
+    with (app) {
 
     // Drag Weld — drag a source vertex onto a target vertex to weld them.
     // LMB-down picks the source; LMB-up picks the target; one snapshot-undo
@@ -903,6 +959,7 @@ void registerTools(EditorApp app) {
     }
 }
 
+
 /// Registers the remaining `reg.commandFactories[id]` entries — tool.*,
 /// ui.*, layer.*, ai3d.*, workplane.*, actr.*, falloff.*, select.*, mesh.*,
 /// history.*, macro.* (app.d's former Span B, ~3395-4132). Phase 2 (0415).
@@ -917,6 +974,84 @@ void registerTools(EditorApp app) {
 /// + 10 &editMode sites) and Edit-class 2 (`&promoteItemType` ->
 /// `promoteItemType`, the one address-taken hook -- see task doc).
 void registerCommands(EditorApp app) {
+    // Task 0722 (audit §2C A9): eight family functions below, called in the
+    // order the flat list wrote them in. The task-0621 selection-type wrap
+    // stays HERE and stays LAST -- it walks the FINISHED dictionary, so it
+    // must run after every family. It also depends on app.d calling
+    // registerTools BEFORE registerCommands, because ~13 tool-paired
+    // commands are registered over there: the note below says "this
+    // function", and that was already only half of where the keys come from.
+    //
+    // Layers / images / image planes / AI-3D are ONE family and not four,
+    // because they share a single anonymous scope block (former lines
+    // 955-1086) whose locals they all read. Splitting them means moving
+    // those locals, which is a change of shape, not a slice.
+    registerToolLifecycleCommands(app);
+    registerItemCommands(app);
+    registerPipeStageCommands(app);
+    registerSelectionCommands(app);
+    registerViewCommands(app);
+    registerFileCommands(app);
+    registerMeshCommands(app);
+    registerHistoryCommands(app);
+    // The same three-deep `with` the flat body had, for the same reason the
+    // family functions keep it: identical name resolution, not a narrower one.
+    with (app) {
+    with (ai3dRefs) {
+    with (remeshRefs) {
+
+    // -----------------------------------------------------------------------
+    // Selection-type authority (task 0621) — wired onto EVERY command.
+    // -----------------------------------------------------------------------
+    // THE RULE lives on `Command.currentType()` (source/command.d): a command
+    // asks the CURRENT selection type, never the derived `editMode`, because
+    // under `SelType.Item` the latter retains the pre-switch geometry type and
+    // the command then acts on a selection the user cannot see.
+    //
+    // This wraps every registered factory rather than adding the provider to
+    // the ~200 construction sites above, and that is the point rather than a
+    // shortcut: the seam this task closes exists BECAUSE the app layer and the
+    // command layer read different authorities, and an opt-in-per-command
+    // wiring would let the next command be added without one. Wrapping the
+    // whole dictionary means a command cannot be registered without the
+    // authority, so `currentType()`'s null fallback is unreachable in
+    // production and only unit tests that construct a command directly ever
+    // take it.
+    //
+    // Placement: LAST in this function, after every `commandFactories[...]`
+    // assignment (including those in the nested `with`/scope blocks above), so
+    // the walk sees the complete dictionary. Any factory registered after this
+    // point would silently miss the provider — add new ones above.
+    //
+    // `reg.commandFactories.keys` snapshots the key set into a fresh array, so
+    // re-assigning existing keys during the walk neither rehashes nor
+    // invalidates the iteration. The wrapper is built by a named helper, not
+    // by a lambda written inline in the loop body, so each closure captures
+    // its OWN `inner` — the standard idiom in this file (cf. `makeFactory`).
+    {
+        auto selTypeSrc = () => currentSelType(selTypeOrder);
+        static Command delegate() withSelType(Command delegate() inner,
+                                              SelType delegate() src) {
+            return () { auto c = inner(); c.setSelTypeProvider(src); return c; };
+        }
+        foreach (id; reg.commandFactories.keys)
+            reg.commandFactories[id] = withSelType(reg.commandFactories[id],
+                                                   selTypeSrc);
+    }
+    }
+    }
+    }
+}
+
+/// Tool lifecycle and panel visibility — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerToolLifecycleCommands(EditorApp app) {
     with (app) {
     with (ai3dRefs) {
     with (remeshRefs) {
@@ -949,6 +1084,23 @@ void registerCommands(EditorApp app) {
         new UiViewportPropsCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["ui.about"] = () => cast(Command)
         new UiAboutCommand(&mesh(), cameraView, editMode);
+    }
+    }
+    }
+}
+
+/// Layers, images, image planes and AI-3D generation — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerItemCommands(EditorApp app) {
+    with (app) {
+    with (ai3dRefs) {
+    with (remeshRefs) {
 
     // layer.* commands (layers Stage 2) — mutate the one Document; the
     // active-index movers (add/delete/select) fire onActiveLayerChanged.
@@ -1084,6 +1236,23 @@ void registerCommands(EditorApp app) {
                     workerUrl.length ? workerUrl : "http://127.0.0.1:47831");
             });
     }
+    }
+    }
+    }
+}
+
+/// Workplane, action centre and falloff — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerPipeStageCommands(EditorApp app) {
+    with (app) {
+    with (ai3dRefs) {
+    with (remeshRefs) {
 
     // workplane.* commands — target the WorkplaneStage (ordinal 0x30)
     // in the global tool pipe.
@@ -1175,6 +1344,23 @@ void registerCommands(EditorApp app) {
         reg.commandFactories["falloff.reverse"] = () => cast(Command)
             new FalloffReverseCommand(&mesh(), cameraView, editMode, toolHost);
     }
+    }
+    }
+    }
+}
+
+/// Selection — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerSelectionCommands(EditorApp app) {
+    with (app) {
+    with (ai3dRefs) {
+    with (remeshRefs) {
 
     reg.commandFactories["select.expand"]         = () => cast(Command) new SelectionExpand(&mesh(), cameraView, editMode);
     reg.commandFactories["select.contract"]       = () => cast(Command) new SelectionContract(&mesh(), cameraView, editMode);
@@ -1223,6 +1409,23 @@ void registerCommands(EditorApp app) {
     reg.commandFactories["select.convert"]   = () => cast(Command)
         (new SelectConvertCommand(&mesh(), cameraView, editMode, &editMode()))
             .setPromoteHook((EditMode m) => promoteGeometryType(m));
+    }
+    }
+    }
+}
+
+/// Viewport, snapping, preferences, path and the AI toggles — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerViewCommands(EditorApp app) {
+    with (app) {
+    with (ai3dRefs) {
+    with (remeshRefs) {
     // Fit routes through the focus/scale OWNER cameras of the active (=
     // hovered, per 0220) cell — not the cell's own (possibly follower)
     // camera. For a default Quad follower both owners are the group master,
@@ -1323,6 +1526,23 @@ void registerCommands(EditorApp app) {
         reg.commandFactories["symmetry.toggle"] = () => cast(Command)
             new SymmetryToggleCommand(&mesh(), cameraView, editMode);
     }
+    }
+    }
+    }
+}
+
+/// File and document lifecycle — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerFileCommands(EditorApp app) {
+    with (app) {
+    with (ai3dRefs) {
+    with (remeshRefs) {
     // File → Open (Ctrl+O): native-primary "All supported" dialog; a .v3d
     // load becomes the current document. `file.load` is also the id the
     // HTTP /api/command path drives via setPath(), so it must stay
@@ -1431,6 +1651,23 @@ void registerCommands(EditorApp app) {
         reg.commandFactories["file.quit"] = () => cast(Command)
             new FileQuit(&mesh(), cameraView, editMode, () { quitRequested = true; });
     }
+    }
+    }
+    }
+}
+
+/// Mesh, polygon, vertex and UV operations — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerMeshCommands(EditorApp app) {
+    with (app) {
+    with (ai3dRefs) {
+    with (remeshRefs) {
     reg.commandFactories["mesh.subdivide"] = () => cast(Command)
         new Subdivide(&mesh(), cameraView, editMode,
                       () => setActiveTool(null));
@@ -1674,6 +1911,23 @@ void registerCommands(EditorApp app) {
     reg.commandFactories["mesh.bevel_edit"] = () => cast(Command)
         new MeshSessionEdit(&mesh(), cameraView, editMode,
                           "mesh.bevel_edit", "Bevel");
+    }
+    }
+    }
+}
+
+/// Scene, history, undo and macro — one family of the registration table (task 0722, audit
+/// §2C A9). Sliced out of `registerCommands`'s former flat body CONTIGUOUSLY, so the order in
+/// which keys are written is exactly what it was; and every key in the
+/// table is written exactly once (checked before the split), so order is
+/// not load-bearing between families either. The `with` chain is
+/// reproduced verbatim rather than narrowed to what this family happens
+/// to use: narrowing it could silently re-point a bare identifier at a
+/// same-named EditorApp member.
+private void registerHistoryCommands(EditorApp app) {
+    with (app) {
+    with (ai3dRefs) {
+    with (remeshRefs) {
     reg.commandFactories["scene.reset"] = () {
         auto c = new SceneReset(&mesh(), cameraView, editMode,
                        &editMode(),
@@ -1766,46 +2020,8 @@ void registerCommands(EditorApp app) {
         new MacroRecord(&mesh(), cameraView, editMode, macroRecorder);
     reg.commandFactories["macro.saveRecorded"] = () => cast(Command)
         new MacroSaveRecorded(&mesh(), cameraView, editMode, macroRecorder);
-
-    // -----------------------------------------------------------------------
-    // Selection-type authority (task 0621) — wired onto EVERY command.
-    // -----------------------------------------------------------------------
-    // THE RULE lives on `Command.currentType()` (source/command.d): a command
-    // asks the CURRENT selection type, never the derived `editMode`, because
-    // under `SelType.Item` the latter retains the pre-switch geometry type and
-    // the command then acts on a selection the user cannot see.
-    //
-    // This wraps every registered factory rather than adding the provider to
-    // the ~200 construction sites above, and that is the point rather than a
-    // shortcut: the seam this task closes exists BECAUSE the app layer and the
-    // command layer read different authorities, and an opt-in-per-command
-    // wiring would let the next command be added without one. Wrapping the
-    // whole dictionary means a command cannot be registered without the
-    // authority, so `currentType()`'s null fallback is unreachable in
-    // production and only unit tests that construct a command directly ever
-    // take it.
-    //
-    // Placement: LAST in this function, after every `commandFactories[...]`
-    // assignment (including those in the nested `with`/scope blocks above), so
-    // the walk sees the complete dictionary. Any factory registered after this
-    // point would silently miss the provider — add new ones above.
-    //
-    // `reg.commandFactories.keys` snapshots the key set into a fresh array, so
-    // re-assigning existing keys during the walk neither rehashes nor
-    // invalidates the iteration. The wrapper is built by a named helper, not
-    // by a lambda written inline in the loop body, so each closure captures
-    // its OWN `inner` — the standard idiom in this file (cf. `makeFactory`).
-    {
-        auto selTypeSrc = () => currentSelType(selTypeOrder);
-        static Command delegate() withSelType(Command delegate() inner,
-                                              SelType delegate() src) {
-            return () { auto c = inner(); c.setSelTypeProvider(src); return c; };
-        }
-        foreach (id; reg.commandFactories.keys)
-            reg.commandFactories[id] = withSelType(reg.commandFactories[id],
-                                                   selTypeSrc);
-    }
     }
     }
     }
 }
+
