@@ -117,8 +117,10 @@ public:
     int   pendingRotateAxis  = -1;      // 0/1/2 principal ring, 3 view-ring
     float pendingRotateAngle = 0;       // radians, absolute since drag start
     // View axis (camera-forward) published alongside pendingRotateAxis == 3.
-    // The wrapper drains it into headlessRotateViewAxis and applies the
-    // arbitrary-axis rotation through applyTRS. Meaningless for axes 0/1/2.
+    // The wrapper FOLDS the within-gesture angle about this world axis onto
+    // `gestureStart.r` to get `run.r` (there is no separate view-axis/angle
+    // slot any more — the matrix IS the truth), then applies through applyTRS.
+    // Meaningless for axes 0/1/2.
     Vec3  pendingRotateViewAxis = Vec3(0, 0, 0);
 
     // ── the off-gizmo arcball (tools.transform.arcball) ──────────────────
@@ -1121,7 +1123,7 @@ public:
             // view-aligned ring under the unified wrapper: GESTURE-SCALAR
             // PRODUCER, same contract as the principal axes. Publish the
             // ABSOLUTE accumulated angle AND the camera-forward axis; the
-            // wrapper drains them into headlessRotateViewAxis/Angle and runs
+            // wrapper folds them onto `gestureStart.r` to get `run.r` and runs
             // applyTRS (the single geometry-apply entry point). NO geometry
             // mutation here. Falloff is now correct (one weighted rotation
             // about the view axis via the kernel's dragAxisIdx == -1 path).

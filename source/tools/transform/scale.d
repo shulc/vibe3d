@@ -140,7 +140,7 @@ public:
     // plane-circle drag branches publish the ABSOLUTE within-drag per-axis
     // scale factor here (`dragScaleAccum`, reset to 1 at drag start) and
     // return WITHOUT mutating geometry; the unified wrapper drains it into
-    // its `headlessScale` and runs `applyTRS`. `pendingScaleValid == false`
+    // its `run.s` and runs `applyTRS`. `pendingScaleValid == false`
     // means "nothing pending" (idle / hover frames leave it untouched).
     bool pendingScaleValid = false;
     Vec3 pendingScale = Vec3(1, 1, 1);   // per-axis factor, absolute since drag start
@@ -510,7 +510,7 @@ public:
         if (auto sn = snapStageForHooks())     { snSnap = sn.snapshotConfigToPacket(); haveSn = true; }
         if (auto sy = symmetryStageForHooks()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
         // P-F Phase 3a (MAJOR-5) — capture the WRAPPER field-snapshot hooks (the
-        // run-absolute headlessScale pre/post) into locals so the closures below
+        // run-absolute `run.s` pre/post) into locals so the closures below
         // compose them alongside the accumulator + pipe-config restores. Null when
         // standalone (no wrapper) ⇒ inert. DISJOINT wrapper field — composes into
         // the same closure without clobbering scaleAccum/propScale.
@@ -1059,7 +1059,7 @@ public:
     // Gesture-scalar producer (scale single-source). Publishes the
     // ABSOLUTE within-drag per-axis scale factor (`dragScaleAccum`,
     // reset to 1 at drag start) for the unified wrapper to drain into
-    // its `headlessScale` and feed `applyTRS`. Every gizmo drag mode
+    // its `run.s` and feed `applyTRS`. Every gizmo drag mode
     // (single-axis arrow 0/1/2, uniform centre disc 3, plane circle
     // 4/5/6) maps onto the same Vec3 of per-axis factors, so — unlike
     // rotate's view-ring — there is no interactive-only exemption: ALL

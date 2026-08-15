@@ -416,10 +416,14 @@ protected:
     // chokepoint so deactivate()/update() can't re-fire a commit during the
     // teardown). This is exactly the geometry half of the wrapper's
     // cancelUncommittedEdit() — factored here because rotate + scale do it
-    // identically; the only per-subclass part (restoring angleAccum/propDeg vs
-    // scaleAccum/propScale to their session-start values) stays in each
-    // sub-tool's cancelSessionIfOpen() before it calls this. Caller must have
-    // verified editIsOpen() == true.
+    // identically; the only per-subclass part stays in each sub-tool's
+    // cancelSessionIfOpen() before it calls this. That per-subclass part is
+    // ROLE-SPLIT: STANDALONE (`wrapperRef is null`) restores the sub-tool's own
+    // angleAccum/propDeg vs scaleAccum/propScale to their session-start values;
+    // WRAPPED returns the wrapper's own session-start truth instead
+    // (`gestureStartRotateEuler()` / `gestureStartScaleFactor()`, i.e.
+    // `gestureStart.r` / `gestureStart.s`) and leaves the accumulators alone.
+    // Caller must have verified editIsOpen() == true.
     protected void cancelOpenSessionGeometry() {
         suppressCommit = true;
         scope(exit) suppressCommit = false;
@@ -818,7 +822,10 @@ protected:
     /// pipe-config restores (uniform hook family). The R/S sub-tool accumulator
     /// hooks restore the SUB-TOOL panel state (scaleAccum/propScale, angleAccum/
     /// propDeg) — NOT the WRAPPER `run.s`/`headlessRotate` that
-    /// `composeFor` folds. So the wrapper sets these two delegates right before it
+    /// `composeFor` folds. NB since the wrapped-role re-point: that accumulator
+    /// arm is itself gated on `wrapperRef is null`, so whenever these two
+    /// delegates are non-null it is INERT and the disjointness below is trivial
+    /// rather than merely arranged. So the wrapper sets these two delegates right before it
     /// calls `commitGesture()`: `wrapperFieldApplyHook` restores the gesture-END
     /// run-absolute field (redo follows the geometry), `wrapperFieldRevertHook`
     /// restores the gesture-START field (in-session Ctrl+Z steps the panel back

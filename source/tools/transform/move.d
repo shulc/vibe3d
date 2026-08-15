@@ -1096,7 +1096,7 @@ public:
         // shared axes — same basis as `run.t`'s
         // interpretation in `XfrmTransformTool.applyTRS`) and parks it
         // in `pendingTranslateDelta`. The wrapper drains this on every
-        // motion event, accumulates into `headlessTranslate`, and
+        // motion event, accumulates into `run.t`, and
         // runs the unified `applyTRS(dragBaseline)`. Under ACEN.Local
         // + axis.local the SAME basis-local scalar then flows to
         // `applyTranslatePerCluster` (one scalar per cluster, applied
