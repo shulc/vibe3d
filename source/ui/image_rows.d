@@ -88,9 +88,10 @@ module ui.image_rows;
 //
 // At 60 fps with the panel open the row build alone was ≈300 KiB/s, ≈17.6
 // MiB/min of GC churn on the UI thread, growing with the number of rows. All
-// three figures are now memoised on the item (`RowTextMemo`, `document.d`): a
-// frame in which neither the document nor the panel width changed allocates
-// nothing at all, so the per-frame cost no longer scales with the row count.
+// three figures are now memoised (`RowTextMemo` and the side table below,
+// task 0635; moved off `ImageData`/`document.d` by task 0771): a frame in
+// which neither the document nor the panel width changed allocates nothing
+// at all, so the per-frame cost no longer scales with the row count.
 //
 // `imageRowsInto` fills the caller's buffer in place (the
 // `Document.referrersOf` / `selectedItemsInto` idiom) so a panel holding one
@@ -101,7 +102,7 @@ module ui.image_rows;
 // ---------------------------------------------------------------------------
 
 import document        : Document, Layer, ImageData;
-import io.image_path   : storePathForItem;
+import io.image_path   : storePathFor;
 
 /// The empty-state line. The measured list has its own empty text rather than
 /// an empty rectangle; it has a second one pointing at a separate browsing
@@ -204,7 +205,214 @@ string dimensionsText(int width, int height, bool missing) {
     return to!string(width) ~ " x " ~ to!string(height);
 }
 
-/// `dimensionsText` for an image ITEM, memoised on the item (task 0635).
+// ---------------------------------------------------------------------------
+// THE ROW TEXT MEMO (task 0635, moved here by task 0771).
+//
+// Cached RENDERINGS of an image item's fields, for this module's three
+// per-row-per-frame text builders (`storePathForItem`, `dimensionsTextFor`,
+// `elidedPathText` below). WHY: the clip list rebuilt every row's text from
+// scratch, once per row on every frame the panel was open. MEASURED over 600
+// frames on 1 mesh + 20 clips: 5120 bytes/frame for `imageRowsInto` alone, of
+// which 4160 (81%) was the document-relative path and 960 the dimensions
+// cell — ~300 KiB/s of GC churn on the UI thread, growing with the row count.
+// All three renderings are pure functions of inputs that do not change
+// between frames, which is the whole reason this is memoisable at all.
+//
+// A THIRD CATEGORY, and the distinction is the point. The authored fields on
+// `ImageData` are what the document SAYS; the derived fields are what the
+// disk ANSWERED; these renderings are neither — they carry no information of
+// their own, nothing serialises them, nothing copies them across a
+// duplicate, and losing the whole cache can only cost time.
+//
+// KEYED, NOT HOOKED — each slot stores the inputs it was computed from and is
+// used only while those still compare equal, rather than being cleared by
+// whoever mutates an input. A hook would have to sit at every mutation site
+// and there are three shapes of site that would not get one: `image.replace`
+// REVERT writes `storedPath` and the four derived fields back directly and
+// never calls `refreshImageMeta`; `layer.duplicate` builds a fresh payload by
+// copying fields, one more to remember; and the DOCUMENT PATH is not a field
+// of anything here at all, so nothing could be notified a Save As moved the
+// anchor even if it wanted to be. A key cannot be forgotten at a mutation
+// site that does not exist yet.
+//
+// WHY THIS IS A SIDE TABLE AND NOT A FIELD OF `ImageData` (task 0771, closing
+// the half 0721 left open). D10's finding was right twice over: a UI cache
+// had no business being DECLARED in `document.d` (0721 fixed that — the type
+// moved to a leaf module) and it had no business being HELD by the document's
+// own payload class either, because it carries no information the document
+// owns. The reason it took a second task is the reason it could not simply
+// move to `ui/` in one step: `storePathForItem` — one of the three writers —
+// lived in `io/image_path.d`, and `io/` must not import `ui/`. Its only
+// caller was always this module, though (checked: `grep -rn
+// storePathForItem source/` before this move found exactly one caller
+// outside its own declaration), so it moves here bodily rather than staying
+// behind as a stub; `io/image_path.d` keeps only the pure, uncached
+// `storePathFor` it used to wrap.
+//
+// LIFETIME — the real question 0771 was filed to answer, because a table
+// keyed by `ImageData` OBJECT IDENTITY holds a GC-STRONG reference to every
+// key: an entry that outlives its clip is not a slow leak, it is a hard one,
+// and there is no delete/undo hook to clear it FROM (see the KEYED-NOT-HOOKED
+// paragraph above — two of the three inputs are not fields of any object at
+// all, so a mutation-site hook has nowhere to stand even for the one input
+// that is). The answer is a SWEEP, not a hook, riding the one pass that
+// already visits every live row: `imageRowsInto` bumps `g_rowTextSweep` on
+// entry and, via `scope(exit)`, prunes on the way out. Every one of the three
+// memo functions stamps the slot it touches with the CURRENT sweep value
+// (`touchRowTextMemo`, below); anything left with an OLDER stamp when
+// `imageRowsInto` returns did not appear in `document.layers` this call and
+// is removed. A deleted clip's entry therefore survives at most until the
+// panel's NEXT draw, and if the panel never draws again the table cannot grow
+// either — nothing else ever writes to it. `scope(exit)` rather than a
+// trailing statement: `imageRowsInto` returns early when there are no image
+// rows at all, and that empty-list call is exactly the one that must still
+// prune a table that went from N clips to zero.
+//
+// ZERO-ALLOCATION ON A WARM FRAME, the property task 0635's own regression
+// test (`R11`, below) pins to the byte, survives the move: a lookup of an
+// EXISTING key and a `foreach` over the table that removes nothing are both
+// plain reads over already-allocated bucket storage — no different from the
+// per-item field access this replaces. Confirmed by construction, not by
+// hope: the swept-but-nothing-stale case is the WARM case, and it is the
+// only case `R11` measures with an `== 0` assertion.
+//
+// THE ELIDED LINE IS THE SLOT THAT WAS MISSING when this struct was first
+// cut, and it is called out because the miss was a measurement artefact
+// rather than an oversight anyone could have read off the code: the first
+// harness drove `imageRowsInto`, which does not call `elideEnd` at all — the
+// panel does, once per row, straight after the row build — so the cutting
+// and the non-cutting build read the same zero and the agreement looked like
+// corroboration. Measured through a call that really reaches it, `elideEnd`
+// allocates 48 bytes per cutting row at the panel's floor budget of 8 and 80
+// at its default 16; only a path SHORTER than the budget costs nothing,
+// because that is the branch that returns its argument.
+//
+// The three `…Valid` flags model "no entry yet", which is a different state
+// from "an entry whose value is the empty string" and cannot be inferred from
+// the key. `dimsValid` is the one that demonstrably earns its byte: a born
+// slot keys as `(0, 0, false)`, and a payload really carrying that
+// measurement renders `"0 x 0"`, so without the flag the born slot would hand
+// back `""` for it.
+//
+// WRITTEN FROM THE DRAW PATH, AND ONLY FROM IT. Every slot is filled by the
+// function that reads it, on a MISS, which makes those three functions
+// mutators of this table however read-only they look from the call site. The
+// clip panel is their only caller and it runs on the UI thread, but they are
+// public, so each one guards its RECOMPUTE branch with `glThreadGuard` — the
+// miss is a cold branch, so the check is paid per input change rather than
+// per frame. The stamp write on a HIT is not separately guarded: it is a
+// same-thread bookkeeping write under the identical "UI thread only" rule the
+// three functions already state, not a second write path.
+// ---------------------------------------------------------------------------
+
+private struct RowTextMemo {
+    // --- the document-relative path text: `storePathForItem` ---
+    string storeText;     ///< the memoised value
+    string storeSource;   ///< the `storedPath` it was computed from
+    string storeAnchor;   ///< the document path it was anchored at
+    bool   storeValid;    ///< false until the first computation
+
+    // --- the dimensions cell: `dimensionsTextFor` ---
+    string dimsText;      ///< the memoised value
+    int    dimsW, dimsH;  ///< the measurement it was computed from
+    bool   dimsMissing;   ///< …and the third input, which empties the cell
+    bool   dimsValid;     ///< false until the first computation
+
+    // --- the elided path line: `elidedPathText` ---
+    //
+    // The BUDGET is the second input and it is not a field of anything: the
+    // panel derives it from the width available on the frame it is drawing
+    // (`avail / charWidth`, floored at 8), so it moves when the window is
+    // resized and at no other time. That is why it is keyed and not hooked,
+    // for the same reason the document path is — there is nowhere to hang a
+    // notification.
+    string elideText;     ///< the memoised value
+    string elideSource;   ///< the row text it was computed from
+    size_t elideBudget;   ///< …and the code-point budget it was cut to
+    bool   elideValid;    ///< false until the first computation
+}
+
+private struct RowTextMemoSlot {
+    RowTextMemo memo;
+    size_t      touchedAt;  ///< the `g_rowTextSweep` value as of the last touch
+}
+
+private __gshared RowTextMemoSlot[ImageData] g_rowTextMemo;  // UI thread only
+private __gshared size_t                     g_rowTextSweep; // UI thread only
+
+/// Get-or-create `img`'s memo slot and stamp it as seen in the CURRENT sweep.
+/// Every one of the three memo functions below goes through this rather than
+/// touching `g_rowTextMemo` directly, so "reached the table this call" and
+/// "survives `sweepRowTextMemo`" cannot drift apart.
+private ref RowTextMemo touchRowTextMemo(ImageData img) {
+    auto slot = img in g_rowTextMemo;
+    if (slot is null) {
+        g_rowTextMemo[img] = RowTextMemoSlot.init;
+        slot = img in g_rowTextMemo;
+    }
+    slot.touchedAt = g_rowTextSweep;
+    return slot.memo;
+}
+
+/// Drop every entry `touchRowTextMemo` did NOT touch during the sweep that
+/// just finished — i.e. every `ImageData` `imageRowsInto`'s last call did not
+/// walk past. See the section comment above for why this, and not a hook, is
+/// the table's whole lifetime policy.
+private void sweepRowTextMemo() {
+    foreach (img, ref slot; g_rowTextMemo)
+        if (slot.touchedAt != g_rowTextSweep) g_rowTextMemo.remove(img);
+}
+
+/// `storePathFor` for an image ITEM, memoised on the side table above (task
+/// 0635; moved off `io/image_path.d` and off `ImageData` by task 0771 — see
+/// the section comment for why both moves were needed).
+///
+/// Same value as `storePathFor(img.storedPath, docPath)` — this is a cache in
+/// front of that function and nothing else; if the two could ever disagree
+/// the cache would be a second rule, which is the thing the whole
+/// storage/display story exists to avoid.
+///
+/// WHY IT EXISTS: the clip list calls this once per row per frame while its
+/// panel is open, and `storePathFor` allocates (four transient strings, none
+/// of which survive the row). Measured over 600 frames on 1 mesh + 20 clips,
+/// it was 81% of the row build's 5120 bytes/frame.
+///
+/// WHY IT IS SAFE: `storePathFor` reads no file — it is `buildNormalizedPath`
+/// + `relativePath` over two strings — so its answer is a total function of
+/// the pair `(storedPath, docPath)`, which is exactly the pair kept beside
+/// the cached value. `resolveStoredPath` (`io/image_path.d`) is the opposite
+/// case and must never get the same treatment: it calls `exists()`, so its
+/// answer changes when a file appears or disappears with nothing in the
+/// document changing at all.
+///
+/// (One input is implicit and shared with the uncached function: a
+/// `storedPath` that is not absolute is absolutised against the process CWD.
+/// `storedPath` is absolute in memory by `io/image_path.d`'s storage rule,
+/// and the CWD does not move between two frames of one panel, so the key is
+/// complete for every reachable state.)
+///
+/// IT WRITES, and the guard says which thread may. See `imageRowsInto`.
+string storePathForItem(ImageData img, string docPath) {
+    if (img is null) return "";
+    ref slot = touchRowTextMemo(img);
+    if (slot.storeValid
+        && slot.storeSource == img.storedPath
+        && slot.storeAnchor == docPath)
+        return slot.storeText;
+
+    import gl_thread_guard : glThreadGuard;
+    glThreadGuard("imageRowText");
+
+    const text = storePathFor(img.storedPath, docPath);
+    slot.storeText   = text;
+    slot.storeSource = img.storedPath;
+    slot.storeAnchor = docPath;
+    slot.storeValid  = true;
+    return text;
+}
+
+/// `dimensionsText` for an image ITEM, memoised on the side table above
+/// (task 0635; moved off `ImageData` by task 0771).
 ///
 /// The second half of the row build's per-frame garbage, and the smaller one:
 /// 960 of the measured 5120 bytes/frame, against the relative path's 4160. It
@@ -214,27 +422,28 @@ string dimensionsText(int width, int height, bool missing) {
 /// the byte target while leaving the property unmet.
 ///
 /// The key is the three inputs, which are `refreshImageMeta`'s three outputs;
-/// see `RowTextMemo` in `document.d` for why the cache is keyed on them rather
+/// see the section comment above for why the cache is keyed on them rather
 /// than cleared by whoever writes them.
 ///
 /// IT WRITES, and the guard says which thread may. See `imageRowsInto`.
 string dimensionsTextFor(ImageData img) {
     if (img is null) return "";
-    if (img.rowText.dimsValid
-        && img.rowText.dimsW == img.width
-        && img.rowText.dimsH == img.height
-        && img.rowText.dimsMissing == img.missing)
-        return img.rowText.dimsText;
+    ref slot = touchRowTextMemo(img);
+    if (slot.dimsValid
+        && slot.dimsW == img.width
+        && slot.dimsH == img.height
+        && slot.dimsMissing == img.missing)
+        return slot.dimsText;
 
     import gl_thread_guard : glThreadGuard;
     glThreadGuard("imageRowText");
 
     const text = dimensionsText(img.width, img.height, img.missing);
-    img.rowText.dimsText    = text;
-    img.rowText.dimsW       = img.width;
-    img.rowText.dimsH       = img.height;
-    img.rowText.dimsMissing = img.missing;
-    img.rowText.dimsValid   = true;
+    slot.dimsText    = text;
+    slot.dimsW       = img.width;
+    slot.dimsH       = img.height;
+    slot.dimsMissing = img.missing;
+    slot.dimsValid   = true;
     return text;
 }
 
@@ -314,8 +523,8 @@ private string elideUndecodable(string s, size_t maxChars) {
 }
 
 /// The path line exactly as the panel draws it: THIS row's text, cut to the
-/// budget the panel derived from the width it has — memoised on the item
-/// (task 0635).
+/// budget the panel derived from the width it has — memoised in the side
+/// table above (task 0635; moved off `ImageData` by task 0771).
 ///
 /// WHY IT IS HERE AND NOT INLINE IN THE PANEL. Two reasons, and the second is
 /// the one that matters.
@@ -344,26 +553,28 @@ private string elideUndecodable(string s, size_t maxChars) {
 /// across the frames this is meant to make free, and a resize costs one
 /// recompute per row — the same price the old code paid every frame.
 ///
-/// `img` is the memo's home and may be null (a payload-null image item, see
+/// `img` is the memo's KEY (task 0771 moved the memo off it into the side
+/// table above) and may be null (a payload-null image item, see
 /// `isImageRow`); that case falls through to the bare function, which for the
 /// empty path text it carries is the no-allocation branch anyway.
 ///
 /// IT WRITES, and the guard says which thread may. See `imageRowsInto`.
 string elidedPathText(ImageData img, string pathText, size_t maxChars) {
     if (img is null) return elideEnd(pathText, maxChars);
-    if (img.rowText.elideValid
-        && img.rowText.elideBudget == maxChars
-        && img.rowText.elideSource == pathText)
-        return img.rowText.elideText;
+    ref slot = touchRowTextMemo(img);
+    if (slot.elideValid
+        && slot.elideBudget == maxChars
+        && slot.elideSource == pathText)
+        return slot.elideText;
 
     import gl_thread_guard : glThreadGuard;
     glThreadGuard("imageRowText");
 
     const text = elideEnd(pathText, maxChars);
-    img.rowText.elideText   = text;
-    img.rowText.elideSource = pathText;
-    img.rowText.elideBudget = maxChars;
-    img.rowText.elideValid  = true;
+    slot.elideText   = text;
+    slot.elideSource = pathText;
+    slot.elideBudget = maxChars;
+    slot.elideValid  = true;
     return text;
 }
 
@@ -389,10 +600,13 @@ string elidedPathText(ref ImageRow r, size_t maxChars) {
 ///
 /// IT IS NOT, HOWEVER, A PURE READ OF THE DOCUMENT — this comment said "pure
 /// with respect to global state" and that was only ever true of the reading
-/// half. Since task 0635 the three text helpers below fill a memo ON THE ITEM
-/// when they miss, so building the rows WRITES to `ImageData.rowText` for
-/// every item whose inputs moved since the last frame. What that write is and
-/// is not:
+/// half. Since task 0635 the three text helpers below fill a memo when they
+/// miss — on the ITEM itself until task 0771, now in this module's own side
+/// table (`g_rowTextMemo`, above `dimensionsTextFor`) — so building the rows
+/// WRITES to that table for every item whose inputs moved since the last
+/// frame, AND stamps every item this call walked past so the table's own
+/// sweep can tell a live entry from a stale one. What that write is and is
+/// not:
 ///
 ///   * it carries no information — `RowTextMemo` is a rendering of fields that
 ///     already exist, nothing serialises it, nothing copies it across a
@@ -419,6 +633,14 @@ string elidedPathText(ref ImageRow r, size_t maxChars) {
 /// about which of them was wrong. The tooltip is `storedPath` itself, which is
 /// absolute in memory — relative in the row, absolute on hover, as measured.
 void imageRowsInto(Document* doc, string docPath, ref ImageRow[] outBuf) {
+    // Task 0771 — the memo table's whole lifetime policy: bump the sweep
+    // BEFORE walking any row, and prune on the way OUT regardless of which
+    // return below fires (including the empty-list one right after this,
+    // which is exactly the call that must still notice a document that went
+    // from N image items to zero). See `sweepRowTextMemo`'s doc comment.
+    ++g_rowTextSweep;
+    scope(exit) sweepRowTextMemo();
+
     size_t n = 0;
     if (doc !is null)
         foreach (l; doc.layers) if (isImageRow(l)) ++n;
@@ -808,7 +1030,7 @@ unittest {
 
     assert(warmBuild == 0,
         "a frame in which nothing changed must build the rows without "
-        ~ "allocating: the path and dimensions text are memoised on the item."
+        ~ "allocating: the path and dimensions text are memoised."
         ~ readings);
     assert(warmCut == 0,
         "…and must cut them without allocating either. `elideEnd` allocates "

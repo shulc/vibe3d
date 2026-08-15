@@ -4,7 +4,9 @@
 module tests.unit.ui.image_rows_test;
 
 import document        : Document, Layer, ImageData;
-import io.image_path   : storePathForItem;
+// `storePathForItem` used to be imported from `io.image_path` here; task 0771
+// moved it (with its whole memo) into `ui.image_rows`, imported wholesale
+// below, so this file reaches it the same way production code now does.
 import std.file : exists, remove;
 import std.path : buildPath;
 import std.json : parseJSON;
@@ -771,5 +773,65 @@ unittest {
         && elidedPathText(rows[2], 8) == "../char…",
         "one item's change moves one item: a single memo shared by every row "
         ~ "would drag its neighbours along");
+}
+
+// ---------------------------------------------------------------------------
+// Task 0771 — a clip's memo entry does not outlive the clip.
+//
+// The side table (`g_rowTextMemo`) is `private` to `ui/image_rows.d`, and
+// this task's own rules forbid widening visibility to make a test possible,
+// so this cannot read the table directly. It observes the table the same way
+// R11 (`source/ui/image_rows.d`) observes "memoised" at all: a surviving
+// entry answers a re-read for FREE (0 bytes — the cached string, unchanged
+// inputs); a pruned one has to recompute from scratch (> 0 bytes). Reading
+// "0 bytes" as "still cached" and ">0 bytes" as "gone" is exactly the
+// distinction the byte count already carries elsewhere in this file.
+// ---------------------------------------------------------------------------
+unittest {
+    import core.memory : GC;
+
+    auto f = makeRowFixture("rows_memo_lifetime");
+    ImageRow[] rows;
+    imageRowsInto(&f.doc, f.docPath, rows);   // populates alpha/bravo/charlie
+
+    auto charlieImg = f.charlie.imageOrNull();
+    auto alphaImg   = f.alpha.imageOrNull();
+    assert(charlieImg !is null && alphaImg !is null,
+        "fixture: both alpha and charlie must have a payload");
+
+    // Drop charlie from the document -- the only thing that made it a LIVE
+    // row for `imageRowsInto`. `charlieImg` itself is untouched: same
+    // storedPath, same width/height/missing, so if its memo entry survives
+    // this removal, re-reading it costs nothing either way.
+    immutable ci = f.doc.indexOf(f.charlie);
+    assert(ci != f.doc.layers.length, "fixture: charlie must be a member before removal");
+    f.doc.layers = f.doc.layers[0 .. ci] ~ f.doc.layers[ci + 1 .. $];
+
+    // The sweep's trigger: a call that walks every CURRENT row, which no
+    // longer includes charlie.
+    imageRowsInto(&f.doc, f.docPath, rows);
+
+    // NEGATIVE CONTROL FIRST. alpha is still a live row, so its entry must
+    // still be a HIT. Without this row, a harness that reads "> 0 bytes" for
+    // every input (a broken measurement, e.g. a `dimensionsTextFor` that lost
+    // its memo check entirely) would pass the positive assertion below for
+    // the wrong reason.
+    immutable a0 = GC.stats().allocatedInCurrentThread;
+    dimensionsTextFor(alphaImg);
+    immutable a1 = GC.stats().allocatedInCurrentThread;
+    assert(a1 - a0 == 0,
+        "control: alpha is still a live row and must still be memoised -- if "
+        ~ "THIS allocates, the reading below cannot mean what it claims");
+
+    // THE READING. charlie is gone from the document; re-reading its
+    // (otherwise-unchanged) dimensions text must cost bytes again, because a
+    // survived entry would answer for free exactly like alpha's just did.
+    immutable b0 = GC.stats().allocatedInCurrentThread;
+    dimensionsTextFor(charlieImg);
+    immutable b1 = GC.stats().allocatedInCurrentThread;
+    assert(b1 - b0 > 0,
+        "a clip removed from the document must not keep its memo entry: "
+        ~ "re-reading it after removal allocated 0 bytes, which means "
+        ~ "sweepRowTextMemo left a stale entry in the table");
 }
 

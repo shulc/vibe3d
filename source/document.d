@@ -46,11 +46,15 @@ import math    : ModelSpace;
 // ItemXform;` / `ItemKind` / `kindInfo`, and a re-export keeps every one of
 // them resolving without an edit. The public surface of `document` is
 // unchanged, name for name.
+//
+// A third stratum, `RowTextMemo`, took the same first step (0721: a leaf
+// module this one re-exported) and then left ENTIRELY (0771): nothing here
+// re-exports it any more, because nothing here holds one — see `ImageData`'s
+// doc comment below for where it went and why.
 public import item_xform : MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
                            ItemXform, sanitizeItemXform;
 public import item_kinds : ItemKind, ItemKindInfo, kindInfo, kindFromToken,
                            tokenOf;
-public import row_text_memo : RowTextMemo;
 
 /// An image item's payload (task 0616). A CLASS reference — unlike `Mesh`
 /// (a value struct `MeshSnapshot` moves) — so that a `Layer` can be REPOINTED
@@ -148,13 +152,15 @@ final class ImageData {
                           ///< path nobody has opened is the one wrong answer
                           ///< a consumer cannot detect.
 
-    // -----------------------------------------------------------------------
-    // Task 0635 — the MEMOISED half. See `RowTextMemo`. Neither authored nor
-    // derived-from-the-file: a pure rendering of the two halves above (plus
-    // the document's own path), held only so a draw path does not rebuild it
-    // once per row per frame.
-    // -----------------------------------------------------------------------
-    RowTextMemo rowText;
+    // Task 0635 added a MEMOISED half here — a rendering of the two halves
+    // above, held so a draw path did not rebuild it once per row per frame.
+    // Task 0771 moved it off this object entirely: it was a UI cache with no
+    // business on the document's own payload class, and unlike the derived
+    // fields above it carries no information of the document's — a
+    // `RowTextMemo[ImageData]` side table, keyed on this object's identity
+    // and pruned by the panel's own draw pass, now lives in
+    // `ui/image_rows.d`, the cache's only reader. See that module for the
+    // struct, the table, and the lifetime rule that replaces the field.
 }
 
 
