@@ -119,6 +119,13 @@ import commands.select.convert  : SelectConvertCommand;
 import commands.select.fill     : SelectFillHoles, SelectFillInsideLoop;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
+import commands.viewport.view_preset  : ViewportViewPreset;
+import commands.viewport.layout_preset : ViewportLayoutPreset;
+import commands.viewport.independence : ViewportIndependence, ViewportIndepAxis;
+import commands.viewport.display      : ViewportDisplayStyle, ViewportWireOverlay,
+                                         ViewportWireAlpha;
+import commands.viewport.grid_steps   : ViewportGridSteps;
+import commands.viewport.master       : ViewportMaster;
 import commands.file.load;
 import commands.file.save;
 import commands.mesh.subdivide;
@@ -1436,6 +1443,33 @@ private void registerViewCommands(EditorApp app) {
         vpm.focusOwnerCamera(vpm.activeId), vpm.scaleOwnerCamera(vpm.activeId), editMode);
     reg.commandFactories["viewport.fit_selected"] = () => cast(Command) new FitSelected(&mesh(),
         vpm.focusOwnerCamera(vpm.activeId), vpm.scaleOwnerCamera(vpm.activeId), editMode);
+    // The ten `viewport.*` commands task 0761 moved out of the HTTP
+    // delegate's own interception (they used to run BEFORE the
+    // `reg.commandFactories` lookup — see `doc/tasks/done/0761-*`). Each
+    // factory call re-resolves `vpm`/`editMode` fresh at dispatch time,
+    // same as `viewport.fit` above; the argument-parsing law each one
+    // implements is unchanged — see `commands/viewport/*.d` and the
+    // injector in `http_providers.d`.
+    reg.commandFactories["viewport.view"] = () => cast(Command)
+        new ViewportViewPreset(&mesh(), cameraView, editMode, vpm);
+    reg.commandFactories["viewport.layout"] = () => cast(Command)
+        new ViewportLayoutPreset(&mesh(), cameraView, editMode, vpm);
+    reg.commandFactories["viewport.indCenter"] = () => cast(Command)
+        new ViewportIndependence(&mesh(), cameraView, editMode, vpm, ViewportIndepAxis.Center);
+    reg.commandFactories["viewport.indScale"] = () => cast(Command)
+        new ViewportIndependence(&mesh(), cameraView, editMode, vpm, ViewportIndepAxis.Scale);
+    reg.commandFactories["viewport.indRotate"] = () => cast(Command)
+        new ViewportIndependence(&mesh(), cameraView, editMode, vpm, ViewportIndepAxis.Rotate);
+    reg.commandFactories["viewport.displayStyle"] = () => cast(Command)
+        new ViewportDisplayStyle(&mesh(), cameraView, editMode, vpm);
+    reg.commandFactories["viewport.wireOverlay"] = () => cast(Command)
+        new ViewportWireOverlay(&mesh(), cameraView, editMode, vpm);
+    reg.commandFactories["viewport.wireAlpha"] = () => cast(Command)
+        new ViewportWireAlpha(&mesh(), cameraView, editMode, vpm);
+    reg.commandFactories["viewport.gridSteps"] = () => cast(Command)
+        new ViewportGridSteps(&mesh(), cameraView, editMode, vpm);
+    reg.commandFactories["viewport.master"] = () => cast(Command)
+        new ViewportMaster(&mesh(), cameraView, editMode, vpm);
     {
         import commands.snap.toggle : SnapToggleCommand;
         import commands.snap.mode   : SnapModeCommand;

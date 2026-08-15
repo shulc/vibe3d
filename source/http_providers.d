@@ -372,6 +372,161 @@ unittest {
     assert(oneStringArg(`{"preset":7}`, "preset") == "");
 }
 
+// ---------------------------------------------------------------------------
+// injectViewportCommandPositional — argument extraction for the ten
+// `viewport.*` commands (task 0761), called from `commandHandlerDelegate`
+// (`wireCommandProviders`, below) right after construction, before apply().
+//
+// Extraction, not command logic: every `switch`/range-check/throw a caller
+// can observe still lives on the command class itself
+// (`commands/viewport/*.d`) — this function's job is only to reproduce the
+// THREE argument-reading laws the original interception used, verbatim, and
+// hand each command the already-typed value(s) it asks for. Operates on the
+// RAW `paramsJson` string (does its own `parseJSON`), not the pre-parsed
+// object the tool.*/select.* injectors receive, because Law 1
+// (`oneStringArg`) accepts a bare JSON string body — a shape those two
+// injectors never see (they only run when `pj.type == JSONType.object`).
+// ---------------------------------------------------------------------------
+private void injectViewportCommandPositional(Command cmd, string paramsJson) {
+    import std.json   : parseJSON, JSONType;
+    import std.string : toLower, strip;
+    import std.conv   : to, ConvException;
+    import commands.viewport.view_preset  : ViewportViewPreset;
+    import commands.viewport.layout_preset : ViewportLayoutPreset;
+    import commands.viewport.independence : ViewportIndependence;
+    import commands.viewport.display      : ViewportDisplayStyle, ViewportWireOverlay,
+                                             ViewportWireAlpha;
+    import commands.viewport.grid_steps   : ViewportGridSteps;
+    import commands.viewport.master       : ViewportMaster;
+
+    // Law 1 — oneStringArg: viewport.view / viewport.layout / the three
+    // independence toggles.
+    if (auto vv = cast(ViewportViewPreset)cmd) {
+        vv.setPreset(oneStringArg(paramsJson, "preset"));
+        return;
+    }
+    if (auto vl = cast(ViewportLayoutPreset)cmd) {
+        vl.setPreset(oneStringArg(paramsJson, "preset"));
+        return;
+    }
+    if (auto vi = cast(ViewportIndependence)cmd) {
+        // Tolerant parse: "no"/"false"/"0" → false; anything else → true.
+        string s = oneStringArg(paramsJson, "value");
+        vi.setValue(!(s == "no" || s == "false" || s == "0"));
+        return;
+    }
+
+    // Law 2 — scalar of ANY type, found by scanning an alias list of named
+    // keys (or the first `_positional` entry, or a bare scalar body):
+    // displayStyle/wireOverlay/wireAlpha share one alias list plus a
+    // `viewport` cell key; gridSteps has its own, separate alias list and no
+    // cell key (application-wide).
+    bool isCellDisplay = (cast(ViewportDisplayStyle)cmd !is null)
+                       || (cast(ViewportWireOverlay)cmd !is null)
+                       || (cast(ViewportWireAlpha)cmd !is null);
+    if (isCellDisplay) {
+        string sval = "";
+        int    cell = -1;
+        bool   haveNum = false;
+        double nval = 0;
+        if (paramsJson.length > 0) {
+            auto pjv = parseJSON(paramsJson);
+            void takeScalar(JSONValue v) {
+                switch (v.type) {
+                    case JSONType.string:   sval = v.str; break;
+                    case JSONType.float_:   nval = v.floating;             haveNum = true; break;
+                    case JSONType.integer:  nval = cast(double)v.integer;  haveNum = true; break;
+                    case JSONType.uinteger: nval = cast(double)v.uinteger; haveNum = true; break;
+                    default: break;
+                }
+            }
+            if (pjv.type != JSONType.object) {
+                takeScalar(pjv);
+            } else {
+                if (auto pp = "_positional" in pjv)
+                    if (pp.type == JSONType.array && pp.array.length >= 1)
+                        takeScalar(pp.array[0]);
+                if (sval.length == 0 && !haveNum) {
+                    // Named forms: the generic "value", plus a per-command
+                    // alias so a caller can be explicit.
+                    foreach (key; ["value", "style", "wire", "overlay", "alpha"]) {
+                        if (auto pp = key in pjv) { takeScalar(*pp); break; }
+                    }
+                }
+                if (auto pp = "viewport" in pjv) {
+                    if (pp.type == JSONType.integer)       cell = cast(int)pp.integer;
+                    else if (pp.type == JSONType.uinteger) cell = cast(int)pp.uinteger;
+                    else if (pp.type == JSONType.float_)   cell = cast(int)pp.floating;
+                    else if (pp.type == JSONType.string) {
+                        try { cell = to!int(pp.str.strip); }
+                        catch (ConvException) { /* keep -1 = active */ }
+                    }
+                }
+            }
+        }
+        if (auto ds = cast(ViewportDisplayStyle)cmd)  { ds.setRaw(sval, cell); return; }
+        if (auto wo = cast(ViewportWireOverlay)cmd)   { wo.setRaw(sval, cell); return; }
+        if (auto wa = cast(ViewportWireAlpha)cmd)     { wa.setRaw(sval, cell, haveNum, nval); return; }
+    }
+
+    if (auto gs = cast(ViewportGridSteps)cmd) {
+        string sval = "";
+        long   mval = long.min;
+        if (paramsJson.length > 0) {
+            auto pjv = parseJSON(paramsJson);
+            void takeScalar(JSONValue v) {
+                switch (v.type) {
+                    case JSONType.string:   sval = v.str;                  break;
+                    case JSONType.integer:  mval = v.integer;              break;
+                    case JSONType.uinteger: mval = cast(long)v.uinteger;   break;
+                    case JSONType.float_:   mval = cast(long)v.floating;   break;
+                    default: break;
+                }
+            }
+            if (pjv.type != JSONType.object) takeScalar(pjv);
+            else {
+                if (auto pp = "_positional" in pjv)
+                    if (pp.type == JSONType.array && pp.array.length >= 1)
+                        takeScalar(pp.array[0]);
+                if (sval.length == 0 && mval == long.min)
+                    foreach (key; ["value", "mask", "steps", "rungs"])
+                        if (auto pp = key in pjv) { takeScalar(*pp); break; }
+            }
+        }
+        gs.setRaw(sval, mval);
+        return;
+    }
+
+    // Law 3 — int-or-string: viewport.master.
+    if (auto vm = cast(ViewportMaster)cmd) {
+        int mid = -1;
+        if (paramsJson.length > 0) {
+            auto pjv = parseJSON(paramsJson);
+            string s = "";
+            if (pjv.type == JSONType.integer)       { mid = cast(int)pjv.integer; }
+            else if (pjv.type == JSONType.uinteger) { mid = cast(int)pjv.uinteger; }
+            else if (pjv.type == JSONType.float_)   { mid = cast(int)pjv.floating; }
+            else if (pjv.type == JSONType.string)   { s = pjv.str; }
+            else if (pjv.type == JSONType.object) {
+                if (auto pp = "_positional" in pjv) {
+                    if (pp.type == JSONType.array && pp.array.length >= 1) {
+                        auto v0 = pp.array[0];
+                        if (v0.type == JSONType.integer)       mid = cast(int)v0.integer;
+                        else if (v0.type == JSONType.uinteger) mid = cast(int)v0.uinteger;
+                        else if (v0.type == JSONType.float_)   mid = cast(int)v0.floating;
+                        else if (v0.type == JSONType.string)   s = v0.str;
+                    }
+                }
+            }
+            if (s.length > 0) {
+                try { mid = to!int(s); } catch (ConvException) { /* keep -1 */ }
+            }
+        }
+        vm.setRaw(mid);
+        return;
+    }
+}
+
 void wireHttpProviders(HttpServer httpServer, ref EditorApp app) {
     // Slots this build legitimately leaves empty. Appended BESIDE the
     // condition that decides each one, never collected in a list at the
@@ -2341,365 +2496,27 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
             import commands.file.save : FileSave;
             import params : injectParamsInto;
 
-            // viewport.view <preset> — camera-only preset switch, no undo entry.
-            // Sets the active viewport's projection kind and axis preset.
-            // Axis presets (Top/Bottom/Front/Back/Right/Left) → ProjKind.Ortho;
-            // Perspective/Camera → ProjKind.Perspective.
-            if (id == "viewport.view") {
-                import view : ProjKind, ViewPreset;
-                import viewport : applyCellViewPreset;
-                // Raw string body, first `_positional`, or `preset:` — see
-                // oneStringArg (task 0720).
-                string presetStr = oneStringArg(paramsJson, "preset");
-                // Map string → preset. projKind is derived from the preset
-                // by the shared helper (Perspective/Camera → Perspective,
-                // every axis preset → Ortho) — same mapping this switch used
-                // to hardcode per-case.
-                ViewPreset vp3preset = ViewPreset.Perspective;
-                switch (presetStr) {
-                    case "Top":         vp3preset = ViewPreset.Top;         break;
-                    case "Bottom":      vp3preset = ViewPreset.Bottom;      break;
-                    case "Front":       vp3preset = ViewPreset.Front;       break;
-                    case "Back":        vp3preset = ViewPreset.Back;        break;
-                    case "Right":       vp3preset = ViewPreset.Right;       break;
-                    case "Left":        vp3preset = ViewPreset.Left;        break;
-                    case "Camera":      vp3preset = ViewPreset.Camera;      break;
-                    default:            vp3preset = ViewPreset.Perspective; break;
-                }
-                // Hardwired to the ACTIVE cell (viewport.view does not do
-                // ?viewport=N resolution — that's the separate camera-set
-                // handler registered via setCameraSetHandler; adding it here
-                // would be scope creep for task 0215).
-                applyCellViewPreset(vpm.views[vpm.activeId], vp3preset);
-                return;
-            }
-
-            // viewport.layout <preset> — switch layout (Single/SplitH/SplitV/Quad).
-            if (id == "viewport.layout") {
-                import viewport : LayoutPreset;
-                string presetStr = oneStringArg(paramsJson, "preset");
-                LayoutPreset lp = LayoutPreset.Single;
-                switch (presetStr) {
-                    case "SplitH": lp = LayoutPreset.SplitH; break;
-                    case "SplitV": lp = LayoutPreset.SplitV; break;
-                    case "Quad":   lp = LayoutPreset.Quad;   break;
-                    default:       lp = LayoutPreset.Single;  break;
-                }
-                vpm.applyLayout(lp);
-                // Mirrors the recentFiles/lastDir/toolDefaults precedent: just
-                // update g_prefs in-memory here, no per-command file write —
-                // it flushes to disk once at clean shutdown (persistPrefsOnExit,
-                // gated on prefsActive). Harmless no-op in --test (never saved).
-                g_prefs.viewportLayout = lp;
-                return;
-            }
-
-            // viewport.indCenter/indScale/indRotate <yes|no> — per-cell independence
-            // flags, camera-only, no undo entry.
-            if (id == "viewport.indCenter" || id == "viewport.indScale" || id == "viewport.indRotate") {
-                bool val = true;
-                {
-                    string s = oneStringArg(paramsJson, "value");
-                    // Tolerant parse: "no"/"false"/"0" → false; anything else → true
-                    if (s == "no" || s == "false" || s == "0") val = false;
-                }
-                if (id == "viewport.indCenter")       vpm.views[vpm.activeId].indCenter = val;
-                else if (id == "viewport.indScale")   vpm.views[vpm.activeId].indScale  = val;
-                else                                  vpm.views[vpm.activeId].indRotate = val;
-                vpm.views[vpm.activeId].dirty = true;
-                return;
-            }
-
-            // viewport.displayStyle / wireOverlay / wireAlpha — per-cell
-            // display state (task 0559 Phase 2). Camera-class commands: they
-            // touch no document state, so no undo entry, exactly like
-            // viewport.indCenter above.
-            //
-            // TWO THINGS HERE ARE DIFFERENT FROM EVERY viewport.* COMMAND
-            // ABOVE, and both are deliberate.
-            //
-            // 1. A CELL SELECTOR. The four older viewport.* commands all
-            //    hardwire vpm.views[vpm.activeId]. Display style is the first
-            //    genuinely PER-CELL render input, so "set the style on a cell
-            //    that is not the active one" has to be expressible — without
-            //    it, the isolation property (a style change reaches exactly
-            //    one cell) is not testable at all, and a shipped
-            //    implementation in which all four cells share one mode would
-            //    look identical to a working one. Defaults to activeId, so
-            //    every existing call shape is unchanged.
-            //
-            // 2. UNCONSUMED ENUM VALUES ARE REJECTED, NOT ACCEPTED. The
-            //    display enums are declared wider than the renderer currently
-            //    honours, on purpose, so the value space is right from the
-            //    start. But a command that accepts a value and then renders
-            //    something else is worse than a command that refuses it: the
-            //    first is a silent lie that a test can be written against and
-            //    pass forever. So the parse below accepts exactly the values
-            //    whose plan fields a pass actually reads today, and names
-            //    what is missing for the rest.
-            if (id == "viewport.displayStyle" || id == "viewport.wireOverlay"
-                || id == "viewport.wireAlpha") {
-                import std.string : toLower, strip;
-                import std.conv   : to, ConvException;
-                import std.format : format;
-
-                string sval = "";
-                int    cell = -1;
-                bool   haveNum = false;
-                double nval = 0;
-
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    void takeScalar(JSONValue v) {
-                        switch (v.type) {
-                            case JSONType.string:   sval = v.str; break;
-                            case JSONType.float_:   nval = v.floating;          haveNum = true; break;
-                            case JSONType.integer:  nval = cast(double)v.integer;  haveNum = true; break;
-                            case JSONType.uinteger: nval = cast(double)v.uinteger; haveNum = true; break;
-                            default: break;
-                        }
-                    }
-                    if (pjv.type != JSONType.object) {
-                        takeScalar(pjv);
-                    } else {
-                        if (auto pp = "_positional" in pjv)
-                            if (pp.type == JSONType.array && pp.array.length >= 1)
-                                takeScalar(pp.array[0]);
-                        if (sval.length == 0 && !haveNum) {
-                            // Named forms: the generic "value", plus a
-                            // per-command alias so a caller can be explicit.
-                            foreach (key; ["value", "style", "wire", "overlay", "alpha"]) {
-                                if (auto pp = key in pjv) { takeScalar(*pp); break; }
-                            }
-                        }
-                        if (auto pp = "viewport" in pjv) {
-                            if (pp.type == JSONType.integer)       cell = cast(int)pp.integer;
-                            else if (pp.type == JSONType.uinteger) cell = cast(int)pp.uinteger;
-                            else if (pp.type == JSONType.float_)   cell = cast(int)pp.floating;
-                            else if (pp.type == JSONType.string) {
-                                try { cell = to!int(pp.str.strip); }
-                                catch (ConvException) { /* keep -1 = active */ }
-                            }
-                        }
-                    }
-                }
-
-                // Out of range is an ERROR, not a silent clamp to the active
-                // cell: a test that addresses cell 2 in a Single layout and
-                // silently gets cell 0 would pass while asserting nothing.
-                if (cell == -1) cell = vpm.activeId;
-                if (cell < 0 || cell >= vpm.cellCount)
-                    throw new Exception(format(
-                        "%s: viewport %d is out of range — the current layout "
-                        ~ "has %d cell(s)", id, cell, vpm.cellCount));
-
-                Viewport3D tv = vpm.views[cell];
-
-                if (id == "viewport.displayStyle") {
-                    switch (sval.strip.toLower) {
-                        case "wireframe": tv.display.active.style = DisplayStyle.Wireframe; break;
-                        case "shaded":    tv.display.active.style = DisplayStyle.Shaded;    break;
-                        // Task 0589: 'solid' used to be refused here, and the
-                        // refusal said exactly what was missing — "an unlit
-                        // surface needs a shader uniform that does not exist".
-                        // That uniform now exists (`u_lit` in shader.d) and the
-                        // face pass reads `DrawPlan.facesLit`, so the value is
-                        // consumed and the refusal would now be the lie. The
-                        // rest of the switch keeps refusing by name.
-                        case "solid":     tv.display.active.style = DisplayStyle.Solid;     break;
-                        default:
-                            throw new Exception(
-                                "viewport.displayStyle: expected 'wireframe', "
-                                ~ "'solid' or 'shaded', got '" ~ sval ~ "'");
-                    }
-                } else if (id == "viewport.wireOverlay") {
-                    switch (sval.strip.toLower) {
-                        case "none":    tv.display.active.wire = WireOverlay.None;    break;
-                        case "uniform": tv.display.active.wire = WireOverlay.Uniform; break;
-                        case "colored":
-                            throw new Exception(
-                                "viewport.wireOverlay: 'colored' needs a "
-                                ~ "per-item line colour that no layer carries "
-                                ~ "yet, and the colour source is still an open "
-                                ~ "question. Refusing rather than guessing.");
-                        default:
-                            throw new Exception(
-                                "viewport.wireOverlay: expected 'none' or "
-                                ~ "'uniform', got '" ~ sval ~ "'");
-                    }
-                } else {
-                    if (!haveNum && sval.length > 0) {
-                        try { nval = to!double(sval.strip); haveNum = true; }
-                        catch (ConvException) { /* reported below */ }
-                    }
-                    if (!haveNum)
-                        throw new Exception(
-                            "viewport.wireAlpha: expected a number in 0..1");
-                    if (nval < 0.0 || nval > 1.0)
-                        throw new Exception(format(
-                            "viewport.wireAlpha: %.4f is outside 0..1", nval));
-                    tv.display.active.wireAlpha = cast(float)nval;
-                }
-
-                // Task 0594: this cell's style is now a CHOICE, not an
-                // inheritance. Set on every arm of the branch above — including
-                // wireAlpha — because all three are the display controls the
-                // layout template would otherwise re-seed, and a user who set
-                // only the opacity has still expressed a preference about this
-                // cell's display. Only reached on success: every rejection
-                // above throws, so a refused value never marks the cell.
-                tv.displayUserSet = true;
-
-                // Mandatory, and the reason the older viewport.* commands all
-                // end this way: without it a non-hovered cell keeps re-blitting
-                // its cached colour texture and the change appears to do
-                // nothing until that cell's camera happens to move.
-                tv.dirty = true;
-
-                // Mirror into the in-memory prefs, exactly like
-                // viewport.layout above: no per-command file write, one flush
-                // at clean shutdown, harmless no-op under --test (never
-                // saved). Mirrored from the VIEW rather than from the parsed
-                // input so the two can never disagree about what was applied.
-                if (cell < g_prefs.viewportDisplay.length) {
-                    g_prefs.viewportDisplay[cell].style     = tv.display.active.style;
-                    g_prefs.viewportDisplay[cell].wire      = tv.display.active.wire;
-                    g_prefs.viewportDisplay[cell].wireAlpha = tv.display.active.wireAlpha;
-                    // Task 0594: and the provenance with them — this is the
-                    // write that makes the saved value outrank the shipped
-                    // template on the next run.
-                    g_prefs.viewportDisplay[cell].styleUserSet = true;
-                }
-                return;
-            }
-
-            // viewport.gridSteps <mask> — the grid's mantissa ladder (task
-            // 0570). APPLICATION-WIDE, so no cell selector: the ladder is one
-            // setting and a cell's grid differs from its neighbour's only
-            // through its own zoom.
-            //
-            // Accepts the mask as a number 0..7, or as the rung set spelled
-            // out ("1,2,5,10"). The second form exists because the number is
-            // a bit set and unreadable at a call site, and because it is what
-            // the panel shows — a test and a UI naming the same thing the
-            // same way is worth the parse.
-            //
-            // Out of range is an ERROR, not a clamp: 8 is not a coarser 7,
-            // it is a value with no ladder behind it.
-            if (id == "viewport.gridSteps") {
-                import std.string : strip, toLower, split, join;
-                import std.conv   : to, ConvException;
-                import std.format : format;
-
-                string sval = "";
-                long   mval = long.min;
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    void takeScalar(JSONValue v) {
-                        switch (v.type) {
-                            case JSONType.string:   sval = v.str;                  break;
-                            case JSONType.integer:  mval = v.integer;              break;
-                            case JSONType.uinteger: mval = cast(long)v.uinteger;   break;
-                            case JSONType.float_:   mval = cast(long)v.floating;   break;
-                            default: break;
-                        }
-                    }
-                    if (pjv.type != JSONType.object) takeScalar(pjv);
-                    else {
-                        if (auto pp = "_positional" in pjv)
-                            if (pp.type == JSONType.array && pp.array.length >= 1)
-                                takeScalar(pp.array[0]);
-                        if (sval.length == 0 && mval == long.min)
-                            foreach (key; ["value", "mask", "steps", "rungs"])
-                                if (auto pp = key in pjv) { takeScalar(*pp); break; }
-                    }
-                }
-
-                if (sval.length > 0 && mval == long.min) {
-                    immutable string s = sval.strip;
-                    // Plain number in a string ("5"), else a rung set.
-                    try { mval = to!long(s); }
-                    catch (ConvException) {
-                        // Match the spelled-out set against the eight ladders.
-                        string canon(const(double)[] r) {
-                            string[] parts;
-                            foreach (v; r) {
-                                // 2.5 keeps its decimal; the rest print whole.
-                                parts ~= (v == cast(double)cast(long)v)
-                                         ? format("%d", cast(long)v)
-                                         : format("%.1f", v);
-                            }
-                            return parts.join(",");
-                        }
-                        string want;
-                        foreach (piece; s.split(",")) want ~= (want.length ? "," : "") ~ piece.strip;
-                        foreach (m; kGridMaskMin .. kGridMaskMax + 1)
-                            if (canon(gridRungs(m)) == want) { mval = m; break; }
-                        if (mval == long.min)
-                            throw new Exception(format(
-                                "viewport.gridSteps: '%s' is neither a mask 0..7 "
-                                ~ "nor one of the eight rung sets (e.g. \"1,2,5,10\")", s));
-                    }
-                }
-
-                if (mval == long.min)
-                    throw new Exception(
-                        "viewport.gridSteps: expected a mask 0..7 or a rung set");
-                if (mval < kGridMaskMin || mval > kGridMaskMax)
-                    throw new Exception(format(
-                        "viewport.gridSteps: %d is outside 0..7 — the mask is a "
-                        ~ "3-bit SET (bit 0 admits 2, bit 1 admits 2.5, bit 2 "
-                        ~ "admits 5), so out-of-range is refused rather than "
-                        ~ "clamped to a ladder that was not asked for", mval));
-
-                g_viewGrid.rungMask = cast(int)mval;
-                g_prefs.gridStepMask = cast(int)mval;
-
-                // Every cell must re-render: the grid step is not part of any
-                // cell's camera, so without this a cell keeps re-blitting its
-                // cached texture and the ladder change appears to do nothing
-                // until that cell's camera happens to move.
-                foreach (k; 0 .. vpm.views.length) vpm.views[k].dirty = true;
-                return;
-            }
-
-            // viewport.master <id> — set per-cell master override, camera-only, no undo.
-            if (id == "viewport.master") {
-                int mid = -1;
-                if (paramsJson.length > 0) {
-                    auto pjv = parseJSON(paramsJson);
-                    string s = "";
-                    if (pjv.type == JSONType.integer)      { mid = cast(int)pjv.integer; }
-                    else if (pjv.type == JSONType.uinteger){ mid = cast(int)pjv.uinteger; }
-                    else if (pjv.type == JSONType.float_)  { mid = cast(int)pjv.floating; }
-                    else if (pjv.type == JSONType.string)  { s = pjv.str; }
-                    else if (pjv.type == JSONType.object) {
-                        if (auto pp = "_positional" in pjv) {
-                            if (pp.type == JSONType.array && pp.array.length >= 1) {
-                                auto v0 = pp.array[0];
-                                if (v0.type == JSONType.integer)      mid = cast(int)v0.integer;
-                                else if (v0.type == JSONType.uinteger) mid = cast(int)v0.uinteger;
-                                else if (v0.type == JSONType.float_)   mid = cast(int)v0.floating;
-                                else if (v0.type == JSONType.string)   s = v0.str;
-                            }
-                        }
-                    }
-                    if (s.length > 0) {
-                        import std.conv : to, ConvException;
-                        try { mid = to!int(s); } catch (ConvException) { /* keep -1 */ }
-                    }
-                }
-                // Out-of-range clamps to -1 (self via group master at resolve time).
-                if (mid < -1 || mid >= vpm.cellCount) mid = -1;
-                vpm.views[vpm.activeId].masterId = mid;
-                vpm.views[vpm.activeId].dirty = true;
-                return;
-            }
+            // The ten `viewport.*` commands used to be intercepted here,
+            // ahead of `reg.commandFactories` below. Moved into the registry
+            // (task 0761) — see `commands/viewport/{view_preset,layout_preset,
+            // independence,display,grid_steps,master}.d` for the command
+            // classes and `injectViewportCommandPositional` below for the
+            // argument-parsing law each one preserves verbatim.
 
             auto factory = id in reg.commandFactories;
             if (factory is null)
                 throw new Exception("unknown command id '" ~ id ~ "'");
             auto cmd = (*factory)();
+
+            // viewport.* commands (task 0761): argument extraction ahead of
+            // apply(), same position in the dispatch flow the old
+            // interception ran at. Operates on the RAW `paramsJson` string
+            // (not the `pj` object parsed below) because one of the three
+            // argument laws — `oneStringArg`'s — accepts a bare JSON string
+            // body, a shape `injectToolCommandPositional`/
+            // `injectSelectCommandPositional` below never see (they only run
+            // inside the `pj.type == JSONType.object` branch).
+            injectViewportCommandPositional(cmd, paramsJson);
 
             // FormsPanel interactive write: mark a `tool.attr` interactive so
             // the reEvaluate() seam opens the tool's live session on the first
