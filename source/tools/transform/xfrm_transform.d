@@ -2273,7 +2273,7 @@ public:
         rec.frameStart = frame;
         if (bank != DragBank.Move) {
             if (auto ac = activeAcenStage())
-                rec.softStart = Pin(ac.isSoftPlaced(), ac.currentSoftCenter());
+                rec.softStart = ac.currentSoftPin();
             else
                 rec.softStart = Pin.init;
         }
@@ -2360,16 +2360,16 @@ public:
         if (bank == DragBank.Move) {
             h.apply = () {
                 if (auto ac = activeAcenStage()) {
-                    ac.restorePinState(pinEnd.placed, pinEnd.center);
-                    ac.restoreSoftPlaced(softEnd.placed, softEnd.center);
+                    ac.restorePinState(pinEnd);
+                    ac.restoreSoftPlaced(softEnd);
                 }
                 run = runEnd; headlessRotate = eulerZYXFromMatrix(run.r);
                 frame = frameEnd; refreshFrameValid();
             };
             h.revert = () {
                 if (auto ac = activeAcenStage()) {
-                    ac.restorePinState(pinStart.placed, pinStart.center);
-                    ac.restoreSoftPlaced(softStart.placed, softStart.center);
+                    ac.restorePinState(pinStart);
+                    ac.restoreSoftPlaced(softStart);
                 }
                 run = runStart; headlessRotate = eulerZYXFromMatrix(run.r);
                 frame = frmStart; refreshFrameValid();
@@ -2379,13 +2379,13 @@ public:
                 run = runEnd; headlessRotate = eulerZYXFromMatrix(run.r);
                 frame = frameEnd; refreshFrameValid();
                 if (auto ac = activeAcenStage())
-                    ac.restoreSoftPlaced(softEnd.placed, softEnd.center);
+                    ac.restoreSoftPlaced(softEnd);
             };
             h.revert = () {
                 run = runStart; headlessRotate = eulerZYXFromMatrix(run.r);
                 frame = frmStart; refreshFrameValid();
                 if (auto ac = activeAcenStage())
-                    ac.restoreSoftPlaced(softStart.placed, softStart.center);
+                    ac.restoreSoftPlaced(softStart);
             };
         }
         return h;
@@ -3176,8 +3176,8 @@ public:
         // (where the moving set legitimately changes) and by any relocate.
         //
         // BUG-2 (reviewer BLOCKER) — set the soft pin BEFORE commitEdit so the
-        // commit captures the gesture-END soft state LIVE (ac.isSoftPlaced() /
-        // currentSoftCenter()) into its undo/redo hooks, alongside the
+        // commit captures the gesture-END soft state LIVE (ac.currentSoftPin())
+        // into its undo/redo hooks, alongside the
         // userPlaced pin + pipe config. Previously this fired AFTER commitEdit,
         // so the recorded hooks never carried the soft pin and an in-session
         // Ctrl+Z reverted geometry but left the gizmo floating at the settled
@@ -3349,10 +3349,9 @@ public:
         bool rotGestureMoved = rotAbsKnown && !xformRotEqual(xfStart, xfEnd);
         bool rotSettle = rotGestureMoved && acenSettleAllowed()
                       && (acenAllowsClickRelocate() || currentFalloff(vts).enabled);
-        bool   softEndPlaced; Vec3 softEndCenter;
-        if (rotSettle)
-            settleGestureCenter(rotateSub.handler.center, softEndPlaced, softEndCenter);
-        else { softEndPlaced = false; softEndCenter = Vec3(0, 0, 0); }
+        Pin softEnd = rotSettle
+            ? settleGestureCenter(rotateSub.handler.center)
+            : Pin.init;
         // COMMIT B — persist the rotate bank's gesture-end rendered basis
         // (R_gesture·B0 = the rotated frame the ring left on screen) so the idle
         // gizmo HOLDS it instead of snapping back to the world-snapped live
@@ -3377,7 +3376,7 @@ public:
         // the userPin — pinEnd is unused for a non-Move bank, Pin.init is a
         // harmless placeholder). Consumes (clears) rotateRec.runKnown.
         auto gh = buildGestureHooks(DragBank.Rotate, xfEnd, frameEnd,
-                                     Pin(softEndPlaced, softEndCenter), Pin.init);
+                                     softEnd, Pin.init);
         rotateSub.wrapperFieldApplyHook  = gh.apply;
         rotateSub.wrapperFieldRevertHook = gh.revert;
         rotateSub.commitGesture();
@@ -3464,10 +3463,9 @@ public:
         bool scaleGestureMoved = scaleAbsKnown && !xformScaleEqual(xfStart, xfEnd);
         bool scaleSettle = scaleGestureMoved && acenSettleAllowed()
                         && currentFalloff(vts).enabled;
-        bool   softEndPlaced; Vec3 softEndCenter;
-        if (scaleSettle)
-            settleGestureCenter(scaleSub.handler.center, softEndPlaced, softEndCenter);
-        else { softEndPlaced = false; softEndCenter = Vec3(0, 0, 0); }
+        Pin softEnd = scaleSettle
+            ? settleGestureCenter(scaleSub.handler.center)
+            : Pin.init;
         // COMMIT B — persist the scale bank's gesture-end rendered basis
         // (R_gesture=I ⇒ B0) so the idle gizmo holds it after release. Gated
         // identically so center+basis persistence stay in sync.
@@ -3484,7 +3482,7 @@ public:
         // the userPin — pinEnd is unused, Pin.init is a harmless
         // placeholder). Consumes (clears) scaleRec.runKnown.
         auto gh = buildGestureHooks(DragBank.Scale, xfEnd, frameEnd,
-                                     Pin(softEndPlaced, softEndCenter), Pin.init);
+                                     softEnd, Pin.init);
         scaleSub.wrapperFieldApplyHook  = gh.apply;
         scaleSub.wrapperFieldRevertHook = gh.revert;
 
@@ -4070,7 +4068,7 @@ public:
                 // this gesture's true start — for a relocate-opened gesture this
                 // fires AFTER setUserPlaced+restage, so it captures the relocated
                 // pin (the correct START for stepping; see the field comment).
-                moveRec.pinStart = Pin(ac.isUserPlaced(), ac.currentPinCenter());
+                moveRec.pinStart = ac.currentUserPin();
                 moveRec.pinKnown = true;
 
                 // BUG-2 — capture the gesture-START SOFT pin LIVE here too (the
@@ -4078,7 +4076,7 @@ public:
                 // soft pin yet → revert clears, pivot recomputes to the
                 // reverted-geometry centroid). For gesture-2+ of a sticky run it
                 // is the prior gesture's settle, so revert restores that.
-                moveRec.softStart = Pin(ac.isSoftPlaced(), ac.currentSoftCenter());
+                moveRec.softStart = ac.currentSoftPin();
             }
         }
     }
@@ -4146,8 +4144,7 @@ public:
             // Route through the shared settle so the 2-entry acenSettleAllowed()
             // predicate (Element + Local excluded) is the SINGLE mode filter; the
             // relocate gate that used to live at the mouse-up was dropped (Phase 3).
-            bool _sp; Vec3 _sc;
-            settleGestureCenter(pendingMoveSoftCenter, _sp, _sc);
+            settleGestureCenter(pendingMoveSoftCenter);
             pendingMoveSoftPin = false;
         }
 
@@ -4155,18 +4152,14 @@ public:
         // captured (no preceding beginEdit-open), buildGestureHooks below falls
         // back to the current pin for START too so the hooks are inert (no pin
         // jump on undo of a gesture that never moved the pin).
-        bool pinEndPlaced = false;
-        Vec3 pinEndCenter = Vec3(0, 0, 0);
+        Pin pinEnd;
         // BUG-2 — gesture-END SOFT pin, the LIVE soft state at commit. The Move
         // mouse-up sets it (notifyAcenSoftPlaced) BEFORE this commit when falloff
         // is active and the mode allows relocate, so it is already settled here.
-        bool softEndPlaced = false;
-        Vec3 softEndCenter = Vec3(0, 0, 0);
+        Pin softEnd;
         if (auto ac = activeAcenStage()) {
-            pinEndPlaced  = ac.isUserPlaced();
-            pinEndCenter  = ac.currentPinCenter();
-            softEndPlaced = ac.isSoftPlaced();
-            softEndCenter = ac.currentSoftCenter();
+            pinEnd  = ac.currentUserPin();
+            softEnd = ac.currentSoftPin();
         }
 
         // F3b — single chokepoint composing the {apply, revert} pair from
@@ -4175,7 +4168,7 @@ public:
         // inert start==end automatically). Consumes (clears) moveRec.pinKnown
         // and moveRec.runKnown.
         auto gh = buildGestureHooks(DragBank.Move, run, frame,
-            Pin(softEndPlaced, softEndCenter), Pin(pinEndPlaced, pinEndCenter));
+            softEnd, pinEnd);
 
         // P-A blocker fix + P-C — UNIFORM hook family. Compose the WHOLE
         // transient pipe CONFIG restore (falloff + snap + symmetry) alongside the
@@ -4790,20 +4783,24 @@ private:
     // calls carried — that gate admits only Auto/None/Screen and is exactly what
     // excluded Border (the flex mode) today. The ONLY exclusion is the 2-entry
     // `acenSettleAllowed()` predicate (Element + Local — modes with a
-    // higher-precedence LIVE pivot source). Returns the (placed, center) the
-    // caller's undo hook should restore as the gesture-END soft state, so the
-    // splice carries the pin in lockstep with the geometry. When the settle is
-    // not allowed it pins nothing and reports placed=false.
-    void settleGestureCenter(Vec3 settledCenter,
-                             out bool softEndPlaced, out Vec3 softEndCenter) {
-        softEndPlaced = false;
-        softEndCenter = Vec3(0, 0, 0);
+    // higher-precedence LIVE pivot source). RETURNS the `Pin` the caller's
+    // undo hook should restore as the gesture-END soft state, so the splice
+    // carries the pin in lockstep with the geometry. When the settle is not
+    // allowed it pins nothing and returns `Pin.init` (placed = false).
+    //
+    // Returns rather than fills two `out` params (task 0724 / audit-4 P6).
+    // Three of the four callers immediately packed the pair back into a
+    // `Pin(...)` and the fourth declared `bool _sp; Vec3 _sc;` purely to throw
+    // them away — the signature was making every caller do work to undo it.
+    // The `out` form was also the riskier one in D: `out` resets its argument
+    // to `T.init` on entry, so a caller reusing a live variable silently lost
+    // it before the first line of the body ran.
+    Pin settleGestureCenter(Vec3 settledCenter) {
         auto ac = activeAcenStage();
-        if (ac is null) return;
-        if (!ac.acenSettleAllowed()) return;
+        if (ac is null) return Pin.init;
+        if (!ac.acenSettleAllowed()) return Pin.init;
         ac.setSoftPlaced(settledCenter);
-        softEndPlaced = ac.isSoftPlaced();
-        softEndCenter = ac.currentSoftCenter();
+        return ac.currentSoftPin();
     }
 
     // COMMIT B — persist the gesture-END rendered BASIS (the analogue of the center

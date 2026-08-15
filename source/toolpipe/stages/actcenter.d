@@ -671,11 +671,19 @@ public:
     /// computeCenter reads the field directly.)
     bool isSoftPlaced() const { return softPin.placed; }
 
-    /// The current soft-pin center (meaningful only when isSoftPlaced()). Exposed
-    /// so the transform wrapper can capture the gesture-START / gesture-END soft
-    /// state for the Move undo/redo hooks, mirroring currentPinCenter() for the
-    /// userPlaced pin.
-    Vec3 currentSoftCenter() const { return softPin.center; }
+    /// The current display soft-pin, WHOLE. Exposed so the transform wrapper
+    /// can capture the gesture-START / gesture-END soft state for the Move
+    /// undo/redo hooks, mirroring currentUserPin() for the userPlaced pin.
+    ///
+    /// Returns the `Pin` rather than the bare centre (task 0724 / audit-4 P6).
+    /// The old shape was `isSoftPlaced()` + `currentSoftCenter()`, and every
+    /// one of the four callers immediately wrote `Pin(a(), b())` — the value
+    /// type being re-assembled by hand on the far side of the API it had just
+    /// been taken apart to cross. That is the drift `Pin`'s own doc in math.d
+    /// exists to warn about, and the API was the thing doing it.
+    /// `isSoftPlaced()` stays, for the callers that genuinely want only the
+    /// flag (http_providers' state dump, the mode predicates).
+    Pin currentSoftPin() const { return softPin; }
 
     /// Restore the display soft-pin to an explicit (placed, center) endpoint and
     /// publish. Used by the wrapper's Move undo/redo hooks to carry the soft pin
@@ -684,8 +692,13 @@ public:
     /// centroid), apply restores the gesture-END (settled) soft pin. Independent
     /// of restorePinState (userPlaced) — the two own disjoint state and compose in
     /// one hook closure without clobber.
-    void restoreSoftPlaced(bool placed, Vec3 center) {
-        softPin = Pin(placed, placed ? center : Vec3(0, 0, 0));
+    ///
+    /// Takes the `Pin` whole (task 0724 / audit-4 P6). Note the normalisation
+    /// it keeps and `restorePinState` does not: an un-placed soft pin is
+    /// stored with a ZEROED centre, so `Pin.init` is the canonical cleared
+    /// value and no stale point can survive behind `placed == false`.
+    void restoreSoftPlaced(Pin p) {
+        softPin = Pin(p.placed, p.placed ? p.center : Vec3(0, 0, 0));
         publishState();
     }
 
@@ -724,24 +737,35 @@ public:
     // WRONG gesture-START for the 2nd+ plain gesture in a userPlaced run (no
     // boundary re-stages it, so the frozen value is stale, from a relocate
     // possibly a prior run). The wrapper instead captures the LIVE pin
-    // (isUserPlaced()/currentPinCenter()) at each gesture's beginEdit. These two
-    // accessors expose the live pin endpoints (placed flag + center) so the
-    // wrapper can capture the gesture-START at beginEdit and the gesture-END at
-    // commit, and restore either one from a hook.
+    // (currentUserPin()) at each gesture's beginEdit. The accessor below
+    // exposes the live pin endpoint WHOLE so the wrapper can capture the
+    // gesture-START at beginEdit and the gesture-END at commit, and restore
+    // either one from a hook.
 
-    /// The current (live) pin endpoints — the gesture-START pin captured at
+    /// The current (live) pin endpoint — the gesture-START pin captured at
     /// beginEdit, and the gesture-END pin captured at mouse-up after any
-    /// sticky-follow has settled. (isUserPlaced(), above, supplies the placed
-    /// flag for the same endpoint.)
-    Vec3 currentPinCenter() const { return userPin.center; }
+    /// sticky-follow has settled.
+    ///
+    /// One `Pin`, not a flag beside a point (task 0724 / audit-4 P6): this
+    /// used to be `isUserPlaced()` + `currentPinCenter()`, read as a pair at
+    /// every site and immediately re-packed into a `Pin`. `isUserPlaced()`
+    /// remains — it has readers that want only the flag — but nothing needs
+    /// to take the endpoint apart to move it any more.
+    Pin currentUserPin() const { return userPin; }
 
     /// Restore the pin to an explicit (placed, center) endpoint and publish so
     /// the visible gizmo follows. Used by the wrapper's Move undo/redo hooks to
     /// snap the action center to the gesture-START (revert) or gesture-END
     /// (apply) pin in lockstep with the geometry. Does NOT touch the frozen
     /// snapshot — hooks run outside any open session.
-    void restorePinState(bool placed, Vec3 center) {
-        userPin = Pin(placed, center);
+    ///
+    /// Takes the `Pin` whole (task 0724 / audit-4 P6), and stores it VERBATIM
+    /// — deliberately unlike `restoreSoftPlaced`, which zeroes the centre of
+    /// an un-placed pin. The user pin's centre is meaningful while unplaced
+    /// (it is the point a later re-place would restage), so normalising here
+    /// would lose it.
+    void restorePinState(Pin p) {
+        userPin = p;
         publishState();
     }
 
