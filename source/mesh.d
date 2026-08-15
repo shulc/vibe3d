@@ -314,18 +314,6 @@ struct Mesh {
     uint[]     vertLoop;     // vertLoop[vi] = loop starting at vi (anchored to fan start for boundary verts)
     uint[]     loopEdge;     // loopEdge[li] = index in edges[] of the undirected edge for loop li
     uint[ulong] edgeIndexMap; // edgeKey(a,b) → index in edges[]; populated by buildLoops + addEdge
-    // P2: CSR-style vertex→edge adjacency scratch for buildLoops's
-    // loopEdge fill on the subpatch preview mesh (caller passes
-    // `rebuildEdgeIndexMap=false`). For each vertex `u`,
-    // edgesAdj[edgesAdjStart[u] .. edgesAdjStart[u+1]] is the list of
-    // edge indices incident to u — typically 4-6 entries on quad
-    // meshes, which fit in one cache line. Sequential scan over that
-    // list beats a binary-search into a 9 MB sorted array for the
-    // 786K preview-edge case (random access vs sequential touches the
-    // hot cache line once per lookup).
-    private size_t[] buildLoopsEdgesAdjStart;
-    private uint[]   buildLoopsEdgesAdj;
-    private size_t[] buildLoopsEdgesAdjCursor; // scratch during fill
 
     // Task 0447 (vertex-fan-walk-returns-foreign-edge, KEEP-TWIN redesign):
     // `buildLoops`'s twin pairing (Pass 3) links two darts by undirected-edge
@@ -8929,16 +8917,13 @@ struct Mesh {
     /// buildLoops); `/api/model` never reads edges, so a live instance is
     /// unaffected. Semantics are otherwise unchanged.
     ///
-    /// `rebuildEdgeIndexMap`: when true (default), repopulates the
-    /// undirected edgeKey → edge index `edgeIndexMap` AA — required
-    /// for callers that read `edgeIndexMap` directly or call
-    /// `edgeIndex` / `edgeIndexByKey`. When false, leaves the AA
-    /// empty and uses a one-shot sorted-array binary search for the
-    /// internal `loopEdge[]` fill. Used by the subpatch preview
-    /// build (subpatch_osd.OsdAccel.buildPreview) where nothing
-    /// outside Mesh ever queries `edgeIndexMap` on the preview mesh
-    /// — at 786K preview edges the AA build costs ~10% of CPU.
-    void buildLoops(bool rebuildEdgeIndexMap = true) {
+    /// Always repopulates the undirected edgeKey → edge index `edgeIndexMap`
+    /// AA alongside the loops family (task 0790 — the `rebuildEdgeIndexMap`
+    /// opt-out this doc used to describe had zero callers from the day a
+    /// faster path replaced its only caller, `subpatch_osd.OsdAccel.buildPreview`,
+    /// which now skips `buildLoops` on the preview mesh entirely rather than
+    /// calling it with the map suppressed).
+    void buildLoops() {
 
         // Pre-compute total loop count + per-face start offset in one
         // pass. Lets pass 1 below run in parallel — each face writes
@@ -8992,91 +8977,26 @@ struct Mesh {
 
 
         // Pass 2: fill loopEdge[] for every half-edge by looking up
-        // its undirected edge index.
-        //
-        // P2 (doc/subpatch_tab_perf_plan.md): the AA `edgeIndexMap`
-        // was the dominant hot symbol at 786K preview edges (build +
-        // parallel reads ≈ 14% of CPU). Two paths:
-        //
-        //   rebuildEdgeIndexMap=true (default, cage mesh ops):
-        //       Same as before — rebuild AA, then parallel `in`
-        //       reads. External callers (bevel, subpatch_osd's cage
-        //       reads, edgeIndex/edgeIndexByKey) need the AA, so we
-        //       still pay this on the cage. Cage edge count is
-        //       small (≈12 for a cube, ≤ few K for typical meshes).
-        //
-        //   rebuildEdgeIndexMap=false (subpatch preview path):
-        //       Build a one-shot sorted (key, idx) view, use
-        //       parallel binary-search lookups, leave edgeIndexMap
-        //       empty. At 786K edges binary search (≈20 cmps) is
-        //       comparable to AA hash + open-addressing probes, but
-        //       allocation-bounded — no per-entry GC hits.
-        if (rebuildEdgeIndexMap) {
-            edgeIndexMap = null;
-            foreach (i, e; edges) edgeIndexMap[edgeKey(e[0], e[1])] = cast(uint)i;
-            void fillLoopEdge(size_t idx) {
-                uint u = loops[idx].vert;
-                uint v = loops[loops[idx].next].vert;
-                if (auto p = edgeKey(u, v) in edgeIndexMap)
-                    loopEdge[idx] = *p;
-            }
-            if (total >= PARALLEL_BUILD_MIN) {
-                foreach (idx; parallel(iota(total))) fillLoopEdge(idx);
-            } else {
-                foreach (idx; 0 .. total) fillLoopEdge(idx);
-            }
+        // its undirected edge index, rebuilding the AA `edgeIndexMap`
+        // along the way. External callers (bevel, subpatch_osd's cage
+        // reads, edgeIndex/edgeIndexByKey) need the AA, so this always
+        // runs — task 0790 removed the CSR-adjacency / binary-search
+        // opt-out that used to skip it (`rebuildEdgeIndexMap=false`);
+        // its only caller was replaced same-day by a faster path that
+        // skips `buildLoops` on the preview mesh entirely (see the
+        // function doc comment above).
+        edgeIndexMap = null;
+        foreach (i, e; edges) edgeIndexMap[edgeKey(e[0], e[1])] = cast(uint)i;
+        void fillLoopEdge(size_t idx) {
+            uint u = loops[idx].vert;
+            uint v = loops[loops[idx].next].vert;
+            if (auto p = edgeKey(u, v) in edgeIndexMap)
+                loopEdge[idx] = *p;
+        }
+        if (total >= PARALLEL_BUILD_MIN) {
+            foreach (idx; parallel(iota(total))) fillLoopEdge(idx);
         } else {
-            // CSR-style vertex→edge adjacency. Two passes over edges,
-            // both linear. Per-lookup cost: walk the (small, hot)
-            // incidence list of one endpoint. On a quad mesh that's
-            // ~4 candidate edges per vertex.
-            buildLoopsEdgesAdjStart .length = vertices.length + 1;
-            buildLoopsEdgesAdjStart[] = 0;
-            foreach (e; edges) {
-                ++buildLoopsEdgesAdjStart[e[0] + 1];
-                ++buildLoopsEdgesAdjStart[e[1] + 1];
-            }
-            foreach (i; 1 .. buildLoopsEdgesAdjStart.length)
-                buildLoopsEdgesAdjStart[i] += buildLoopsEdgesAdjStart[i - 1];
-            buildLoopsEdgesAdj.length    = buildLoopsEdgesAdjStart[$ - 1];
-            buildLoopsEdgesAdjCursor.length = vertices.length;
-            buildLoopsEdgesAdjCursor[] = 0;
-            foreach (ei, e; edges) {
-                buildLoopsEdgesAdj[buildLoopsEdgesAdjStart[e[0]]
-                    + buildLoopsEdgesAdjCursor[e[0]]++] = cast(uint)ei;
-                buildLoopsEdgesAdj[buildLoopsEdgesAdjStart[e[1]]
-                    + buildLoopsEdgesAdjCursor[e[1]]++] = cast(uint)ei;
-            }
-
-            // edgeIndexMap is intentionally left empty — see contract
-            // comment in the function-level docstring.
-            edgeIndexMap = null;
-
-            // Const views shared into the parallel workers.
-            auto adjStart = buildLoopsEdgesAdjStart;
-            auto adj      = buildLoopsEdgesAdj;
-            auto edgesV   = edges;
-            void fillLoopEdge(size_t idx) {
-                uint u = loops[idx].vert;
-                uint v = loops[loops[idx].next].vert;
-                size_t lo = adjStart[u];
-                size_t hi = adjStart[u + 1];
-                for (size_t i = lo; i < hi; i++) {
-                    uint ei = adj[i];
-                    auto e = edgesV[ei];
-                    if ((e[0] == u && e[1] == v) ||
-                        (e[0] == v && e[1] == u))
-                    {
-                        loopEdge[idx] = ei;
-                        return;
-                    }
-                }
-            }
-            if (total >= PARALLEL_BUILD_MIN) {
-                foreach (idx; parallel(iota(total))) fillLoopEdge(idx);
-            } else {
-                foreach (idx; 0 .. total) fillLoopEdge(idx);
-            }
+            foreach (idx; 0 .. total) fillLoopEdge(idx);
         }
 
 
@@ -9147,11 +9067,11 @@ struct Mesh {
             }
         }
         if (anySameDir) {
-            // CSR vertex→dart adjacency (template: buildLoopsEdgesAdjStart /
-            // buildLoopsEdgesAdj above — same count / prefix-sum / fill shape,
-            // keyed by `loops[idx].vert` instead of an edge's two endpoints,
-            // one entry per dart since each dart has exactly one tail vertex).
-            // Built ONLY here (some edge is same-direction), so the
+            // CSR vertex→dart adjacency: same count / prefix-sum / fill shape
+            // as the edgeIndexMap build above, keyed by `loops[idx].vert`
+            // instead of an edge's two endpoints, one entry per dart since
+            // each dart has exactly one tail vertex. Built ONLY here (some
+            // edge is same-direction), so the
             // consistently-wound fast path never allocates it (Risk #1). The
             // fan-walk ranges use it to enumerate the WHOLE fan of an
             // unordered vertex, complete and winding-independent (but in
@@ -9240,20 +9160,16 @@ struct Mesh {
         // value-zeroed behaviour. No-op when no PolyVertex map is registered.
         resizePolyVertexMaps();
 
-        // Stamp validity at the current structVersion. The loops family is
-        // fully rebuilt above in either branch, so it is always Valid here.
-        // edgeIndexMap tracks which branch ran: the `rebuildEdgeIndexMap`
-        // default rebuilds it (Valid); the CSR-adjacency branch leaves it
-        // `null` by design (DeliberatelyEmpty, not Stale — this is an
-        // intentional caller contract, not a forgotten rebuild).
-        loopsStamp  = structVersion;
-        loopsState_ = DerivedState.Valid;
-        if (rebuildEdgeIndexMap) {
-            edgeMapStamp  = structVersion;
-            edgeMapState_ = DerivedState.Valid;
-        } else {
-            edgeMapState_ = DerivedState.DeliberatelyEmpty;
-        }
+        // Stamp validity at the current structVersion. The loops family and
+        // edgeIndexMap are both fully rebuilt above, so both are always
+        // Valid here (task 0790 removed the branch that could leave
+        // edgeIndexMap `DeliberatelyEmpty` while loops read Valid — the only
+        // remaining producer of `DeliberatelyEmpty` is `markDerivedEmpty()`,
+        // which drops both states together).
+        loopsStamp    = structVersion;
+        loopsState_   = DerivedState.Valid;
+        edgeMapStamp  = structVersion;
+        edgeMapState_ = DerivedState.Valid;
     }
 
     // -----------------------------------------------------------------------

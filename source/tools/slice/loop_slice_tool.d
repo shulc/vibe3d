@@ -437,10 +437,12 @@ public:
         // tests/unit/tools/slice/loop_slice_tool_test.d hands it a mesh whose
         // loops are stale (a plain `addFace` with no terminal buildLoops) and
         // requires the throw. Deleting `assertLoopsValid()` turns that test
-        // red. `assertEdgeMapValid()` cannot be the sole failure today — no
-        // producer of (loops valid, map stale) exists; see the note at
-        // commands/select/loop.d and case 7 of the stamp trace table in
-        // tests/unit/mesh_test.d.
+        // red. `assertEdgeMapValid()` cannot be the sole failure — no
+        // producer of (loops valid, map stale) exists, and since task 0790
+        // deleted `buildLoops`'s `rebuildEdgeIndexMap` parameter (the one arm
+        // that could produce it) that is now true BY CONSTRUCTION, not just
+        // unobserved; see the note at commands/select/loop.d and case 7 of
+        // the stamp trace table in tests/unit/mesh_test.d.
         mesh.assertLoopsValid();
         mesh.assertEdgeMapValid();
         auto root = JSONValue.emptyObject;

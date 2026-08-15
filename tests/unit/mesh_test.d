@@ -3242,13 +3242,17 @@ unittest {
 //    primitive that leaves edgeIndexMap Stale — `addFaceFast` (case 6) and
 //    `rebuildEdgesFromFaces` (below) — bumps `structVersion` in the same
 //    breath, which invalidates the loops stamp too; `markDerivedEmpty()`
-//    invalidates both by construction; and `buildLoops(false)`, the one arm
-//    that would validate loops while deliberately emptying the map, has ZERO
-//    callers repo-wide (backlog 0790). So on this tree `loopsValid()` implies
-//    `edgeMapUsable()`, and the SECOND assert of a pair cannot be the sole
-//    failure. This block is the measurement behind that claim; the three
-//    paired call sites cite it (commands/select/loop.d, app.d
-//    rebuildLoopHoverMask, tools/slice/loop_slice_tool.d toolStateJson).
+//    invalidates both by construction; and the one arm that would once have
+//    validated loops while deliberately emptying the map — `buildLoops(bool
+//    rebuildEdgeIndexMap)`'s `false` branch — no longer exists at all: task
+//    0790 deleted the parameter after finding zero callers repo-wide for
+//    three months. So on this tree `loopsValid()` implies `edgeMapUsable()`
+//    not merely "as observed" but BY CONSTRUCTION — `buildLoops()` now always
+//    stamps both Valid together, and `markDerivedEmpty()` always drops both
+//    together — and the SECOND assert of a pair cannot be the sole failure.
+//    This block is the measurement behind that claim; the three paired call
+//    sites cite it (commands/select/loop.d, app.d rebuildLoopHoverMask,
+//    tools/slice/loop_slice_tool.d toolStateJson).
 // ---------------------------------------------------------------------------
 unittest {
     auto m = makeCube();

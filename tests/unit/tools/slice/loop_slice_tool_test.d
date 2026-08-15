@@ -123,10 +123,12 @@ unittest {
 // VALID). Nothing here touches a private field.
 //
 // Only the `assertLoopsValid` half is demonstrated: the mirror state (loops
-// valid, edgeMap stale) has no producer on this tree, so the
-// `assertEdgeMapValid` on the next line can only fire where the line above it
-// already threw. See case 7 of the stamp trace table in
-// `tests/unit/mesh_test.d` for that measurement.
+// valid, edgeMap stale) has no producer on this tree — and, since task 0790
+// deleted `buildLoops`'s `rebuildEdgeIndexMap` parameter (the one arm that
+// would once have produced it), that is now true BY CONSTRUCTION, not just
+// unobserved. So the `assertEdgeMapValid` on the next line can only fire
+// where the line above it already threw. See case 7 of the stamp trace table
+// in `tests/unit/mesh_test.d` for that measurement.
 //
 // `debug`-wrapped because both are `debug assert` — live in dub test / dub
 // build, stripped from the shipped `-release` binary. This block says the

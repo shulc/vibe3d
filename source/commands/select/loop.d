@@ -33,18 +33,23 @@ class SelectLoop : Command {
         // loops are stale (a plain `addFace` without a terminal buildLoops)
         // and requires the throw; deleting the line turns that test red.
         //
-        // The SECOND one cannot be the sole failure today, and that was
-        // measured, not assumed — deleting `assertEdgeMapValid()` alone leaves
-        // the same test GREEN. There is no producer of (loops valid, edgeMap
-        // stale) on this tree: every primitive that leaves the map Stale bumps
+        // The SECOND one cannot be the sole failure, and that was measured,
+        // not assumed — deleting `assertEdgeMapValid()` alone leaves the same
+        // test GREEN. There is no producer of (loops valid, edgeMap stale) on
+        // this tree: every primitive that leaves the map Stale bumps
         // structVersion and invalidates the loops stamp in the same breath,
-        // and `buildLoops(false)` (the one arm that would validate loops while
-        // emptying the map) has zero callers, backlog 0790. It is kept rather
-        // than deleted because it is a one-compare debug-only check that
-        // becomes independently meaningful the day such a producer appears —
-        // and case 7 of the stamp trace table in tests/unit/mesh_test.d is the
-        // tripwire that will say so (it goes red if a mutator stops bumping
-        // structVersion).
+        // `markDerivedEmpty()` drops both states together, and the one arm
+        // that could once validate loops while leaving the map empty —
+        // `buildLoops(bool rebuildEdgeIndexMap)`'s `false` branch — no longer
+        // exists at all: task 0790 deleted the parameter after finding zero
+        // callers repo-wide for three months. So this state is unreachable BY
+        // CONSTRUCTION now, not merely unobserved. `assertEdgeMapValid()` is
+        // kept anyway — it is a one-compare debug-only check, free in
+        // release, and stays a correct guard should some future primitive
+        // reintroduce a way to invalidate the map without invalidating loops;
+        // case 7 of the stamp trace table in tests/unit/mesh_test.d is the
+        // tripwire that will go red the day that happens (a mutator that
+        // stops bumping structVersion).
         mesh.assertLoopsValid();
         mesh.assertEdgeMapValid();
         snap = SelectionSnapshot.capture(*mesh);

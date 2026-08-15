@@ -33,12 +33,15 @@ import commands.select.loop : SelectLoop;
 // `assertLoopsValid` is demonstrated here. The mirror state (loops valid,
 // edgeMap stale) has no producer on this tree — every primitive that leaves
 // the map Stale bumps structVersion and takes the loops stamp down with it,
-// and `buildLoops(false)`, the one arm that would validate loops while
-// deliberately emptying the map, has zero callers (backlog 0790). So
-// `assertEdgeMapValid` here can only ever fire in a state where the line above
-// it has already thrown. The measurement behind that claim is case 7 of the
-// stamp trace table in `tests/unit/mesh_test.d`; if a future mutator gives the
-// mirror state a producer, this comment is what should be revisited.
+// and the one arm that would once have validated loops while deliberately
+// emptying the map — `buildLoops(bool rebuildEdgeIndexMap)`'s `false` branch
+// — no longer exists: task 0790 deleted the parameter after it sat at zero
+// callers for three months. So `assertEdgeMapValid` here is unreachable BY
+// CONSTRUCTION, not merely unobserved — it can only ever fire in a state
+// where the line above it has already thrown. The measurement behind that
+// claim is case 7 of the stamp trace table in `tests/unit/mesh_test.d`; if a
+// future mutator reintroduces a producer of the mirror state, this comment is
+// what should be revisited.
 //
 // Wrapped in `debug` because both are `debug assert`: under `-release` there
 // is nothing to throw. This proves the guard is live in the builds that CARRY

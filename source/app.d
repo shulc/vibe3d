@@ -2148,10 +2148,13 @@ void main(string[] args) {
         // fair stand-in for this one.
         //
         // The `assertEdgeMapValid()` below cannot be the sole failure on this
-        // tree (no producer of "loops valid, map stale" exists — see the note
-        // at commands/select/loop.d and case 7 of the stamp trace table in
-        // tests/unit/mesh_test.d). Kept as the guard that starts discriminating
-        // the day one appears.
+        // tree, and since task 0790 deleted `buildLoops`'s
+        // `rebuildEdgeIndexMap` parameter (the one arm that could produce
+        // "loops valid, map stale") that is now true BY CONSTRUCTION, not
+        // just unobserved — see the note at commands/select/loop.d and case 7
+        // of the stamp trace table in tests/unit/mesh_test.d. Kept anyway as
+        // the guard that starts discriminating the day some future primitive
+        // reintroduces a producer.
         mesh.assertLoopsValid();
         mesh.assertEdgeMapValid();
         // `sliceRing`: highlight the ring the loop-SLICE lands on (seed +
