@@ -525,8 +525,10 @@ private GitOut git(string root, const(string)[] args)
 /// `VIBE3D_CENSUS_BASE` pins a single revision instead — a tool for aiming the
 /// gate (and for the negative control), not an escape hatch: whatever revision
 /// it names, the invariant still has to hold against it.
-string[] laneRevisions(string root)
+string[] laneRevisions(string root, out bool haveBranchPoint)
 {
+    haveBranchPoint = true;
+
     auto forced = environment.get("VIBE3D_CENSUS_BASE", "");
     if (forced.length) return [forced.strip];
 
@@ -540,8 +542,12 @@ string[] laneRevisions(string root)
         auto mb = git(root, ["merge-base", "HEAD", mainRef]);
         if (mb.status == 0 && mb.text.strip.length) { base = mb.text.strip; break; }
     }
-    if (base.length == 0) return [h];        // no `main` to branch from
-    if (base == h)        return [h];
+    if (base.length == 0)                    // no `main` to branch from
+    {
+        haveBranchPoint = false;
+        return [h];
+    }
+    if (base == h) return [h];               // on main itself: HEAD is the bar
 
     auto revs = appender!(string[]);
     revs.put(base);
@@ -738,7 +744,12 @@ private ptrdiff_t indexOf(const(char)[] s, char c) @safe pure nothrow @nogc
 /// which files lost what rather than only naming a total.
 struct Verdict
 {
-    bool          ran;         /// false when git could not name a branch point
+    bool          ran;         /// false when git could not answer at all
+    /// True when no `main` was reachable, so the only baseline is HEAD. The
+    /// check still catches an uncommitted destruction, but on a clean checkout
+    /// it compares a tree against itself and can never fail. A shallow CI
+    /// clone lands here, which is why it is announced rather than assumed.
+    bool          degraded;
     string        baseRev;     /// the HIGH-WATER revision, the one that binds
     size_t        revsWalked;
     Census        work, base;  /// live counts
@@ -765,8 +776,10 @@ Verdict judge(string root)
 {
     Verdict v;
 
-    auto revs = laneRevisions(root);
+    bool haveBranchPoint;
+    auto revs = laneRevisions(root, haveBranchPoint);
     if (revs.length == 0) return v;                   // no git: v.ran stays false
+    v.degraded = !haveBranchPoint;
 
     auto entries = new TreeEntry[][](revs.length);
     foreach (i, rev; revs)
@@ -873,12 +886,85 @@ unittest
         // No git, no branch point, nothing to compare against. Say so loudly:
         // a check that quietly passes when it cannot run is the exact shape of
         // the two CI lanes this repo found green-but-idle.
-        stderr.writeln("census gate: SKIPPED — no git branch point for ", censusRepoRoot,
-                       " (set VIBE3D_CENSUS_BASE=<rev> to force one)");
+        stderr.writeln("census gate: SKIPPED — git could not answer for ", censusRepoRoot,
+                       " (set VIBE3D_CENSUS_BASE=<rev> to force a baseline)");
         return;
     }
 
+    if (v.degraded)
+        stderr.writefln("census gate: DEGRADED — no `main` to branch from, so the only " ~
+                        "baseline is HEAD (%d blocks / %d asserts). Uncommitted losses are " ~
+                        "still caught; committed ones are not. A shallow clone does this — " ~
+                        "fetch enough history, or set VIBE3D_CENSUS_BASE=<rev>.",
+                        v.base.blocks, v.base.asserts);
+
     assert(v.ok, report(v));
+}
+
+unittest
+{
+    // THE NEGATIVE CONTROL, AUTOMATED.
+    //
+    // A gate nobody has watched fail is indistinguishable from a gate that
+    // never runs — this repo has now found two CI lanes in exactly that state.
+    // So the verdict is exercised for real here, every run: a throwaway git
+    // repo, a test taken away, and a check that the answer actually turns from
+    // green to red and back. It was first done by hand against
+    // `dub test --config=tests` (red at exit 2 naming the file, green once
+    // declared); this is that transcript nailed down so it cannot rot.
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+
+    const sandbox = buildPath(tempDir(), format("vibe3d-census-selftest-%d", thisProcessID));
+    collectException(rmdirRecurse(sandbox));
+    mkdirRecurse(buildPath(sandbox, "source"));
+    mkdirRecurse(buildPath(sandbox, "tests", "unit"));
+    scope(exit) collectException(rmdirRecurse(sandbox));
+
+    // The gate under test must not read the ambient override.
+    const savedBase = environment.get("VIBE3D_CENSUS_BASE", "");
+    if (savedBase.length) environment.remove("VIBE3D_CENSUS_BASE");
+    scope(exit) if (savedBase.length) environment["VIBE3D_CENSUS_BASE"] = savedBase;
+
+    const src = buildPath(sandbox, "source", "a.d");
+    write(src, "unittest { assert(1); assert(2); }\nunittest { assert(3); }\n");
+
+    if (git(sandbox, ["init", "-q"]).status != 0) return;      // no git on this host
+    git(sandbox, ["symbolic-ref", "HEAD", "refs/heads/probe"]); // deliberately not `main`
+    git(sandbox, ["add", "-A"]);
+    git(sandbox, ["-c", "user.email=census@invalid", "-c", "user.name=census",
+                  "commit", "-q", "-m", "baseline"]);
+
+    auto v0 = judge(sandbox);
+    if (!v0.ran) return;                    // git present but unusable; the gate says so itself
+    assert(v0.ok, "a tree identical to its own baseline must be green");
+    assert(v0.base.blocks == 2 && v0.base.asserts == 3, v0.base.toString);
+
+    // Take one block away and declare nothing.
+    write(src, "unittest { assert(1); assert(2); }\n");
+    auto v1 = judge(sandbox);
+    assert(!v1.ok, "an undeclared loss must be RED — this is the whole gate");
+    assert(v1.blocksSlack == -1 && v1.assertsSlack == -1, report(v1));
+
+    // Under-declare: the block is accounted for, the assertion is not.
+    const ledger = buildPath(sandbox, ledgerPath);
+    write(ledger, "drop 1 0 0835 under-declared on purpose\n");
+    auto v2 = judge(sandbox);
+    assert(!v2.ok, "under-declaring must stay RED, or the numbers mean nothing");
+    assert(v2.blocksSlack == 0 && v2.assertsSlack == -1, report(v2));
+
+    // Declare it exactly: green.
+    write(ledger, "drop 1 1 0835 the second block, removed on purpose\n");
+    auto v3 = judge(sandbox);
+    assert(v3.ok, report(v3));
+
+    // And a declaration cannot be spent twice: commit it, then take another
+    // block away with the same line still standing.
+    git(sandbox, ["add", "-A"]);
+    git(sandbox, ["-c", "user.email=census@invalid", "-c", "user.name=census",
+                  "commit", "-q", "-m", "declared"]);
+    write(src, "// everything gone\n");
+    auto v4 = judge(sandbox);
+    assert(!v4.ok, "a ledger line already in the baseline must not pay for a second loss");
 }
 
 // ---------------------------------------------------------------------------
@@ -1019,8 +1105,24 @@ void main(string[] args)
     // path the gate uses for the branch point. That is what makes the
     // pure-move validation a test of the SHIPPED rule and not of a lookalike.
     string rev;
+    bool   wantJudge;
     foreach (k; 2 .. args.length)
+    {
         if (args[k] == "--rev" && k + 1 < args.length) rev = args[k + 1];
+        if (args[k] == "--judge") wantJudge = true;
+    }
+
+    // `--judge` runs the gate's own verdict against a tree, which is how the
+    // no-branch-point and shallow-clone paths get exercised somewhere other
+    // than the repo this binary was built from.
+    if (wantJudge)
+    {
+        auto v = judge(root);
+        writefln("ran=%s degraded=%s ok=%s baseRev=%s revs=%d blocksSlack=%d assertsSlack=%d",
+                 v.ran, v.degraded, v.ok, v.baseRev, v.revsWalked, v.blocksSlack, v.assertsSlack);
+        if (!v.ok) writeln(report(v));
+        return;
+    }
 
     auto files = rev.length ? scanRevision(root, rev) : scanWorkingTree(root);
     auto t     = total(files);
