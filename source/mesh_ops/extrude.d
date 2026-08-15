@@ -1926,6 +1926,20 @@ mixin template MeshExtrudeOps() {
         const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != vertices.length) return 0;
         if (width == 0.0f) return 0;
+        // Settled-mesh precondition (debug-only, stripped from release builds
+        // — task 0724 / audit-4 M6). This kernel is the ONE of the three
+        // extrude family members that reads edgeIndexMap on the state the
+        // CALLER handed it (the fan walk below, `edgeIndexMap[edgeKey(p,
+        // vi)]`), before it has mutated any topology itself — only vertex
+        // POSITIONS move above that read, and positions do not bump
+        // structVersion. The other two read it only after their own
+        // rebuild, so they need nothing here (see the commit message).
+        // Unusually for this family the read is an unchecked `[]`, not
+        // `in`: on a stale-but-populated map it resolves to the previous
+        // topology's edge index and the rim/fan bookkeeping silently pairs
+        // the wrong corners, which is worse than the RangeError the empty
+        // case would raise.
+        assertEdgeMapValid();
 
         uint succInFace_(uint fi, uint v) const {
             auto f = faces[fi];

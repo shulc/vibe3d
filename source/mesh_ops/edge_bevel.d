@@ -186,6 +186,16 @@ mixin template MeshEdgeBevelOps() {
         const mask = maskMinusHiddenEdges(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (width < 1e-6f) return 0;
         if (mask.length != edges.length) return 0;
+        // Settled-mesh precondition (debug-only, stripped from release builds
+        // — task 0724 / audit-4 M6). The open-fan rim arm resolves each
+        // bordering edge's selection through edgeIndexMap (`selectedEdge`),
+        // and it does so against the state the CALLER handed us: this kernel
+        // mutates no topology before that point (verified — no addEdge /
+        // addFace / rebuildEdges between here and there). A stale map indexes
+        // `qualifies[]` — the mask the caller just passed — with the previous
+        // topology's edge number, so the arm reads the WRONG edge's selection
+        // bit and picks the wrong slide direction, with no error anywhere.
+        assertEdgeMapValid();
 
         if (roundLevel < 0) roundLevel = 0;
         if (roundLevel > MAX_ROUND_LEVEL) roundLevel = MAX_ROUND_LEVEL;

@@ -635,3 +635,48 @@ unittest {
     assert(m.faces.length    == 6,  "extrudeVerticesByMask: width=0 must not add faces");
 }
 
+// Task 0724 / audit-4 M6 — the settled-mesh precondition on
+// extrudeVerticesByMask is LIVE, i.e. it CAN fail. That is the whole
+// question the rollout had to answer for each site, and for the two mesh_ops
+// kernels the answer is demonstrable rather than argued: `addFaceFast` fills
+// `edges` while deliberately leaving `edgeIndexMap` stale (it takes the
+// caller's scratch lookup and defers the canonical map to a terminal
+// buildLoops), and that is not a synthetic state — it is exactly how every
+// importer assembles a mesh (io/scene_ir.d, io/native.d, remesh). Those all
+// call buildLoops() before anyone can run a kernel on the result, which is
+// why no caller trips this today; drop that call and the kernel would read
+// `edgeIndexMap[edgeKey(...)]` off a map built for a different topology.
+//
+// Wrapped in `debug` because the assertion it exercises is `debug assert` —
+// stripped from -release, so the throw only exists in the builds that
+// actually carry the check (dub test / dub build; not the shipped binary).
+unittest {
+    debug {
+        import core.exception : AssertError;
+        import std.exception  : assertThrown;
+
+        Mesh m;
+        uint[ulong] scratch;
+        m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+        m.addFaceFast(scratch, [0u, 1u, 2u, 3u]);
+        assert(m.edges.length == 4,
+            "setup: addFaceFast must still append the quad's four edges");
+        assert(!m.edgeMapUsable(),
+            "setup: addFaceFast defers the canonical map, so it must read unusable");
+
+        bool[] mask = new bool[](m.vertices.length);
+        mask[0] = true;
+        assertThrown!AssertError(m.extrudeVerticesByMask(mask, 0.0f, 0.1f),
+            "extrudeVerticesByMask must refuse a mesh whose edgeIndexMap was "
+            ~ "never rebuilt -- if this stops throwing, the precondition has "
+            ~ "become decoration");
+
+        // ...and the SAME call is fine once the caller settles the mesh, so
+        // the assert is discriminating between two states, not refusing the
+        // kernel outright.
+        m.buildLoops();
+        assert(m.edgeMapUsable(), "setup: buildLoops must restore the map");
+        m.extrudeVerticesByMask(mask, 0.0f, 0.1f);
+    }
+}
+

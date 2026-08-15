@@ -6056,3 +6056,42 @@ unittest {
     assert(m.vertices.length == 8, "bevelVert no-op: vertex count unchanged");
     assert(m.faces.length    == 6, "bevelVert no-op: face count unchanged");
 }
+
+// Task 0724 / audit-4 M6 — the settled-mesh precondition on bevelEdgesByMask
+// is LIVE. Twin of the extrudeVerticesByMask block in
+// tests/unit/mesh_ops/extrude_test.d; see that one for why `addFaceFast` is
+// the honest way to reach the stale state (it is the importers' own assembly
+// path, not a synthetic poke at a private field).
+//
+// What the assert buys here specifically: the open-fan rim arm indexes
+// `qualifies[]` -- the caller's OWN selection mask -- with an edge number it
+// resolved through edgeIndexMap. A map built for a different topology
+// therefore reads a DIFFERENT edge's selection bit and silently slides the
+// wrong way; nothing in the kernel would notice.
+unittest {
+    debug {
+        import core.exception : AssertError;
+        import std.exception  : assertThrown;
+
+        Mesh m;
+        uint[ulong] scratch;
+        m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+        m.addFaceFast(scratch, [0u, 1u, 2u, 3u]);
+        assert(m.edges.length == 4,
+            "setup: addFaceFast must still append the quad's four edges");
+        assert(!m.edgeMapUsable(),
+            "setup: addFaceFast defers the canonical map, so it must read unusable");
+
+        bool[] mask = new bool[](m.edges.length);
+        mask[0] = true;
+        assertThrown!AssertError(m.bevelEdgesByMask(mask, 0.1f),
+            "bevelEdgesByMask must refuse a mesh whose edgeIndexMap was never "
+            ~ "rebuilt -- if this stops throwing, the precondition has become "
+            ~ "decoration");
+
+        // Discriminating, not blanket: settle the mesh and the same call runs.
+        m.buildLoops();
+        assert(m.edgeMapUsable(), "setup: buildLoops must restore the map");
+        m.bevelEdgesByMask(mask, 0.1f);
+    }
+}

@@ -353,6 +353,17 @@ int nearestFaceVertex(const ref Mesh m, ModelSpace ms, int face, Vec3 p)
 /// -1 here rather than forcing a rebuild from a `const` reference — see
 /// doc/topopen_p0_plan.md risk R6). NOT `pure` — `Mesh.edgeMapUsable()`
 /// isn't itself annotated pure.
+///
+/// Deliberately NOT an `assertEdgeMapValid()` site (task 0724 / audit-4 M6,
+/// which asked for the assert to be rolled onto every edgeIndexMap consumer):
+/// this one already enforces the same invariant, and does it BETTER. The
+/// early `return -1` is a real runtime guard that survives `-release`, where
+/// a `debug assert` is stripped; and "the map is not built" is a SUPPORTED
+/// input here, not a contract violation — `tests/unit/constraint_test.d`
+/// pins it with a hand-assembled mesh that never ran buildLoops(). Converting
+/// this to an assert would turn a documented tolerance into a crash and that
+/// green test red. The consumers that DID get the assert are the ones with
+/// no sentinel to return.
 int nearestFaceEdge(const ref Mesh m, ModelSpace ms, int face, Vec3 p) {
     if (face < 0 || face >= cast(int)m.faces.length) return -1;
     if (!m.edgeMapUsable()) return -1;
