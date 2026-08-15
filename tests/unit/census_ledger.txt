@@ -1,0 +1,38 @@
+# Declared drops in the test census — the ledger the gate reads (task 0835).
+#
+# The gate lives in tests/unit/census_gate.d and runs inside
+# `dub test --config=tests`. It counts `unittest` blocks and assertion tokens
+# over source/ ∪ tests/unit/ in the working tree, counts them again at every
+# revision of the current lane (the branch point and each commit since) with
+# the same scanner, and asserts:
+#
+#     live count + declared drops  never falls below the highest this lane
+#     has already reached
+#
+# Growth needs nothing from you: add tests and the gate stays green with no
+# file to edit and no number to bump — committing them just raises the bar.
+# Only a DROP needs a line here.
+#
+# FORMAT — one line per declared drop, appended at the end:
+#
+#     drop <blocks> <asserts> <task-id> <what was removed, and why it was right>
+#
+# Both numbers are MAGNITUDES (how many were lost), not signed deltas. The
+# arithmetic has to close exactly: the gate prints the shortfall it still sees,
+# so declaring 1 block when 40 went missing leaves the lane red and names the
+# files that lost them. Over-declaring is arithmetically possible and is meant
+# to be conspicuous — a line reading `drop 279 1492` is the point.
+#
+# Lines already present at the branch point are already folded into the
+# baseline, so they cannot be spent twice: only what a lane ADDS here grants
+# that lane an allowance. What accumulates instead is the useful thing — an
+# auditable record of every test this project has ever deliberately given up.
+#
+# WORKED EXAMPLE (task 0727, which landed before this gate existed; commented
+# out so it grants nothing, and reproduced by the scanner to the digit):
+#
+#     drop 1 9 0727 the unittest of the deleted class-blind LIFO stepping path
+#
+# WHAT DOES NOT BELONG HERE. "The extraction lost some blocks, unclear which"
+# is not a declaration, it is the 0706 incident with a number attached. If you
+# cannot say what was removed, the answer is to find it, not to declare it.

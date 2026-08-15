@@ -34,3 +34,40 @@ file move is not an acceptable trade (task 0706).
 Naming: `tests/unit/<module_path>_test.d` mirroring the `source/` layout, with
 `module tests.unit.<...>_test;` — the directory is a source root, so the module
 name starts at `tests.unit`.
+
+## The census gate (task 0835)
+
+`census_gate.d` counts `unittest` blocks and assertion tokens over
+`source/` ∪ `tests/unit/` and fails the run when that count falls below the
+highest this lane has already reached, unless a line in `census_ledger.txt`
+accounts for the loss. It exists because task 0706 destroyed **279 blocks and
+1492 assertions** behind a clean build and 179 passing modules; the only thing
+that noticed was a human counting.
+
+What it costs you:
+
+| you are doing | what the gate asks |
+|---|---|
+| adding tests | nothing — growth is free, no number to bump |
+| moving a block between files, splitting a module | nothing — the count is a sum over both roots, so a move is invisible |
+| editing a test | nothing — only the count matters, not the text |
+| **deleting tests** | one appended line in `census_ledger.txt` saying how many and why |
+
+The last row is the whole ceremony. The numbers have to close exactly: the
+failure message prints the shortfall it still sees and names the files that
+lost blocks, so under-declaring stays red.
+
+The baseline is git, not a checked-in number — deliberately. A stored total
+would be one line every lane rewrites, which is a rebase conflict per lane; and
+a total refreshed only sometimes silently accumulates slack until it stops
+firing. Counting the lane's own revisions with the same scanner has neither
+problem. Where there is no git branch point to compare against (a tarball), the
+gate prints a `SKIPPED` line to stderr rather than passing quietly.
+
+To count a tree by hand, or a historical one:
+
+```bash
+rdmd -version=CensusTool tests/unit/census_gate.d .                  # working tree
+rdmd -version=CensusTool tests/unit/census_gate.d . --rev <sha>      # any revision
+rdmd -version=CensusTool tests/unit/census_gate.d . --per-file       # per file
+```
