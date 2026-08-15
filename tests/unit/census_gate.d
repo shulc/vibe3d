@@ -23,6 +23,20 @@
 // refreshed sometimes accumulates slack, which is a gate that stops firing
 // without anyone noticing.
 //
+// IN CI THE BRANCH POINT IS HANDED IN, BECAUSE CI HAS NONE (task 0850). A push
+// build checks out `main` itself, so `merge-base HEAD main` IS HEAD, the tree
+// equals its own baseline and nothing can fall below it; a pull-request build
+// checks out a merge commit with neither `main` nor `origin/main` present at
+// all. Both shapes were measured against this repository, and in the first one
+// the gate looked perfectly healthy while being unable to fail.
+// So the workflow passes the revision CI knows and git does not: the previous
+// tip of the branch (`github.event.before`) or the PR base, through
+// `VIBE3D_CENSUS_BRANCH_POINT`. That plus `fetch-depth: 0` (the clone must
+// actually contain the revision) is the whole CI wiring, and both halves are
+// self-defending: remove the depth and the named revision stops resolving,
+// remove the variable and the baseline collapses onto HEAD — either way a run
+// under GitHub Actions goes RED instead of quiet.
+//
 // THE INVARIANT. Let A be the live count and D the sum of declared drops in
 // `tests/unit/census_ledger.txt`. The gate asserts
 //
@@ -510,6 +524,28 @@ private GitOut git(string root, const(string)[] args)
     catch (Exception) { return GitOut(-1, ""); }
 }
 
+/// The environment variable through which CI hands in the branch point it knows
+/// and the checkout does not. `none` is the one accepted excuse for having no
+/// baseline at all (a fork, a first commit) — spelled out in the workflow file
+/// where a reader can see it, rather than inferred from silence.
+enum branchPointEnv = "VIBE3D_CENSUS_BRANCH_POINT";
+
+/// Everything the baseline search decided, so the gate can tell "no baseline
+/// exists" apart from "a baseline was named and this checkout does not have it".
+struct Baseline
+{
+    string[] revs;        /// the revisions to take the maximum over; empty ⇒ no git
+    /// The only revision left is HEAD, so the tree is being compared against
+    /// itself and the gate cannot fail on anything already committed.
+    bool     degraded;
+    bool     supplied;    /// `branchPointEnv` named a revision
+    bool     unresolved;  /// ... and git could not turn it into a commit
+    bool     blindOnPurpose; /// `branchPointEnv` was the literal `none`
+    /// The checkout is a shallow clone, so history is cut off at a graft and
+    /// every range that crosses it answers with a number rather than an error.
+    bool     shallow;
+}
+
 /// The revisions the working tree is measured against: the branch point, and
 /// every commit the lane has made since.
 ///
@@ -522,32 +558,78 @@ private GitOut git(string root, const(string)[] args)
 /// the lane closes it: additions raise the bar the moment they are committed,
 /// so they can never be spent again.
 ///
-/// `VIBE3D_CENSUS_BASE` pins a single revision instead — a tool for aiming the
-/// gate (and for the negative control), not an escape hatch: whatever revision
-/// it names, the invariant still has to hold against it.
-string[] laneRevisions(string root, out bool haveBranchPoint)
+/// WHERE THE BRANCH POINT COMES FROM, in order: `VIBE3D_CENSUS_BASE` (pins ONE
+/// revision — a tool for aiming the gate and for the negative control, not an
+/// escape hatch: whatever it names, the invariant still has to hold against
+/// it); then `VIBE3D_CENSUS_BRANCH_POINT`, which CI fills from the event
+/// (task 0850) and which is walked to HEAD like any other branch point; then
+/// `merge-base HEAD main`. A supplied revision is passed through `merge-base`
+/// too, so a force-push whose old tip is no longer an ancestor still yields a
+/// real fork point instead of a range that walks the wrong way.
+Baseline laneRevisions(string root)
 {
-    haveBranchPoint = true;
-
-    auto forced = environment.get("VIBE3D_CENSUS_BASE", "");
-    if (forced.length) return [forced.strip];
+    Baseline b;
 
     auto head = git(root, ["rev-parse", "HEAD"]);
-    if (head.status != 0 || head.text.strip.length == 0) return null;
+    if (head.status != 0 || head.text.strip.length == 0) return b;
     const h = head.text.strip;
 
+    // A shallow clone answers questions about history it does not have, and it
+    // answers them with numbers. MEASURED: fetch the branch point on its own
+    // into a depth-1 checkout — the cheap option this task was asked to
+    // consider — and `rev-parse` resolves it, `merge-base` exits 1, and
+    // `rev-list base..HEAD` reports ONE commit for a 21-commit lane because the
+    // graft cuts the walk. The gate then compares against a real tree by a lane
+    // that is not the lane, and passes. So shallowness is recorded and, under
+    // CI, refused: it is not a baseline, it is a plausible-looking guess.
+    b.shallow = git(root, ["rev-parse", "--is-shallow-repository"]).text.strip == "true";
+
+    auto forced = environment.get("VIBE3D_CENSUS_BASE", "").strip;
+    if (forced.length)
+    {
+        b.revs     = [forced];
+        b.degraded = (forced == h);
+        return b;
+    }
+
     string base;
-    foreach (mainRef; ["main", "origin/main"])
+
+    auto named = environment.get(branchPointEnv, "").strip;
+    if (named == "none")
+        b.blindOnPurpose = true;
+    else if (named.length && !isNullSha(named))
     {
-        auto mb = git(root, ["merge-base", "HEAD", mainRef]);
-        if (mb.status == 0 && mb.text.strip.length) { base = mb.text.strip; break; }
+        // An all-zero sha is git's way of saying "there was nothing here
+        // before" — the first push of a branch. That is an absent baseline,
+        // not a broken one, so it is not treated as supplied.
+        b.supplied = true;
+        auto mb = git(root, ["merge-base", "HEAD", named]);
+        if (mb.status == 0 && mb.text.strip.length) base = mb.text.strip;
+        else
+        {
+            auto rp = git(root, ["rev-parse", "--verify", "--quiet", named ~ "^{commit}"]);
+            if (rp.status == 0 && rp.text.strip.length) base = rp.text.strip;
+            else b.unresolved = true;   // named but absent: a shallow clone does this
+        }
     }
-    if (base.length == 0)                    // no `main` to branch from
+
+    if (base.length == 0)
+        foreach (mainRef; ["main", "origin/main"])
+        {
+            auto mb = git(root, ["merge-base", "HEAD", mainRef]);
+            if (mb.status == 0 && mb.text.strip.length) { base = mb.text.strip; break; }
+        }
+
+    // No branch point, or a branch point that IS the head: either way the only
+    // bar is the tree itself. The two are one state on purpose — what matters
+    // is not whether a `main` was found but whether anything can fail, and a
+    // push build that checks out `main` finds one and still cannot fail.
+    if (base.length == 0 || base == h)
     {
-        haveBranchPoint = false;
-        return [h];
+        b.degraded = true;
+        b.revs     = [h];
+        return b;
     }
-    if (base == h) return [h];               // on main itself: HEAD is the bar
 
     auto revs = appender!(string[]);
     revs.put(base);
@@ -559,7 +641,17 @@ string[] laneRevisions(string root, out bool haveBranchPoint)
             auto t = line.strip;
             if (t.length) revs.put(t);
         }
-    return revs.data;
+    b.revs = revs.data;
+    return b;
+}
+
+/// git's "nothing was here before" sha: forty zeroes, what a push event carries
+/// as its `before` when it creates the branch.
+private bool isNullSha(const(char)[] s) @safe pure nothrow @nogc
+{
+    if (s.length < 7) return false;
+    foreach (c; s) if (c != '0') return false;
+    return true;
 }
 
 /// A lane longer than this is not a lane; the cap keeps a pathological branch
@@ -745,11 +837,16 @@ private ptrdiff_t indexOf(const(char)[] s, char c) @safe pure nothrow @nogc
 struct Verdict
 {
     bool          ran;         /// false when git could not answer at all
-    /// True when no `main` was reachable, so the only baseline is HEAD. The
-    /// check still catches an uncommitted destruction, but on a clean checkout
-    /// it compares a tree against itself and can never fail. A shallow CI
-    /// clone lands here, which is why it is announced rather than assumed.
+    /// True when the only baseline left is HEAD, so the tree is compared
+    /// against itself and nothing already committed can fail. The check still
+    /// catches an uncommitted destruction. Both CI shapes landed here before
+    /// task 0850 — a shallow PR clone with no `main` at all, and a push build
+    /// that has `main` and is standing on it.
     bool          degraded;
+    bool          baselineSupplied;   /// `VIBE3D_CENSUS_BRANCH_POINT` named a revision
+    bool          baselineUnresolved; /// ... and this checkout does not contain it
+    bool          blindOnPurpose;     /// `VIBE3D_CENSUS_BRANCH_POINT=none`
+    bool          shallowClone;       /// history is grafted, so any range is a guess
     string        baseRev;     /// the HIGH-WATER revision, the one that binds
     size_t        revsWalked;
     Census        work, base;  /// live counts
@@ -776,10 +873,14 @@ Verdict judge(string root)
 {
     Verdict v;
 
-    bool haveBranchPoint;
-    auto revs = laneRevisions(root, haveBranchPoint);
+    auto baseline = laneRevisions(root);
+    auto revs     = baseline.revs;
     if (revs.length == 0) return v;                   // no git: v.ran stays false
-    v.degraded = !haveBranchPoint;
+    v.degraded           = baseline.degraded;
+    v.baselineSupplied   = baseline.supplied;
+    v.baselineUnresolved = baseline.unresolved;
+    v.blindOnPurpose     = baseline.blindOnPurpose;
+    v.shallowClone       = baseline.shallow;
 
     auto entries = new TreeEntry[][](revs.length);
     foreach (i, rev; revs)
@@ -892,11 +993,46 @@ unittest
     }
 
     if (v.degraded)
-        stderr.writefln("census gate: DEGRADED — no `main` to branch from, so the only " ~
-                        "baseline is HEAD (%d blocks / %d asserts). Uncommitted losses are " ~
-                        "still caught; committed ones are not. A shallow clone does this — " ~
-                        "fetch enough history, or set VIBE3D_CENSUS_BASE=<rev>.",
-                        v.base.blocks, v.base.asserts);
+        stderr.writefln("census gate: DEGRADED — the only baseline is HEAD itself " ~
+                        "(%d blocks / %d asserts), so the tree is being compared against " ~
+                        "the revision it was checked out from. Uncommitted losses are still " ~
+                        "caught; committed ones are not. Standing on `main` does this, and " ~
+                        "so does a shallow clone — hand in a branch point with %s=<rev>, or " ~
+                        "pin one with VIBE3D_CENSUS_BASE=<rev>.",
+                        v.base.blocks, v.base.asserts, branchPointEnv);
+
+    // Under CI, blindness is a failure and not a footnote (task 0850).
+    //
+    // `GITHUB_ACTIONS` is set by the runner, not by our workflow file, so this
+    // rule cannot be switched off by editing the workflow — which is the point.
+    // Both ways the CI wiring can rot are covered: drop `fetch-depth: 0` and the
+    // named revision stops resolving; drop the environment variable and the
+    // baseline collapses onto HEAD. Before this task the second one was the live
+    // state of the lane, and it printed nothing at all.
+    if (environment.get("GITHUB_ACTIONS", "") == "true")
+    {
+        assert(!v.shallowClone || v.blindOnPurpose, format(
+            "census gate: this checkout is a SHALLOW clone, so the history behind " ~
+            "any revision is cut off at a graft and a lane walk over it returns a " ~
+            "number instead of an error (measured: one commit for a 21-commit lane). " ~
+            "Set `fetch-depth: 0` on actions/checkout — fetching the branch point on " ~
+            "its own is not a substitute, it is the failure mode."));
+
+        assert(!v.baselineUnresolved, format(
+            "census gate: %s names %s, which this checkout does not contain — the " ~
+            "clone is too shallow to hold it. Restore `fetch-depth: 0` on " ~
+            "actions/checkout, or set %s=none if this build genuinely has no " ~
+            "baseline (a fork, a first commit).",
+            branchPointEnv, environment.get(branchPointEnv, ""), branchPointEnv));
+
+        assert(!v.degraded || v.blindOnPurpose, format(
+            "census gate: running under CI with no baseline but HEAD — nothing " ~
+            "committed can fail this check, which is the state task 0850 exists to " ~
+            "end. Pass the branch point in: %s: ${{ github.event.before }} for a " ~
+            "push, ${{ github.event.pull_request.base.sha }} for a pull request. If " ~
+            "this build really has no baseline, say so with %s=none.",
+            branchPointEnv, branchPointEnv));
+    }
 
     assert(v.ok, report(v));
 }
@@ -920,10 +1056,18 @@ unittest
     mkdirRecurse(buildPath(sandbox, "tests", "unit"));
     scope(exit) collectException(rmdirRecurse(sandbox));
 
-    // The gate under test must not read the ambient override.
-    const savedBase = environment.get("VIBE3D_CENSUS_BASE", "");
-    if (savedBase.length) environment.remove("VIBE3D_CENSUS_BASE");
-    scope(exit) if (savedBase.length) environment["VIBE3D_CENSUS_BASE"] = savedBase;
+    // The gate under test must not read the ambient overrides — and under CI
+    // one of them IS set, pointing at a revision of the real repository that
+    // this sandbox has never heard of.
+    const savedBase  = environment.get("VIBE3D_CENSUS_BASE", "");
+    const savedPoint = environment.get(branchPointEnv, "");
+    if (savedBase.length)  environment.remove("VIBE3D_CENSUS_BASE");
+    if (savedPoint.length) environment.remove(branchPointEnv);
+    scope(exit)
+    {
+        if (savedBase.length)  environment["VIBE3D_CENSUS_BASE"] = savedBase;
+        if (savedPoint.length) environment[branchPointEnv]       = savedPoint;
+    }
 
     const src = buildPath(sandbox, "source", "a.d");
     write(src, "unittest { assert(1); assert(2); }\nunittest { assert(3); }\n");
@@ -965,6 +1109,113 @@ unittest
     write(src, "// everything gone\n");
     auto v4 = judge(sandbox);
     assert(!v4.ok, "a ledger line already in the baseline must not pay for a second loss");
+}
+
+unittest
+{
+    // THE CI SHAPE, AUTOMATED (task 0850).
+    //
+    // The control above builds a lane and destroys a test in the WORKING TREE,
+    // which is the shape a developer is in. CI is never in that shape: it
+    // checks out a commit, so the loss it has to catch is already committed —
+    // and against a baseline of HEAD a committed loss is invisible, because
+    // HEAD is what the tree was made from.
+    //
+    // That is not a hypothetical. Measured on this repository before the fix:
+    // a depth-1 checkout of `main` (53 of the last 60 runs of the lane) judged
+    // `ran=true degraded=false ok=true` — not merely blind but showing no sign
+    // of it, because `merge-base HEAD main` succeeds and returns HEAD. This
+    // reproduces that state and then shows the supplied branch point turning it
+    // red, which is the entire content of the CI wiring.
+    import std.file : mkdirRecurse, rmdirRecurse, write;
+
+    const sandbox = buildPath(tempDir(), format("vibe3d-census-cishape-%d", thisProcessID));
+    collectException(rmdirRecurse(sandbox));
+    mkdirRecurse(buildPath(sandbox, "source"));
+    scope(exit) collectException(rmdirRecurse(sandbox));
+
+    const savedBase  = environment.get("VIBE3D_CENSUS_BASE", "");
+    const savedPoint = environment.get(branchPointEnv, "");
+    if (savedBase.length)  environment.remove("VIBE3D_CENSUS_BASE");
+    if (savedPoint.length) environment.remove(branchPointEnv);
+    scope(exit)
+    {
+        if (savedBase.length)  environment["VIBE3D_CENSUS_BASE"] = savedBase;
+        if (savedPoint.length) environment[branchPointEnv]       = savedPoint;
+    }
+
+    string commit(string root, string msg)
+    {
+        git(root, ["add", "-A"]);
+        git(root, ["-c", "user.email=census@invalid", "-c", "user.name=census",
+                   "commit", "-q", "-m", msg]);
+        return git(root, ["rev-parse", "HEAD"]).text.strip;
+    }
+
+    const src = buildPath(sandbox, "source", "a.d");
+    write(src, "unittest { assert(1); assert(2); }\nunittest { assert(3); }\n");
+
+    if (git(sandbox, ["init", "-q"]).status != 0) return;      // no git on this host
+    git(sandbox, ["symbolic-ref", "HEAD", "refs/heads/main"]); // a push build stands on main
+    const before = commit(sandbox, "baseline");
+    if (before.length == 0) return;
+
+    // The loss, COMMITTED — a test destroyed by a merge that already landed.
+    write(src, "unittest { assert(1); assert(2); }\n");
+    commit(sandbox, "the extraction that ate a block");
+
+    // What CI saw before this task: `main` resolves, merge-base is HEAD, the
+    // tree equals its own baseline, and the verdict is a clean green.
+    auto blind = judge(sandbox);
+    assert(blind.ran);
+    assert(blind.ok, "reproduction failed: this is supposed to be the INERT state");
+    assert(blind.degraded, "an inert baseline must at least say so");
+    assert(!blind.baselineSupplied && !blind.blindOnPurpose);
+
+    // Hand in the branch point the event knows: red, by the exact −1/−1 the
+    // deletion cost.
+    environment[branchPointEnv] = before;
+    auto armed = judge(sandbox);
+    assert(!armed.degraded, "a supplied branch point is a real baseline");
+    assert(armed.baselineSupplied);
+    assert(!armed.ok, "a committed, undeclared loss must be RED once CI hands in a base");
+    assert(armed.blocksSlack == -1 && armed.assertsSlack == -1, report(armed));
+
+    // Declaring it closes the arithmetic here exactly as it does locally.
+    mkdirRecurse(buildPath(sandbox, dirName(ledgerPath)));
+    write(buildPath(sandbox, ledgerPath), "drop 1 1 0850 the block this control removed\n");
+    auto declared = judge(sandbox);
+    assert(declared.ok, report(declared));
+
+    // A shallow clone is the other way the wiring rots: the revision is named
+    // and simply is not there. That must be distinguishable from having no
+    // baseline, because one is a broken configuration and the other is a fork.
+    environment[branchPointEnv] = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    auto missing = judge(sandbox);
+    assert(missing.baselineSupplied && missing.baselineUnresolved,
+           "a named-but-absent revision must be reported as such, not silently ignored");
+    assert(missing.degraded, "and with nothing else to stand on, it is blind");
+
+    // And the one accepted excuse, spelled out rather than inferred.
+    environment[branchPointEnv] = "none";
+    auto excused = judge(sandbox);
+    assert(excused.blindOnPurpose && excused.degraded && !excused.baselineSupplied);
+    environment.remove(branchPointEnv);
+
+    // A shallow clone must be recognised as one. This is the case that made the
+    // first rehearsal of this task pass when it should have failed: fetching the
+    // branch point into a depth-1 checkout leaves `rev-parse` able to resolve it,
+    // so the gate found a real tree to compare against and walked a lane that the
+    // graft had already truncated.
+    const shallowClone = buildPath(tempDir(), format("vibe3d-census-shallow-%d", thisProcessID));
+    collectException(rmdirRecurse(shallowClone));
+    scope(exit) collectException(rmdirRecurse(shallowClone));
+    if (git(sandbox, ["clone", "-q", "--depth=1", "file://" ~ sandbox, shallowClone]).status == 0)
+    {
+        auto shallowVerdict = judge(shallowClone);
+        assert(shallowVerdict.shallowClone,
+               "a shallow checkout must be recognised as one — under CI it is refused");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1118,8 +1369,11 @@ void main(string[] args)
     if (wantJudge)
     {
         auto v = judge(root);
-        writefln("ran=%s degraded=%s ok=%s baseRev=%s revs=%d blocksSlack=%d assertsSlack=%d",
-                 v.ran, v.degraded, v.ok, v.baseRev, v.revsWalked, v.blocksSlack, v.assertsSlack);
+        writefln("ran=%s degraded=%s supplied=%s unresolved=%s shallow=%s " ~
+                 "blindOnPurpose=%s ok=%s baseRev=%s revs=%d blocksSlack=%d assertsSlack=%d",
+                 v.ran, v.degraded, v.baselineSupplied, v.baselineUnresolved,
+                 v.shallowClone, v.blindOnPurpose, v.ok, v.baseRev, v.revsWalked,
+                 v.blocksSlack, v.assertsSlack);
         if (!v.ok) writeln(report(v));
         return;
     }
