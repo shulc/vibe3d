@@ -393,3 +393,109 @@ unittest { // bridgeLoopsPaired: exact-correspondence quad emission
     assert(n2 == 4, "bridgeLoops via bridgeLoopsPaired: expected 4 quads");
     assert(m2.faces.length == 4, "bridgeLoops: face count unchanged after refactor");
 }
+
+// ---------------------------------------------------------------------------
+// Task 0901 — corner-provenance obligation (task 0830's vocabulary). Bridge's
+// five entry points bottom out in `bridgeLoopsPaired` / `bridgeStripPaired` /
+// `bridgeFanRows`, all of which only ever call `addFace` — never a bare
+// `faces ~=` — so a bridge is the tail-APPEND shape, not a drop: it does not
+// touch a single corner outside the faces it adds. These blocks pin that,
+// against a face the bridge never touches, so a regression to
+// `CornerDrop.SweptSurfaceNoLaw` (which would zero the WHOLE map) is
+// distinguishable from the correct behaviour.
+// ---------------------------------------------------------------------------
+
+// Face 0 = [0,1,2,3], a quad with no relationship to the vertices any of the
+// blocks below bridge — its four corners are the "did the operation touch
+// something it shouldn't have" probe. Values are keyed 1000+corner so a
+// dropped (zeroed) value is unambiguous.
+private Mesh meshWithUnrelatedUvQuad() {
+    Mesh m;
+    m.addVertex(Vec3(0, 0, 0));
+    m.addVertex(Vec3(1, 0, 0));
+    m.addVertex(Vec3(1, 1, 0));
+    m.addVertex(Vec3(0, 1, 0));
+    m.addFace([0, 1, 2, 3]);
+    m.buildLoops();
+
+    MeshMap uv;
+    uv.name   = "uv";
+    uv.dim    = 2;
+    uv.domain = MapDomain.PolyVertex;
+    uv.data.length = m.loops.length * 2;
+    foreach (li; 0 .. m.loops.length) {
+        uv.data[li * 2]     = 1000.0f + li;
+        uv.data[li * 2 + 1] = 2000.0f + li;
+    }
+    m.meshMaps ~= uv;
+    return m;
+}
+
+private const(float)[] uvDataOf(ref Mesh m) {
+    foreach (ref mm; m.meshMaps)
+        if (mm.domain == MapDomain.PolyVertex) return mm.data;
+    return null;
+}
+
+unittest { // bridgeLoopsPaired (closed loop): unrelated face's UV survives byte-for-byte
+    Mesh m = meshWithUnrelatedUvQuad();
+    const float[] before = uvDataOf(m)[0 .. 8].dup;   // face 0's 4 corners * dim 2
+
+    // A separate coaxial-squares pair, disjoint from face 0's vertices 0..3.
+    foreach (p; [Vec3(0,0,1), Vec3(1,0,1), Vec3(1,1,1), Vec3(0,1,1),
+                 Vec3(0,0,2), Vec3(1,0,2), Vec3(1,1,2), Vec3(0,1,2)])
+        m.addVertex(p);
+    size_t added = m.bridgeLoops([4u,5u,6u,7u], [8u,9u,10u,11u]);
+    assert(added == 4, "expected 4 bridge quads");
+    m.buildLoops();
+
+    const(float)[] after = uvDataOf(m);
+    assert(after.length == m.loops.length * 2, "map stays length-correct");
+    assert(after[0 .. 8] == before,
+           "an untouched face's UV must survive a bridge byte-for-byte — a "
+           ~ "SweptSurfaceNoLaw-style whole-map drop would zero this");
+    // The 4 new bridge quads' corners have no measured law — honest zero,
+    // not a guess.
+    foreach (v; after[8 .. $])
+        assert(v == 0.0f, "a bridge quad's own corners are the honest zero");
+}
+
+unittest { // bridgeStripPaired / bridgeOpenRows: same guarantee on the open-row path
+    Mesh m = meshWithUnrelatedUvQuad();
+    const float[] before = uvDataOf(m)[0 .. 8].dup;
+
+    foreach (p; [Vec3(2,0,0), Vec3(3,0,0), Vec3(4,0,0),
+                 Vec3(2,1,0), Vec3(3,1,0), Vec3(4,1,0)])
+        m.addVertex(p);
+    size_t added = m.bridgeOpenRows([4u,5u,6u], [7u,8u,9u], false, 1u, 0.0f);
+    assert(added == 2, "expected 2 bridge quads on the open-row path");
+    m.buildLoops();
+
+    const(float)[] after = uvDataOf(m);
+    assert(after.length == m.loops.length * 2, "map stays length-correct");
+    assert(after[0 .. 8] == before,
+           "bridgeOpenRows must not touch a face outside the two chains it bridges");
+    foreach (v; after[8 .. $])
+        assert(v == 0.0f, "a bridged strip quad's own corners are the honest zero");
+}
+
+unittest { // bridgeFanRows (unequal-length open rows): same guarantee
+    Mesh m = meshWithUnrelatedUvQuad();
+    const float[] before = uvDataOf(m)[0 .. 8].dup;
+
+    // Long chain (4 verts, 3 edges) vs short chain (2 verts, 1 edge) — the
+    // captured 3:1 fan case (tri/quad/tri).
+    foreach (p; [Vec3(2,0,0), Vec3(3,0,0), Vec3(4,0,0), Vec3(5,0,0),
+                 Vec3(2,1,0), Vec3(5,1,0)])
+        m.addVertex(p);
+    size_t added = m.bridgeOpenRows([4u,5u,6u,7u], [8u,9u], false, 1u, 0.0f);
+    assert(added == 3, "expected 3 faces (2 tri + 1 quad) on the fan path");
+    m.buildLoops();
+
+    const(float)[] after = uvDataOf(m);
+    assert(after.length == m.loops.length * 2, "map stays length-correct");
+    assert(after[0 .. 8] == before,
+           "bridgeFanRows must not touch a face outside the two chains it fans");
+    foreach (v; after[8 .. $])
+        assert(v == 0.0f, "a fanned face's own corners are the honest zero");
+}

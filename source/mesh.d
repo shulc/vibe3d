@@ -1067,6 +1067,17 @@ struct Mesh {
     //     `ForeignTopology` — kernels that REPLACE the mesh rather than edit it.
     //     Declared for completeness of the vocabulary; a replaced mesh has no
     //     old corner space at all, so most of them have nothing to declare.
+    //     Task 0901 walked every site the vocabulary names for these four and
+    //     found none live: `commands/mesh/subdivide.d` and
+    //     `commands/mesh/remesh.d` both do `*mesh = result` (a fresh `Mesh`
+    //     that never had a map — see `resizePolyVertexMaps`'s note above),
+    //     `io/scene_ir.d`/`io/scene_import.d`/`commands/scene/load_mesh.d`
+    //     build-then-swap the same way, `subpatch_osd.d`'s preview mesh never
+    //     registers a PolyVertex map, and `remesh/region_stitch.d`'s
+    //     intermediate `Mesh` scratch values are the same. `PrimitiveRebuild`,
+    //     `SubpatchCage` and `ForeignTopology` are therefore reserved, unused
+    //     vocabulary today — see each reason's own doc comment in
+    //     `mesh_corner_maps.d` for the specific site it was checked against.
     // (The delta undo/redo replay LEFT this set in task 0689 — see mechanism (d)
     // above; what remains there is a fallback, `DeltaReplayDeclined`.)
     //
@@ -5832,12 +5843,30 @@ struct Mesh {
     //     `remapPolyVertexMaps` (mechanism a/b) or the atomic `addFace` append,
     //     or are simply unchanged across a benign rebuild — so KEEP them.
     //   * Otherwise the face/loop topology was rewritten WITHOUT a relocate (the
-    //     DROP class: primitive rebuilds, subdivide, EDGE extrude, edge-extend,
-    //     bridge, subpatch cage). The old per-corner values are meaningless in
-    //     the new corner space, so ZERO the whole map at the new length. This is
-    //     the conscious, length-correct, value-dropped behaviour (D5 drop set);
-    //     leaving stale leading values in new corner slots would be silent
-    //     corruption.
+    //     DROP class: EDGE extrude, edge-extend, vertex extrude, smooth shift,
+    //     path-extrude — every declared `CornerDrop.SweptSurfaceNoLaw` site).
+    //     The old per-corner values are meaningless in the new corner space, so
+    //     ZERO the whole map at the new length. This is the conscious,
+    //     length-correct, value-dropped behaviour (D5 drop set); leaving stale
+    //     leading values in new corner slots would be silent corruption.
+    //
+    //     Corrected (task 0901): this list used to also name primitive
+    //     rebuilds, subdivide and bridge. It shouldn't have —
+    //       * subdivide (`commands/mesh/subdivide.d`, all three modes) and
+    //         remesh (`commands/mesh/remesh.d`) REPLACE the whole `Mesh` value
+    //         (`*mesh = result`). The map is not zeroed by this rule at all;
+    //         it disappears WITH the old mesh, because `result` never had one.
+    //         Calling that a "drop" is the inaccuracy task 0682 introduced.
+    //       * primitive create-tools (`tools/create/*`, `mesh_ops/box_geom.d`)
+    //         only ever APPEND via `addFace` into the live scene mesh — see
+    //         `CornerDrop.PrimitiveRebuild`'s doc comment.
+    //       * bridge (`mesh_ops/bridge.d`) is the same shape — append-only via
+    //         `addFace` — see `CornerDrop.SweptSurfaceNoLaw`'s doc comment.
+    //       * the subpatch cage/preview (`subpatch_osd.d`) builds a disposable
+    //         `out Mesh`/`ref Mesh preview` that never registers a PolyVertex
+    //         map in the first place (its hot `refresh()` path only ever
+    //         writes `preview.vertices`, never `preview.faces`), so this rule
+    //         is never reached for it either.
     //
     // No-op when no PolyVertex map is registered.
     void resizePolyVertexMaps() {

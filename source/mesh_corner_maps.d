@@ -140,12 +140,28 @@ enum CornerDrop : ubyte {
 
     /// A primitive factory REPLACED the mesh (box / sphere / disc / …). There
     /// is no old corner space to correspond to — the previous mesh is gone.
+    /// Reserved for that scenario specifically: task 0901 verified every
+    /// create-tool commit path (`tools/create/*`, `mesh_ops/box_geom.d`) is a
+    /// one-shot APPEND via `addFace` into the live scene mesh (the "existing
+    /// geometry survives" convention every leaf tool documents at its commit
+    /// site) — never a wholesale replace — so this reason has no live site
+    /// today. It stays in the vocabulary for the day a primitive tool grows
+    /// an in-place re-parameterise (a genuine mesh replace).
     PrimitiveRebuild,
 
     /// The kernel creates a fresh surface whose parameterisation no measured
     /// case covers: edge extrude / vertex extrude / edge extend / smooth shift
-    /// / bridge / path-extrude. Unlike a FACE extrude (whose two wall laws ARE
-    /// frozen, task 0697), no capture of these exists.
+    /// / path-extrude. Unlike a FACE extrude (whose two wall laws ARE frozen,
+    /// task 0697), no capture of these exists.
+    ///
+    /// NOT bridge (task 0901 correction — this list used to include it):
+    /// `mesh_ops/bridge.d`'s five entry points only ever call `addFace` in
+    /// their winding loops, never a bare `faces ~=`, so a bridge is exactly
+    /// the tail-append shape `CornerProvenance.Kind.Appended` describes — it
+    /// does not touch a single corner outside the faces it adds. Declaring it
+    /// a DROP would zero every OTHER face's UV in the mesh just because the
+    /// user bridged two edges somewhere else, which is not what the kernel
+    /// does; see `declareCornerAppend()`'s call sites in `mesh_ops/bridge.d`.
     SweptSurfaceNoLaw,
 
     /// A plane cut / edge slice splits faces along a chord, and the kernel that
@@ -168,6 +184,15 @@ enum CornerDrop : ubyte {
     /// The subpatch cage / preview build produces a DIFFERENT mesh alongside the
     /// cage rather than editing it, and the per-corner plane of the preview is
     /// not addressed by anything today.
+    ///
+    /// Unused in practice (task 0901 verified): `subpatch_osd.d`'s cage
+    /// parameter is `ref const Mesh` (the language forbids mutating it) and
+    /// its preview mesh is always either a fresh `out Mesh` (`buildPreview`)
+    /// or a `ref Mesh preview` whose hot per-frame `refresh()` path writes
+    /// only `preview.vertices` — `preview.faces` is never touched after the
+    /// initial build, and no caller ever registers a PolyVertex map on a
+    /// preview mesh, so `resizePolyVertexMaps` never even runs against a live
+    /// map for it. Kept for the day a preview channel carries one.
     SubpatchCage,
 
     /// The undo/redo delta replay's fallback: the replay normally carries the
@@ -178,6 +203,16 @@ enum CornerDrop : ubyte {
 
     /// A remesh / decimate / import replaced the topology wholesale from an
     /// external solver that reports no correspondence back.
+    ///
+    /// Unused in practice (task 0901 verified): `remesh/region_stitch.d` and
+    /// `remesh/remesh_job.d` hand their result back as raw `Vec3[]`/`uint[][]`
+    /// arrays, never a `Mesh`, and `commands/mesh/remesh.d` assembles those
+    /// into a brand-new `Mesh result` (`Mesh.init`, no map ever attached) and
+    /// then does `*mesh = result` — the same whole-mesh replace as
+    /// `commands/mesh/subdivide.d`, so the map disappears with the old mesh
+    /// rather than being dropped by this reason. Kept for a future in-place
+    /// foreign-topology rewrite (a decimator that edits `faces` without
+    /// replacing the `Mesh` value).
     ForeignTopology,
 }
 

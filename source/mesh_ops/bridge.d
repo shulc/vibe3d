@@ -52,6 +52,15 @@ mixin template MeshBridgeOps() {
             resizeSubpatch();
             setFaceSubpatch(newFi, sub);
         }
+        // Task 0901: every quad above went through `addFace`, which grows the
+        // PolyVertex map atomically per call — no other corner is touched.
+        // Declared for the CROSS-CHECK (task 0830's `declareCornerAppend`),
+        // not to apply anything: a future edit that swaps one of these
+        // `addFace` calls for a bare `faces ~=` (the task-0690 shape) would
+        // otherwise silently zero the whole map via the length insurance
+        // instead of tripping the stated-total mismatch. `bridgeLoops` and
+        // `bridgeLoopsSpans` both bottom out here, so this covers them too.
+        declareCornerAppend();
         return N;
     }
 
@@ -318,6 +327,10 @@ mixin template MeshBridgeOps() {
             resizeSubpatch();
             setFaceSubpatch(newFi, sub);
         }
+        // Task 0901: same append-only shape as `bridgeLoopsPaired` above —
+        // see that call's comment. Covers `bridgeOpenRows`' equal-length
+        // path (both single- and multi-span) too, since it bottoms out here.
+        declareCornerAppend();
         return N - 1;
     }
 
@@ -405,6 +418,10 @@ mixin template MeshBridgeOps() {
             setFaceSubpatch(newFi, sub);
             ++added;
         }
+        // Task 0901: same append-only shape as `bridgeLoopsPaired` above —
+        // see that call's comment. This is `bridgeOpenRows`' unequal-length
+        // (fan/triangulate) path, private and reachable only from there.
+        declareCornerAppend();
         return added;
     }
 
