@@ -235,6 +235,16 @@ unittest {
 //   * a FACING rule drops them when the quad is wound away from the eye.
 // `visibleVertices` does the second. Reverse the winding and the same four
 // vertices at the same coordinates change answer, which is the whole point.
+//
+// Task 0832 — WHAT THIS FIXTURE STILL PROVES, AND WHAT IT DOES NOT. The facing
+// term now has exactly one implementation, `math.frontFacingLocal`, carrying
+// the reference editor's rule (the corner triangle at the ring's first vertex,
+// culled strictly at `dot(N, v0 - eye) > 0`). This quad is convex and
+// uniformly wound, so ALL of the candidate rules agree on it — which means
+// this block still pins "there IS a facing term, and winding alone decides it"
+// and cannot pin WHICH rule. That separation needs an open face where the
+// rules part company (a split face, a reflex corner), and it lives in
+// `tests/unit/facing_predicate_test.d`.
 // ---------------------------------------------------------------------------
 
 private Mesh oneQuad(bool towardsEye) {
@@ -243,7 +253,8 @@ private Mesh oneQuad(bool towardsEye) {
     m.vertices = [
         Vec3(-a, -a, 0), Vec3(a, -a, 0), Vec3(a, a, 0), Vec3(-a, a, 0),
     ];
-    // CCW seen from +Z gives cross(v1-v0, v2-v0) = +Z, towards an eye on +Z.
+    // CCW seen from +Z gives cross(v1-v0, v[n-1]-v0) = +Z (and so does every
+    // other candidate normal on a convex quad), towards an eye on +Z.
     if (towardsEye) m.addFace([0, 1, 2, 3]);
     else            m.addFace([3, 2, 1, 0]);
     m.buildLoops();
@@ -252,16 +263,19 @@ private Mesh oneQuad(bool towardsEye) {
 
 unittest {
     // Fixture self-check: the two windings really are front- and back-facing
-    // for THIS eye, stated in the gate's own algebra (`dot(n, v0 - eye)`, front
-    // iff < 0). Without this the test below could pass for the wrong reason.
+    // for THIS eye, stated in the gate's own algebra — the ADOPTED rule
+    // (task 0832): N = cross(v1 - v0, v[n-1] - v0), culled iff dot(N, v0 - eye)
+    // is strictly positive. Written out here rather than calling
+    // `frontFacingLocal`, so the check stays independent arithmetic. Without it
+    // the test below could pass for the wrong reason.
     auto vp = testViewport();
 
     static double facingDot(const ref Mesh m, Vec3 eye) {
         const Vec3 v0 = m.vertices[m.faces[0][0]];
         const Vec3 v1 = m.vertices[m.faces[0][1]];
-        const Vec3 v2 = m.vertices[m.faces[0][2]];
+        const Vec3 vL = m.vertices[m.faces[0][$ - 1]];   // the LAST ring entry
         const double ux = v1.x - v0.x, uy = v1.y - v0.y, uz = v1.z - v0.z;
-        const double vx = v2.x - v0.x, vy = v2.y - v0.y, vz = v2.z - v0.z;
+        const double vx = vL.x - v0.x, vy = vL.y - v0.y, vz = vL.z - v0.z;
         const double nx = uy * vz - uz * vy;
         const double ny = uz * vx - ux * vz;
         const double nz = ux * vy - uy * vx;
@@ -290,7 +304,8 @@ unittest {
                 ~ " term was removed, and that changes what SNAP grabs"
                 ~ " (source/snap.d walkSource) — not just what a pass draws."
                 ~ " If it was removed deliberately for a wireframe rule, see"
-                ~ " doc/tasks/backlog/0577 first: the same predicate is"
-                ~ " duplicated in three other places and they must move"
-                ~ " together or the picker and the snapper disagree.", vi));
+                ~ " doc/tasks/backlog/0577 first. Since task 0832 the predicate"
+                ~ " has ONE implementation (math.frontFacingLocal), so removing"
+                ~ " it here removes it from the lasso and the snapper in the"
+                ~ " same edit — which is the point, but say so out loud.", vi));
 }

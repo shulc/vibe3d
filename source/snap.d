@@ -4,6 +4,7 @@ import std.math : sqrt, round, floor, isNaN;
 import core.sync.mutex : Mutex;
 
 import math : Vec3, Viewport, ModelSpace, projectionSpace, projectToWindowFull,
+              frontFacingLocal,
               screenRay, screenPointToRay,
               rayPlaneIntersect, pointInPolygon2D,
               closestOnSegment2DSquared, closestOnSegmentToRay, cross, dot,
@@ -663,7 +664,9 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // exception is the front-facing SIGN test in `faceVisible`, which stays
     // local + a `vpLocal.eye` (no `ms.mirrored` correction — see
     // `ModelSpace.mirrored`'s doc comment in math.d for why one is not
-    // needed), mirroring the identical cull in `Mesh.visibleVertices`.
+    // needed). Since task 0832 that test and the one inside
+    // `Mesh.visibleVertices` are not merely "identical" by inspection — they
+    // are the SAME function, `math.frontFacingLocal`.
     void walkSource(const ref Mesh m, int slot, const(uint)[] exclude,
                     const ModelSpace ms) {
         const Viewport vpLocal = projectionSpace(vp, ms);
@@ -708,11 +711,17 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             // a second caller inherits it.
             if (m.isFaceHidden(fi)) return false;
             if (vis.length == 0) return true;
-            if (face.length < 3) return false;
-            Vec3 fn = cross(m.vertices[face[1]] - m.vertices[face[0]],
-                            m.vertices[face[2]] - m.vertices[face[0]]);
-            bool backFacing = dot(fn, m.vertices[face[0]] - vpLocal.eye) >= 0;
-            if (backFacing) return false;
+            // FACING — task 0832. This line used to be a THIRD spelling of the
+            // predicate (the first triangle's cross, in float, culled at
+            // `>= 0`) which disagreed with the other two on a split face. It
+            // is now `math.frontFacingLocal` — one home, carrying the
+            // reference's rule. The `< 3` guard moved in there with it.
+            //
+            // Named for what it is: applying that rule to SNAP is an
+            // ASSUMPTION. The capture (task 0726) drove the lasso, never a
+            // snap gesture, so nobody has measured that the reference culls
+            // this way here. See `frontFacingLocal`'s comment.
+            if (!frontFacingLocal(m.vertices, face, vpLocal.eye)) return false;
             foreach (v; face) if (v >= vis.length || !vis[v]) return false;
             return true;
         }

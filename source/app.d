@@ -4978,19 +4978,26 @@ void main(string[] args) {
                     float ndcZ;
                     return projectToWindow(vLocal, vpLocal, sx, sy, ndcZ);
                 }
-                bool frontFacing(Vec3 nLocal, Vec3 p0Local) {
+                bool frontFacing(const(Vec3)[] vertsLocal, const(uint)[] ring) {
+                    // Task 0832: the rule itself moved to
+                    // `math.frontFacingLocal`, its one home. It takes the RING
+                    // rather than a precomputed normal, because WHICH normal
+                    // is the rule — this call site used to hand it
+                    // `Mesh.faceNormal` (Newell over the whole polygon) while
+                    // the two snap sites each built a different one. The
+                    // adopted rule is the reference's, MEASURED for this
+                    // gesture (task 0726 drove the lasso).
+                    //
                     // No `ms.mirrored` correction here (task 0617 follow-up:
                     // the flip that used to live on this line was WRONG and
                     // has been removed — see math.d's `ModelSpace.mirrored`
                     // doc comment for the identity that replaces §3.7/§3.8).
                     // `vpLocal.eye` is already `M⁻¹·eyeWorld`
-                    // (`projectionSpace`), so `dot(nLocal, p0Local -
-                    // vpLocal.eye)` already answers "is the eye on the
-                    // outward side" correctly for ANY invertible `M`,
-                    // mirrored or not — XOR-ing `ms.mirrored` on top flipped
-                    // a right answer wrong under a mirror.
-                    bool backFacing = dot(nLocal, p0Local - vpLocal.eye) >= 0;
-                    return !backFacing;
+                    // (`projectionSpace`), so the local dot already answers
+                    // "is the eye on the outward side" correctly for ANY
+                    // invertible `M`, mirrored or not — XOR-ing `ms.mirrored`
+                    // on top flipped a right answer wrong under a mirror.
+                    return frontFacingLocal(vertsLocal, ring, vpLocal.eye);
                 }
                 // GPU-pick-buffer-driven visibility for the lasso.
                 // doc/lasso_gpu_pick_buffer_fix.md — replaces the old
@@ -5045,17 +5052,17 @@ void main(string[] args) {
                             if (cage == uint.max || cage >= mesh.faces.length) continue;
                             // Hide, branch 1/6 (task 0613 S4). It goes HERE,
                             // beside the identity the branch already resolved
-                            // — the three closures above (`insideLasso`,
-                            // `projLocal`, `frontFacing`) take a POINT, not an
-                            // element, so they cannot know what is hidden.
+                            // — the three closures above take a POINT
+                            // (`insideLasso`, `projLocal`) or a bare vertex
+                            // RING (`frontFacing`, task 0832), never a face
+                            // INDEX, so none of them can know what is hidden.
                             // FACES keep their VBO slot (faceTriCount == 0,
                             // R3), so `gpuVisible[fi]` below stays correctly
                             // keyed and only this guard is needed.
                             if (mesh.isFaceHidden(cage)) continue;
                             auto face = pv.faces[fi];
                             if (face.length < 3) { cageAllInside[cage] = false; continue; }
-                            Vec3 fn = pv.faceNormal(cast(uint)fi);
-                            if (!frontFacing(fn, pv.vertices[face[0]])) continue;
+                            if (!frontFacing(pv.vertices, face)) continue;
                             // GPU visibility per PREVIEW face index.
                             // faceIdVbo writes preview-face indices,
                             // so `gpuVisible[fi]` is the right key.
@@ -5087,8 +5094,7 @@ void main(string[] args) {
                             // keeps its slot, so `fi` still indexes
                             // `gpuVisible` correctly here.
                             if (mesh.isFaceHidden(fi)) continue;
-                            Vec3 fn = mesh.faceNormal(cast(uint)fi);
-                            if (!frontFacing(fn, mesh.vertices[face[0]])) continue;
+                            if (!frontFacing(mesh.vertices, face)) continue;
                             if (gpuVisible !is null
                                 && fi < gpuVisible.length
                                 && !gpuVisible[fi]) continue;

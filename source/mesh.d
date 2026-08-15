@@ -7734,8 +7734,10 @@ struct Mesh {
     /// belongs to at least one front-facing face AND is not occluded by any
     /// other front-facing face along the eye→vertex ray.
     ///
-    /// A face is front-facing when its normal points toward the camera
-    /// (dot(normal, face[0] - eye) < 0). Occlusion is tested by ray-casting
+    /// Front-facing is decided by `math.frontFacingLocal` — the ONE home of
+    /// that predicate since task 0832, carrying the reference editor's rule
+    /// (the corner triangle at the ring's first vertex, culled strictly at
+    /// `dot(N, v0 - eye) > 0`). Occlusion is tested by ray-casting
     /// from the eye through each candidate vertex against every other
     /// front-facing face: if the ray crosses a face's plane inside its
     /// polygon strictly nearer the eye than the vertex, the vertex is hidden
@@ -7770,7 +7772,8 @@ struct Mesh {
     // the outward side" correctly for any invertible `M` — see
     // `ModelSpace.mirrored`'s doc comment in math.d for the identity.
     bool[] visibleVertices(Vec3 eye, const ref Viewport vp, const ModelSpace ms) const {
-        import math : pointInPolygon2D, projectToWindowFull, projectionSpace, ModelSpace;
+        import math : pointInPolygon2D, projectToWindowFull, projectionSpace, ModelSpace,
+                      frontFacingLocal;
         import std.math : abs, sqrt;
 
         bool[] vis = new bool[](vertices.length);
@@ -7795,7 +7798,8 @@ struct Mesh {
 
         // Pass 1: collect front-facing faces with cached screen polygons +
         // bboxes, and seed the visibility mask.
-        // The plane normal and the front-facing dot are carried in DOUBLE.
+        // The plane normal is carried in DOUBLE (the facing dot moved out to
+        // `math.frontFacingLocal`, which carries its own in double too).
         // The depth half of this gate compares against a coincidence tolerance
         // of ~2.98e-7 RELATIVE to the candidate's largest coordinate (see
         // below) — about 2.5 float32 ulps. In float arithmetic the ray-plane
@@ -7839,15 +7843,23 @@ struct Mesh {
             // A hidden face's corners that ALSO touch a visible face stay
             // visible, which is right: they are on screen, drawn by that face.
             if (isFaceHidden(fi)) continue;
+            // FACING — task 0832. This used to be its own copy of the rule
+            // (the plane of the first triangle, culled at `>= 0`); it is now
+            // `math.frontFacingLocal`, the one home, and the rule it applies
+            // is the reference's, adopted for parity. Read that function's
+            // comment before changing anything here — in particular, snap is
+            // the ONLY consumer of this mask, and the reference's snap gesture
+            // was never measured, so applying the rule here is a named
+            // ASSUMPTION rather than a measurement.
+            if (!frontFacingLocal(vertices, face, localEye)) continue;
+            // `fn` is now ONLY the ray-plane's plane for the depth gate in
+            // pass 2 — it no longer decides facing, and the two are separate
+            // questions: a face this predicate keeps can still have a
+            // degenerate first-triangle plane (that is exactly the split-face
+            // shape), which pass 2's `abs(denom) < 1e-9` guard already answers
+            // by declining to occlude through it.
             double[3] fn = planeNormal(vertices[face[0]], vertices[face[1]],
                                        vertices[face[2]]);
-            {
-                Vec3 p0 = vertices[face[0]];
-                bool backFacing = dotD(fn, cast(double)p0.x - localEye.x,
-                                           cast(double)p0.y - localEye.y,
-                                           cast(double)p0.z - localEye.z) >= 0;
-                if (backFacing) continue;
-            }
             foreach (vi; face) vis[vi] = true;
 
             float mnx = float.infinity, mxx = -float.infinity;

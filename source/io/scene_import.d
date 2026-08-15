@@ -16,10 +16,14 @@ module io.scene_import;
 //     * source/math.d `lookAt` writes -f into the third basis row and
 //       `perspectiveMatrix` puts -1 in the w-row → the camera looks down -Z
 //       (the OpenGL right-handed convention).
-//     * source/mesh.d's front-face test is
-//         fn = cross(v1-v0, v2-v0);  front  iff  dot(fn, v0-eye) < 0
+//     * the front-face test (`math.frontFacingLocal`, the one home since task
+//       0832) is
+//         N = cross(v1-v0, v[n-1]-v0);  front  iff  NOT (dot(N, v0-eye) > 0)
 //       i.e. a CCW-wound face whose normal points toward the camera is the
 //       front face (makeOctahedron's comment: "Winding is CCW from outside").
+//       Which of the ring's corners builds N is a parity choice and does not
+//       bear on handedness — every candidate normal agrees on the convex,
+//       uniformly-wound faces this argument is about.
 //   Because both spaces agree, we pass NEITHER aiProcess_MakeLeftHanded nor
 //   aiProcess_FlipWindingOrder — those would MIRROR a right-handed source and
 //   invert winding, which is exactly wrong here.

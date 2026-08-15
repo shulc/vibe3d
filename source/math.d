@@ -1464,6 +1464,118 @@ bool pointInPolygon2D(float px, float py, float[] xs, float[] ys) {
     return inside;
 }
 
+// ---------------------------------------------------------------------------
+// THE FACING PREDICATE — one rule, one home (task 0832).
+//
+// "Is this face turned away from the eye" used to be written out THREE times,
+// and audit 4 (§P1) measured that they were not three copies of one rule but
+// three DIFFERENT rules: the plane of the first triangle in double
+// (`Mesh.visibleVertices`), the cross of the first triangle in float
+// (`snap.d`'s `faceVisible`), and a Newell sum over the whole ring (`app.d`'s
+// lasso). They part company on exactly the face an edge split leaves behind —
+// so the snapper and the lasso could disagree about the same polygon, and
+// nothing in the tree said which answer was right.
+//
+// THE RULE BELOW IS THE REFERENCE EDITOR'S, and it is here for PARITY. It was
+// read under a debugger at the reference's own compute site (task 0726 — the
+// arguments at the call, matched against offline arithmetic to the last
+// printed digit), and the owner adopted it on 2026-08-15:
+//
+//     N = cross(v1 - v0, v[n-1] - v0)   the corner triangle at the FIRST ring
+//                                       vertex; the third point is the LAST
+//                                       ring entry, NOT the second
+//     cull  iff  dot(N, v0 - eye) > 0   strictly, against a literal 0
+//
+// THE BILL, measured and accepted deliberately. Write it down here so nobody
+// later reads any of it as an oversight and "repairs" it:
+//
+//   * N depends on the ring's STARTING VERTEX. Four rotations of one quad give
+//     four different normals; only the rotation is different, the polygon is
+//     the same polygon.
+//   * On a planar polygon whose ring STARTS at a reflex corner, N is turned
+//     180° from the surface it belongs to, so the face answers backwards.
+//   * On the face an edge split leaves, when the inserted midpoint lands at
+//     ring index 0, its two ring neighbours are collinear with it and N is
+//     EXACTLY the zero vector — and such a polygon is then front-facing from
+//     BOTH sides, because `dot(0, anything) > 0` is false.
+//
+// That last line is why the comparison is strict and why "N == 0 is never
+// culled" needs no clause of its own: it falls out of `> 0`. The rule our tree
+// used before culled at `>= 0`, which is the opposite answer for every
+// zero-normal and every exactly-edge-on face.
+//
+// `Mesh.faceNormal` (Newell, area-weighted over the whole ring) is strictly
+// more robust than this and disagreed with the reference on 19 of 72 measured
+// cells. It stays where it is for GEOMETRY (bevels, workplanes, UV projection);
+// it is deliberately NOT what decides facing. Do not "fix" this predicate by
+// reaching for it — that would be neither parity nor honesty.
+//
+// LOCAL SPACE. `eyeLocal` is the eye in the same space `verts` are expressed
+// in (`projectionSpace(vp, ms).eye`, i.e. `M⁻¹·eyeWorld`). A front-facing test
+// done ENTIRELY in local space needs no `ms.mirrored` correction, mirrored or
+// not — see `ModelSpace.mirrored`'s doc comment above for the identity, and for
+// the flip that used to be XOR'd onto all three copies of this test and was
+// wrong. Do not reintroduce it here.
+//
+// PRECISION. The cross and the dot are carried in DOUBLE while the positions
+// stay float, the same choice `Mesh.visibleVertices`'s depth gate already
+// documents. Products of float32 values are exact in double, so the sign this
+// returns is the correctly-rounded sign of the exact float32 arithmetic — and,
+// the part that matters for the rule above, a truly collinear corner yields an
+// EXACT zero rather than float noise with an arbitrary sign. That is a
+// property of evaluating this formula, not a different formula: the three
+// sites disagreed on precision too (double / float / float), and one home has
+// to pick one.
+//
+// WHERE THIS IS USED, and where it deliberately is not:
+//
+//   * lasso over polygons (`app.d`) — MEASURED. This is the gesture task 0726
+//     drove, and the rule is the reference's answer for it.
+//   * snap (`Mesh.visibleVertices` and `snap.d`'s `faceVisible`) — AN
+//     ASSUMPTION, and it is named as one on purpose. The capture never drove a
+//     snap gesture in the reference; nobody has measured that the reference
+//     uses THIS rule there. It is applied here because snap's two legs (the
+//     vertex/edge mask from `visibleVertices`, the face gate in `faceVisible`)
+//     must at least agree with EACH OTHER, and because a predicate with more
+//     than one implementation is the defect this function exists to remove.
+//     If snap is ever measured and the reference turns out to do something
+//     else there, this is the assumption to revisit — split it out under its
+//     own name, do not quietly widen this one.
+//   * single click — NOT this rule and not any rule. Our click path has no
+//     facing term at all (pinned by task 0576: `bvh_pick.pickFace` is a
+//     nearest-hit ray-cast; `gpu_select` decides by depth). The reference does
+//     cull there, but by a per-triangle determinant sign that never touches the
+//     polygon normal — so giving click a facing term is a separate behaviour
+//     change, not a consequence of this one.
+//
+/// True when the face `ring` (indices into `verts`) faces `eyeLocal` — i.e.
+/// when it is NOT culled. `ring` shorter than 3 is not a face and answers
+/// false. All coordinates are in ONE space; `eyeLocal` must be in that space.
+bool frontFacingLocal(const(Vec3)[] verts, const(uint)[] ring, Vec3 eyeLocal)
+    @safe pure nothrow @nogc
+{
+    if (ring.length < 3) return false;
+    const Vec3 v0 = verts[ring[0]];
+    const Vec3 v1 = verts[ring[1]];
+    const Vec3 vL = verts[ring[$ - 1]];
+    // N = cross(v1 - v0, vL - v0), in double (see PRECISION above).
+    const double ux = cast(double)v1.x - v0.x,
+                 uy = cast(double)v1.y - v0.y,
+                 uz = cast(double)v1.z - v0.z;
+    const double wx = cast(double)vL.x - v0.x,
+                 wy = cast(double)vL.y - v0.y,
+                 wz = cast(double)vL.z - v0.z;
+    const double nx = uy * wz - uz * wy,
+                 ny = uz * wx - ux * wz,
+                 nz = ux * wy - uy * wx;
+    const double dx = cast(double)v0.x - eyeLocal.x,
+                 dy = cast(double)v0.y - eyeLocal.y,
+                 dz = cast(double)v0.z - eyeLocal.z;
+    // Strictly `> 0` culls. Equality — a zero N, or a face exactly edge-on —
+    // is kept, which is the whole of the "N == 0 is never culled" clause.
+    return !(nx * dx + ny * dy + nz * dz > 0.0);
+}
+
 // Closest distance from point (px,py) to segment (ax,ay)-(bx,by).
 // t is the interpolation parameter [0..1] of the closest point on segment.
 float closestOnSegment2D(float px, float py,
