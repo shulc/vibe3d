@@ -839,6 +839,13 @@ struct EditorApp {
     CheckerShader checkerShader;
     GridShader    gridShader;
     FormsPanel    formsPanel;
+    // Task 0722 (audit §2C A2): the ONLY main() local the Tool Properties
+    // block closed over that was not already a field here. Same category as
+    // `formsPanel` right above -- a class reference assigned exactly once in
+    // main() (`new PropertyPanel()`), well before the LATE-wiring point, and
+    // never reassigned. main() itself has no other reader: the declaration
+    // and all six reads were inside the block that moved to ui/panels.d.
+    PropertyPanel propertyPanel;
     ImGuiIO*      io;
     void delegate(string, string) commandHandlerDelegate;
     void delegate(string, string) formsInteractiveDispatch;
