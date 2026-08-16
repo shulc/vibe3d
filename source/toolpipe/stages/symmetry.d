@@ -402,6 +402,12 @@ public:
     }
 
 private:
+    /// Task 0791 — symmetry does NOT split into activation and attribute the
+    /// way the other slots do: measured on the reference, BOTH of its commands
+    /// (the state toggle and the axis) end a held operation with the same
+    /// activation bracket. So every accepted write here arms the slot.
+    public override bool attrArmsSlot(string name) const { return true; }
+
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "enabled":

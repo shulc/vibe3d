@@ -113,7 +113,7 @@ import document : Layer, ItemXform;
 import tools.transform.item_xform_kernels : applyGestureToItems;
 import commands.layer.xform_edit : LayerXformEdit, LayerXformTarget;
 import perf_probe : g_perf, Cat, g_frames, Phase;
-import toolpipe.pipeline : g_pipeCtx;
+import toolpipe.pipeline : g_pipeCtx, Pipeline;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.falloff : FalloffStage, FalloffSetSnapshot,
                                  snapshotFalloffSet, restoreFalloffSet,
@@ -673,8 +673,7 @@ public:
         // Task 0791 — the other slot latches re-latch on the first poll too, so
         // arming a tool never reads a slot change that happened while no
         // transform tool was armed as an activation of ITS run.
-        lastFalloffSlotValid = false;
-        lastAxisMode         = -1;
+        lastSlotSigValid = false;
         clearFrame();                 // COMMIT B — fresh session re-derives the basis
     }
 
@@ -2012,60 +2011,45 @@ public:
         // handles) publishes stage config while dragging.
         if (activeDrag !is null) return false;
         bool fired = false;
-        // — Action centre. TWO activation events share this slot: the MODE
-        //   (which centre tool is in it) and an explicit user RELOCATE. The
-        //   pointer routes for both already end the run at the mouse-down
-        //   (the Phase-1a / element-pick / P5 boundaries); this poll is what
-        //   gives the COMMAND-surface relocate the same law, which it did
-        //   not have — measured: the pivot moved and the run was untouched.
+        // — the pipe's slot state, ALL stages at once. A move means the user
+        //   armed a slot: a different tool in it, the SAME tool re-issued, a
+        //   node added or removed, or -- for the action centre -- an explicit
+        //   relocate through the command surface, which is the one this task
+        //   started from (the pointer routes already end the run themselves).
+        {
+            ulong curSig = slotStateSignature();
+            uint  acenEp = 0;
+            if (auto ac = activeAcenStage()) acenEp = ac.slotEpoch;
+            if (!lastSlotSigValid) {
+                // First poll after the tool armed: latch without firing.
+                lastSlotSigValid = true;
+                lastSlotSig      = curSig;
+                lastAcenEpoch    = acenEp;
+            } else if (curSig != lastSlotSig) {
+                // pivotMoved is ASKED, not assumed: an action-centre activation
+                // moves the gizmo pivot, so the display soft-pin from a prior
+                // settle goes with the run; a falloff or axis activation leaves
+                // the pivot alone and must not yank the gizmo.
+                endHeldRunAtSlotActivation(acenEp != lastAcenEpoch);
+                fired = true;
+                lastSlotSig   = curSig;
+                lastAcenEpoch = acenEp;
+            }
+        }
+
+        // — the action centre's MODE, by VALUE. Belt and braces for the paths
+        //   that change it WITHOUT a command site (a reset inside the stage, a
+        //   preset composing transiently): the signature above counts commands,
+        //   this catches the rest. Kept because it is what closed the run
+        //   before this task and several suites lean on it.
         if (auto ac = activeAcenStage()) {
-            int  curMode  = cast(int) ac.mode;
-            uint curEpoch = ac.userRelocateEpoch;
+            int curMode = cast(int) ac.mode;
             if (lastAcenMode == -1) {
-                // First poll this session: latch without firing a boundary.
-                lastAcenMode          = curMode;
-                lastAcenRelocateEpoch = curEpoch;
-            } else if (curMode != lastAcenMode
-                    || curEpoch != lastAcenRelocateEpoch) {
-                // pivotMoved: BUG-1 — a mode change (and equally a relocate)
-                // recomputes the centre from scratch, so any display
-                // soft-pin from a prior settle goes with the run.
-                // (applySetAttr "mode" already clears it inside the stage
-                // when the change came through setAttr; this covers every
-                // other path and is a no-op when already clear.)
+                lastAcenMode = curMode;
+            } else if (curMode != lastAcenMode) {
                 endHeldRunAtSlotActivation(/*pivotMoved=*/true);
                 fired = true;
                 lastAcenMode = curMode;
-            }
-            lastAcenRelocateEpoch = curEpoch;
-        }
-
-        // — Falloff. The slot's occupant is the weighting TOOL: its `type`,
-        //   and how many falloff nodes are stacked. A type swap and a node
-        //   added/removed are both activations. Every OTHER falloff attr
-        //   (size / shape / dist / steps / map / …) stays an attribute write
-        //   and still re-grades through the block below.
-        {
-            ulong curSig = falloffSlotSignature();
-            if (!lastFalloffSlotValid) {
-                lastFalloffSlotValid = true;
-                lastFalloffSlotSig   = curSig;
-            } else if (curSig != lastFalloffSlotSig) {
-                endHeldRunAtSlotActivation(/*pivotMoved=*/false);
-                fired = true;
-                lastFalloffSlotSig = curSig;
-            }
-        }
-
-        // — Axis. Same shape: the mode is which axis tool sits in the slot.
-        if (auto ax = activeAxisStage()) {
-            int curAxisMode = cast(int) ax.mode;
-            if (lastAxisMode == -1) {
-                lastAxisMode = curAxisMode;
-            } else if (curAxisMode != lastAxisMode) {
-                endHeldRunAtSlotActivation(/*pivotMoved=*/false);
-                fired = true;
-                lastAxisMode = curAxisMode;
             }
         }
         return fired;
@@ -2106,14 +2090,23 @@ public:
         }
     }
 
-    // The falloff slot's occupant, as one comparable value: the ordered list of
-    // stage types, folded with the stack depth. Changing a type, adding a node
-    // or removing one all move it; every other falloff attribute leaves it
-    // alone (those are attribute writes and re-grade instead).
-    private ulong falloffSlotSignature() const {
+    // The pipe's SLOT STATE, as one comparable value: every stage's
+    // slot-arming write counter, folded in pipeline order. It moves when the
+    // user arms any slot -- including re-arming the tool ALREADY in it, which
+    // is the case a value comparison cannot see and which the reference was
+    // measured to end the operation on -- and when a node is added or removed
+    // (the fold walks the live stage list, so its length is part of the value).
+    // Every OTHER pipe attribute leaves it alone: those are attribute writes
+    // and still re-grade.
+    //
+    // WHICH attributes count is each stage's own answer (Stage.attrArmsSlot),
+    // so the snap stage -- measured NOT to end a held operation, the one slot
+    // that does not follow the rule -- simply never moves this.
+    private ulong slotStateSignature() const {
         ulong sig = 1469598103934665603UL;          // FNV-1a offset basis
-        foreach (fs; activeFalloffStages()) {
-            sig ^= cast(ulong)(cast(int) fs.type) + 1;
+        if (g_pipeCtx is null) return sig;
+        foreach (st; (cast(Pipeline) g_pipeCtx.pipeline).allMut()) {
+            sig ^= cast(ulong) st.slotEpoch + 1;
             sig *= 1099511628211UL;                 // FNV-1a prime
         }
         return sig;
@@ -5110,17 +5103,17 @@ private:
     // int-backed enum); -1 is outside its value range so any real mode differs.
     int lastAcenMode = -1;
 
-    // Task 0791 — the other three slot-activation latches, same poll, same
-    // first-poll rule (latch without firing).
-    //   * the ACEN stage's user-relocate counter (the command-surface relocate);
-    //   * the falloff slot's occupant signature (types + stack depth);
-    //   * the AXIS stage's mode.
-    // `lastFalloffSlotValid` is the falloff pair's "-1": a signature is a hash,
-    // so it has no out-of-band value to spare.
-    uint  lastAcenRelocateEpoch = 0;
-    ulong lastFalloffSlotSig    = 0;
-    bool  lastFalloffSlotValid  = false;
-    int   lastAxisMode          = -1;
+    // Task 0791 — the slot-activation latches. Both re-latch (without firing)
+    // on the first poll after the tool arms, so a slot change made while no
+    // transform tool was armed is never read as an activation of ITS run.
+    //   * `lastSlotSig` folds every stage's slot-arming write counter;
+    //   * `lastAcenEpoch` is the action centre's own counter as of the last
+    //     poll — it is how the boundary tells a pivot-moving activation from
+    //     one that must leave the gizmo alone.
+    // `lastSlotSigValid` is the signature's "-1": a hash has no spare value.
+    ulong lastSlotSig      = 0;
+    bool  lastSlotSigValid = false;
+    uint  lastAcenEpoch    = 0;
 
     // In-session falloff re-grade (re-fire) state.
     //

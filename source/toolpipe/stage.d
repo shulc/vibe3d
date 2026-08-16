@@ -220,6 +220,39 @@ abstract class Stage : ParamProvider {
     string[2][] listAttrs() const {
         return defaultStageListAttrs(cast(Stage)this);
     }
+
+    // ------------------------------------------------------------------
+    // Slot ACTIVATION (task 0791).
+    //
+    // Some of a stage's attributes are not settings on the tool in its slot —
+    // they say WHICH TOOL IS IN THE SLOT. Writing one of those is an
+    // ACTIVATION, and an activation ends a held transform operation instead of
+    // re-weighing it. Measured on the reference: re-issuing the tool ALREADY in
+    // the slot ends the operation too, so the trigger is the WRITE, not a
+    // difference in the value — which is why this is a counter and not a
+    // comparison.
+    //
+    // `slotEpoch` is bumped ONLY from COMMAND sites (`tool.pipe.attr`, the
+    // falloff / action-centre preset commands), never from a stage's internal
+    // bookkeeping. That distinction is load-bearing: the same fields are also
+    // written by the tool's own paths (a click-pick relocate, the softdrag
+    // brush, an auto-relocate chain), and a counter that moved with those would
+    // fire on the gesture it is meant to protect — the trap task 0724 fell into
+    // with the falloff packet's picked centre.
+    //
+    // Nothing may depend on the absolute value: it is a change detector.
+    // ------------------------------------------------------------------
+    uint slotEpoch;
+
+    /// Does writing `name` ARM this stage's slot (rather than adjust the tool
+    /// already in it)? Default NO — a stage opts in. Snap deliberately stays
+    /// out: measured on the reference, arming a snap tool leaves a held
+    /// operation untouched (the pipe activation runs but opens no reflux
+    /// bracket), which is the one slot that does not follow the rule.
+    bool attrArmsSlot(string name) const { return false; }
+
+    /// Record that the USER armed this slot. Called at command sites only.
+    final void noteSlotArmed() { ++slotEpoch; }
 }
 
 // ---------------------------------------------------------------------------

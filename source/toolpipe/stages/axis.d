@@ -1058,6 +1058,9 @@ private:
         "AxisStage.modeEntries must carry an entry for every Mode — a new "
         ~ "member needs a wire tag (parse + stringify read it) and a UI label");
 
+    /// Task 0791 — `mode` IS the slot: which axis tool occupies it.
+    public override bool attrArmsSlot(string name) const { return name == "mode"; }
+
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "mode": {

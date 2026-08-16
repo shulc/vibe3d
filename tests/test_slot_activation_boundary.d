@@ -421,3 +421,82 @@ unittest {
     cmd("tool.set Transform off");
     postJson("/api/reset", "");
 }
+
+// ===========================================================================
+// (SLOT-REFIRE) Re-issuing the tool ALREADY in the slot ends the run too.
+//
+// This is the cell nobody guesses, and it is why the check counts WRITES
+// instead of comparing values. The reference was measured twice on it: once on
+// the action-centre slot (a slot holding a tool, that exact tool re-issued) and
+// once on the falloff slot. Both end the held operation even though the
+// pipeline is byte-identical across the change — so the trigger is the
+// activation EVENT.
+//
+// Here the falloff type is written with the value it ALREADY has. A
+// signature-over-values would see nothing; the run must end anyway.
+// ===========================================================================
+unittest {
+    auto before = armAndLandGesture("SLOT-REFIRE", () {
+        cmd("tool.pipe.attr falloff type linear");
+        cmd("tool.pipe.attr falloff shape linear");
+        cmd(`tool.pipe.attr falloff center "0.2,0,0"`);
+        cmd(`tool.pipe.attr falloff size "0.9,0.9,0.9"`);
+    });
+    // The SAME value the slot already holds.
+    cmd("tool.pipe.attr falloff type linear");
+    settle();
+    assert(!runIsHeld(),
+        "re-issuing the tool already in the slot is still an ACTIVATION and "
+        ~ "must END the held run — a value comparison cannot see this case, "
+        ~ "which is the whole reason the check counts writes");
+    assertFrozen("SLOT-REFIRE", before);
+    dropTool();
+}
+
+// ===========================================================================
+// (SYMMETRY-SLOT) A symmetry change ends the held run.
+//
+// Measured late (task 0791 waves 2-3) and reversing what we shipped: both of
+// the reference's symmetry commands end a held operation with the same
+// activation bracket every other closing slot uses. Symmetry has no
+// attribute-shaped half there, so EVERY symmetry write arms the slot here.
+//
+// The companion is (SNAP-SLOT) below: the two were measured in the same boot
+// and they answer DIFFERENTLY, which is why neither is assumed from the other.
+// ===========================================================================
+unittest {
+    auto before = armAndLandGesture("SYMMETRY-SLOT", () {
+        cmd("tool.pipe.attr symmetry enabled 0");
+    });
+    cmd("tool.pipe.attr symmetry enabled 1");
+    settle();
+    assert(!runIsHeld(),
+        "a symmetry change is a slot activation and must END the held run");
+    assertFrozen("SYMMETRY-SLOT", before);
+    cmd("tool.pipe.attr symmetry enabled 0");
+    dropTool();
+}
+
+// ===========================================================================
+// (SNAP-SLOT) A snap change does NOT end the held run — the one slot that
+// does not follow the rule.
+//
+// Measured: arming a snap tool while an operation is held leaves it untouched.
+// The reference's own trace shows why — the pipe activation runs, but no
+// reflux bracket opens and nothing is rolled back. So this cell is not an
+// omission, it is the counter-example that stops "activating a slot ends the
+// run" from being over-applied.
+// ===========================================================================
+unittest {
+    auto before = armAndLandGesture("SNAP-SLOT", () {
+        cmd("tool.pipe.attr snap enabled false");
+    });
+    cmd("tool.pipe.attr snap enabled true");
+    settle();
+    assert(runIsHeld(),
+        "a snap change must NOT end the held run — measured on the reference, "
+        ~ "snap is the slot whose activation opens no bracket at all");
+    assertFrozen("SNAP-SLOT", before);
+    cmd("tool.pipe.attr snap enabled false");
+    dropTool();
+}

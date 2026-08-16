@@ -270,25 +270,23 @@ class ActionCenterStage : Stage, Operator, ToolSwitchTransient {
     // `userPlaced` / `userPlacedCenter` fields.
     Pin  userPin;
 
-    /// Task 0791 — how many times the USER has explicitly relocated the centre
-    /// through the COMMAND surface (`tool.pipe.attr actionCenter
-    /// userPlacedCenter` / `userPlacedX|Y|Z`, which is also what the Tool
-    /// Properties field writes). Bumped in `applySetAttr` ONLY.
+    /// Task 0791 — which of this stage's attributes ARE the slot: the MODE
+    /// (which centre tool sits in it) and every explicit relocate. See
+    /// Stage.attrArmsSlot for why this is a write-counter and not a diff, and
+    /// why only command sites bump it.
     ///
-    /// Why a counter on the COMMAND and not a watch on `userPin`: the pin is
-    /// also written by the tool's own paths (the element click-pick, the
-    /// softdrag brush, the Auto-relocate chain), so its VALUE drifts as a
-    /// consequence of the very gesture the boundary exists to protect. A watch
-    /// on the value therefore fires on the tool's own work — measured: it
-    /// reddens test_acen_pin_characterization / test_run_consolidation /
-    /// test_softdrag_brush_reset / test_falloff_idle_refire, which is task
-    /// 0724's own trap (a field that moves because the tool moved it) in a new
-    /// place. A counter is edge-triggered by the user's command and cannot
-    /// drift.
-    ///
-    /// Read by XfrmTransformTool's idle slot-activation poll; nothing may
-    /// depend on its absolute value — it is a change detector, not a count.
-    uint userRelocateEpoch;
+    /// `cenX/cenY/cenZ` are in the set because writing one PROMOTES the stage
+    /// to Manual — the write is a mode change wearing a coordinate's name.
+    override bool attrArmsSlot(string name) const {
+        switch (name) {
+            case "mode", "userPlacedCenter",
+                 "userPlacedX", "userPlacedY", "userPlacedZ",
+                 "cenX", "cenY", "cenZ":
+                return true;
+            default:
+                return false;
+        }
+    }
 
     Vec3 manualCenter = Vec3(0, 0, 0);      // valid for Mode.Manual
     // Mode.Element: the picked element's vertex indices (single vert / edge
@@ -1709,10 +1707,6 @@ private:
                     hit.z = parts[2].strip.to!float;
                 } catch (Exception) { return false; }
                 setUserPlaced(hit);
-                // Task 0791 — this is the command-surface relocate, the
-                // headless counterpart of the click. Mark it so the transform
-                // tool's slot poll ends the held run exactly as the click does.
-                ++userRelocateEpoch;
                 return true;
             }
             case "userPlacedX": case "userPlacedY": case "userPlacedZ": {
@@ -1732,7 +1726,6 @@ private:
                 else if (name == "userPlacedY") userPin.center.y = v;
                 else                            userPin.center.z = v;
                 userPin.placed = true;
-                ++userRelocateEpoch;      // task 0791 — see userPlacedCenter
                 return true;
             }
             case "selectSubMode": {

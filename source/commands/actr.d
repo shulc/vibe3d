@@ -56,8 +56,12 @@ class ActrPresetCommand : Command {
         // mode names in registration). Use setUserMode (sets userLocked=true)
         // so the explicit `actr.*` setting survives the next tool.set call
         // (resetTransientPipeStages skips locked stages).
+        // Task 0791 — an `actr.*` preset arms BOTH slots, and arming a slot
+        // ends a held transform operation. Counted here because this command
+        // writes the stages directly rather than through `tool.pipe.attr`.
         if (ac !is null) {
             ac.setUserMode(acenMode_);
+            ac.noteSlotArmed();
             // Verify the mode was accepted by reading back.
             import std.algorithm : canFind;
             bool accepted = false;
@@ -69,6 +73,7 @@ class ActrPresetCommand : Command {
         }
         if (ax !is null) {
             ax.setUserMode(axisMode_);
+            ax.noteSlotArmed();
             bool accepted = false;
             foreach (kv; ax.listAttrs())
                 if (kv[0] == "mode" && kv[1] == axisMode_) { accepted = true; break; }

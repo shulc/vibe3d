@@ -1497,23 +1497,26 @@ void moveArrowGesture(long want) {
 }
 
 // ===========================================================================
-// (P-C SYMMETRY MID-RUN, toggle-on) A symmetry toggle AFTER a committed move
-// gesture participates in the generalized refire trigger + the uniform
-// config-restore hook family: the re-grade re-runs the composed fold WITH the
-// live symmetry pass and records ONE tagged in-session entry; an in-session /
-// post-drop undo restores the symmetry CONFIG together with the geometry.
+// (SYMMETRY MID-RUN, toggle-on) A symmetry change AFTER a committed move
+// gesture is a SLOT ACTIVATION: it ENDS the held run rather than re-grading it.
 //
-// NOTE on the geometry witness: symmetry pairs vertices by their CURRENT
-// position (SymmetryStage.rebuildPairing on the live mesh). When symmetry is
-// enabled AFTER a gesture has already displaced a vertex off the plane, that
-// vertex no longer pairs with its old mirror, so toggling symmetry on mid-run
-// re-grades to byte-identical geometry on this fixture (no valid pair → no
-// mirror write). That is faithful positional-symmetry behaviour, NOT a P-C bug
-// (the geometric re-grade with symmetry is exercised by the (SYMMETRY) case
-// above, which captures the pristine-mesh pairing at mouse-down). The P-C
-// deliverable witnessed here is the TRIGGER + CONFIG-RESTORE, exactly like the
-// (P-C SNAP MID-RUN) case. The symmetry-on companion that DOES drive the mirror
-// (pairing captured at mouse-down) is the pre-existing (SYMMETRY) test.
+// This case used to assert the opposite (P-C: the toggle joins the generalized
+// refire trigger and appends one tagged in-session entry). Measured on the
+// reference (task 0791, waves 2 and 3): BOTH symmetry commands there -- the
+// state toggle and the axis -- end a held operation with the same activation
+// bracket the other slots use, so symmetry has no attribute-shaped half at all.
+// Our slot law already covered the action-centre, falloff and axis slots;
+// symmetry was deliberately LEFT OUT and named as unmeasured, because the
+// reference had never been driven through it. Now it has been.
+//
+// What survives from the old case and what does not:
+//   * the trigger half REVERSES -- no in-session entry is appended, because
+//     there is no re-grade;
+//   * the config-restore half goes with it: with no re-grade entry there is
+//     nothing for an in-session Ctrl+Z to restore. The uniform hook family is
+//     still exercised by the falloff and snap ATTRIBUTE cases around this one,
+//     which re-grade as before;
+//   * the post-drop undo half STANDS: the run still reverts to the cube.
 // ===========================================================================
 unittest {
     establishCubeBaseline();
@@ -1528,37 +1531,27 @@ unittest {
     assert(undoCount() == floor + 1, "move gesture records one in-session entry");
     auto v0AfterG = vert(0);
 
-    // Toggle symmetry ON mid-run (X plane). P-C: the trigger fires (symmetry
-    // packet changed) → ONE tagged in-session entry is recorded, carrying the
-    // symmetry config-restore hooks.
+    // Toggle symmetry ON mid-run (X plane). Under the slot law this ARMS the
+    // symmetry slot, so the held run ENDS: nothing is appended in-session, and
+    // the landed geometry is frozen where the gesture left it.
     cmd("tool.pipe.attr symmetry enabled 1");
     cmd("tool.pipe.attr symmetry axis x");
     settle();
     assert(querySymmetryEnabled(), "symmetry is now enabled");
-    assert(inSessionCount() == 2,
-        "the symmetry toggle re-grade APPENDS one tagged in-session entry; got "
+    assert(inSessionCount() == 0,
+        "a symmetry change is a slot ACTIVATION: it must END the held run "
+        ~ "(consolidating its in-session tail), not append a re-grade step; got "
         ~ inSessionCount().to!string);
-
-    // In-session Ctrl+Z: restores the symmetry config (enabled→false). Geometry
-    // stays at the post-gesture position (positional pairing found no mirror on
-    // the deformed mesh — see the NOTE above).
-    playAndWait(ctrlZ(50.0));
-    settle();
-    assert(!querySymmetryEnabled(),
-        "P-C: in-session Ctrl+Z restores the symmetry config (enabled 1→0)");
     assert(vertNear(vert(0), v0AfterG),
-        "the symmetry-toggle re-grade left geometry at the post-gesture position");
+        "...and the held result stays frozen where the gesture left it");
 
     // Post-drop: drop the tool (consolidates), one Ctrl+Z reverts the whole run
-    // to the cube AND restores the run-start symmetry config (off).
+    // to the cube.
     cmd("tool.set move off");
     settle();
     postJson("/api/undo", "");
     settle();
     assertVertex(6, 0.5, 0.5, 0.5, "post-drop undo reverts the move run to the cube");
-    assert(!querySymmetryEnabled(),
-        "P-C uniform-hook: post-drop undo restores the RUN-START symmetry config "
-        ~ "(off) on the merged run");
 
     cmd("tool.pipe.attr symmetry enabled 0");
     cmd("tool.pipe.attr falloff type none");

@@ -1109,6 +1109,12 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
     }
 
 private:
+    /// Task 0791 — `type` IS the slot: it says which weighting tool occupies
+    /// it. Every other falloff attribute adjusts the tool already there and
+    /// still re-grades a held operation (measured: writing the falloff's own
+    /// start plane re-weighs, it does not end the run).
+    public override bool attrArmsSlot(string name) const { return name == "type"; }
+
     bool applySetAttr(string name, string value) {
         switch (name) {
             case "type": {

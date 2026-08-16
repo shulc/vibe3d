@@ -137,6 +137,17 @@ class ToolPipeAttrCommand : Command {
                 cs.userLocked = cs.enabled;
         }
 
+        // Task 0791 — if this write ARMS the stage's slot (says which tool sits
+        // in it) rather than adjusting the tool already there, it is an
+        // ACTIVATION: the transform tool ends its held operation instead of
+        // re-weighing it. Counted HERE, at the command, and not inside the
+        // stage: the same fields are also written by the tool's own paths, and
+        // a counter that moved with those would fire on the gesture it exists
+        // to protect. Must precede onStageConfigChanged below, which is where
+        // the tool reads it.
+        if (matched.attrArmsSlot(attrName_))
+            matched.noteSlotArmed();
+
         // Stage-attr edits (falloff/ACEN/AXIS/snap) gain mid-session
         // immediacy: when a tool ALREADY has a live evaluation session, the
         // session driver re-runs its apply now so the new stage state takes
