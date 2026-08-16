@@ -309,7 +309,12 @@ unittest {
     }
     Thread.sleep(60.msecs);
 
-    // The re-grade actually ran.
+    // The write actually reached the geometry. NB this witnesses the RESPONSE,
+    // not one particular path to it: killing the ARM-1 block and the
+    // stage-config reEvaluate INDEPENDENTLY both leave this green (measured
+    // while adding it — an open panel session re-applies per frame), so the
+    // honest claim is "the falloff edit moved the mesh", which is what the T·R
+    // assertions below need in order not to be reading the pre-change pose.
     bool reGraded = false;
     foreach (vi; 0 .. 8) {
         auto got = vAt(vi);
@@ -317,9 +322,9 @@ unittest {
             if (!approxEq(got[k], preChange[vi][k], 2e-4)) reGraded = true;
     }
     assert(reGraded,
-        "the mid-session attribute write must FIRE the ARM-1 re-grade — the "
-        ~ "geometry did not move at all, so everything below would be asserting "
-        ~ "the pre-change pose");
+        "the mid-session attribute write must reach the geometry — nothing "
+        ~ "moved at all, so everything below would be asserting the pre-change "
+        ~ "pose");
 
     // Post-falloff: under Phase 2 full-fold the held RZ SURVIVED. For each
     // vertex whose composed T·R differs from a translate-only re-grade (the

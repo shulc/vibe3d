@@ -896,8 +896,7 @@ public:
         //
         // Skipped during a live drag (dragAxis frozen): a slot read mid-drag is
         // the drag's own state, not a user action.
-        if (activeDrag is null)
-            endHeldRunIfSlotActivated();
+        endHeldRunIfSlotActivated();     // no-ops mid-drag, see the method
 
         // Mid-tool falloff re-apply. While an edit session is open
         // and a non-trivial translate has been applied, a falloff
@@ -2004,6 +2003,14 @@ public:
     // Returns whether it ended a run this call. Idempotent: the latches are
     // updated by the firing call, so a second call sees no change.
     override bool endHeldRunIfSlotActivated() {
+        // Never mid-drag. A slot read while a gesture is in flight is the
+        // drag's own state, not a user action — and the reference's cells were
+        // all taken at idle, so ending a run underneath a live drag would be
+        // extrapolation. The guard lives HERE rather than only at the update()
+        // call site because the stage-config seam fires synchronously with the
+        // command, and a handle drag (the RMB falloff-radius drag, the falloff
+        // handles) publishes stage config while dragging.
+        if (activeDrag !is null) return false;
         bool fired = false;
         // — Action centre. TWO activation events share this slot: the MODE
         //   (which centre tool is in it) and an explicit user RELOCATE. The
