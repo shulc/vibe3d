@@ -117,6 +117,8 @@ import commands.select.drop     : SelectDropCommand;
 import commands.select.element  : SelectElementCommand;
 import commands.select.convert  : SelectConvertCommand;
 import commands.select.fill     : SelectFillHoles, SelectFillInsideLoop;
+import commands.select.boundary : SelectBoundary;
+import commands.select.by_tag   : SelectByTag;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 import commands.viewport.view_preset  : ViewportViewPreset;
@@ -1382,6 +1384,12 @@ private void registerSelectionCommands(EditorApp app) {
     reg.commandFactories["select.fill.insideLoop"] = () => cast(Command)
         (new SelectFillInsideLoop(&mesh(), cameraView, editMode, &editMode()))
             .setPromoteHook((EditMode m) => promoteGeometryType(m));
+    // select.boundary ends on Edges, so it goes through the SAME geometry-type
+    // funnel select.fill.insideLoop uses — the mode move is part of the
+    // command's measured behaviour, not a caller's afterthought.
+    reg.commandFactories["select.boundary"]        = () => cast(Command)
+        (new SelectBoundary(&mesh(), cameraView, editMode, &editMode()))
+            .setPromoteHook((EditMode m) => promoteGeometryType(m));
     // The wire vocabulary is FOUR tokens (task 0642): vertex / edge / polygon
     // route through the geometry funnel; `item` routes through the item door
     // (`switchItemType`), which leaves `editMode` alone by construction. Every
@@ -1408,6 +1416,8 @@ private void registerSelectionCommands(EditorApp app) {
         (new SelectTypeFromCommand(&mesh(), cameraView, editMode, &editMode(), "item",
                                   (EditMode m) => switchGeometryType(m)))
             .setItemHook(switchItemType);
+    reg.commandFactories["select.byTag"]     = () => cast(Command)
+        new SelectByTag(&mesh(), cameraView, editMode);
     reg.commandFactories["select.drop"]      = () => cast(Command)
         new SelectDropCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["select.element"]   = () => cast(Command)

@@ -1,0 +1,609 @@
+{
+ "name": "select_boundary",
+ "description": "select.boundary parity: the border edges of the selected polygon set, or the mesh's open boundary when nothing is selected. The measured law is `s == 1 || (s >= 1 && u >= 1)` over each edge's active/inactive polygon counts, where the active set is the selection or, when it is empty, every polygon. That is NOT the reference's own documented wording ('an odd number of selected polygons'), which the T-junction cases in source/commands/select/boundary.d refute in both directions; on the manifold meshes below the two agree, which is why the discriminating cases live in the module unittest rather than here.",
+ "source": "LIVE-CAPTURED from the reference editor, driven headlessly through its command line: one fresh instance per case, a unit box with one segment per axis (the same +-0.5 cube /api/reset builds), polygons selected by centroid predicate through its Python geometry API, then its own boundary command. The engine's edge selection was read back off the geometry and written here as endpoint coordinate pairs.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-16",
+  "harness": "tools/local/capture/boundary (task 1050)",
+  "task": "1050",
+  "notes": "Commands only -- no viewport gesture and no pointer injection, so the drag-transport artifact does not apply. 11 cases were captured in all; the five here are the ones whose setup is expressible in vibe3d through the fixture step vocabulary. The other six (open meshes made by deleting a face, a T-junction built by stacking and welding two boxes, a coincident-duplicate polygon) drove the RULE and are pinned by the module unittest instead. The full scoreboard of candidate rules against all 11 is in the task file."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "one_face",
+   "description": "One selected quad on the closed unit cube: the answer is its own four edges, and the mode ends on Edges.",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.boundary"
+     }
+    }
+   ],
+   "expected": {
+    "mode": "edges",
+    "edges": [
+     [
+      [
+       -0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       -0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       0.5,
+       -0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       0.5,
+       0.5
+      ],
+      [
+       0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       0.5,
+       0.5
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "name": "two_adjacent",
+   "description": "Two adjacent quads: six edges -- the edge they SHARE is interior to the set and is excluded.",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ],
+       [
+        [
+         0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.boundary"
+     }
+    }
+   ],
+   "expected": {
+    "mode": "edges",
+    "edges": [
+     [
+      [
+       -0.5,
+       -0.5,
+       0.5
+      ],
+      [
+       -0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       -0.5,
+       0.5
+      ],
+      [
+       0.5,
+       -0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       -0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       0.5,
+       -0.5
+      ]
+     ],
+     [
+      [
+       0.5,
+       -0.5,
+       0.5
+      ],
+      [
+       0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       0.5,
+       0.5
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "name": "three_corner",
+   "description": "Three quads meeting at a corner: the three shared edges are excluded, the six outer ones remain.",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ],
+       [
+        [
+         0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ],
+       [
+        [
+         0.5,
+         -0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.boundary"
+     }
+    }
+   ],
+   "expected": {
+    "mode": "edges",
+    "edges": [
+     [
+      [
+       -0.5,
+       -0.5,
+       0.5
+      ],
+      [
+       -0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       -0.5,
+       0.5
+      ],
+      [
+       0.5,
+       -0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       -0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       0.5,
+       -0.5
+      ]
+     ],
+     [
+      [
+       0.5,
+       -0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       -0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       0.5,
+       -0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       0.5,
+       -0.5
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "name": "two_opposite",
+   "description": "A DISCONTINUOUS selection (two opposite faces) yields both rings -- the rule is per-edge, so it never needed the set to be connected.",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ],
+       [
+        [
+         -0.5,
+         -0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         -0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.boundary"
+     }
+    }
+   ],
+   "expected": {
+    "mode": "edges",
+    "edges": [
+     [
+      [
+       -0.5,
+       -0.5,
+       -0.5
+      ],
+      [
+       -0.5,
+       0.5,
+       -0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       -0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       -0.5,
+       -0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       -0.5,
+       0.5
+      ],
+      [
+       -0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       -0.5,
+       0.5
+      ],
+      [
+       0.5,
+       -0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       0.5,
+       -0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       0.5,
+       0.5
+      ],
+      [
+       0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       0.5,
+       -0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       0.5,
+       -0.5
+      ]
+     ],
+     [
+      [
+       0.5,
+       -0.5,
+       0.5
+      ],
+      [
+       0.5,
+       0.5,
+       0.5
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "name": "none_closed",
+   "description": "Nothing selected on a CLOSED mesh: every edge is interior to the whole-mesh set, so the answer is empty. Note this is asserted as an empty list, not by omitting the key.",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.boundary"
+     }
+    }
+   ],
+   "expected": {
+    "mode": "edges",
+    "edges": []
+   }
+  }
+ ]
+}

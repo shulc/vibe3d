@@ -1,0 +1,413 @@
+{
+ "name": "set_position_axis",
+ "description": "mesh.setPosition `axis` + `value` parity: one coordinate is written on every selected vertex, in WORLD space, with no welding.",
+ "source": "LIVE-CAPTURED from the reference editor, driven headlessly through its command line -- a unit box with one segment per axis (the +-0.5 cube /api/reset builds), vertices selected by coordinate predicate through its Python geometry API, then its own Set Position command with an axis token and a value. The golden is the engine's own full vertex array.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-16",
+  "harness": "tools/local/capture (task 1052)",
+  "task": "1052",
+  "notes": "Commands only -- no gesture, no pointer injection. The reference's Work Plane arm was NOT captured: it is not portable to our command path (an operator-command's VectorStack carries only a SubjectPacket), so measuring it would have frozen behaviour we cannot reach."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "axis_x_zero",
+   "description": "The four +X vertices set to X = 0. Y and Z keep their values -- the 'centre a loop for a mirror' gesture. A whole-vector write would put all four on the origin.",
+   "expected_vertices": [
+    [
+     -0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.0,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.0,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     0.0,
+     0.5,
+     -0.5
+    ],
+    [
+     0.0,
+     0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     0.5
+    ]
+   ],
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.5,
+        -0.5,
+        -0.5
+       ],
+       [
+        0.5,
+        -0.5,
+        0.5
+       ],
+       [
+        0.5,
+        0.5,
+        -0.5
+       ],
+       [
+        0.5,
+        0.5,
+        0.5
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.setPosition",
+      "params": {
+       "axis": "x",
+       "value": 0.0
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 8,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_after": {
+    "verts": 8,
+    "edges": 12,
+    "faces": 6
+   }
+  },
+  {
+   "name": "axis_y_nonzero",
+   "description": "A NON-ZERO value on Y: the coordinate is assigned, not merely flattened to the axis plane.",
+   "expected_vertices": [
+    [
+     -0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.25,
+     -0.5
+    ],
+    [
+     0.5,
+     0.25,
+     -0.5
+    ],
+    [
+     0.5,
+     0.25,
+     0.5
+    ],
+    [
+     -0.5,
+     0.25,
+     0.5
+    ]
+   ],
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        -0.5,
+        0.5,
+        -0.5
+       ],
+       [
+        0.5,
+        0.5,
+        -0.5
+       ],
+       [
+        0.5,
+        0.5,
+        0.5
+       ],
+       [
+        -0.5,
+        0.5,
+        0.5
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.setPosition",
+      "params": {
+       "axis": "y",
+       "value": 0.25
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 8,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_after": {
+    "verts": 8,
+    "edges": 12,
+    "faces": 6
+   }
+  },
+  {
+   "name": "axis_partial_ring_no_weld",
+   "description": "Three of the four +X vertices set to Z = -0.25. Two of them land on the SAME point and stay two vertices -- the reference does not weld, and neither do we. The fourth (+X,+Y,+Z) is unselected and must not move.",
+   "expected_vertices": [
+    [
+     -0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     -0.5,
+     -0.25
+    ],
+    [
+     0.5,
+     -0.5,
+     -0.25
+    ],
+    [
+     -0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     0.5,
+     0.5,
+     -0.25
+    ],
+    [
+     0.5,
+     0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     0.5
+    ]
+   ],
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.5,
+        -0.5,
+        -0.5
+       ],
+       [
+        0.5,
+        -0.5,
+        0.5
+       ],
+       [
+        0.5,
+        0.5,
+        -0.5
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.setPosition",
+      "params": {
+       "axis": "z",
+       "value": -0.25
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 8,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_after": {
+    "verts": 8,
+    "edges": 12,
+    "faces": 6
+   }
+  },
+  {
+   "name": "world_space_is_the_default",
+   "description": "Asking the reference explicitly for world space produced a byte-identical mesh to the bare command -- so our world-space-only port is not silently a different frame. Same golden as axis_x_zero, deliberately duplicated so the fact is asserted rather than only written down.",
+   "expected_vertices": [
+    [
+     -0.5,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.0,
+     -0.5,
+     -0.5
+    ],
+    [
+     0.0,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     -0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     -0.5
+    ],
+    [
+     0.0,
+     0.5,
+     -0.5
+    ],
+    [
+     0.0,
+     0.5,
+     0.5
+    ],
+    [
+     -0.5,
+     0.5,
+     0.5
+    ]
+   ],
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.5,
+        -0.5,
+        -0.5
+       ],
+       [
+        0.5,
+        -0.5,
+        0.5
+       ],
+       [
+        0.5,
+        0.5,
+        -0.5
+       ],
+       [
+        0.5,
+        0.5,
+        0.5
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.setPosition",
+      "params": {
+       "axis": "x",
+       "value": 0.0
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 8,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_after": {
+    "verts": 8,
+    "edges": 12,
+    "faces": 6
+   }
+  }
+ ]
+}

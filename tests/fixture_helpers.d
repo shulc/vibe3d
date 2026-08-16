@@ -1431,3 +1431,227 @@ void runHoverTargetSuite(string fixtureJson) {
         }
     }
 }
+
+/// runSelectionSuite — a frozen SELECTION golden, keyed on geometry.
+///
+/// The suites above freeze positions after a geometry op; this one freezes
+/// WHICH ELEMENTS ARE SELECTED after a selection command. The two cannot share
+/// a runner: a selection golden has to survive a different vertex numbering
+/// between the reference engine and vibe3d, so every expected element is
+/// written as COORDINATES — a vertex as its position, an edge as its two
+/// endpoint positions (either order), a polygon as its centroid — and matched
+/// bidirectionally, exactly the way `runTopologyDiffSuite` matches vertices.
+///
+/// Schema:
+///   { "name": "...", "provenance": {...}, "tolerance": 1e-4,
+///     "cases": [ { "name": "...",
+///                  "input": [ ...step vocabulary, including
+///                             {"endpoint":"command","body":{...}}... ],
+///                  "expected": {
+///                    "mode":     "edges",                     // optional
+///                    "edges":    [ [[x,y,z],[x,y,z]], ... ],  // optional
+///                    "vertices": [ [x,y,z], ... ],            // optional
+///                    "polygons": [ [cx,cy,cz], ... ]          // optional
+///                  } } ] }
+///
+/// An omitted `expected` key is NOT "expect nothing" — it is "do not look".
+/// Write `"edges": []` to assert an empty edge selection; that distinction is
+/// load-bearing, because "the command selected nothing" is a real measured
+/// outcome for several `select.boundary` cases and has to be assertable.
+void runSelectionSuite(string fixtureJson) {
+    auto fx      = parseJSON(fixtureJson);
+    string suite = ("name" in fx) ? fx["name"].str : "<selection-suite>";
+    requireProvenance(fx, suite);
+    double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
+
+    foreach (cs; fx["cases"].array) {
+        string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
+        double tol = ("tolerance" in cs) ? asDouble(cs["tolerance"]) : tolD;
+
+        foreach (i, step; cs["input"].array) runStep(step, cn, "input", i);
+
+        auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
+        auto sel   = parseJSON(cast(string) get(BASE ~ "/api/selection"));
+        auto V     = model["vertices"].array;
+        double[3] vpos(long i) { return jvec3(V[cast(size_t) i]); }
+
+        auto exp = cs["expected"];
+
+        if ("mode" in exp)
+            assert(sel["mode"].str == exp["mode"].str,
+                format("%s: selection mode expected '%s', got '%s'",
+                       cn, exp["mode"].str, sel["mode"].str));
+
+        // ---- edges: unordered set of endpoint-position PAIRS -------------
+        if ("edges" in exp) {
+            double[3][2][] got;
+            foreach (si; sel["selectedEdges"].array) {
+                long ei = si.integer;
+                auto ee = model["edges"].array[cast(size_t) ei].array;
+                got ~= [vpos(ee[0].integer), vpos(ee[1].integer)];
+            }
+            auto want = exp["edges"].array;
+            bool samePair(double[3][2] g, JSONValue w) {
+                double[3] a = jvec3(w.array[0]), b = jvec3(w.array[1]);
+                return (dist2(g[0], a) <= tol*tol && dist2(g[1], b) <= tol*tol)
+                    || (dist2(g[0], b) <= tol*tol && dist2(g[1], a) <= tol*tol);
+            }
+            assert(got.length == want.length,
+                format("%s: edge-selection size expected %d, got %d (%s)",
+                       cn, want.length, got.length, got));
+            foreach (w; want) {
+                bool found = false;
+                foreach (g; got) if (samePair(g, w)) { found = true; break; }
+                assert(found, format("%s: expected edge %s not selected",
+                                     cn, w.toString));
+            }
+            foreach (g; got) {
+                bool found = false;
+                foreach (w; want) if (samePair(g, w)) { found = true; break; }
+                assert(found, format("%s: unexpected edge %s in the selection",
+                                     cn, g));
+            }
+        }
+
+        // ---- vertices: unordered set of positions ------------------------
+        if ("vertices" in exp) {
+            double[3][] got;
+            foreach (si; sel["selectedVertices"].array)
+                got ~= vpos(si.integer);
+            auto want = exp["vertices"].array;
+            assert(got.length == want.length,
+                format("%s: vertex-selection size expected %d, got %d",
+                       cn, want.length, got.length));
+            foreach (w; want)
+                assert(hasVertexNear(got, jvec3(w), tol),
+                    format("%s: expected vertex %s not selected", cn, w.toString));
+        }
+
+        // ---- polygons: unordered set of centroids ------------------------
+        if ("polygons" in exp) {
+            double[3][] got;
+            foreach (si; sel["selectedFaces"].array) {
+                auto fv = model["faces"].array[cast(size_t) si.integer].array;
+                double[3] c = [0, 0, 0];
+                foreach (fi; fv) {
+                    auto p = vpos(fi.integer);
+                    c[0] += p[0]; c[1] += p[1]; c[2] += p[2];
+                }
+                double n = cast(double) fv.length;
+                if (n > 0) { c[0] /= n; c[1] /= n; c[2] /= n; }
+                got ~= c;
+            }
+            auto want = exp["polygons"].array;
+            assert(got.length == want.length,
+                format("%s: polygon-selection size expected %d, got %d",
+                       cn, want.length, got.length));
+            foreach (w; want)
+                assert(hasVertexNear(got, jvec3(w), tol),
+                    format("%s: expected polygon centroid %s not selected",
+                           cn, w.toString));
+        }
+    }
+}
+
+/// runKnownDivergenceSuite — freeze a MEASURED disagreement with the
+/// reference, so it can neither rot nor be mistaken for parity.
+///
+/// Some reference behaviour is measured before we can reproduce it. The
+/// measurement is the valuable part and must be committed; what must NOT
+/// happen is committing it as a red parity test (it breaks the gate for
+/// everyone) or as a green test of our own current output (which reads as
+/// parity and quietly blesses the divergence).
+///
+/// This runner asserts THREE things, and each one fails for a different and
+/// useful reason:
+///   1. our output still matches `vibe3d_current`   — a plain regression pin;
+///   2. the reference golden is still what it was   — the frozen measurement;
+///   3. the difference between them is EXACTLY the declared `divergence`.
+///
+/// (3) is the load-bearing one. Narrow the gap and this suite goes red — which
+/// is the intended prompt: whoever closed it updates the fixture, and if they
+/// closed it completely they delete this case and add a parity one. A
+/// divergence that has been quietly fixed is as much a stale record as one
+/// that has quietly widened.
+///
+/// Schema:
+///   { "name": "...", "provenance": {...}, "tolerance": 1e-4,
+///     "cases": [ { "name": "...", "input": [...], "op": [...],
+///                  "reference":      { "counts": {...}, "vertices": [...] },
+///                  "vibe3d_current": { "counts": {...}, "vertices": [...] },
+///                  "divergence": {
+///                     "extra_in_vibe3d":   [ [x,y,z], ... ],
+///                     "missing_in_vibe3d": [ [x,y,z], ... ] } } ] }
+void runKnownDivergenceSuite(string fixtureJson) {
+    auto fx      = parseJSON(fixtureJson);
+    string suite = ("name" in fx) ? fx["name"].str : "<divergence-suite>";
+    requireProvenance(fx, suite);
+    double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
+
+    foreach (cs; fx["cases"].array) {
+        string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
+        double tol = ("tolerance" in cs) ? asDouble(cs["tolerance"]) : tolD;
+
+        foreach (i, step; cs["input"].array) runStep(step, cn, "input", i);
+        foreach (i, step; cs["op"].array)    runStep(step, cn, "op", i);
+
+        auto cur = cs["vibe3d_current"];
+        if ("counts" in cur)
+            assertCounts(cn, "vibe3d_current", cur["counts"], readCounts());
+
+        auto got = readVertices();
+
+        // (1) our own output, verbatim — bidirectional, so neither a lost nor
+        // an invented vertex slips through.
+        auto mine = cur["vertices"].array;
+        foreach (w; mine)
+            assert(hasVertexNear(got, jvec3(w), tol),
+                format("%s: vibe3d no longer produces its recorded vertex %s "
+                       ~ "— this fixture records a KNOWN DIVERGENCE; if you "
+                       ~ "changed the behaviour deliberately, re-measure and "
+                       ~ "update it", cn, w.toString));
+        foreach (g; got) {
+            bool found = false;
+            foreach (w; mine) if (dist2(g, jvec3(w)) <= tol*tol) { found = true; break; }
+            assert(found,
+                format("%s: vibe3d produced a vertex [%.4f,%.4f,%.4f] that is "
+                       ~ "not in its recorded output", cn, g[0], g[1], g[2]));
+        }
+
+        // (3) the gap itself. Recompute it from the two frozen sets rather
+        // than trusting the declared list, then check the two agree — a
+        // hand-edited `divergence` block that no longer describes the data is
+        // exactly the stale record this suite exists to prevent.
+        auto refv = cs["reference"]["vertices"].array;
+        double[3][] extra, missing;
+        foreach (g; got) {
+            bool inRef = false;
+            foreach (r; refv) if (dist2(g, jvec3(r)) <= tol*tol) { inRef = true; break; }
+            if (!inRef) extra ~= g;
+        }
+        foreach (r; refv) {
+            bool inGot = hasVertexNear(got, jvec3(r), tol);
+            if (!inGot) missing ~= jvec3(r);
+        }
+
+        auto dv = cs["divergence"];
+        void sameSet(string what, double[3][] have, JSONValue declared) {
+            auto want = declared.array;
+            assert(have.length == want.length,
+                format("%s: %s is now %d vertices, the fixture declares %d "
+                       ~ "(%s). The divergence CHANGED — re-measure against "
+                       ~ "the reference and update this fixture; if it closed "
+                       ~ "entirely, replace this case with a parity one.",
+                       cn, what, have.length, want.length, have));
+            foreach (w; want)
+                assert(hasVertexNear(have, jvec3(w), tol),
+                    format("%s: %s no longer contains %s — the divergence "
+                           ~ "CHANGED, re-measure and update this fixture",
+                           cn, what, w.toString));
+        }
+        sameSet("extra_in_vibe3d", extra,
+                ("extra_in_vibe3d" in dv) ? dv["extra_in_vibe3d"] : JSONValue(cast(JSONValue[])[]));
+        sameSet("missing_in_vibe3d", missing,
+                ("missing_in_vibe3d" in dv) ? dv["missing_in_vibe3d"] : JSONValue(cast(JSONValue[])[]));
+    }
+}

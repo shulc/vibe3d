@@ -1,0 +1,226 @@
+{
+ "name": "select_by_tag",
+ "description": "select.byTag region parity. The reference offers no command that turns a tag into a polygon selection -- measured: two of the three ids the audit named do not exist, and the third selects the TAG rather than the polygons and does not drive polygon commands. What IS measurable, and what this fixture freezes, is the REGION: after tagging two selected faces of the unit cube, exactly those two carry the tag and the other four read the default. Our select.byTag must hand that same region back.",
+ "source": "LIVE-CAPTURED from the reference editor, driven headlessly through its command line: a unit box with one segment per axis, the +Y and +Z faces selected by centroid predicate, a named surface assigned to them, then every polygon's material tag read back off the geometry. Measured partition: (0,0.5,0) and (0,0,0.5) carry the named tag, the other four read as the default.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-16",
+  "harness": "tools/local/capture (task 1051)",
+  "task": "1051",
+  "notes": "The tag IDENTITY differs by construction and is not part of the claim: the reference names surfaces ('Red'), we index them (materialId 1). The claim is the SET of polygons. Also measured and deliberately NOT adopted: the reference's poly.setMaterial retags the WHOLE MESH when nothing is selected, where mesh.setMaterial is a no-op -- see the task file."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "region_round_trip",
+   "description": "Tag two faces, drop the selection, ask for the tag back: the same two faces return. The drop is the whole point -- without it the command could pass by doing nothing at all.",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ],
+       [
+        [
+         0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.setMaterial",
+      "params": {
+       "materialId": 1
+      }
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byTag",
+      "params": {
+       "id": 1
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [
+     [
+      0.0,
+      0.5,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.5
+     ]
+    ]
+   }
+  },
+  {
+   "name": "default_region_is_the_complement",
+   "description": "The untagged four are a region too -- the reference reads them as the 'Default' tag, which is our material 0. Asserting it keeps 'select everything' from passing the case above.",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ],
+       [
+        [
+         0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.setMaterial",
+      "params": {
+       "materialId": 1
+      }
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byTag",
+      "params": {
+       "id": 0
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [
+     [
+      0.0,
+      -0.5,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -0.5
+     ],
+     [
+      0.5,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      0.0
+     ]
+    ]
+   }
+  }
+ ]
+}
