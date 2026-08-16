@@ -442,7 +442,7 @@ public:
         }
     }
 
-    override bool setAttr(string name, string value) {
+    override bool setAttrImpl(string name, string value) {
         bool ok = applySetAttr(name, value);
         if (ok) publishState();
         return ok;

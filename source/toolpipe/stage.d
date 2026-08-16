@@ -214,7 +214,23 @@ abstract class Stage : ParamProvider {
     // listAttrs stringifies the same params() schema — used by the
     // `/api/toolpipe` inspection endpoint. Order matches params().
     // ------------------------------------------------------------------
-    bool setAttr(string name, string value) {
+    /// Task 0791 — the slot counter is bumped HERE, at the one point every
+    /// attribute write passes through, and not at each command that happens to
+    /// write one. The command-by-command version shipped first and was wrong in
+    /// a way no test could see: `symmetry.toggle` writes the stage directly, so
+    /// the button and the keyboard shortcut did NOT end a held run while the
+    /// headless spelling of the same change did. Counting here cannot miss a
+    /// caller — and it deliberately does not catch the paths that write a
+    /// stage's FIELDS directly (undo/redo restore is one), which is right:
+    /// those are not the user arming a slot.
+    ///
+    /// `setAttrImpl` is what stages override.
+    final bool setAttr(string name, string value) {
+        bool ok = setAttrImpl(name, value);
+        if (ok && attrArmsSlot(name)) ++slotEpoch;
+        return ok;
+    }
+    bool setAttrImpl(string name, string value) {
         return defaultStageSetAttr(this, name, value);
     }
     string[2][] listAttrs() const {

@@ -73,11 +73,6 @@ class FalloffPresetCommand : Command {
             throw new Exception(
                 name() ~ ": falloff stage rejected type '" ~ typeName_ ~ "'");
 
-        // Task 0791 — picking the weighting tool IS arming the slot, and an
-        // activation ends a held transform operation (measured; re-picking the
-        // type ALREADY in the slot ends it too, which is why this counts the
-        // write instead of comparing the value).
-        fo.noteSlotArmed();
 
         // Explicit user selection → lock the falloff so it survives a tool
         // switch (reference parity). Selecting `none` clears the lock. Preset-bundled
@@ -269,7 +264,6 @@ class FalloffAddCommand : Command {
         // (guarded primary-only) side-effects run identically to the primary
         // path. Cannot fail now (pre-validated above).
         fo.setAttr("type", typeName_);
-        fo.noteSlotArmed();      // task 0791 — a stacked node is an activation
 
         // Explicit user selection → lock the slot so it survives a tool
         // switch (reference parity, same rule FalloffPresetCommand applies

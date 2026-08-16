@@ -89,7 +89,7 @@ class WorkplaneStage : Stage, Operator {
     override string   id()       const                          { return "workplane"; }
     override ubyte    ordinal()  const pure nothrow @nogc @safe { return ordWork; }
 
-    override bool setAttr(string name, string value) {
+    override bool setAttrImpl(string name, string value) {
         bool ok = applySetAttr(name, value);
         if (ok) publishState();
         return ok;

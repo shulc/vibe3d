@@ -500,3 +500,35 @@ unittest {
     cmd("tool.pipe.attr snap enabled false");
     dropTool();
 }
+
+// ===========================================================================
+// (SYMMETRY-VIA-ITS-OWN-COMMAND) The same activation through the route a USER
+// actually takes.
+//
+// (SYMMETRY-SLOT) above drives `tool.pipe.attr symmetry enabled 1` — the
+// headless spelling. The symmetry button and its keyboard shortcut fire
+// `symmetry.toggle`, which writes the stage DIRECTLY instead of going through
+// the pipe-attr command. This cell exists because that difference is invisible
+// to every other cell here: the law was implemented by counting writes at the
+// command sites, and an unlisted site is exactly the failure mode that kind of
+// trigger has.
+//
+// Found by asking what the mutation numbers actually meant, not by a test
+// failing: five of the eight counted sites could be deleted with the whole
+// suite still green, which says the suite cannot defend the enumeration. This
+// is that hole, made into a cell.
+// ===========================================================================
+unittest {
+    auto before = armAndLandGesture("SYMMETRY-VIA-COMMAND", () {
+        cmd("tool.pipe.attr symmetry enabled 0");
+    });
+    cmd("symmetry.toggle");
+    settle();
+    assert(!runIsHeld(),
+        "a symmetry change through its OWN command must END the held run, "
+        ~ "exactly as the pipe-attr spelling does — the user does not know "
+        ~ "which route the UI took");
+    assertFrozen("SYMMETRY-VIA-COMMAND", before);
+    cmd("tool.pipe.attr symmetry enabled 0");
+    dropTool();
+}

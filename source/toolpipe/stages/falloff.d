@@ -528,7 +528,7 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
         return p;
     }
 
-    override bool setAttr(string name, string value) {
+    override bool setAttrImpl(string name, string value) {
         FalloffType prev = type;
         bool ok = applySetAttr(name, value);
         if (ok) {
