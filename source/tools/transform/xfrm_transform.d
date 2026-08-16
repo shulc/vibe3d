@@ -118,6 +118,7 @@ import toolpipe.stages.falloff : FalloffStage, FalloffSetSnapshot,
                                  snapshotFalloffSet, restoreFalloffSet,
                                  restoreFalloffSetFromCombined;
 import toolpipe.stages.actcenter : ActionCenterStage;
+import toolpipe.stages.axis : AxisStage;
 import toolpipe.stages.snap : SnapStage;
 import toolpipe.stages.symmetry : SymmetryStage;
 import toolpipe.packets  : FalloffType, ElementMode, ElementConnect, FalloffPacket,
@@ -667,6 +668,11 @@ public:
         currentRunBank     = DragBank.None;
         resetRun();                   // apply-path Phase 2: fresh geometry run (+ P-F frozen frame)
         lastAcenMode       = -1;      // P-C: re-latch the ACEN mode on first poll
+        // Task 0791 — the other slot latches re-latch on the first poll too, so
+        // arming a tool never reads a slot change that happened while no
+        // transform tool was armed as an activation of ITS run.
+        lastFalloffSlotValid = false;
+        lastAxisMode         = -1;
         clearFrame();                 // COMMIT B — fresh session re-derives the basis
     }
 
@@ -873,45 +879,93 @@ public:
             }
         }
 
-        // P-C — ACEN-mode boundary poll. An action-center MODE change mid-run is
-        // a session BOUNDARY (the reference restarts the op at a new pivot). But
-        // `actr.*` is a SideEffect command (records nothing) so it never trips
-        // the command-history foreign-record guard that the selection/mutation
-        // boundary above relies on. So poll the published ACEN mode here, in the
-        // SAME idle path: on a change with an open run, consolidate + nextRun so
-        // the next gesture is a new run (mirrors the selection-boundary block's
-        // consolidate/nextRun + the bank/anchor/baseline resets). This runs
-        // BEFORE the refire block and before any mouse-down is processed this
-        // frame (update() runs before event dispatch), so no gesture lands in the
-        // wrong run — the poll always precedes the next gesture (invariant).
-        // Skipped during a live drag (dragAxis frozen): a mode read mid-drag is
+        // ── Pipe-slot ACTIVATION poll (task 0791; grew out of P-C's ACEN-mode
+        // poll) ───────────────────────────────────────────────────────────────
+        //
+        // THE LAW, and the two halves it separates:
+        //
+        //   ACTIVATING a slot  — putting a (possibly identical) tool into one of
+        //                        the pipe's slots — ENDS the held run. The result
+        //                        stays frozen at the pipe state that produced it
+        //                        and the tool re-arms.
+        //   WRITING an ATTRIBUTE of a slot's tool — RE-WEIGHS the held run from
+        //                        its pre-gesture baseline (the re-grade block
+        //                        below; unchanged).
+        //
+        // Measured on the reference under a debugger, eight cells in one boot,
+        // in full agreement with the trace (task 0791). The decisive cell put
+        // the SAME tool back into a slot that already held it: the pipeline is
+        // byte-identical before and after and the held operation still ends, so
+        // the trigger is the activation EVENT, not a diff of the pipeline. That
+        // is also why there is no packet comparison to copy here — the reference
+        // compares nothing, it rolls the held result back and re-runs the pipe.
+        //
+        // Covered: the three slots the reference was actually driven through —
+        // action centre, falloff, axis. Snap and symmetry are NOT covered: they
+        // were never driven there, and guessing is what this task spent four
+        // reference boots not doing. See the task file's gap list.
+        //
+        // Why a POLL: `actr.*` / `tool.pipe.attr` are SideEffect commands (they
+        // record nothing) so they never trip the command-history foreign-record
+        // guard the selection/mutation boundary above relies on. This runs BEFORE
+        // the re-grade block and before any mouse-down is processed this frame
+        // (update() runs before event dispatch), so no gesture lands in the wrong
+        // run — the poll always precedes the next gesture (invariant).
+        //
+        // Skipped during a live drag (dragAxis frozen): a slot read mid-drag is
         // the drag's own state, not a user action.
         if (activeDrag is null) {
+            // — Action centre. TWO activation events share this slot: the MODE
+            //   (which centre tool is in it) and an explicit user RELOCATE. The
+            //   pointer routes for both already end the run at the mouse-down
+            //   (the Phase-1a / element-pick / P5 boundaries); this poll is what
+            //   gives the COMMAND-surface relocate the same law, which it did
+            //   not have — measured: the pivot moved and the run was untouched.
             if (auto ac = activeAcenStage()) {
-                int curMode = cast(int) ac.mode;
+                int  curMode  = cast(int) ac.mode;
+                uint curEpoch = ac.userRelocateEpoch;
                 if (lastAcenMode == -1) {
                     // First poll this session: latch without firing a boundary.
+                    lastAcenMode          = curMode;
+                    lastAcenRelocateEpoch = curEpoch;
+                } else if (curMode != lastAcenMode
+                        || curEpoch != lastAcenRelocateEpoch) {
+                    // pivotMoved: BUG-1 — a mode change (and equally a relocate)
+                    // recomputes the centre from scratch, so any display
+                    // soft-pin from a prior settle goes with the run.
+                    // (applySetAttr "mode" already clears it inside the stage
+                    // when the change came through setAttr; this covers every
+                    // other path and is a no-op when already clear.)
+                    endHeldRunAtSlotActivation(/*pivotMoved=*/true);
                     lastAcenMode = curMode;
-                } else if (curMode != lastAcenMode) {
-                    if (editIsOpen())
-                        commitEdit("Move");
-                    if (history !is null && history.runOpen()) {
-                        closeRunBoundary();
-                        // Same resets as the selection boundary: a later
-                        // config change cannot re-grade the just-closed run.
-                        invalidateRunRefireAnchor();
-                    }
-                    // GEOMETRY-run boundary regardless of an open history run: the
-                    // pivot moved, so the next gesture must re-capture its baseline.
-                    resetRun();   // + P-F: a mode change freezes a NEW run-frame
-                    // BUG-1: a mode change recomputes the center from scratch — drop
-                    // any display soft-pin from a prior mode's settle. (applySetAttr
-                    // "mode" already clears it inside the stage when the change came
-                    // through setAttr; this covers any other path that moved the mode
-                    // and is a no-op when already clear.)
-                    clearAcenSoftPlaced();
-                    clearFrame();       // COMMIT B — one lifecycle with the center pin
-                    lastAcenMode     = curMode;
+                }
+                lastAcenRelocateEpoch = curEpoch;
+            }
+
+            // — Falloff. The slot's occupant is the weighting TOOL: its `type`,
+            //   and how many falloff nodes are stacked. A type swap and a node
+            //   added/removed are both activations. Every OTHER falloff attr
+            //   (size / shape / dist / steps / map / …) stays an attribute write
+            //   and still re-grades through the block below.
+            {
+                ulong curSig = falloffSlotSignature();
+                if (!lastFalloffSlotValid) {
+                    lastFalloffSlotValid = true;
+                    lastFalloffSlotSig   = curSig;
+                } else if (curSig != lastFalloffSlotSig) {
+                    endHeldRunAtSlotActivation(/*pivotMoved=*/false);
+                    lastFalloffSlotSig = curSig;
+                }
+            }
+
+            // — Axis. Same shape: the mode is which axis tool sits in the slot.
+            if (auto ax = activeAxisStage()) {
+                int curAxisMode = cast(int) ax.mode;
+                if (lastAxisMode == -1) {
+                    lastAxisMode = curAxisMode;
+                } else if (curAxisMode != lastAxisMode) {
+                    endHeldRunAtSlotActivation(/*pivotMoved=*/false);
+                    lastAxisMode = curAxisMode;
                 }
             }
         }
@@ -1985,6 +2039,54 @@ public:
     private void closeRunBoundary() {
         consolidateRunAndAdvance();
         currentRunBank = DragBank.None;
+    }
+
+    // Task 0791 — the ONE thing a pipe-slot ACTIVATION does: end the held run.
+    // The held result stays exactly where the old pipe state put it (nothing is
+    // recomputed here) and the tool re-arms on a fresh run/frame. Called from
+    // the idle slot poll in update(); the pointer routes reach the same state
+    // through their own mouse-down boundaries (Phase 1a / element pick / P5),
+    // which is why those already answered this way before 0791.
+    //
+    // `pivotMoved` is for the action-centre slot only: its activations also move
+    // the gizmo pivot, so the display soft-pin from a prior settle must go with
+    // the run. A falloff/axis activation leaves the pivot alone and must NOT
+    // yank the gizmo.
+    private void endHeldRunAtSlotActivation(bool pivotMoved) {
+        // Session close first, for ALL THREE banks — a slot activation ends the
+        // held operation, not just the Move part of it. (The pointer boundaries
+        // commit the same set; the pre-0791 ACEN-mode poll committed only Move,
+        // a gap of the same shape as the one this task closes.)
+        if (editIsOpen())
+            commitEdit("Move");
+        rotateSub.commitSessionIfOpen();
+        scaleSub.commitSessionIfOpen();
+        if (history !is null && history.runOpen()) {
+            closeRunBoundary();
+            // Same reset as the selection boundary: a later config change
+            // cannot re-grade the run that just ended.
+            invalidateRunRefireAnchor();
+        }
+        // GEOMETRY-run boundary regardless of an open history run: the next
+        // gesture must re-capture its baseline against the new pipe state.
+        resetRun();   // + P-F: freezes a NEW run-frame
+        if (pivotMoved) {
+            clearAcenSoftPlaced();
+            clearFrame();   // COMMIT B — one lifecycle with the center pin
+        }
+    }
+
+    // The falloff slot's occupant, as one comparable value: the ordered list of
+    // stage types, folded with the stack depth. Changing a type, adding a node
+    // or removing one all move it; every other falloff attribute leaves it
+    // alone (those are attribute writes and re-grade instead).
+    private ulong falloffSlotSignature() const {
+        ulong sig = 1469598103934665603UL;          // FNV-1a offset basis
+        foreach (fs; activeFalloffStages()) {
+            sig ^= cast(ulong)(cast(int) fs.type) + 1;
+            sig *= 1099511628211UL;                 // FNV-1a prime
+        }
+        return sig;
     }
 
     // Run boundary: invalidate the re-grade anchor + staleness stamp so a
@@ -4745,6 +4847,13 @@ private:
                g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
     }
 
+    // The single AXIS stage — read by the slot-activation poll (task 0791) to
+    // notice which axis tool sits in the slot.
+    AxisStage activeAxisStage() const {
+        if (g_pipeCtx is null) return null;
+        return cast(AxisStage) g_pipeCtx.pipeline.findByTask(TaskCode.Axis);
+    }
+
     // Wrapper-side mirror of ActionCenterStage.acenSettleAllowed() — the 2-entry
     // Element/Local exclusion, used by the per-bank settle gates at the mouse-ups.
     // Defaults FALSE when no ACEN stage is registered (nothing to pin into; basis
@@ -4970,6 +5079,18 @@ private:
     // lastMutationVersion init-latch). Cast from ActionCenterStage.Mode (an
     // int-backed enum); -1 is outside its value range so any real mode differs.
     int lastAcenMode = -1;
+
+    // Task 0791 — the other three slot-activation latches, same poll, same
+    // first-poll rule (latch without firing).
+    //   * the ACEN stage's user-relocate counter (the command-surface relocate);
+    //   * the falloff slot's occupant signature (types + stack depth);
+    //   * the AXIS stage's mode.
+    // `lastFalloffSlotValid` is the falloff pair's "-1": a signature is a hash,
+    // so it has no out-of-band value to spare.
+    uint  lastAcenRelocateEpoch = 0;
+    ulong lastFalloffSlotSig    = 0;
+    bool  lastFalloffSlotValid  = false;
+    int   lastAxisMode          = -1;
 
     // In-session falloff re-grade (re-fire) state.
     //
