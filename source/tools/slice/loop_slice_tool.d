@@ -1117,15 +1117,17 @@ private:
         return [];
     }
 
-    // The currently-selected face indices, ascending. Empty when nothing is
-    // face-selected. Read once at arm (latched into `armedSelFaces_`) and
-    // live in the headless path.
+    // The currently-selected face indices, in SELECTION (click) order (task
+    // 1054 Phase 1, doc/loop_slice_corner_plan.md §3.5/§5). Empty when
+    // nothing is face-selected. Read once at arm (latched into
+    // `armedSelFaces_`, which therefore also picks up selection order --
+    // see the Phase 3->4 note in the plan) and live in the headless path.
+    // Behaviour of the CUT is unchanged by this: the kernel still treats
+    // `restrictFor`'s result as a set until the band walk is wired in
+    // (Phase 3).
     uint[] selectedFaceIndices() {
-        uint[] r;
-        if (!mesh.hasAnySelectedFaces()) return r;
-        foreach (i, sel; mesh.selectedFaces)
-            if (sel) r ~= cast(uint)i;
-        return r;
+        if (!mesh.hasAnySelectedFaces()) return [];
+        return mesh.selectedFaceIndicesInSelectionOrder();
     }
 
     // The face-restriction set the kernel should honour for THIS cut: the

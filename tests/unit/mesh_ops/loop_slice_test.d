@@ -1503,3 +1503,303 @@ unittest { // S4/S5 companion — ALL FOUR ring faces hidden: caps must still
         "S5 companion: section caps must be HIDDEN when ALL FOUR ring source "
         ~ "faces were");
 }
+
+// ---------------------------------------------------------------------------
+// Task 1054 U2/U3 — the selection-band walk (Phase 2, doc/
+// loop_slice_corner_plan.md §1/§3.1/§3.2/§6). `bandWalk` is a PURE function
+// (no `Mesh` coupling, not yet wired into any kernel — Phase 3), so these
+// drive it directly with a literal face-ring table instead of building a
+// full `Mesh`: `tests/unit/` cannot string-import `tests/fixtures/`
+// (`dub.json` `stringImportPaths` is `assets/icon`/`assets/fonts` only), so
+// this embeds a compact ~8-case table lifted from the 54-case corpus
+// (`tools/local/fixture_gen/loop_slice_band/loop_slice_slice_selected_band.json`,
+// private) rather than the whole thing — the full 54 run in the HTTP lane
+// once the walk is wired in (Phase 3, F1/F2).
+//
+// `bandTestBasePolys` is NOT our own `prim.cube`'s output -- it is the
+// reference's own base-mesh dump for the same primitive parameters
+// (`prim.cube segmentsX:3 segmentsY:1 segmentsZ:3 sizeX:1 sizeY:1 sizeZ:1
+// sharp:true radius:0`, same argstring as
+// `tests/fixtures/loop_slice_corner.json:24-27`), embedded here as ring
+// topology only (vertex-index adjacency) since U2/U3 test chains and
+// ring-edge-index side pairs, not the cut geometry (§1 step 4, which stays
+// unwired) — so no vertex coordinates are needed either.
+//
+// CHECKED (task 1054 review), and the numbering does NOT correspond:
+// vibe3d's own `prim.cube` with the identical argstring also lands on
+// 32 V / 60 E / 30 F, but its face table is a different numbering
+// entirely -- e.g. this file's faces 21/24/27/28/29 (the corpus's own "L"
+// selection, see the `L` case below) are the reference's top-face L; the
+// same five indices against vibe3d's own `prim.cube` output land on one
+// top cell plus four side faces at y = 0. **Nothing in this file
+// establishes an index correspondence between the two meshes.** Phase 3,
+// when it wires `bandWalk` into a live kernel, must therefore key its own
+// fixtures on GEOMETRY (vertex positions / face-set membership), exactly
+// as `tests/fixtures/loop_slice_corner.json` already does, never on a
+// face-index literal carried over from this table.
+//
+// Expected chains/side-pairs/edge-counts below were computed by re-running
+// the plan's own predictor (its chain-ordering routine, plus the
+// side-derivation half of its cut-point routine with the position-dependent
+// cut math removed) against this same reference base mesh and selection --
+// the same predictor independently verified to reproduce the full 54-case
+// corpus 54/54 during planning (task 1054 reading). Not re-derived by hand.
+private immutable(uint[])[] bandTestBasePolys = [
+    [0, 1, 12, 11], [11, 12, 13, 10], [10, 13, 8, 9], [1, 2, 14, 12],
+    [12, 14, 15, 13], [13, 15, 7, 8], [2, 3, 4, 14], [14, 4, 5, 15],
+    [15, 5, 6, 7], [16, 17, 1, 0], [17, 18, 2, 1], [18, 19, 3, 2],
+    [19, 20, 4, 3], [20, 21, 5, 4], [21, 22, 6, 5], [22, 23, 7, 6],
+    [23, 24, 8, 7], [24, 25, 9, 8], [25, 26, 10, 9], [26, 27, 11, 10],
+    [27, 16, 0, 11], [16, 27, 28, 17], [27, 26, 29, 28], [26, 25, 24, 29],
+    [17, 28, 30, 18], [28, 29, 31, 30], [29, 24, 23, 31], [18, 30, 20, 19],
+    [30, 31, 21, 20], [31, 23, 22, 21],
+];
+
+/// Canonical (unordered) vertex-pair key for face `fi`'s ring-edge `side`
+/// (edge k = ring[k] -> ring[(k+1)%n]) — test-local mirror of the "shared
+/// rail" identity check §3.2 describes, using `mesh.edgeKey` so it agrees
+/// with the kernel's own canonicalisation.
+private ulong bandCellEdgeKey(const(uint[])[] polys, uint fi, uint side) {
+    auto ring = polys[fi];
+    auto n = ring.length;
+    return edgeKey(ring[side], ring[(side + 1) % n]);
+}
+
+unittest { // U2 — chains and (A,B) side pairs, ~8 cases spanning straight /
+    // turn / closed / multi-chain / single-cell / backward-gate-used /
+    // backward-gate-blocked / start-rule-fallback-runs (§2's own branch-
+    // coverage table names each of these by corpus case).
+    import mesh_ops.loop_slice : bandWalk, BandCell;
+    import std.format : format;
+
+    // straight cell run (A,B opposite) — corpus `row3`.
+    {
+        auto got = bandWalk(bandTestBasePolys, [21u, 24u, 27u]);
+        assert(got == [[BandCell(21, 0, 2), BandCell(24, 0, 2), BandCell(27, 0, 2)]],
+            format("row3: got %s", got));
+    }
+
+    // the turn cell (A,B adjacent) — corpus `L`, the frozen corner fixture's
+    // own selection.
+    {
+        auto got = bandWalk(bandTestBasePolys, [21u, 24u, 27u, 28u, 29u]);
+        assert(got == [[BandCell(21, 0, 2), BandCell(24, 0, 2), BandCell(27, 0, 1),
+                         BandCell(28, 3, 1), BandCell(29, 3, 1)]],
+            format("L: got %s", got));
+    }
+
+    // closed chain — corpus `b2x2` (a 2x2 block; every cell turns).
+    {
+        auto got = bandWalk(bandTestBasePolys, [21u, 24u, 22u, 25u]);
+        assert(got == [[BandCell(21, 1, 2), BandCell(24, 0, 1),
+                         BandCell(25, 3, 0), BandCell(22, 2, 3)]],
+            format("b2x2: got %s", got));
+    }
+
+    // multi-chain — corpus `tee` (a T shape: a 3-cell stem plus one arm cell
+    // that the list-order walk cannot fold into the same chain).
+    {
+        auto got = bandWalk(bandTestBasePolys, [22u, 25u, 28u, 24u]);
+        assert(got == [[BandCell(22, 0, 2), BandCell(25, 0, 2), BandCell(28, 0, 2)],
+                        [BandCell(24, 2, 0)]],
+            format("tee: got %s", got));
+    }
+
+    // single-polygon chain — corpus `one_00` (both sides derived: B=0, A=n/2).
+    {
+        auto got = bandWalk(bandTestBasePolys, [25u]);
+        assert(got == [[BandCell(25, 2, 0)]], format("one_00: got %s", got));
+    }
+
+    // backward extension USED — corpus `L_cornerfirst` (corner cell clicked
+    // first; forward growth alone can't reach the whole L, so the backward
+    // gate — forward chain >= 3 and not closed — fires).
+    {
+        auto got = bandWalk(bandTestBasePolys, [27u, 21u, 24u, 28u, 29u]);
+        assert(got == [[BandCell(29, 1, 3), BandCell(28, 1, 3), BandCell(27, 1, 0),
+                         BandCell(24, 2, 0), BandCell(21, 2, 0)]],
+            format("L_cornerfirst: got %s", got));
+    }
+
+    // backward gate BLOCKED — corpus `L_p3_midfirst` (mid-row cell clicked
+    // first; the forward-only chain never reaches 3 polygons before the
+    // corner splits it into two chains, so backward extension never fires).
+    {
+        auto got = bandWalk(bandTestBasePolys, [24u, 29u, 21u, 28u, 27u]);
+        assert(got == [[BandCell(24, 2, 0), BandCell(21, 2, 0)],
+                        [BandCell(29, 1, 3), BandCell(28, 1, 3), BandCell(27, 1, 3)]],
+            format("L_p3_midfirst: got %s", got));
+    }
+
+    // backward gate BLOCKED by `closed` specifically (task 1054 review
+    // finding: this case did not exist before the review — none of the 8
+    // cases above, nor the 54-case corpus, force `closed` to do anything;
+    // replacing its computation with a constant `false` left every one of
+    // them green). Selection [22,21,23,24,25]: the forward walk from seed
+    // 22 closes a 4-cell ring (22,21,24,25) before cell 23 is ever
+    // reached, so the "not closed" gate blocks 23 from being absorbed
+    // backward into that ring -- 23 starts its own one-cell chain
+    // instead. Verified by mutation: constant-`false`-ing `closed` merges
+    // both into a single 5-cell chain `[23,22,21,24,25]`.
+    {
+        auto got = bandWalk(bandTestBasePolys, [22u, 21u, 23u, 24u, 25u]);
+        assert(got == [
+            [BandCell(22, 2, 3), BandCell(21, 1, 2), BandCell(24, 0, 1), BandCell(25, 3, 0)],
+            [BandCell(23, 2, 0)],
+        ], format("closed_gate_discriminator: got %s", got));
+    }
+
+    // start-rule fallback RUNS (§1.1(a)) — corpus `w3_all9scr`: all 9 cells
+    // of the 3x3 block selected in a scrambled order; the first chain
+    // consumes 8 of them as a closed ring, and the restart for the 9th
+    // reaches the "no nb<2 candidate" fallback with a single remaining
+    // candidate (so this pins that the branch RUNS and produces the right
+    // chain, not which of two candidates it would prefer with a choice —
+    // see the plan's §1.1(a)/R5 and this file's own doc comment on
+    // `bandReorderByConnectivity`).
+    {
+        auto got = bandWalk(bandTestBasePolys,
+            [25u, 27u, 23u, 26u, 28u, 21u, 29u, 22u, 24u]);
+        assert(got == [
+            [BandCell(27, 0, 1), BandCell(28, 3, 0), BandCell(25, 2, 1),
+             BandCell(26, 3, 0), BandCell(23, 2, 3), BandCell(22, 1, 3),
+             BandCell(21, 1, 2), BandCell(24, 0, 2)],
+            [BandCell(29, 2, 0)],
+        ], format("w3_all9scr: got %s", got));
+    }
+
+    // Mutations (per plan §5 Phase 2 validation; both actually run against
+    // this file, see `bandChains`'s doc comment for the same split):
+    //  - dropping the >= 3 backward-extension threshold (raised so it never
+    //    fires) changes `L_cornerfirst`'s chain shape from one 5-cell chain
+    //    to two split chains -- reddens the assert above.
+    //  - constant-`false`-ing `closed` merges the discriminator case above
+    //    (`[22,21,23,24,25]`) from two chains into one 5-cell chain --
+    //    reddens that assert. This is the ONLY case in this file (or the
+    //    54-case corpus) that discriminates it at all.
+}
+
+unittest { // U3 — shared-rail identity (§3.2) + open/closed cut-point count.
+    // Cell i's entry edge B_i and cell i+1's exit edge A_{i+1} (within the
+    // SAME chain) must resolve to the identical physical (undirected) edge
+    // -- the manifold-winding invariant §3.2 names -- and a k-cell chain
+    // must expose exactly k+1 distinct physical cut edges when open, k when
+    // closed (watertight-by-construction, per §3.2's own count).
+    //
+    // STRUCTURAL, not discriminating (task 1054 review): every case here is
+    // a STRICT SUBSET of U2's own selections, driven back through the same
+    // `bandWalk`, so U3 cannot fail in a way U2's exact-chain asserts
+    // wouldn't already catch first -- it re-derives the shared-rail
+    // identity from `bandSideOf`'s own side derivation, so agreeing with
+    // itself is close to a tautology for that half. What it adds beyond U2
+    // is the DISTINCT-EDGE-COUNT invariant (open k -> k+1, closed k -> k),
+    // which U2's per-cell literal asserts do not check directly.
+    import mesh_ops.loop_slice : bandWalk, BandCell;
+    import std.format : format;
+
+    static void checkChain(BandCell[] chain, size_t expectDistinct, string tag) {
+        // Shared-rail identity: consecutive cells' facing sides are the
+        // SAME edge. Guarded against an empty chain (`bandWalk` cannot
+        // hand one to a caller today, but `chain.length - 1` on `size_t`
+        // underflows to `size_t.max` if it ever does, turning this into an
+        // effectively-unbounded loop over an empty array instead of a
+        // clean no-op).
+        if (chain.length == 0) return;
+        foreach (i; 0 .. chain.length - 1) {
+            auto lhs = bandCellEdgeKey(bandTestBasePolys, chain[i].fi, chain[i].B);
+            auto rhs = bandCellEdgeKey(bandTestBasePolys, chain[i + 1].fi, chain[i + 1].A);
+            assert(lhs == rhs,
+                format("%s: chain[%d]'s B-edge must equal chain[%d]'s A-edge",
+                       tag, i, i + 1));
+        }
+        bool[ulong] distinct;
+        foreach (c; chain) {
+            distinct[bandCellEdgeKey(bandTestBasePolys, c.fi, c.A)] = true;
+            distinct[bandCellEdgeKey(bandTestBasePolys, c.fi, c.B)] = true;
+        }
+        assert(distinct.length == expectDistinct,
+            format("%s: expected %d distinct cut edges (k=%d), got %d",
+                   tag, expectDistinct, chain.length, distinct.length));
+    }
+
+    // row3 -- open, k=3 -> 4 distinct edges.
+    checkChain(bandWalk(bandTestBasePolys, [21u, 24u, 27u])[0], 4, "row3");
+    // L -- open, k=5 -> 6.
+    checkChain(bandWalk(bandTestBasePolys, [21u, 24u, 27u, 28u, 29u])[0], 6, "L");
+    // b2x2 -- CLOSED, k=4 -> 4 (not 5): the wraparound edge is shared, not new.
+    checkChain(bandWalk(bandTestBasePolys, [21u, 24u, 22u, 25u])[0], 4, "b2x2");
+    // one_00 -- single-cell (both sides derived), k=1 -> 2.
+    checkChain(bandWalk(bandTestBasePolys, [25u])[0], 2, "one_00");
+    // w3_all9scr's first chain -- CLOSED, k=8 -> 8 (the 3x3 block's outer
+    // ring; every cut edge is shared with the chain's other end).
+    checkChain(bandWalk(bandTestBasePolys,
+        [25u, 27u, 23u, 26u, 28u, 21u, 29u, 22u, 24u])[0], 8, "w3_all9scr chain0");
+
+    // Mutation (plan §5 Phase 3 validation, applies once wired): deleting
+    // the rail pre-pass or corrupting the entry/exit convention would break
+    // the shared-rail identity above for any turn cell (L_cornerfirst,
+    // b2x2) -- U3 pins the INVARIANT the pre-pass depends on existing.
+}
+
+unittest { // U4 — a repeated index in `sel` must not hang `bandWalk`
+    // forever (task 1054 review, BLOCKER). `bandReorderByConnectivity`'s
+    // `seenCount` counts DISTINCT visits while `S = sel.length` counts raw
+    // entries -- a duplicate index (e.g. `[21, 21]`) marks the same slot
+    // `seen` twice, so `seenCount` saturates below `S`; both the nb<2 scan
+    // and its "first unvisited" fallback then find nothing left, `start`
+    // stays -1, and without a `start < 0` escape the outer
+    // `while (seenCount < S)` spins with no progress. Reproduced pre-fix:
+    // `bandWalk(bandTestBasePolys, [21u, 21u])` killed at an external 8 s
+    // timeout.
+    //
+    // Bounded with an in-process watchdog (a daemon thread + a timed
+    // semaphore wait), per plan/review guidance ("bound it so a regression
+    // fails fast rather than wedging the suite"): a plain direct call would
+    // itself hang the whole test binary if this ever regresses, defeating
+    // the point of a regression test. The daemon thread means a genuine
+    // regression still leaves one thread spinning in the background, but
+    // the test PROCESS does not block on it -- this assert fails within
+    // the watchdog window instead.
+    //
+    // Mutation: reverting the `if (start < 0) break;` fix (i.e. dropping
+    // it) reproduces the pre-fix hang -- verified by running this exact
+    // assert against the reverted source, which timed out instead of
+    // passing.
+    import mesh_ops.loop_slice : bandWalk;
+    import core.thread : Thread;
+    import core.time : dur;
+    import core.sync.semaphore : Semaphore;
+
+    auto done = new Semaphore();
+    auto worker = new Thread({
+        cast(void) bandWalk(bandTestBasePolys, [21u, 21u]);
+        done.notify();
+    });
+    worker.isDaemon = true;
+    worker.start();
+    assert(done.wait(dur!"seconds"(5)),
+        "bandWalk(bandTestBasePolys, [21, 21]) (a repeated selection index) "
+        ~ "did not return within the 5s watchdog -- regressed to the "
+        ~ "pre-fix infinite loop in bandReorderByConnectivity's restart scan");
+}
+
+unittest { // U5 — an out-of-range selection index must not crash `bandWalk`
+    // (task 1054 review). `bandNb`/`bandSideOf` index `polys[pi]` raw with
+    // no bounds guard of their own; `bandWalk` now filters `sel` to
+    // `p < polys.length` once, before any of them run. Reproduced pre-fix:
+    // `bandWalk(bandTestBasePolys, [21u, 999u])` threw `ArrayIndexError`
+    // (`bandTestBasePolys.length` is 30, so 999 is well out of range).
+    //
+    // Mutation: removing the `valid`/filter block in `bandWalk` reproduces
+    // the pre-fix crash -- verified by running this exact call against the
+    // reverted source, which threw instead of returning.
+    import mesh_ops.loop_slice : bandWalk, BandCell;
+    import std.format : format;
+
+    auto got = bandWalk(bandTestBasePolys, [21u, 999u]);
+    // The out-of-range entry is dropped, not silently kept -- what
+    // survives is exactly the single-cell walk over face 21 alone.
+    assert(got == [[BandCell(21, 2, 0)]],
+        format("out-of-range index must be filtered out, not crash or "
+               ~ "silently retained: got %s", got));
+}

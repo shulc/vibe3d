@@ -8096,6 +8096,40 @@ struct Mesh {
         return idx;
     }
 
+    /// The currently SELECTED face indices, in SELECTION (click) order rather
+    /// than ascending index (task 1054 — the Loop Slice selection-band walk
+    /// consumes selection order as an input to its cut law, doc/
+    /// loop_slice_corner_plan.md §1/§3.5). Same house idiom as
+    /// `mesh_ops.select_loop.selectLoopFaces` (`select_loop.d:773-784`) —
+    /// reused verbatim rather than invented a second time: filter by
+    /// `isFaceSelected` FIRST (a stale non-zero stamp on an unselected face
+    /// is a known hazard, `edge_bevel.d`/`extrude.d` leave one behind), THEN
+    /// sort by `faceSelectionOrder`'s 1-based rank stamp (`0` — "never
+    /// manually stamped" — sorts LAST as `int.max`), ties broken by ascending
+    /// index. A stamp-less selection (RMB lasso, a `.v3d` load, `select.invert`
+    /// — see the plan's gesture survey) is therefore a well-defined input:
+    /// every rank ties at `int.max` and the result degenerates to ascending
+    /// index, i.e. today's order.
+    ///
+    /// Bounds-defended against `faceSelectionOrder` (R4): `resizeFaceSelection`
+    /// deliberately does NOT resize it (`:5773-5778`, unlike the vertex/edge
+    /// twins), so a face born after the array last grew reads past its end —
+    /// indexing it raw here would `RangeError` on exactly that face.
+    uint[] selectedFaceIndicesInSelectionOrder() const {
+        uint[] sel;
+        foreach (i; 0 .. faces.length)
+            if (isFaceSelected(i)) sel ~= cast(uint)i;
+        static int fOrderOf(const int[] ord, size_t i) {
+            return (i < ord.length && ord[i] > 0) ? ord[i] : int.max;
+        }
+        import std.algorithm.sorting : sort;
+        sel.sort!((x, y) {
+            int ox = fOrderOf(faceSelectionOrder, x), oy = fOrderOf(faceSelectionOrder, y);
+            return ox != oy ? ox < oy : x < y;
+        });
+        return sel;
+    }
+
     /// Return the centroid of the current vertex selection (or all vertices if none selected).
     Vec3 selectionCentroidVertices() const {
         bool any = hasAnySelectedVertices();

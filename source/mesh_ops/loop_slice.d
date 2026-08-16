@@ -1339,6 +1339,387 @@ mixin template MeshLoopSliceOps() {
 }
 
 // ---------------------------------------------------------------------------
+// Task 1054 -- the "Slice Selected" BAND WALK (measured law; see
+// doc/loop_slice_corner_plan.md §1, §3.1, §3.6, §1.1(a)/(b), private doc --
+// this repo carries no public description of the reference this was
+// measured against). Phase 2: added as a PURE function family, NOT YET
+// WIRED into `insertEdgeLoopsMulti` above -- that mixin's `restrictFaces`
+// contract, the emitters, and every existing loop-slice test are untouched
+// by this block (Phase 3, task 1054). Deliberately free functions at module
+// scope, independent of `Mesh`/the mixin above, so a unit test can drive
+// them with a literal face-ring table instead of building a full `Mesh`.
+//
+// A reference debugger-reading identified the internal routines this walk
+// reproduces; per this repo's neutrality rule those identifiers are
+// PRIVATE-DOC ONLY (plan §0/§7) and do not appear here or in any test name --
+// each function below is described by what it does, with a doc-comment
+// pointer to the private plan section that has the full provenance.
+// ---------------------------------------------------------------------------
+
+/// DoS backstop (task 0365 P1 pattern, R6): `sel.length` scales the edge
+/// map, every rank array, and the walk below -- and, unlike the linear
+/// `MAX_LOOP_SLICE_COUNT` (`:548-550`) this "mirrors" in spirit only, the
+/// restart scan in `bandReorderByConnectivity`'s `while (seenCount < S)`
+/// loop is worst-case QUADRATIC in `S`: a fully-disconnected selection (no
+/// two selected faces share an edge -- e.g. several separate single-face
+/// picks) forces one restart per face, and each restart's "first
+/// unvisited" scan re-walks the list from the front. Measured this session
+/// on that exact worst case (a checkerboard-selected quad grid, so no two
+/// selected faces are ever edge-adjacent): S=4096 -> ~11 ms, S=16384 ->
+/// ~175 ms, consistent with the O(S^2) term above. 16384 keeps the worst
+/// case under ~200 ms for what is a one-shot, user-triggered cut (not a
+/// per-frame path) while giving genuinely large multi-thousand-face
+/// selections room; raising it further trades directly against that
+/// worst-case latency. Applied at both the sole reachable entry point
+/// (`bandWalk` below, where truncation is also logged once via
+/// `logWarnOnce` rather than silently dropped) and again at the top of
+/// `bandReorderByConnectivity` itself, so a future caller inside this
+/// module that reaches the walk without going through `bandWalk` cannot
+/// bypass it. Truncate rather than reject, so a legitimate large selection
+/// degrades to a bounded walk instead of failing outright.
+enum size_t MAX_BAND_FACES = 16384;
+
+/// A single band cell: `fi`'s resolved entry/exit ring-edge indices within
+/// its own chain (§1 step 3). `A` = the side shared with the chain
+/// PREDECESSOR (derived when absent); `B` = with the SUCCESSOR (derived
+/// when absent). NOT the cut point (§1 step 4) -- that stays Phase 3's
+/// concern, once this is wired into an emitter.
+struct BandCell {
+    uint fi, A, B;
+    // Explicit opEquals (compiler-specific gotcha, verified empirically
+    // while writing U2/U3): on DMD64 D Compiler v2.112.1-rc.1, the
+    // COMPILER-SYNTHESISED default struct opEquals does not participate
+    // correctly in `BandCell[][] == BandCell[][]` (nested dynamic-array
+    // equality) -- `x[0] == y[0]` (one level) is true while `x == y` (two
+    // levels) is false for otherwise-identical content, with no such gap
+    // for `int[][]`. Reproduced standalone with plain `dmd` outside this
+    // codebase, so it is not specific to how this struct is used here --
+    // only that the array-heavy assertions below would need it either way.
+    // NOT reproduced on LDC 1.40.0 (LLVM D compiler, based on DMD
+    // v2.110.0) -- the same standalone repro gives `true`/`true` there, so
+    // a reader testing on `ldc2` alone would see this as a no-op and could
+    // mistake it for dead code. Keep it: this project builds with DMD.
+    // One-level `BandCell[] == BandCell[]` was fine without this; this exists for
+    // the two-level comparisons in U2.
+    bool opEquals(const BandCell rhs) const {
+        return fi == rhs.fi && A == rhs.A && B == rhs.B;
+    }
+}
+
+/// Edge (unordered vertex pair) -> incident polygon indices, in the order
+/// `polys` is visited (ascending face index) -- so `min(...)` over an
+/// entry IS the slot-0 rule (§3.6): the edge's LOWEST-index incident
+/// polygon. Built from `polys` alone, deliberately NOT `Mesh.facesAroundEdge`
+/// (`mesh.d:7685`): its own doc-comment says it cannot witness a 3rd
+/// incident polygon and its order is a walk order, not ascending index --
+/// both fatal to the slot-0 rule. Caveat carried from the plan (§3.6): this
+/// is a fit to the corpus's own cube-generated index order, not a decoded
+/// rule -- it may not hold on an imported/welded mesh whose face index
+/// order differs, and is unverified off the cube (registry #24).
+private uint[][ulong] bandEdgeMap(const(uint[])[] polys) {
+    uint[][ulong] e2p;
+    foreach (piRaw, ring; polys) {
+        uint pi = cast(uint)piRaw;
+        auto n = ring.length;
+        foreach (k; 0 .. n) {
+            auto key = edgeKey(ring[k], ring[(k + 1) % n]);
+            if (auto p = key in e2p) (*p) ~= pi;
+            else e2p[key] = [pi];
+        }
+    }
+    return e2p;
+}
+
+/// Ring-edge index of `pi` shared with `qi`, or -1.
+private int bandSideOf(const(uint[])[] polys, uint pi, uint qi,
+                        uint[][ulong] e2p) {
+    auto ring = polys[pi];
+    auto n = ring.length;
+    foreach (k; 0 .. n) {
+        auto key = edgeKey(ring[k], ring[(k + 1) % n]);
+        if (auto inc = key in e2p)
+            foreach (q; *inc) if (q == qi) return cast(int)k;
+    }
+    return -1;
+}
+
+private bool bandAdjacent(const(uint[])[] polys, uint a, uint b,
+                           uint[][ulong] e2p) {
+    return bandSideOf(polys, a, b, e2p) >= 0;
+}
+
+/// Directed degree (§1 step 2, §3.6): count of `pi`'s edges whose SLOT-0
+/// incident polygon (an explicit `min()` over the edge's incident set --
+/// measured, not "our slot 0"; plan Q3) is itself marked-selected and is
+/// not `pi`. Same caveat as `bandEdgeMap` above (§3.6): the slot-0 =
+/// lowest-index rule is a fit to the corpus's own cube-generated index
+/// order, not a decoded rule -- it may not hold on an imported/welded mesh
+/// whose index order differs, and is unverified off the cube (registry #24).
+private int bandNb(const(uint[])[] polys, uint pi, const bool[] marks,
+                    uint[][ulong] e2p) {
+    auto ring = polys[pi];
+    auto n = ring.length;
+    int c = 0;
+    foreach (k; 0 .. n) {
+        auto key = edgeKey(ring[k], ring[(k + 1) % n]);
+        auto inc = key in e2p;
+        if (inc is null || inc.length == 0) continue;
+        uint first = (*inc)[0];
+        foreach (q; (*inc)[1 .. $]) if (q < first) first = q;
+        if (first != pi && first < marks.length && marks[first]) c++;
+    }
+    return c;
+}
+
+/// The O(n) "extend" step (§1.1(b)): "first unvisited, in LIST order,
+/// sharing an edge with `cur`" == "the minimum-rank unvisited polygon among
+/// the polygons incident to `cur`'s OWN edges" -- iterate `cur`'s n edges,
+/// take the min rank. Same law as a full O(S) list rescan per step, without
+/// it: the naive reading is quadratic in the selection size (§1.1(b)).
+/// `rankOf[q] == uint.max` means "not a candidate in this list" (either
+/// unselected, or out of range).
+private long bandNextByRank(const(uint[])[] polys, uint cur,
+                             uint[][ulong] e2p, const uint[] rankOf,
+                             const bool[] seen) {
+    auto ring = polys[cur];
+    auto n = ring.length;
+    uint bestRank = uint.max;
+    long best = -1;
+    foreach (k; 0 .. n) {
+        auto key = edgeKey(ring[k], ring[(k + 1) % n]);
+        auto inc = key in e2p;
+        if (inc is null) continue;
+        foreach (q; *inc) {
+            if (q == cur) continue;
+            if (q >= seen.length || seen[q]) continue;
+            if (q >= rankOf.length || rankOf[q] == uint.max) continue;
+            if (rankOf[q] < bestRank) { bestRank = rankOf[q]; best = q; }
+        }
+    }
+    return best;
+}
+
+/// Reorders the selection by a greedy connectivity walk with the measured
+/// RESTART rule (§1 step 2 "Start"; §1.1(a) -- the fallback is REACHABLE,
+/// on a chain RESTART, never on the very first pick). NOT a chain boundary
+/// -- `bandChains` below re-derives chains (with the backward-extension
+/// gate) from THIS output, mirroring the two-function split measured at
+/// the reference's own compute sites (plan §1.1(a), private doc).
+///
+/// The `else` branch below ("first unvisited element" of `sel`, in `sel`'s
+/// own list order) IS the fallback's tie-break -- list order, by
+/// construction, with no extra case needed to get there. MEASURED (plan
+/// Phase 0b, §1.1(a)/R5): the corpus itself reaches this branch only once
+/// (`w3_all9scr`, a chain restart) with a SINGLE remaining candidate, so
+/// that case alone cannot tell list order apart from a "lowest polygon
+/// index" alternative -- Phase 0b's own pre-registered discriminator was
+/// run against the reference for exactly that reason. Row A (control,
+/// selection `[3,16,17,2,1,18,23,27]`, pos 0.3) measured 44 V, where both
+/// candidates agreed; row B (discriminator, same set reordered to
+/// `[3,16,17,2,1,23,18,27]`, same pos) measured 45 V, matching list
+/// order's prediction and rejecting lowest-index's 44 V. See
+/// `tools/local/fixture_gen/loop_slice_band/` (`cases_p0b.py`, `p0b.json`,
+/// README) for the capture. This ships list order.
+private uint[] bandReorderByConnectivity(const(uint[])[] polys, const(uint)[] sel,
+                              uint[][ulong] e2p) {
+    // Re-applied here, not just in `bandWalk` (task 1054 review): this is
+    // the O(S^2)-worst-case function `MAX_BAND_FACES` exists to bound, and
+    // it is `private` to this module -- any future call site added inside
+    // `mesh_ops.loop_slice` that reaches this directly, bypassing
+    // `bandWalk`, would otherwise skip the cap entirely. Silent here
+    // deliberately: the one reachable path today (`bandWalk`) already logs
+    // the truncation once; a second warning at this layer would double up.
+    if (sel.length > MAX_BAND_FACES) sel = sel[0 .. MAX_BAND_FACES];
+    auto S = sel.length;
+    bool[] marks = new bool[](polys.length);
+    foreach (p; sel) if (p < marks.length) marks[p] = true;
+
+    // rankOf: position of each selected polygon within `sel` (list order)
+    // -- the candidate order THIS walk's own "extend" step consumes.
+    uint[] rankOf = new uint[](polys.length);
+    rankOf[] = uint.max;
+    foreach (i, p; sel)
+        if (p < rankOf.length && rankOf[p] == uint.max) rankOf[p] = cast(uint)i;
+
+    bool[] seen = new bool[](polys.length);
+    uint[] order;
+    order.reserve(S);
+    size_t seenCount = 0;
+    while (seenCount < S) {
+        long start = -1;
+        // Start: first unvisited element (in `sel`'s list order) whose
+        // directed degree is < 2; else the first unvisited element.
+        foreach (p; sel) {
+            if (p < seen.length && seen[p]) continue;
+            if (bandNb(polys, p, marks, e2p) < 2) { start = p; break; }
+        }
+        if (start < 0)
+            foreach (p; sel) { if (p >= seen.length || !seen[p]) { start = p; break; } }
+        // `seenCount` counts DISTINCT visits, `S` counts `sel`'s raw entry
+        // count -- a repeated index (e.g. `[21, 21]`) marks the same slot
+        // `seen` twice, so `seenCount` saturates below `S` and both scans
+        // above find nothing left unvisited: `start` stays -1 forever and,
+        // without this break, the outer `while (seenCount < S)` spins with
+        // no progress (reproduced: `bandWalk(polys, [21u, 21u])` hangs).
+        // Bail out with whatever `order` holds so far rather than loop
+        // forever two lines from `MAX_BAND_FACES`.
+        if (start < 0) break;
+        long cur = start;
+        while (cur >= 0) {
+            order ~= cast(uint)cur;
+            if (cast(uint)cur < seen.length) seen[cur] = true;
+            seenCount++;
+            cur = bandNextByRank(polys, cast(uint)cur, e2p, rankOf, seen);
+        }
+    }
+    return order;
+}
+
+/// Groups `order` (`bandReorderByConnectivity`'s output) into chains:
+/// forward growth by list order, then BACKWARD growth, gated by two
+/// independent conditions with two DIFFERENT kinds of provenance -- do not
+/// cite one for both:
+///  - forward chain already holds >= 3 polygons -- BEHAVIOURALLY measured
+///    in this codebase: dropping the check (raising the threshold so it
+///    never fires) changes U2's `L_cornerfirst` case from one 5-cell chain
+///    to two split chains, reddening the assert (verified by mutation).
+///  - the forward chain is not already closed -- DEBUGGER-READ ONLY at the
+///    reference's own compute site (plan §1.1); load-bearing in the sense
+///    that removing it is a real behaviour change (constant-`false`-ing
+///    `closed` turns U2's `[22,21,23,24,25]` case from
+///    `[22,21,24,25]`+`[23]` into a single `[23,22,21,24,25]` chain,
+///    verified by mutation), but that case's expected value is OUR OWN
+///    shipped output, not an independently captured reference result --
+///    no reference capture of a closed-chain restart exists to confirm
+///    which of the two shapes the reference itself would produce.
+/// (Prior note, kept for context: "three of four measured row-order cases
+/// predict the wrong chain" without the combined gate, per plan §1.1 /
+/// §1 step 2.)
+private uint[][] bandChains(const(uint[])[] polys, const(uint)[] order,
+                             uint[][ulong] e2p) {
+    import std.algorithm : reverse;
+    auto n = order.length;
+    uint[] rankOf = new uint[](polys.length);
+    rankOf[] = uint.max;
+    foreach (i, p; order)
+        if (p < rankOf.length && rankOf[p] == uint.max) rankOf[p] = cast(uint)i;
+
+    bool[] seen = new bool[](polys.length);
+    uint[][] chains;
+    foreach (seed; order) {
+        if (seed < seen.length && seen[seed]) continue;
+        if (seed < seen.length) seen[seed] = true;
+
+        uint[] fwd;
+        long cur = seed;
+        while (true) {
+            long nxt = bandNextByRank(polys, cast(uint)cur, e2p, rankOf, seen);
+            if (nxt < 0) break;
+            fwd ~= cast(uint)nxt;
+            if (cast(uint)nxt < seen.length) seen[nxt] = true;
+            cur = nxt;
+        }
+
+        bool closed = fwd.length >= 2
+                    && bandAdjacent(polys, seed, fwd[$ - 1], e2p);
+        uint[] bwd;
+        cur = seed;
+        while (fwd.length + 1 >= 3 && !closed) {
+            long nxt = bandNextByRank(polys, cast(uint)cur, e2p, rankOf, seen);
+            if (nxt < 0) break;
+            bwd ~= cast(uint)nxt;
+            if (cast(uint)nxt < seen.length) seen[nxt] = true;
+            cur = nxt;
+        }
+        uint[] chain = bwd.dup;
+        reverse(chain);
+        chain ~= seed;
+        chain ~= fwd;
+        chains ~= chain;
+    }
+    return chains;
+}
+
+/// Side pair per chain cell (§1 step 3). NOT the cut-point math (§1 step 4)
+/// -- that stays Phase 3's concern once the walk is wired into an emitter,
+/// and deliberately does NOT reproduce the reference's neighbour-frame
+/// terminal anomaly (§3.7 -- a decided suppression, not an oversight: our
+/// rail cache already yields one vertex per undirected edge, watertight,
+/// where the reference's own result is non-manifold on 7 of 54 cases).
+private BandCell[] bandSides(const(uint[])[] polys, const(uint)[] chain,
+                              uint[][ulong] e2p) {
+    auto n = chain.length;
+    bool closed = n >= 3 && bandAdjacent(polys, chain[0], chain[$ - 1], e2p);
+    BandCell[] cells;
+    cells.reserve(n);
+    foreach (i, pi; chain) {
+        auto ring = polys[pi];
+        int  m    = cast(int)ring.length;
+        long prev = (i > 0)     ? chain[i - 1] : (closed ? chain[$ - 1] : -1);
+        long nxt  = (i + 1 < n) ? chain[i + 1] : (closed ? chain[0]     : -1);
+        int A = (prev >= 0) ? bandSideOf(polys, pi, cast(uint)prev, e2p) : -1;
+        int B = (nxt  >= 0) ? bandSideOf(polys, pi, cast(uint)nxt,  e2p) : -1;
+        if (A < 0 && B >= 0)      A = (B + m / 2) % m;
+        else if (B < 0 && A >= 0) B = (A + m / 2) % m;
+        else if (A < 0 && B < 0)  { B = 0; A = m / 2; }
+        // NOT reproduced: the predictor's own degenerate-cell guard (skip a
+        // cell whose derived A and B land on the SAME ring-edge index).
+        // Unreachable on any manifold selection (0 of 79 128 measured
+        // selections over the corpus's 3x3 block hit it, since a manifold
+        // edge has exactly one polygon on its far side), but this editor
+        // permits a 3-polygon edge, and a chain cell whose predecessor and
+        // successor both connect through THAT edge would produce A == B
+        // here with no guard.
+        cells ~= BandCell(pi, cast(uint)A, cast(uint)B);
+    }
+    return cells;
+}
+
+/// Task 1054 band walk entry point (measured law, doc/
+/// loop_slice_corner_plan.md §1). `sel` = the selected polygon indices, in
+/// SELECTION (click) order (`Mesh.selectedFaceIndicesInSelectionOrder`,
+/// Phase 1). Returns one `BandCell[]` per chain, cells in walk order --
+/// chain order then cell order, which is the order Phase 3's rail pre-pass
+/// needs (§3.3/§3.7) for its "first creator wins" determinism.
+///
+/// NOT YET WIRED into `insertEdgeLoopsMulti` (Phase 3, task 1054) -- calling
+/// this today has no effect on any cut; `select = off` and every existing
+/// `select = on` behaviour are both untouched by this function's existence.
+BandCell[][] bandWalk(const(uint[])[] polys, const(uint)[] sel) {
+    if (sel.length > MAX_BAND_FACES) {
+        // Visible, not silent (task 1054 review): a caller handing us a
+        // selection this large has no other way to learn it was cut down.
+        import log : logWarnOnce;
+        import std.format : format;
+        logWarnOnce("loop_slice", "bandWalkTruncated",
+            format("Slice Selected band walk: selection of %d faces "
+                   ~ "truncated to MAX_BAND_FACES (%d)", sel.length, MAX_BAND_FACES));
+        sel = sel[0 .. MAX_BAND_FACES];
+    }
+    if (sel.length == 0 || polys.length == 0) return null;
+
+    // Bounds defence (task 1054 review): `bandNb`/`bandSideOf` index
+    // `polys[pi]` raw, with no guard of their own -- filter `sel` here,
+    // ONCE, so every downstream helper stays honestly unguarded instead of
+    // being partially defended in three different places. Reproduced
+    // without this: `bandWalk(polys, [21u, 999u])` threw `ArrayIndexError`
+    // on the out-of-range 999.
+    uint[] valid;
+    valid.reserve(sel.length);
+    foreach (p; sel) if (p < polys.length) valid ~= p;
+    sel = valid;
+    if (sel.length == 0) return null;
+
+    auto e2p = bandEdgeMap(polys);
+    auto order = bandReorderByConnectivity(polys, sel, e2p);
+    auto chainFaces = bandChains(polys, order, e2p);
+    BandCell[][] result;
+    result.reserve(chainFaces.length);
+    foreach (chain; chainFaces) result ~= bandSides(polys, chain, e2p);
+    return result;
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests — co-located with the family they exercise (moved verbatim
 // from mesh.d alongside the kernels above).
 // ---------------------------------------------------------------------------

@@ -4432,3 +4432,127 @@ unittest {
       ~ "not lose it to front-truncation");
 }
 
+// Task 1054 U1 — `selectedFaceIndicesInSelectionOrder` (Phase 1, doc/
+// loop_slice_corner_plan.md §5/§6): click order preserved; 0-stamp faces
+// sort last with ties ascending; survives a short `faceSelectionOrder`
+// (R4, `resizeFaceSelection` deliberately does not resize it — mesh.d
+// :5773-5778); a stale non-zero stamp on an unselected face is ignored.
+unittest {
+    // Click order preserved -- NOT ascending index order.
+    {
+        Mesh m = makeCube();
+        m.resetSelection();
+        m.selectFace(2);
+        m.selectFace(0);
+        m.selectFace(1);
+        assert(m.selectedFaceIndicesInSelectionOrder() == [2u, 0u, 1u],
+            format("click order must be preserved, got %s",
+                   m.selectedFaceIndicesInSelectionOrder()));
+    }
+
+    // A ranked (individually-clicked) face sorts before every 0-stamp
+    // (bulk-selected, never individually ranked) face; the 0-stamp faces
+    // tie and fall back to ascending index among themselves.
+    {
+        Mesh m = makeCube();
+        m.resetSelection();
+        bool[] fsel; fsel.length = m.faces.length;
+        fsel[3] = true; fsel[1] = true;   // bulk select: no per-element rank
+        m.setFacesSelectedFrom(fsel);
+        m.selectFace(4);                  // ranked select, after the bulk one
+        assert(m.selectedFaceIndicesInSelectionOrder() == [4u, 1u, 3u],
+            format("ranked face first, zero-stamped faces tie ascending, got %s",
+                   m.selectedFaceIndicesInSelectionOrder()));
+    }
+
+    // Mutation-style check: dropping the sort (returning ascending order
+    // instead) would read as [1,3,4] above and this assert would catch it --
+    // covered by the assert already; no separate block needed.
+
+    // Survives a `faceSelectionOrder` shorter than `faces` (R4) without a
+    // RangeError -- reproduces the shape `resizeFaceSelection` leaves behind
+    // (faceMarks grows, faceSelectionOrder does not) directly, rather than
+    // depending on any one mutator's internals to produce it.
+    {
+        Mesh m = makeCube();
+        m.resetSelection();
+        m.selectFace(0);
+        m.selectFace(5);
+        assert(m.faceSelectionOrder.length == m.faces.length);
+        m.faceSelectionOrder = m.faceSelectionOrder[0 .. 3];   // now shorter than faces
+        uint[] got;
+        bool threw = false;
+        try got = m.selectedFaceIndicesInSelectionOrder();
+        catch (Throwable) threw = true;
+        assert(!threw, "accessor must not RangeError on a short faceSelectionOrder");
+        // Face 5's stamp sits past the short array -> reads as unranked (0)
+        // -> sorts LAST, after face 0's real rank.
+        assert(got == [0u, 5u],
+            format("short-stamp face must read as unranked (sorts last), got %s", got));
+    }
+
+    // A stale non-zero stamp on an UNSELECTED face is ignored -- the
+    // accessor filters by `isFaceSelected` FIRST, never trusting a non-zero
+    // stamp alone (caveat 2, extrude.d/edge_bevel.d leave exactly this kind
+    // of residue behind).
+    {
+        Mesh m = makeCube();
+        m.resetSelection();
+        m.selectFace(0);
+        m.selectFace(1);
+        m.deselectFace(1);
+        m.faceSelectionOrder[1] = 99;   // force a stale non-zero stamp back in
+        assert(m.selectedFaceIndicesInSelectionOrder() == [0u],
+            "a stale non-zero stamp on an unselected face must be ignored");
+    }
+}
+
+// Task 1054 U6 — the ascending bulk stamp (§3.5b-iii, doc/
+// loop_slice_corner_plan.md): our RMB polygon lasso stamps ascending face
+// index (`app.d:5074-5148`, a `foreach (fi; 0 .. faces.length)` sweep calling
+// `symmetricSelectFace` per hit) -- and as of task 1054 that stamp is an
+// INPUT to the band-walk cut law, not an incidental iteration order. Pin it
+// at the level the law consumes: a lasso-shaped ascending sweep must come
+// back from the Phase-1 accessor in ascending order.
+//
+// Asserts the RAW `faceSelectionOrder` stamp array directly (task 1054
+// review), not just `selectedFaceIndicesInSelectionOrder()`'s sorted
+// projection of it: that accessor's own tie-break is ascending index
+// (`mesh.d:8127`), so an UNSTAMPED selection (every rank tied at
+// `int.max`) sorts to the identical ascending output as a selection
+// stamped 1..N in order -- reddening only "reverse the sweep" (a mutation
+// of THIS TEST's own iteration order, not of production code) proves
+// nothing about whether `Mesh.selectFace` stamps at all. Verified by
+// mutation: deleting `faceSelectionOrder[idx] = ++faceSelectionOrderCounter;`
+// from `Mesh.selectFace` (mesh.d, the actual production stamp site) left
+// the OLD accessor-based assert here green; asserting `faceSelectionOrder`
+// directly reddens on that same deletion (got all-zero instead of
+// `[1..6]`).
+unittest {
+    import symmetry_pick : symmetricSelectFace;
+    import math : Viewport;
+
+    Mesh m = makeCube();
+    m.resetSelection();
+    Viewport vp;
+    // `symmetricSelectFace` returns silently to a plain `mesh.selectFace`
+    // when the toolpipe isn't registered (its own doc comment, "unit
+    // tests") -- exactly this context, so it exercises the same stamping
+    // path the lasso drives without needing a live SymmetryStage.
+    foreach (fi; 0 .. m.faces.length)
+        symmetricSelectFace(&m, vp, EditMode.Polygons, cast(int)fi, false);
+    int[] expectedStamp;
+    foreach (fi; 0 .. m.faces.length) expectedStamp ~= cast(int)(fi + 1);
+    assert(m.faceSelectionOrder == expectedStamp,
+        format("a lasso-shaped ascending sweep must stamp faceSelectionOrder "
+               ~ "1..N in face-index order, got %s", m.faceSelectionOrder));
+
+    // The accessor's sorted projection is still the law's actual input --
+    // keep this as a companion assert, not a replacement for the one above.
+    uint[] expected;
+    foreach (fi; 0 .. m.faces.length) expected ~= cast(uint)fi;
+    assert(m.selectedFaceIndicesInSelectionOrder() == expected,
+        format("a lasso-shaped ascending sweep must stamp ascending order, got %s",
+               m.selectedFaceIndicesInSelectionOrder()));
+}
+
