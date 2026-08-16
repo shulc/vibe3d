@@ -305,7 +305,11 @@ public:
     /// Set the axis mode explicitly (called by ActrPresetCommand).
     /// Sets userLocked=true so the mode survives the next tool activation.
     void setUserMode(string modeStr) {
-        bool ok = applySetAttr("mode", modeStr);
+        // Task 0791 — through the FUNNEL, not around it: `setAttr` is where a
+        // slot-arming write is counted, and this is the door the action-centre
+        // preset command comes in by. Calling `applySetAttr` directly here left
+        // that door uncounted and needed a patch at the command instead.
+        bool ok = setAttr("mode", modeStr);
         if (ok) {
             userLocked = true;
             publishState();

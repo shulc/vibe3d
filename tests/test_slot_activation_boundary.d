@@ -532,3 +532,53 @@ unittest {
     cmd("tool.pipe.attr symmetry enabled 0");
     dropTool();
 }
+
+// ===========================================================================
+// (ACEN-PRESET-COMMAND) The action centre armed through its own preset command.
+//
+// `actr.<mode>` does not write the stage through `tool.pipe.attr` — it calls
+// the stage's setUserMode, which the write funnel does not see. It therefore
+// carries its own count, and this cell is what says so: the same audit that
+// found the symmetry-toggle hole flags every command that reaches a stage by
+// another door, and reading the code is not how that one was settled.
+// ===========================================================================
+unittest {
+    auto before = armAndLandGesture("ACEN-PRESET-COMMAND", () {});
+    cmd("actr.origin");
+    settle();
+    assert(!runIsHeld(),
+        "the action-centre PRESET command must END the held run — it arms the "
+        ~ "slot through setUserMode, which the setAttr funnel never sees");
+    assertFrozen("ACEN-PRESET-COMMAND", before);
+    dropTool();
+}
+
+// ===========================================================================
+// (FALLOFF-REMOVE) A falloff node REMOVED from the slot.
+//
+// (FALLOFF-STACK) covers adding one. Removal takes yet another door — it
+// unplugs the stage from the pipeline rather than writing any attribute — so
+// it is covered, if at all, by the slot signature folding over the LIVE stage
+// list. Same audit, same rule: measure the door, do not read it.
+// ===========================================================================
+unittest {
+    auto before = armAndLandGesture("FALLOFF-REMOVE", () {
+        cmd("tool.pipe.attr falloff type linear");
+        cmd("tool.pipe.attr falloff shape linear");
+        cmd(`tool.pipe.attr falloff center "0.2,0,0"`);
+        cmd(`tool.pipe.attr falloff size "0.9,0.9,0.9"`);
+        cmd("falloff.add radial");
+        // The stacked node must not zero the weights, or the gesture records
+        // nothing and the cell fails in its setup instead of its subject.
+        cmd(`tool.pipe.attr falloff#1 center "0,0,0"`);
+        cmd(`tool.pipe.attr falloff#1 size "20,20,20"`);
+        cmd("tool.pipe.attr falloff#1 shape linear");
+    });
+    cmd("falloff.remove falloff#1");
+    settle();
+    assert(!runIsHeld(),
+        "removing a falloff node from the slot must END the held run, like "
+        ~ "adding one does");
+    assertFrozen("FALLOFF-REMOVE", before);
+    dropTool();
+}
