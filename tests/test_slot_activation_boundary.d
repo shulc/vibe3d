@@ -582,3 +582,31 @@ unittest {
     assertFrozen("FALLOFF-REMOVE", before);
     dropTool();
 }
+
+// ===========================================================================
+// (WORKPLANE-SLOT) The work plane ends the held run.
+//
+// Measured on the reference late (task 0791 wave 10), on a slot that had been
+// named as unmeasured rather than guessed: fitting the plane to the selection,
+// OFFSETTING it and RESETTING it all end a held operation, each with the same
+// activation bracket the other closing slots use. Like symmetry — and unlike
+// falloff — it does not split into an activation half and an attribute half,
+// so every write here arms the slot.
+//
+// Our workplane commands reach the stage through its own mutators rather than
+// through an attribute write, which is the door class this task keeps finding,
+// so the mutators count themselves. The one exception is `reset()`: that is
+// also the stage's lifecycle hook (scene reset, tool switch), so the COMMAND
+// counts instead — a lifecycle event is not a user arming anything.
+// ===========================================================================
+unittest {
+    auto before = armAndLandGesture("WORKPLANE-SLOT", () {});
+    cmd("workplane.offset axis:Y dist:0.5");
+    settle();
+    assert(!runIsHeld(),
+        "a work-plane change must END the held run — measured on the reference "
+        ~ "for fit / offset / reset alike");
+    assertFrozen("WORKPLANE-SLOT", before);
+    cmd("workplane.reset");
+    dropTool();
+}

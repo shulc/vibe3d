@@ -121,6 +121,13 @@ class WorkplaneStage : Stage, Operator {
     /// Reset to default behaviour — auto-snap, world origin, no rotation.
     /// Backs the `workplane.reset` command and the generic
     /// SceneReset/`/api/reset` pipeline-cleanup loop (via Stage.reset()).
+    /// Task 0791 — the WORK slot ends a held transform operation, and it does
+    /// NOT split into activation and attribute the way falloff does: measured
+    /// on the reference, fitting the plane to the selection, offsetting it and
+    /// resetting it all end the operation with the same bracket. So every
+    /// attribute write here arms the slot.
+    public override bool attrArmsSlot(string name) const { return true; }
+
     override void reset() {
         isAuto   = true;
         center   = Vec3(0, 0, 0);
@@ -149,6 +156,12 @@ class WorkplaneStage : Stage, Operator {
     /// Add `angle` (degrees) around world axis `axisIdx` (0=X, 1=Y, 2=Z)
     /// to the current rotation. Backs `workplane.rotate`.
     void rotateBy(int axisIdx, float angleDeg) {
+        // Task 0791 — a user-intent mutator with no internal caller, so it
+        // counts itself. `reset()` deliberately does NOT: it is also the
+        // stage's lifecycle hook (scene reset, tool switch), and counting a
+        // lifecycle event as a user arming is the trap this task keeps finding.
+        // The `workplane.reset` COMMAND counts instead.
+        noteSlotArmed();
         if (axisIdx < 0 || axisIdx > 2) return;
         final switch (axisIdx) {
             case 0: rotation.x += angleDeg; break;
@@ -162,6 +175,12 @@ class WorkplaneStage : Stage, Operator {
     /// Add `dist` (world units) to the center along axis `axisIdx`.
     /// Backs `workplane.offset`.
     void offsetBy(int axisIdx, float dist) {
+        // Task 0791 — a user-intent mutator with no internal caller, so it
+        // counts itself. `reset()` deliberately does NOT: it is also the
+        // stage's lifecycle hook (scene reset, tool switch), and counting a
+        // lifecycle event as a user arming is the trap this task keeps finding.
+        // The `workplane.reset` COMMAND counts instead.
+        noteSlotArmed();
         if (axisIdx < 0 || axisIdx > 2) return;
         final switch (axisIdx) {
             case 0: center.x += dist; break;
@@ -241,6 +260,7 @@ class WorkplaneStage : Stage, Operator {
     /// Stored rotation is left untouched; evaluate() falls back to the
     /// directBasis path when `directBasisActive` is true.
     void setBasis(Vec3 normal, Vec3 axis1, Vec3 axis2, Vec3 newCenter) {
+        noteSlotArmed();   // task 0791 — same class as rotateBy/offsetBy
         directNormal = normal;
         directAxis1  = axis1;
         directAxis2  = axis2;
