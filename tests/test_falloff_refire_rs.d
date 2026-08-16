@@ -665,13 +665,21 @@ unittest {
 }
 
 // ===========================================================================
-// (TYPE-SWITCH) Falloff TYPE switch mid-run re-grades (not just a param tweak).
+// (THREE-DISCRETE-TWEAKS) Three separate attribute edits mid-run append THREE
+// re-grade steps, not one.
 //
-// A radial→linear TYPE switch is a packet INEQUALITY (falloffPacketsEqual
-// compares type), so the re-fire site fires: the move gesture re-grades against
-// the new weighting and bakes ONE in-session entry. Driven on the Move bank for
-// a clean linear-weight witness; the R/S sites share the same packet-equality
+// P-E/G2's subject: each /api command is its own generation, so each APPENDS
+// its own in-session step (they used to REPLACE into one). Driven on the Move
+// bank for a clean weight witness; the R/S sites share the same packet-equality
 // gate.
+//
+// The three tweaks used to be `type` + `start` + `end`. Since task 0791 a
+// falloff TYPE edit is not an attribute write at all — it swaps the tool in the
+// falloff SLOT, and a slot activation ENDS the held run rather than re-weighing
+// it (measured on the reference; the law and all its cells are pinned in
+// tests/test_slot_activation_boundary.d). So the three tweaks here are three
+// genuine ATTRIBUTE writes on ONE armed radial falloff — `center`, `size`,
+// `shape` — which is what P-E was ever about. The step count is unchanged.
 // ===========================================================================
 unittest {
     establishCubeBaseline();
@@ -702,40 +710,47 @@ unittest {
     assert(undoCount() == floor + 1, "move gesture records one entry");
     auto v0AfterG = vert(0);
 
-    // Switch the TYPE radial → linear, then set the linear start + end. Each is a
-    // packet inequality → a re-grade fires. P-E: these are THREE SEPARATE /api
-    // commands — three DISCRETE tweaks, each its own generation — so each APPENDS
-    // its own in-session step (was: all three REPLACEd into ONE, inSession 2).
-    // gesture + 3 re-grades = 4 tagged in-session entries (G2).
-    cmd("tool.pipe.attr falloff type linear");
-    cmd(`tool.pipe.attr falloff start "0.5,0.5,0.5"`);
-    cmd(`tool.pipe.attr falloff end "-0.5,-0.5,-0.5"`);
+    // Move the radial support (centre), then shrink it, then change its curve.
+    // Each is a packet inequality → a re-grade fires. P-E: these are THREE
+    // SEPARATE /api commands — three DISCRETE tweaks, each its own generation —
+    // so each APPENDS its own in-session step (was: all three REPLACEd into
+    // ONE, inSession 2). gesture + 3 re-grades = 4 tagged in-session entries
+    // (G2). None of the three touches the SLOT (the type stays `radial`
+    // throughout), so the run must survive all three.
+    cmd(`tool.pipe.attr falloff center "-0.5,-0.5,-0.5"`);
+    cmd(`tool.pipe.attr falloff size "2,2,2"`);
+    cmd("tool.pipe.attr falloff shape smooth");
     settle();
     assert(inSessionCount() == 4,
-        "a falloff TYPE switch + start + end are THREE DISCRETE tweaks → each "
-        ~ "APPENDS its own re-grade step (P-E G2): gesture + 3 = 4; got "
-        ~ inSessionCount().to!string);
+        "three DISCRETE attribute tweaks each APPEND their own re-grade step "
+        ~ "(P-E G2): gesture + 3 = 4; got " ~ inSessionCount().to!string);
     assert(!vertNear(vert(0), v0AfterG),
-        "the TYPE-switch re-grade moved geometry (different weighting)");
+        "the re-grade moved geometry (different weighting)");
 
     cmd("tool.set move off");
     settle();
     postJson("/api/undo", "");
     settle();
-    assertVertex(6, 0.5, 0.5, 0.5, "post-drop Ctrl+Z reverts the type-switch run");
+    assertVertex(6, 0.5, 0.5, 0.5, "post-drop Ctrl+Z reverts the re-graded run");
     cmd("tool.pipe.attr falloff type none");
     drainHistory();
 }
 
 // ===========================================================================
-// (FALLOFF-OFF) Turning falloff OFF mid-run re-grades to weight=1 everywhere.
+// (FALLOFF-OFF) Turning falloff OFF mid-run ENDS the held run — it does NOT
+// re-grade to weight=1. Reversed by the slot-activation law (task 0791).
 //
-// Implemented semantics (asserted TRUTHFULLY): `type none` makes the packet
-// empty; the absolute re-apply then runs with NO falloff, so every moving-set
-// vert gets the FULL transform (weight 1). On a NO-selection move (whole-mesh
-// moving set) every vert that was partially-weighted under the radial falloff
-// jumps to the full translate. This is a packet change (radial → none) so it
-// re-grades + records ONE entry.
+// This case used to assert the opposite, and its old reading was reasonable:
+// `type none` empties the packet, so an absolute re-apply would give every
+// moving-set vert the FULL transform and the partially-weighted corner would
+// jump. Measured on the reference, emptying the slot is an ACTIVATION like any
+// other, and an activation freezes the held result instead of recomputing it.
+//
+// The fixture is kept exactly as it was because it is a strong witness in
+// either direction: a tight radial support leaves v6 (at the centre) fully
+// moved and v0 (the far corner) barely moved, so a re-grade to weight 1 would
+// be unmissable — v0 would jump to v6's delta. Asserting they stay APART is
+// therefore a claim, not the absence of one.
 // ===========================================================================
 unittest {
     establishCubeBaseline();
@@ -766,33 +781,35 @@ unittest {
     auto v6AfterG = vert(6);   // fully moved (at the radial center)
     auto v0AfterG = vert(0);   // barely moved (tight radius far corner)
 
-    // Turn falloff OFF mid-run → weight=1 everywhere → v0 jumps to the full
-    // translate (same delta v6 received).
+    // Empty the falloff slot mid-run. Under the law this ENDS the run: the
+    // in-session tail is consolidated (no tagged entry survives) and not one
+    // vertex moves.
     cmd("tool.pipe.attr falloff type none");
     settle();
-    assert(inSessionCount() == 2,
-        "turning falloff OFF is a packet change → re-grade APPENDS one entry; got "
+    assert(inSessionCount() == 0,
+        "emptying the falloff slot is an ACTIVATION: it must END the held run "
+        ~ "(consolidating its in-session tail), not append a re-grade step; got "
         ~ inSessionCount().to!string);
     auto v0Off = vert(0);
-    assert(!vertNear(v0Off, v0AfterG),
-        "falloff-off re-grades v0 to the FULL transform (weight 1); v0 was ("
-        ~ v0AfterG[0].to!string ~ "," ~ v0AfterG[1].to!string ~ ","
-        ~ v0AfterG[2].to!string ~ ") now (" ~ v0Off[0].to!string ~ ","
-        ~ v0Off[1].to!string ~ "," ~ v0Off[2].to!string ~ ")");
-    // The full-weight delta v0 received equals the delta v6 received (both got
-    // the unweighted translate). v6 is unchanged by the off-switch (it was
-    // already weight≈1 at the center).
+    assert(vertNear(v0Off, v0AfterG),
+        "the held result is frozen at the falloff that made it: v0 (barely "
+        ~ "weighted under the tight support) must NOT jump to the full "
+        ~ "transform; v0 was (" ~ v0AfterG[0].to!string ~ ","
+        ~ v0AfterG[1].to!string ~ "," ~ v0AfterG[2].to!string ~ ") now ("
+        ~ v0Off[0].to!string ~ "," ~ v0Off[1].to!string ~ ","
+        ~ v0Off[2].to!string ~ ")");
+    // …and the two corners stay APART. Under the re-grade this case used to
+    // assert, both would carry the SAME unweighted delta; the weighted gesture
+    // gave them very different ones, and that difference must survive.
     auto v6Off = vert(6);
-    // Compare the OFF-state translate of v0 against v6's translate from the cube:
-    // both equal the gesture's world delta. v6 delta:
     double[3] v6Delta = [v6Off[0]-0.5,    v6Off[1]-0.5,    v6Off[2]-0.5];
     double[3] v0Delta = [v0Off[0]-(-0.5), v0Off[1]-(-0.5), v0Off[2]-(-0.5)];
-    assert(fabs(v6Delta[0]-v0Delta[0]) < 1e-2 && fabs(v6Delta[1]-v0Delta[1]) < 1e-2
-        && fabs(v6Delta[2]-v0Delta[2]) < 1e-2,
-        "falloff-off gives EVERY moving vert the same full translate: v6 delta ("
-        ~ v6Delta[0].to!string ~ "," ~ v6Delta[1].to!string ~ "," ~ v6Delta[2].to!string
-        ~ ") vs v0 delta (" ~ v0Delta[0].to!string ~ "," ~ v0Delta[1].to!string
-        ~ "," ~ v0Delta[2].to!string ~ ")");
+    assert(fabs(v6Delta[0]-v0Delta[0]) > 1e-2,
+        "setup+claim: the tight support must have weighted the two corners "
+        ~ "differently, and emptying the slot must NOT level them: v6 delta ("
+        ~ v6Delta[0].to!string ~ "," ~ v6Delta[1].to!string ~ ","
+        ~ v6Delta[2].to!string ~ ") vs v0 delta (" ~ v0Delta[0].to!string ~ ","
+        ~ v0Delta[1].to!string ~ "," ~ v0Delta[2].to!string ~ ")");
 
     cmd("tool.set move off");
     settle();

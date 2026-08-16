@@ -289,28 +289,34 @@ unittest {
 }
 
 // ===========================================================================
-// (PICKED-CENTER) Element falloff's sphere CENTRE — audit-4 P9, task 0724.
+// (PICKED-CENTER) Element falloff's sphere CENTRE — audit-4 P9 (task 0724),
+// REVERSED by the slot-activation law (task 0791).
 //
-// Every case above edits a field of `FalloffConfig`, which is what
-// `falloffPacketsEqual` compares. `pickedCenter` is the one input to
-// `elementWeight` that is NOT in the config: it lives directly on
-// FalloffPacket, is owned by ACEN, and was excluded from equality on the
-// grounds that "the gizmo pivot has its own source of truth". The
-// consequence is a hole of exactly the F1 shape this file was written to
-// lock: relocating the sphere centre while a run is open changes which
-// vertices the falloff grades, and the trigger cannot see it.
+// Every other case in this file edits a field of `FalloffConfig` and asserts
+// the preview refreshes. This one is here to say, at the spot where the
+// opposite expectation used to live, that relocating the action centre is NOT
+// a member of that family: it is a SLOT ACTIVATION, and an activation ENDS the
+// held run instead of re-weighing it.
 //
-// The relocate here goes through `actionCenter userPlacedCenter`, so NOT ONE
-// falloff attr changes — which is the point. `dist` stays 1.2 throughout.
+// 0724 read the missing reaction as a packet-equality hole (`pickedCenter` is
+// an input to `elementWeight` that lives outside `FalloffConfig`) and closed it
+// by adding the field to `falloffPacketsEqual`. The reference was then measured
+// under a debugger: it holds no comparison at all, and an activation of the
+// action-centre slot ends the operation — which is also what OUR OWN pointer
+// routes had been doing all along (a click-away or element-pick relocate takes
+// a mouse-down boundary). So the re-grade 0724 produced existed only on the
+// headless leg, and disagreed with the click leg of the same user action.
 //
-// Geometry is chosen so the two centres SWAP the roles of two corners:
-// with the centre at v0 (-0.5,-0.5,-0.5) the opposite corner v6 is
-// sqrt(3) ~= 1.732 away and sits outside the 1.2 sphere (weight 0, unmoved),
-// while v0 itself is at the centre (weight 1, full move). Relocating the
-// centre to v6 inverts both. No anchorRing is set, so `anchorPos` is empty
-// and `elementWeight` measures distance to `pickedCenter` itself — the
-// branch where the field is load-bearing rather than shadowed by the picked
-// element's geometry.
+// The geometry below is 0724's own fixture, kept because it is exactly the
+// case where the field is load-bearing: with the centre at v0 (-0.5,-0.5,-0.5)
+// the opposite corner v6 is sqrt(3) ~= 1.732 away, outside the 1.2 sphere
+// (weight 0, unmoved), while v0 sits at the centre (weight 1, full move). A
+// re-grade would SWAP those two roles — so "frozen" here is a strong claim,
+// not the absence of one. No `anchorRing` is set, so `anchorPos` is empty and
+// `elementWeight` measures distance to `pickedCenter` itself.
+//
+// The law's own cells (all three relocate routes, both other slots, and the
+// attribute-write control) live in tests/test_slot_activation_boundary.d.
 // ===========================================================================
 unittest {
     postJson("/api/reset", "");
@@ -332,19 +338,20 @@ unittest {
         ~ "(weight 0) and must be unmoved; got v6.x=" ~ afterG[6][0].to!string);
 
     // Idle relocate of the sphere centre to the opposite corner. Nothing in
-    // FalloffConfig changes.
+    // FalloffConfig changes — and under the slot-activation law nothing in the
+    // GEOMETRY changes either: the run ends, frozen at the centre that made it.
     cmd(`tool.pipe.attr actionCenter userPlacedCenter "0.5,0.5,0.5"`);
     settle();
-    auto regraded = dumpVerts();
-    assert(!approxEq(regraded[6][0], afterG[6][0], 1e-3),
-        "idle relocate of the element sphere CENTRE must refresh the preview "
-        ~ "(audit-4 P9): v6 is now AT the centre and should take the full "
-        ~ "move; v6.x was " ~ afterG[6][0].to!string ~ ", still "
-        ~ regraded[6][0].to!string ~ " after userPlacedCenter -> 0.5,0.5,0.5");
-    assert(!approxEq(regraded[0][0], afterG[0][0], 1e-3),
-        "...and v0, now sqrt(3) from the centre, must fall back out of range; "
-        ~ "v0.x was " ~ afterG[0][0].to!string ~ ", still "
-        ~ regraded[0][0].to!string);
+    auto afterRelocate = dumpVerts();
+    assert(approxEq(afterRelocate[6][0], afterG[6][0], 1e-3),
+        "a relocate is a slot ACTIVATION: it must END the held run, not "
+        ~ "re-weigh it. v6 (now at the new centre) must stay where the gesture "
+        ~ "left it; was " ~ afterG[6][0].to!string ~ ", now "
+        ~ afterRelocate[6][0].to!string);
+    assert(approxEq(afterRelocate[0][0], afterG[0][0], 1e-3),
+        "...and v0 (now sqrt(3) from the centre) must NOT fall back out of "
+        ~ "range; was " ~ afterG[0][0].to!string ~ ", now "
+        ~ afterRelocate[0][0].to!string);
 
     cmd("tool.set move off");
     postJson("/api/reset", "");

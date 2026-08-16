@@ -213,21 +213,25 @@ unittest {
 // (2) PANEL multi-bank + mid-session falloff = full-fold ARM-1 re-grade.
 //
 // Open a Transform session via tool.beginSession, write TX then RZ (both
-// non-identity, no falloff). With all 8 verts selected about the ORIGIN, the
-// composed T·R fold has a known closed form. Then change the falloff
-// mid-session: with falloff type=none → linear (or any setting whose weight is
-// still 1.0 for every selected vertex inside the support), the ARM-1 re-grade
-// re-runs the FULL fold (T·R) — under Phase 2 it must NOT collapse to a
-// translate-only re-grade (which would drop the held RZ). We verify the held
-// rotate SURVIVES the falloff re-grade by checking the post-falloff geometry
-// still matches the composed T·R (not T-only).
+// non-identity). With all 8 verts selected about the ORIGIN, the composed T·R
+// fold has a known closed form. Then edit a falloff ATTRIBUTE mid-session: the
+// ARM-1 re-grade re-runs the FULL fold (T·R) — under Phase 2 it must NOT
+// collapse to a translate-only re-grade (which would drop the held RZ). We
+// verify the held rotate SURVIVES the falloff re-grade by checking the
+// post-change geometry still matches the composed T·R (not T-only).
 //
-// A radial falloff centred at the origin with a LARGE size keeps every selected
-// vertex at near-unit weight, so the re-grade is dominated by the composed op
-// and the test reads the SHAPE of the re-grade (T·R vs T-only) rather than an
-// exact magnitude. The assertion is "the rotated components survived" — the
-// post-falloff geometry is far closer to the composed T·R than to a
-// translate-only re-grade (which would drop the held RZ entirely).
+// A radial falloff centred at the origin keeps every cube vertex at the SAME
+// weight (they are equidistant from the centre), so the re-grade scales the
+// composed displacement uniformly and the test reads the SHAPE of the re-grade
+// (T·R vs T-only) rather than an exact magnitude. The assertion is "the rotated
+// components survived" — the post-change geometry is far closer to the composed
+// T·R than to a translate-only re-grade, which would drop the held RZ entirely.
+//
+// The trigger used to be the falloff TYPE (none → radial). Since task 0791 that
+// is a SLOT ACTIVATION and ends the held run instead of re-weighing it, so the
+// falloff is armed before the session with a support so large that weight is
+// 1.0 within tolerance, and the mid-session trigger is a `size` write — an
+// attribute, which is the half of the law that still re-grades.
 // ---------------------------------------------------------------------------
 
 // Expected composed T·R of a cube vertex about the origin for TX=0.5, RZ=90°.
@@ -252,6 +256,17 @@ unittest {
     drainAndReset();
     setupTransformOriginAll();
 
+    // Arm the radial falloff BEFORE the session. Its support is enormous, so every
+    // selected vertex sits at weight 1.0 to well inside the 1e-4 tolerance and
+    // the pre-change state is the plain composed T·R — while the SLOT is already
+    // occupied, so the mid-session change below is an attribute write and not an
+    // activation (task 0791: a type switch would END the run instead of
+    // re-grading it, and this case is about the re-grade).
+    cmd("tool.pipe.attr falloff type radial");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd(`tool.pipe.attr falloff center "0,0,0"`);
+    cmd(`tool.pipe.attr falloff size "40000,40000,40000"`);
+
     // Open a live session so the subsequent tool.attr hits the already-live
     // reEvaluate() branch (panel-session, editIsOpen() true → ARM-1 path).
     cmd("tool.beginSession Transform");
@@ -273,13 +288,18 @@ unittest {
                 ~ " want " ~ want[k].to!string);
     }
 
-    // MID-SESSION falloff change → fires the ARM-1 re-grade. Radial falloff
-    // centred at the origin with a large size keeps every selected vertex at
-    // near-unit weight, so the re-grade is dominated by the composed op. The
-    // change vs the prior `none` packet is what triggers ARM-1.
-    cmd("tool.pipe.attr falloff type radial");
-    cmd("tool.pipe.attr falloff shape linear");
-    cmd(`tool.pipe.attr falloff center "0,0,0"`);
+    // Capture the pre-change pose so the re-grade can be WITNESSED: without
+    // this the case would pass even if the trigger never fired at all (the
+    // geometry is already on T·R), which is precisely the failure mode task
+    // 0791 was chasing.
+    double[3][8] preChange;
+    foreach (vi; 0 .. 8) preChange[vi] = vAt(vi);
+
+    // MID-SESSION falloff ATTRIBUTE change → fires the ARM-1 re-grade. Narrowing
+    // the support from 40000 to 40 drops every (equidistant) cube vertex from
+    // weight ~1.0 to ~0.978 — small enough that the re-grade stays dominated by
+    // the composed op, large enough to be visible well above the 1e-4 assert
+    // tolerance.
     cmd(`tool.pipe.attr falloff size "40,40,40"`);
 
     // Settle the re-grade (it runs on the next update tick).
@@ -288,6 +308,18 @@ unittest {
         Thread.sleep(10.msecs);
     }
     Thread.sleep(60.msecs);
+
+    // The re-grade actually ran.
+    bool reGraded = false;
+    foreach (vi; 0 .. 8) {
+        auto got = vAt(vi);
+        foreach (k; 0 .. 3)
+            if (!approxEq(got[k], preChange[vi][k], 2e-4)) reGraded = true;
+    }
+    assert(reGraded,
+        "the mid-session attribute write must FIRE the ARM-1 re-grade — the "
+        ~ "geometry did not move at all, so everything below would be asserting "
+        ~ "the pre-change pose");
 
     // Post-falloff: under Phase 2 full-fold the held RZ SURVIVED. For each
     // vertex whose composed T·R differs from a translate-only re-grade (the

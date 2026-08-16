@@ -369,3 +369,55 @@ unittest {
         ~ " after widening size to 3");
     dropTool();
 }
+
+// ===========================================================================
+// (ROTATE-PANEL-SESSION) The boundary closes ALL THREE banks, not just Move.
+//
+// A panel-driven rotate (tool.beginSession + tool.attr RZ) leaves a Rotate
+// sub-tool session open with a held, uncommitted angle. Before 0791 the idle
+// slot poll committed only the wrapper's Move session, so an activation could
+// leave that session open — the run ended around it. The boundary now commits
+// the rotate and the scale sessions too, which is what "the held OPERATION
+// ends" means when the preset composes more than one bank.
+//
+// Witness: the open session's edit lands as a committed undo entry at the
+// activation (it is not left dangling), and the rotated geometry stays put.
+// ===========================================================================
+unittest {
+    postJson("/api/reset", "");
+    cmd("tool.set Transform on");
+    cmd("tool.pipe.attr actionCenter mode origin");
+    cmd("tool.pipe.attr falloff type radial");
+    cmd("tool.pipe.attr falloff shape linear");
+    cmd(`tool.pipe.attr falloff center "0,0,0"`);
+    cmd(`tool.pipe.attr falloff size "40000,40000,40000"`);
+    settle();
+
+    cmd("tool.beginSession Transform");
+    cmd("tool.attr Transform RZ 90");
+    settle();
+    auto held = dumpVerts();
+    assert(!approxEq(held[0][0], -0.5, 1e-3),
+        "setup: the panel rotate must have moved v0 off its pristine x; got "
+        ~ held[0][0].to!string);
+    long undosHeld = undoCount();
+
+    // Activate the falloff slot while that session is open.
+    cmd("tool.pipe.attr falloff type linear");
+    settle();
+
+    assert(undoCount() >= undosHeld,
+        "the open panel session must be COMMITTED at the boundary, not "
+        ~ "discarded: undo count went from " ~ undosHeld.to!string ~ " to "
+        ~ undoCount().to!string);
+    auto after = dumpVerts();
+    foreach (i; 0 .. held.length)
+        foreach (k; 0 .. 3)
+            assert(approxEq(after[i][k], held[i][k], 1e-3),
+                "the held rotate must stay frozen across the slot activation; "
+                ~ "v" ~ i.to!string ~ " comp " ~ k.to!string ~ " was "
+                ~ held[i][k].to!string ~ ", now " ~ after[i][k].to!string);
+
+    cmd("tool.set Transform off");
+    postJson("/api/reset", "");
+}

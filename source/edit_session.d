@@ -91,6 +91,29 @@ interface LiveEvalClient {
 }
 
 // ---------------------------------------------------------------------------
+// SlotActivationClient — optional capability (task 0791): a tool that treats
+// ACTIVATING a pipe slot differently from writing one of its ATTRIBUTES.
+//
+// The distinction is measured, not stylistic. Putting a tool into a slot — even
+// the same tool that was already there — ENDS the held operation and freezes
+// its result; writing an attribute of the tool in the slot RE-WEIGHS the held
+// operation in place. XfrmTransformTool is the sole implementor; every other
+// tool keeps the old, single-branch behaviour by simply not implementing it.
+//
+// This seam exists because the two answers must be decided BEFORE the
+// stage-config re-evaluate below runs: the re-evaluate IS the re-weigh, so a
+// tool whose run has just ended must not have it fired at all. An idle poll one
+// frame later cannot undo an already-recomputed geometry.
+// ---------------------------------------------------------------------------
+interface SlotActivationClient {
+    /// A pipe-stage config edit has been published. Return true iff it was a
+    /// SLOT ACTIVATION for this tool, in which case the tool has ALREADY ended
+    /// its held run and the caller must skip the re-evaluate. Must be
+    /// idempotent — the driver may call it more than once per change.
+    bool endHeldRunIfSlotActivated();
+}
+
+// ---------------------------------------------------------------------------
 // RefireClient — optional capability: record-once, re-evaluate panel-edit
 // sessions (undo/redo migration P4). CommandWrapperTool (the deform-command
 // wrapper base: xfrm.smooth / jitter / quantize + edge slide) is the sole
@@ -261,6 +284,14 @@ final class EditSession {
     // (not hasLiveAttrEval()) — see LiveEvalClient.hasLiveAttrEval for the
     // falloff-refire entry-count contract this asymmetry preserves.
     void onStageConfigChanged() {
+        // Task 0791 — ask FIRST whether this edit ACTIVATED a slot. If it did,
+        // the tool has ended its held run and the result is frozen at the pipe
+        // state that produced it, so the re-evaluate below (which is the
+        // re-weigh) must not run. Ordering is the whole point: this path is
+        // synchronous with the command, while the tool's own idle poll is a
+        // frame later — too late to un-recompute geometry.
+        auto sa = cast(SlotActivationClient) tool_();
+        if (sa !is null && sa.endHeldRunIfSlotActivated()) return;
         auto lc = cast(LiveEvalClient) tool_();
         if (lc !is null && lc.hasLiveEval()) lc.reEvaluate();
     }

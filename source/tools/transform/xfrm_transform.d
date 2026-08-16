@@ -88,7 +88,8 @@ import shader : Shader;
 import params : Param;
 import tools.transform.transform : TransformTool;
 import tool            : ToolFlag;
-import edit_session    : LiveEvalClient, LifecycleUndoEmitter;
+import edit_session    : LiveEvalClient, SlotActivationClient,
+                         LifecycleUndoEmitter;
 import tools.transform.move      : MoveTool;
 import tools.transform.rotate    : RotateTool;
 import tools.transform.scale     : ScaleTool;
@@ -348,7 +349,8 @@ struct GestureRecord {
 // interface's implementations (EditSession discovers them by cast).
 // LifecycleUndoEmitter (task 0428): marker — this tool emits a
 // ToolDeactivationCommand on drop (undo-cursor lifecycle stepping).
-class XfrmTransformTool : TransformTool, LiveEvalClient, LifecycleUndoEmitter {
+class XfrmTransformTool : TransformTool, LiveEvalClient, SlotActivationClient,
+                          LifecycleUndoEmitter {
 public:
     // T/R/S flags — `T integer 0/1` etc. in the preset config.
     // Default to all enabled (the bare `Transform` preset that shows
@@ -879,96 +881,23 @@ public:
             }
         }
 
-        // ── Pipe-slot ACTIVATION poll (task 0791; grew out of P-C's ACEN-mode
-        // poll) ───────────────────────────────────────────────────────────────
+        // Pipe-slot ACTIVATION check (task 0791; grew out of P-C's ACEN-mode
+        // poll) — the law lives on `endHeldRunIfSlotActivated` below. This site
+        // catches the routes that publish no stage-config signal at all (the
+        // `actr.*` side-effect commands record nothing, so they never trip the
+        // command-history foreign-record guard the selection/mutation boundary
+        // above relies on); every `tool.pipe.attr` reaches the same check
+        // synchronously through EditSession.onStageConfigChanged.
         //
-        // THE LAW, and the two halves it separates:
-        //
-        //   ACTIVATING a slot  — putting a (possibly identical) tool into one of
-        //                        the pipe's slots — ENDS the held run. The result
-        //                        stays frozen at the pipe state that produced it
-        //                        and the tool re-arms.
-        //   WRITING an ATTRIBUTE of a slot's tool — RE-WEIGHS the held run from
-        //                        its pre-gesture baseline (the re-grade block
-        //                        below; unchanged).
-        //
-        // Measured on the reference under a debugger, eight cells in one boot,
-        // in full agreement with the trace (task 0791). The decisive cell put
-        // the SAME tool back into a slot that already held it: the pipeline is
-        // byte-identical before and after and the held operation still ends, so
-        // the trigger is the activation EVENT, not a diff of the pipeline. That
-        // is also why there is no packet comparison to copy here — the reference
-        // compares nothing, it rolls the held result back and re-runs the pipe.
-        //
-        // Covered: the three slots the reference was actually driven through —
-        // action centre, falloff, axis. Snap and symmetry are NOT covered: they
-        // were never driven there, and guessing is what this task spent four
-        // reference boots not doing. See the task file's gap list.
-        //
-        // Why a POLL: `actr.*` / `tool.pipe.attr` are SideEffect commands (they
-        // record nothing) so they never trip the command-history foreign-record
-        // guard the selection/mutation boundary above relies on. This runs BEFORE
-        // the re-grade block and before any mouse-down is processed this frame
-        // (update() runs before event dispatch), so no gesture lands in the wrong
-        // run — the poll always precedes the next gesture (invariant).
+        // It runs BEFORE the re-grade block and before any mouse-down is
+        // processed this frame (update() runs before event dispatch), so no
+        // gesture lands in the wrong run — the check always precedes the next
+        // gesture (invariant).
         //
         // Skipped during a live drag (dragAxis frozen): a slot read mid-drag is
         // the drag's own state, not a user action.
-        if (activeDrag is null) {
-            // — Action centre. TWO activation events share this slot: the MODE
-            //   (which centre tool is in it) and an explicit user RELOCATE. The
-            //   pointer routes for both already end the run at the mouse-down
-            //   (the Phase-1a / element-pick / P5 boundaries); this poll is what
-            //   gives the COMMAND-surface relocate the same law, which it did
-            //   not have — measured: the pivot moved and the run was untouched.
-            if (auto ac = activeAcenStage()) {
-                int  curMode  = cast(int) ac.mode;
-                uint curEpoch = ac.userRelocateEpoch;
-                if (lastAcenMode == -1) {
-                    // First poll this session: latch without firing a boundary.
-                    lastAcenMode          = curMode;
-                    lastAcenRelocateEpoch = curEpoch;
-                } else if (curMode != lastAcenMode
-                        || curEpoch != lastAcenRelocateEpoch) {
-                    // pivotMoved: BUG-1 — a mode change (and equally a relocate)
-                    // recomputes the centre from scratch, so any display
-                    // soft-pin from a prior settle goes with the run.
-                    // (applySetAttr "mode" already clears it inside the stage
-                    // when the change came through setAttr; this covers every
-                    // other path and is a no-op when already clear.)
-                    endHeldRunAtSlotActivation(/*pivotMoved=*/true);
-                    lastAcenMode = curMode;
-                }
-                lastAcenRelocateEpoch = curEpoch;
-            }
-
-            // — Falloff. The slot's occupant is the weighting TOOL: its `type`,
-            //   and how many falloff nodes are stacked. A type swap and a node
-            //   added/removed are both activations. Every OTHER falloff attr
-            //   (size / shape / dist / steps / map / …) stays an attribute write
-            //   and still re-grades through the block below.
-            {
-                ulong curSig = falloffSlotSignature();
-                if (!lastFalloffSlotValid) {
-                    lastFalloffSlotValid = true;
-                    lastFalloffSlotSig   = curSig;
-                } else if (curSig != lastFalloffSlotSig) {
-                    endHeldRunAtSlotActivation(/*pivotMoved=*/false);
-                    lastFalloffSlotSig = curSig;
-                }
-            }
-
-            // — Axis. Same shape: the mode is which axis tool sits in the slot.
-            if (auto ax = activeAxisStage()) {
-                int curAxisMode = cast(int) ax.mode;
-                if (lastAxisMode == -1) {
-                    lastAxisMode = curAxisMode;
-                } else if (curAxisMode != lastAxisMode) {
-                    endHeldRunAtSlotActivation(/*pivotMoved=*/false);
-                    lastAxisMode = curAxisMode;
-                }
-            }
-        }
+        if (activeDrag is null)
+            endHeldRunIfSlotActivated();
 
         // Mid-tool falloff re-apply. While an edit session is open
         // and a non-trivial translate has been applied, a falloff
@@ -2039,6 +1968,100 @@ public:
     private void closeRunBoundary() {
         consolidateRunAndAdvance();
         currentRunBank = DragBank.None;
+    }
+
+    // ── THE LAW (task 0791), and the two halves it separates ────────────
+    //
+    //   ACTIVATING a slot  — putting a (possibly identical) tool into one of
+    //                        the pipe's slots — ENDS the held run. The result
+    //                        stays frozen at the pipe state that produced it
+    //                        and the tool re-arms.
+    //   WRITING an ATTRIBUTE of a slot's tool — RE-WEIGHS the held run from
+    //                        its pre-gesture baseline (the re-grade block
+    //                        the re-grade block in update(); unchanged).
+    //
+    // Measured on the reference under a debugger, eight cells in one boot,
+    // in full agreement with the trace (task 0791). The decisive cell put
+    // the SAME tool back into a slot that already held it: the pipeline is
+    // byte-identical before and after and the held operation still ends, so
+    // the trigger is the activation EVENT, not a diff of the pipeline. That
+    // is also why there is no packet comparison to copy here — the reference
+    // compares nothing, it rolls the held result back and re-runs the pipe.
+    //
+    // Covered: the three slots the reference was actually driven through —
+    // action centre, falloff, axis. Snap and symmetry are NOT covered: they
+    // were never driven there, and guessing is what this task spent four
+    // reference boots not doing. See the task file's gap list.
+    //
+    // The check is callable from BOTH places that can see an activation:
+    //   * EditSession.onStageConfigChanged, synchronously with the pipe-stage
+    //     command and BEFORE its re-evaluate (SlotActivationClient). An open
+    //     panel session re-evaluates the moment the stage publishes, so the
+    //     boundary has to win that race — a frame later the geometry has
+    //     already been recomputed and freezing it is no longer possible.
+    //   * update()'s idle path, for the routes that publish no stage-config
+    //     signal at all (the `actr.*` side-effect commands).
+    // Returns whether it ended a run this call. Idempotent: the latches are
+    // updated by the firing call, so a second call sees no change.
+    override bool endHeldRunIfSlotActivated() {
+        bool fired = false;
+        // — Action centre. TWO activation events share this slot: the MODE
+        //   (which centre tool is in it) and an explicit user RELOCATE. The
+        //   pointer routes for both already end the run at the mouse-down
+        //   (the Phase-1a / element-pick / P5 boundaries); this poll is what
+        //   gives the COMMAND-surface relocate the same law, which it did
+        //   not have — measured: the pivot moved and the run was untouched.
+        if (auto ac = activeAcenStage()) {
+            int  curMode  = cast(int) ac.mode;
+            uint curEpoch = ac.userRelocateEpoch;
+            if (lastAcenMode == -1) {
+                // First poll this session: latch without firing a boundary.
+                lastAcenMode          = curMode;
+                lastAcenRelocateEpoch = curEpoch;
+            } else if (curMode != lastAcenMode
+                    || curEpoch != lastAcenRelocateEpoch) {
+                // pivotMoved: BUG-1 — a mode change (and equally a relocate)
+                // recomputes the centre from scratch, so any display
+                // soft-pin from a prior settle goes with the run.
+                // (applySetAttr "mode" already clears it inside the stage
+                // when the change came through setAttr; this covers every
+                // other path and is a no-op when already clear.)
+                endHeldRunAtSlotActivation(/*pivotMoved=*/true);
+                fired = true;
+                lastAcenMode = curMode;
+            }
+            lastAcenRelocateEpoch = curEpoch;
+        }
+
+        // — Falloff. The slot's occupant is the weighting TOOL: its `type`,
+        //   and how many falloff nodes are stacked. A type swap and a node
+        //   added/removed are both activations. Every OTHER falloff attr
+        //   (size / shape / dist / steps / map / …) stays an attribute write
+        //   and still re-grades through the block below.
+        {
+            ulong curSig = falloffSlotSignature();
+            if (!lastFalloffSlotValid) {
+                lastFalloffSlotValid = true;
+                lastFalloffSlotSig   = curSig;
+            } else if (curSig != lastFalloffSlotSig) {
+                endHeldRunAtSlotActivation(/*pivotMoved=*/false);
+                fired = true;
+                lastFalloffSlotSig = curSig;
+            }
+        }
+
+        // — Axis. Same shape: the mode is which axis tool sits in the slot.
+        if (auto ax = activeAxisStage()) {
+            int curAxisMode = cast(int) ax.mode;
+            if (lastAxisMode == -1) {
+                lastAxisMode = curAxisMode;
+            } else if (curAxisMode != lastAxisMode) {
+                endHeldRunAtSlotActivation(/*pivotMoved=*/false);
+                fired = true;
+                lastAxisMode = curAxisMode;
+            }
+        }
+        return fired;
     }
 
     // Task 0791 — the ONE thing a pipe-slot ACTIVATION does: end the held run.
