@@ -9,7 +9,7 @@ import mesh_edit_delta : MeshEditTracker, MeshEditScope;
 import change_bus : SelDomain;
 import mesh_ops.cut : MeshCutOps;
 import mesh_ops.bridge : MeshBridgeOps;
-import mesh_ops.loop_slice : MeshLoopSliceOps;
+import mesh_ops.loop_slice : MeshLoopSliceOps, bandWalk, BandCell;
 import mesh_ops.decimate : MeshDecimateOps;
 import mesh_ops.revolve : MeshRevolveOps;
 import mesh_ops.cleanup : MeshCleanupOps;

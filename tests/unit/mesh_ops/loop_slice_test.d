@@ -9,6 +9,7 @@ import mesh_ops.loop_slice;
 
 unittest {
     import std.math : abs;
+    import std.conv : to;
 
     // Helper: true if any face in m has exactly the vertices in vs (order-independent).
     static bool hasFace(const Mesh m, uint[] vs) {
@@ -33,6 +34,26 @@ unittest {
                 return i;
         }
         return ~0u;
+    }
+
+    // Helper: like `hasFace` but returns the actual ring ARRAY (in its
+    // stored order) rather than a bool -- `hasFace` only checks vertex-SET
+    // membership, which is blind to ring ROTATION (task 1054 review, "Also
+    // worth strengthening": a band-mode leak into this whole-ring path
+    // reddened only a fraction of the existing whole-ring suites, precisely
+    // because most of them -- this one included, until the assert below --
+    // never inspect a face's ring array, only its vertex set/counts).
+    static uint[] findFaceRingByVertexSet(const Mesh m, uint[] vs) {
+        outer: foreach (const f; m.faces) {
+            if (f.length != vs.length) continue;
+            foreach (v; vs) {
+                bool found = false;
+                foreach (fv; f) if (fv == v) { found = true; break; }
+                if (!found) continue outer;
+            }
+            return f.dup;
+        }
+        return [];
     }
 
     // ------------------------------------------------------------------
@@ -89,6 +110,28 @@ unittest {
         // We accept either sub-quad of F0 to allow for orientation variants.
         bool subQuadOk = hasFace(m, [0u, mA, mB, 3u]) || hasFace(m, [mA, 1u, 2u, mB]);
         assert(subQuadOk, "at least one sub-quad of the F0 split must exist by vertex set");
+
+        // Task 1054 review ("Also worth strengthening"): the vertex-set
+        // checks above (and every other assertion in this test) are blind to
+        // ring ORDER. `select = off` (this whole-ring path, `bandFaces ==
+        // null`) must stay byte-for-byte on `emitSingleRingSplit`'s own
+        // dispatch/construction: its FIRST cap is built literally as
+        // `newFaces ~= [a, pLo[0], qLo[0], d];` (loop_slice.d) -- ORIGINAL,
+        // new, new, ORIGINAL (`oNNo`) -- never band mode's chord-start
+        // rotation (`emitNgonRingSplit`'s `[qLo0] ~ s2 ~ [pLo0]`, R9's
+        // `NooN`). Confirmed empirically (a fresh cube's only cut): F0's
+        // "toward-a/d" cap is the sub-quad with vertex set {1, mA, mB, 2}
+        // (F0=[0,3,2,1], seed edge 0-1 is F0's own wrap-around edge 1->0)
+        // and its EXACT stored ring is `[1, mA, mB, 2]` -- not merely "some
+        // rotation of that set", which is what the earlier `hasFace`-only
+        // checks in this test could not tell apart from a rotated one.
+        uint[] cap1 = findFaceRingByVertexSet(m, [1u, mA, mB, 2u]);
+        assert(cap1.length == 4, "F0's toward-a/d sub-quad must exist by vertex set");
+        assert(cap1 == [1u, mA, mB, 2u],
+            "select=off whole-ring split must keep emitSingleRingSplit's "
+            ~ "[a, pLo0, qLo0, d] (oNNo) construction EXACTLY -- a band-mode "
+            ~ "chord-start rotation (NooN) must never leak into this path -- "
+            ~ "got ring " ~ cap1.to!string);
     }
 
     // ------------------------------------------------------------------
@@ -1741,8 +1784,11 @@ unittest { // U3 — shared-rail identity (§3.2) + open/closed cut-point count.
     // b2x2) -- U3 pins the INVARIANT the pre-pass depends on existing.
 }
 
-unittest { // U4 — a repeated index in `sel` must not hang `bandWalk`
-    // forever (task 1054 review, BLOCKER). `bandReorderByConnectivity`'s
+unittest { // Phase-2-review hang guard (NOT the plan's U4 — that name is
+    // reused below by Phase 3's own §6 U4, determinism under a permuted
+    // face-array order; this test predates that numbering) — a repeated
+    // index in `sel` must not hang `bandWalk` forever (task 1054 review,
+    // BLOCKER). `bandReorderByConnectivity`'s
     // `seenCount` counts DISTINCT visits while `S = sel.length` counts raw
     // entries -- a duplicate index (e.g. `[21, 21]`) marks the same slot
     // `seen` twice, so `seenCount` saturates below `S`; both the nb<2 scan
@@ -1783,8 +1829,10 @@ unittest { // U4 — a repeated index in `sel` must not hang `bandWalk`
         ~ "pre-fix infinite loop in bandReorderByConnectivity's restart scan");
 }
 
-unittest { // U5 — an out-of-range selection index must not crash `bandWalk`
-    // (task 1054 review). `bandNb`/`bandSideOf` index `polys[pi]` raw with
+unittest { // Phase-2-review bounds guard (NOT the plan's U5 — that name is
+    // reused below by Phase 3's own §6 U5, the measured ring-start law; this
+    // test predates that numbering) — an out-of-range selection index must
+    // not crash `bandWalk` (task 1054 review). `bandNb`/`bandSideOf` index `polys[pi]` raw with
     // no bounds guard of their own; `bandWalk` now filters `sel` to
     // `p < polys.length` once, before any of them run. Reproduced pre-fix:
     // `bandWalk(bandTestBasePolys, [21u, 999u])` threw `ArrayIndexError`
@@ -1802,4 +1850,287 @@ unittest { // U5 — an out-of-range selection index must not crash `bandWalk`
     assert(got == [[BandCell(21, 2, 0)]],
         format("out-of-range index must be filtered out, not crash or "
                ~ "silently retained: got %s", got));
+}
+
+// ---------------------------------------------------------------------------
+// Task 1054 Phase 3 — U5: the MEASURED ring-start law (R9, plan §3.2/§6),
+// pinned on a REAL kernel run rather than the pure `bandWalk` above. Unlike
+// U2/U3 (which drive `bandWalk` directly against `bandTestBasePolys`'
+// reference-index topology, since the walk was not yet wired), U5 needs the
+// actual EMITTED face rings `insertEdgeLoopsMulti` produces, so it builds a
+// real `Mesh` via `prim.cube`'s own generator (`buildCuboidParametric`) and
+// selects faces by GEOMETRY (vertex-coordinate SET, mirroring tests/
+// fixture_helpers.d's `resolveCoords`) — never by a face-index literal, per
+// the SAME "our numbering does not correspond to the reference's" rule
+// `bandTestBasePolys`' own doc comment states (and CLAUDE.md's Picking
+// Strategy note: never key a geometry assertion to index correspondence).
+//
+// Classification needs no cross-engine correspondence either: a vertex index
+// at or above the PRE-CUT vertex count is a vertex THIS CALL created ('N');
+// below it, it is original ('o') — `insertEdgeLoopsMulti` only ever APPENDS
+// (`addVertex`), so this partition is exact. The resulting pattern STRING
+// (letters in the face's own stored ring order) is then a direct,
+// reference-independent read of the ring-start law: a face carrying the
+// chord at both ends of its OWN stored array (`flags[0] && flags[$-1]`) is
+// "created"; one with a non-new position 0 is "absorb-only" (per §6's own
+// classifier).
+//
+// The CREATED-class multisets below are the reference's, lifted verbatim
+// from the plan's §6 table (`ring_start_law.py`'s per-case output — 470
+// created / 133 absorb-only / 0 violations across all 54 cases): a created
+// face's exact pattern is fully determined by the cut's OWN construction
+// (§3.2's `capA`/`capB`), so its letter-for-letter shape is portable across
+// engines regardless of which mesh generator built the base cube — verified
+// empirically (this test's created-class asserts reproduce the reference's
+// strings exactly, unmodified from the plan's table). An ABSORB-only face's
+// pattern additionally encodes WHICH local ring-edge index the absorbed
+// mid(s) land at, which is an accident of THAT face's own vertex ordering —
+// vibe3d's `prim.cube` generator does not match the reference's index/
+// winding convention (`bandTestBasePolys`' own doc comment) — so absorb-only
+// faces are checked STRUCTURALLY (`assertAbsorbShape`, below) rather than by
+// exact string: face count, midpoints-absorbed-per-face, and `!flags[0]`
+// (never rotated) — the count/shape claims the reference dump also supports
+// on these four cases, and the portable half of the law either way.
+private struct BandRunResult { string[] created; string[] absorbOnly; }
+
+private BandRunResult runBandAndClassify(Vec3[][] sel, float pos) {
+    import mesh_ops.box_geom : BoxParams, buildCuboidParametric;
+    import std.algorithm : canFind;
+
+    Mesh m;
+    BoxParams p;
+    p.segmentsX = 3; p.segmentsY = 1; p.segmentsZ = 3;
+    p.sizeX = 1; p.sizeY = 1; p.sizeZ = 1;
+    p.radius = 0; p.sharp = true;
+    buildCuboidParametric(&m, p);
+    m.buildLoops();
+    m.resetSelection();   // size the selection/order arrays before selectFace
+    immutable uint origCount = cast(uint) m.vertices.length;
+
+    static bool near(Vec3 a, Vec3 b) { return (a - b).length() < 1e-4f; }
+
+    // Resolve one polygon by its corner-coordinate SET (any order) — the
+    // in-process mirror of fixture_helpers.resolveCoords's polygon mode.
+    static uint resolveFace(ref Mesh mm, Vec3[] want) {
+        outer: foreach (fi, f; mm.faces) {
+            if (f.length != want.length) continue;
+            auto used = new bool[](f.length);
+            foreach (w; want) {
+                bool found = false;
+                foreach (k, vi; f) {
+                    if (used[k]) continue;
+                    if (near(mm.vertices[vi], w)) { used[k] = true; found = true; break; }
+                }
+                if (!found) continue outer;
+            }
+            return cast(uint) fi;
+        }
+        assert(false, "resolveFace: no matching polygon in the built cube");
+    }
+
+    uint[] faceIdx;
+    foreach (spec; sel) faceIdx ~= resolveFace(m, spec);
+    foreach (fi; faceIdx) m.selectFace(cast(int) fi);
+    uint[] bandFaces = m.selectedFaceIndicesInSelectionOrder();
+
+    uint[] newFaceIndices;
+    bool ok = m.insertEdgeLoopsMulti(null, [pos], newFaceIndices, bandFaces);
+    assert(ok, "band cut must succeed");
+
+    BandRunResult res;
+    foreach (f; m.faces) {
+        char[] s;
+        foreach (v; f) s ~= (v >= origCount) ? 'N' : 'o';
+        if (!s.canFind('N')) continue;   // untouched face — outside the classifier's domain
+        // This partitions on `s[0]=='N' && s[$-1]=='N'` -- the very property
+        // under test (does the ring START ON the chord) -- so it is worth
+        // recording, not just asserting, WHY that is discriminating rather
+        // than circular (task 1054 review NIT): verified over this corpus
+        // that exactly ONE cyclic rotation of any given face's ring has the
+        // marker at BOTH ends (a chord is exactly 2 adjacent new vertices;
+        // no other rotation of the same ring puts both at index 0 and $-1
+        // simultaneously unless the whole ring is new, which never happens
+        // here), so the stored order the kernel actually emitted -- not an
+        // independent re-derivation -- is what this reads. Confirmed by
+        // mutation: dropping the rotation (forcing every face's stored start
+        // back to index 0 regardless of content) moves faces between the
+        // `created`/`absorbOnly` classes and reddens BOTH consumers below --
+        // U5's created-class multiset assert AND the absorb-only regression
+        // guard -- rather than leaving either silently unaffected.
+        if (s[0] == 'N' && s[$ - 1] == 'N') res.created    ~= s.idup;
+        else                                res.absorbOnly ~= s.idup;
+    }
+    return res;
+}
+
+private void assertMultiset(string what, string[] got, string[] want) {
+    import std.algorithm : sort;
+    import std.format : format;
+    auto g = got.dup;  auto w = want.dup;
+    sort(g); sort(w);
+    assert(g == w, format("%s: pattern multiset expected %s, got %s", what, w, g));
+}
+
+// Absorb-only faces are checked STRUCTURALLY (count of absorbing faces, and
+// how many midpoints each absorbed), not by exact pattern STRING: unlike a
+// created face's pattern (fully determined by the cut's OWN construction,
+// hence portable letter-for-letter across engines — the created-class
+// asserts above reproduce the reference's exact strings), an absorbing
+// face's pattern also encodes WHICH local ring-edge index the absorbed
+// mid(s) land at, which is an accident of THAT face's own vertex ordering —
+// a property of the mesh GENERATOR (ours differs from the reference's, per
+// `bandTestBasePolys`' own doc comment), not of the cut law. `!flags[0]`
+// (never rotate an absorbing face) is the portable, LAW-level invariant —
+// checked directly below, and again by the dedicated regression-guard
+// unittest after this one.
+private void assertAbsorbShape(string what, string[] got, size_t expectedCount,
+                                size_t expectedNPerFace) {
+    import std.algorithm : count;
+    import std.format : format;
+    assert(got.length == expectedCount,
+        format("%s: expected %d absorb-only face(s), got %d (%s)",
+               what, expectedCount, got.length, got));
+    foreach (pat; got) {
+        assert(pat[0] != 'N',
+            format("%s: absorb-only face rotated onto a new vertex: %s", what, pat));
+        auto n = pat.count('N');
+        assert(n == expectedNPerFace,
+            format("%s: expected %d absorbed midpoint(s), got %d in %s",
+                   what, expectedNPerFace, n, pat));
+    }
+}
+
+unittest { // U5 — created-class law: the chord sits on the ring's CLOSING
+    // edge (`flags[0] && flags[$-1]`), on the four corpus cases the plan's
+    // §6 table freezes (row3/L/b2x2/one_00), all on the top face (y=0.5) of
+    // the 3x1x3 segmented box, all at pos 0.5 (rotation is pos-independent).
+    Vec3 v(float x, float y, float z) { return Vec3(x, y, z); }
+    enum float e = 0.166667f, h = 0.5f;
+
+    Vec3[][] row3Sel = [
+        [v(-h,h,-h), v(-h,h,-e), v(-e,h,-e), v(-e,h,-h)],
+        [v(-e,h,-h), v(-e,h,-e), v(e,h,-e),  v(e,h,-h)],
+        [v(e,h,-h),  v(e,h,-e),  v(h,h,-e),  v(h,h,-h)],
+    ];
+    auto r3 = runBandAndClassify(row3Sel, 0.5f);
+    assertMultiset("row3 created", r3.created,
+        ["NooN", "NooN", "NooN", "NooN", "NooN", "NooN"]);
+    assertAbsorbShape("row3 absorb-only", r3.absorbOnly, 2, 1);
+
+    Vec3[][] LSel = row3Sel ~ [
+        [v(e,h,-e), v(e,h,e), v(h,h,e), v(h,h,-e)],
+        [v(e,h,e),  v(e,h,h), v(h,h,h), v(h,h,e)],
+    ];
+    auto L = runBandAndClassify(LSel, 0.5f);
+    assertMultiset("L created", L.created,
+        ["NooN", "NooN", "NooN", "NooN", "NooN", "NooN", "NooN", "NooN", "NoN", "NoooN"]);
+    assertAbsorbShape("L absorb-only", L.absorbOnly, 2, 1);
+
+    Vec3[][] b2x2Sel = [
+        [v(-h,h,-h), v(-h,h,-e), v(-e,h,-e), v(-e,h,-h)],
+        [v(-e,h,-h), v(-e,h,-e), v(e,h,-e),  v(e,h,-h)],
+        [v(-h,h,-e), v(-h,h,e),  v(-e,h,e),  v(-e,h,-e)],
+        [v(-e,h,-e), v(-e,h,e),  v(e,h,e),   v(e,h,-e)],
+    ];
+    auto b22 = runBandAndClassify(b2x2Sel, 0.5f);
+    assertMultiset("b2x2 created", b22.created,
+        ["NoN", "NoN", "NoN", "NoN", "NoooN", "NoooN", "NoooN", "NoooN"]);
+    assert(b22.absorbOnly.length == 0,
+        "b2x2: a closed loop of turn cells has NO terminal — nothing absorbs");
+
+    Vec3[][] one00Sel = [
+        [v(-e,h,-e), v(-e,h,e), v(e,h,e), v(e,h,-e)],
+    ];
+    auto one00 = runBandAndClassify(one00Sel, 0.5f);
+    assertMultiset("one_00 created", one00.created, ["NooN", "NooN"]);
+    assertAbsorbShape("one_00 absorb-only", one00.absorbOnly, 2, 1);
+}
+
+unittest { // U5 — absorb-only class is a REGRESSION GUARD (§3.2 consequence
+    // 3): a face that only absorbs a foreign terminating midpoint must KEEP
+    // its ORIGINAL start (`!flags[0]`) — the pass-2 absorber already
+    // guarantees `nf[0] == f[0]` (it walks `f` from `k=0`, inserting mids
+    // AFTER each original vertex), so this is pinned as a standing
+    // regression check on the same row3 run rather than new machinery.
+    Vec3 v(float x, float y, float z) { return Vec3(x, y, z); }
+    enum float e = 0.166667f, h = 0.5f;
+    Vec3[][] row3Sel = [
+        [v(-h,h,-h), v(-h,h,-e), v(-e,h,-e), v(-e,h,-h)],
+        [v(-e,h,-h), v(-e,h,-e), v(e,h,-e),  v(e,h,-h)],
+        [v(e,h,-h),  v(e,h,-e),  v(h,h,-e),  v(h,h,-h)],
+    ];
+    auto r3 = runBandAndClassify(row3Sel, 0.5f);
+    foreach (pat; r3.absorbOnly)
+        assert(pat[0] != 'N',
+            "absorb-only face must keep its ORIGINAL ring start: " ~ pat);
+}
+
+// ---------------------------------------------------------------------------
+// Task 1054 review (SHOULD-FIX 2) — the rail pre-pass must skip a
+// DEGENERATE band cell (`cell.A == cell.B`, only reachable via a
+// 3-polygon edge — `bandSides`'s own doc comment) instead of creating a
+// rail for a cell that the entry-population loop then skips anyway. In
+// the ALL-degenerate limit this must be decided a no-op BEFORE any vertex
+// is appended, matching the standing rule (this file's coincident-
+// position dedup, and `mesh_ops.edge_slice`'s "no-op must not corrupt the
+// mesh" contract) that a no-op is decided before the first geometry
+// mutation.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+
+    // Three triangles all sharing ONE edge (0,1) — a genuine non-manifold
+    // "book" (same construction as tests/unit/mesh_test.d's "non-manifold
+    // book: spine edge (3 faces)" fixture). Selecting all three makes
+    // EVERY chain cell degenerate: `bandChains`' own "closed" rule treats
+    // three polygons mutually adjacent via a SINGLE physical edge as a
+    // closed 3-cycle, so each cell's derived predecessor-side and
+    // successor-side resolve to the SAME ring-edge index — that polygon's
+    // only shared (non-boundary) edge — giving `cell.A == cell.B` for all
+    // three cells, with no live cell anywhere in the chain.
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0),      // 0 — spine endpoint A
+        Vec3(1, 0, 0),      // 1 — spine endpoint B
+        Vec3(0.5f,  1, 0),  // 2 — page 0 tip
+        Vec3(0.5f, -1, 0),  // 3 — page 1 tip
+        Vec3(-0.5f, 0, 1),  // 4 — page 2 tip
+    ];
+    m.addFace([0u, 1u, 2u]);
+    m.addFace([0u, 1u, 3u]);
+    m.addFace([0u, 1u, 4u]);
+    m.buildLoops();
+    m.resetSelection();
+    m.selectFace(0);
+    m.selectFace(1);
+    m.selectFace(2);
+    uint[] bandFaces = m.selectedFaceIndicesInSelectionOrder();
+    assert(bandFaces.length == 3, "setup: all three book pages must be selected");
+
+    immutable size_t vertsBefore = m.vertices.length;
+    immutable size_t edgesBefore = m.edges.length;
+    immutable size_t facesBefore = m.faces.length;
+
+    uint[] newFaceIndices;
+    bool ok = m.insertEdgeLoopsMulti(null, [0.5f], newFaceIndices, bandFaces);
+
+    assert(!ok, "an all-degenerate band selection must report a no-op");
+    // The load-bearing assert: before the fix, the pre-pass's `getMids`
+    // calls ran over every cell (degenerate or not) and appended a rail
+    // vertex on the book's shared edge BEFORE the all-degenerate bail at
+    // the end of the band-mode block ever ran — a no-op that still
+    // mutated the mesh. Reverting the fix (removing the `anyLiveCell` gate
+    // and its early `return false`, restoring the pre-pass to run
+    // unconditionally) reproduces exactly that: `ok` stays `false` but
+    // `m.vertices.length` grows by 1 — verified by running this assert
+    // against the reverted source, where it failed with "expected 5, got 6".
+    assert(m.vertices.length == vertsBefore,
+        "a no-op band cut must NOT append any vertex — got "
+        ~ m.vertices.length.to!string ~ ", expected " ~ vertsBefore.to!string);
+    assert(m.edges.length == edgesBefore,
+        "a no-op band cut must NOT touch the edge count");
+    assert(m.faces.length == facesBefore,
+        "a no-op band cut must NOT touch the face count");
+    assert(newFaceIndices.length == 0,
+        "a no-op band cut must report no new faces");
 }

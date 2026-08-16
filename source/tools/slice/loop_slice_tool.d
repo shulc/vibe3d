@@ -990,10 +990,27 @@ public:
         // Require at least ONE candidate seed to yield a real ring — don't
         // arm (latch armed_=true) on a set that would produce nothing (the
         // 0228 no-engage-on-bad-seed guard, generalised to a set).
-        bool anyValid = false;
-        foreach (s; candSeeds) {
-            bool closed;
-            if (mesh.collectEdgeRing(s, closed).length > 0) { anyValid = true; break; }
+        //
+        // Task 1054 review (SHOULD-FIX 3): band mode does NOT consume
+        // `seeds`/`candSeeds` at all once entered (`insertEdgeLoopsMulti`'s
+        // `bandFaces` walk ignores them — see `activationSeeds`' doc
+        // comment), and applies no ring-collectability requirement of its
+        // own: a band selection whose neighbours are all non-quads cuts
+        // fine through the general polygon emitter. Gating the ARM on
+        // `collectEdgeRing` succeeding therefore refused exactly what
+        // `applyHeadless` (which has no such gate) already accepted — a
+        // new interactive/headless divergence this activation fallback
+        // introduced. Skip the ring-collectability requirement whenever
+        // THIS arm will enter band mode — same condition `restrictFor`
+        // uses to decide `bandFaces != null`, so the two never disagree.
+        bool willBandMode = sliceSelected_ && *editMode == EditMode.Polygons
+                          && selectedFaceIndices().length > 0;
+        bool anyValid = willBandMode;
+        if (!willBandMode) {
+            foreach (s; candSeeds) {
+                bool closed;
+                if (mesh.collectEdgeRing(s, closed).length > 0) { anyValid = true; break; }
+            }
         }
         if (!anyValid) return false;
 
@@ -1097,12 +1114,30 @@ private:
     //   • EDGES mode + a non-empty edge selection → every selected edge, in
     //     ascending index order (unchanged from 0239 — `insertEdgeLoopsMulti`
     //     dedups rings by canonical face-set, so an over-selected loop never
-    //     double-cuts one ring).
-    //   • POLYGONS mode + a face selection → the interior/shared cage edges of
+    //     double-cuts one ring). These seeds are always what actually gets
+    //     cut: `restrictFor` (below) is gated on Polygons mode (task 1054
+    //     review, SHOULD-FIX 1) precisely so a face selection cannot inject
+    //     `bandFaces` here and silently discard them — component selections
+    //     are NOT cleared by a mode switch (`commands/mesh/select.d`'s
+    //     "edges" branch clears only the edge selection), so a face
+    //     selection made in Polygons mode routinely survives into Edges.
+    //   • POLYGONS mode + a face selection, Slice Selected OFF or the
+    //     selection has an interior edge → the interior/shared cage edges of
     //     the selected region (`Mesh.interiorEdgesOfSelectedFaces`): two
     //     adjacent selected quads seed their one shared edge, so the ring
-    //     crossing that edge is cut; a lone / non-adjacent face selection
-    //     yields nothing.
+    //     crossing that edge is cut.
+    //   • POLYGONS mode + a face selection + Slice Selected ON + NO interior
+    //     edge (a lone or disjoint selection, task 1054 §3.4) → any edge
+    //     touching a selected face. `insertEdgeLoopsMulti`'s `seeds` argument
+    //     is UNUSED once band mode is entered (`bandFaces !is null` — the band
+    //     walk consumes `selectedFaceIndices()`/`armedSelFaces_` directly, not
+    //     `seeds`), so this fallback only needs to be non-empty to satisfy the
+    //     "is there something to cut" gate in `applyHeadless`/
+    //     `onMouseButtonDown` below — the OLD ring-clip rule left 7 of the 54
+    //     measured corpus cases (`one_00`, `one_00_p3`, `one_m1m1`, `gap_row`,
+    //     `gap_diag`, `w3_diag3`, `w3_rnd0`) producing nothing where the
+    //     reference cuts, because a lone/disjoint selection has no interior
+    //     (shared) edge under the old rule.
     //   • Anything else → empty (the interactive path then tries a hover seed;
     //     the headless path treats empty as a no-op).
     uint[] activationSeeds() const {
@@ -1112,8 +1147,20 @@ private:
                 if (sel && i < mesh.edges.length) s ~= cast(uint)i;
             return s;
         }
-        if (*editMode == EditMode.Polygons && mesh.hasAnySelectedFaces())
-            return mesh.interiorEdgesOfSelectedFaces();
+        if (*editMode == EditMode.Polygons && mesh.hasAnySelectedFaces()) {
+            auto interior = mesh.interiorEdgesOfSelectedFaces();
+            if (interior.length > 0 || !sliceSelected_) return interior;
+            uint[] any;
+            foreach (fi; 0 .. mesh.faces.length) {
+                if (!mesh.isFaceSelected(fi)) continue;
+                auto f = mesh.faces[fi];
+                foreach (k; 0 .. f.length) {
+                    uint ei = mesh.edgeIndex(f[k], f[(k + 1) % f.length]);
+                    if (ei != ~0u) any ~= ei;
+                }
+            }
+            return any;
+        }
         return [];
     }
 
@@ -1122,19 +1169,31 @@ private:
     // nothing is face-selected. Read once at arm (latched into
     // `armedSelFaces_`, which therefore also picks up selection order --
     // see the Phase 3->4 note in the plan) and live in the headless path.
-    // Behaviour of the CUT is unchanged by this: the kernel still treats
-    // `restrictFor`'s result as a set until the band walk is wired in
-    // (Phase 3).
+    // The order is load-bearing since Phase 3 wired the band walk: it is
+    // consumed directly as `bandFaces` (`restrictFor`, below) and the band
+    // walk chains over it in THIS order (plan §1 step 1), not as a plain SET.
     uint[] selectedFaceIndices() {
         if (!mesh.hasAnySelectedFaces()) return [];
         return mesh.selectedFaceIndicesInSelectionOrder();
     }
 
-    // The face-restriction set the kernel should honour for THIS cut: the
-    // given selected-face set when Slice Selected is ON and a face selection
-    // exists, else `null` (⇒ whole ring, byte-for-byte unchanged).
+    // The `bandFaces` argument `insertEdgeLoopsMulti` should receive for
+    // THIS cut: the given selected-face set (in selection order — band mode
+    // walks it, not just clips to it) when Slice Selected is ON, the CURRENT
+    // edit mode is Polygons, and a face selection exists; else `null` (⇒
+    // whole ring, byte-for-byte unchanged). The Polygons-mode check (task
+    // 1054 review, SHOULD-FIX 1) is load-bearing, not defensive: component
+    // selections survive a mode switch (see `activationSeeds`' EDGES-mode
+    // bullet above), so without it a face selection left over from Polygons
+    // mode would activate band mode from EDGES mode too — and since
+    // `insertEdgeLoopsMulti`'s `seeds` argument is UNUSED once band mode is
+    // entered, that would silently discard a genuine edge selection's seeds
+    // in favour of walking the stale faces instead. The name is a holdover
+    // from the pre-Phase-3 "restrict the ring to this set" contract; despite
+    // the name this now decides the ALGORITHM (band vs. ring), not a filter.
     uint[] restrictFor(uint[] selFaces) {
-        return (sliceSelected_ && selFaces.length > 0) ? selFaces : null;
+        return (sliceSelected_ && *editMode == EditMode.Polygons && selFaces.length > 0)
+            ? selFaces : null;
     }
 
     // The directed world-space endpoints `position_`/`t` are measured against

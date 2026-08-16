@@ -61,6 +61,15 @@ mixin template MeshLoopSliceOps() {
         // (`walkRingSide` returns via `closedA` before side B ever runs) and
         // for a single-sided (boundary-seed) ring (side B is never walked).
         bool mirror = false;
+        // Task 1054 Phase 3 — the "Slice Selected" BAND WALK (doc/
+        // loop_slice_corner_plan.md §3.1/§3.2). True for an entry synthesized
+        // from `bandWalk()` rather than collected by `collectEdgeRing`. A
+        // DISTINCT flag from `ngon` on purpose (§3.2): both route through
+        // `emitNgonRingSplit`, but only a band entry gets the rotated start
+        // cap (R9) and the chain-cell absorb (§3.3) — the user-facing "Slice
+        // N-gon" whole-ring path must stay byte-identical, so it cannot share
+        // this flag's gated behaviour.
+        bool band = false;
     }
 
     /// Exit-edge rule for a loop slice crossing an N-sided face (task 0250).
@@ -360,20 +369,27 @@ mixin template MeshLoopSliceOps() {
     ///   see the orientation-reconciliation comment inline), the face falls
     ///   back to a single-ring split on the first ring only.
     ///
-    /// `restrictFaces` (optional) — when non-null, the cut is RESTRICTED to
-    ///   only the faces in this set: a ring face NOT listed is left uncut, so
-    ///   the inserted loop spans only the run of listed faces crossed by each
-    ///   ring rather than the whole ring around the mesh. To keep the result
-    ///   watertight the boundary rails (where a listed, split face meets an
-    ///   unlisted, uncut neighbour) are still midpoint-split, and the unlisted
-    ///   neighbour ABSORBS those midpoints into its own boundary (becoming an
-    ///   n-gon) — the "respecting corners" termination at the selection edge.
-    ///   Passing `null` (the default) removes the restriction (whole ring). The
-    ///   absorb happens through the SAME two-pass branch as the default open-ring
-    ///   path (`twoPass`, below); a CLOSED belt ring with no restriction takes the
-    ///   byte-for-byte single-pass path instead. `newFaceIndices` still reports only the sub-quads the
-    ///   slice CREATED (the absorbed n-gon neighbours are modified originals,
-    ///   not new, so they are excluded — matching the Select-New-Polygons law).
+    /// `bandFaces` (optional; task 1054 Phase 3, doc/loop_slice_corner_plan.md
+    ///   §3.1 — renamed and RE-CONTRACTED from the old `restrictFaces`) — when
+    ///   non-null, the selected polygon indices IN SELECTION (click) ORDER
+    ///   (`Mesh.selectedFaceIndicesInSelectionOrder`), and their presence alone
+    ///   switches the whole cut to BAND MODE: a chain walk over exactly these
+    ///   polygons (`bandWalk`, below this mixin in the same module), one cut per
+    ///   polygon in its own ring frame, turning at a corner cell instead of the
+    ///   ordinary ring's straight belt. This is a SEPARATE algorithm from the
+    ///   ring/`seeds` path above, not a clip of it — `seeds` is unused when
+    ///   `bandFaces` is non-null. To keep the result watertight the boundary
+    ///   rails (where a band cell meets a non-band neighbour, or another band
+    ///   cell across a non-cut side) are still midpoint-split, and the neighbour
+    ///   ABSORBS those midpoints into its own boundary (becoming an n-gon) — the
+    ///   "respecting corners" termination at the selection edge. Passing `null`
+    ///   (the default) is the ordinary ring path, byte-for-byte unchanged — every
+    ///   existing caller passes `null`/nothing except the two Slice-Selected call
+    ///   sites in `loop_slice_tool.d`. The absorb happens through the SAME
+    ///   two-pass branch as the default open-ring path (`twoPass`, below).
+    ///   `newFaceIndices` still reports only the sub-faces the slice CREATED
+    ///   (the absorbed n-gon neighbours are modified originals, not new, so they
+    ///   are excluded — matching the Select-New-Polygons law).
     ///
     /// `keepQuads` (optional, default false) — the Loop Slice "Keep Quads"
     ///   guard. As of the watertight-by-default change this is a GEOMETRIC
@@ -411,9 +427,24 @@ mixin template MeshLoopSliceOps() {
     ///   a triangle). Forcing the n-gon's OWN sub-faces to be all-quad — the
     ///   deeper "keep quads inside a sliced n-gon" facet — is an unknowable
     ///   reference heuristic (closed source, not headlessly capturable) and is
-    ///   deliberately NOT attempted here; see the task notes. Composes with
-    ///   `restrictFaces` orthogonally (which rings/faces are cut vs which faces
-    ///   the ring is allowed to traverse are independent axes).
+    ///   deliberately NOT attempted here; see the task notes. Composes with the
+    ///   ordinary (non-band) `bandFaces` orthogonally (which rings/faces are cut
+    ///   vs which faces the ring is allowed to traverse are independent axes).
+    ///   When `bandFaces` IS non-null (band mode) this option is force-refused
+    ///   (task 1054 §3.8 — the reference refuses "Slice N-gon" together with
+    ///   "Slice Selected"; a silent downgrade rather than a failure) — but
+    ///   NOT by the `if (bandMode) ngon = false;` local reassignment near the
+    ///   top of this function (task 1054 review NIT: that line is a dead
+    ///   store — band mode never runs the ring-collection codepath that is
+    ///   this PARAMETER's only reader, so overwriting it changes nothing
+    ///   downstream). The refusal is structural instead: every entry
+    ///   `bandWalk`'s cells synthesize sets `.band = true` and never touches
+    ///   `.ngon` (stays its `false` default), and `splitFace`'s own dispatch
+    ///   (`entries[0].ngon || entries[0].band`) already routes a band entry
+    ///   to the general n-gon emitter on `.band` alone — so a band cut can
+    ///   never traverse a non-quad face regardless of this parameter's
+    ///   value. The reassignment is kept (harmless, and documents intent at
+    ///   the call boundary) but is not what does the refusing.
     /// `split` (optional, default false) — the Loop Slice "Split" guard (task
     ///   0251). Off (default) the inserted loop is a SINGLE connected edge loop:
     ///   the midpoint verts on each rail are SHARED between the sub-face on the
@@ -525,7 +556,7 @@ mixin template MeshLoopSliceOps() {
     ///   hook points (tasks 0257/0258/0259).
     bool insertEdgeLoopsMulti(const(uint)[] seeds, const(float)[] positionsIn,
                               out uint[] newFaceIndices,
-                              const(uint)[] restrictFaces = null,
+                              const(uint)[] bandFaces = null,
                               bool keepQuads = false,
                               bool ngon = false,
                               bool split = false,
@@ -537,7 +568,14 @@ mixin template MeshLoopSliceOps() {
                               const(float)[] profileHeightsIn = null,
                               float profileDepth = 0.0f) {
         newFaceIndices = [];
-        if (seeds.length == 0 || positionsIn.length == 0) return false;
+        // Task 1054 Phase 3 (§3.1): `seeds` is UNUSED in band mode — the walk
+        // consumes `bandFaces` directly — so an empty `seeds` no longer bails
+        // when `bandFaces` is given (§3.4's lone/disjoint activation depends on
+        // this: those selections have no interior seed edge under the OLD
+        // ring rule).
+        immutable bool bandMode = bandFaces !is null;
+        if (positionsIn.length == 0) return false;
+        if (!bandMode && seeds.length == 0) return false;
 
         // DoS backstop (task 0365 P1): `positionsIn.length` scales the
         // per-position ring/vertex work below (one `addVertex` + one ring
@@ -584,58 +622,65 @@ mixin template MeshLoopSliceOps() {
         if (positions.length == 0) return false;   // defensive; unreachable (positionsIn non-empty)
         const(float)[] profileHeights = (profileHeightsIn is null) ? null : profileHeightsBuf;
 
-        // 1. Collect + dedup rings from the ORIGINAL (unmutated) mesh.
-        import std.algorithm : sort;
+        // Task 1054 §3.8: band mode force-refuses "Slice N-gon" (a silent
+        // downgrade, matching the reference's observed refusal to change
+        // behaviour rather than failing the op) — see the `ngon` param doc
+        // above. Applied before anything reads `ngon` below.
+        if (bandMode) ngon = false;
+
+        // `perFaceRings` is populated by ONE of two entirely separate
+        // algorithms selected by `bandMode` (§3.1): the ordinary ring walk
+        // below, or the band walk (`bandWalk`, populated further down this
+        // function once the rail cache/`getMids` it needs are in scope — see
+        // the "Band mode" block right before `twoPass`). Declared once here
+        // so both branches and the shared pass-1/pass-2 emission below see
+        // the same map.
+        EdgeRingEntry[][uint] perFaceRings;
+        // Hoisted out of the `!bandMode` branch below (task 1054 Phase 3):
+        // `faceArrayEstimate`'s capacity hint reads `rings.length` regardless
+        // of mode — empty (0) in band mode, a harmless under-reserve rather
+        // than a scope error.
         EdgeRingEntry[][] rings;
-        bool[immutable(uint)[]] seenRingKey;
         // `anyOpenRing` — set when at least one KEPT ring is OPEN (it TERMINATES
         // at a non-quad / mesh-boundary face rather than wrapping back on itself).
         // An open ring has terminating rails shared with a non-ring neighbour, so
         // its cut must ABSORB the terminating midpoint into that neighbour to stay
         // watertight (the reference default). A CLOSED belt ring has no terminating
         // face, so it never needs the absorb pass and keeps the byte-for-byte
-        // single-pass emission (see `twoPass` below).
+        // single-pass emission (see `twoPass` below). Always false in band mode
+        // (never set there — band mode's own `twoPass` term is `bandMode` itself).
         bool anyOpenRing = false;
-        foreach (seed; seeds) {
-            if (seed >= edges.length) continue;
-            bool closed;
-            auto ring = collectEdgeRing(seed, closed, ngon);
-            if (ring.length == 0) continue;   // degenerate/no-op seed — skip
 
-            uint[] faceIds;
-            faceIds.reserve(ring.length);
-            foreach (e; ring) faceIds ~= e.fi;
-            faceIds.sort();
-            auto key = faceIds.idup;
-            if (key in seenRingKey) continue;   // same ring as an earlier seed
-            seenRingKey[key] = true;
-            rings ~= ring;
-            if (!closed) anyOpenRing = true;    // terminating ring → absorb pass
-        }
-        if (rings.length == 0) return false;
+        if (!bandMode) {
+            // 1. Collect + dedup rings from the ORIGINAL (unmutated) mesh.
+            import std.algorithm : sort;
+            bool[immutable(uint)[]] seenRingKey;
+            foreach (seed; seeds) {
+                if (seed >= edges.length) continue;
+                bool closed;
+                auto ring = collectEdgeRing(seed, closed, ngon);
+                if (ring.length == 0) continue;   // degenerate/no-op seed — skip
 
-        // 2. Per-face ring map — at most 2 entries/face for a well-formed
-        //    quad mesh; a 3rd+ is dropped (documented above).
-        EdgeRingEntry[][uint] perFaceRings;
-        foreach (ref ring; rings)
-            foreach (e; ring) {
-                auto p = e.fi in perFaceRings;
-                if (p is null) perFaceRings[e.fi] = [e];
-                else if (p.length < 2) (*p) ~= e;
+                uint[] faceIds;
+                faceIds.reserve(ring.length);
+                foreach (e; ring) faceIds ~= e.fi;
+                faceIds.sort();
+                auto key = faceIds.idup;
+                if (key in seenRingKey) continue;   // same ring as an earlier seed
+                seenRingKey[key] = true;
+                rings ~= ring;
+                if (!closed) anyOpenRing = true;    // terminating ring → absorb pass
             }
+            if (rings.length == 0) return false;
 
-        // Slice-Selected restriction: keep only ring faces in `restrictFaces`
-        // as SPLIT faces; dropped ring faces fall through to the absorb pass
-        // (they take the boundary midpoints of their split neighbours as an
-        // n-gon). `restrictFaces is null` ⇒ no restriction (whole ring).
-        immutable bool restricting = restrictFaces !is null;
-        if (restricting) {
-            bool[uint] allowSet;
-            foreach (f; restrictFaces) allowSet[f] = true;
-            uint[] toDrop;
-            foreach (fi, _; perFaceRings) if (fi !in allowSet) toDrop ~= fi;
-            foreach (fi; toDrop) perFaceRings.remove(fi);
-            if (perFaceRings.length == 0) return false;  // nothing selected to cut
+            // 2. Per-face ring map — at most 2 entries/face for a well-formed
+            //    quad mesh; a 3rd+ is dropped (documented above).
+            foreach (ref ring; rings)
+                foreach (e; ring) {
+                    auto p = e.fi in perFaceRings;
+                    if (p is null) perFaceRings[e.fi] = [e];
+                    else if (p.length < 2) (*p) ~= e;
+                }
         }
 
         // Rail cache — SHARED across every face and both grid axes: a
@@ -890,6 +935,24 @@ mixin template MeshLoopSliceOps() {
         uint[] newSrc;
         if (carryUv) newSrc.reserve(faceArrayEstimate);
 
+        // Read-only rail lookup for the absorb pass — returns the existing
+        // midpoints on edge va→vb (in that direction) if it was split by a
+        // neighbouring face, else null. NEVER creates a rail (unlike getMids).
+        // Moved ahead of `emitNgonRingSplit` (task 1054 Phase 3): a BAND entry's
+        // s1/s2 absorb (§3.3) needs it, and D requires a nested function be
+        // declared before its use within the same scope.
+        uint[] absorbMids(uint va, uint vb) {
+            ulong k = edgeKey(va, vb);
+            auto rp = k in railByKey;
+            if (rp is null) return null;
+            // Absorb attaches to the lo (connected) side (`midsVa`) — under Split
+            // the neighbour stays joined to the lo loop; the hi loop is free.
+            if (rails[*rp].va == va) return rails[*rp].midsVa;
+            auto rev = rails[*rp].midsVa.dup;
+            reverseInPlace(rev);
+            return rev;
+        }
+
         // Slice ONE non-quad ring-crossed face (task 0250 "Slice N-gon"). The
         // chord runs from the entry-edge rail to the exit-edge rail, splitting
         // the polygon into two sub-faces plus (P-1) middle quads between rails.
@@ -911,19 +974,42 @@ mixin template MeshLoopSliceOps() {
             uint[] qLo = railMids(d, c, true, e.mirror),  qHi = railMids(d, c, false, e.mirror);
 
             // S1 = the boundary chain from b (entry-edge far vertex) forward to
-            // c (exit-edge near vertex); S2 = from d forward to a.
+            // c (exit-edge near vertex); S2 = from d forward to a. Task 1054
+            // §3.3: a BAND entry (`e.band`) also ABSORBS any foreign cut point
+            // already resolved on one of these perimeter edges — a neighbouring
+            // chain cell can have derived a side that lands on THIS polygon's
+            // non-cut boundary, and without absorbing it the result has a
+            // T-junction there. Never on the entry/exit edges themselves (those
+            // are the rails above, not part of this loop) — the guard is simply
+            // "only absorb on an edge the loop is about to CONTINUE across",
+            // i.e. never on the last edge before the `break`. Gated to band
+            // entries: the user-facing "Slice N-gon" whole-ring path must stay
+            // byte-identical (R2), so it never calls `absorbMids` here.
             uint[] s1, s2;
             for (uint k = cast(uint)((ej + 1) % N); ; k = (k + 1) % N) {
                 s1 ~= f[k];
                 if (k == cast(uint)xj) break;
+                if (e.band) foreach (m; absorbMids(f[k], f[(k + 1) % N])) s1 ~= m;
             }
             for (uint k = cast(uint)((xj + 1) % N); ; k = (k + 1) % N) {
                 s2 ~= f[k];
                 if (k == cast(uint)ej) break;
+                if (e.band) foreach (m; absorbMids(f[k], f[(k + 1) % N])) s2 ~= m;
             }
 
-            // Start cap (S2 side, toward a/d): [pLo0, qLo0] ~ S2.
-            uint[] capB = [pLo[0], qLo[0]] ~ s2;
+            // Start cap (S2 side, toward a/d): [pLo0, qLo0] ~ S2 for the
+            // general "Slice N-gon" whole-ring path (unchanged — R2). A BAND
+            // entry instead gets the MEASURED reference ring-start rotation
+            // (task 1054 §3.2/R9, 470/470 measured, 0 violations): the chord
+            // is the ring's CLOSING edge, i.e. the ring begins at `qLo[0]` and
+            // ends at `pLo[0]` — `[qLo0] ~ S2 ~ [pLo0]` — a pure rotation of
+            // the same cyclic ring (identical face, winding, vertices), not a
+            // different split. Gated to band entries: the un-rotated `NNoo`
+            // cap this general emitter produces on its own is ALSO never
+            // emitted by the reference (§3.2), so routing straight band cells
+            // here without this rotation would trade one divergence for
+            // another (U5 pins both classes).
+            uint[] capB = e.band ? ([qLo[0]] ~ s2 ~ [pLo[0]]) : ([pLo[0], qLo[0]] ~ s2);
             newFaces ~= capB;
             newFaceIndices ~= cast(uint)(newFaces.length - 1);
             // Middle quads between consecutive rails.
@@ -943,11 +1029,15 @@ mixin template MeshLoopSliceOps() {
         void splitFace(uint fi) {
             auto entries = perFaceRings[fi];
 
-            // A non-quad face crossed under `ngon`: all its entries describe the
-            // SAME polygon, so the first ngon entry fully determines the cut (a
-            // 2nd distinct ring through the same n-gon is rare/degenerate and
-            // defensively ignored — the chord split is single-ring).
-            if (entries[0].ngon) {
+            // A non-quad face crossed under `ngon`, OR a band cell (task 1054
+            // Phase 3 — `entries[0].band`, a DISTINCT flag, see the field doc):
+            // both route through the general polygon emitter. For `ngon` all
+            // its entries describe the SAME polygon, so the first entry fully
+            // determines the cut (a 2nd distinct ring through the same n-gon is
+            // rare/degenerate and defensively ignored — the chord split is
+            // single-ring); a band cell's `perFaceRings[fi]` always holds
+            // exactly one entry (`bandWalk` visits each selected polygon once).
+            if (entries[0].ngon || entries[0].band) {
                 emitNgonRingSplit(entries[0]);
                 return;
             }
@@ -1061,19 +1151,109 @@ mixin template MeshLoopSliceOps() {
             }
         }
 
-        // Read-only rail lookup for the absorb pass — returns the existing
-        // midpoints on edge va→vb (in that direction) if it was split by a
-        // neighbouring face, else null. NEVER creates a rail (unlike getMids).
-        uint[] absorbMids(uint va, uint vb) {
-            ulong k = edgeKey(va, vb);
-            auto rp = k in railByKey;
-            if (rp is null) return null;
-            // Absorb attaches to the lo (connected) side (`midsVa`) — under Split
-            // the neighbour stays joined to the lo loop; the hi loop is free.
-            if (rails[*rp].va == va) return rails[*rp].midsVa;
-            auto rev = rails[*rp].midsVa.dup;
-            reverseInPlace(rev);
-            return rev;
+        // Task 1054 Phase 3 — BAND MODE (§3.1-§3.3): the walk over `bandFaces`,
+        // deferred to here because it needs `getMids`/`absorbMids`/`rails` above
+        // to already be in scope (D requires a nested function/local declared
+        // before use). Two phases, both walked in `bandWalk`'s own return order
+        // — CHAIN order then CELL order within a chain, never face-index order:
+        //
+        //  (i)  Rail PRE-PASS (§3.3, R3): create every band rail — both the A
+        //       and B side of every chain cell — before any face is emitted.
+        //       This is what makes the eventual per-face absorb (inside
+        //       `emitNgonRingSplit`, gated on `.band`) independent of EMISSION
+        //       order, and gives the rail cache's "first creator wins" dedup a
+        //       DETERMINISTIC winner for an edge two different chains both
+        //       derive a point on (§3.7's `r3_p3_ord_MRL` mutual-pair case, U4:
+        //       the chain-0 cell's point survives, because chain 0 is walked
+        //       first here).
+        //  (ii) Populate `perFaceRings`, one synthesized `EdgeRingEntry` per
+        //       chain cell: `entryJ = B` (the side shared with the chain
+        //       SUCCESSOR), `exitJ = A` (shared with the PREDECESSOR) — the
+        //       convention `emitNgonRingSplit` was written for is the INVERSE
+        //       of that (§3.2: its "entry" rail reads at fraction `t`, its
+        //       "exit" rail at `1-t`; the law wants `A` at `1-pos` and `B` at
+        //       `pos`) — swapping them mirrors every cut at `pos != 0.5` while
+        //       leaving every `pos == 0.5` case unchanged, which is exactly why
+        //       the parity fixture needs the 28 non-0.5 cases (R1). `mirror`
+        //       stays false (band mode never performs an open ring's side-B
+        //       walk), `band = true` routes `splitFace` to the general emitter
+        //       WITH the rotated start cap and the chain-cell absorb (§3.2/3.3).
+        //       A cell whose derived A/B land on the SAME ring-edge index (only
+        //       reachable via a 3-polygon edge, `bandSides`'s own doc comment)
+        //       is skipped, matching the reference predictor's own guard.
+        if (bandMode) {
+            auto bandChainsOut = bandWalk(faces, bandFaces);
+            if (bandChainsOut.length == 0) return false;   // nothing selected to cut
+
+            // Task 1054 review (SHOULD-FIX 2): a cell whose derived A and B
+            // land on the SAME ring-edge index (`cell.A == cell.B`, only
+            // reachable via a 3-polygon edge — see `bandSides`'s own doc
+            // comment) is DEGENERATE and must never reach the rail pre-pass
+            // below, not just the entry-population loop that already skipped
+            // it. Creating a rail for a cell that will never be cut leaves a
+            // STRAY midpoint on that edge — pass 2's absorb would then splice
+            // it into an uninvolved neighbour (a cut point with no cut behind
+            // it). And in the ALL-degenerate limit, the OLD code (which
+            // pre-passed every cell unconditionally, then discovered
+            // `perFaceRings.length == 0` only at the very end) let `getMids`
+            // append vertices before this function decided it had nothing to
+            // cut — violating the standing "a no-op is decided before the
+            // first geometry mutation" rule this kernel enforces everywhere
+            // else (see the coincident-position dedup above). Decide the
+            // bail BEFORE any `getMids` call by scanning for a live
+            // (non-degenerate) cell first; only then run the pre-pass, which
+            // now skips a degenerate cell exactly like the entry-population
+            // loop below always has.
+            bool anyLiveCell = false;
+            findLive: foreach (chain; bandChainsOut)
+                foreach (cell; chain)
+                    if (cell.A != cell.B) { anyLiveCell = true; break findLive; }
+            if (!anyLiveCell) return false;   // every cell degenerate — no mutation yet
+
+            // Deliberately re-derives `ej`/`xj` from `cell.B`/`cell.A`
+            // directly here, rather than reading them back off the
+            // `EdgeRingEntry`s the second loop below builds (those don't
+            // exist yet at this point, and this loop must run first — see
+            // (i) above). Keep this in the SAME B=entry/A=exit convention as
+            // that loop's `e.entryJ`/`e.exitJ` assignment: with only one
+            // `positions` entry (the common case) a same-edge-different-
+            // direction rail request degenerates to the identical value
+            // (reversing a 1-element array is the identity), which SILENTLY
+            // absorbs a convention mismatch between this loop and the one
+            // below — verified by mutation: swapping ONLY the assignment
+            // below (`e.entryJ`/`e.exitJ`) left every fixture green, because
+            // this pre-pass's independently-correct rails still won the
+            // cache. Swapping BOTH consistently (this loop too) is what
+            // actually exercises the dart convention (R1) — reddening
+            // `L_p3_cornerfirst` (`pos=0.3`) while the `pos=0.5` corner
+            // fixture stayed green, exactly as predicted.
+            foreach (chain; bandChainsOut)
+                foreach (cell; chain) {
+                    if (cell.A == cell.B) continue;   // degenerate — no rail: see above
+                    auto ring = faces[cell.fi];
+                    uint N = cast(uint)ring.length;
+                    uint ej = cell.B, xj = cell.A;
+                    uint a = ring[ej], b = ring[(ej + 1) % N];
+                    uint c = ring[xj], d = ring[(xj + 1) % N];
+                    getMids(a, b);
+                    getMids(d, c);
+                }
+
+            foreach (chain; bandChainsOut)
+                foreach (cell; chain) {
+                    if (cell.A == cell.B) continue;   // degenerate (non-manifold edge) — skip
+                    EdgeRingEntry e;
+                    e.fi     = cell.fi;
+                    e.entryJ = cast(int)cell.B;
+                    e.exitJ  = cast(int)cell.A;
+                    e.mirror = false;
+                    e.band   = true;
+                    perFaceRings[cell.fi] = [e];
+                }
+            // Unreachable after the `anyLiveCell` gate above (it guarantees
+            // at least one surviving cell reaches the loop above and gets an
+            // entry) — kept as a defensive backstop, not load-bearing.
+            if (perFaceRings.length == 0) return false;
         }
 
         // Two passes are needed whenever some non-split face must ABSORB a
@@ -1081,15 +1261,15 @@ mixin template MeshLoopSliceOps() {
         // ring: when the ring stops at a non-quad face or a mesh boundary the
         // neighbour absorbs the terminating midpoint into its own boundary (an
         // n-gon), so the cut stays WATERTIGHT with no T-junction — the reference's
-        // default behaviour. The Slice-Selected restriction (`restricting`) also
-        // needs it (absorb at the selection border, even for a closed belt ring).
-        // A CLOSED all-quad belt ring (the common full-ring cut) has NO terminating
-        // face — `anyOpenRing` is false and it is not restricting — so it takes the
-        // byte-for-byte single-pass whole-ring path below, unchanged. `keepQuads`
-        // (Keep Quads) is now a GEOMETRIC NO-OP: the terminating absorb it used to
-        // gate happens by default, matching the reference (Keep Quads on == off on
-        // every capturable mesh); the param is kept only for panel parity.
-        immutable bool twoPass = restricting || anyOpenRing;
+        // default behaviour. Band mode (`bandMode`) always needs it too (absorb at
+        // the selection border, even for a closed band). A CLOSED all-quad belt
+        // ring (the common full-ring cut) has NO terminating face — `anyOpenRing`
+        // is false and it is not band mode — so it takes the byte-for-byte
+        // single-pass whole-ring path below, unchanged. `keepQuads` (Keep Quads)
+        // is now a GEOMETRIC NO-OP: the terminating absorb it used to gate happens
+        // by default, matching the reference (Keep Quads on == off on every
+        // capturable mesh); the param is kept only for panel parity.
+        immutable bool twoPass = bandMode || anyOpenRing;
         if (!twoPass) {
             // Whole-ring path — UNCHANGED (byte-for-byte): one pass in face
             // index order, dup non-ring faces, split ring faces.
@@ -1342,12 +1522,13 @@ mixin template MeshLoopSliceOps() {
 // Task 1054 -- the "Slice Selected" BAND WALK (measured law; see
 // doc/loop_slice_corner_plan.md §1, §3.1, §3.6, §1.1(a)/(b), private doc --
 // this repo carries no public description of the reference this was
-// measured against). Phase 2: added as a PURE function family, NOT YET
-// WIRED into `insertEdgeLoopsMulti` above -- that mixin's `restrictFaces`
-// contract, the emitters, and every existing loop-slice test are untouched
-// by this block (Phase 3, task 1054). Deliberately free functions at module
-// scope, independent of `Mesh`/the mixin above, so a unit test can drive
-// them with a literal face-ring table instead of building a full `Mesh`.
+// measured against). Phase 2 added this as a PURE function family; Phase 3
+// WIRES it into `insertEdgeLoopsMulti` above (its `bandFaces` parameter --
+// renamed and re-contracted from the old `restrictFaces` -- switches the
+// whole cut to this algorithm, see the "Band mode" block ahead of `twoPass`).
+// Deliberately free functions at module scope, independent of `Mesh`/the
+// mixin above, so a unit test can drive them with a literal face-ring table
+// instead of building a full `Mesh`.
 //
 // A reference debugger-reading identified the internal routines this walk
 // reproduces; per this repo's neutrality rule those identifiers are
@@ -1357,20 +1538,24 @@ mixin template MeshLoopSliceOps() {
 // ---------------------------------------------------------------------------
 
 /// DoS backstop (task 0365 P1 pattern, R6): `sel.length` scales the edge
-/// map, every rank array, and the walk below -- and, unlike the linear
-/// `MAX_LOOP_SLICE_COUNT` (`:548-550`) this "mirrors" in spirit only, the
-/// restart scan in `bandReorderByConnectivity`'s `while (seenCount < S)`
-/// loop is worst-case QUADRATIC in `S`: a fully-disconnected selection (no
-/// two selected faces share an edge -- e.g. several separate single-face
-/// picks) forces one restart per face, and each restart's "first
-/// unvisited" scan re-walks the list from the front. Measured this session
-/// on that exact worst case (a checkerboard-selected quad grid, so no two
-/// selected faces are ever edge-adjacent): S=4096 -> ~11 ms, S=16384 ->
-/// ~175 ms, consistent with the O(S^2) term above. 16384 keeps the worst
-/// case under ~200 ms for what is a one-shot, user-triggered cut (not a
-/// per-frame path) while giving genuinely large multi-thousand-face
-/// selections room; raising it further trades directly against that
-/// worst-case latency. Applied at both the sole reachable entry point
+/// map, every rank array, and the walk below. `bandReorderByConnectivity`'s
+/// `while (seenCount < S)` restart loop USED to be worst-case QUADRATIC in
+/// `S` here (a fully-disconnected selection -- no two selected faces share
+/// an edge, e.g. several separate single-face picks -- forced one restart
+/// per face, and each restart's "first unvisited" scan re-walked the list
+/// from the front). Measured on that exact worst case (a checkerboard-
+/// selected quad grid): S=4096 -> ~11 ms, S=16384 -> ~175 ms, consistent
+/// with an O(S^2) term -- the sizing this cap was originally chosen against.
+/// Task 1054 review (SHOULD-FIX 4): the restart scan has since been
+/// collapsed to O(S) overall (two monotonically advancing cursors --
+/// see `bandReorderByConnectivity`'s own doc comment), so the walk this
+/// selection size feeds is no longer quadratic. The cap stays anyway, as a
+/// DoS backstop in the same spirit as the linear `MAX_LOOP_SLICE_COUNT`
+/// (`:548-550`): `bandChains`/`bandSides`/the emission pass downstream are
+/// still O(S)-ish work per cut, a genuinely unbounded `sel.length` is still
+/// caller-controlled (a scripted `/api/command` reaches this kernel
+/// directly), and 16384 costs nothing against any selection a real editing
+/// session produces. Applied at both the sole reachable entry point
 /// (`bandWalk` below, where truncation is also logged once via
 /// `logWarnOnce` rather than silently dropped) and again at the top of
 /// `bandReorderByConnectivity` itself, so a future caller inside this
@@ -1522,9 +1707,9 @@ private long bandNextByRank(const(uint[])[] polys, uint cur,
 /// README) for the capture. This ships list order.
 private uint[] bandReorderByConnectivity(const(uint[])[] polys, const(uint)[] sel,
                               uint[][ulong] e2p) {
-    // Re-applied here, not just in `bandWalk` (task 1054 review): this is
-    // the O(S^2)-worst-case function `MAX_BAND_FACES` exists to bound, and
-    // it is `private` to this module -- any future call site added inside
+    // Re-applied here, not just in `bandWalk` (task 1054 review): this
+    // function is what `MAX_BAND_FACES` exists to bound, and it is
+    // `private` to this module -- any future call site added inside
     // `mesh_ops.loop_slice` that reaches this directly, bypassing
     // `bandWalk`, would otherwise skip the cap entirely. Silent here
     // deliberately: the one reachable path today (`bandWalk`) already logs
@@ -1545,24 +1730,63 @@ private uint[] bandReorderByConnectivity(const(uint[])[] polys, const(uint)[] se
     uint[] order;
     order.reserve(S);
     size_t seenCount = 0;
+    // Task 1054 review (SHOULD-FIX 4 / plan §1.1(b)): two monotonically
+    // ADVANCING cursors into `sel`, replacing the O(S) full-list rescan the
+    // restart loop below used to run on EVERY iteration -- O(S^2)
+    // worst-case on a fully-disconnected selection (measured: S=4096 ~11ms,
+    // S=16384 ~175ms, per the MAX_BAND_FACES doc comment above). `bandNb`
+    // is STATIC (a pure function of `marks`/`e2p`, never of `seen`), and
+    // `seen` only ever transitions false->true -- so once a cursor has
+    // walked past a position because it currently fails that cursor's own
+    // predicate, that position can NEVER satisfy the SAME predicate later:
+    // either it was already seen (permanent), or (for `cursorNb2`) it had
+    // `bandNb(...) >= 2` (permanent, since nb never changes). Safe to skip
+    // it forever rather than re-examine it on every restart. Each cursor
+    // therefore takes at most S total steps across the WHOLE walk (not per
+    // restart), collapsing the restart scan from O(S^2) to O(S) overall --
+    // resuming a cursor from its saved position instead of rescanning from
+    // 0 finds the IDENTICAL first match a full rescan would (everything
+    // before it has already been permanently ruled out), so this is a pure
+    // optimisation: the sequence `order` produces is byte-for-byte
+    // unchanged (pinned by U2's existing exact-chain literal asserts, which
+    // stay green unmodified).
+    //
+    // `cursorAny` deliberately does NOT share `cursorNb2`'s position: on
+    // the fallback ("no nb<2 candidate anywhere left") it must still be
+    // able to find an unseen element `cursorNb2` already walked past --
+    // skipped there only for having `bandNb(...) >= 2`, which says nothing
+    // about eligibility for the plain "first unvisited" fallback rule.
+    size_t cursorNb2 = 0, cursorAny = 0;
     while (seenCount < S) {
         long start = -1;
         // Start: first unvisited element (in `sel`'s list order) whose
         // directed degree is < 2; else the first unvisited element.
-        foreach (p; sel) {
-            if (p < seen.length && seen[p]) continue;
-            if (bandNb(polys, p, marks, e2p) < 2) { start = p; break; }
+        while (cursorNb2 < S) {
+            uint p = sel[cursorNb2];
+            bool isSeen = (p < seen.length && seen[p]);
+            if (!isSeen && bandNb(polys, p, marks, e2p) < 2) {
+                start = p;
+                cursorNb2++;
+                break;
+            }
+            cursorNb2++;
         }
-        if (start < 0)
-            foreach (p; sel) { if (p >= seen.length || !seen[p]) { start = p; break; } }
+        if (start < 0) {
+            while (cursorAny < S) {
+                uint p = sel[cursorAny];
+                bool isSeen = (p < seen.length && seen[p]);
+                cursorAny++;
+                if (!isSeen) { start = p; break; }
+            }
+        }
         // `seenCount` counts DISTINCT visits, `S` counts `sel`'s raw entry
         // count -- a repeated index (e.g. `[21, 21]`) marks the same slot
-        // `seen` twice, so `seenCount` saturates below `S` and both scans
-        // above find nothing left unvisited: `start` stays -1 forever and,
-        // without this break, the outer `while (seenCount < S)` spins with
-        // no progress (reproduced: `bandWalk(polys, [21u, 21u])` hangs).
-        // Bail out with whatever `order` holds so far rather than loop
-        // forever two lines from `MAX_BAND_FACES`.
+        // `seen` twice, so `seenCount` saturates below `S` and both cursors
+        // above exhaust with nothing left unvisited: `start` stays -1
+        // forever and, without this break, the outer `while (seenCount < S)`
+        // spins with no progress (reproduced: `bandWalk(polys, [21u, 21u])`
+        // hangs). Bail out with whatever `order` holds so far rather than
+        // loop forever two lines from `MAX_BAND_FACES`.
         if (start < 0) break;
         long cur = start;
         while (cur >= 0) {
@@ -1682,9 +1906,10 @@ private BandCell[] bandSides(const(uint[])[] polys, const(uint)[] chain,
 /// chain order then cell order, which is the order Phase 3's rail pre-pass
 /// needs (§3.3/§3.7) for its "first creator wins" determinism.
 ///
-/// NOT YET WIRED into `insertEdgeLoopsMulti` (Phase 3, task 1054) -- calling
-/// this today has no effect on any cut; `select = off` and every existing
-/// `select = on` behaviour are both untouched by this function's existence.
+/// WIRED into `insertEdgeLoopsMulti`'s `bandFaces` parameter as of Phase 3
+/// (task 1054) — the sole caller is that function's "Band mode" block, ahead
+/// of its `twoPass` decision. `select = off` is untouched (band mode is only
+/// entered when `bandFaces !is null`, and every non-band caller passes null).
 BandCell[][] bandWalk(const(uint[])[] polys, const(uint)[] sel) {
     if (sel.length > MAX_BAND_FACES) {
         // Visible, not silent (task 1054 review): a caller handing us a
