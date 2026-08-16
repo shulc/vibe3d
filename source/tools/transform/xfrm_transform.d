@@ -1991,6 +1991,15 @@ public:
     // were never driven there, and guessing is what this task spent four
     // reference boots not doing. See the task file's gap list.
     //
+    // ONE counter answers all of it. An earlier version of this also kept a
+    // second, value-comparing latch on the action centre's MODE "as belt and
+    // braces for the paths that change it without a command". That claim was a
+    // hypothesis, and it is false: every live writer of the mode goes through a
+    // command site (the pipe-attr command or the action-centre preset), and the
+    // only direct writes left in the tree are inside that stage's own
+    // unittests. Deleted after measuring — the suite does not notice, and the
+    // mode cell stays red under a mutation that stops the mode arming the slot.
+    //
     // The check is callable from BOTH places that can see an activation:
     //   * EditSession.onStageConfigChanged, synchronously with the pipe-stage
     //     command and BEFORE its re-evaluate (SlotActivationClient). An open
@@ -2037,21 +2046,6 @@ public:
             }
         }
 
-        // — the action centre's MODE, by VALUE. Belt and braces for the paths
-        //   that change it WITHOUT a command site (a reset inside the stage, a
-        //   preset composing transiently): the signature above counts commands,
-        //   this catches the rest. Kept because it is what closed the run
-        //   before this task and several suites lean on it.
-        if (auto ac = activeAcenStage()) {
-            int curMode = cast(int) ac.mode;
-            if (lastAcenMode == -1) {
-                lastAcenMode = curMode;
-            } else if (curMode != lastAcenMode) {
-                endHeldRunAtSlotActivation(/*pivotMoved=*/true);
-                fired = true;
-                lastAcenMode = curMode;
-            }
-        }
         return fired;
     }
 
