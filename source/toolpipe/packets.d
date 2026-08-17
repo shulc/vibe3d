@@ -1,7 +1,7 @@
 module toolpipe.packets;
 
 import math : Vec3, Viewport;
-import mesh : Mesh;
+import mesh : Mesh, MapKind;
 import editmode : EditMode;
 import seltype : SelType;
 
@@ -67,6 +67,27 @@ struct SubjectPacket {
     int  cursorX     = -1;
     int  cursorY     = -1;
     bool cursorValid = false;
+
+    // The MORPH ROUTING TARGET (task 1069) — which mesh map an edit is
+    // authored INTO, or none. Declared on the subject rather than on the
+    // tools, matching the reference SDK's own tool-subject struct, which
+    // carries the mesh, the selected map, the map's type and a separate base
+    // side by side. A tool that knows nothing about morphs keeps working
+    // because it never reads these two fields.
+    //
+    // **Reading them is OPT-IN, and exactly ONE tool does.** `buildLocalVts`
+    // lives on the base `TransformTool`, so Push / Bend / the two Align tools
+    // all receive a subject carrying the target — and all of them ignore it
+    // and keep editing the base, deliberately (plan §2.0, registry rows
+    // 47a-47l). That is not an oversight to fix later: it is what keeps ONE
+    // gesture on ONE surface, because those tools' symmetry mirror is not
+    // routed either.
+    //
+    // `morphTargetKind == unclassified` means NO TARGET. (The obvious field
+    // name for the second one is a BANNED symbol in the neutrality
+    // dictionary — checked before it was written, not after.)
+    MapKind morphTargetKind = MapKind.unclassified;
+    string  morphTargetName;
 }
 
 

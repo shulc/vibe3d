@@ -202,32 +202,80 @@ enum string kCreaseWeightMapName = "crease";
 /// existing (name, dim, domain, data) shape (task 1062 / 1060 §1 amendment 1)
 /// — this is a lookup table, not a data-layout change.
 enum MapKind {
+    /// Shape not declared. What a map created through the RAW `addMeshMap`
+    /// carries, and what a pre-1069 `.v3d` block's maps read back as. NOT a
+    /// synonym for "no map" — it is the honest "nobody said which kind this
+    /// is". Every filter that excludes a kind must be written NEGATIVELY, or
+    /// it drops every legacy map (task 1069, plan §1).
+    unclassified,
     uv,             // PolyVertex, dim 2, reserved name kUvMapName
     vertexWeight,   // Point,      dim 1, caller-supplied name (many per mesh)
     creaseWeight,   // Edge,       dim 1, reserved name kCreaseWeightMapName
+    /// A morph channel storing a per-vertex DELTA from the base position
+    /// (task 1069). Point, dim 3, caller-supplied name (many per mesh).
+    /// Created EMPTY — no vertex has an entry — and an absent entry means
+    /// zero displacement, so absent and "entry == (0,0,0)" produce the same
+    /// geometry (they differ on the wire and by entry identity only).
+    morphRelative,
+    /// A morph channel storing a per-vertex absolute POSITION (task 1069).
+    /// Point, dim 3, caller-supplied name. Created DENSE — a snapshot of
+    /// every base position — and an absent entry means "stay at the base",
+    /// which is a DIFFERENT thing from a stored zero. This is the kind for
+    /// which the presence channel is geometrically observable.
+    morphAbsolute,
+}
+
+/// True for the two morph kinds. Exists so kind filters read as one negative
+/// test (`!isMorphKind(m.kind)`) instead of two comparisons that the next
+/// morph-like kind would silently escape.
+bool isMorphKind(MapKind k) pure nothrow @nogc @safe {
+    return k == MapKind.morphRelative || k == MapKind.morphAbsolute;
 }
 
 /// One `MapKind`'s declared shape. `reservedName` is empty for a kind that
-/// allows many independently-named instances per mesh (vertexWeight); a
-/// non-empty `reservedName` is the one name that kind's channel is created
-/// under (uv / creaseWeight — see `kindInfo`'s callers).
+/// allows many independently-named instances per mesh (vertexWeight, and both
+/// morph kinds); a non-empty `reservedName` is the one name that kind's
+/// channel is created under (uv / creaseWeight — see `kindInfo`'s callers).
+///
+/// `tracksPresence` and `absentIsZero` are the two properties that actually
+/// differ between the two morph kinds (task 1069): they are NOT one kind with
+/// a flag, they are two registry members whose declarations differ here.
 struct MapKindInfo {
     MapDomain domain;
     ubyte     dim;
     string    reservedName;
+    /// Does this kind allocate a `MeshMap.present` channel? False for every
+    /// kind whose data is dense by construction — those pay nothing.
+    bool      tracksPresence;
+    /// What an ABSENT entry means. True ⇒ the zero vector / scalar (so absence
+    /// is geometrically invisible); false ⇒ "stay at the base position", which
+    /// moves a vertex and is therefore observable in geometry. Vacuous for a
+    /// kind that does not track presence.
+    bool      absentIsZero;
 }
 
-/// `(domain, dim, reservedName)` for a `MapKind`. The one place a `MeshMap`
-/// kind's shape is declared; `addMeshMapOfKind` and the `debug` asserts on
-/// `creaseWeightMap`/etc read it back rather than repeating the triple.
+/// `(domain, dim, reservedName, tracksPresence, absentIsZero)` for a
+/// `MapKind`. The one place a `MeshMap` kind's shape is declared;
+/// `addMeshMapOfKind` and the `debug` asserts on `creaseWeightMap`/etc read it
+/// back rather than repeating the tuple. A `final switch`, so a new member
+/// cannot be added without declaring its shape here.
 MapKindInfo kindInfo(MapKind kind) pure nothrow @nogc @safe {
     final switch (kind) {
+        case MapKind.unclassified:
+            // dim 0 is deliberately un-constructible: `addMeshMap` rejects
+            // `dim == 0`, so `addMeshMapOfKind(MapKind.unclassified)` returns
+            // null rather than registering a shapeless map.
+            return MapKindInfo(MapDomain.Point, 0, "", false, true);
         case MapKind.uv:
-            return MapKindInfo(MapDomain.PolyVertex, 2, kUvMapName);
+            return MapKindInfo(MapDomain.PolyVertex, 2, kUvMapName, false, true);
         case MapKind.vertexWeight:
-            return MapKindInfo(MapDomain.Point, 1, "");
+            return MapKindInfo(MapDomain.Point, 1, "", false, true);
         case MapKind.creaseWeight:
-            return MapKindInfo(MapDomain.Edge, 1, kCreaseWeightMapName);
+            return MapKindInfo(MapDomain.Edge, 1, kCreaseWeightMapName, false, true);
+        case MapKind.morphRelative:
+            return MapKindInfo(MapDomain.Point, 3, "", true, true);
+        case MapKind.morphAbsolute:
+            return MapKindInfo(MapDomain.Point, 3, "", true, false);
     }
 }
 
@@ -260,6 +308,17 @@ enum int MAX_BEVEL_SEGMENTS  = 64;
 /// Param/UI layer (there is no user-facing valence knob to clamp).
 enum int MAX_JUNCTION_VALENCE = 64;
 
+/// Upper bound on the number of registered `MeshMap`s per mesh (task 1069).
+/// A kernel-only backstop with no Param layer, for the same stated reason as
+/// `MAX_JUNCTION_VALENCE`: there is no user-facing knob to clamp, and the
+/// scriptable `mesh.morph.create` loop is the allocation vector — each new map
+/// costs `nverts * (dim*4 + 1)` bytes, so an unbounded create loop is
+/// attacker-scalable in a dimension the user's own mesh size does not control.
+/// Enforced in `addMeshMap` (returns null past the cap), which every creation
+/// path funnels through. Honest about what it bounds: the map COUNT. The
+/// per-map size is O(the caller's own mesh) and is not an attacker knob.
+enum int MAX_MESH_MAPS = 256;
+
 /// A generic named, typed per-element float attribute channel — the single
 /// reusable home for continuous per-element data (UV, vertex weight, edge
 /// crease, vertex color, …) so each such attribute does NOT become a bespoke
@@ -273,14 +332,85 @@ enum int MAX_JUNCTION_VALENCE = 64;
 /// `dim` is the number of float components per element (1 = weight/crease,
 /// 2 = UV, 3 = color, …). `name` is the lookup key in the registry and must be
 /// unique per mesh.
+///
+/// **Presence** (task 1069). `present` is the parallel channel that makes
+/// "this element has no entry" a different state from "this element's entry is
+/// zero". Its invariant is stated separately from `data`'s because the two do
+/// NOT scale the same way:
+///
+///     data.length    == elementCount(domain) * dim   (per COMPONENT)
+///     present.length == elementCount(domain)         (per ELEMENT — NO `* dim`)
+///
+/// An element is present or absent as a whole; there is no per-component
+/// presence. `present.length == 0` is the separate legal value meaning "every
+/// element is present", which is what every kind that does not track presence
+/// (uv, vertexWeight, creaseWeight) carries — they allocate nothing and behave
+/// byte-identically to before this channel existed.
 struct MeshMap {
     string    name;
     ubyte     dim;
     MapDomain domain;
     float[]   data;
+    /// Which kind this map was registered as. STORED rather than inferred:
+    /// the two morph kinds have identical shape (Point, dim 3) and neither
+    /// reserves a name, so neither of the two mechanisms that exist (reserved
+    /// name, declared shape) can tell them apart (task 1069, plan §1).
+    MapKind   kind = MapKind.unclassified;
+    /// Per-ELEMENT presence, non-zero == present. Empty ⇒ all present.
+    ubyte[]   present;
 
     MeshMap dup() const {
-        return MeshMap(name, dim, domain, data.dup);
+        // FIELD-WISE, deliberately NOT the positional constructor. A
+        // positional `MeshMap(name, dim, domain, data.dup)` silently
+        // DEFAULT-INITS every field added after the last argument — and for
+        // `present` that default is `[]`, which MEANS "all present". A
+        // dropped presence channel would therefore not crash and not read as
+        // garbage; it would read as a legal, WRONG answer. The static assert
+        // is the tripwire for the NEXT field, not for these two.
+        static assert(MeshMap.tupleof.length == 6,
+            "MeshMap gained a field — add it to dup() before bumping this count");
+        MeshMap r;
+        r.name    = name;
+        r.dim     = dim;
+        r.domain  = domain;
+        r.data    = data.dup;
+        r.kind    = kind;
+        r.present = present.dup;
+        return r;
+    }
+
+    /// Is element `i` present? Honours the "empty ⇒ all present" convention,
+    /// so every pre-1069 map answers `true` for every in-range element.
+    bool isPresent(size_t i) const pure nothrow @nogc @safe {
+        if (present.length == 0) return i * dim + dim <= data.length;
+        return i < present.length && present[i] != 0;
+    }
+
+    /// Write element `i`'s dim-3 entry AND set its presence, with NO change
+    /// notification of any kind. The form the mid-drag routing kernel uses:
+    /// it resolves the map once per apply and writes every moving vertex
+    /// through here, then notes `MeshEditScope.Maps` ONCE. Going through
+    /// `Mesh.setMorphValue` instead would `commitChange` — and so bump
+    /// `mutationVersion` — once per vertex per motion event, which breaks the
+    /// mid-drag version stability the symmetry / falloff / snap caches key on.
+    /// Returns false on a dim mismatch or an out-of-range element.
+    bool setEntry(size_t i, Vec3 v) {
+        if (dim != 3) return false;
+        const size_t b = i * 3;
+        if (b + 3 > data.length) return false;
+        data[b] = v.x; data[b + 1] = v.y; data[b + 2] = v.z;
+        if (i < present.length) present[i] = 1;
+        return true;
+    }
+
+    /// Read element `i`'s dim-3 entry, or `fallback` when it is absent or out
+    /// of range. The read half of the same mid-drag loop — resolved once, no
+    /// per-vertex name lookup.
+    Vec3 entryOr(size_t i, Vec3 fallback) const {
+        if (dim != 3) return fallback;
+        const size_t b = i * 3;
+        if (b + 3 > data.length || !isPresent(i)) return fallback;
+        return Vec3(data[b], data[b + 1], data[b + 2]);
     }
 }
 
@@ -1889,6 +2019,12 @@ struct Mesh {
                 const size_t src = pair[0] * d;
                 const size_t dst = pair[1] * d;
                 m.data[dst .. dst + d] = m.data[src .. src + d];
+                // Task 1069: presence propagates with the value. A copy of a
+                // vertex that had NO entry must itself have no entry — copying
+                // `data` alone would give the copy a present zero.
+                if (m.present.length != 0
+                    && pair[0] < m.present.length && pair[1] < m.present.length)
+                    m.present[pair[1]] = m.present[pair[0]];
             }
         }
 
@@ -2712,13 +2848,23 @@ struct Mesh {
             const ubyte dim = mm.dim;
             float[] nd;
             nd.length = newVerts.length * dim;
+            // Task 1069: the presence channel rides the SAME gather, one entry
+            // per ELEMENT. Copying `data` and not `present` is invisible to a
+            // relative-kind assertion (absent and zero look alike there) and
+            // MOVES A VERTEX under the absolute kind — which is why the
+            // regression test for this gather uses the absolute kind.
+            const bool hasP = mm.present.length != 0;
+            ubyte[] np;
+            if (hasP) np.length = newVerts.length;
             foreach (old, p; remap) {
                 if (p == cast(uint)~0u) continue;
                 const size_t ob = cast(size_t)old * dim;
                 if (ob + dim > mm.data.length) continue; // defensive
                 nd[p * dim .. p * dim + dim] = mm.data[ob .. ob + dim];
+                if (hasP && old < mm.present.length) np[p] = mm.present[old];
             }
             mm.data = nd;
+            if (hasP) mm.present = np;
         }
         // task 1060: `vertexSetMask` rides the SAME gather as the
         // Point-domain meshMaps loop just above — a survivor's own
@@ -6932,13 +7078,27 @@ struct Mesh {
         const size_t old  = m.data.length;
         m.data.length = want;
         if (want > old) m.data[old .. $] = 0.0f;
+        // Presence rides the same resize, at ONE entry per ELEMENT — no
+        // `* dim` (task 1069; the invariant is on `MeshMap`). New trailing
+        // slots default to 0 == ABSENT, which is right for both morph kinds:
+        // a newly appended vertex has no delta (relative) and stays at its
+        // base (absolute). `ubyte.init` is already 0 — unlike `float.init`,
+        // which is NaN — but the fill is written explicitly anyway so the
+        // next reader does not have to know that to trust the line.
+        if (kindInfo(m.kind).tracksPresence) {
+            const size_t wantP = elementCount(m.domain);
+            const size_t oldP  = m.present.length;
+            m.present.length = wantP;
+            if (wantP > oldP) m.present[oldP .. $] = 0;
+        }
     }
 
     // Register a new per-element float channel. `dim` must be >= 1; `name`
     // must be non-empty and not already registered; PolyVertex is reserved.
     // Returns a pointer to the stored map (data zero-initialised to the right
     // length), or null on rejection. Defensive, like the rest of mesh.d.
-    MeshMap* addMeshMap(string name, ubyte dim, MapDomain domain) {
+    MeshMap* addMeshMap(string name, ubyte dim, MapDomain domain,
+                        MapKind kind = MapKind.unclassified) {
         if (name.length == 0) return null;
         if (dim == 0) return null;
         // PolyVertex (per-corner) is live: sized to `loops.length * dim` via
@@ -6947,12 +7107,21 @@ struct Mesh {
         // (remapPolyVertexMaps / rebuildPolyVertexAtFace); see the meshMaps
         // field comment for the wired vs drop sets.
         if (meshMap(name) !is null) return null; // names are unique per mesh
+        // Kernel-only DoS backstop (task 1069). There is no Param layer to
+        // clamp — `mesh.morph.create` in a script loop is the vector — so the
+        // cap lives at the one function every creation path funnels through.
+        if (meshMaps.length >= MAX_MESH_MAPS) return null;
         MeshMap m;
         m.name   = name;
         m.dim    = dim;
         m.domain = domain;
+        m.kind   = kind;
         m.data.length = elementCount(domain) * dim;
         m.data[] = 0.0f; // float.init is NaN; default mesh-map value is 0
+        if (kindInfo(kind).tracksPresence) {
+            m.present.length = elementCount(domain); // per ELEMENT, no `* dim`
+            m.present[] = 0;                         // created ABSENT everywhere
+        }
         meshMaps ~= m;
         return &meshMaps[$ - 1];
     }
@@ -7015,17 +7184,29 @@ struct Mesh {
     }
 
     /// Return names of all registered `MapDomain.Point, dim==1` weight maps.
+    ///
+    /// The kind test is deliberately NEGATIVE (task 1069). A positive
+    /// `kind == MapKind.vertexWeight` filter would return EMPTY for every
+    /// weight map that predates this task and for every one a pre-1069 `.v3d`
+    /// reader creates — all of which are `unclassified` — which empties the
+    /// falloff weight-map dropdown (`toolpipe/stages/falloff.d`) and makes
+    /// `select.byStat` reject a map that exists. Note honestly that the
+    /// exclusion is REDUNDANT today: morph maps are dim 3, so `dim == 1`
+    /// already keeps them out. It is here so a future dim-1 morph variant
+    /// cannot leak into the weight surface, written negatively so an
+    /// unclassified legacy map can never be dropped.
     string[] weightMapNames() const {
         string[] names;
         foreach (ref m; meshMaps)
-            if (m.domain == MapDomain.Point && m.dim == 1)
+            if (m.domain == MapDomain.Point && m.dim == 1 && !isMorphKind(m.kind))
                 names ~= m.name;
         return names;
     }
 
-    /// Convenience: add a Point dim-1 weight map. Delegates to addMeshMap.
+    /// Convenience: add a Point dim-1 weight map, CLASSIFIED as such so it is
+    /// not indistinguishable from a raw `addMeshMap` of the same shape.
     MeshMap* addWeightMap(string name) {
-        return addMeshMap(name, 1, MapDomain.Point);
+        return addMeshMapOfKind(MapKind.vertexWeight, name);
     }
 
     /// Register a new map of a known `MapKind`, deriving domain + dim from
@@ -7036,9 +7217,9 @@ struct Mesh {
     MeshMap* addMeshMapOfKind(MapKind kind, string name = "") {
         const info = kindInfo(kind);
         const string useName = name.length ? name : info.reservedName;
-        auto m = addMeshMap(useName, info.dim, info.domain);
+        auto m = addMeshMap(useName, info.dim, info.domain, kind);
         debug if (m !is null)
-            assert(m.dim == info.dim && m.domain == info.domain,
+            assert(m.dim == info.dim && m.domain == info.domain && m.kind == kind,
                 "addMeshMapOfKind: stored map fields do not match its kind's declaration");
         return m;
     }
@@ -7148,6 +7329,10 @@ struct Mesh {
     }
 
     /// Per-vertex weight read. Returns 0.0 on missing map or out-of-range index.
+    ///
+    /// Task 1069: the shape gate below needs no morph-kind exclusion — a morph
+    /// map is Point dim 3, so `dim != 1` already refuses it. Said here so the
+    /// next reader does not have to re-derive it from the kind registry.
     float vertexWeight(string name, size_t vi) const {
         auto m = meshMap(name);
         if (m is null) return 0.0f;
@@ -7159,6 +7344,147 @@ struct Mesh {
     /// Per-vertex weight write. Returns true on success.
     bool setVertexWeight(string name, size_t vi, float w) {
         return setMeshMapValue(name, vi, [w]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Morph channels (task 1069). Point domain, dim 3, presence-tracked.
+    //
+    // Two reads, deliberately different, matching the two the reference SDK
+    // exposes as separate methods: `morphValue` reports PRESENCE and refuses
+    // to invent a value; `morphEvaluate` substitutes the kind's declared
+    // default and can therefore never tell you whether an entry exists. Code
+    // that needs to know "does this vertex have an entry" MUST use the first —
+    // the second cannot answer it, by construction.
+    // -----------------------------------------------------------------------
+
+    /// Names of every registered map of `kind`, in registration order.
+    string[] mapNamesOfKind(MapKind kind) const {
+        string[] names;
+        foreach (ref m; meshMaps)
+            if (m.kind == kind) names ~= m.name;
+        return names;
+    }
+
+    /// Names of every registered morph map (either kind), in registration
+    /// order. The list the UI and the `.v3d`/`.lwo` codecs iterate.
+    string[] morphMapNames() const {
+        string[] names;
+        foreach (ref m; meshMaps)
+            if (isMorphKind(m.kind)) names ~= m.name;
+        return names;
+    }
+
+    /// The kind of the map registered under `name`, or `unclassified` when no
+    /// such map exists. Used by the routing seam, which resolves its target
+    /// BY NAME on every use (`removeMeshMap` splices the array and invalidates
+    /// every outstanding `MeshMap*` — plan R3).
+    MapKind mapKind(string name) const {
+        auto m = meshMap(name);
+        return (m is null) ? MapKind.unclassified : m.kind;
+    }
+
+    /// Resolve a morph map for a mid-drag WRITE loop: the map registered under
+    /// `name` if and only if it is a morph kind, else null. The routing kernel
+    /// resolves ONCE PER APPLY through this and then uses `MeshMap.setEntry` /
+    /// `MeshMap.entryOr` per vertex — it must never cache the pointer across a
+    /// drag, because `removeMeshMap` splices the registry array and
+    /// invalidates every outstanding `MeshMap*` (plan R3).
+    MeshMap* morphMapForWrite(string name) return {
+        auto m = meshMap(name);
+        if (m is null || !isMorphKind(m.kind)) return null;
+        return m;
+    }
+
+    /// PRESENCE read. `true` + the stored triple when vertex `vi` has an entry
+    /// in morph map `name`; `false` and `v == Vec3(0,0,0)` when it does not,
+    /// when the map is missing, or when it is not a morph map. The `false`
+    /// case's zero is NOT a value — do not read it as one; use
+    /// `morphEvaluate` if you want the kind's default substituted.
+    bool morphValue(string name, size_t vi, out Vec3 v) const {
+        v = Vec3(0, 0, 0);
+        auto m = meshMap(name);
+        if (m is null) return false;
+        if (!isMorphKind(m.kind)) return false;
+        const size_t b = vi * 3;
+        if (b + 3 > m.data.length) return false;
+        if (!m.isPresent(vi)) return false;
+        v = Vec3(m.data[b], m.data[b + 1], m.data[b + 2]);
+        return true;
+    }
+
+    /// EVALUATE read — the stored triple with the KIND'S DEFAULT substituted
+    /// when the entry is absent. For `morphRelative` the default is the zero
+    /// delta; for `morphAbsolute` it is the vertex's own base position, which
+    /// is what "stay at the base" means in that kind's own units. So the
+    /// result is always in the map's storage semantics and
+    /// `morphApply(vertices[vi], morphEvaluate(name, vi), kind, 1.0f)` is the
+    /// displayed position for BOTH kinds.
+    ///
+    /// (The plan's Stage-7 sketch wrote this as `vertices[vi] +
+    /// morphEvaluate(...)`. That is right for the relative kind and WRONG for
+    /// the absolute one, whose stored value is a position, not a
+    /// displacement — `morphApply` is the form that holds for both.)
+    Vec3 morphEvaluate(string name, size_t vi) const {
+        auto m = meshMap(name);
+        const Vec3 base = (vi < vertices.length) ? vertices[vi] : Vec3(0, 0, 0);
+        if (m is null || !isMorphKind(m.kind)) return base;
+        const size_t b = vi * 3;
+        if (b + 3 > m.data.length || !m.isPresent(vi))
+            return (m.kind == MapKind.morphRelative) ? Vec3(0, 0, 0) : base;
+        return Vec3(m.data[b], m.data[b + 1], m.data[b + 2]);
+    }
+
+    /// Write one entry AND set its presence. Absolute (not additive). Returns
+    /// false on a missing / non-morph map or an out-of-range vertex.
+    ///
+    /// This is the ONE-SHOT / command-level write: it `commitChange`s, so it
+    /// bumps `mutationVersion`. The mid-drag routing kernel must NOT use it —
+    /// see `morphMapForWrite` + `MeshMap.setEntry`, which write without any
+    /// notification so the version stays stable for the whole gesture.
+    bool setMorphValue(string name, size_t vi, Vec3 v) {
+        auto m = meshMap(name);
+        if (m is null) return false;
+        if (!isMorphKind(m.kind)) return false;
+        const size_t b = vi * 3;
+        if (b + 3 > m.data.length) return false;
+        m.data[b]     = v.x;
+        m.data[b + 1] = v.y;
+        m.data[b + 2] = v.z;
+        if (vi < m.present.length) m.present[vi] = 1;
+        // Maps-class, not Material: a morph write changes what is DRAWN
+        // (Phase 0 measured the viewport at base+delta), so it must reach
+        // `DisplayRefreshMask` — which `Material` does not carry for this
+        // purpose. See mesh_edit_delta.MeshEditScope.Maps.
+        commitChange(MeshEditScope.Maps);
+        return true;
+    }
+
+    /// Remove one entry — presence goes to 0 and the stored components are
+    /// zeroed so a later dense reader cannot resurrect a stale value. This is
+    /// NOT "set it to zero": for `morphAbsolute` an absent entry MOVES the
+    /// vertex back to its base, and for either kind an absent entry is a
+    /// different thing on the wire from a stored zero.
+    bool clearMorphValue(string name, size_t vi) {
+        auto m = meshMap(name);
+        if (m is null) return false;
+        if (!isMorphKind(m.kind)) return false;
+        const size_t b = vi * 3;
+        if (b + 3 > m.data.length) return false;
+        m.data[b .. b + 3] = 0.0f;
+        if (vi < m.present.length) m.present[vi] = 0;
+        commitChange(MeshEditScope.Maps);
+        return true;
+    }
+
+    /// How many vertices have an entry in morph map `name`. 0 for a missing
+    /// or non-morph map. The quantity the fixture's `entries[]` counts.
+    size_t morphEntryCount(string name) const {
+        auto m = meshMap(name);
+        if (m is null || !isMorphKind(m.kind)) return 0;
+        size_t n = 0;
+        const size_t elems = m.data.length / 3;
+        foreach (i; 0 .. elems) if (m.isPresent(i)) ++n;
+        return n;
     }
 
     // Resize the per-edge arrays to `edges` length and drop every edge

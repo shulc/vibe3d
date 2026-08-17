@@ -178,6 +178,8 @@ import commands.mesh.jitter;
 import commands.mesh.magnet : MeshMagnet;
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
+import commands.mesh.morph;
+import commands.mesh.morph_edit : MeshMorphEdit;
 import commands.mesh.edge_crease;
 import commands.mesh.uv_transform;
 import commands.mesh.uv_project  : UvProject;
@@ -659,6 +661,9 @@ struct EditorApp {
     // ---- (в) by-value: the 13 typed MeshSessionEdit/MeshVertexEdit
     //      factories (app.d ~2785-2832), each assigned exactly once ----
     MeshVertexEdit  delegate() vxEditFactory;
+    // Task 1069 — routed-gesture undo factory, injected into every
+    // XfrmTransformTool via setUndoBindings' third argument.
+    MeshMorphEdit   delegate() morphEditFactory;
     // Task 0614 Phase 4 — item-transform gizmo-drag undo factory, the
     // LayerXformEdit analogue of vxEditFactory. Injected into every
     // XfrmTransformTool instance (registration.d) via setItemUndoFactory().

@@ -318,6 +318,33 @@ private:
     // state.actionCenter (typically Move/Rotate/Scale's per-frame update).
     Mesh* delegate() meshSrc_;
     @property Mesh* mesh_() const { return meshSrc_ ? meshSrc_() : null; }
+
+    /// The vertex position the ACTION CENTRE aims at — the DRAWN one
+    /// (task 1069). `CLAUDE.md` names this stage the single source of truth
+    /// for the gizmo pivot, and Phase 0 measured the surface drawing
+    /// base+delta under a morph target, so leaving the pivot on the base
+    /// would put the gizmo where the user is not looking, while the tool's
+    /// run baseline (base + delta, which law L7 forces independently) sits
+    /// somewhere else again — three different points for one gesture.
+    ///
+    /// Identical to `mesh_.vertices[vi]` whenever no morph target is bound,
+    /// which is what keeps every existing action-centre fixture unchanged.
+    ///
+    /// Worth stating because it is the reason objection 8 could not be
+    /// closed by the pick test alone: a `/api/pick` assertion passes with
+    /// this unrouted (the BVH already follows the draw) while the gizmo sits
+    /// on the base. The two need separate assertions.
+    private Vec3 acenVertex(size_t vi) const {
+        import morph_target : displayPosition;
+        return displayPosition(mesh_, vi);
+    }
+
+    /// Is a morph preview live on this stage's mesh? Wrapper so the import
+    /// sits in one place.
+    private bool morphPreviewActive(const Mesh* m) const {
+        import morph_target : mtActive = morphPreviewActive;
+        return mtActive(m);
+    }
     EditMode* editMode_;
     // Task 0082: delegate supplying the primary Layer for Pivot/Parent modes.
     // Null in tests that don't need item-hierarchy modes.
@@ -594,8 +621,8 @@ public:
         int  n   = 0;
         foreach (vi; verts) {
             if (vi >= mesh_.vertices.length) continue;   // stale index guard
-            sum += ms.isIdentity ? mesh_.vertices[vi]
-                                 : ms.toWorldPoint(mesh_.vertices[vi]);
+            sum += ms.isIdentity ? acenVertex(vi)
+                                 : ms.toWorldPoint(acenVertex(vi));
             n++;
         }
         if (n == 0) return false;
@@ -1310,8 +1337,8 @@ private:
         bool seen = false;
         foreach (vi, c; clusterOf) {
             if (c != cid) continue;
-            Vec3 v = ms.isIdentity ? mesh_.vertices[vi]
-                                   : ms.toWorldPoint(mesh_.vertices[vi]);
+            Vec3 v = ms.isIdentity ? acenVertex(vi)
+                                   : ms.toWorldPoint(acenVertex(vi));
             if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
             if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
             if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
@@ -1458,8 +1485,8 @@ private:
         // itemSpace(). Element's LAW is out of 0649's scope; its SPACE is not.
         const auto ms = itemSpace();
         Vec3 vAt(size_t vi) const {
-            return ms.isIdentity ? mesh_.vertices[vi]
-                                 : ms.toWorldPoint(mesh_.vertices[vi]);
+            return ms.isIdentity ? acenVertex(vi)
+                                 : ms.toWorldPoint(acenVertex(vi));
         }
         Vec3 sum = Vec3(0, 0, 0);
         int  count = 0;
@@ -1540,10 +1567,39 @@ private:
     // bbox == avg, so existing unit tests are unaffected.
     Vec3 centroidWithGeometryFallback() const {
         if (mesh_ is null) return Vec3(0, 0, 0);
-        // mesh.selectionBBoxCenter* falls back to the whole geometry
-        // when no selection bits are set ("no selection ⇒ all geometry").
-        // The item space goes IN, not onto the result — see itemSpace().
+        // Task 1069 — the DEFAULT (Auto / Screen / Select) pivot does NOT come
+        // from this stage's six direct `mesh_.vertices[vi]` reads: it comes
+        // from `Mesh.selectionBBoxCenter*`, inside mesh.d. So routing those six
+        // does not route the pivot a user actually sees, which is worth saying
+        // plainly because it is easy to believe otherwise.
+        //
+        // The bbox is recomputed HERE over the drawn positions rather than by
+        // routing the mesh method, because `mesh.d` is a core module that must
+        // not import the app-level morph target (`morph_target` already
+        // imports `mesh`). Semantics reproduced exactly, including the
+        // "no selection ⇒ all geometry" fallback and the item-space transform
+        // going IN rather than onto the result.
         auto ms = itemSpace();
+        if (morphPreviewActive(mesh_) && *editMode_ == EditMode.Vertices) {
+            const bool any = mesh_.hasAnySelectedVertices();
+            Vec3 mn = Vec3(float.infinity, float.infinity, float.infinity);
+            Vec3 mx = Vec3(-float.infinity, -float.infinity, -float.infinity);
+            bool seen = false;
+            foreach (i; 0 .. mesh_.vertices.length) {
+                if (any && !mesh_.isVertexSelected(i)) continue;
+                Vec3 v = acenVertex(i);
+                if (!ms.isIdentity) v = ms.toWorldPoint(v);
+                if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
+                if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
+                if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
+                seen = true;
+            }
+            return seen ? (mn + mx) * 0.5f : Vec3(0, 0, 0);
+        }
+        // Edge / Polygon modes stay on the mesh method: their bbox is over
+        // element MEMBERSHIP, not over a vertex array this stage can substitute
+        // without duplicating the edge/face selection walk too. Named as a
+        // residue rather than left silent — registry row 48.
         final switch (*editMode_) {
             case EditMode.Vertices: return mesh_.selectionBBoxCenterVertices(ms);
             case EditMode.Edges:    return mesh_.selectionBBoxCenterEdges(ms);
@@ -1572,8 +1628,8 @@ private:
             if (vi >= visited.length || visited[vi]) return;
             visited[vi] = true;
             if (sp.vertSign[vi] != sp.baseSide) return;
-            sum   = sum + (ms.isIdentity ? mesh_.vertices[vi]
-                                         : ms.toWorldPoint(mesh_.vertices[vi]));
+            sum   = sum + (ms.isIdentity ? acenVertex(vi)
+                                         : ms.toWorldPoint(acenVertex(vi)));
             count += 1;
         }
 
@@ -1639,14 +1695,14 @@ private:
                 foreach (i, edge; mesh_.edges) {
                     if (hasSelE && !mesh_.isEdgeSelected(i)) continue;
                     foreach (vi; edge)
-                        if (!visited[vi]) { touch(mesh_.vertices[vi]); visited[vi] = true; }
+                        if (!visited[vi]) { touch(acenVertex(vi)); visited[vi] = true; }
                 }
                 break;
             case EditMode.Polygons:
                 foreach (i, face; mesh_.faces) {
                     if (hasSelF && !mesh_.isFaceSelected(i)) continue;
                     foreach (vi; face)
-                        if (!visited[vi]) { touch(mesh_.vertices[vi]); visited[vi] = true; }
+                        if (!visited[vi]) { touch(acenVertex(vi)); visited[vi] = true; }
                 }
                 break;
         }

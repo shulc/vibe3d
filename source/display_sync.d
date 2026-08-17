@@ -33,12 +33,20 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 /// Visibility is a class of its own and not merely part of Marks: adding
 /// Marks to this mask would re-upload the whole mesh on every selection
 /// click.
+/// Includes Maps (task 1069) for the same reason as Visibility, and it is a
+/// MEASURED reason rather than a symmetry argument: Phase 0 measured the
+/// reference's viewport drawing base+delta with a morph selected, so a morph
+/// write changes what is on screen while moving no vertex and adding no face.
+/// Like the Hide bit it is consumed at UPLOAD time (`GpuMesh.upload` reads the
+/// drawn positions through `morph_target.displayVertices`), so it cannot be
+/// honoured by a per-frame draw-time read either.
 enum uint DisplayRefreshMask =
       MeshEditScope.Position
     | MeshEditScope.Points
     | MeshEditScope.Polygons
     | MeshEditScope.Material
-    | MeshEditScope.Visibility;
+    | MeshEditScope.Visibility
+    | MeshEditScope.Maps;
 
 // The display-refresh gate (seam 2b) — since task 0427 a TOOL-side seam.
 //

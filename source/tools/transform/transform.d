@@ -9,6 +9,7 @@ import change_bus : MeshEditScope;
 import command : Command;
 import command_history : CommandHistory;
 import commands.mesh.vertex_edit : MeshVertexEdit;
+import commands.mesh.morph_edit  : MeshMorphEdit;
 import snap : SnapResult;
 import toolpipe.packets : FalloffPacket, FalloffType, SymmetryPacket, SnapPacket, SubjectPacket;
 import toolpipe.stages.falloff : FalloffStage;
@@ -26,6 +27,10 @@ import document : primaryModelSpace;
 // constructor that wires gpu+caches; the tool just calls this delegate
 // rather than knowing about ViewCache + GpuMesh + Mesh separately).
 alias VertexEditFactory = MeshVertexEdit delegate();
+/// Task 1069 — the ROUTED-gesture undo factory, `VertexEditFactory`'s twin.
+/// Nullable: a tool with no morph factory simply records nothing for a
+/// routed drag, the same way a null `vertexEditFactory` skips undo today.
+alias MorphEditFactory = MeshMorphEdit delegate();
 
 // ---------------------------------------------------------------------------
 // Every vertex index a drag MOVES — which is exactly the set snapping must
@@ -144,12 +149,33 @@ protected:
     // handle the null case as "skip undo recording".
     CommandHistory     history;
     VertexEditFactory  vertexEditFactory;
+    MorphEditFactory   morphEditFactory;
 
     // Drag snapshot — captured by beginEdit() at drag/slider start, used by
     // commitEdit() at drag/slider end to build the MeshVertexEdit. Reset to
     // empty between sessions; isCapturing() reports whether a drag is open.
     private uint[] editIdx;
     private Vec3[] editBefore;
+
+    // ── Task 1069: the ROUTED session's own baseline ───────────────────────
+    //
+    // `editBefore` above stays POSITIONS, deliberately and non-negotiably.
+    // BOTH cancel paths (`cancelOpenSessionGeometry` here and the wrapper's
+    // `cancelUncommittedEdit`) replay that array straight back into
+    // `mesh.vertices`; putting map DELTAS in it would teleport every moving
+    // vertex to near the origin on a cancel and then publish the result. That
+    // is a data-destroying bug, not a cosmetic one.
+    //
+    // The map's pre-gesture state therefore lives in its OWN parallel arrays,
+    // and the two cancel sites restore BOTH. Whole-mesh rather than
+    // moving-set-sized because a routed gesture can write entries outside the
+    // moving set: the symmetry mirror writes partners (`pairOf`, derived from
+    // positions, never from a mask) and the CONS post-pass re-projects. A
+    // moving-set capture would leave those unrestorable.
+    private string morphEditMap_;
+    private Vec3[] morphEditBefore_;      // mesh-length stored values
+    private bool[] morphEditBeforeHas_;   // mesh-length presence
+    private bool   morphEditOpen_;
     private bool   editCapturing;
 
     int      dragAxis = -1;      // 0/1/2=X/Y/Z axis, -1=none (exact meaning varies per tool)
@@ -228,7 +254,9 @@ protected:
     // Inject undo plumbing — called by app.d after construction. Tools
     // built by tests or older paths can skip this; in that case
     // commitEdit() is a no-op.
-    public void setUndoBindings(CommandHistory h, VertexEditFactory factory) {
+    public void setUndoBindings(CommandHistory h, VertexEditFactory factory,
+                                MorphEditFactory morphFactory = null) {
+        this.morphEditFactory = morphFactory;
         this.history           = h;
         this.vertexEditFactory = factory;
     }
@@ -270,7 +298,97 @@ protected:
             editIdx    ~= cast(uint)vi;
             editBefore ~= mesh.vertices[vi];
         }
+        captureMorphEditBaseline();   // task 1069 — a SEPARATE array, see above
         editCapturing = true;
+    }
+
+    // Snapshot the bound morph map's whole state at session open. No-op (and
+    // leaves `morphEditOpen_` false) when no target is bound, which is what
+    // keeps every non-routed gesture byte-identical to before this task.
+    private void captureMorphEditBaseline() {
+        import morph_target : resolveMorphTarget;
+        import tools.transform.morph_route : defaultStored;
+        import mesh : MapKind;
+        morphEditOpen_ = false;
+        morphEditMap_  = null;
+        morphEditBefore_.length    = 0;
+        morphEditBeforeHas_.length = 0;
+        string nm; MapKind kind;
+        if (!resolveMorphTarget(mesh, nm, kind)) return;
+        auto map = mesh.morphMapForWrite(nm);
+        if (map is null) return;
+        const size_t n = mesh.vertices.length;
+        morphEditMap_ = nm;
+        morphEditBefore_.length    = n;
+        morphEditBeforeHas_.length = n;
+        foreach (i; 0 .. n) {
+            morphEditBeforeHas_[i] = map.isPresent(i);
+            morphEditBefore_[i]    = map.entryOr(i, defaultStored(mesh.vertices[i], kind));
+        }
+        morphEditOpen_ = true;
+    }
+
+    /// Restore the bound map to its session-open state. Called by BOTH cancel
+    /// paths — a cancelled routed drag must leave the map exactly as it was,
+    /// and restoring `mesh.vertices` alone would leave the edit in place while
+    /// looking correct to any assertion that only reads geometry.
+    protected void restoreMorphEditBaseline() {
+        if (!morphEditOpen_) return;
+        auto map = mesh.morphMapForWrite(morphEditMap_);
+        if (map is null) return;
+        const size_t n = morphEditBefore_.length;
+        foreach (i; 0 .. n) {
+            if (i >= mesh.vertices.length) break;
+            if (morphEditBeforeHas_[i]) map.setEntry(i, morphEditBefore_[i]);
+            else                        mesh.clearMorphValue(morphEditMap_, i);
+        }
+        import mesh_edit_delta : MeshEditScope;
+        mesh.commitChange(MeshEditScope.Maps);
+    }
+
+    /// True when the open edit session is ROUTED — the commit sites branch on
+    /// this to build the morph command instead of the vertex one.
+    protected bool morphEditIsOpen() const { return morphEditOpen_; }
+
+    /// Build the routed-gesture undo record, or null when the session was not
+    /// routed / nothing changed. Closes the capture session, exactly like
+    /// `buildEditCmd`.
+    protected Command buildMorphEditCmd(string label) {
+        import commands.mesh.morph_edit : MeshMorphEdit, MorphEntryEdit;
+        import tools.transform.morph_route : defaultStored;
+        import morph_target : resolveMorphTarget;
+        import mesh : MapKind;
+        if (!editCapturing || !morphEditOpen_) return null;
+        scope(exit) cancelEdit();
+        if (history is null) return null;
+        auto map = mesh.morphMapForWrite(morphEditMap_);
+        if (map is null) return null;
+        string nm; MapKind kind;
+        if (!resolveMorphTarget(mesh, nm, kind)) return null;
+
+        MorphEntryEdit[] entries;
+        const size_t n = morphEditBefore_.length;
+        foreach (i; 0 .. n) {
+            if (i >= mesh.vertices.length) break;
+            const bool hasNow = map.isPresent(i);
+            const Vec3 valNow = map.entryOr(i, defaultStored(mesh.vertices[i], kind));
+            // PRESENCE alone is a real change: a zero-magnitude move still
+            // creates an entry (`zero_move_creates_entries`), and an undo has
+            // to be able to take it back out.
+            if (hasNow == morphEditBeforeHas_[i]
+             && valNow.x == morphEditBefore_[i].x
+             && valNow.y == morphEditBefore_[i].y
+             && valNow.z == morphEditBefore_[i].z)
+                continue;
+            entries ~= MorphEntryEdit(cast(uint) i,
+                                      morphEditBefore_[i], morphEditBeforeHas_[i],
+                                      valNow, hasNow);
+        }
+        if (entries.length == 0) return null;
+        if (morphEditFactory is null) return null;
+        auto cmd = morphEditFactory();
+        cmd.setEdit(morphEditMap_, entries, label);
+        return cmd;
     }
 
     // Cancel a captured edit without recording — used when the drag is
@@ -278,6 +396,14 @@ protected:
     protected void cancelEdit() {
         editIdx.length    = 0;
         editBefore.length = 0;
+        // Task 1069: the routed session's baseline is dropped with the
+        // positional one. NOTE this only DISCARDS the capture — restoring the
+        // map is `restoreMorphEditBaseline()`, which the two cancel sites call
+        // BEFORE they reach here.
+        morphEditOpen_ = false;
+        morphEditMap_  = null;
+        morphEditBefore_.length    = 0;
+        morphEditBeforeHas_.length = 0;
         editCapturing     = false;
     }
 
@@ -388,6 +514,10 @@ protected:
         // restores the pin itself); leaving a stale frozen snapshot behind would
         // let a LATER cancel revert a relocate that was already committed.
         discardAcenUserPlacedSnapshot();
+        // Task 1069 — a ROUTED gesture changed the map, not `mesh.vertices`,
+        // so `buildEditCmd` would diff two identical position arrays and
+        // return null: the drag would reach the undo stack not at all.
+        if (auto mcmd = buildMorphEditCmd(label)) { recordCommit(mcmd); return; }
         auto cmd = buildEditCmd(label);
         if (cmd is null) return;
         recordCommit(cmd);
@@ -434,6 +564,11 @@ protected:
             if (vid < mesh.vertices.length)
                 mesh.vertices[vid] = base[i];
         }
+        // Task 1069: a routed session moved the MAP, not the positions, so the
+        // loop above restores nothing that changed. Without this the cancelled
+        // drag keeps its edit — and an assertion that only reads
+        // `mesh.vertices` cannot see it.
+        restoreMorphEditBaseline();
         // Session cancel restores positions to the pre-edit baseline — a real
         // version bump (not mid-drag), so commitChange (Position) reproduces the
         // raw mutationVersion bump AND publishes the class.
@@ -581,6 +716,19 @@ protected:
         // `selTypeSrc_`'s doc comment above).
         if (selTypeSrc_) subj.selType = selTypeSrc_();
         subj.viewport         = cachedVp;
+        // Task 1069 — declare the morph routing target on the subject.
+        // Resolved AGAINST THIS MESH, so a target naming a map that this layer
+        // does not carry degrades to "no target" rather than to a stale name.
+        // Declared here for every TransformTool subclass; only
+        // XfrmTransformTool's apply path READS it (plan §2.0).
+        {
+            import morph_target : resolveMorphTarget;
+            string mtName; MapKind mtKind;
+            if (resolveMorphTarget(mesh, mtName, mtKind)) {
+                subj.morphTargetName = mtName;
+                subj.morphTargetKind = mtKind;
+            }
+        }
         vts.put(&subj);
         g_pipeCtx.pipeline.evaluate(vts);
         return true;

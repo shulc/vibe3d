@@ -97,6 +97,15 @@ enum MeshEditScope : uint {
     // caches — are unaffected, and only the ones that opt in (see
     // display_sync.DisplayRefreshMask) act on it.
     Visibility = 1 << 5,
+    // A per-element MAP value changed (task 1069). Its own class for the same
+    // reason `Visibility` has one: a morph write moves no vertex and adds no
+    // face, but the viewport draws base+delta (Phase 0, measured), so the GPU
+    // buffers must be rebuilt. `Material` cannot stand in — it is the
+    // per-face surface class and its consumers are a different set. Publishers
+    // use it INSTEAD of Material for morph writes; the pre-existing
+    // `setMeshMapValue` keeps publishing Material so no existing consumer
+    // changes behaviour.
+    Maps = 1 << 6,
     Geometry = Points | Polygons,
 }
 
@@ -1056,13 +1065,20 @@ private void applyReindexForward(ref Mesh m, in uint[] perm) {
         const ubyte dim = mm.dim;
         float[] nd;
         nd.length = kept * dim;
+        // Task 1069: the presence channel rides the SAME permutation, one
+        // entry per ELEMENT (no `* dim`).
+        const bool hasP = mm.present.length != 0;
+        ubyte[] np;
+        if (hasP) np.length = kept;
         foreach (old, p; perm) {
             if (p == ~0u) continue;
             const size_t ob = cast(size_t)old * dim;
             if (ob + dim > mm.data.length) continue; // defensive
             nd[p * dim .. p * dim + dim] = mm.data[ob .. ob + dim];
+            if (hasP && old < mm.present.length) np[p] = mm.present[old];
         }
         mm.data = nd;
+        if (hasP) mm.present = np;
     }
     // Task 1060: `vertexSetMask` rides the SAME permutation as the
     // Point-domain meshMaps loop just above (same gap `mesh.d`'s
@@ -1127,13 +1143,21 @@ private void applyReindexReverse(ref Mesh m, in uint[] perm) {
         float[] nd;
         nd.length = perm.length * dim;
         nd[] = 0f;
+        // Task 1069: presence rides the same reverse permutation. Gap slots
+        // stay 0 == ABSENT, which is the right default for both morph kinds
+        // and matches `nd`'s explicit zero fill above.
+        const bool hasP = mm.present.length != 0;
+        ubyte[] np;
+        if (hasP) { np.length = perm.length; np[] = 0; }
         foreach (old, p; perm) {
             if (p == ~0u) continue;
             const size_t pb = cast(size_t)p * dim;
             if (pb + dim > mm.data.length) continue; // defensive
             nd[old * dim .. old * dim + dim] = mm.data[pb .. pb + dim];
+            if (hasP && p < mm.present.length) np[old] = mm.present[p];
         }
         mm.data = nd;
+        if (hasP) mm.present = np;
     }
     // Task 1060: `vertexSetMask` rides the SAME reverse permutation as the
     // Point-domain meshMaps loop just above.
@@ -1200,9 +1224,18 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
         const size_t n   = mm.data.length / dim;
         float[] nd;
         nd.reserve(mm.data.length);
+        // Task 1069: presence rides the SAME drop-filter, one entry per
+        // ELEMENT, filtered on the identical survive condition.
+        const bool hasP = mm.present.length != 0;
+        ubyte[] np;
+        if (hasP) np.reserve(mm.present.length);
         foreach (i; 0 .. n)
-            if (i >= drop.length || !drop[i]) nd ~= mm.data[i * dim .. i * dim + dim];
+            if (i >= drop.length || !drop[i]) {
+                nd ~= mm.data[i * dim .. i * dim + dim];
+                if (hasP) np ~= (i < mm.present.length) ? mm.present[i] : cast(ubyte)0;
+            }
         mm.data = nd;
+        if (hasP) mm.present = np;
     }
     // Task 1060: `vertexSetMask` rides the SAME drop-filter as the
     // Point-domain meshMaps loop just above — computed BEFORE `m.vertices`
@@ -1275,6 +1308,9 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
                 if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
                 const size_t dim = mm.dim;
                 if (vi * dim + dim <= mm.data.length) mm.data[vi * dim .. vi * dim + dim] = 0f;
+                // Task 1069: same "not a restored capture" convention as the
+                // value above — the re-inserted vertex has no entry.
+                if (vi < mm.present.length) mm.present[vi] = 0;
             }
             // Task 1060: same "not a restored capture" convention as
             // vertexMarks/meshMaps just above — the re-inserted vertex's
@@ -1286,6 +1322,7 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
             foreach (ref mm; m.meshMaps) {
                 if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
                 foreach (_; 0 .. mm.dim) mm.data ~= 0f;
+                if (mm.present.length != 0) mm.present ~= cast(ubyte)0; // task 1069
             }
             m.vertexSetMask ~= 0UL;
         } else {
@@ -1300,6 +1337,9 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
                     zeros.length = dim;
                     zeros[] = 0f;
                     mm.data.insertInPlace(vi * dim, zeros);
+                    // Task 1069: the presence channel shifts with the values.
+                    if (mm.present.length != 0 && vi <= mm.present.length)
+                        mm.present.insertInPlace(vi, cast(ubyte)0);
                 }
             }
             if (vi <= m.vertexSetMask.length) m.vertexSetMask.insertInPlace(vi, 0UL);

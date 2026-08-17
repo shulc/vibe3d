@@ -201,6 +201,7 @@ import commands.mesh.jitter;
 import commands.mesh.magnet : MeshMagnet;
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
+import commands.mesh.morph;
 import commands.mesh.edge_crease;
 import commands.mesh.uv_transform;
 import commands.mesh.uv_project  : UvProject;
@@ -347,7 +348,7 @@ private void registerTransformTools(EditorApp app) {
         t.flagT = true; t.flagR = false; t.flagS = false;
         t.handleFamily = 0;
         t.handlePresentation = "full";
-        t.setUndoBindings(history, vxEditFactory);
+        t.setUndoBindings(history, vxEditFactory, morphEditFactory);
         t.setItemUndoFactory(layerXformEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         if (aiExplore.enabled && aiLogWriter.enabled)
@@ -369,7 +370,7 @@ private void registerTransformTools(EditorApp app) {
         t.flagT = false; t.flagR = true; t.flagS = false;
         t.handleFamily = 1;
         t.handlePresentation = "full";
-        t.setUndoBindings(history, vxEditFactory);
+        t.setUndoBindings(history, vxEditFactory, morphEditFactory);
         t.setItemUndoFactory(layerXformEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         if (aiExplore.enabled && aiLogWriter.enabled)
@@ -391,7 +392,7 @@ private void registerTransformTools(EditorApp app) {
         t.flagT = false; t.flagR = false; t.flagS = true;
         t.handleFamily = 2;
         t.handlePresentation = "full";
-        t.setUndoBindings(history, vxEditFactory);
+        t.setUndoBindings(history, vxEditFactory, morphEditFactory);
         t.setItemUndoFactory(layerXformEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         if (aiExplore.enabled && aiLogWriter.enabled)
@@ -410,7 +411,7 @@ private void registerTransformTools(EditorApp app) {
                                         // D, §7.2) — same funnel as the gizmo
                                         // centre in app.d.
                                         (ref Layer[] buf) => document().itemTransformTargets(buf));
-        t.setUndoBindings(history, vxEditFactory);
+        t.setUndoBindings(history, vxEditFactory, morphEditFactory);
         t.setItemUndoFactory(layerXformEditFactory);
         t.setPipeGizmoHost(pipeGizmoHost);
         if (aiExplore.enabled && aiLogWriter.enabled)
@@ -1940,6 +1941,20 @@ private void registerMeshCommands(EditorApp app) {
     // state about a MESH channel and only its consumer is per-cell.
     reg.commandFactories["mesh.weightmap.select"] = () => cast(Command)
         new WeightmapSelect(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.morph.create"] = () => cast(Command)
+        new MorphCreate(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.morph.remove"] = () => cast(Command)
+        new MorphRemove(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.morph.rename"] = () => cast(Command)
+        new MorphRename(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.morph.select"] = () => cast(Command)
+        new MorphSelect(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.morph.set"] = () => cast(Command)
+        new MorphSet(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.morph.clear"] = () => cast(Command)
+        new MorphClear(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.morph.apply"] = () => cast(Command)
+        new MorphApplyCmd(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.edgeCrease.set"] = () => cast(Command)
         new EdgeCreaseSet(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.edgeCrease.clear"] = () => cast(Command)

@@ -198,6 +198,7 @@ import commands.mesh.jitter;
 import commands.mesh.magnet : MeshMagnet;
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
+import commands.mesh.morph;
 import commands.mesh.edge_crease;
 import commands.mesh.uv_transform;
 import commands.mesh.uv_project  : UvProject;
@@ -2104,9 +2105,68 @@ void drawChannelsPanel(EditorApp app) {
                             /*stageId=*/"",
                             /*layerIndex=*/"");
         }
+
+        // ---- Vertex Maps (task 1069) -------------------------------------
+        //
+        // Unconditional, and the reason is not completeness: it is the ONLY
+        // place two silent behaviours become visible.
+        //
+        //   * A morph map does not survive a mesh-REPLACING kernel
+        //     (subdivide / remesh / import). That is consistent with what
+        //     already happens to uv and weight maps rather than a new
+        //     regression, but a hand-authored morph is a far worse thing to
+        //     lose silently than a UV. Watching the entry count go to zero is
+        //     how a user finds out.
+        //   * With a target BOUND, twelve registered tools still edit the
+        //     BASE — deliberately (registry rows 47a-47l). Showing which map
+        //     is bound is what stops "I pushed and my morph did nothing" from
+        //     being a mystery.
+        //
+        // Lives inside this panel rather than in a new dock window on
+        // purpose: a new window would need DockBuilder wiring and would
+        // perturb every saved layout, and `imgui.ini` determinism is load
+        // bearing for the test suite.
+        drawVertexMapsSection(app);
     }
     // `ImGui.End()` + `popPanelChromeStyle()` are the two `scope(exit)`s
     // registered above.
+    }
+}
+
+/// The Vertex Maps list: every morph map with its kind and entry count, the
+/// routing target marked. Read-only — creation / removal / selection go
+/// through the `mesh.morph.*` commands, which are what undo records.
+private void drawVertexMapsSection(EditorApp app) {
+    with (app) {
+    import std.format  : format;
+    import mesh        : isMorphKind, MapKind;
+    import morph_target : morphTargetName;
+
+    auto m = &mesh();
+    if (m is null) return;
+    bool anyMorph = false;
+    foreach (ref mm; m.meshMaps) if (isMorphKind(mm.kind)) { anyMorph = true; break; }
+    if (!anyMorph) return;              // no morph maps ⇒ no section at all
+
+    if (!ImGui.CollapsingHeader("Vertex Maps")) return;
+    const string bound = morphTargetName();
+    foreach (ref mm; m.meshMaps) {
+        if (!isMorphKind(mm.kind)) continue;
+        const bool isTarget = (bound.length > 0 && bound == mm.name);
+        size_t entries = 0;
+        const size_t n = mm.data.length / 3;
+        foreach (i; 0 .. n) if (mm.isPresent(i)) ++entries;
+        // The kind is spelled out rather than abbreviated: the two differ in
+        // what an ABSENT entry means, which is the one thing a user reading
+        // an entry count needs to know.
+        ImGui.TextUnformatted(format("%s%s  [%s]  %d/%d",
+            isTarget ? "> " : "  ",
+            mm.name,
+            mm.kind == MapKind.morphRelative ? "relative" : "absolute",
+            entries, n));
+    }
+    if (bound.length == 0)
+        ImGui.TextUnformatted("no target bound - edits go to the base");
     }
 }
 

@@ -61,6 +61,7 @@ void exportLwo(ref const Mesh mesh, string path)
 
     // --- UV: flat per-corner "uv" map -> two-tier VMAP base + VMAD overrides ---
     buildUvMaps(mesh, obj.vmaps, obj.vmads);
+    buildMorphMaps(mesh, obj.vmaps);   // task 1069
 
     writeLwo2File(path, obj);
 }
@@ -167,6 +168,7 @@ void exportLwoDocument(ref const Document doc, string path)
 
         // UV: the same two-tier VMAP+VMAD reconstruction, per layer.
         buildUvMaps(src, lay.vmaps, lay.vmads);
+        buildMorphMaps(src, lay.vmaps);   // task 1069
 
         layers ~= lay;
     }
@@ -249,6 +251,45 @@ private Lwo2Surface toLwoSurface(ref const Surface s)
 //
 // Fills the caller's `vmaps`/`vmads` (the flat object's, or a layer's) so the
 // single-mesh and per-layer paths share ONE implementation.
+/// Emit one SPARSE VMAP per morph map (task 1069). The sibling of
+/// `buildUvMaps` below, and much simpler because the morph domain is per-POINT:
+/// there is no corner bookkeeping and no VMAD half.
+///
+/// Only PRESENT entries are listed, which is the whole point — a dense
+/// emission would collapse "this vertex has no entry" into "its entry is
+/// zero", and for the absolute kind those are different POSITIONS.
+///
+/// The library's own invariant is `values.length == points.length * dimension`
+/// and it is an `assert`, so it is COMPILED OUT under `-release`. The loop
+/// below satisfies it by construction — three floats appended for every point
+/// appended, in the same iteration — rather than leaning on the assert as a
+/// runtime check.
+private void buildMorphMaps(ref const Mesh mesh, ref Lwo2VertexMap[] vmaps) {
+    import io.lwo_import : kMorphRelativeTag, kMorphAbsoluteTag;
+    foreach (ref map; mesh.meshMaps) {
+        if (!isMorphKind(map.kind)) continue;
+        if (map.domain != MapDomain.Point || map.dim != 3) continue;
+        Lwo2VertexMap vmap;
+        vmap.type      = (map.kind == MapKind.morphAbsolute)
+                       ? kMorphAbsoluteTag : kMorphRelativeTag;
+        vmap.name      = map.name;
+        vmap.dimension = 3;
+        const size_t n = map.data.length / 3;
+        foreach (uint pt; 0 .. cast(uint) n) {
+            if (pt >= mesh.vertices.length) break;   // defensive
+            if (!map.isPresent(pt)) continue;
+            vmap.points ~= pt;
+            vmap.values ~= map.data[pt * 3];
+            vmap.values ~= map.data[pt * 3 + 1];
+            vmap.values ~= map.data[pt * 3 + 2];
+        }
+        if (vmap.points.length == 0) continue;       // an empty map emits nothing
+        assert(vmap.values.length == vmap.points.length * 3,
+            "morph VMAP: values/points/dimension invariant broken");
+        vmaps ~= vmap;
+    }
+}
+
 private void buildUvMaps(ref const Mesh mesh,
                          ref Lwo2VertexMap[]  vmaps,
                          ref Lwo2VertexMapD[] vmads)

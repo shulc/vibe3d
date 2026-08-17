@@ -231,13 +231,41 @@ mixin template XfrmApplyImpl() {
                 if (consPkt.enabled && consPkt.geom != ConstrainGeom.Off) {
                     auto bgSrc = backgroundSourcesFull();
                     if (bgSrc.length > 0) {
+                        // Task 1069 — the ROUTED form. This pass does not
+                        // "need the same treatment" as a nicety: left alone it
+                        // silently becomes a NO-OP under routing, because its
+                        // teleport guard compares `mesh.vertices[vid]` against
+                        // `baseline[vid]` and under routing those are equal for
+                        // EVERY vertex. Every vertex would be skipped and
+                        // nothing would notice — a test that only asserts "the
+                        // base was not corrupted" passes on the dead pass.
+                        //
+                        // The comparison point is the RUN baseline
+                        // (`route.runPos`), NOT the true base: a vertex that
+                        // already carried a delta from an earlier gesture and
+                        // that the falloff gives weight 0 this gesture is
+                        // skipped by the fold kernel, so it still sits at its
+                        // run position — comparing against the true base would
+                        // see a difference, not skip it, and CONS would
+                        // re-project (and corrupt) a delta this gesture never
+                        // touched. That is only visible with TWO gestures.
+                        import tools.transform.morph_route :
+                            routedDisplayPos, storeRouted;
+                        auto route = buildMorphRouteFor(baseline);
+                        const bool routed = route.covers(mesh.vertices.length);
+                        auto routeMap = routed ? mesh.morphMapForWrite(route.name) : null;
+                        bool consWrote = false;
                         foreach (vid; vertexIndicesToProcess) {
                             if (vid < 0 || vid >= cast(int)mesh.vertices.length)
                                 continue;
                             // Teleport guard: leave w==0 verts (the fold left
-                            // them at baseline) undisturbed.
-                            Vec3 finalPos = mesh.vertices[vid];
-                            Vec3 basePos  = baseline[vid];
+                            // them at their run baseline) undisturbed.
+                            Vec3 finalPos = (routeMap !is null)
+                                          ? routedDisplayPos(routeMap, route, cast(size_t)vid)
+                                          : mesh.vertices[vid];
+                            Vec3 basePos  = (routeMap !is null)
+                                          ? route.runPos[vid]
+                                          : baseline[vid];
                             if (finalPos.x == basePos.x
                              && finalPos.y == basePos.y
                              && finalPos.z == basePos.z)
@@ -246,13 +274,19 @@ mixin template XfrmApplyImpl() {
                             // translation; for rotate/scale each vertex has its own
                             // non-uniform displacement (vector-mode is analytic only for T).
                             Vec3 editDelta = finalPos - basePos;
-                            mesh.vertices[vid] = constrainPoint(
+                            Vec3 constrained = constrainPoint(
                                 finalPos,
                                 editDelta,
                                 cachedVp,
                                 bgSrc,
                                 *consPkt);
+                            if (routeMap !is null)
+                                consWrote |= storeRouted(routeMap, route,
+                                                         cast(size_t)vid, constrained);
+                            else
+                                mesh.vertices[vid] = constrained;
                         }
+                        if (consWrote) mesh.noteChange(MeshEditScope.Maps);
                     }
                 }
             }
@@ -724,8 +758,25 @@ mixin template XfrmApplyImpl() {
             clusterM = inItemFrame(ims, clusterM);
         }
 
-        // Source = restored baseline gathered ordinal-parallel to the moving set;
-        // weight at the BASELINE position (weightVerts == the mesh-length baseline).
+        // Task 1069 — the routing target for THIS apply, resolved once.
+        // `MorphRoute.init` (no target bound) makes every use below inert and
+        // the whole fold byte-identical to before this task.
+        auto route = buildMorphRouteFor(baseline);
+        const bool routed = route.covers(mesh.vertices.length);
+        // The array the fold EVALUATES from. Unrouted that is `baseline` (the
+        // true base); routed it is `route.runPos` (base + the map's value at
+        // RUN START), which is what law L7 forces — gesture 2 must build on
+        // gesture 1, not replace it. Both are mesh-length and vertex-id
+        // indexed, which is what `weightVerts` needs.
+        const(Vec3)[] evalFrom = routed ? route.runPos : cast(const(Vec3)[]) baseline;
+
+        // Source = the eval array gathered ORDINAL-parallel to the moving set.
+        // The two index spaces here are NOT the same and the mismatch is
+        // silent: `src` is ordinal (parallel to `vertexIndicesToProcess`),
+        // `weightVerts` is vertex-id indexed and mesh-length. The whole-mesh
+        // case — our empty-selection convention — makes them coincide, so a
+        // test written on a full selection cannot see a swap. Gather ONE
+        // ordinal array here and pass the vid array through unchanged.
         // (task 0202) Reuse the tool-owned scratch buffer instead of allocating a
         // fresh Vec3[] every motion event — guarded resize is a no-op except on a
         // moving-set length change (grow/shrink only at a NEW drag's first frame);
@@ -734,8 +785,8 @@ mixin template XfrmApplyImpl() {
             foldSrc_.length = vertexIndicesToProcess.length;
         auto src = foldSrc_;
         foreach (k, vi; vertexIndicesToProcess)
-            src[k] = (vi >= 0 && vi < cast(int)baseline.length)
-                   ? baseline[vi] : Vec3(0, 0, 0);
+            src[k] = (vi >= 0 && vi < cast(int)evalFrom.length)
+                   ? evalFrom[vi] : Vec3(0, 0, 0);
 
         // Anchor = first moving-vert's frozen baseline position, used ONLY by
         // the CPU per-vertex kernel (applyXformMatrix) to avoid large-minus-large
@@ -790,10 +841,19 @@ mixin template XfrmApplyImpl() {
                               && rotateBlendMode() != BlendMode.MatrixLerp)
                            ? rotateBlendMode()
                            : blendModeForMeasure();
+        // `weightVerts` is the SAME array the fold evaluates from, built once
+        // above — so the fold's evaluation space and its weighting space
+        // cannot drift apart. Under routing that means the falloff weight is
+        // sampled at the MORPHED position, which is a DIVERGENCE chosen for
+        // coherence with the measured preview (the surface draws morphed and
+        // the action centre is routed to the morphed centroid, so weighting
+        // from the base would grade the falloff from a point the user is not
+        // looking at). Unmeasured — registry row 46b.
         applyXformMatrix(mesh, vertexIndicesToProcess, src, pivot, M,
                          lastFoldAnchor,
                          foldMode, dragFalloff, dragAimSpace(), cp, ap,
-                         clusterM, noSym, toProcess, /*weightVerts=*/ baseline);
+                         clusterM, noSym, toProcess, /*weightVerts=*/ evalFrom,
+                         /*route=*/ route);
 
         // MIRROR pass — fixed-base position-copy symmetry. The fold carries
         // exactly ONE symmetry model: the positive-axis side drives and is
@@ -807,16 +867,28 @@ mixin template XfrmApplyImpl() {
         // positions the driver pass produced just as it copies the global ones.
         if (dragSymmetry.enabled
             && dragSymmetry.pairOf.length == mesh.vertices.length) {
-            import symmetry : applySymmetryMirror, applySymmetryMirrorDelta;
+            import tools.transform.morph_route :
+                applySymmetryMirrorRouted, applySymmetryMirrorDeltaRouted;
             // `toProcess` is passed as both the selected mask AND the
             // also-touched out-mask, so mirror writes fold into the GPU upload /
             // undo touched set (replacing the deleted Pass B's outAlsoTouched
             // OR-in). On-plane drivers are projected back onto the plane inside
             // both paths, preserving the "center stays on the plane" contract.
+            //
+            // Task 1069 — the ROUTED overloads, and this is the ONLY call site
+            // in the tree allowed to use them. They tail-call the unrouted
+            // originals when `route` is inert, so the no-target case runs the
+            // existing code path verbatim. The seam is HERE, on the caller,
+            // and not inside `symmetry.d`: that function has seven production
+            // callers and most of them do not route their own primary write,
+            // so a route parameter down there would make one gesture write the
+            // primary vertex to the base and its mirror partner to the map.
             if (dragSymmetry.topology)
-                applySymmetryMirrorDelta(mesh, dragSymmetry, baseline, toProcess, toProcess);
+                applySymmetryMirrorDeltaRouted(mesh, dragSymmetry, baseline,
+                                               toProcess, toProcess, route);
             else
-                applySymmetryMirror(mesh, dragSymmetry, toProcess, toProcess);
+                applySymmetryMirrorRouted(mesh, dragSymmetry,
+                                          toProcess, toProcess, route);
         }
 
         // Change-notification (doc/change_notification_bus_plan, Stage 1): the
@@ -827,7 +899,10 @@ mixin template XfrmApplyImpl() {
         // Position on exactly the frames geometry moved. ONE note per apply (both
         // the global fold and the per-cluster clusterM path run through the single
         // applyXformMatrix above) — never per vertex.
-        mesh.noteChange(MeshEditScope.Position);
+        // Task 1069: under routing NOTHING positional moved — the class is
+        // Maps, not Position. Publishing Position there would tell every
+        // position-keyed consumer that geometry changed when it did not.
+        mesh.noteChange(routed ? MeshEditScope.Maps : MeshEditScope.Position);
     }
 
     // MS-3.2 — one rotation pass of the canonical-matrix apply (called from

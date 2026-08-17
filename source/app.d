@@ -104,6 +104,7 @@ import commands.mesh.quantize;
 import commands.mesh.jitter;
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
+import commands.mesh.morph;
 import commands.mesh.edge_crease;
 import commands.mesh.uv_transform;
 import commands.mesh.uv_map_util;
@@ -3212,6 +3213,11 @@ void main(string[] args) {
     // the same gpu/caches the tool mutates. Tools call beginEdit() at drag
     // start and commitEdit() at drag end; one undo entry per drag.
     auto vxEditFactory = () => new MeshVertexEdit(&mesh(), cameraView, editMode);
+    // Task 1069 — the ROUTED-gesture undo factory (MeshMorphEdit's analogue
+    // of vxEditFactory). Same live context; the command writes the bound
+    // morph map rather than mesh.vertices.
+    import commands.mesh.morph_edit : MeshMorphEdit;
+    auto morphEditFactory = () => new MeshMorphEdit(&mesh(), cameraView, editMode);
     // Task 0614 Phase 4 — the item-transform gizmo-drag undo factory
     // (LayerXformEdit's analogue of vxEditFactory above). `mesh`/`cameraView`/
     // `editMode` are unused by LayerXformEdit's own apply()/revert() (it
@@ -3531,6 +3537,7 @@ void main(string[] args) {
     app.aiLogWriter     = aiLogWriter;
 
     app.vxEditFactory            = vxEditFactory;
+    app.morphEditFactory         = morphEditFactory;
     app.layerXformEditFactory    = layerXformEditFactory;
     app.bevelEditFactory         = bevelEditFactory;
     app.loopSliceEditFactory     = loopSliceEditFactory;

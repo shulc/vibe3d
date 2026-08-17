@@ -24,7 +24,8 @@ module tools.transform.xform_kernels;
 import math    : Vec3, Viewport, dot, cross, AimViewport, rotateAboutPivot;
 import math    : Quat, slerp, quatFromMatrix, matrixFromQuat, applyAffine,
                  matMul4, identityMatrix;
-import mesh    : Mesh;
+import mesh    : Mesh, MeshMap;
+import tools.transform.morph_route : MorphRoute, storeRouted;
 import falloff : evaluateFalloff;
 import symmetry : applySymmetryMirror;
 import toolpipe.packets : FalloffPacket, SymmetryPacket;
@@ -544,7 +545,15 @@ void applyXformMatrix(
     float[16][] clusterM,
     const ref SymmetryPacket dragSymmetry,
     bool[] toProcess,
-    const(Vec3)[] weightVerts = null)
+    const(Vec3)[] weightVerts = null,
+    // Task 1069 — the morph ROUTING seam's ONE live vertex write. Passed BY
+    // VALUE, not `const ref`: D forbids a default argument on a `ref`
+    // parameter (`MorphRoute.init` is not an lvalue), and the struct is two
+    // slices + a string + an enum copied ONCE per kernel call, against an
+    // O(V) loop. `.init` == no routing, so every other caller in the tree is
+    // untouched. See morph_route.d for why the seam is here and not on
+    // `mesh.vertices`.
+    MorphRoute route = MorphRoute.init)
 {
     // Array-layout contract (locked by test (v), the non-identity-indices case):
     //   - `baseline` is ORDINAL-parallel to `indices`: baseline[i] is the pre-edit
@@ -559,6 +568,12 @@ void applyXformMatrix(
     // is a compact per-move-set snapshot, weightVerts mirrors a mesh-length live
     // buffer.
     bool useWeightVerts = (weightVerts.length == mesh.vertices.length);
+    // Resolve the routing target ONCE per call — never per vertex (a name
+    // lookup is O(maps)), and never cached across a drag (removeMeshMap
+    // invalidates every MeshMap*, plan R3).
+    const bool routed = route.covers(mesh.vertices.length);
+    MeshMap* routeMap = routed ? mesh.morphMapForWrite(route.name) : null;
+    bool routeWrote = false;
     foreach (i, vi; indices) {
         if (vi >= mesh.vertices.length) continue;
         if (i >= baseline.length) continue;
@@ -612,11 +627,32 @@ void applyXformMatrix(
             double dy = cast(double)base.y - cast(double)anchor.y;
             double dz = cast(double)base.z - cast(double)anchor.z;
             // v' = anchor + M_lin*d + off
-            mesh.vertices[vi] = Vec3(
+            const Vec3 moved = Vec3(
                 cast(float)(cast(double)anchor.x + m00*dx + m01*dy + m02*dz + off0),
                 cast(float)(cast(double)anchor.y + m10*dx + m11*dy + m12*dz + off1),
                 cast(float)(cast(double)anchor.z + m20*dx + m21*dy + m22*dz + off2));
+            if (routeMap !is null) {
+                // ROUTED: the map receives the store and `mesh.vertices` is
+                // left EXACTLY as it was (law L2). Note the store subtracts
+                // `route.base[vi]`, the TRUE base -- NOT the run baseline the
+                // kernel evaluated from. Subtracting the run baseline would
+                // cancel the already-accumulated delta out, and every second
+                // gesture would silently overwrite the first instead of
+                // adding to it (law L7).
+                routeWrote |= storeRouted(routeMap, route, vi, moved);
+            } else {
+                mesh.vertices[vi] = moved;
+            }
         }
+    }
+    // ONE change note for the whole loop, and only when something was
+    // written. Going through `Mesh.setMorphValue` per vertex instead would
+    // `commitChange` -- bumping `mutationVersion` once per vertex per motion
+    // event -- and mid-drag version stability is deliberate: the symmetry,
+    // falloff and snap caches key on it (see applyFold's own note).
+    if (routeWrote) {
+        import mesh_edit_delta : MeshEditScope;
+        mesh.noteChange(MeshEditScope.Maps);
     }
     // NOTE (doc/symmetry_deform_plan.md Stage 2): the GLOBAL-fold symmetry
     // mirror tail that used to live here was DELETED. The live unified fold

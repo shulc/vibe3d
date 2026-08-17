@@ -731,6 +731,21 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         Vec3 toWorld(Vec3 vLocal) {
             return ms.isIdentity ? vLocal : ms.toWorldPoint(vLocal);
         }
+        // Task 1069 — the snapper targets the DRAWN vertex, not the base.
+        //
+        // Labelled honestly: this is an ASSUMPTION, not a measurement. Phase 0
+        // measured that the reference DRAWS base+delta and that its POLYGON
+        // picking follows the draw; its snap gesture was never driven, so
+        // nobody has measured that it snaps to the morphed position there. The
+        // rule is applied because snapping to a point the user cannot see is a
+        // defect on its own terms, and because snap's two legs (the
+        // `visibleVertices` mask and the candidate positions here) must at
+        // least agree with EACH OTHER. If snap is ever measured and answers
+        // differently, THIS is the assumption to revisit.
+        Vec3 vAt(size_t vi) {
+            import morph_target : displayPosition;
+            return toWorld(displayPosition(&m, vi));
+        }
 
         if ((cfg.enabledTypes & SnapType.Vertex)
                 && typeEligible(SnapType.Vertex, cfg.snapScope)) {
@@ -738,7 +753,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                                             cfg.outerRangePx, exclude);
             foreach (vi; cands)
                 if (vertVisible(vi))
-                    el.consider(toWorld(m.vertices[vi]), cast(int)vi, SnapType.Vertex, slot);
+                    el.consider(vAt(vi), cast(int)vi, SnapType.Vertex, slot);
         }
 
         // ------------------------------------------------------------------
@@ -841,8 +856,8 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 // WORLD, so the closest-approach election below (a metric
                 // computation, NOT affine-invariant under non-uniform scale)
                 // runs against the ray in the same space it was cast in.
-                Vec3 a = toWorld(m.vertices[edge[0]]);
-                Vec3 b = toWorld(m.vertices[edge[1]]);
+                Vec3 a = vAt(edge[0]);
+                Vec3 b = vAt(edge[1]);
                 // STAGE 1, and the only thing left of it for a straight edge:
                 // an edge with an endpoint behind the camera is not elected.
                 // The candidate grid already drops those (`projectElementCells`
@@ -921,7 +936,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 auto edgeA = m.edges[eiA];
                 if (!edgeVisible(edgeA[0], edgeA[1])) continue;
                 float pxA0, pyA0, ndcA0, pxA1, pyA1, ndcA1;
-                Vec3 a0 = toWorld(m.vertices[edgeA[0]]), a1 = toWorld(m.vertices[edgeA[1]]);
+                Vec3 a0 = vAt(edgeA[0]), a1 = vAt(edgeA[1]);
                 if (!projectToWindowFull(a0, vp, pxA0, pyA0, ndcA0)) continue;
                 if (!projectToWindowFull(a1, vp, pxA1, pyA1, ndcA1)) continue;
 
@@ -933,7 +948,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                         edgeB[1] == edgeA[0] || edgeB[1] == edgeA[1]) continue;
                     if (!edgeVisible(edgeB[0], edgeB[1])) continue;
                     float pxB0, pyB0, ndcB0, pxB1, pyB1, ndcB1;
-                    Vec3 b0 = toWorld(m.vertices[edgeB[0]]), b1 = toWorld(m.vertices[edgeB[1]]);
+                    Vec3 b0 = vAt(edgeB[0]), b1 = vAt(edgeB[1]);
                     if (!projectToWindowFull(b0, vp, pxB0, pyB0, ndcB0)) continue;
                     if (!projectToWindowFull(b1, vp, pxB1, pyB1, ndcB1)) continue;
 

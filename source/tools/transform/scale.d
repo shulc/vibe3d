@@ -497,8 +497,23 @@ public:
 
     protected override void commitEdit(string label) {
         if (suppressCommit) { cancelEdit(); return; }
-        auto cmd = buildEditCmd(label);
-        if (cmd is null) return;
+        // Task 1069 — a ROUTED gesture writes the map, not `mesh.vertices`, so
+        // `buildEditCmd` returns null and the drag would never reach undo.
+        // Both commands take the SAME hook pair, so the setter is captured as
+        // a delegate rather than duplicating the hook composition below.
+        import commands.mesh.morph_edit : MeshMorphEdit;
+        import command : Command;
+        Command cmd;
+        void delegate(void delegate(), void delegate()) setCmdHooks;
+        if (auto mcmd = cast(MeshMorphEdit) buildMorphEditCmd(label)) {
+            cmd = mcmd;
+            setCmdHooks = (a, r) { mcmd.setHooks(a, r); };
+        } else {
+            auto vcmd = buildEditCmd(label);
+            if (vcmd is null) return;
+            cmd = vcmd;
+            setCmdHooks = (a, r) { vcmd.setHooks(a, r); };
+        }
 
         Vec3 accBefore  = preEditScaleAccum;
         Vec3 propBefore = preEditPropScale;
@@ -531,7 +546,7 @@ public:
         // the same closure without clobbering scaleAccum/propScale.
         auto wrapApply  = wrapperFieldApplyHook;
         auto wrapRevert = wrapperFieldRevertHook;
-        cmd.setHooks(
+        setCmdHooks(
             () {
                 // Accumulator restore is standalone-only: the wrapped role's
                 // geometry is driven by wrapApply (run.s restored by the wrapper

@@ -28,6 +28,18 @@ struct ImportedSurface {
     float  opacity     = 1.0f;
 }
 
+/// One imported morph channel, SPARSE and point-domain (task 1069).
+/// `verts` are indices into the part's own `vertices`; `values` carries three
+/// floats per listed vertex. `absolute` selects the kind — the two are
+/// different data models (a delta vs a position) and the wire format's tag is
+/// the only thing that says which, so it is carried, never guessed.
+struct PartMorph {
+    string  name;
+    bool    absolute;
+    uint[]  verts;
+    float[] values;    // length == verts.length * 3
+}
+
 /// One self-contained chunk of imported geometry. Face indices are LOCAL to
 /// this part (`faces[k][j]` indexes `vertices`); `faceMaterial` indexes
 /// `surfaces`. `faceSubpatch` / `faceMaterial` may be empty (⇒ all-FACE /
@@ -49,6 +61,12 @@ struct ImportedPart {
     // too and the stream stays aligned with the emitted faces. After
     // `buildLoops`, it seeds the `"uv"` map via `faceCornerLoop`.
     float[]           uv;
+    // Per-VERTEX morph channels (task 1069), sparse. Point-domain, so unlike
+    // `uv` there is no corner bookkeeping — but the indices are into
+    // `vertices`, so anything that RENUMBERS vertices must carry them. The
+    // positional weld in `scene_import.d` is exactly such a step and does
+    // carry them; see `weldPositional`.
+    PartMorph[]       morphs;
     // Layer visibility, carried from the source format's hidden flag (Stage 5).
     // Additive default TRUE so every existing importer (and `flattenToMesh` /
     // `partToMesh`, which never read it) is unchanged: only the formats that
@@ -88,6 +106,52 @@ private void populateUvMap(ref Mesh m, const float[] uv, bool hasUv) {
     auto map = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
     if (map is null) return;                        // name clash / empty mesh — leave UV-less
     map.data[] = uv[];                              // corner order == loop order, 1:1
+}
+
+/// Seed a mesh's morph maps from a part's sparse per-vertex morph channels
+/// (task 1069). Called by every importer assembler after the vertices exist.
+///
+/// UNTRUSTED INDICES. These come out of a foreign file and address a dense
+/// array directly, so every one is range-checked here and an out-of-range
+/// entry is SKIPPED with a warning — never clamped (which would silently
+/// relocate a morph onto the wrong vertex) and never fatal (which would make
+/// one bad byte cost the whole import).
+private void populateMorphMaps(ref Mesh m, const PartMorph[] morphs,
+                               size_t vertexOffset = 0) {
+    import mesh : MapKind;
+    import log  : logWarn;
+    foreach (ref pm; morphs) {
+        if (pm.name.length == 0) continue;
+        if (pm.values.length != pm.verts.length * 3) {
+            try logWarn("io", "morph '" ~ pm.name
+                            ~ "': values/verts length mismatch, skipped");
+            catch (Exception) {}
+            continue;
+        }
+        const kind = pm.absolute ? MapKind.morphAbsolute : MapKind.morphRelative;
+        auto map = m.meshMap(pm.name);
+        if (map is null) map = m.addMeshMapOfKind(kind, pm.name);
+        if (map is null) continue;              // name clash with a non-morph map
+        size_t skipped = 0;
+        foreach (k, v; pm.verts) {
+            const size_t vi = cast(size_t) v + vertexOffset;
+            if (vi >= m.vertices.length) { ++skipped; continue; }
+            if (!map.setEntry(vi, Vec3(pm.values[k * 3], pm.values[k * 3 + 1],
+                                       pm.values[k * 3 + 2])))
+                ++skipped;
+        }
+        if (skipped > 0) {
+            try logWarn("io", "morph '" ~ pm.name ~ "': skipped out-of-range entries");
+            catch (Exception) {}
+        }
+    }
+}
+
+/// A part's morph channel plus the vertex offset it acquires when parts are
+/// merged into one mesh (task 1069).
+private struct MergedMorph {
+    PartMorph morph;
+    uint      offset;
 }
 
 /// v1 adapter: merge every part of `scene` into a single Mesh.
@@ -158,6 +222,7 @@ Mesh flattenToMesh(const ref ImportedScene scene) {
         if (part.uv.length > 0) { anyUv = true; break; }
 
     uint vertexOffset = 0;
+    MergedMorph[] mergedMorphs;   // task 1069
     foreach (pi, ref part; scene.parts) {
         const remap = surfRemap[pi];
         const bool partHasUv = part.uv.length > 0;
@@ -211,6 +276,12 @@ Mesh flattenToMesh(const ref ImportedScene scene) {
                 }
             }
         }
+        // Task 1069 — remember each part's morph channels with the vertex
+        // offset they must be shifted by in the merged mesh.
+        foreach (ref pm; part.morphs)
+            mergedMorphs ~= MergedMorph(
+                PartMorph(pm.name, pm.absolute, pm.verts.dup, pm.values.dup),
+                vertexOffset);
         allVerts ~= part.vertices;
         vertexOffset += cast(uint) part.vertices.length;
     }
@@ -231,6 +302,9 @@ Mesh flattenToMesh(const ref ImportedScene scene) {
     // corner order (face-then-corner), which is exactly the CSR loop order
     // `buildLoops` just laid down, so `faceCornerLoop(fi, c)` indexes it 1:1.
     populateUvMap(m, allUv, anyUv);
+
+    // Sparse per-vertex morph channels, shifted into the merged index space.
+    foreach (ref mm; mergedMorphs) populateMorphMaps(m, [mm.morph], mm.offset);
 
     // Apply per-face subpatch flags (parallel to faces). After resizeSubpatch
     // the subpatch storage is sized to m.faces.length == allSubpatch.length, and
@@ -329,6 +403,9 @@ private Mesh partToMesh(const ref ImportedPart part) {
 
     // Per-corner UV → the `"uv"` PolyVertex map (corner order == loop order).
     populateUvMap(m, uv, partHasUv);
+
+    // Sparse per-vertex morph channels (task 1069). Per-part, so no offset.
+    populateMorphMaps(m, part.morphs);
 
     // Subpatch flags (never read the allocating `isSubpatch` @property in a loop).
     m.resizeSubpatch();
@@ -457,6 +534,7 @@ Mesh flattenDocument(const ref Document doc) {
     }
 
     uint vertexOffset = 0;
+    MergedMorph[] mergedMorphs;   // task 1069
     // Task 0615 Stage 4: interchange export has no non-mesh concept — iterate
     // `doc.meshLayers`, not `doc.layers`, so a non-mesh layer is silently
     // skipped rather than reaching `meshRef()`.
@@ -561,6 +639,9 @@ Mesh flattenDocument(const ref Document doc) {
 
     // Per-corner UV → the flattened mesh's `"uv"` map (corner order == loop order).
     populateUvMap(m, allUv, anyUv);
+
+    // Sparse per-vertex morph channels, shifted into the merged index space.
+    foreach (ref mm; mergedMorphs) populateMorphMaps(m, [mm.morph], mm.offset);
 
     m.resizeSubpatch();
     foreach (fi, flag; allSubpatch)

@@ -6,6 +6,7 @@ import std.conv      : to;
 import std.format    : format;
 
 import mesh;
+static import mesh_ = mesh;   // disambiguates mesh.kindInfo(MapKind) from document.kindInfo(LayerKind)
 import math;
 import document : Document, Layer, ItemXform, sanitizeItemXform,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG,
@@ -211,7 +212,37 @@ private void v3dReject(string msg) nothrow { g_v3dRejectReason = msg; v3dWarn("r
 //                                                  // optional (v6+); per-vertex
 //     "edgeMaps":     [{ "kind", "name", "data":[s0,s1,...] }, ...]
 //                                                  // optional (task 1062); per-edge
+//     "vertexMorphs": [{ "kind", "name",
+//                        "verts":[i,...], "values":[x,y,z, ...] }, ...]
+//                                                  // optional (task 1069); per-vertex,
+//                                                  // dim 3, SPARSE
 //   }
+//
+// `vertexMorphs` (task 1069 addition, kV3dFormatVersion NOT bumped — the same
+// within-version tolerance `edgeMaps` and `selectionSets` rode) carries
+// `MapDomain.Point` dim-3 MORPH maps. Two things about its shape are
+// load-bearing rather than stylistic:
+//
+//   * It is SPARSE. `verts` lists exactly the vertices that HAVE an entry and
+//     `values` carries three floats each (`values.length == verts.length * 3`).
+//     In memory the map is dense with a parallel presence channel; a dense
+//     wire form would collapse "no entry" into "entry == 0", which for the
+//     ABSOLUTE kind is the difference between "stay at the base" and
+//     "teleport to the origin".
+//   * `kind` ("relative" | "absolute") is REQUIRED, because it cannot be
+//     inferred. Both kinds are Point/dim-3 and neither reserves a name, so
+//     neither of this codec's two identification mechanisms — the reserved
+//     name and the declared shape — can tell them apart. An entry with an
+//     unrecognised kind is skipped with a warning rather than guessed at.
+//
+// The reader range-checks every listed index against `vertices.length` and
+// skips an out-of-range one with a warning, keeping the rest of the map: a
+// `.v3d` is untrusted input and these indices address a dense array directly.
+// The key is omitted entirely when the mesh has no morph map.
+//
+// Note the hazard this block closes: `weightMaps` above skips any Point map
+// with `dim != 1`, so before `vertexMorphs` existed a dim-3 Point map was
+// silently not saved at all.
 //
 // `edgeMaps` (task 1062 addition, kV3dFormatVersion NOT bumped — see the
 // "8 IS MEANT TO STAY 8" note below) carries `MapDomain.Edge` dim-1 maps.
@@ -551,6 +582,50 @@ JSONValue meshToJson(ref const Mesh mesh)
     }
     if (eMaps.length > 0)
         m["edgeMaps"] = JSONValue(eMaps);
+
+    // Point (per-vertex) dim-3 MORPH maps — task 1069, an ADDITIVE key inside
+    // format version 8 (the same within-version tolerance `edgeMaps` and
+    // `selectionSets` rode; see the "8 IS MEANT TO STAY 8" note above).
+    //
+    // The key is `vertexMorphs`, NOT the name a reader reaches for by analogy
+    // with uvMaps/weightMaps/edgeMaps — that natural name is a banned symbol
+    // (neutrality dictionary), which was checked BEFORE this block was written
+    // rather than after (task 1062's lesson).
+    //
+    // SPARSE ON THE WIRE. In memory a morph map is dense like every other
+    // MeshMap, with a parallel presence channel; here only the PRESENT entries
+    // are emitted, as two parallel arrays. That is not a size optimisation —
+    // it is the only way the file can carry the distinction the presence
+    // channel exists for. A dense emission would make "this vertex has no
+    // entry" indistinguishable from "this vertex's entry is zero", which for
+    // the ABSOLUTE kind is the difference between "stay at the base" and
+    // "teleport to the origin".
+    //
+    // `kind` is written because it CANNOT be inferred: both morph kinds are
+    // Point/dim-3 and neither reserves a name, so name and shape — the only
+    // two mechanisms this codec has — cannot tell them apart.
+    JSONValue[] vMorphs;
+    foreach (ref map; mesh.meshMaps) {
+        if (!isMorphKind(map.kind)) continue;
+        JSONValue mj;
+        mj["kind"] = JSONValue(map.kind == MapKind.morphRelative
+                                 ? "relative" : "absolute");
+        mj["name"] = JSONValue(map.name);
+        JSONValue[] mvVerts, mvValues;
+        const size_t n = map.data.length / 3;
+        foreach (i; 0 .. n) {
+            if (!map.isPresent(i)) continue;
+            mvVerts  ~= JSONValue(cast(long) i);
+            mvValues ~= JSONValue(map.data[i * 3]);
+            mvValues ~= JSONValue(map.data[i * 3 + 1]);
+            mvValues ~= JSONValue(map.data[i * 3 + 2]);
+        }
+        mj["verts"]  = JSONValue(mvVerts);
+        mj["values"] = JSONValue(mvValues);
+        vMorphs ~= mj;
+    }
+    if (vMorphs.length > 0)
+        m["vertexMorphs"] = JSONValue(vMorphs);
 
     // Selection sets (task 1060 addition, kV3dFormatVersion NOT bumped — the
     // SAME within-version-tolerance rule `edgeMaps` above rode; see the "8 IS
@@ -1732,6 +1807,86 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         }
     }
 
+    // --- optional: vertexMorphs (task 1069 addition, within-version) ---
+    // Point-domain dim-3 morph maps, SPARSE on the wire: parallel `verts` /
+    // `values` arrays, `values.length == verts.length * 3`. Staged here and
+    // applied after the mesh is committed, the same discipline every other
+    // optional map array follows.
+    //
+    // UNTRUSTED INPUT. A `.v3d` can be hand-edited or produced by something
+    // else, and every decoded index goes straight into a dense array. So:
+    // every index is range-checked against `vertices.length` at APPLY time
+    // (the count is not known yet here), an out-of-range one is skipped with
+    // a warning and the rest of the map still loads, and nothing here ever
+    // throws — the same tolerant stance §Q3 sets for the whole codec.
+    struct StagedVm { string name; string kind; long[] verts; float[] values; }
+    StagedVm[] stagedVm;
+    if (auto vmp = "vertexMorphs" in m) {
+        if (vmp.type == JSONType.array) {
+            foreach (vi, vj; vmp.array) {
+                if (vj.type != JSONType.object) {
+                    v3dWarn(format("ignoring vertexMorphs[%d]: not an object", vi));
+                    continue;
+                }
+                string nm;
+                if (auto np = "name" in vj)
+                    if (np.type == JSONType.string) nm = np.str;
+                if (nm.length == 0) {
+                    v3dWarn(format("ignoring vertexMorphs[%d]: missing/empty name", vi));
+                    continue;
+                }
+                string kind;
+                if (auto kp = "kind" in vj)
+                    if (kp.type == JSONType.string) kind = kp.str;
+                // Unlike `edgeMaps`, an unknown kind is NOT loaded as a plain
+                // map: the kind is the only thing that says what the stored
+                // numbers MEAN, so guessing would silently mis-place every
+                // vertex the map touches.
+                if (kind != "relative" && kind != "absolute") {
+                    v3dWarn(format("ignoring vertexMorphs[%s]: unknown kind \"%s\" "
+                                  ~ "(expected \"relative\" or \"absolute\")", nm, kind));
+                    continue;
+                }
+                auto mvp = "verts"  in vj;
+                auto sp  = "values" in vj;
+                if (mvp is null || mvp.type != JSONType.array
+                 || sp is null || sp.type != JSONType.array) {
+                    v3dWarn(format("ignoring vertexMorphs[%s]: missing/non-array "
+                                  ~ "verts or values", nm));
+                    continue;
+                }
+                if (sp.array.length != mvp.array.length * 3) {
+                    v3dWarn(format("ignoring vertexMorphs[%s]: values length %d != "
+                                  ~ "%d verts * 3", nm, sp.array.length,
+                                  mvp.array.length));
+                    continue;
+                }
+                long[] mvVerts;
+                mvVerts.reserve(mvp.array.length);
+                bool malformed = false;
+                foreach (ij; mvp.array) {
+                    if (ij.type != JSONType.integer && ij.type != JSONType.uinteger) {
+                        malformed = true;
+                        break;
+                    }
+                    mvVerts ~= (ij.type == JSONType.integer)
+                             ? ij.integer : cast(long) ij.uinteger;
+                }
+                if (malformed) {
+                    v3dWarn(format("ignoring vertexMorphs[%s]: non-integer vertex index", nm));
+                    continue;
+                }
+                float[] values;
+                values.reserve(sp.array.length);
+                foreach (fj; sp.array)
+                    values ~= jsonFloat(fj);
+                stagedVm ~= StagedVm(nm, kind, mvVerts, values);
+            }
+        } else {
+            v3dWarn("ignoring non-array \"vertexMorphs\"");
+        }
+    }
+
     // --- optional: selectionSets (task 1060 addition, within-version) ---
     // Parse into staging lists now; applied after `buildLoops`/`rebuildEdges`
     // below, same discipline as `uvMaps`/`weightMaps`/`edgeMaps` — the EDGE
@@ -1891,7 +2046,13 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
                             mesh.loops.length, su.dim));
             continue;
         }
-        auto map = mesh.addMeshMap(su.name, su.dim, MapDomain.PolyVertex);
+        // Task 1069: classify when the shape matches the uv kind's own
+        // declaration. A uv block with a different dim is still loaded (the
+        // codec has always been tolerant here) but stays `unclassified`
+        // rather than claiming a kind whose declared shape it does not have.
+        auto map = mesh.addMeshMap(su.name, su.dim, MapDomain.PolyVertex,
+                                   su.dim == mesh_.kindInfo(MapKind.uv).dim
+                                     ? MapKind.uv : MapKind.unclassified);
         if (map is null) {
             // name clash with an already-staged map, or an empty-loop mesh.
             v3dWarn(format("ignoring uvMaps[%s]: could not register map", su.name));
@@ -1941,7 +2102,15 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
                            mesh.edges.length));
             continue;
         }
-        auto map = mesh.addMeshMap(se.name, 1, MapDomain.Edge);
+        // Task 1069: stamp the kind so `kind` is not a field only morphs
+        // populate. Only the one recognised value classifies; anything else
+        // (absent, empty, a future string) stays `unclassified`, which is the
+        // honest reading and is exactly what the negative kind filters are
+        // written to tolerate.
+        auto map = mesh.addMeshMap(se.name, 1, MapDomain.Edge,
+                                   se.kind == "creaseWeight"
+                                     ? MapKind.creaseWeight
+                                     : MapKind.unclassified);
         if (map is null) {
             v3dWarn(format("ignoring edgeMaps[%s]: could not register map",
                            se.name));
@@ -1949,6 +2118,48 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         }
         map.data[] = se.data[];
         ++eMapCount;
+    }
+
+    // Apply staged Point dim-3 morph maps (task 1069). Sparse on the wire:
+    // each listed vertex index gets an entry (value AND presence); every
+    // vertex NOT listed is left absent, which is the whole point of the block.
+    //
+    // Every index is range-checked HERE, against the committed vertex count —
+    // a `.v3d` is untrusted input and these indices address a dense array
+    // directly. An out-of-range index is skipped with a warning and the map
+    // keeps loading; nothing throws and nothing is written out of bounds.
+    int vmCount = 0;
+    foreach (ref sv; stagedVm) {
+        const MapKind kind = (sv.kind == "relative")
+                           ? MapKind.morphRelative : MapKind.morphAbsolute;
+        auto map = mesh.addMeshMapOfKind(kind, sv.name);
+        if (map is null) {
+            v3dWarn(format("ignoring vertexMorphs[%s]: could not register map",
+                           sv.name));
+            continue;
+        }
+        size_t skipped = 0;
+        foreach (k, vidx; sv.verts) {
+            if (vidx < 0 || cast(size_t) vidx >= mesh.vertices.length) {
+                ++skipped;
+                continue;
+            }
+            // Count a REFUSED write too, not just an out-of-range index.
+            // `MeshMap.setEntry` range-checks on its own, so this loop cannot
+            // write out of bounds even with the guard above removed — which
+            // means the guard above buys the DIAGNOSTIC, not the safety. A
+            // refusal that produced no warning would be silent data loss.
+            if (!map.setEntry(cast(size_t) vidx,
+                              Vec3(sv.values[k * 3], sv.values[k * 3 + 1],
+                                   sv.values[k * 3 + 2])))
+                ++skipped;
+        }
+        if (skipped > 0)
+            v3dWarn(format("vertexMorphs[%s]: skipped %d entr%s with an "
+                          ~ "out-of-range vertex index (mesh has %d vertices)",
+                          sv.name, skipped, skipped == 1 ? "y" : "ies",
+                          mesh.vertices.length));
+        ++vmCount;
     }
 
     // Apply staged selection sets (task 1060). `edges`/`edgeIndexMap` are

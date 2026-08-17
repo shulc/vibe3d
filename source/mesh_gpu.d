@@ -237,6 +237,21 @@ struct GpuMesh {
             (cast(Mesh*)&mesh).commitChange(MeshEditScope.Position);
             return;
         }
+        // Task 1069 — the DRAWN positions. Phase 0 measured the reference's
+        // viewport at base+delta with a morph selected, so the upload is the
+        // first consumer of that. `null` whenever nothing is bound, and the
+        // fallback below is `mesh.vertices` — so a document with no morph
+        // target uploads byte-identical bytes to before this task.
+        //
+        // Resolved HERE rather than threaded through every caller: there are
+        // several upload sites and one of them forgetting would draw a stale
+        // surface with no symptom other than "the morph does not show".
+        const(Vec3)[] vpos;
+        {
+            import morph_target : displayVertices;
+            auto dv = displayVertices(&mesh);
+            vpos = (dv.length == mesh.vertices.length) ? dv : mesh.vertices;
+        }
         ++uploadVersion;
         // Counted AFTER the suppress/layout-mismatch early-returns above, so
         // `uploadCalls` means uploads that actually touched a buffer, not
@@ -316,9 +331,9 @@ struct GpuMesh {
                     faceTriCount[fi] = 0;
                     continue;
                 }
-                Vec3 v0 = mesh.vertices[face[0]];
-                Vec3 v1 = mesh.vertices[face[1]];
-                Vec3 v2 = mesh.vertices[face[2]];
+                Vec3 v0 = vpos[face[0]];
+                Vec3 v1 = vpos[face[1]];
+                Vec3 v2 = vpos[face[2]];
                 float ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
                 float bx = v2.x - v0.x, by = v2.y - v0.y, bz = v2.z - v0.z;
                 float cx = ay*bz - az*by;
@@ -337,9 +352,9 @@ struct GpuMesh {
                     immutable uint ia = i0;
                     immutable uint ib = face[i];
                     immutable uint ic = face[i + 1];
-                    Vec3 va = mesh.vertices[ia];
-                    Vec3 vb = mesh.vertices[ib];
-                    Vec3 vc = mesh.vertices[ic];
+                    Vec3 va = vpos[ia];
+                    Vec3 vb = vpos[ib];
+                    Vec3 vc = vpos[ic];
                     size_t k = fw * FACE_STRIDE;
                     scratchFaceData[k +  0] = va.x;
                     scratchFaceData[k +  1] = va.y;
@@ -462,8 +477,8 @@ struct GpuMesh {
                     edgeOriginGpu[oc++] = (edgeOrigin.length > 0)
                                            ? edgeOrigin[ei]
                                            : cast(uint)ei;
-                Vec3 a = mesh.vertices[edge[0]];
-                Vec3 b = mesh.vertices[edge[1]];
+                Vec3 a = vpos[edge[0]];
+                Vec3 b = vpos[edge[1]];
                 scratchEdgeData[ew + 0] = a.x;
                 scratchEdgeData[ew + 1] = a.y;
                 scratchEdgeData[ew + 2] = a.z;
@@ -491,7 +506,7 @@ struct GpuMesh {
         {
             size_t vw = 0;
             size_t oc = 0;
-            foreach (vi, v; mesh.vertices) {
+            foreach (vi, v; vpos) {
                 if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max) continue;
                 if (hideSkipVertex(mesh, vi)) continue;
                 scratchVertData[vw + 0] = v.x;
@@ -665,6 +680,15 @@ struct GpuMesh {
                           const uint[] vertOrigin = null) {
         if (faceTriStart.length != mesh.faces.length)
             return;   // layout mismatch — caller should fall back to upload().
+        // Task 1069 — the positions-only refresh reads the DRAWN positions
+        // too, or the fast path would silently un-morph the surface that the
+        // full upload just morphed.
+        const(Vec3)[] vpos;
+        {
+            import morph_target : displayVertices;
+            auto dv = displayVertices(&mesh);
+            vpos = (dv.length == mesh.vertices.length) ? dv : mesh.vertices;
+        }
         ++uploadVersion;
         // Counted AFTER the suppress/layout-mismatch early-returns above, so
         // `uploadCalls` means uploads that actually touched a buffer, not
@@ -703,9 +727,9 @@ struct GpuMesh {
                     // would overwrite that face's data.
                     if (face.length < 3 || hideSkipFace(mesh, fi)) continue;
                     immutable uint i0 = face[0];
-                    Vec3 v0 = mesh.vertices[i0];
-                    Vec3 v1 = mesh.vertices[face[1]];
-                    Vec3 v2 = mesh.vertices[face[2]];
+                    Vec3 v0 = vpos[i0];
+                    Vec3 v1 = vpos[face[1]];
+                    Vec3 v2 = vpos[face[2]];
                     float ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
                     float bx = v2.x - v0.x, by = v2.y - v0.y, bz = v2.z - v0.z;
                     float cx = ay*bz - az*by;
@@ -725,9 +749,9 @@ struct GpuMesh {
                         immutable uint ia = i0;
                         immutable uint ib = face[i];
                         immutable uint ic = face[i+1];
-                        Vec3 va = mesh.vertices[ia];
-                        Vec3 vb = mesh.vertices[ib];
-                        Vec3 vc = mesh.vertices[ic];
+                        Vec3 va = vpos[ia];
+                        Vec3 vb = vpos[ib];
+                        Vec3 vc = vpos[ic];
                         fp[k++] = va.x; fp[k++] = va.y; fp[k++] = va.z;
                         fp[k++] = nx;   fp[k++] = ny;   fp[k++] = nz;
                         fp[k++] = vb.x; fp[k++] = vb.y; fp[k++] = vb.z;
@@ -758,8 +782,8 @@ struct GpuMesh {
                     // shifts every segment after the first hidden edge (R2).
                     if (hideSkipEdge(mesh, ei)) continue;
                     if (seg * 2 >= edgeVertCount) break;
-                    Vec3 a = mesh.vertices[edge[0]];
-                    Vec3 b = mesh.vertices[edge[1]];
+                    Vec3 a = vpos[edge[0]];
+                    Vec3 b = vpos[edge[1]];
                     int k = seg * 6;
                     ep[k++] = a.x; ep[k++] = a.y; ep[k++] = a.z;
                     ep[k++] = b.x; ep[k++] = b.y; ep[k++] = b.z;
@@ -780,7 +804,7 @@ struct GpuMesh {
                 GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (vp) {
                 int seg = 0;
-                foreach (vi, v; mesh.vertices) {
+                foreach (vi, v; vpos) {
                     if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max)
                         continue;
                     // Same skip as `upload`'s kept-vert walk (R2).
@@ -809,6 +833,13 @@ struct GpuMesh {
         // VBO alone), so the counter bump is at entry rather than beside a
         // version bump like the other three.
         g_fc.upload(cast(long)mesh.vertices.length);
+        // Task 1069 — the DRAWN positions (see `upload` above).
+        const(Vec3)[] vpos;
+        {
+            import morph_target : displayVertices;
+            auto dv = displayVertices(&mesh);
+            vpos = (dv.length == mesh.vertices.length) ? dv : mesh.vertices;
+        }
         if (edgeVertCount > 0) {
             glBindBuffer(GL_ARRAY_BUFFER, edgeVbo);
             float* ep = cast(float*)glMapBufferRange(
@@ -824,8 +855,8 @@ struct GpuMesh {
                     // shifts every segment after the first hidden edge (R2).
                     if (hideSkipEdge(mesh, ei)) continue;
                     if (seg * 2 >= edgeVertCount) break;
-                    Vec3 a = mesh.vertices[edge[0]];
-                    Vec3 b = mesh.vertices[edge[1]];
+                    Vec3 a = vpos[edge[0]];
+                    Vec3 b = vpos[edge[1]];
                     int k = seg * 6;
                     ep[k++] = a.x; ep[k++] = a.y; ep[k++] = a.z;
                     ep[k++] = b.x; ep[k++] = b.y; ep[k++] = b.z;
@@ -842,7 +873,7 @@ struct GpuMesh {
                 GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (vp) {
                 int seg = 0;
-                foreach (vi, v; mesh.vertices) {
+                foreach (vi, v; vpos) {
                     if (vertOrigin.length > 0 && vertOrigin[vi] == uint.max)
                         continue;
                     // Same skip as `upload`'s kept-vert walk (R2).
@@ -886,6 +917,13 @@ struct GpuMesh {
         // which differs per buffer and would need four separate sums to state
         // honestly.
         g_fc.upload(cast(long)mesh.vertices.length);
+        // Task 1069 — the DRAWN positions (see `upload` above).
+        const(Vec3)[] vpos;
+        {
+            import morph_target : displayVertices;
+            auto dv = displayVertices(&mesh);
+            vpos = (dv.length == mesh.vertices.length) ? dv : mesh.vertices;
+        }
         enum FACE_STRIDE = 6;
 
         // Face VBO — flat-shaded fan triangulation, one normal per face.
@@ -903,9 +941,9 @@ struct GpuMesh {
                     // triangle, so writing here would corrupt that face (R2).
                     if (face.length < 3 || hideSkipFace(mesh, fi)) continue;
                     immutable uint i0 = face[0];
-                    Vec3 v0 = mesh.vertices[i0];
-                    Vec3 v1 = mesh.vertices[face[1]];
-                    Vec3 v2 = mesh.vertices[face[2]];
+                    Vec3 v0 = vpos[i0];
+                    Vec3 v1 = vpos[face[1]];
+                    Vec3 v2 = vpos[face[2]];
                     float ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
                     float bx = v2.x - v0.x, by = v2.y - v0.y, bz = v2.z - v0.z;
                     float cx = ay*bz - az*by;
@@ -977,7 +1015,7 @@ struct GpuMesh {
                 GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
             if (vp) {
                 int seg = 0;
-                foreach (vi, v; mesh.vertices) {
+                foreach (vi, v; vpos) {
                     if (hideSkipVertex(mesh, vi)) continue;
                     if (seg >= vertCount) break;
                     int k = seg * 3;

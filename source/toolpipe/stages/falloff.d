@@ -428,6 +428,11 @@ class FalloffStage : Stage, Operator, ToolSwitchTransient {
             auto m = mesh_;
             if (m !is null && mapName.length > 0) {
                 auto map = m.meshMap(mapName);
+                // Task 1069: this gate reads the SHAPE directly rather than
+                // going through `weightMapNames()`, so it needs no morph-kind
+                // exclusion of its own — a morph map is Point dim 3 and the
+                // `dim == 1` test already refuses it. Named here so the next
+                // reader does not have to re-derive that.
                 if (map !is null && map.domain == MapDomain.Point && map.dim == 1) {
                     vertexMapWeights_.length = map.data.length;
                     vertexMapWeights_[] = map.data[];

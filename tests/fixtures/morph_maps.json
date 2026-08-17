@@ -1,0 +1,4098 @@
+{
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-17",
+  "harness": "headless command lane, purpose-built driver + map-aware dump (task 1069)",
+  "task": "1069",
+  "notes": "60 cells at ~2.7 s each, no display and no GUI. TWO map kinds were found where the audit assumed one: a RELATIVE kind storing deltas (created empty) and an ABSOLUTE kind storing positions (created dense). The delta-vs-absolute question was decided by editing the base AFTER the map -- and by a SCALE as well as a translate, since a translate alone cannot separate the candidates. The viewport question (does it draw base+delta while a map is selected) had no headless proxy here and was settled separately by a GUI capture; see the task's Phase 0."
+ },
+ "_about": "Reference-editor morph-map behaviour, captured through a headless command lane (one fresh engine per case). Keyed on GEOMETRY (vertex positions), never on index. SCRUBBED for neutrality (task 1069): every number is verbatim from the capture; the reference's command ids and its two four-character map-type tags were replaced with neutral prose and with the kind names 'relative' / 'absolute'. Seven case keys and seven cell ids carried a tag fragment and were renamed with it: bgmorph_is_dense -> background_to_morph_is_dense, lxo_roundtrip -> reference_native_roundtrip, morf_empty_at_creation -> relative_empty_at_creation, spot_apply_half_keeps_target -> absolute_apply_half_keeps_target, spot_base_translate_keeps_target -> absolute_base_translate_keeps_target, spot_dense_at_creation -> absolute_dense_at_creation, spot_stores_absolute -> absolute_stores_position",
+ "_base_mesh": {
+  "vertices": [
+   [
+    -0.2,
+    0.2,
+    0.6
+   ],
+   [
+    0.8,
+    0.2,
+    0.6
+   ],
+   [
+    0.8,
+    1.2,
+    0.6
+   ],
+   [
+    -0.2,
+    1.2,
+    0.6
+   ],
+   [
+    -0.2,
+    0.2,
+    1.6
+   ],
+   [
+    0.8,
+    0.2,
+    1.6
+   ],
+   [
+    0.8,
+    1.2,
+    1.6
+   ],
+   [
+    -0.2,
+    1.2,
+    1.6
+   ]
+  ],
+  "faces": [
+   [
+    0,
+    1,
+    2,
+    3
+   ],
+   [
+    7,
+    6,
+    5,
+    4
+   ],
+   [
+    0,
+    4,
+    5,
+    1
+   ],
+   [
+    1,
+    5,
+    6,
+    2
+   ],
+   [
+    2,
+    6,
+    7,
+    3
+   ],
+   [
+    3,
+    7,
+    4,
+    0
+   ]
+  ],
+  "note": "axis-aligned box, deliberately asymmetric and origin-free so 'delta' and 'absolute' can never coincide"
+ },
+ "cases": {
+  "edit_routes_into_selected_morph": {
+   "_case": "p3_move_inmorph",
+   "_desc": "relative map M selected; the unified transform's move of (0.25,-0.1,0.05) applied to the vertex at (0.8,1.2,1.6)",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "edit_moves_base_when_no_morph_selected": {
+   "_case": "p2_move_base",
+   "_desc": "no map selected; the same move -> the BASE moves and no map is written",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       1.05,
+       1.1,
+       1.65
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {}
+    }
+   ]
+  },
+  "base_translate_leaves_delta": {
+   "_case": "w1_base_translate",
+   "_desc": "map holds a delta; map deselected; the base vertex translated by (0.4,0.3,-0.2) -> the stored delta is unchanged",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       1.2,
+       1.5,
+       1.4
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          1.2,
+          1.5,
+          1.4
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "base_scale_leaves_delta": {
+   "_case": "w2_base_scale",
+   "_desc": "map deselected; the whole box scaled x2 about the origin -> the stored delta is STILL unchanged. The decisive case: a translate alone cannot separate 'store a delta' from 'store a position and re-derive it', a x2 scale can -- storing in the transformed frame would predict 2*D, re-deriving from a stored position would predict (stored position - new base)",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.4,
+       0.4,
+       1.2
+      ],
+      [
+       1.6,
+       0.4,
+       1.2
+      ],
+      [
+       1.6,
+       2.4,
+       1.2
+      ],
+      [
+       -0.4,
+       2.4,
+       1.2
+      ],
+      [
+       -0.4,
+       0.4,
+       3.2
+      ],
+      [
+       1.6,
+       0.4,
+       3.2
+      ],
+      [
+       1.6,
+       2.4,
+       3.2
+      ],
+      [
+       -0.4,
+       2.4,
+       3.2
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          1.6,
+          2.4,
+          3.2
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "absolute_stores_position": {
+   "_case": "w3_absolute",
+   "_desc": "an ABSOLUTE map selected; the same move -> the map stores absolute POSITIONS and is dense",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "S": {
+       "type": "absolute",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          0.6
+         ],
+         "value": [
+          -0.2,
+          0.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          0.6
+         ],
+         "value": [
+          0.8,
+          0.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          0.6
+         ],
+         "value": [
+          0.8,
+          1.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          0.6
+         ],
+         "value": [
+          -0.2,
+          1.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          1.6
+         ],
+         "value": [
+          -0.2,
+          0.2,
+          1.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.8,
+          0.2,
+          1.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          1.05,
+          1.1,
+          1.65
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          1.6
+         ],
+         "value": [
+          -0.2,
+          1.2,
+          1.6
+         ]
+        }
+       ],
+       "entry_count": 8
+      }
+     }
+    }
+   ]
+  },
+  "zero_delta_entry_survives": {
+   "_case": "w4_zero_entry",
+   "_desc": "move by D then by -D with the map selected -> the entry REMAINS, with value 0. A returned-to-zero entry is not erased",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          -0.0,
+          0.0,
+          0.0
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "zero_move_creates_entries": {
+   "_case": "w5_zero_move_all",
+   "_desc": "all 8 vertices selected, moved by (0,0,0) -> 8 entries, every one zero. Entries follow the SELECTION, not the displacement",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          0.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          0.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          0.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          0.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        }
+       ],
+       "entry_count": 8
+      }
+     }
+    }
+   ]
+  },
+  "entries_follow_the_selection": {
+   "_case": "w6_two_verts",
+   "_desc": "4 vertices selected and moved -> exactly 4 entries",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 4
+      }
+     }
+    }
+   ]
+  },
+  "absolute_dense_at_creation": {
+   "_case": "x1_absolute_create",
+   "_desc": "create an ABSOLUTE map -> 8 entries, a snapshot of every base position",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "S": {
+       "type": "absolute",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          0.6
+         ],
+         "value": [
+          -0.2,
+          0.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          0.6
+         ],
+         "value": [
+          0.8,
+          0.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          0.6
+         ],
+         "value": [
+          0.8,
+          1.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          0.6
+         ],
+         "value": [
+          -0.2,
+          1.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          1.6
+         ],
+         "value": [
+          -0.2,
+          0.2,
+          1.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.8,
+          0.2,
+          1.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.8,
+          1.2,
+          1.6
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          1.6
+         ],
+         "value": [
+          -0.2,
+          1.2,
+          1.6
+         ]
+        }
+       ],
+       "entry_count": 8
+      }
+     }
+    }
+   ]
+  },
+  "relative_empty_at_creation": {
+   "_case": "p1_build",
+   "_desc": "create a RELATIVE map -> 0 entries; the map exists and holds no values",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [],
+       "entry_count": 0
+      }
+     }
+    }
+   ]
+  },
+  "clear_is_selection_scoped": {
+   "_case": "x3_relative_clear",
+   "_desc": "a dense map, 4 vertices selected, clear -> exactly those 4 entries are gone; the rest survive",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 4
+      }
+     }
+    }
+   ]
+  },
+  "subdivide_interpolates_the_map": {
+   "_case": "x4_subdiv",
+   "_desc": "subdivide the faces; new vertices get the position-interpolated delta, with absent parents counted as zero",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ],
+      [
+       0.3,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.7,
+       0.6
+      ],
+      [
+       0.3,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.7,
+       0.6
+      ],
+      [
+       0.3,
+       0.7,
+       0.6
+      ],
+      [
+       0.3,
+       1.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.7,
+       1.6
+      ],
+      [
+       0.3,
+       0.2,
+       1.6
+      ],
+      [
+       -0.2,
+       0.7,
+       1.6
+      ],
+      [
+       0.3,
+       0.7,
+       1.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.1
+      ],
+      [
+       0.8,
+       0.2,
+       1.1
+      ],
+      [
+       0.3,
+       0.2,
+       1.1
+      ],
+      [
+       0.8,
+       1.2,
+       1.1
+      ],
+      [
+       0.8,
+       0.7,
+       1.1
+      ],
+      [
+       -0.2,
+       1.2,
+       1.1
+      ],
+      [
+       0.3,
+       1.2,
+       1.1
+      ],
+      [
+       -0.2,
+       0.7,
+       1.1
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.125,
+          -0.05,
+          0.025
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.7,
+          1.6
+         ],
+         "value": [
+          0.125,
+          -0.05,
+          0.025
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          0.7,
+          1.6
+         ],
+         "value": [
+          0.0625,
+          -0.025,
+          0.0125
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.1
+         ],
+         "value": [
+          0.125,
+          -0.05,
+          0.025
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.7,
+          1.1
+         ],
+         "value": [
+          0.0625,
+          -0.025,
+          0.0125
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          1.2,
+          1.1
+         ],
+         "value": [
+          0.0625,
+          -0.025,
+          0.0125
+         ]
+        }
+       ],
+       "entry_count": 7
+      }
+     }
+    }
+   ]
+  },
+  "bevel_duplicates_the_entry": {
+   "_case": "x4b_bevel_edge",
+   "_desc": "bevel with inset 0.1; the inset copy of a corner inherits the source corner's delta verbatim",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ],
+      [
+       -0.1,
+       0.3,
+       1.6
+      ],
+      [
+       0.7,
+       0.3,
+       1.6
+      ],
+      [
+       0.7,
+       1.1,
+       1.6
+      ],
+      [
+       -0.1,
+       1.1,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          0.7,
+          1.1,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 2
+      }
+     }
+    }
+   ]
+  },
+  "reference_native_roundtrip": {
+   "_case": "x5_native_roundtrip",
+   "_desc": "save and reopen in the reference's OWN native format -> the map, its sparsity and its values are preserved. NOT a claim about our formats: our .v3d and .lwo round trips are self-consistency tests seeded with these values",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "apply_half": {
+   "_case": "w7_apply_a05",
+   "_desc": "apply the map at strength 0.5",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.925,
+       1.15,
+       1.625
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.925,
+          1.15,
+          1.625
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "apply_full": {
+   "_case": "w7_apply_a10",
+   "_desc": "apply the map at strength 1.0 (a smoke case: every candidate law agrees here)",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       1.05,
+       1.1,
+       1.65
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          1.05,
+          1.1,
+          1.65
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "apply_over": {
+   "_case": "w7_apply_a15",
+   "_desc": "apply at strength 1.5 -- no clamp",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       1.175,
+       1.05,
+       1.675
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          1.175,
+          1.05,
+          1.675
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "apply_negative": {
+   "_case": "w7_apply_aneg",
+   "_desc": "apply at strength -0.5 -- no clamp",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.675,
+       1.25,
+       1.575
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.675,
+          1.25,
+          1.575
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "apply_x100": {
+   "_case": "w7_apply_a100",
+   "_desc": "apply at strength 100.0 -- no clamp; float32 rounding is visible in the result and sets the tolerance rule",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       25.799994,
+       -8.800002,
+       6.599995
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          25.799994,
+          -8.800002,
+          6.599995
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "deformer_two_morphs_add": {
+   "_case": "x7_deform_two",
+   "_desc": "two maps M=(0.25,-0.1,0.05) and N=(0,0,0.4) applied through the deformer mechanism, both at strength 1.0, then baked -> the deltas ADD rather than one overriding the other",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       1.05,
+       1.1,
+       2.05
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          1.05,
+          1.1,
+          2.05
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      },
+      "N": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          1.05,
+          1.1,
+          2.05
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.4
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "deformer_strength_half": {
+   "_case": "x7b_deform_one_half",
+   "_desc": "one map through the deformer mechanism at strength 0.5 -- the cross-check that the deformer and the direct apply agree",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.925,
+       1.15,
+       1.625
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.925,
+          1.15,
+          1.625
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      },
+      "N": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.925,
+          1.15,
+          1.625
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.4
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "deformer_strength_2": {
+   "_case": "y5_strength_2",
+   "_desc": "deformer strength 2.0 -- no clamp",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       1.3,
+       1.0,
+       1.7
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          1.3,
+          1.0,
+          1.7
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "deformer_strength_neg": {
+   "_case": "y5_strength_neg",
+   "_desc": "deformer strength -1.0 -- no clamp",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.55,
+       1.3,
+       1.55
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.55,
+          1.3,
+          1.55
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "deformer_strength_0": {
+   "_case": "y5_strength_0",
+   "_desc": "deformer strength 0.0 (a smoke case: every candidate law agrees here)",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "absolute_apply_half_keeps_target": {
+   "_case": "v1_absolute_apply_half",
+   "_desc": "an ABSOLUTE map deselected, applied at 0.5 -> the base moves halfway to the stored target AND the stored target is NOT re-snapshotted",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.925,
+       1.15,
+       1.625
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "S": {
+       "type": "absolute",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          0.6
+         ],
+         "value": [
+          -0.2,
+          0.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          0.6
+         ],
+         "value": [
+          0.8,
+          0.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          0.6
+         ],
+         "value": [
+          0.8,
+          1.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          0.6
+         ],
+         "value": [
+          -0.2,
+          1.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          1.6
+         ],
+         "value": [
+          -0.2,
+          0.2,
+          1.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.8,
+          0.2,
+          1.6
+         ]
+        },
+        {
+         "pos": [
+          0.925,
+          1.15,
+          1.625
+         ],
+         "value": [
+          1.05,
+          1.1,
+          1.65
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          1.6
+         ],
+         "value": [
+          -0.2,
+          1.2,
+          1.6
+         ]
+        }
+       ],
+       "entry_count": 8
+      }
+     }
+    }
+   ]
+  },
+  "absolute_base_translate_keeps_target": {
+   "_case": "v2_absolute_base_translate",
+   "_desc": "an ABSOLUTE map deselected; the base vertex translated -> the stored absolute target is unchanged",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       1.2,
+       1.5,
+       1.4
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "S": {
+       "type": "absolute",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          0.6
+         ],
+         "value": [
+          -0.2,
+          0.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          0.6
+         ],
+         "value": [
+          0.8,
+          0.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          0.6
+         ],
+         "value": [
+          0.8,
+          1.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          0.6
+         ],
+         "value": [
+          -0.2,
+          1.2,
+          0.6
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          1.6
+         ],
+         "value": [
+          -0.2,
+          0.2,
+          1.6
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.8,
+          0.2,
+          1.6
+         ]
+        },
+        {
+         "pos": [
+          1.2,
+          1.5,
+          1.4
+         ],
+         "value": [
+          1.05,
+          1.1,
+          1.65
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          1.6
+         ],
+         "value": [
+          -0.2,
+          1.2,
+          1.6
+         ]
+        }
+       ],
+       "entry_count": 8
+      }
+     }
+    }
+   ]
+  },
+  "delta_is_item_local": {
+   "_case": "v5_item_rotated",
+   "_desc": "the mesh item rotated +90 degrees about Y; the tool moves world +X by 0.25 -> the stored delta is (0,0,0.25), i.e. the ITEM-LOCAL displacement",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.25
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "delta_is_item_local_control": {
+   "_case": "u5_rot_base_control",
+   "_desc": "the same rotation with no map selected: the base vertex moves to local (0.8,1.2,1.85) -- the control showing the tool's axis is world",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.85
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {}
+    }
+   ]
+  },
+  "edits_accumulate": {
+   "_case": "v6_accumulate",
+   "_desc": "two successive gestures with one map selected -> the stored delta is their SUM, not the last one",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.35,
+          0.1,
+          0.35
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "background_to_morph_is_dense": {
+   "_case": "v4_background_morph",
+   "_desc": "the dedicated background-mesh-into-a-map command, relative kind -> an entry for EVERY vertex, value = background position - foreground position",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "BGM": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          0.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          0.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          0.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          0.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.0,
+          0.0
+         ]
+        }
+       ],
+       "entry_count": 8
+      }
+     }
+    },
+    {
+     "name": "Mesh (2)",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       1.05,
+       1.1,
+       1.65
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {}
+    }
+   ]
+  },
+  "new_map_steals_the_selection": {
+   "_case": "u3_new_map_selection",
+   "_desc": "create a second map while M is selected -> the next edit lands in the NEW map",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      },
+      "M2": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.1,
+          0.2,
+          0.3
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "topology_edit_still_hits_the_base": {
+   "_case": "u1_subdiv_in_morph",
+   "_desc": "a map is SELECTED; subdivide -> the base topology changes anyway. Topology operations are NOT routed",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ],
+      [
+       0.3,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.7,
+       0.6
+      ],
+      [
+       0.3,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.7,
+       0.6
+      ],
+      [
+       0.3,
+       0.7,
+       0.6
+      ],
+      [
+       0.3,
+       1.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.7,
+       1.6
+      ],
+      [
+       0.3,
+       0.2,
+       1.6
+      ],
+      [
+       -0.2,
+       0.7,
+       1.6
+      ],
+      [
+       0.3,
+       0.7,
+       1.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.1
+      ],
+      [
+       0.8,
+       0.2,
+       1.1
+      ],
+      [
+       0.3,
+       0.2,
+       1.1
+      ],
+      [
+       0.8,
+       1.2,
+       1.1
+      ],
+      [
+       0.8,
+       0.7,
+       1.1
+      ],
+      [
+       -0.2,
+       1.2,
+       1.1
+      ],
+      [
+       0.3,
+       1.2,
+       1.1
+      ],
+      [
+       -0.2,
+       0.7,
+       1.1
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.125,
+          -0.05,
+          0.025
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.7,
+          1.6
+         ],
+         "value": [
+          0.125,
+          -0.05,
+          0.025
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          0.7,
+          1.6
+         ],
+         "value": [
+          0.0625,
+          -0.025,
+          0.0125
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.1
+         ],
+         "value": [
+          0.125,
+          -0.05,
+          0.025
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.7,
+          1.1
+         ],
+         "value": [
+          0.0625,
+          -0.025,
+          0.0125
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          1.2,
+          1.1
+         ],
+         "value": [
+          0.0625,
+          -0.025,
+          0.0125
+         ]
+        }
+       ],
+       "entry_count": 7
+      }
+     }
+    }
+   ]
+  },
+  "freeze_deform_keeps_the_map": {
+   "_case": "u4_freeze_keeps_map",
+   "_desc": "baking the deformed positions into the base LEAVES the stored map value untouched",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       1.05,
+       1.1,
+       1.65
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          1.05,
+          1.1,
+          1.65
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 1
+      }
+     }
+    }
+   ]
+  },
+  "golden_three_entries": {
+   "_case": "g1_golden",
+   "_desc": "a box plus one relative map with three distinct entries",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          0.6
+         ],
+         "value": [
+          -0.3,
+          0.4,
+          0.2
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.5,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 3
+      }
+     }
+    }
+   ]
+  },
+  "golden_apply_05": {
+   "_case": "g2_apply_05",
+   "_desc": "the same, then applied at strength 0.5",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.35,
+       0.4,
+       0.7
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.45,
+       1.6
+      ],
+      [
+       0.925,
+       1.15,
+       1.625
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.35,
+          0.4,
+          0.7
+         ],
+         "value": [
+          -0.3,
+          0.4,
+          0.2
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.45,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.5,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.925,
+          1.15,
+          1.625
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 3
+      }
+     }
+    }
+   ]
+  },
+  "golden_subdivide": {
+   "_case": "g3_subdiv",
+   "_desc": "the same, then subdivided with the map deselected",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.2,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       1.2,
+       1.6
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ],
+      [
+       0.3,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       0.7,
+       0.6
+      ],
+      [
+       0.3,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.7,
+       0.6
+      ],
+      [
+       0.3,
+       0.7,
+       0.6
+      ],
+      [
+       0.3,
+       1.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.7,
+       1.6
+      ],
+      [
+       0.3,
+       0.2,
+       1.6
+      ],
+      [
+       -0.2,
+       0.7,
+       1.6
+      ],
+      [
+       0.3,
+       0.7,
+       1.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.1
+      ],
+      [
+       0.8,
+       0.2,
+       1.1
+      ],
+      [
+       0.3,
+       0.2,
+       1.1
+      ],
+      [
+       0.8,
+       1.2,
+       1.1
+      ],
+      [
+       0.8,
+       0.7,
+       1.1
+      ],
+      [
+       -0.2,
+       1.2,
+       1.1
+      ],
+      [
+       0.3,
+       1.2,
+       1.1
+      ],
+      [
+       -0.2,
+       0.7,
+       1.1
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          0.6
+         ],
+         "value": [
+          -0.3,
+          0.4,
+          0.2
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.5,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          0.2,
+          0.6
+         ],
+         "value": [
+          -0.15,
+          0.2,
+          0.1
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          0.7,
+          0.6
+         ],
+         "value": [
+          -0.15,
+          0.2,
+          0.1
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          0.7,
+          0.6
+         ],
+         "value": [
+          -0.075,
+          0.1,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          1.2,
+          1.6
+         ],
+         "value": [
+          0.125,
+          -0.05,
+          0.025
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.7,
+          1.6
+         ],
+         "value": [
+          0.125,
+          0.2,
+          0.025
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          0.2,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.25,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          0.7,
+          1.6
+         ],
+         "value": [
+          0.0625,
+          0.1,
+          0.0125
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          0.2,
+          1.1
+         ],
+         "value": [
+          -0.15,
+          0.2,
+          0.1
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.2,
+          1.1
+         ],
+         "value": [
+          0.0,
+          0.25,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          0.2,
+          1.1
+         ],
+         "value": [
+          -0.075,
+          0.225,
+          0.05
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          1.2,
+          1.1
+         ],
+         "value": [
+          0.125,
+          -0.05,
+          0.025
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.7,
+          1.1
+         ],
+         "value": [
+          0.0625,
+          0.1,
+          0.0125
+         ]
+        },
+        {
+         "pos": [
+          0.3,
+          1.2,
+          1.1
+         ],
+         "value": [
+          0.0625,
+          -0.025,
+          0.0125
+         ]
+        },
+        {
+         "pos": [
+          -0.2,
+          0.7,
+          1.1
+         ],
+         "value": [
+          -0.075,
+          0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 17
+      }
+     }
+    }
+   ]
+  },
+  "golden_deformer_025": {
+   "_case": "g4_deform_full",
+   "_desc": "the same, through the deformer mechanism at strength 0.25, then baked",
+   "meshes": [
+    {
+     "name": "Mesh",
+     "vertices": [
+      [
+       -0.275,
+       0.3,
+       0.65
+      ],
+      [
+       0.8,
+       0.2,
+       0.6
+      ],
+      [
+       0.8,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       1.2,
+       0.6
+      ],
+      [
+       -0.2,
+       0.2,
+       1.6
+      ],
+      [
+       0.8,
+       0.325,
+       1.6
+      ],
+      [
+       0.8625,
+       1.175,
+       1.6125
+      ],
+      [
+       -0.2,
+       1.2,
+       1.6
+      ]
+     ],
+     "morph_maps": {
+      "M": {
+       "type": "relative",
+       "dim": 3,
+       "entries": [
+        {
+         "pos": [
+          -0.275,
+          0.3,
+          0.65
+         ],
+         "value": [
+          -0.3,
+          0.4,
+          0.2
+         ]
+        },
+        {
+         "pos": [
+          0.8,
+          0.325,
+          1.6
+         ],
+         "value": [
+          0.0,
+          0.5,
+          0.0
+         ]
+        },
+        {
+         "pos": [
+          0.8625,
+          1.175,
+          1.6125
+         ],
+         "value": [
+          0.25,
+          -0.1,
+          0.05
+         ]
+        }
+       ],
+       "entry_count": 3
+      }
+     }
+    }
+   ]
+  }
+ }
+}

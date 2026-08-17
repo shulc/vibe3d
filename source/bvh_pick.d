@@ -257,9 +257,10 @@ public:
         if (result.face >= 0 && result.face < cast(int)sourceMesh.faces.length) {
             auto face = sourceMesh.faces[result.face];
             if (face.length >= 3) {
-                Vec3 a = sourceMesh.vertices[face[0]];
-                Vec3 b = sourceMesh.vertices[face[1]];
-                Vec3 c = sourceMesh.vertices[face[2]];
+                import morph_target : displayPosition;
+                Vec3 a = displayPosition(&sourceMesh, face[0]);
+                Vec3 b = displayPosition(&sourceMesh, face[1]);
+                Vec3 c = displayPosition(&sourceMesh, face[2]);
                 Vec3 nLocal = cross(b - a, c - a);
                 Vec3 n = ms.isIdentity ? nLocal : ms.toWorldNormal(nLocal);
                 float len = n.length;
@@ -316,7 +317,19 @@ private:
 
         // Flat vertex array (XYZ per vertex).
         float[] verts = new float[](sourceMesh.vertices.length * 3);
-        foreach (vi, v; sourceMesh.vertices) {
+        // Task 1069 — the BVH is built from the DRAWN positions. Measured
+        // (Phase 0): polygon picking follows the drawn surface, so a BVH built
+        // from the base would pick a face where nothing is visible. `null`
+        // when no morph target is bound, so an ordinary document builds
+        // byte-identical geometry.
+        const(Vec3)[] bvhSrc;
+        {
+            import morph_target : displayVertices;
+            auto dv = displayVertices(&sourceMesh);
+            bvhSrc = (dv.length == sourceMesh.vertices.length)
+                   ? dv : sourceMesh.vertices;
+        }
+        foreach (vi, v; bvhSrc) {
             verts[vi * 3 + 0] = v.x;
             verts[vi * 3 + 1] = v.y;
             verts[vi * 3 + 2] = v.z;
@@ -377,7 +390,19 @@ private:
         if (triCount == 0 || sourceMesh.vertices.length == 0) return;
 
         float[] verts = new float[](sourceMesh.vertices.length * 3);
-        foreach (vi, v; sourceMesh.vertices) {
+        // Task 1069 — the BVH is built from the DRAWN positions. Measured
+        // (Phase 0): polygon picking follows the drawn surface, so a BVH built
+        // from the base would pick a face where nothing is visible. `null`
+        // when no morph target is bound, so an ordinary document builds
+        // byte-identical geometry.
+        const(Vec3)[] bvhSrc;
+        {
+            import morph_target : displayVertices;
+            auto dv = displayVertices(&sourceMesh);
+            bvhSrc = (dv.length == sourceMesh.vertices.length)
+                   ? dv : sourceMesh.vertices;
+        }
+        foreach (vi, v; bvhSrc) {
             verts[vi * 3 + 0] = v.x;
             verts[vi * 3 + 1] = v.y;
             verts[vi * 3 + 2] = v.z;

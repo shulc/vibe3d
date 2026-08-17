@@ -86,7 +86,7 @@ import handler  : ToolHandles;
 import eventlog : queryMouse;
 import shader : Shader;
 import params : Param;
-import tools.transform.transform : TransformTool;
+import tools.transform.transform : TransformTool, VertexEditFactory, MorphEditFactory;
 import tool            : ToolFlag;
 import edit_session    : LiveEvalClient, SlotActivationClient,
                          LifecycleUndoEmitter;
@@ -101,6 +101,7 @@ import tools.transform.scale     : ScaleTool;
 import tools.transform.xfrm_item;
 import tools.transform.xfrm_handles;
 import tools.transform.xfrm_apply;
+import tools.transform.morph_route : MorphRoute, defaultStored;
 import tools.transform.xform_kernels :
     applyScaleFromActivation,   // dormant compoundPasses!=1 pow path only (applyTRS, F2)
     applyXformMatrix,
@@ -622,11 +623,12 @@ public:
     // Forward the undo bindings into each sub-tool so their drags
     // record on the same global history.
     override public void setUndoBindings(CommandHistory h,
-                                  VertexEditFactory factory) {
-        super.setUndoBindings(h, factory);
-        moveSub.setUndoBindings(h, factory);
-        rotateSub.setUndoBindings(h, factory);
-        scaleSub.setUndoBindings(h, factory);
+                                  VertexEditFactory factory,
+                                         MorphEditFactory morphFactory = null) {
+        super.setUndoBindings(h, factory, morphFactory);
+        moveSub.setUndoBindings(h, factory, morphFactory);
+        rotateSub.setUndoBindings(h, factory, morphFactory);
+        scaleSub.setUndoBindings(h, factory, morphFactory);
     }
 
     // Enabled sub-tools in bank order T → R → S, backed by a fixed member
@@ -2136,6 +2138,11 @@ public:
         bool hadRun = runBaselineValid;
         runBaselineValid = false;
         runFrameValid    = false;
+        // Task 1069 — the routed run baseline shares the geometry-run
+        // boundary exactly. Without this a second gesture would evaluate from
+        // the FIRST gesture's start position and overwrite its delta instead
+        // of adding to it (law L7).
+        morphRunValid_   = false;
         // Task 0614 Phase 3 — R15 lifecycle parity: the item baseline shares
         // the vertex baseline's boundary exactly (same gate, same call
         // site), so the next item run re-baselines + re-freezes together.
@@ -2276,6 +2283,10 @@ public:
             dragBaseline.length = mesh.vertices.length;
             foreach (i; 0 .. mesh.vertices.length)
                 dragBaseline[i] = mesh.vertices[i];
+            // Task 1069 — the routed run baseline rides the SAME `rebake`
+            // predicate as `dragBaseline`, so a same-bank repeat holds it
+            // exactly as it holds the base one.
+            captureMorphRunBaseline(dragBaseline);
             resetGestureAttrs();
             runBaselineValid = true;
 
@@ -3813,6 +3824,12 @@ public:
         // reads run.r. The Euler slot is the only numeric rotate input (the
         // view-ring has no numeric attr), so matrixFromEulerZYX is the exact truth.
         run.r = matrixFromEulerZYX(headlessRotate);
+        // Task 1069 — a headless apply supplies its OWN fresh baseline
+        // (`mesh.vertices.dup`), so it is its own one-shot run and must NOT
+        // inherit a `dragMorphBaseline` captured by some earlier gizmo drag.
+        // Without this, a headless apply following a drag would evaluate from
+        // that drag's start position and overwrite its delta.
+        morphRunValid_ = false;
         return applyTRS(mesh.vertices.dup);
     }
 
@@ -3929,6 +3946,7 @@ public:
             dragBaseline.length = mesh.vertices.length;
             foreach (i; 0 .. mesh.vertices.length)
                 dragBaseline[i] = mesh.vertices[i];
+            captureMorphRunBaseline(dragBaseline);   // task 1069, same predicate
             runBaselineValid = true;
             return true;
         }
@@ -4249,8 +4267,24 @@ public:
         // between buildEditCmd and recordCommit (buildEditCmd returns null on a
         // no-op gesture — nothing to hook).
         discardAcenUserPlacedSnapshot();
-        auto cmd = buildEditCmd(label);
-        if (cmd is null) return;
+        // Task 1069 — under ROUTING the gesture changed the MAP, not
+        // `mesh.vertices`, so `buildEditCmd` would diff two identical position
+        // arrays and return null. Both commands need the SAME hook pair
+        // spliced in below, so the setter is captured as a delegate rather
+        // than duplicating the ~40 lines that compose the hooks.
+        import commands.mesh.morph_edit : MeshMorphEdit;
+        import command : Command;
+        Command cmd;
+        void delegate(void delegate(), void delegate()) setCmdHooks;
+        if (auto mcmd = cast(MeshMorphEdit) buildMorphEditCmd(label)) {
+            cmd = mcmd;
+            setCmdHooks = (a, r) { mcmd.setHooks(a, r); };
+        } else {
+            auto vcmd = buildEditCmd(label);
+            if (vcmd is null) return;
+            cmd = vcmd;
+            setCmdHooks = (a, r) { vcmd.setHooks(a, r); };
+        }
 
         // BUG-2 — a real edit command was built, so this gesture genuinely moved
         // geometry (NOT a no-op relocate click). Apply the pending Move-settle soft
@@ -4317,7 +4351,7 @@ public:
         if (auto sn = activeSnapStage())     { snSnap = sn.snapshotConfigToPacket(); haveSn = true; }
         if (auto sy = activeSymmetryStage()) { sySnap = sy.snapshotConfigToPacket(); haveSy = true; }
 
-        cmd.setHooks(
+        setCmdHooks(
             // apply (redo): the F3b-composed pin + SOFT pin + run/frame restore
             // (gh.apply), plus the falloff/snap/symmetry config restore this
             // commit site alone carries (R/S never touch pipe config in their
@@ -4635,6 +4669,13 @@ public:
                 if (vid < mesh.vertices.length)
                     mesh.vertices[vid] = base[i];
             }
+            // Task 1069 — the SECOND cancel site. A routed session moved the
+            // MAP and left `mesh.vertices` alone, so the loop above restores
+            // nothing that changed; without this the cancelled drag keeps its
+            // edit. (And note why `editBefore` still holds POSITIONS: this
+            // loop writes it straight into geometry, so putting deltas in
+            // there would teleport every moving vertex to near the origin.)
+            restoreMorphEditBaseline();
             // Session cancel restores positions to the pre-edit baseline — a real
             // version bump (not mid-drag), so commitChange (Position) reproduces
             // the raw mutationVersion bump AND publishes the class.
@@ -5468,6 +5509,90 @@ private:
     // The tool-session edit baseline (`editBefore` in TransformTool) is
     // separate and lives at session scope.
     Vec3[] dragBaseline;
+
+    // ── Task 1069: the routing seam's tool-side half ───────────────────────
+
+    /// Capture `dragMorphBaseline` from `base` (the TRUE base array) plus the
+    /// bound map's CURRENT stored values. No target bound ⇒ the array is
+    /// dropped and routing stays inert.
+    private void captureMorphRunBaseline(const(Vec3)[] base) {
+        import morph_target : resolveMorphTarget;
+        import mesh_morph   : morphApply;
+        import mesh         : MapKind;
+        morphRunValid_ = false;
+        dragMorphBaseline.length = 0;
+        string nm; MapKind kind;
+        if (!resolveMorphTarget(mesh, nm, kind)) return;
+        if (base.length != mesh.vertices.length) return;
+        auto map = mesh.morphMapForWrite(nm);
+        if (map is null) return;
+        dragMorphBaseline.length = base.length;
+        foreach (i; 0 .. base.length)
+            dragMorphBaseline[i] = morphApply(base[i],
+                                              map.entryOr(i, defaultStored(base[i], kind)),
+                                              kind, 1.0f);
+        morphRunValid_ = true;
+    }
+
+    /// Build the route for THIS apply. `base` is whatever array this apply is
+    /// evaluating from — `dragBaseline` for a live drag, a fresh
+    /// `mesh.vertices.dup` for the one-shot headless/panel path — and it is
+    /// the TRUE base either way, because the routed path never writes
+    /// `mesh.vertices`.
+    ///
+    /// Returns `MorphRoute.init` (inert) when no target is bound, which is
+    /// what keeps every non-routed drag byte-identical to before this task.
+    protected MorphRoute buildMorphRouteFor(const(Vec3)[] base) {
+        import morph_target : resolveMorphTarget;
+        import mesh         : MapKind;
+        MorphRoute r;
+        string nm; MapKind kind;
+        if (!resolveMorphTarget(mesh, nm, kind)) return r;
+        if (base.length != mesh.vertices.length) return r;
+        // A one-shot apply with no open run has no captured run baseline yet;
+        // capture it here, ONCE. Doing this per apply would be the accumulate
+        // bug in miniature — mid-drag the live map already holds THIS
+        // gesture's partial delta, so re-deriving `runPos` from it every apply
+        // would make the gesture accumulate against itself.
+        if (!morphRunValid_ || dragMorphBaseline.length != mesh.vertices.length)
+            captureMorphRunBaseline(base);
+        if (!morphRunValid_) return r;
+        r.kind   = kind;
+        r.name   = nm;
+        r.base   = base;
+        r.runPos = dragMorphBaseline;
+        return r;
+    }
+
+    /// True when this apply will route — used by the commit / cancel paths to
+    /// choose the morph command over the vertex one.
+    public bool morphRoutingActive() {
+        import morph_target : resolveMorphTarget;
+        import mesh         : MapKind;
+        string nm; MapKind kind;
+        return resolveMorphTarget(mesh, nm, kind);
+    }
+
+    // Task 1069 — the ROUTED run baseline: every vertex's DISPLAYED position
+    // (base + the target map's value) at run start, mesh-length and
+    // vertex-id indexed, exactly like `dragBaseline`.
+    //
+    // It is a SECOND array on purpose. The tempting shortcut — write the
+    // morphed position into `dragBaseline` itself — is a data-corrupting bug,
+    // not a simplification: `applyTRS` calls `restoreBaseline()` from
+    // `dragBaseline` on EVERY apply including the last of the gesture, and the
+    // routed kernel branch never writes `mesh.vertices`, so nothing would
+    // overwrite it. `mesh.vertices` would hold the morphed position for the
+    // whole gesture and after it, law L2's "the base is untouched" would fail
+    // on the first apply, and the NEXT gesture's rebake would re-capture the
+    // already-morphed position as its base and stack a second delta on the
+    // first. `edits_accumulate` is the test that catches the second half.
+    Vec3[] dragMorphBaseline;
+
+    // Validity flag for `dragMorphBaseline`, cleared by `resetRun()` on the
+    // same geometry-run boundary as `runBaselineValid` — a fresh run must
+    // re-read the map, or gesture 2 evaluates from gesture 1's start.
+    bool morphRunValid_ = false;
 
     // Run-scoped validity flag for `dragBaseline` (apply-path unification
     // Phase 2). False ⇒ the next gizmo `begin*DragSession` re-captures the

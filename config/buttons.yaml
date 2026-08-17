@@ -216,6 +216,8 @@ panels:
           - { label: Faceted,    action: { kind: command, id: mesh.subdivide_faceted } }
           - { label: Subpatch,   action: { kind: command, id: mesh.subpatch_toggle } }
           - { label: "Edge Crease", action: { kind: command, id: mesh.edgeCrease.set } }
+          - { label: "New Morph Map…", action: { kind: command, id: mesh.morph.create } }
+          - { label: "Apply Morph…",   action: { kind: command, id: mesh.morph.apply } }
           - { label: "Clean Up", action: { kind: command, id: mesh.cleanup } }
           - { label: "Fix Orientation", action: { kind: command, id: mesh.fixOrientation } }
           - { label: "Remesh (Quad)…", action: { kind: command, id: "mesh.remesh.open" } }

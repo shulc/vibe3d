@@ -191,6 +191,7 @@ import commands.mesh.jitter;
 import commands.mesh.magnet : MeshMagnet;
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
+import commands.mesh.morph;
 import commands.mesh.edge_crease;
 import commands.mesh.uv_transform;
 import commands.mesh.uv_project  : UvProject;

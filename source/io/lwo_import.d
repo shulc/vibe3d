@@ -1,5 +1,25 @@
 module io.lwo_import;
 
+// ---------------------------------------------------------------------------
+// The interchange format's two MORPH map tags (task 1069).
+//
+// Four-character map-type tags in the file's own vertex-map type space, the
+// same class of constant as `"TXUV"` a few hundred lines below. Their basis
+// for living in `source/` is that they are ABSENT FROM BOTH neutrality
+// dictionaries -- checked by running the project's own lint over a fixture
+// containing them, which produced no finding -- and that `"TXUV"` is already
+// public in this file and in `lwo_export.d`. They name no vendor, no product
+// and no SDK symbol.
+//
+// Both are point-domain, dimension 3, many-named. They differ in what the
+// three floats MEAN: one stores a displacement from the base position, the
+// other an absolute position. Nothing about their shape distinguishes them,
+// which is precisely why the tag has to be carried through to the map's kind
+// instead of being inferred.
+// ---------------------------------------------------------------------------
+enum string kMorphRelativeTag = "MORF";   // stores a DELTA
+enum string kMorphAbsoluteTag = "SPOT";   // stores a POSITION
+
 import std.file      : read, exists, getSize;
 import std.algorithm : min;
 import std.format    : format;
@@ -93,6 +113,16 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         size_t  base, limit;        // window into localToGlobal[kind]
     }
 
+    // One decoded morph channel, layer-local. `absolute` is the map's KIND,
+    // which the tag carries and nothing else can supply: both kinds are
+    // point-domain dim-3, so shape cannot tell them apart.
+    struct MorphBuild {
+        string  name;
+        bool    absolute;
+        uint[]  verts;
+        float[] values;   // 3 per listed vertex
+    }
+
     struct PartBuild {
         Vec3[]   verts;
         uint[][] polys;
@@ -100,6 +130,16 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
         PtagCapture[] ptags;        // PTAG chunks + their POLS window (filtered to SURF later)
         string   name;
         bool     hidden;            // LAYR flags bit 0 (1 => layer hidden)
+
+        // --- morph vertex maps, layer-local (task 1069) ---
+        // Sparse per-point 3-component channels, keyed by the map's S0 NAME.
+        // Until this task these were parsed and thrown away: the file carried
+        // them, the reader logged "skip VMAP", and the data was gone. Two
+        // things had to change beyond widening the type gate — the S0 name was
+        // scanned PAST and never captured (a morph channel is name-keyed, so
+        // without it every map lands under one empty name), and the two
+        // interchange map tags had to be recognised.
+        MorphBuild[]   morphs;
 
         // --- TXUV vertex maps, layer-local (resolved into ImportedPart.uv) ---
         // Continuous base (VMAP TXUV): point index -> (u,v). Last write wins if a
@@ -331,11 +371,56 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             ubyte[4] mapType = data[pos .. pos + 4];
             ushort   dim     = readU16(data, pos + 4);
             size_t   p       = pos + 6;
-            // S0 name: null-terminated, even-padded.
+            // S0 name: null-terminated, even-padded. Task 1069 — the name is
+            // now CAPTURED, not just skipped: morph channels are name-keyed,
+            // so without this every one of them would land under a single
+            // empty name and the last would win.
+            const size_t nameStart = p;
             while (p < chunkEnd && data[p] != 0) p++;
+            const string vmapName =
+                (p > nameStart) ? cast(string) data[nameStart .. p].idup : "";
             if (p < chunkEnd) p++;             // consume null
             if (p < chunkEnd && (p & 1)) p++;  // pad to even
-            if (mapType == "TXUV" && dim >= 1) {
+            if ((mapType == kMorphRelativeTag || mapType == kMorphAbsoluteTag)
+                && dim == 3) {
+                // A morph channel. Sparse: one (point, x, y, z) per entry.
+                //
+                // UNTRUSTED INPUT: `point` is decoded from a foreign file and
+                // will index a dense array downstream, so it is range-checked
+                // against THIS part's own point count, an out-of-range one is
+                // skipped with a warning, and the rest of the chunk keeps
+                // parsing. A truncated entry ends the chunk cleanly. Never a
+                // throw: one bad byte must not cost the whole load.
+                MorphBuild mb;
+                mb.name     = vmapName.length ? vmapName : "morph";
+                mb.absolute = (mapType == kMorphAbsoluteTag);
+                size_t entries = 0, dropped = 0;
+                while (p < chunkEnd) {
+                    uint point = readVX(data, p);
+                    float[3] xyz = [0.0f, 0.0f, 0.0f];
+                    bool short_ = false;
+                    foreach (d; 0 .. 3) {
+                        if (p + 4 > chunkEnd) { short_ = true; break; }
+                        xyz[d] = readF32(data, p);
+                        p += 4;
+                    }
+                    if (short_) break;
+                    if (point >= cur.verts.length) { ++dropped; continue; }
+                    mb.verts  ~= point;
+                    mb.values ~= xyz[0];
+                    mb.values ~= xyz[1];
+                    mb.values ~= xyz[2];
+                    ++entries;
+                }
+                if (dropped > 0)
+                    lwoWarn(format("VMAP morph '%s': %d entry/entries with an "
+                                  ~ "out-of-range point index dropped (part has "
+                                  ~ "%d points)", mb.name, dropped, cur.verts.length));
+                cur.morphs ~= mb;
+                lwoInfo(format("VMAP morph '%s' (%s): part %d, %d point(s)",
+                                mb.name, mb.absolute ? "absolute" : "relative",
+                                parts.length - 1, entries));
+            } else if (mapType == "TXUV" && dim >= 1) {
                 size_t entries = 0;
                 while (p < chunkEnd) {
                     uint point = readVX(data, p);
@@ -410,6 +495,10 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                                     dropped ? format(", %d out-of-range dropped", dropped) : ""));
                 }
             } else {
+                // VMAD morph overrides are deliberately OUT OF SCOPE (task
+                // 1069): a morph is a per-POINT channel, and a discontinuous
+                // per-corner morph is not something the measured law covers.
+                // Dropped, and said out loud rather than silently.
                 lwoInfo(format("skip VMAD type=%s dim=%d (not 2-D TXUV)",
                                 cast(string) mapType[].idup, dim));
             }
@@ -557,6 +646,16 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                         && tagIdx < tags.length)
                     ip.faceMaterial[slot] = tagIdx;
             }
+        }
+
+        // Morph VMAPs -> the part's sparse per-vertex morph channels
+        // (task 1069). Point-domain, so unlike UV there is no corner
+        // bookkeeping: the indices are already this part's own point indices,
+        // range-checked at decode time.
+        foreach (ref mb; pb.morphs) {
+            if (mb.verts.length == 0) continue;
+            ip.morphs ~= PartMorph(mb.name, mb.absolute,
+                                   mb.verts.dup, mb.values.dup);
         }
 
         // TXUV VMAP/VMAD -> the flat per-corner ImportedPart.uv stream (dim 2),
