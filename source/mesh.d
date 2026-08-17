@@ -7750,6 +7750,49 @@ struct Mesh {
         return n;
     }
 
+    /// How many edges are incident on each vertex, BY VERTEX INDEX — counted
+    /// straight off `edges[]`, so a vertex on a bare FLOATING edge (no face
+    /// at all) is counted correctly. This is the honest counterpart to
+    /// `vertexValence` (above), which walks the half-edge fan seeded from
+    /// `vertLoop` — and `vertLoop` is populated ONLY from face corners
+    /// (`edgeNeighbors`'s doc comment, `source/mesh.d:7887-7899`, spells
+    /// this out), so a vertex that sits on a floating edge but touches no
+    /// face reads as degree 0 through the fan even though `edges[]`
+    /// genuinely lists an edge on it. Any caller that needs a per-vertex
+    /// COUNT (task 1061's `select.byStat.vertex test:edgeCount`) must use
+    /// this, not `vertexValence`, for the same reason `edgePolygonCounts`
+    /// exists instead of a `facesAroundEdge` ring-walk tally. O(E), one pass.
+    uint[] vertexEdgeCounts() const {
+        auto n = new uint[](vertices.length);
+        foreach (ref e; edges) {
+            if (e[0] < n.length) ++n[e[0]];
+            if (e[1] < n.length) ++n[e[1]];
+        }
+        return n;
+    }
+
+    /// How many polygons are incident on each vertex, BY VERTEX INDEX —
+    /// counted straight off `faces[]` corners. A per-vertex "last face
+    /// stamped" array makes a face that lists the same vertex twice (a
+    /// degenerate corner) count once, not twice — the same defensiveness
+    /// `vertexPolygonCounts`'s caller (`select.byStat.vertex
+    /// test:polygonCount`, task 1061) needs and a raw per-corner tally does
+    /// not give. O(V + Σ face arity).
+    uint[] vertexPolygonCounts() const {
+        auto n = new uint[](vertices.length);
+        auto lastFace = new int[](vertices.length);
+        lastFace[] = -1;
+        foreach (fi; 0 .. faces.length) {
+            foreach (v; faces[fi]) {
+                if (v < n.length && lastFace[v] != cast(int) fi) {
+                    lastFace[v] = cast(int) fi;
+                    ++n[v];
+                }
+            }
+        }
+        return n;
+    }
+
     /// Return a range over all faces that share an edge with face `fi`.
     /// Uses twin links from the half-edge structure — no hash map needed.
     AdjacentFaceRange adjacentFaces(uint fi) const {

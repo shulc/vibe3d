@@ -119,6 +119,7 @@ import commands.select.convert  : SelectConvertCommand;
 import commands.select.fill     : SelectFillHoles, SelectFillInsideLoop;
 import commands.select.boundary : SelectBoundary;
 import commands.select.by_tag   : SelectByTag;
+import commands.select.by_stat  : SelectByStatVertex, SelectByStatEdge, SelectByStatPolygon;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 import commands.viewport.view_preset  : ViewportViewPreset;
@@ -1418,6 +1419,18 @@ private void registerSelectionCommands(EditorApp app) {
             .setItemHook(switchItemType);
     reg.commandFactories["select.byTag"]     = () => cast(Command)
         new SelectByTag(&mesh(), cameraView, editMode);
+    // select.byStat.* rows always promote to their own geometry type
+    // (task 1061, vibe3d-choice) — same funnel select.boundary /
+    // select.fill.insideLoop use.
+    reg.commandFactories["select.byStat.vertex"]  = () => cast(Command)
+        (new SelectByStatVertex(&mesh(), cameraView, editMode, &editMode()))
+            .setPromoteHook((EditMode m) => promoteGeometryType(m));
+    reg.commandFactories["select.byStat.edge"]    = () => cast(Command)
+        (new SelectByStatEdge(&mesh(), cameraView, editMode, &editMode()))
+            .setPromoteHook((EditMode m) => promoteGeometryType(m));
+    reg.commandFactories["select.byStat.polygon"] = () => cast(Command)
+        (new SelectByStatPolygon(&mesh(), cameraView, editMode, &editMode()))
+            .setPromoteHook((EditMode m) => promoteGeometryType(m));
     reg.commandFactories["select.drop"]      = () => cast(Command)
         new SelectDropCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["select.element"]   = () => cast(Command)

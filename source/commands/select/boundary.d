@@ -47,6 +47,22 @@ import snapshot : SelectionSnapshot;
 // scoring belong to task 1050; the frozen cases are
 // `tests/fixtures/select_boundary.json`.
 //
+// ---------------------------------------------------------------------------
+// NOT the same law as select.byStat.edge's open-border row (task 1061)
+// ---------------------------------------------------------------------------
+// `commands/select/by_stat.d`'s `EdgeStat.polygonCount compare:equal
+// value:1` answers a different question: exactly one adjacent polygon,
+// over the WHOLE MESH, selection-independent. THIS command answers relative
+// to the ACTIVE polygon set (selected, or all when none is selected). They
+// coincide only when nothing is selected — measured
+// (`edge_boundary_tagged_open_cube.identical_with_a_polygon_selected`):
+// with one polygon selected the reference's boundary answer is
+// byte-identical to the no-selection case, where THIS command would answer
+// that polygon's own four edges. `label()` below states the scope at the
+// UI surface; the cross-asserting discriminator unittest near the bottom
+// of this file constructs and runs `SelectByStatEdge` on the same mesh
+// state and asserts the two answers differ.
+//
 // Two more measured facts this command reproduces:
 //   * the POLYGON selection survives — this is not a converter that consumes
 //     its input (unlike `select.convert`, which clears the source).
@@ -76,6 +92,11 @@ class SelectBoundary : Command {
     }
 
     override string name() const { return "select.boundary"; }
+
+    // States the scope that distinguishes this command from
+    // select.byStat.edge's open-border row (task 1061) — this one is
+    // relative to the ACTIVE polygon set, not the whole mesh.
+    override string label() const { return "Select Border Of Polygon Set"; }
 
     /// Lockstep hook with the app's geometry-type funnel. Optional: a
     /// headless/unit-test construction without one writes `*editModePtr`.
@@ -160,6 +181,13 @@ version (unittest) {
     import std.algorithm : sort;
     import std.conv      : to;
     import math          : Vec3;
+    // The boundary-law discriminator (task 1061 §3): this file reaches
+    // INTO by_stat.d for the mirror unittest only — an import direction
+    // that does not exist outside version(unittest). Legal in D for class
+    // references; no `static this()` is added to either module (a circular
+    // import with module constructors throws `ModuleCtorError` at
+    // startup).
+    import commands.select.by_stat : SelectByStatEdge;
 
     // Run the command headlessly and return the selected edges as sorted
     // (min,max) vertex-index pairs — the engine-independent key. The Mesh is
@@ -169,6 +197,32 @@ version (unittest) {
         View v = new View(0, 0, 1, 1);
         EditMode mode = em;
         auto c = new SelectBoundary(m, v, mode, &mode);
+        c.apply();
+        uint[2][] outp;
+        foreach (ei; 0 .. m.edges.length) {
+            if (!m.isEdgeSelected(ei)) continue;
+            uint a = m.edges[ei][0], b = m.edges[ei][1];
+            outp ~= a < b ? [a, b] : [b, a];
+        }
+        outp.sort();
+        return outp;
+    }
+
+    // The MIRROR half of the discriminator (task 1061 §3.3): actually
+    // constructs and runs `SelectByStatEdge`, in the shape of
+    // `by_tag.d:186-201`'s `runByTag` — NOT a re-assertion of
+    // `SelectBoundary`'s own behaviour, which is already covered four times
+    // over above and would catch nothing about "route select.boundary
+    // through the statistics command" (or vice versa).
+    private uint[2][] byStatOpenBorderOf(Mesh* m) {
+        View v = new View(0, 0, 1, 1);
+        EditMode mode = EditMode.Edges;
+        auto c = new SelectByStatEdge(m, v, mode, &mode);
+        foreach (ref p; c.params()) {
+            if (p.name == "test")    *p.sptr = "polygonCount";
+            if (p.name == "compare") *p.sptr = "equal";
+            if (p.name == "value")   *p.iptr = 1;
+        }
         c.apply();
         uint[2][] outp;
         foreach (ei; 0 .. m.edges.length) {
@@ -342,4 +396,44 @@ unittest {
     assert(sharedIn,
         "two active polygons and one inactive on one edge: the edge IS a "
         ~ "border — 'odd number of selected polygons' would exclude it");
+}
+
+// THE MIRROR DISCRIMINATOR (task 1061 §3). select.boundary answers relative
+// to the ACTIVE polygon set; select.byStat.edge's open-border row
+// (`test:polygonCount compare:equal value:1`) answers the whole mesh,
+// selection-independent. With the +Z wall selected, select.boundary
+// returns the WALL's own four edges (measured above, `:264-275`);
+// select.byStat.edge returns the mesh's HOLE — byte-identical to what it
+// answers with nothing selected. Two separate mesh instances (same STATE,
+// not the same object) so running one command cannot contaminate the
+// other's edge-selection read. Deleting either law, or routing one through
+// the other in EITHER direction, must turn this red — and it can only do
+// that because this half actually constructs and drives
+// `SelectByStatEdge`, not merely `SelectBoundary` a second time.
+unittest {
+    auto mA = openBox();
+    mA.selectFace(3);                     // the +Z wall: ring 2,3,7,6
+    auto wallAnswer = boundaryOf(mA);
+
+    auto mB = openBox();
+    mB.selectFace(3);
+    auto holeAnswer = byStatOpenBorderOf(mB);
+
+    assert(wallAnswer.length == 4,
+        "select.boundary must answer the selected wall's 4 edges");
+    assert(holeAnswer.length == 4,
+        "select.byStat.edge must answer the mesh's hole, 4 edges");
+    assert(wallAnswer != holeAnswer,
+        "the two laws must disagree with a polygon selected — identical "
+        ~ "answers means the two laws were unified");
+
+    bool topEdgeIn = false;
+    foreach (e; wallAnswer) if (e[0] == 6 && e[1] == 7) topEdgeIn = true;
+    assert(topEdgeIn,
+        "select.boundary's wall answer must include the open top edge (6,7)");
+
+    foreach (e; holeAnswer)
+        assert(e[0] >= 4 && e[1] >= 4,
+            "select.byStat.edge must answer ONLY the hole (verts 4..7), "
+            ~ "selection-independent");
 }

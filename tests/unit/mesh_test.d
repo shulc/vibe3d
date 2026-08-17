@@ -4318,6 +4318,86 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
+// Task 1061 — `vertexEdgeCounts` / `vertexPolygonCounts`: honest per-vertex
+// counters for `select.byStat.vertex`'s edgeCount/polygonCount rows. Pinned
+// on a closed cube, an open cube (the dump's own partition), a floating edge
+// (the case that separates the honest scan from `vertexValence`'s fan walk),
+// and a face repeating a vertex (the case that separates it from a raw
+// per-corner tally).
+// ---------------------------------------------------------------------------
+unittest {   // closed cube: every vertex has 3 edges and 3 polygons.
+    Mesh m = makeCube();
+    auto ec = m.vertexEdgeCounts();
+    auto pc = m.vertexPolygonCounts();
+    assert(ec.length == 8 && pc.length == 8);
+    foreach (i; 0 .. 8) {
+        assert(ec[i] == 3, "cube vertex has 3 incident edges");
+        assert(pc[i] == 3, "cube vertex has 3 incident polygons");
+    }
+}
+
+unittest {   // open cube (+Y face removed): the dump's own partition --
+             // every vertex keeps 3 edges, the top ring drops to 2 polygons,
+             // the bottom ring stays at 3.
+    Mesh m = makeCube();
+    // +Y face is [3,7,6,2] in makeCube()'s face list (index 4).
+    size_t topFace = size_t.max;
+    foreach (fi, ref f; m.faces)
+        if (f.length == 4 && f[0] == 3 && f[1] == 7 && f[2] == 6 && f[3] == 2)
+            topFace = fi;
+    assert(topFace != size_t.max, "setup: found the +Y face");
+    m.faces = m.faces[0 .. topFace] ~ m.faces[topFace + 1 .. $];
+    m.buildLoops();
+
+    auto ec = m.vertexEdgeCounts();
+    foreach (i; 0 .. 8)
+        assert(ec[i] == 3, "deleting a face does not remove its shared edges");
+
+    auto pc = m.vertexPolygonCounts();
+    bool[uint] topRing = [3: true, 7: true, 6: true, 2: true];
+    foreach (i; 0 .. 8) {
+        if (cast(uint) i in topRing)
+            assert(pc[i] == 2, "a vertex of the deleted face now borders 2 polygons");
+        else
+            assert(pc[i] == 3, "an untouched vertex still borders 3 polygons");
+    }
+}
+
+unittest {   // a bare floating edge: `vertexEdgeCounts` must see it even
+             // though it touches no face -- `vertexValence`'s fan walk
+             // (seeded from vertLoop, populated only from face corners)
+             // reads it as degree 0. This is the mutation-reddening case:
+             // swapping vertexEdgeCounts for a vertexValence-based tally
+             // turns this red.
+    Mesh m;
+    m.addVertex(Vec3(0, 0, 0));
+    m.addVertex(Vec3(1, 0, 0));
+    m.addEdge(0, 1);
+    m.buildLoops();
+
+    auto ec = m.vertexEdgeCounts();
+    assert(ec[0] == 1 && ec[1] == 1,
+        "a floating edge's endpoints must be counted, unlike vertexValence");
+    assert(m.vertexValence(0) == 0 && m.vertexValence(1) == 0,
+        "setup: the fan walk really does see this vertex as isolated");
+}
+
+unittest {   // a face listing the same vertex twice must count once, not
+             // twice -- the last-face-stamp guard.
+    Mesh m;
+    foreach (p; [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)])
+        m.addVertex(p);
+    // Degenerate face: vertex 0 appears at two winding positions.
+    // `vertexPolygonCounts` is a pure scan over `faces[]`, independent of
+    // loop/dart validity, so no `buildLoops()` is needed to exercise it.
+    m.appendFaceRaw([0u, 1u, 2u, 0u, 3u].dup);
+
+    auto pc = m.vertexPolygonCounts();
+    assert(pc[0] == 1, "vertex 0 appears twice in the face's winding but "
+        ~ "borders it exactly once");
+}
+
+// ---------------------------------------------------------------------------
 // TASK 0920 — `compactUnreferenced` builds a full old->new `remap` and
 // permutes `vertices` by it, but used to leave `vertexMarks` /
 // `vertexSelectionOrder` / every Point-domain MeshMap (vertex weight, vertex

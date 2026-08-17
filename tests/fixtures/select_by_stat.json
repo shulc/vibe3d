@@ -1,0 +1,2320 @@
+{
+ "name": "select_by_stat",
+ "description": "select.byStat.{vertex,edge,polygon} reference parity (task 1061): dangling-point / n-gon / open-border style Statistics rows expressed as ordinary selection commands. Frozen from a headless reference command capture (toolcards/selection_sets/g56_measured.json, section G5_select_by_statistic). NOT covered here (see the module unittests and doc/behavior_gap_registry.md instead): the non-manifold 3rd-polygon edge case (cannot be built through this step vocabulary), the select.boundary cross-law discriminator, the polygon 'less' anomaly (measured as behaving like 'more' in the reference; we ship strictly-less, deliberately not reproduced), the multi-foreground-layer scope divergence (we evaluate the primary layer only), and the deferred coplanar/UV boundary kinds.",
+ "source": "LIVE-CAPTURED from the reference editor, driven headlessly through its command line (the 'command' capture method -- no viewport gesture, no pointer injection): a unit box with one segment per axis (the same +-0.5 cube /api/reset builds) and, for the polygon-vertex-count rows, a 6-sided cylinder. Geometry selected by centroid/coordinate predicate, the Statistics +/- command issued, the resulting selection read back as coordinates.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-16",
+  "harness": "tools/local/capture (task 1061)",
+  "task": "1061",
+  "notes": "Commands only, same transport-free lane as select_boundary.json/select_by_tag.json (task 1050/1051). vibe3d evaluates every row over the PRIMARY layer only; the reference measured law is every FOREGROUND layer (plus_minus.scope) -- a declared divergence pinned by a module unittest in by_stat.d, not by this fixture. The reference's polygon 'less' comparator was measured to behave as 'more' (two sampled values, never emitted by its own UI); vibe3d ships strictly-less and does not reproduce the anomaly -- pinned by a module unittest, never asserted here. equal_3 (the cylinder's 4 cap triangles) is held back: its centroids depend on mesh.triple's own fan-triangulation pattern, which this fixture does not claim parity for."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "vertex_by_edge_count_eq3",
+   "description": "unit cube with the +Y face deleted (5 quads) -- edge_by_polygon_count / vertex_edge_vs_poly cell; every vertex still has 3 incident edges -- deleting a face does not remove its shared edges (vertex_edge_vs_poly.edges_equal_3).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.delete"
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "edgeCount",
+       "compare": "equal",
+       "value": 3
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": [
+     [
+      -0.5,
+      -0.5,
+      -0.5
+     ],
+     [
+      0.5,
+      -0.5,
+      -0.5
+     ],
+     [
+      0.5,
+      0.5,
+      -0.5
+     ],
+     [
+      -0.5,
+      0.5,
+      -0.5
+     ],
+     [
+      -0.5,
+      -0.5,
+      0.5
+     ],
+     [
+      0.5,
+      -0.5,
+      0.5
+     ],
+     [
+      0.5,
+      0.5,
+      0.5
+     ],
+     [
+      -0.5,
+      0.5,
+      0.5
+     ]
+    ]
+   }
+  },
+  {
+   "name": "vertex_by_edge_count_eq2",
+   "description": "unit cube with the +Y face deleted (5 quads) -- edge_by_polygon_count / vertex_edge_vs_poly cell; no vertex has exactly 2 incident edges on this mesh (vertex_edge_vs_poly.edges_equal_2).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.delete"
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "edgeCount",
+       "compare": "equal",
+       "value": 2
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": []
+   }
+  },
+  {
+   "name": "vertex_by_edge_count_eq4",
+   "description": "unit cube with the +Y face deleted (5 quads) -- edge_by_polygon_count / vertex_edge_vs_poly cell; no vertex has exactly 4 incident edges on this mesh (vertex_edge_vs_poly.edges_equal_4).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.delete"
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "edgeCount",
+       "compare": "equal",
+       "value": 4
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": []
+   }
+  },
+  {
+   "name": "vertex_by_polygon_count_eq2",
+   "description": "unit cube with the +Y face deleted (5 quads) -- edge_by_polygon_count / vertex_edge_vs_poly cell; the 4 verts that touched the deleted face now border only 2 polygons (vertex_edge_vs_poly.polys_equal_2).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.delete"
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "polygonCount",
+       "compare": "equal",
+       "value": 2
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": [
+     [
+      -0.5,
+      0.5,
+      -0.5
+     ],
+     [
+      -0.5,
+      0.5,
+      0.5
+     ],
+     [
+      0.5,
+      0.5,
+      -0.5
+     ],
+     [
+      0.5,
+      0.5,
+      0.5
+     ]
+    ]
+   }
+  },
+  {
+   "name": "vertex_by_polygon_count_eq3",
+   "description": "unit cube with the +Y face deleted (5 quads) -- edge_by_polygon_count / vertex_edge_vs_poly cell; the 4 verts untouched by the deletion still border 3 polygons (vertex_edge_vs_poly.polys_equal_3).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.delete"
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "polygonCount",
+       "compare": "equal",
+       "value": 3
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": [
+     [
+      -0.5,
+      -0.5,
+      -0.5
+     ],
+     [
+      -0.5,
+      -0.5,
+      0.5
+     ],
+     [
+      0.5,
+      -0.5,
+      -0.5
+     ],
+     [
+      0.5,
+      -0.5,
+      0.5
+     ]
+    ]
+   }
+  },
+  {
+   "name": "vertex_by_polygon_count_eq4",
+   "description": "unit cube with the +Y face deleted (5 quads) -- edge_by_polygon_count / vertex_edge_vs_poly cell; no vertex borders 4 polygons on this mesh (vertex_edge_vs_poly.polys_equal_4).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.delete"
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "polygonCount",
+       "compare": "equal",
+       "value": 4
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": []
+   }
+  },
+  {
+   "name": "edge_open_border",
+   "description": "unit cube with the +Y face deleted: the hole's 4 edges have exactly 1 adjacent polygon, selection-independent -- this is NOT select.boundary's active-set law (task 1050), see boundary.d's cross-reference (edge_boundary_tagged_open_cube.geometry_kind_2, edge_boundary_nonmanifold).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.delete"
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.edge",
+      "params": {
+       "test": "polygonCount",
+       "compare": "equal",
+       "value": 1
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "edges",
+    "edges": [
+     [
+      [
+       -0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       -0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       0.5,
+       -0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       0.5,
+       0.5
+      ],
+      [
+       0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       0.5,
+       0.5
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "name": "edge_material_border",
+   "description": "unit cube, +Y face deleted, +X face tagged materialId 1: the material-boundary row selects the 3 edges bordering a DIFFERENTLY-tagged polygon; the tagged face's own OPEN edge (bordering the hole, only 1 adjacent polygon) is excluded (edge_boundary_tagged_open_cube.material_kind_1 / .note).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.delete"
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         0.5,
+         -0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         -0.5,
+         0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.setMaterial",
+      "params": {
+       "materialId": 1
+      }
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.edge",
+      "params": {
+       "test": "materialBoundary"
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "edges",
+    "edges": [
+     [
+      [
+       0.5,
+       -0.5,
+       -0.5
+      ],
+      [
+       0.5,
+       0.5,
+       -0.5
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.5,
+       0.5
+      ],
+      [
+       0.5,
+       -0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       0.5,
+       -0.5,
+       0.5
+      ],
+      [
+       0.5,
+       -0.5,
+       -0.5
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "name": "edge_part_border",
+   "description": "unit cube, +Y face deleted, +Z face tagged partId 1: same law as the material row, over facePart instead of faceMaterial; the tagged face's own open edge is excluded (edge_boundary_tagged_open_cube.part_kind_0 / .note).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.delete"
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.setPart",
+      "params": {
+       "partId": 1
+      }
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.edge",
+      "params": {
+       "test": "partBoundary"
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "edges",
+    "edges": [
+     [
+      [
+       -0.5,
+       -0.5,
+       0.5
+      ],
+      [
+       0.5,
+       -0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       0.5,
+       -0.5,
+       0.5
+      ],
+      [
+       0.5,
+       0.5,
+       0.5
+      ]
+     ],
+     [
+      [
+       -0.5,
+       0.5,
+       0.5
+      ],
+      [
+       -0.5,
+       -0.5,
+       0.5
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "name": "vertex_more_strict_eq3",
+   "description": "unit cube with the +Y face triangulated along the (2,7) diagonal (5 quads + 2 tris) -- vertex_more_is_strict cell: the 6 verts untouched by the split (vertex_more_is_strict.edges_equal_3).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.5,
+        0.5,
+        -0.5
+       ],
+       [
+        -0.5,
+        0.5,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace"
+     }
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "edgeCount",
+       "compare": "equal",
+       "value": 3
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": [
+     [
+      -0.5,
+      -0.5,
+      -0.5
+     ],
+     [
+      -0.5,
+      -0.5,
+      0.5
+     ],
+     [
+      -0.5,
+      0.5,
+      -0.5
+     ],
+     [
+      0.5,
+      -0.5,
+      -0.5
+     ],
+     [
+      0.5,
+      -0.5,
+      0.5
+     ],
+     [
+      0.5,
+      0.5,
+      0.5
+     ]
+    ]
+   }
+  },
+  {
+   "name": "vertex_more_strict_eq4",
+   "description": "unit cube with the +Y face triangulated along the (2,7) diagonal (5 quads + 2 tris) -- vertex_more_is_strict cell: the 2 diagonal verts gain the new chord edge (vertex_more_is_strict.edges_equal_4).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.5,
+        0.5,
+        -0.5
+       ],
+       [
+        -0.5,
+        0.5,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace"
+     }
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "edgeCount",
+       "compare": "equal",
+       "value": 4
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": [
+     [
+      -0.5,
+      0.5,
+      0.5
+     ],
+     [
+      0.5,
+      0.5,
+      -0.5
+     ]
+    ]
+   }
+  },
+  {
+   "name": "vertex_more_strict_more3",
+   "description": "unit cube with the +Y face triangulated along the (2,7) diagonal (5 quads + 2 tris) -- vertex_more_is_strict cell: 'more' is strictly greater -- same 2 verts as eq4, not eq3+eq4 (vertex_more_is_strict.edges_more_3).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.5,
+        0.5,
+        -0.5
+       ],
+       [
+        -0.5,
+        0.5,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace"
+     }
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "edgeCount",
+       "compare": "more",
+       "value": 3
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": [
+     [
+      -0.5,
+      0.5,
+      0.5
+     ],
+     [
+      0.5,
+      0.5,
+      -0.5
+     ]
+    ]
+   }
+  },
+  {
+   "name": "vertex_more_strict_less4",
+   "description": "unit cube with the +Y face triangulated along the (2,7) diagonal (5 quads + 2 tris) -- vertex_more_is_strict cell: 'less' is strictly less -- same 6 verts as eq3 (vertex_more_is_strict.edges_less_4).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.5,
+        0.5,
+        -0.5
+       ],
+       [
+        -0.5,
+        0.5,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace"
+     }
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "edgeCount",
+       "compare": "less",
+       "value": 4
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": [
+     [
+      -0.5,
+      -0.5,
+      -0.5
+     ],
+     [
+      -0.5,
+      -0.5,
+      0.5
+     ],
+     [
+      -0.5,
+      0.5,
+      -0.5
+     ],
+     [
+      0.5,
+      -0.5,
+      -0.5
+     ],
+     [
+      0.5,
+      -0.5,
+      0.5
+     ],
+     [
+      0.5,
+      0.5,
+      0.5
+     ]
+    ]
+   }
+  },
+  {
+   "name": "plus_minus_union",
+   "description": "unit cube with the +Y face triangulated along the (2,7) diagonal (5 quads + 2 tris) -- vertex_more_is_strict cell: preselect the 2 triangles, add every quad (vertexCount equal 4) -- the row evaluates over the WHOLE MESH, not the preselection, so the 5 quads join the 2 tris for 7 total (plus_minus.cells[0]). Two selection sizes 2->7 is the anti-inert assertion: a no-op command fails this in the union direction.",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.5,
+        0.5,
+        -0.5
+       ],
+       [
+        -0.5,
+        0.5,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace"
+     }
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": []
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ],
+       [
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.polygon",
+      "params": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 4,
+       "mode": "add"
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [
+     [
+      -0.5,
+      0.0,
+      0.0
+     ],
+     [
+      -0.166667,
+      0.5,
+      -0.166667
+     ],
+     [
+      0.0,
+      -0.5,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -0.5
+     ],
+     [
+      0.0,
+      0.0,
+      0.5
+     ],
+     [
+      0.166667,
+      0.5,
+      0.166667
+     ],
+     [
+      0.5,
+      0.0,
+      0.0
+     ]
+    ]
+   }
+  },
+  {
+   "name": "plus_minus_difference",
+   "description": "unit cube with the +Y face triangulated along the (2,7) diagonal (5 quads + 2 tris) -- vertex_more_is_strict cell: preselect all 7 polygons, remove every quad (vertexCount equal 4) -- only the 2 tris survive (plus_minus.cells[1]). 7->2 is the anti-inert assertion in the difference direction.",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.5,
+        0.5,
+        -0.5
+       ],
+       [
+        -0.5,
+        0.5,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace"
+     }
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": []
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         -0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         -0.5,
+         -0.5
+        ]
+       ],
+       [
+        [
+         -0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ],
+       [
+        [
+         -0.5,
+         -0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ]
+       ],
+       [
+        [
+         0.5,
+         -0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         -0.5,
+         0.5
+        ]
+       ],
+       [
+        [
+         -0.5,
+         -0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         -0.5,
+         -0.5
+        ],
+        [
+         0.5,
+         -0.5,
+         0.5
+        ],
+        [
+         -0.5,
+         -0.5,
+         0.5
+        ]
+       ],
+       [
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ],
+       [
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.polygon",
+      "params": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 4,
+       "mode": "remove"
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [
+     [
+      0.166667,
+      0.5,
+      0.166667
+     ],
+     [
+      -0.166667,
+      0.5,
+      -0.166667
+     ]
+    ]
+   }
+  },
+  {
+   "name": "plus_minus_difference_noop",
+   "description": "unit cube with the +Y face triangulated along the (2,7) diagonal (5 quads + 2 tris) -- vertex_more_is_strict cell: preselect only the 2 tris, remove every quad -- nothing to remove, the 2 tris are unchanged (plus_minus.cells[2]).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.5,
+        0.5,
+        -0.5
+       ],
+       [
+        -0.5,
+        0.5,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace"
+     }
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": []
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         0.5
+        ],
+        [
+         0.5,
+         0.5,
+         -0.5
+        ]
+       ],
+       [
+        [
+         0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         -0.5
+        ],
+        [
+         -0.5,
+         0.5,
+         0.5
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.polygon",
+      "params": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 4,
+       "mode": "remove"
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [
+     [
+      0.166667,
+      0.5,
+      0.166667
+     ],
+     [
+      -0.166667,
+      0.5,
+      -0.166667
+     ]
+    ]
+   }
+  },
+  {
+   "name": "polygon_by_vertex_count_eq4",
+   "description": "6-sided cylinder (sides:6 segments:1 sizeX:0.5 sizeY:0.75 sizeZ:0.5), top hexagon cap triangulated by mesh.triple: 4 tris at y=0.75, 6 side quads at y=0, 1 hexagon (untouched) at y=-0.75 -- poly_by_vertex cell. equal_3 (the 4 cap triangles) is deliberately NOT asserted here: its centroids depend on mesh.triple's own fan pattern, out of scope for a statistics fixture (see the task file). The five cases below do not depend on it. equal 4 -> the 6 side quads (poly_by_vertex.equal_4).",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "prim.cylinder",
+      "params": {
+       "cenX": 0.0,
+       "cenY": 0.0,
+       "cenZ": 0.0,
+       "sizeX": 0.5,
+       "sizeY": 0.75,
+       "sizeZ": 0.5,
+       "sides": 6,
+       "segments": 1
+      }
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.0,
+         0.75,
+         -0.5
+        ],
+        [
+         -0.433013,
+         0.75,
+         -0.25
+        ],
+        [
+         -0.433013,
+         0.75,
+         0.25
+        ],
+        [
+         -0.0,
+         0.75,
+         0.5
+        ],
+        [
+         0.433013,
+         0.75,
+         0.25
+        ],
+        [
+         0.433013,
+         0.75,
+         -0.25
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.triple"
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.polygon",
+      "params": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 4
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [
+     [
+      -0.216506,
+      0.0,
+      -0.375
+     ],
+     [
+      -0.433013,
+      0.0,
+      0.0
+     ],
+     [
+      -0.216506,
+      0.0,
+      0.375
+     ],
+     [
+      0.216506,
+      0.0,
+      0.375
+     ],
+     [
+      0.433013,
+      0.0,
+      0.0
+     ],
+     [
+      0.216506,
+      0.0,
+      -0.375
+     ]
+    ]
+   }
+  },
+  {
+   "name": "polygon_by_vertex_count_eq5",
+   "description": "6-sided cylinder (sides:6 segments:1 sizeX:0.5 sizeY:0.75 sizeZ:0.5), top hexagon cap triangulated by mesh.triple: 4 tris at y=0.75, 6 side quads at y=0, 1 hexagon (untouched) at y=-0.75 -- poly_by_vertex cell. equal_3 (the 4 cap triangles) is deliberately NOT asserted here: its centroids depend on mesh.triple's own fan pattern, out of scope for a statistics fixture (see the task file). The five cases below do not depend on it. equal 5 -> nothing on this mesh (poly_by_vertex.equal_5).",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "prim.cylinder",
+      "params": {
+       "cenX": 0.0,
+       "cenY": 0.0,
+       "cenZ": 0.0,
+       "sizeX": 0.5,
+       "sizeY": 0.75,
+       "sizeZ": 0.5,
+       "sides": 6,
+       "segments": 1
+      }
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.0,
+         0.75,
+         -0.5
+        ],
+        [
+         -0.433013,
+         0.75,
+         -0.25
+        ],
+        [
+         -0.433013,
+         0.75,
+         0.25
+        ],
+        [
+         -0.0,
+         0.75,
+         0.5
+        ],
+        [
+         0.433013,
+         0.75,
+         0.25
+        ],
+        [
+         0.433013,
+         0.75,
+         -0.25
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.triple"
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.polygon",
+      "params": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 5
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": []
+   }
+  },
+  {
+   "name": "polygon_by_vertex_count_eq6",
+   "description": "6-sided cylinder (sides:6 segments:1 sizeX:0.5 sizeY:0.75 sizeZ:0.5), top hexagon cap triangulated by mesh.triple: 4 tris at y=0.75, 6 side quads at y=0, 1 hexagon (untouched) at y=-0.75 -- poly_by_vertex cell. equal_3 (the 4 cap triangles) is deliberately NOT asserted here: its centroids depend on mesh.triple's own fan pattern, out of scope for a statistics fixture (see the task file). The five cases below do not depend on it. equal 6 -> the untouched bottom hexagon (poly_by_vertex.equal_6).",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "prim.cylinder",
+      "params": {
+       "cenX": 0.0,
+       "cenY": 0.0,
+       "cenZ": 0.0,
+       "sizeX": 0.5,
+       "sizeY": 0.75,
+       "sizeZ": 0.5,
+       "sides": 6,
+       "segments": 1
+      }
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.0,
+         0.75,
+         -0.5
+        ],
+        [
+         -0.433013,
+         0.75,
+         -0.25
+        ],
+        [
+         -0.433013,
+         0.75,
+         0.25
+        ],
+        [
+         -0.0,
+         0.75,
+         0.5
+        ],
+        [
+         0.433013,
+         0.75,
+         0.25
+        ],
+        [
+         0.433013,
+         0.75,
+         -0.25
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.triple"
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.polygon",
+      "params": {
+       "test": "vertexCount",
+       "compare": "equal",
+       "value": 6
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [
+     [
+      0.0,
+      -0.75,
+      0.0
+     ]
+    ]
+   }
+  },
+  {
+   "name": "polygon_by_vertex_count_more4",
+   "description": "6-sided cylinder (sides:6 segments:1 sizeX:0.5 sizeY:0.75 sizeZ:0.5), top hexagon cap triangulated by mesh.triple: 4 tris at y=0.75, 6 side quads at y=0, 1 hexagon (untouched) at y=-0.75 -- poly_by_vertex cell. equal_3 (the 4 cap triangles) is deliberately NOT asserted here: its centroids depend on mesh.triple's own fan pattern, out of scope for a statistics fixture (see the task file). The five cases below do not depend on it. more 4 (strict) -> only the hexagon, not the quads (poly_by_vertex.more_4).",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "prim.cylinder",
+      "params": {
+       "cenX": 0.0,
+       "cenY": 0.0,
+       "cenZ": 0.0,
+       "sizeX": 0.5,
+       "sizeY": 0.75,
+       "sizeZ": 0.5,
+       "sides": 6,
+       "segments": 1
+      }
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.0,
+         0.75,
+         -0.5
+        ],
+        [
+         -0.433013,
+         0.75,
+         -0.25
+        ],
+        [
+         -0.433013,
+         0.75,
+         0.25
+        ],
+        [
+         -0.0,
+         0.75,
+         0.5
+        ],
+        [
+         0.433013,
+         0.75,
+         0.25
+        ],
+        [
+         0.433013,
+         0.75,
+         -0.25
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.triple"
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.polygon",
+      "params": {
+       "test": "vertexCount",
+       "compare": "more",
+       "value": 4
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [
+     [
+      0.0,
+      -0.75,
+      0.0
+     ]
+    ]
+   }
+  },
+  {
+   "name": "polygon_by_vertex_count_more3",
+   "description": "6-sided cylinder (sides:6 segments:1 sizeX:0.5 sizeY:0.75 sizeZ:0.5), top hexagon cap triangulated by mesh.triple: 4 tris at y=0.75, 6 side quads at y=0, 1 hexagon (untouched) at y=-0.75 -- poly_by_vertex cell. equal_3 (the 4 cap triangles) is deliberately NOT asserted here: its centroids depend on mesh.triple's own fan pattern, out of scope for a statistics fixture (see the task file). The five cases below do not depend on it. more 3 (strict) -> the 6 quads + the hexagon, NOT the 4 triangles -- triangulation-independent (only relies on arity 3 vs >3), pins the anomaly guard (poly_by_vertex.more_3).",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "prim.cylinder",
+      "params": {
+       "cenX": 0.0,
+       "cenY": 0.0,
+       "cenZ": 0.0,
+       "sizeX": 0.5,
+       "sizeY": 0.75,
+       "sizeZ": 0.5,
+       "sides": 6,
+       "segments": 1
+      }
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         -0.0,
+         0.75,
+         -0.5
+        ],
+        [
+         -0.433013,
+         0.75,
+         -0.25
+        ],
+        [
+         -0.433013,
+         0.75,
+         0.25
+        ],
+        [
+         -0.0,
+         0.75,
+         0.5
+        ],
+        [
+         0.433013,
+         0.75,
+         0.25
+        ],
+        [
+         0.433013,
+         0.75,
+         -0.25
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.triple"
+     }
+    },
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.polygon",
+      "params": {
+       "test": "vertexCount",
+       "compare": "more",
+       "value": 3
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [
+     [
+      -0.216506,
+      0.0,
+      -0.375
+     ],
+     [
+      -0.433013,
+      0.0,
+      0.0
+     ],
+     [
+      -0.216506,
+      0.0,
+      0.375
+     ],
+     [
+      0.216506,
+      0.0,
+      0.375
+     ],
+     [
+      0.433013,
+      0.0,
+      0.0
+     ],
+     [
+      0.216506,
+      0.0,
+      -0.375
+     ],
+     [
+      0.0,
+      -0.75,
+      0.0
+     ]
+    ]
+   }
+  },
+  {
+   "name": "vertex_by_weight_map_all_set",
+   "description": "unit cube, weight map W with every vertex set to 1.0: the weightMap row selects every vertex whose value is non-zero (vertex_by_vmap.map_all_entries_value_1).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.weightmap.create",
+      "params": {
+       "name": "W"
+      }
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.weightmap.set",
+      "params": {
+       "name": "W",
+       "vert": 0,
+       "weight": 1.0
+      }
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.weightmap.set",
+      "params": {
+       "name": "W",
+       "vert": 1,
+       "weight": 1.0
+      }
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.weightmap.set",
+      "params": {
+       "name": "W",
+       "vert": 2,
+       "weight": 1.0
+      }
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.weightmap.set",
+      "params": {
+       "name": "W",
+       "vert": 3,
+       "weight": 1.0
+      }
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.weightmap.set",
+      "params": {
+       "name": "W",
+       "vert": 4,
+       "weight": 1.0
+      }
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.weightmap.set",
+      "params": {
+       "name": "W",
+       "vert": 5,
+       "weight": 1.0
+      }
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.weightmap.set",
+      "params": {
+       "name": "W",
+       "vert": 6,
+       "weight": 1.0
+      }
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.weightmap.set",
+      "params": {
+       "name": "W",
+       "vert": 7,
+       "weight": 1.0
+      }
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "weightMap",
+       "map": "W"
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": [
+     [
+      -0.5,
+      -0.5,
+      -0.5
+     ],
+     [
+      0.5,
+      -0.5,
+      -0.5
+     ],
+     [
+      0.5,
+      0.5,
+      -0.5
+     ],
+     [
+      -0.5,
+      0.5,
+      -0.5
+     ],
+     [
+      -0.5,
+      -0.5,
+      0.5
+     ],
+     [
+      0.5,
+      -0.5,
+      0.5
+     ],
+     [
+      0.5,
+      0.5,
+      0.5
+     ],
+     [
+      -0.5,
+      0.5,
+      0.5
+     ]
+    ]
+   }
+  },
+  {
+   "name": "vertex_by_weight_map_all_zero",
+   "description": "unit cube, weight map W created but never written (every entry reads as its zero default): the weightMap row selects nothing (vertex_by_vmap.map_all_entries_value_0 / .map_with_no_entries).",
+   "input": [
+    {
+     "reset": true
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.weightmap.create",
+      "params": {
+       "name": "W"
+      }
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "select.byStat.vertex",
+      "params": {
+       "test": "weightMap",
+       "map": "W"
+      }
+     }
+    }
+   ],
+   "expected": {
+    "mode": "vertices",
+    "vertices": []
+   }
+  }
+ ]
+}
