@@ -1972,6 +1972,40 @@ class HttpServer {
         }
     }
 
+    private void route_apiStats(HttpRequest request, HttpResponse response) {
+        // Task 1100 — every row the last complete frame of the Statistics
+        // panel DREW, with the cell text exactly as drawn. This is the
+        // rendered fact, not a re-computation: a test that asked the row model
+        // again would prove the row model and say nothing about whether the
+        // panel drew it — which is the failure `ui/item_rows.d`'s header
+        // records this codebase already shipping once.
+        //
+        // NOT marshaled, on the same grounds as /api/buttons/availability: the
+        // draw publishes a finished frame under a lock in one assignment and
+        // this reads it back under the same lock. Nothing live is walked from
+        // this thread.
+        //
+        // Empty `rows` is the honest answer before the first frame, in a
+        // non-`--test` run, and while the panel is closed.
+        //
+        // `charset=utf-8` is not decoration and this is the first endpoint that
+        // needs it: the payload carries the em-dash placeholder (U+2014), and a
+        // client that is told only "application/json" may decode the body as
+        // Latin-1 — which is exactly what Phobos' curl does, turning the three
+        // bytes of one glyph into three characters. JSON is UTF-8 by
+        // specification; saying so is what makes the glyph survive the wire.
+        response.headers["Content-Type"] = "application/json; charset=utf-8";
+        try {
+            import ui.stat_record : statRowsJson;
+            response.statusCode = 200;
+            response.body = statRowsJson();
+        } catch (Exception e) {
+            response.statusCode = 500;
+            response.body = "{\"error\": \"Failed to retrieve stat rows\", \"message\": \"" ~
+                           jsonEsc(e.msg) ~ "\"}";
+        }
+    }
+
     private void route_apiLayers(HttpRequest request, HttpResponse response) {
         // Layer list. MARSHALED (task 0612 Stage 3) — it used to be served
         // straight from the HTTP thread on the grounds that "tests are
@@ -3497,6 +3531,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/tool/state",           "GET",  Match.exact,  Answered.httpThread, "route_apiToolState"),
     RouteSpec("/api/toolprops/ids",        "GET",  Match.exact,  Answered.httpThread, "route_apiToolpropsIds"),
     RouteSpec("/api/buttons/availability", "GET",  Match.exact,  Answered.httpThread, "route_apiButtonsAvailability"),
+    RouteSpec("/api/stats",                "GET",  Match.exact,  Answered.httpThread, "route_apiStats"),
     RouteSpec("/api/layers",               "GET",  Match.exact,  Answered.mainThread, "route_apiLayers"),
     RouteSpec("/api/perf/reset",           "POST", Match.exact,  Answered.httpThread, "route_apiPerfReset"),
     RouteSpec("/api/perf",                 "GET",  Match.exact,  Answered.httpThread, "route_apiPerf"),

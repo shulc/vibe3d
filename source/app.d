@@ -131,6 +131,7 @@ import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesSh
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.image_list      : UiImageListCommand, g_imageListShown;
 import commands.ui.channels        : UiChannelsCommand, g_channelsShown;
+import commands.ui.statistics      : UiStatisticsCommand, g_statisticsShown;
 import commands.ui.about           : g_aboutShown;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 version (WithAI)
@@ -6231,6 +6232,11 @@ void main(string[] args) {
                     // panel took, and cheaper than resetting everyone's layout
                     // for one window.
                     ImGui.DockBuilderDockWindow("Channels",           rightId);
+                    // Task 1100. `kLayoutIniVersion` deliberately NOT bumped,
+                    // for the reason stated above: an existing ini has no entry
+                    // for this window and opens it floating, which is cheaper
+                    // than resetting everyone's layout for one window.
+                    ImGui.DockBuilderDockWindow("Statistics",         rightId);
                     ImGui.DockBuilderDockWindow("Viewport Properties",rightId);
                     ImGui.DockBuilderDockWindow("Tab bar",            topId);
                     ImGui.DockBuilderDockWindow("Status line",        botId);
@@ -6417,6 +6423,24 @@ void main(string[] args) {
         if (!command.g_testMode || g_channelsShown) {
             import ui.panels : drawChannelsPanel;
             drawChannelsPanel(app);
+        }
+
+        // ---- Statistics (dockable; task 1100) ----
+        // The element-count tree with its two selection columns. Same
+        // imgui-determinism rule as the panels above: hidden by default in
+        // --test, opt-in via `ui.statistics show`.
+        //
+        // The parameters are NARROW on purpose — a `const(Document)*`, the
+        // current selection type, the expand bits and one dispatch delegate —
+        // which is what makes the panel constructible in a unittest and what
+        // extends the panel's own no-mutation proof to the drawer. See
+        // `ui/panels.d`'s header for the drawer.
+        if (!command.g_testMode || g_statisticsShown) {
+            import ui.panels : drawStatisticsPanel;
+            import commands.ui.statistics : g_statExpand;
+            import seltype : currentSelType;
+            drawStatisticsPanel(&app.document(), currentSelType(app.selTypeOrder),
+                                g_statExpand, app.commandHandlerDelegate);
         }
 
         // ---- Viewport Properties (floating) ----

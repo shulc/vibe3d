@@ -92,32 +92,21 @@ import std.conv       : to;
 // routing one through the other in EITHER direction, turns both files red.
 //
 // ---------------------------------------------------------------------------
-// The tag-border rows — an UNMEASURED extrapolation on 3+ polygons
+// Where the predicates live (task 1100)
 // ---------------------------------------------------------------------------
-// `EdgeStat.materialBoundary` / `.partBoundary`: select an edge iff it has
-// AT LEAST 2 adjacent polygons AND those polygons carry AT LEAST 2 DISTINCT
-// tags. Every measured edge in `edge_boundary_tagged_open_cube` carries at
-// most TWO adjacent polygons, so what the capture actually pins is: 2
-// polygons/same tag → out; 2 polygons/different tags → in; 1 polygon (the
-// tagged face's own open edge, bordering nothing else) → out. The rule
-// above is the smallest rule consistent with those three cells, but its
-// answer on a NON-MANIFOLD edge with 3+ tagged polygons (e.g. tags A, A, B)
-// is an UNMEASURED EXTRAPOLATION, not parity — no fixture case may assert
-// such an edge against a reference number.
+// The three per-element predicates, the `Compare` vocabulary and the three
+// `*Stat` row enums are in `source/mesh_stats.d`, which this module
+// `public import`s so no external caller changed. They moved because the
+// Statistics panel needs to COUNT the rows every frame and a `Command` cannot
+// answer a count without mutating the selection; the kernel takes the mesh as
+// `const`, which makes "count by running the command" a compile error rather
+// than a discipline. This module keeps the argument hygiene, the snapshot,
+// the mode composition and the edit-mode promotion — everything that makes
+// this a command — and calls the kernel for the mask.
 //
-// ---------------------------------------------------------------------------
-// The weight-map predicate's negative arm — an UNMEASURED extrapolation
-// ---------------------------------------------------------------------------
-// `VertexStat.weightMap`: select a vertex iff its weight-map value is
-// non-zero (`!= 0.0f`). Every measured value in the capture's
-// `vertex_by_vmap` cells — rollup and raw dump alike — is 0.0, 0.5 or 1.0;
-// there is not one negative literal anywhere in either. So "non-zero" is
-// the capture author's generalisation from `{0} vs {positive}`, and `!= 0`
-// is not discriminated from `> 0` by any measurement — confirmed by
-// substitution: swapping `!= 0.0f` for `> 0.0f` left the whole test suite
-// green. The answer on a genuinely negative weight is an UNMEASURED
-// EXTRAPOLATION, not parity — no fixture case may assert a negative-weight
-// vertex against a reference number.
+// The weight-map predicate's negative arm, the two boundary laws and the tag
+// borders' unmeasured extrapolation are documented WITH the predicates now,
+// in `mesh_stats.d`; the measured laws about the COMMAND surface stay here.
 //
 // ---------------------------------------------------------------------------
 // The `less` anomaly — measured, NOT reproduced (task 1061 §5)
@@ -156,17 +145,14 @@ import std.conv       : to;
 // never claimed as parity in the fixture.
 // ---------------------------------------------------------------------------
 
-/// Shared `compare` vocabulary. `more`/`less` are both STRICT.
-enum Compare { all, equal, less, more }
+/// The row vocabulary lives with the predicates it selects between
+/// (`source/mesh_stats.d`, task 1100) and is re-exported here so that every
+/// caller of `Compare` / `VertexStat` / `EdgeStat` / `PolygonStat` through
+/// this module keeps compiling — the `GpuMesh` extract precedent (task 0425).
+public import mesh_stats : Compare, VertexStat, EdgeStat, PolygonStat;
 
-private bool matchCompare(Compare c, int actual, int value) {
-    final switch (c) {
-        case Compare.all:   return true;
-        case Compare.equal: return actual == value;
-        case Compare.less:  return actual < value;
-        case Compare.more:  return actual > value;
-    }
-}
+import mesh_stats : StatContext, StatNeed, buildStatContext, vertexStatMask,
+                    edgeStatMask, polygonStatMask;
 
 /// Shared `mode` vocabulary. No `set` — see the header note.
 private enum ApplyMode { add, remove }
@@ -293,8 +279,6 @@ private abstract class ByStatBase : Command {
 // ---------------------------------------------------------------------------
 // select.byStat.vertex
 // ---------------------------------------------------------------------------
-enum VertexStat { edgeCount, polygonCount, weightMap }
-
 final class SelectByStatVertex : ByStatBase {
     private string test_ = "edgeCount";
 
@@ -366,35 +350,18 @@ final class SelectByStatVertex : ByStatBase {
         const size_t n = mesh.vertices.length;
         if (n == 0) return true;
 
-        auto want = new bool[](n);
-        final switch (t) {
-            case VertexStat.edgeCount: {
-                auto counts = mesh.vertexEdgeCounts();
-                foreach (vi; 0 .. n)
-                    want[vi] = matchCompare(cmp, cast(int) counts[vi], value_);
-                break;
-            }
-            case VertexStat.polygonCount: {
-                auto counts = mesh.vertexPolygonCounts();
-                foreach (vi; 0 .. n)
-                    want[vi] = matchCompare(cmp, cast(int) counts[vi], value_);
-                break;
-            }
-            case VertexStat.weightMap: {
-                // `vertexWeight` returns 0.0f alike for "missing map", "wrong
-                // domain", "out-of-range index" AND "an entry genuinely set
-                // to 0.0" (source/mesh.d:6823-6828) — the missing-map case is
-                // already excluded above by the `weightMapNames()` check, so
-                // what remains is the measured predicate itself: the value
-                // is non-zero, NOT that a dense-array entry exists (a 0.0
-                // write is a real, present value — `vertex_by_vmap`). The
-                // NEGATIVE arm of `!= 0.0f` is its own unmeasured
-                // extrapolation — see the header note above.
-                foreach (vi; 0 .. n)
-                    want[vi] = mesh.vertexWeight(map_, vi) != 0.0f;
-                break;
-            }
-        }
+        // The predicate is the kernel's, called through its mask driver — one
+        // implementation, shared with the panel's count driver (task 1100).
+        //
+        // The context is built for THIS test only. Asking for the whole thing
+        // would make a vertex-count selection pay for a per-edge adjacency it
+        // never reads — measured at tens of milliseconds on a 100k-face mesh,
+        // and a regression this extraction would otherwise have introduced.
+        const need = t == VertexStat.edgeCount    ? StatNeed.vertEdge
+                   : t == VertexStat.polygonCount ? StatNeed.vertPoly
+                                                  : StatNeed.none;
+        StatContext ctx = buildStatContext(*mesh, need);
+        auto want = vertexStatMask(ctx, t, cmp, value_, map_);
 
         final switch (md) {
             case ApplyMode.add:
@@ -414,8 +381,6 @@ final class SelectByStatVertex : ByStatBase {
 // ---------------------------------------------------------------------------
 // select.byStat.edge
 // ---------------------------------------------------------------------------
-enum EdgeStat { polygonCount, materialBoundary, partBoundary }
-
 final class SelectByStatEdge : ByStatBase {
     private string test_ = "polygonCount";
 
@@ -460,30 +425,6 @@ final class SelectByStatEdge : ByStatBase {
         }
     }
 
-    // Per-edge adjacent-face lists, built the same way `SelectBoundary` and
-    // `edgePolygonCounts` do (a fresh `edgeKey` -> index table, independent
-    // of `edgeIndexMap`'s validity stamp) — but keeping full FACE IDENTITY
-    // per edge, not just a count, because the tag-boundary predicate needs
-    // to read each adjacent face's own tag.
-    private uint[][] buildEdgeFaceLists() {
-        const size_t ne = mesh.edges.length;
-        const size_t nf = mesh.faces.length;
-        auto edgeFaces = new uint[][](ne);
-        uint[ulong] idx;
-        foreach (i; 0 .. ne)
-            idx[edgeKey(mesh.edges[i][0], mesh.edges[i][1])] = cast(uint) i;
-        foreach (fi; 0 .. nf) {
-            const uint[] f = mesh.faces[fi];
-            if (f.length == 0) continue;
-            foreach (k; 0 .. f.length) {
-                auto p = edgeKey(f[k], f[(k + 1) % f.length]) in idx;
-                if (p is null) continue;
-                edgeFaces[*p] ~= cast(uint) fi;
-            }
-        }
-        return edgeFaces;
-    }
-
     override bool apply() {
         auto t   = parseTest();
         auto cmp = parseCompare();
@@ -509,34 +450,10 @@ final class SelectByStatEdge : ByStatBase {
         const size_t ne = mesh.edges.length;
         if (ne == 0) return true;
 
-        auto want = new bool[](ne);
-        final switch (t) {
-            case EdgeStat.polygonCount: {
-                auto counts = mesh.edgePolygonCounts();
-                foreach (ei; 0 .. ne)
-                    want[ei] = matchCompare(cmp, counts[ei], value_);
-                break;
-            }
-            case EdgeStat.materialBoundary:
-            case EdgeStat.partBoundary: {
-                // `faceAttrOr`'s contract (see select.byTag): the per-face
-                // tag arrays may legitimately be SHORTER than faces[]; a
-                // short entry reads as 0. Read-only over the tags.
-                const bool isPart = (t == EdgeStat.partBoundary);
-                uint tagOf(size_t fi) {
-                    auto arr = isPart ? mesh.facePart : mesh.faceMaterial;
-                    return fi < arr.length ? arr[fi] : 0u;
-                }
-                auto edgeFaces = buildEdgeFaceLists();
-                foreach (ei; 0 .. ne) {
-                    if (edgeFaces[ei].length < 2) continue;   // own open edge: excluded
-                    bool[uint] tags;
-                    foreach (fi; edgeFaces[ei]) tags[tagOf(fi)] = true;
-                    want[ei] = tags.length >= 2;
-                }
-                break;
-            }
-        }
+        const need = t == EdgeStat.polygonCount ? StatNeed.edgePoly
+                                                 : StatNeed.edgeFaces;
+        StatContext ctx = buildStatContext(*mesh, need);
+        auto want = edgeStatMask(ctx, t, cmp, value_);
 
         final switch (md) {
             case ApplyMode.add:
@@ -556,8 +473,6 @@ final class SelectByStatEdge : ByStatBase {
 // ---------------------------------------------------------------------------
 // select.byStat.polygon
 // ---------------------------------------------------------------------------
-enum PolygonStat { vertexCount }
-
 final class SelectByStatPolygon : ByStatBase {
     private string test_ = "vertexCount";
 
@@ -609,13 +524,9 @@ final class SelectByStatPolygon : ByStatBase {
         const size_t nf = mesh.faces.length;
         if (nf == 0) return true;
 
-        auto want = new bool[](nf);
-        final switch (t) {
-            case PolygonStat.vertexCount:
-                foreach (fi; 0 .. nf)
-                    want[fi] = matchCompare(cmp, cast(int) mesh.faces[fi].length, value_);
-                break;
-        }
+        // Polygon arity is read off `faces` directly — no derived array.
+        StatContext ctx = buildStatContext(*mesh, StatNeed.none);
+        auto want = polygonStatMask(ctx, t, cmp, value_);
 
         final switch (md) {
             case ApplyMode.add:

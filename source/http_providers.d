@@ -228,6 +228,7 @@ import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesSh
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.image_list      : UiImageListCommand;
 import commands.ui.channels        : UiChannelsCommand;
+import commands.ui.statistics      : UiStatisticsCommand, UiStatisticsExpandCommand;
 import commands.ui.about           : UiAboutCommand;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
@@ -2367,6 +2368,29 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                         auto pos = pp.array;
                         if (pos.length >= 1 && pos[0].type == JSONType.string)
                             uch.setVisible(pos[0].str);
+                    }
+                }
+            } else if (auto ust = cast(UiStatisticsCommand)cmd) {
+                // ui.statistics <show|hide> (test-only; task 1100).
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            ust.setVisible(pos[0].str);
+                    }
+                }
+            } else if (auto use = cast(UiStatisticsExpandCommand)cmd) {
+                // ui.statistics.expand <target> [open|close] (test-only).
+                // `target` is a section label or a "<Section>/<Category>" key —
+                // the same key the row model publishes.
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        string tgt = (pos.length >= 1 && pos[0].type == JSONType.string)
+                                   ? pos[0].str : "";
+                        string st  = (pos.length >= 2 && pos[1].type == JSONType.string)
+                                   ? pos[1].str : "open";
+                        use.setArgs(tgt, st);
                     }
                 }
             } else if (auto uvp = cast(UiViewportPropsCommand)cmd) {

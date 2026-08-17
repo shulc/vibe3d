@@ -4143,3 +4143,359 @@ void drawToolPropertiesPanel(EditorApp app) {
     popPanelChromeStyle();
     }
 }
+
+// =============================================================================
+// THE STATISTICS PANEL (task 1100)
+//
+// A three-level tree of element counts — section → category → leaf — with two
+// numeric columns (`Num` = how many exist, `Sel` = how many of those are
+// selected) and two clickable columns that add the row's elements to the
+// selection or subtract them from it.
+//
+// -----------------------------------------------------------------------------
+// WHY THE SIGNATURE IS NARROW AND NOT `EditorApp`
+// -----------------------------------------------------------------------------
+// Three properties follow from it, and all three are load-bearing:
+//
+//   1. `const(Document)*` extends the no-mutation proof through the DRAWER: it
+//      cannot construct a mutating command over the document's mesh either, so
+//      "count this row by running its own command and looking at the result"
+//      does not compile here any more than it does in the kernel.
+//   2. The `run` delegate is the ONE place `const` stops, and it is necessary —
+//      a clickable column has to be able to fire a command. That is exactly why
+//      a mesh fingerprint is taken around a real draw frame in
+//      `tests/unit/ui/stat_panel_widget_test.d`: it is the one hole the type
+//      system cannot close.
+//   3. It is CONSTRUCTIBLE IN A UNITTEST. An `EditorApp` parameter would make
+//      this panel untestable below the HTTP layer.
+//
+// -----------------------------------------------------------------------------
+// WHAT IS HAND-DRAWN, AND WHY
+// -----------------------------------------------------------------------------
+// The pinned `d_imgui` binding has no `BeginTable`, no `TreeNodeEx` and no
+// `BeginTabBar` — the enums exist as types only. So the five columns and the
+// three-level tree are hand-drawn with `Button`/`InvisibleButton` + `SameLine`
+// + `Dummy`, exactly as the Items panel already does it. This is the single
+// largest cost in the task and the reason the renderer is its own stage.
+//
+// ROW PITCH is exactly `GetFrameHeightWithSpacing()` and the two ACTION COLUMNS
+// ARE NEVER INDENTED. Both are design constraints rather than accidents: the
+// headless harness addresses rows by index off that pitch, and its x lands
+// inside the first column — so a layout change that breaks either fails the
+// click test loudly, at the right place.
+//
+// COLUMN WIDTHS are SEEDED from the decode and are not layout constants. The
+// owner's two frames measured the same columns at different widths (one frame
+// truncates the `Num` header, the other does not), so what was decoded is an
+// initial value. They are recomputed here from the header and the widest cell.
+//
+// -----------------------------------------------------------------------------
+// THREE THINGS REDUCE A ROW'S PROMINENCE AND THEY ARE NOT THE SAME THING
+// -----------------------------------------------------------------------------
+//   * `noAffordance` — the two action cells are EMPTY. No button, no
+//     `BeginDisabled` wrapper, no tooltip. This is every CATEGORY row (a whole
+//     level of the tree, measured across ten categories in two frames), plus
+//     the count-only leaves.
+//   * `BeginDisabled` — a button IS drawn, greyed, with the reason in a
+//     tooltip. Ours, for `inertActions` / `structuralZero` / `unmeasured`.
+//   * the DIMMED TONE — measured: exactly the rows whose selected count is
+//     non-zero are drawn dim, the section header included, and the buttons dim
+//     WITH the row. A dimmed row is FULLY CLICKABLE. Expressing it by wrapping
+//     the row in `BeginDisabled` is the mistake this comment exists to prevent
+//     — greying is already what that call does two lines further down.
+// =============================================================================
+
+import ui.stat_rows : StatCell, StatAvail, StatTone, StatExpand, StatAction,
+                      StatSection, statSectionsInto, statNeedOf;
+import document : Document;
+import mesh : Mesh;
+
+/// The two placeholder glyphs, which answer DIFFERENT questions and must never
+/// be merged into one constant.
+///
+///   * `kGatedCell` — MEASURED. "There IS a number, but not for your current
+///     selection type." One frame could not have decided this (the same glyph
+///     is what a not-yet-computed cell shows in the reference); a second frame,
+///     with polygons current, printed numbers in the polygon section and this
+///     in the others, in a single draw.
+///   * `kUnknownCell` — OURS (owner decision 1). "We do not know this number."
+///     A `0` there would be a claim; this is the honest cell.
+enum string kGatedCell   = "...";
+enum string kUnknownCell = "—";
+
+/// Column width SEEDS, not layout. See the header note.
+private enum float kSeedActionW = 20.0f;
+private enum float kSeedNumW    = 30.0f;
+
+/// What a numeric cell reads. THREE outcomes, not two, and the third is the
+/// one a placeholder-shaped `if` swallows:
+///
+///   * a number, when we know it;
+///   * `kUnknownCell` when the row's predicate is unmeasured — we cannot
+///     compute this at all;
+///   * `kGatedCell` when there IS a number but not for the current selection
+///     type;
+///   * …and BLANK, which is not a placeholder at all: a CATEGORY row carries
+///     no numbers, measured, for the whole level. Rendering the gate glyph
+///     there would answer a question the row never asks.
+private string cellText(StatCell c, StatAvail avail, bool blank) {
+    import std.conv : to;
+    if (blank) return "";
+    if (c.known) return c.value.to!string;
+    return avail == StatAvail.unmeasured ? kUnknownCell : kGatedCell;
+}
+
+private string availToken(StatAvail a) {
+    final switch (a) {
+        case StatAvail.live:           return "live";
+        case StatAvail.inertActions:   return "inertActions";
+        case StatAvail.noAffordance:   return "noAffordance";
+        case StatAvail.structuralZero: return "structuralZero";
+        case StatAvail.unmeasured:     return "unmeasured";
+    }
+}
+
+void drawStatisticsPanel(const(Document)* doc, SelType current,
+                         ref StatExpand exp,
+                         void delegate(string cmdId, string argsJson) run) {
+    pushPanelChromeStyle();
+    scope(exit) popPanelChromeStyle();
+    scope(exit) ImGui.End();
+    if (!ImGui.Begin("Statistics")) return;
+    drawStatisticsBody(doc, current, exp, run);
+}
+
+/// The panel WITHOUT its window — everything between `Begin` and `End`.
+///
+/// Split out for one reason, and it is not cosmetic: the headless widget
+/// harness submits a panel BODY into its own window, so a function that opened
+/// a window of its own could not be driven by it, and the click test that
+/// proves a row's `+` reaches that row's action could not exist. This is the
+/// SHIPPED code — `drawStatisticsPanel` above adds the chrome and nothing else,
+/// so no test-only seam is introduced into what the app draws.
+void drawStatisticsBody(const(Document)* doc, SelType current,
+                        ref StatExpand exp,
+                        void delegate(string cmdId, string argsJson) run) {
+    import ui.stat_record : DrawnStatRow, beginStatFrame, recordDrawnStatRow,
+                            endStatFrame;
+    import ui.item_glyphs : drawDisclosure, kGlyphCellRatio,
+                            kGlyphRadiusRatio, kIndentRatio;
+    import mesh_stats : StatContext, buildStatContext;
+
+    // ---- The mesh, obtained EXACTLY ONCE, guarding `primary` --------------
+    // `Document.primary` is nullable and the null state is live and asserted.
+    // `Layer` is a class, so `doc.primary.meshOrNull()` on a null primary reads
+    // a member of a null object and FAULTS — in a panel that draws every frame.
+    // Guarding the RESULT for null guards the wrong pointer.
+    //
+    // And deliberately NOT `document.noEditTargetMesh()`, the read-only empty
+    // stand-in the other per-frame read paths take: an empty mesh answers every
+    // geometry row `0`, and `0` is a claim to know how many there are.
+    const(Mesh)* m = (doc !is null && doc.hasEditTarget())
+                   ? doc.primary.meshOrNull() : null;
+    // Build ONLY what this expand state will read — the "compute what is on
+    // screen" rule. `statNeedOf` lives beside the tree that decides it, and
+    // the two are compared by value in `stat_rows_test.d`.
+    StatContext ctx = (m is null) ? StatContext.init
+                                  : buildStatContext(*m, statNeedOf(exp));
+
+    static StatSection[] rowBuf;
+    // Counted ALWAYS, in the default build, on the frame path — so "the panel
+    // costs nothing while it is closed" is a number a test reads rather than a
+    // claim, and so the refresh policy is decided against a measurement.
+    g_fc.bumpStatRebuild();
+    statSectionsInto(doc, current, ctx, exp, rowBuf);
+
+    // ---- Metrics ----------------------------------------------------------
+    // Derived from the row height, which already carries the UI scale and the
+    // font swap between a normal run and --test.
+    immutable float rowH    = ImGui.GetFrameHeightWithSpacing()
+                            - ImGui.GetStyle().ItemSpacing.y;
+    immutable float gRad    = rowH * kGlyphRadiusRatio;
+    immutable float indentW = rowH * kIndentRatio;
+    immutable float pad     = ImGui.CalcTextSize("0").x;
+
+    // Widths: seeded, then widened to fit the header and the widest cell this
+    // frame actually holds. The frames measured that these MOVE.
+    float numW = kSeedNumW, selW = kSeedNumW;
+    {
+        float wNum = ImGui.CalcTextSize("Num").x;
+        float wSel = ImGui.CalcTextSize("Sel").x;
+        void widen(StatCell c, StatAvail a, ref float w) {
+            immutable float t = ImGui.CalcTextSize(cellText(c, a, false)).x;
+            if (t > w) w = t;
+        }
+        foreach (ref s; rowBuf) {
+            widen(s.num, s.avail, wNum);  widen(s.sel, s.avail, wSel);
+            foreach (ref c; s.categories)
+                foreach (ref l; c.leaves) {
+                    widen(l.num, l.avail, wNum);  widen(l.sel, l.avail, wSel);
+                }
+        }
+        if (wNum + pad > numW) numW = wNum + pad;
+        if (wSel + pad > selW) selW = wSel + pad;
+    }
+    float actionW = kSeedActionW;
+    {
+        immutable float wPlus = ImGui.CalcTextSize("+").x + pad;
+        if (wPlus > actionW) actionW = wPlus;
+    }
+
+    immutable uint inkNormal = IM_COL32(0,  0,  0,  255);
+    immutable uint inkDim    = IM_COL32(97, 97, 97, 255);
+    immutable ImVec4 vecNormal = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
+    immutable ImVec4 vecDim    = ImVec4(0.38f, 0.38f, 0.38f, 1.0f);
+
+    auto dl = ImGui.GetWindowDrawList();
+    beginStatFrame();
+    scope(exit) endStatFrame();
+
+    // ---- Column headers, ONE row of the same pitch ------------------------
+    // No `Separator()` anywhere in this panel: a separator is its own line of
+    // height, and the row pitch is what the click test addresses rows by.
+    {
+        ImGui.Dummy(ImVec2(actionW * 2.0f, rowH));
+        ImGui.SameLine(0.0f, 0.0f);
+        immutable float nameW = ImGui.GetContentRegionAvail().x - numW - selW;
+        ImGui.TextDisabled("Name");
+        ImGui.SameLine(0.0f, 0.0f);
+        ImVec2 hp = ImGui.GetCursorScreenPos();
+        ImGui.Dummy(ImVec2((nameW > 0 ? nameW : 0.0f), rowH));
+        ImGui.SameLine(0.0f, 0.0f);
+        ImGui.TextDisabled("Num");
+        ImGui.SameLine(0.0f, 0.0f);
+        ImGui.Dummy(ImVec2(numW * 0.25f, rowH));
+        ImGui.SameLine(0.0f, 0.0f);
+        ImGui.TextDisabled("Sel");
+    }
+
+    // ---- One row -----------------------------------------------------------
+    // `rowId` is the ImGui id scope; `keyForToggle` is the expand key ("" for a
+    // leaf, which has nothing to toggle).
+    int rowSeq = 0;
+    void drawRow(string level, string label, int depth, StatCell num, StatCell sel,
+                 StatAvail avail, StatTone tone, string reason,
+                 StatAction add, StatAction remove,
+                 bool hasDisclosure, bool expanded, void delegate() toggle) {
+        ImGui.PushID(rowSeq++);
+        scope(exit) ImGui.PopID();
+
+        // A CATEGORY row carries no numbers — the whole LEVEL, measured, and
+        // blank is not one of the two placeholders.
+        immutable bool blankCells = (level == "category");
+        immutable bool dim = (tone == StatTone.dimmed);
+        immutable uint ink = dim ? inkDim : inkNormal;
+        // THE TONE, applied to the whole row INCLUDING its buttons — and never
+        // by disabling anything. A dimmed row is fully clickable.
+        ImGui.PushStyleColor(ImGuiCol.Text, dim ? vecDim : vecNormal);
+        scope(exit) ImGui.PopStyleColor(1);
+
+        immutable bool showButtons = (avail != StatAvail.noAffordance);
+        immutable bool enabled     = (avail == StatAvail.live);
+
+        // ---- the two action columns, FIRST and NEVER indented ----
+        if (showButtons) {
+            if (!enabled) ImGui.BeginDisabled(true);
+            if (ImGui.Button("+", ImVec2(actionW, rowH)) && enabled
+                && run !is null && !add.empty)
+                run(add.commandId, add.argsJson);
+            if (!enabled && reason.length && ImGui.IsItemHovered())
+                ImGui.SetTooltip(reason);
+            ImGui.SameLine(0.0f, 0.0f);
+            if (ImGui.Button("-", ImVec2(actionW, rowH)) && enabled
+                && run !is null && !remove.empty)
+                run(remove.commandId, remove.argsJson);
+            if (!enabled && reason.length && ImGui.IsItemHovered())
+                ImGui.SetTooltip(reason);
+            if (!enabled) ImGui.EndDisabled();
+        } else {
+            // EMPTY cells — not a greyed button. A greyed button is still an
+            // affordance; this row has none.
+            ImGui.Dummy(ImVec2(actionW * 2.0f, rowH));
+        }
+        ImGui.SameLine(0.0f, 0.0f);
+
+        // ---- indent (the NAME column only) ----
+        if (depth > 0) {
+            ImGui.Dummy(ImVec2(indentW * depth, rowH));
+            ImGui.SameLine(0.0f, 0.0f);
+        }
+
+        // ---- disclosure ----
+        {
+            immutable ImVec2 dp = ImGui.GetCursorScreenPos();
+            if (hasDisclosure) {
+                if (ImGui.InvisibleButton("##disc", ImVec2(rowH, rowH)) && toggle !is null)
+                    toggle();
+                drawDisclosure(dl, ImVec2(dp.x + rowH * 0.5f, dp.y + rowH * 0.5f),
+                               gRad, expanded, ink);
+            } else {
+                ImGui.Dummy(ImVec2(rowH, rowH));
+            }
+            ImGui.SameLine(0.0f, 0.0f);
+        }
+
+        // ---- name, then the two numeric cells, right-aligned in their slots --
+        immutable string numTx = cellText(num, avail, blankCells);
+        immutable string selTx = cellText(sel, avail, blankCells);
+        immutable float availW = ImGui.GetContentRegionAvail().x;
+        immutable float nameW  = availW - numW - selW;
+        ImGui.TextUnformatted(label);
+        ImGui.SameLine(0.0f, 0.0f);
+        {
+            immutable ImVec2 cp = ImGui.GetCursorScreenPos();
+            immutable float lw = ImGui.CalcTextSize(label).x;
+            immutable float gap = nameW - lw;
+            ImGui.Dummy(ImVec2(gap > 0 ? gap : 0.0f, rowH));
+            ImGui.SameLine(0.0f, 0.0f);
+        }
+        {
+            immutable ImVec2 np = ImGui.GetCursorScreenPos();
+            ImGui.Dummy(ImVec2(numW, rowH));
+            dl.AddText(ImVec2(np.x + numW - ImGui.CalcTextSize(numTx).x, np.y), ink,
+                       numTx);
+            ImGui.SameLine(0.0f, 0.0f);
+        }
+        {
+            immutable ImVec2 sp = ImGui.GetCursorScreenPos();
+            ImGui.Dummy(ImVec2(selW, rowH));
+            dl.AddText(ImVec2(sp.x + selW - ImGui.CalcTextSize(selTx).x, sp.y), ink,
+                       selTx);
+        }
+
+        DrawnStatRow rec;
+        rec.level          = level;
+        rec.label          = label;
+        rec.numText        = numTx;
+        rec.selText        = selTx;
+        rec.avail          = availToken(avail);
+        rec.tone           = dim ? "dimmed" : "normal";
+        rec.expanded       = expanded;
+        rec.hasActions     = showButtons;
+        rec.actionsEnabled = showButtons && enabled;
+        rec.addCommand     = add.commandId;
+        rec.addArgs        = add.argsJson;
+        rec.removeArgs     = remove.argsJson;
+        rec.reason         = reason;
+        recordDrawnStatRow(rec);
+    }
+
+    foreach (si, ref s; rowBuf) {
+        immutable size_t sIdx = cast(size_t) s.type;
+        drawRow("section", s.label, 0, s.num, s.sel, s.avail, s.tone, s.reason,
+                s.add, s.remove, /*hasDisclosure=*/true, s.expanded,
+                () { exp.section[sIdx] = !exp.section[sIdx]; });
+        foreach (ci, ref c; s.categories) {
+            // A CATEGORY ROW IS A LABEL, A TRIANGLE AND NOTHING ELSE — blank
+            // numbers and empty action cells, by LEVEL rather than by case.
+            immutable string key = c.key;
+            drawRow("category", c.label, 1, c.num, c.sel, c.avail, StatTone.normal,
+                    "", c.add, c.remove, /*hasDisclosure=*/true, c.expanded,
+                    () { exp.category[key] = !exp.categoryOpen(key); });
+            foreach (li, ref l; c.leaves)
+                drawRow("leaf", l.label, 2, l.num, l.sel, l.avail, l.tone,
+                        l.reason, l.add, l.remove, /*hasDisclosure=*/false,
+                        false, null);
+        }
+    }
+}

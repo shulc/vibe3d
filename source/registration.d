@@ -238,6 +238,8 @@ import commands.ui.tool_properties : UiToolPropertiesCommand, g_toolPropertiesSh
 import commands.ui.layer_list      : UiLayerListCommand, g_layerListShown;
 import commands.ui.image_list      : UiImageListCommand;
 import commands.ui.channels        : UiChannelsCommand;
+import commands.ui.statistics      : UiStatisticsCommand, UiStatisticsExpandCommand,
+                                     g_statisticsShown;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 import commands.ui.about           : UiAboutCommand;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
@@ -1093,6 +1095,10 @@ private void registerToolLifecycleCommands(EditorApp app) {
         new UiImageListCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["ui.channels"] = () => cast(Command)
         new UiChannelsCommand(&mesh(), cameraView, editMode);
+    reg.commandFactories["ui.statistics"] = () => cast(Command)
+        new UiStatisticsCommand(&mesh(), cameraView, editMode);
+    reg.commandFactories["ui.statistics.expand"] = () => cast(Command)
+        new UiStatisticsExpandCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["ui.viewportProps"] = () => cast(Command)
         new UiViewportPropsCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["ui.about"] = () => cast(Command)

@@ -777,6 +777,11 @@ struct FrameWork {
                               /// several, so this is operations, not frames)
     long pipeEvals;           /// Pipeline.evaluate() passes
     long stageEvals;          /// individual operator evaluate() calls inside them
+    long statRebuilds;        /// Statistics-panel row-model rebuilds
+                              /// (`statSectionsInto` passes). Zero while the
+                              /// panel is closed, which is what makes "the
+                              /// panel costs nothing when it is not open" a
+                              /// measurement rather than a claim (task 1100).
     long allocBytes;          /// main-thread GC bytes allocated during the frame
     long drawCalls;           /// sum over pass[].calls
     long drawVerts;           /// sum over pass[].verts
@@ -857,6 +862,7 @@ struct FrameWorkProbe {
         total_.hoverPicks        += cur_.hoverPicks;
         total_.pipeEvals         += cur_.pipeEvals;
         total_.stageEvals        += cur_.stageEvals;
+        total_.statRebuilds      += cur_.statRebuilds;
         total_.allocBytes        += cur_.allocBytes;
         total_.drawCalls         += cur_.drawCalls;
         total_.drawVerts         += cur_.drawVerts;
@@ -902,6 +908,7 @@ struct FrameWorkProbe {
     void bumpViewCacheRebuild(){ cur_.viewCacheRebuilds++; }
     void bumpHoverPick()       { cur_.hoverPicks++; }
     void bumpPipeEval()        { cur_.pipeEvals++; }
+    void bumpStatRebuild()     { cur_.statRebuilds++; }
     void bumpStageEval()       { cur_.stageEvals++; }
 
     /// Zero every published counter and the in-flight frame's accumulators.
@@ -984,6 +991,7 @@ struct FrameWorkProbe {
         app.put(`,"hoverPicks":`);       putLong(app, w.hoverPicks);
         app.put(`,"pipeEvals":`);        putLong(app, w.pipeEvals);
         app.put(`,"stageEvals":`);       putLong(app, w.stageEvals);
+        app.put(`,"statRebuilds":`);     putLong(app, w.statRebuilds);
         app.put(`,"allocBytes":`);       putLong(app, w.allocBytes);
         app.put(`,"pass":{`);
         static foreach (i, member; __traits(allMembers, DrawPass)) {{

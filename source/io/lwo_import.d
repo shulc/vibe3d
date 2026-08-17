@@ -255,8 +255,21 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             auto cur = &parts[$ - 1];
             ubyte[4] polyType = data[pos .. pos + 4];
             size_t   p        = pos + 4;
-            // FACE = ordinary polygons; PTCH = Catmull-Clark subpatch
-            // (the .lwo PTCH face kind; same on-disk format, interpreted as subpatches).
+            // FACE = ordinary polygons; PTCH = the format's SUBPATCH face
+            // kind (same on-disk format, interpreted as subpatches).
+            //
+            // CORRECTED (task 1100): this comment used to call PTCH a
+            // "Catmull-Clark subpatch", and that conflates two independent
+            // things. The face TYPE is what PTCH names, and we have exactly one
+            // of them — `Marks.Subpatch`. The subdivision ALGORITHM is
+            // Catmull-Clark, which we do implement (`source/mesh.d`), and which
+            // says nothing about what kind of face a chunk carries. The
+            // reference format has both as SEPARATE polygon types; the wrong
+            // wording here is what would send a reader building the Statistics
+            // panel's type list to the wrong row (owner decision Р10: our
+            // subpatch faces are counted in the FIRST subdivision row, and the
+            // Catmull-Clark row is a structural zero — one predicate never
+            // populates both).
             bool isFace = (polyType == "FACE");
             bool isPtch = (polyType == "PTCH");
             if (isFace || isPtch) {

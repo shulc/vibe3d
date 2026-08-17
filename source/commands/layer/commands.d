@@ -765,6 +765,16 @@ final class LayerDelete : LayerCommandBase {
 final class LayerSelect : LayerCommandBase {
     private int    indexArg = 0;
     private string modeArg  = "set";   // {set,add,remove,toggle}; set == today's
+    // TASK 1100 — `kind` selects a whole item KIND in ONE command, which is
+    // what makes the Statistics panel's `Items → By Type` row exactly one undo
+    // entry per click. It is an argument on THIS command rather than a
+    // `layer.selectByKind` of its own for the reason the `mode:clear` note
+    // below already states for itself: the prior-set snapshot, the UI-class
+    // undo entry that restores it, the switch hook and the `SelType.Item`
+    // promotion are identical, and a second command would be a second copy of
+    // all four. Default "" == today's behaviour exactly; `injectParamsInto`
+    // leaves an absent key alone, so no existing caller changes.
+    private string kindArg  = "";
     // TASK 0671 — one EXACT snapshot of the whole item-selection state
     // replaces the `bool[Layer] prevSelected` + `Layer prevPrimary` pair. The
     // pair recorded the selected bits and a DERIVED consequence (which item
@@ -787,11 +797,22 @@ final class LayerSelect : LayerCommandBase {
     override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
 
     override Param[] params() {
+        import item_kinds : ItemKind, kindInfo;
+        import std.traits : EnumMembers;
+        // The wire TOKEN doubles as the display label: the display name of a
+        // kind lives in `ui/channel_rows.d` and no command in this tree imports
+        // `ui.*` — one form label is not worth opening that direction.
+        string[2][] kindChoices = [["", "(index)"]];
+        foreach (k; EnumMembers!ItemKind) {
+            const string tok = kindInfo(k).token;
+            kindChoices ~= [tok, tok];
+        }
         return [ Param.int_("index", "Index", &indexArg, 0),
                  Param.enum_("mode", "Mode", &modeArg,
                      [["set","Set"], ["add","Add"],
                       ["remove","Remove"], ["toggle","Toggle"],
-                      ["clear","Clear"]], "set") ];
+                      ["clear","Clear"]], "set"),
+                 Param.enum_("kind", "Kind", &kindArg, kindChoices, "") ];
     }
 
     override bool apply() {
@@ -813,6 +834,38 @@ final class LayerSelect : LayerCommandBase {
         // drift would do it silently.
         if (modeArg == "clear") {
             doc.clearItemSelection();
+            applied = true;
+            fireSwitchIfChanged(prevPrimary, prevActiveIndex);
+            noteItemSelectionChange();
+            if (onItemSelect !is null) onItemSelect();
+            return true;
+        }
+
+        // TASK 1100 — `kind:` selects EVERY item of one kind, batching inside
+        // this apply() over the single snapshot taken above. One command, one
+        // `isUndoable` entry, one switch-hook fire on the NET change — where an
+        // N-command bracket would have fired the tool-drop / GPU-re-upload /
+        // cache-invalidation hook N times per click.
+        if (kindArg.length > 0) {
+            import item_kinds : ItemKind, kindFromToken;
+            ItemKind want;
+            if (!kindFromToken(kindArg, want)) {
+                refusal_ = "layer.select: unknown kind '" ~ kindArg ~ "'";
+                return false;
+            }
+            // Deliberately narrow: `set` over a batch would mean
+            // clear-then-add-all and `toggle` per item is meaningless for a
+            // `+`/`-` column, whose law is measured as "never a replace, never
+            // a toggle". A caller that wants `kind:set` writes clear-then-add
+            // and brings its own test.
+            if (modeArg != "add" && modeArg != "remove") {
+                refusal_ = "layer.select: kind:" ~ kindArg ~ " supports mode "
+                    ~ "add or remove only (got '" ~ modeArg ~ "')";
+                return false;
+            }
+            const batchMode = selModeFromToken(modeArg);
+            foreach (l; doc.layers)
+                if (l !is null && l.kind == want) doc.selectItem(l, batchMode);
             applied = true;
             fireSwitchIfChanged(prevPrimary, prevActiveIndex);
             noteItemSelectionChange();
