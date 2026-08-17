@@ -5,7 +5,7 @@ module tests.unit.subpatch_osd_test;
 
 import std.math : sqrt;
 import math : Vec3;
-import mesh : Mesh, SubpatchTrace, edgeKey, makeCube;
+import mesh : Mesh, SubpatchTrace, edgeKey, makeCube, MapKind;
 import osd.c;
 import perf_probe : g_perf, Cat, g_fc, DrawPass;
 import subpatch_osd;
@@ -424,6 +424,56 @@ unittest {
             "the same mixed-cage preview must build once the cage is settled");
         assert(preview2.faces.length > 0,
             "a settled mixed cage must yield a non-empty preview");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Task 1062 review (NIT 8) — a UNIFORM (fully-marked) importer-shaped cage
+// that merely HAS the reserved crease map registered, every entry at 0.0,
+// must NOT hit the settled-cage precondition above at all.
+//
+// Before the fix, `creaseMapLive` was `creaseMap !is null` — true the
+// instant the map OBJECT exists, regardless of its contents — so
+// `anyUnmarked || creaseMapLive` widened to catch a cage that pre-1062
+// never ran this precondition at all (a fully-marked cage with no crease
+// map skips the guarded block entirely). An all-zero map contributes
+// nothing to the sharpness vector either way, so this was a NEW failure
+// mode for an input class that behaves identically to "no crease at all".
+//
+// `debug`-wrapped for the same reason as the block above.
+// ---------------------------------------------------------------------------
+unittest {
+    debug {
+        Mesh cage;
+        uint[ulong] scratch;
+        cage.vertices = [
+            Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 1),
+            Vec3(2, 0, 0), Vec3(2, 0, 1),
+        ];
+        cage.addFaceFast(scratch, [0u, 1u, 2u, 3u]);
+        cage.addFaceFast(scratch, [1u, 4u, 5u, 2u]);
+        cage.resizeSubpatch();
+        cage.setFaceSubpatch(0, true);
+        cage.setFaceSubpatch(1, true);   // UNIFORM: every face marked
+        assert(!cage.edgeMapUsable(),
+            "setup: the Subpatch write must not have settled the map");
+
+        // Register the reserved crease map WITHOUT settling the cage first
+        // -- addMeshMapOfKind only needs edges.length, which addFaceFast
+        // already grew.
+        auto crease = cage.addMeshMapOfKind(MapKind.creaseWeight);
+        assert(crease !is null);
+        assert(crease.data.length == cage.edges.length);
+        foreach (w; crease.data) assert(w == 0.0f, "setup: map is all-zero");
+
+        OsdAccel      accel;
+        Mesh          preview;
+        SubpatchTrace trace;
+        assert(accel.buildPreview(cage, 2, preview, trace),
+            "a uniform cage with an all-zero crease map must build WITHOUT "
+          ~ "the settled-cage precondition running at all -- an all-zero "
+          ~ "map contributes nothing, identically to having no crease map");
+        assert(preview.faces.length > 0);
     }
 }
 

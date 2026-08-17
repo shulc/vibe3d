@@ -203,7 +203,24 @@ private void v3dReject(string msg) nothrow { g_v3dRejectReason = msg; v3dWarn("r
 //                        "diffuse", "specular", "glossiness", "opacity" }, ...],
 //     "uvMaps":       [{ "name", "dim", "data":[u0,v0, u1,v1, ...] }, ...]
 //                                                  // optional (v4+); per-corner
+//     "weightMaps":   [{ "name", "data":[w0,w1,...] }, ...]
+//                                                  // optional (v6+); per-vertex
+//     "edgeMaps":     [{ "kind", "name", "data":[s0,s1,...] }, ...]
+//                                                  // optional (task 1062); per-edge
 //   }
+//
+// `edgeMaps` (task 1062 addition, kV3dFormatVersion NOT bumped — see the
+// "8 IS MEANT TO STAY 8" note below) carries `MapDomain.Edge` dim-1 maps.
+// Today's one producer is the reserved subdivision crease-weight channel
+// (`kind: "creaseWeight"`, name `"crease"`); the block is written/read
+// generically the same way `weightMaps` is, so a future user-authored edge
+// map round-trips alongside it. `data.length` must equal `edges.length`
+// (edge index space is settled by `buildLoops`/`rebuildEdges` before this
+// applies — see edge_weight_plan.md §0 П4 for why that index is stable
+// across a save/reload with no intervening topology edit). Values round-trip
+// VERBATIM, including out-of-range ones — this codec does not clamp; the
+// clamp lives solely in subpatch_osd.creaseSharpnessFromWeight. Omitted
+// entirely when no Edge map exists.
 //
 // `uvMaps` (v4 addition, UV-maps Stage 3) carries the PolyVertex (per-corner)
 // mesh maps — v1 of the feature has just the "uv" map (dim 2). `data` is the
@@ -489,6 +506,40 @@ JSONValue meshToJson(ref const Mesh mesh)
     }
     if (wMaps.length > 0)
         m["weightMaps"] = JSONValue(wMaps);
+
+    // Edge (dim-1) maps — task 1062 addition. Today the only producer is the
+    // reserved subdivision crease-weight channel (source/mesh.d,
+    // MapKind.creaseWeight, name kCreaseWeightMapName == "crease"), but the
+    // block is written generically off `MapDomain.Edge` the same way
+    // `weightMaps` is written generically off `MapDomain.Point` — a future
+    // user-authored edge map would ride the same wire shape. `data` is the
+    // FULL dense array (mesh.edges.length entries), zero or not — this codec
+    // never prunes a zero entry (checked 2026-08-17: the reference's crease
+    // map type has no zero default, so "never touched" and "explicitly 0"
+    // are distinct THERE; ours is a dense MeshMap like every other one, so
+    // preserving every entry verbatim — never collapsing a zero away — is
+    // what keeps the round trip from losing anything that wasn't already
+    // collapsed in memory; see the long comment on Mesh.edgeCreaseWeight).
+    // `kind` carries the reserved map's identity so a future user-authored
+    // edge map (dim/domain matching but a different name) round-trips
+    // alongside it without ambiguity. Omitted entirely when no Edge map
+    // exists, matching uvMaps/weightMaps' optional-array convention.
+    JSONValue[] eMaps;
+    foreach (ref map; mesh.meshMaps) {
+        if (map.domain != MapDomain.Edge || map.dim != 1) continue;
+        JSONValue ej;
+        ej["kind"] = JSONValue(map.name == kCreaseWeightMapName
+                                 ? "creaseWeight" : "");
+        ej["name"] = JSONValue(map.name);
+        JSONValue[] edata;
+        edata.reserve(map.data.length);
+        foreach (f; map.data)
+            edata ~= JSONValue(f);
+        ej["data"] = JSONValue(edata);
+        eMaps ~= ej;
+    }
+    if (eMaps.length > 0)
+        m["edgeMaps"] = JSONValue(eMaps);
 
     return m;
 }
@@ -1568,6 +1619,60 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         }
     }
 
+    // --- optional: edgeMaps (v8-within-version addition, task 1062) ---
+    // Parse into a staging list now; applied after `buildLoops` below since
+    // the Edge domain is edge-index-keyed (mesh.edges only exists once
+    // topology is built — mirrors the uvMaps/weightMaps staging discipline).
+    // `kind` IS read (task 1062 review, NIT 7 — an earlier revision of this
+    // comment claimed it was read while the parser never actually extracted
+    // it from the JSON object at all): an unrecognized kind is still loaded
+    // as a plain named Edge map (forward-compatible, same tolerant stance as
+    // every other optional array here), but a kind that explicitly claims
+    // to be the RESERVED `"creaseWeight"` kind under a non-reserved name is
+    // rejected below (`kCreaseWeightMapName` is what a reader — subpatch_osd.d's
+    // creaseWeightMap() — actually keys on, so a mismatched claim would
+    // silently register a decoy the crease consumer never sees).
+    struct StagedEm { string name; string kind; float[] data; }
+    StagedEm[] stagedEm;
+    if (auto emp = "edgeMaps" in m) {
+        if (emp.type == JSONType.array) {
+            foreach (ei, ej; emp.array) {
+                if (ej.type != JSONType.object) {
+                    v3dWarn(format("ignoring edgeMaps[%d]: not an object", ei));
+                    continue;
+                }
+                string nm;
+                if (auto np = "name" in ej)
+                    if (np.type == JSONType.string) nm = np.str;
+                if (nm.length == 0) {
+                    v3dWarn(format("ignoring edgeMaps[%d]: missing/empty name", ei));
+                    continue;
+                }
+                string kind;
+                if (auto kp = "kind" in ej)
+                    if (kp.type == JSONType.string) kind = kp.str;
+                if (kind == "creaseWeight" && nm != kCreaseWeightMapName) {
+                    v3dWarn(format("ignoring edgeMaps[%s]: kind \"creaseWeight\" "
+                                  ~ "claimed under a non-reserved name "
+                                  ~ "(expected \"%s\")", nm, kCreaseWeightMapName));
+                    continue;
+                }
+                auto dap = "data" in ej;
+                if (dap is null || dap.type != JSONType.array) {
+                    v3dWarn(format("ignoring edgeMaps[%s]: missing/non-array data", nm));
+                    continue;
+                }
+                float[] data;
+                data.reserve(dap.array.length);
+                foreach (fj; dap.array)
+                    data ~= jsonFloat(fj);
+                stagedEm ~= StagedEm(nm, kind, data);
+            }
+        } else {
+            v3dWarn("ignoring non-array \"edgeMaps\"");
+        }
+    }
+
     // --- commit: rebuild the mesh on a fresh struct (mirrors importLWO) ---
     mesh = Mesh.init;
     mesh.vertices = verts;
@@ -1642,12 +1747,41 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         ++wMapCount;
     }
 
+    // Apply staged Edge dim-1 maps (task 1062). Each map must have exactly
+    // `edges.length` float entries — `edges` is settled by `buildLoops`
+    // above, so this check (and П4's rebuildEdges()⇄addFaceFast equivalence,
+    // see edge_weight_plan.md §0) is what makes "the Nth entry belongs to
+    // the Nth edge" true after a reload. `addMeshMap` registers a plain
+    // Edge/dim-1 map regardless of `kind` — the reserved NAME is what a
+    // reader (subpatch_osd.d's creaseWeightMap()) actually keys on, not the
+    // `kind` string. An unknown/absent `kind` never blocks the load (still
+    // registered as a plain named Edge map); the one `kind` value that DOES
+    // block a load is `"creaseWeight"` claimed under a non-reserved name —
+    // rejected above, in the staging loop, before this one ever sees it.
+    int eMapCount = 0;
+    foreach (ref se; stagedEm) {
+        if (se.data.length != mesh.edges.length) {
+            v3dWarn(format("ignoring edgeMaps[%s]: data length %d != "
+                           ~ "%d edges", se.name, se.data.length,
+                           mesh.edges.length));
+            continue;
+        }
+        auto map = mesh.addMeshMap(se.name, 1, MapDomain.Edge);
+        if (map is null) {
+            v3dWarn(format("ignoring edgeMaps[%s]: could not register map",
+                           se.name));
+            continue;
+        }
+        map.data[] = se.data[];
+        ++eMapCount;
+    }
+
     v3dInfo(format("mesh ready: %d verts, %d edges, %d faces, "
                     ~ "%d marked subpatch, %d surfaces, %d uv map(s), "
-                    ~ "%d weight map(s)",
+                    ~ "%d weight map(s), %d edge map(s)",
                     mesh.vertices.length, mesh.edges.length,
                     mesh.faces.length, subpatchCount, mesh.surfaces.length,
-                    uvMapCount, wMapCount));
+                    uvMapCount, wMapCount, eMapCount));
     return true;
 }
 
@@ -2588,4 +2722,49 @@ unittest {
     assert(back.layers[1].imageOrNull().colorspace == "(default)",
         "…and the clip's channel reads the substituted default, got \""
       ~ back.layers[1].imageOrNull().colorspace ~ "\"");
+}
+
+// ---------------------------------------------------------------------------
+// N9 — `edgeMaps[*].kind` IS ACTUALLY READ (task 1062 review, NIT 7).
+//
+// An earlier revision of the staging-loop comment claimed "`kind` is read"
+// while the parser never extracted the field from the JSON object at all —
+// a comment describing code that did not exist. This pins the one place
+// `kind` now has a real effect: a `"creaseWeight"`-kind entry claimed under
+// a name OTHER than the reserved `kCreaseWeightMapName` ("crease") is
+// rejected, because `subpatch_osd.d`'s `creaseWeightMap()` keys on the NAME,
+// not `kind` — a mismatched claim would otherwise silently register a decoy
+// map the crease consumer never reads, while a human skimming the file sees
+// `"kind":"creaseWeight"` and assumes it is live.
+//
+// Mutation: delete the `kind == "creaseWeight" && nm != kCreaseWeightMapName`
+// guard in the staging loop → the bogus-named entry registers under its own
+// (wrong) name and both assertions below redden (verified 2026-08-17).
+// ---------------------------------------------------------------------------
+unittest {
+    import mesh : makeCube;
+
+    Mesh m = makeCube();
+    immutable uint ei = m.edgeIndex(0, 1);
+    assert(ei != ~0u);
+    assert(m.setCreaseWeight(ei, 0.4f));
+
+    auto j = meshToJson(m);
+    assert("edgeMaps" in j, "fixture precondition: the crease map was written");
+    assert(j["edgeMaps"].array.length == 1);
+    assert(j["edgeMaps"].array[0]["kind"].str == "creaseWeight");
+    assert(j["edgeMaps"].array[0]["name"].str == kCreaseWeightMapName);
+
+    // Spoof the name while keeping the reserved kind claim.
+    j["edgeMaps"].array[0]["name"] = JSONValue("bogus");
+
+    Mesh back;
+    assert(meshFromJson(j, back),
+        "a rejected entry must not fail the WHOLE load, only itself");
+    assert(back.meshMap("bogus") is null,
+        "a \"creaseWeight\"-kind entry under a non-reserved name must be "
+      ~ "REJECTED, not silently registered under its own (wrong) name");
+    assert(back.creaseWeightMap() is null,
+        "…and since the only edgeMaps entry was rejected, no crease map "
+      ~ "exists under the reserved name either");
 }

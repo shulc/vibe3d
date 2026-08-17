@@ -1,6 +1,6 @@
 module mesh;
 
-import std.math : sqrt;
+import std.math : sqrt, isIdentical;
 import std.parallelism : parallel;
 import std.range : iota;
 import math;
@@ -183,6 +183,51 @@ enum MapDomain {
 /// extending the out-of-tree LWO writer dependency; see the `meshMaps` field
 /// comment and doc/uv_maps_plan.md Stage 6).
 enum string kUvMapName = "uv";
+
+/// Reserved name of the subdivision-surface crease-weight map (Edge domain,
+/// dim 1) — task 1062. A per-edge scalar in [the stored value, no upper/
+/// lower clamp]; 1.0 == the editor UI's 100%. Reserved the same way
+/// `kUvMapName` reserves "uv": one name shared by every mesh's crease
+/// channel, so a future user-authored edge map is distinguishable from it
+/// (the sibling task, 1060, wanted exactly this — see `MapKind` below).
+enum string kCreaseWeightMapName = "crease";
+
+/// A `MeshMap` *kind* — a reserved identity for a same-shaped map, so a
+/// caller declares (or reads) a map's domain + dimension in ONE place
+/// (`kindInfo` below) instead of open-coding them at each call site, and so
+/// a reserved channel (uv / creaseWeight) is distinguishable from a future
+/// user-authored map of the same domain/dim. Purely additive over `MeshMap`'s
+/// existing (name, dim, domain, data) shape (task 1062 / 1060 §1 amendment 1)
+/// — this is a lookup table, not a data-layout change.
+enum MapKind {
+    uv,             // PolyVertex, dim 2, reserved name kUvMapName
+    vertexWeight,   // Point,      dim 1, caller-supplied name (many per mesh)
+    creaseWeight,   // Edge,       dim 1, reserved name kCreaseWeightMapName
+}
+
+/// One `MapKind`'s declared shape. `reservedName` is empty for a kind that
+/// allows many independently-named instances per mesh (vertexWeight); a
+/// non-empty `reservedName` is the one name that kind's channel is created
+/// under (uv / creaseWeight — see `kindInfo`'s callers).
+struct MapKindInfo {
+    MapDomain domain;
+    ubyte     dim;
+    string    reservedName;
+}
+
+/// `(domain, dim, reservedName)` for a `MapKind`. The one place a `MeshMap`
+/// kind's shape is declared; `addMeshMapOfKind` and the `debug` asserts on
+/// `creaseWeightMap`/etc read it back rather than repeating the triple.
+MapKindInfo kindInfo(MapKind kind) pure nothrow @nogc @safe {
+    final switch (kind) {
+        case MapKind.uv:
+            return MapKindInfo(MapDomain.PolyVertex, 2, kUvMapName);
+        case MapKind.vertexWeight:
+            return MapKindInfo(MapDomain.Point, 1, "");
+        case MapKind.creaseWeight:
+            return MapKindInfo(MapDomain.Edge, 1, kCreaseWeightMapName);
+    }
+}
 
 /// Upper bound on radial-sweep ring count (`RevolveParams.count`, after the
 /// tool's Count→ring-count translation). Shared by TWO callers: this
@@ -6819,6 +6864,125 @@ struct Mesh {
         return addMeshMap(name, 1, MapDomain.Point);
     }
 
+    /// Register a new map of a known `MapKind`, deriving domain + dim from
+    /// `kindInfo` instead of open-coding them at the call site (task 1062 /
+    /// 1060 §1 amendment 1). `name` defaults to the kind's reserved name
+    /// (uv / creaseWeight); pass a name explicitly for `vertexWeight`, which
+    /// reserves none (many independently-named instances per mesh).
+    MeshMap* addMeshMapOfKind(MapKind kind, string name = "") {
+        const info = kindInfo(kind);
+        const string useName = name.length ? name : info.reservedName;
+        auto m = addMeshMap(useName, info.dim, info.domain);
+        debug if (m !is null)
+            assert(m.dim == info.dim && m.domain == info.domain,
+                "addMeshMapOfKind: stored map fields do not match its kind's declaration");
+        return m;
+    }
+
+    /// The reserved subdivision-crease map (Edge, dim 1), or null if this
+    /// mesh has never had a weight set on it. `debug`-asserts an existing
+    /// instance's shape against `MapKind.creaseWeight`'s declaration — the
+    /// same check `addMeshMapOfKind` runs at creation, repeated here because
+    /// a hand-edited `.v3d` could in principle register something
+    /// differently-shaped under the reserved name.
+    MeshMap* creaseWeightMap() return {
+        auto m = meshMap(kCreaseWeightMapName);
+        debug if (m !is null) {
+            const info = kindInfo(MapKind.creaseWeight);
+            assert(m.domain == info.domain && m.dim == info.dim,
+                "creaseWeightMap: existing '" ~ kCreaseWeightMapName
+              ~ "' map does not match MapKind.creaseWeight's declaration");
+        }
+        return m;
+    }
+    // const overload for read-only call sites (subpatch_osd.d's buildPreview
+    // takes `ref const Mesh cage`).
+    const(MeshMap)* creaseWeightMap() const return {
+        auto m = meshMap(kCreaseWeightMapName);
+        debug if (m !is null) {
+            const info = kindInfo(MapKind.creaseWeight);
+            assert(m.domain == info.domain && m.dim == info.dim,
+                "creaseWeightMap: existing '" ~ kCreaseWeightMapName
+              ~ "' map does not match MapKind.creaseWeight's declaration");
+        }
+        return m;
+    }
+
+    /// Per-edge crease-weight read. Returns 0.0 (no crease) on a missing map
+    /// or an out-of-range index — 0.0 is a real stored value elsewhere in
+    /// this map and behaves identically to "never set" (fixture's
+    /// `law.storage` note).
+    ///
+    /// **Dense-vs-sparse note (checked live against the reference engine,
+    /// 2026-08-17).** Querying the reference's own map-type registry
+    /// confirms the crease channel IS an edge-domain map (dimension 1) —
+    /// distinct from its ordinary (vertex-domain) weight map, which the
+    /// owner's own instinct expected here; the two share the vague
+    /// "vertex map" umbrella term but differ in domain, a separately
+    /// queryable property. The same registry reports the crease type has
+    /// **no zero default**, unlike the ordinary weight map — i.e. the
+    /// reference distinguishes "this edge has no entry in the map" from
+    /// "this edge's entry is 0.0". `MeshMap.data` here does NOT make that
+    /// distinction: it is a dense `float[]`, zero-filled for every edge as
+    /// soon as the map is created (`addMeshMap`/`resizeMeshMapData`), so an
+    /// edge that was never explicitly written reads identically to one
+    /// explicitly cleared to 0.0. This is accepted, not overlooked: (1) the
+    /// fixture's own `law.storage` note says a stored 0.0 behaves as no
+    /// crease GEOMETRICALLY, so the ambiguity carries no law difference;
+    /// (2) the `.v3d` codec writes the map's FULL `data` array verbatim
+    /// (native.d) — it never prunes a zero entry, so nothing is lost across
+    /// save/load that wasn't already collapsed in memory; (3) this is the
+    /// same dense-array-with-zero-default contract every other `MeshMap`
+    /// already ships (`vertexWeight` mirrors the reference's ordinary
+    /// weight map, which DOES have a zero default, so no divergence there);
+    /// and (4) no UI surface in this task's scope (§5 of the plan) exposes
+    /// "was this edge ever touched" as a distinct state. If a future
+    /// feature needs that distinction (e.g. a "reset to default" UI
+    /// affordance), it needs its OWN presence channel — do not read it back
+    /// out of this dense array.
+    float edgeCreaseWeight(size_t ei) const {
+        auto m = creaseWeightMap();
+        if (m is null) return 0.0f;
+        if (ei >= m.data.length) return 0.0f;
+        return m.data[ei];
+    }
+
+    /// Per-edge crease-weight write. ABSOLUTE (not additive); stores `w`
+    /// VERBATIM, including out-of-range values — the clamp to [0, saturate]
+    /// lives exclusively in `subpatch_osd.creaseSharpnessFromWeight`, not
+    /// here (task 1062 §4: the `.v3d` codec must round-trip −1.0 / 5.0
+    /// unchanged). Creates the reserved map on first use.
+    ///
+    /// Bumps `topologyVersion` directly, like `setSubpatch` — and
+    /// DELIBERATELY does not route through the generic `setMeshMapValue`
+    /// (which only bumps `mutationVersion` via a Material-class
+    /// `commitChange`). The subpatch preview's OUTPUT topology depends on
+    /// crease weights exactly as it depends on subpatch marks: without this
+    /// bump, `SubpatchPreview.rebuildIfStale`'s position-only fast path
+    /// (source/mesh.d) never re-runs `buildPreview` and a written weight
+    /// presents as "does nothing" (task 1062 §3, the headline risk).
+    ///
+    /// No-op guard, matching `setSubpatch` (source/mesh.d, `:5591-5603`):
+    /// re-writing the SAME value must not bump either version, or the
+    /// commonest UI gesture — open the dialog, press OK with the unchanged
+    /// default — forces a full preview rebuild, a GPU re-upload and an undo
+    /// entry for nothing. `isIdentical`, not `==`, because a plain `==`
+    /// guard is never true for NaN (even NaN compared to itself), so a
+    /// NaN-to-NaN re-write would keep bumping versions forever despite
+    /// changing nothing observable — `isIdentical` compares bit patterns and
+    /// treats that case as no change too.
+    bool setCreaseWeight(size_t ei, float w) {
+        auto m = creaseWeightMap();
+        if (m is null) m = addMeshMapOfKind(MapKind.creaseWeight);
+        if (m is null) return false;
+        if (ei >= m.data.length) return false;
+        if (isIdentical(m.data[ei], w)) return true;
+        m.data[ei] = w;
+        commitChange(MeshEditScope.Material);
+        ++topologyVersion;
+        return true;
+    }
+
     /// Per-vertex weight read. Returns 0.0 on missing map or out-of-range index.
     float vertexWeight(string name, size_t vi) const {
         auto m = meshMap(name);
@@ -11810,6 +11974,20 @@ struct SubpatchPreview {
         // one, so "face i subpatch" and "face i hidden" cannot cancel.
         foreach (fi; 0 .. source.faces.length)
             h = hashOf(source.isFaceHidden(fi), h);
+        // Crease-weight fold (task 1062, same reasoning as the Hide fold
+        // just above): this IS the Tab-toggle REUSE key. A weight changed
+        // while the preview was off must land in this key, or the
+        // resurrected preview (rebuildIfStale's reusablePreviewKey branch)
+        // draws the pre-change surface — the crease-map analogue of the bug
+        // the Hide fold was added to fix. Hashes the map's raw data when the
+        // reserved map exists, a fixed sentinel when it does not, so
+        // "no crease map" can never alias a real (all-zero-weight) map by
+        // both folding down to the same value.
+        {
+            auto cw = source.creaseWeightMap();
+            if (cw !is null) h = hashOf(cw.data, h);
+            else              h = hashOf(0xC1EA5E00u, h);
+        }
         return h == 0 ? 1 : h;
     }
 
@@ -11938,12 +12116,15 @@ struct SubpatchPreview {
         cageVertPreview.length = 0;
         osdAccel.clear();
 
-        // OsdAccel.buildPreview extracts the subpatch-marked subset (which is
-        // the whole cage when every face is marked, a slice otherwise),
-        // feeds it to OpenSubdiv, and emits the limit Mesh + trace.
-        // Non-subpatch faces of the cage do not appear in the preview
-        // in the selective case — see OsdAccel.buildPreview for the
-        // trade-off rationale.
+        // OsdAccel.buildPreview feeds the WHOLE cage to OpenSubdiv (stale
+        // note fixed, task 1062: unlike catmullClarkOsd, which DOES extract
+        // the subpatch-marked subset into a sub-cage, buildPreview never
+        // subsets — cage edge index == mesh edge index, with no remap).
+        // Selective subpatch is simulated by crease/corner sharpness
+        // (SHARP_INF) on the un-marked region's boundary instead of face
+        // removal, so non-subpatch faces DO appear in the preview — held
+        // flat by the sharpness markers rather than smoothed — see
+        // OsdAccel.buildPreview for the trade-off rationale.
         if (!osdAccel.buildPreview(source, d, mesh, trace)) {
             // OSD topology creation failed on a degenerate input —
             // leave the preview inert rather than rendering stale

@@ -199,6 +199,7 @@ import commands.mesh.jitter;
 import commands.mesh.magnet : MeshMagnet;
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
+import commands.mesh.edge_crease;
 import commands.mesh.uv_transform;
 import commands.mesh.uv_project  : UvProject;
 import commands.mesh.uv_pack     : UvFit, UvPack;
@@ -1915,6 +1916,10 @@ private void registerMeshCommands(EditorApp app) {
         new WeightmapRename(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.weightmap.set"] = () => cast(Command)
         new WeightmapSet(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.edgeCrease.set"] = () => cast(Command)
+        new EdgeCreaseSet(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.edgeCrease.clear"] = () => cast(Command)
+        new EdgeCreaseClear(&mesh(), cameraView, editMode);
     reg.commandFactories["uv.flip"] = () => cast(Command)
         new UvFlip(&mesh(), cameraView, editMode);
     reg.commandFactories["uv.mirror"] = () => cast(Command)

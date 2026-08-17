@@ -104,6 +104,7 @@ import commands.mesh.quantize;
 import commands.mesh.jitter;
 import commands.mesh.smooth;
 import commands.mesh.weightmap;
+import commands.mesh.edge_crease;
 import commands.mesh.uv_transform;
 import commands.mesh.uv_map_util;
 import commands.mesh.edge_slide;

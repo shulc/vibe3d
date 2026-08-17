@@ -695,6 +695,40 @@ private GLuint compilePosFanOutProgram() {
                           varyings[], GL_INTERLEAVED_ATTRIBS);
 }
 
+/// Map a stored edge-crease weight (1.0 == the editor UI's 100%) to
+/// OpenSubdiv sharpness (task 1062). Measured off `toolcards/edge_weight/`
+/// against the pinned shim: dead linear, `sharpness = 10 * weight`,
+/// saturating at weight 1.0 — which lands exactly on OSD's own
+/// SHARPNESS_INFINITE threshold (`sdc/crease.h`, 10.0f), so no separate
+/// clamp constant is needed at the top end. Negative weights are inert
+/// (clamped to 0, not honoured with the opposite sign); the map itself
+/// still STORES whatever was written, verbatim — this function is the one
+/// and only place the clamp happens (source/mesh.d's setCreaseWeight does
+/// not clamp; neither does the `.v3d` codec).
+///
+/// NaN-safe by construction, and this is load bearing, not incidental: the
+/// test is `w > 0`, so NaN (which compares false against every relational
+/// operator) and any `w <= 0` both fall through to the `0` return. A
+/// `Param`'s `.enforceBounds()` clamp is UI-only and does not reject NaN on
+/// the headless/HTTP write path (source/params.d), so this is the one place
+/// that does — a NaN sharpness would otherwise reach OSD's IsSmooth/
+/// IsInfinite tests (both false on NaN, `sdc/crease.h`) and hand the
+/// renderer a NaN mesh.
+///
+/// NOTE for the next reader, and this note is load-bearing too: the
+/// reference editor's OTHER subdivision surface type (not Catmull-Clark)
+/// shares the SAME per-edge map but responds QUADRATICALLY to weight and
+/// HONOURS negative weights — its shipped help text describes THAT law, not
+/// this one. vibe3d has no such surface type; this function ports the
+/// Catmull-Clark law only, pinned bit-for-bit by
+/// `tests/fixtures/edge_crease_weight.json`. Do not "fix" this toward the
+/// help text — see doc/behavior_gap_registry.md's divergence-deliberate row
+/// for task 1062.
+float creaseSharpnessFromWeight(float w) pure nothrow @nogc @safe {
+    if (!(w > 0)) return 0.0f;
+    return w >= 1.0f ? 10.0f : 10.0f * w;
+}
+
 struct OsdAccel {
     private osdc_topology_t*     osd;
     private osdc_gl_evaluator_t* glEval;        // null when no GL context
@@ -971,13 +1005,29 @@ struct OsdAccel {
             cageScratchXyz[3*vi + 2] = v.z;
         }
 
-        // ---- Selective-subpatch sharpness arrays ---------------------
-        // For each cage edge that touches at least one un-marked face:
-        // crease at SHARPNESS_INFINITE so OSD doesn't smooth across it.
-        // For each cage vert that has at least one un-marked incident
-        // face: corner-sharpen so the vert stays at the cage position.
-        // Uniform-subpatch case (every face marked) → empty arrays,
-        // standard smooth CC.
+        // ---- Selective-subpatch + crease-weight sharpness arrays -----
+        // Two independent contributors write into the SAME per-edge sharp[]
+        // array, combined by MAX (task 1062 §2a): selective subpatch writes
+        // SHARP_INF on any edge touching an un-marked face (unchanged
+        // meaning from before this task); the reserved crease-weight
+        // MeshMap (source/mesh.d, MapKind.creaseWeight) writes
+        // creaseSharpnessFromWeight(w). The max is not defensive tidiness —
+        // it is required: Far's assignComponentTags
+        // (far/topologyDescriptor.cpp) applies crease entries by
+        // ASSIGNMENT, so a plain append-and-hope would let a later, lower
+        // entry for the SAME edge pair overwrite an earlier higher one
+        // (e.g. a stray 0.02 crease-map weight silencing a selective-
+        // subpatch SHARP_INF on the same edge).
+        //
+        // For each cage vert that has at least one un-marked incident face:
+        // corner-sharpen so the vert stays at the cage position (selective
+        // subpatch only — crease weights are an edge-only law; the crease-
+        // map's own vertex-rule response comes from two sharp EDGES meeting
+        // at a corner, not from a corner tag — see the "creased loop"
+        // fixture cases).
+        //
+        // Uniform-subpatch cage with no crease map → both contributors
+        // empty → standard smooth CC, unchanged from before this task.
         bool anyMarked   = false;
         bool anyUnmarked = false;
         foreach (fi; 0 .. nf) {
@@ -993,15 +1043,33 @@ struct OsdAccel {
         float[] cornerWeights;
         enum float SHARP_INF = 10.0f;     // OSD treats >= 10 as infinity
 
-        if (anyUnmarked) {
+        auto creaseMap = cage.creaseWeightMap();
+        // "Live" means the map has at least one entry that actually
+        // produces a nonzero sharpness — not merely that the map OBJECT
+        // exists. A uniform (fully-marked) cage that carries the reserved
+        // crease map with every entry at 0.0 (or NaN/negative, which
+        // `creaseSharpnessFromWeight` also maps to 0) contributes nothing
+        // to the sharpness vector either way, but before this guard its
+        // mere presence widened the `anyUnmarked || creaseMapLive` gate
+        // below and subjected an otherwise ordinary cage to
+        // `assertEdgeMapValid()`'s throwing precondition — a NEW failure
+        // mode for an importer-shaped cage that never had this guard run on
+        // it pre-1062 (task 1062 review, NIT 8).
+        import std.algorithm : any;
+        immutable bool creaseMapLive = creaseMap !is null
+            && creaseMap.data.any!(w => creaseSharpnessFromWeight(w) > 0);
+
+        if (anyUnmarked || creaseMapLive) {
             // Settled-cage precondition (debug-only — task 0724 / audit-4 M6).
-            // Same branch-local placement and same reasoning as the twin in
-            // `catmullClarkOsd`: only the MIXED cage needs the map, and only
-            // to key `edgeFaces[*p]`. A stale map here mis-attributes the
-            // marked/un-marked adjacency counts, so the INF-crease set comes
-            // out wrong and the preview smooths across a boundary it was
-            // supposed to hold sharp — a silently different limit surface,
-            // never an error.
+            // Needed by BOTH contributors now (task 1062 widened the guard's
+            // condition, not its reasoning): the edgeKey lookup below keys
+            // edgeFaces[*p]/edgeFaceTotal[*p] for selective subpatch AND the
+            // boundary guard, and the crease-map read below is indexed by
+            // cage edge index, meaningful only once buildLoops()/
+            // rebuildEdges() settled edges[]. A stale map here mis-attributes
+            // adjacency counts, so the sharpness set comes out wrong and the
+            // preview smooths across a boundary it was supposed to hold
+            // sharp — a silently different limit surface, never an error.
             // TASK 0833 — demonstrated live: tests/unit/subpatch_osd_test.d
             // previews an importer-shaped cage (`addFaceFast`, no terminal
             // buildLoops) with mixed Subpatch bits and requires the throw, then
@@ -1010,10 +1078,19 @@ struct OsdAccel {
             cage.assertEdgeMapValid();
             // Tag verts that ANY un-marked face touches.
             bool[] vertHasUnmarked = new bool[](nv);
-            // Per-edge: count marked vs un-marked adjacency to decide
-            // crease vs smooth. Edge → (markedFaces, unmarkedFaces).
+            // Per-edge: count marked vs un-marked adjacency (selective
+            // subpatch) AND total incident-face count (the boundary guard
+            // below, task 1062 §2b). The guard is keyed on the EDGE's own
+            // incident-face count, NEVER on its endpoints: fixture boundary
+            // case 10 is an INTERIOR edge one of whose endpoints sits on the
+            // boundary rim, and the reference DOES crease it — an
+            // endpoint-keyed guard ("skip if either endpoint is a boundary
+            // vertex") would wrongly skip this edge. This is the mutation
+            // for that assertion.
             int[2][] edgeFaces;
-            edgeFaces.length = cage.edges.length;
+            int[]    edgeFaceTotal;
+            edgeFaces.length     = cage.edges.length;
+            edgeFaceTotal.length = cage.edges.length;
             foreach (fi, face; cage.faces) {
                 immutable bool marked = cage.isFaceSubpatch(fi);
                 foreach (i; 0 .. face.length) {
@@ -1026,16 +1103,51 @@ struct OsdAccel {
                     if (auto p = edgeKey(a, b) in cage.edgeIndexMap) {
                         if (marked) ++edgeFaces[*p][0];
                         else        ++edgeFaces[*p][1];
+                        ++edgeFaceTotal[*p];
                     }
                 }
             }
-            // Crease: any cage edge with at least one un-marked face.
+
+            // Combine both contributors per edge into one sharpness value,
+            // then emit a single (pair, weight) entry per creased edge.
+            // `float.init` is NaN in D, so an explicit zero-fill is
+            // required — `new float[]` alone left every entry NaN, which
+            // made `sharp[ei] <= 0` false for EVERY edge (NaN compares
+            // false against everything) and emitted all 12 cube edges with
+            // a NaN crease weight instead of skipping the un-creased ones.
+            // Caught 2026-08-17 by Stage6's fixture comparison going red on
+            // the very first nonzero-weight case.
+            float[] sharp = new float[](cage.edges.length);
+            sharp[] = 0.0f;
+            foreach (ei; 0 .. cage.edges.length) {
+                if (edgeFaces[ei][1] > 0) sharp[ei] = SHARP_INF;
+            }
+            if (creaseMapLive) {
+                // Boundary guard: a weight must NEVER be able to lower a
+                // boundary edge (task 1062 card requirement — an assertion,
+                // not a comment). An edge with < 2 incident faces is left
+                // OUT of the crease map's contribution entirely, so this
+                // guard can only ever be REDUNDANT with what OpenSubdiv does
+                // structurally (far/topologyRefinerFactory.cpp sets every
+                // boundary edge's sharpness to SHARPNESS_INFINITE
+                // unconditionally, AFTER the descriptor's crease weights are
+                // applied) — never in tension with it, and never able to
+                // raise a boundary edge's sharpness above infinite either.
+                foreach (ei; 0 .. cage.edges.length) {
+                    if (edgeFaceTotal[ei] < 2) continue;   // boundary edge
+                    immutable float w = ei < creaseMap.data.length
+                        ? creaseMap.data[ei] : 0.0f;
+                    immutable float s = creaseSharpnessFromWeight(w);
+                    if (s > sharp[ei]) sharp[ei] = s;
+                }
+            }
             foreach (ei, e; cage.edges) {
-                if (edgeFaces[ei][1] == 0) continue;
+                if (sharp[ei] <= 0) continue;
                 creasePairs   ~= cast(int)e[0];
                 creasePairs   ~= cast(int)e[1];
-                creaseWeights ~= SHARP_INF;
+                creaseWeights ~= sharp[ei];
             }
+
             // Corner: any cage vert touching an un-marked face.
             foreach (vi; 0 .. nv) {
                 if (!vertHasUnmarked[vi]) continue;
