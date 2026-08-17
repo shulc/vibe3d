@@ -25,6 +25,8 @@ import std.array : insertInPlace;
 
 import mesh;            // Mesh, Marks, edgeKey (mutual import — see note below)
 import math : Vec3;
+import mesh_selsets : selSetRekeyEdges, selSetGatherVertexMaskForward,
+    selSetGatherVertexMaskReverse, selSetDropFilterVertexMask;
 
 // NOTE on the mesh <-> mesh_edit_delta mutual import: D handles mutual module
 // imports fine; there is no module-ctor cycle here (these are plain structs +
@@ -176,6 +178,9 @@ struct MeshOpEntry {
     uint[]    faceMat;                 // RemoveFaces: per-face material
     uint[]    facePrt;                 // RemoveFaces: per-face part id
     uint[]    faceSub;                 // RemoveFaces: per-face subpatch bit (0/1)
+    ulong[]   faceSetMsk;              // RemoveFaces: per-face selection-set membership
+                                        //   (task 1060, review SHOULD-FIX 4 — carried the
+                                        //   same way facePrt is, not the earlier 0-insert)
     uint[]    perm;                    // Reindex: old->new remap
 
     // Sparse marks/subpatch/material deltas. For SelectionDelta the element
@@ -749,15 +754,17 @@ struct MeshEditTracker {
     /// the merge path, `extrudeFacesByMask`), so handing the buffers over is
     /// safe. A future caller that wants to KEEP its arrays must `.dup` at the
     /// call site — the cost then lands on the one caller that needs it.
-    void recordRemoveFaces(FaceIdx[] idx, uint[][] lists, uint[] mat, uint[] prt, uint[] sub) {
+    void recordRemoveFaces(FaceIdx[] idx, uint[][] lists, uint[] mat, uint[] prt, uint[] sub,
+                           ulong[] setm = null) {
         if (idx.length == 0) return;
         MeshOpEntry e;
-        e.kind      = MeshOpEntry.Kind.RemoveFaces;
-        e.fIdx      = idx;
-        e.faceLists = lists;
-        e.faceMat   = mat;
-        e.facePrt   = prt;
-        e.faceSub   = sub;
+        e.kind       = MeshOpEntry.Kind.RemoveFaces;
+        e.fIdx       = idx;
+        e.faceLists  = lists;
+        e.faceMat    = mat;
+        e.facePrt    = prt;
+        e.faceSub    = sub;
+        e.faceSetMsk = setm;
         log_ ~= e;
     }
 
@@ -950,7 +957,7 @@ private void applyReverse(ref Mesh m, ref const MeshOpEntry e) {
                 m.faces.length = f0;
             break;
         case MeshOpEntry.Kind.RemoveFaces:
-            removeFacesReverse(m, e.fIdx, e.faceLists, e.faceMat, e.facePrt, e.faceSub);
+            removeFacesReverse(m, e.fIdx, e.faceLists, e.faceMat, e.facePrt, e.faceSub, e.faceSetMsk);
             break;
         case MeshOpEntry.Kind.ReshapeFaces:
             // NEGATIVE CONTROL (test only): stub ReshapeFaces^-1 to a no-op
@@ -1057,6 +1064,15 @@ private void applyReindexForward(ref Mesh m, in uint[] perm) {
         }
         mm.data = nd;
     }
+    // Task 1060: `vertexSetMask` rides the SAME permutation as the
+    // Point-domain meshMaps loop just above (same gap `mesh.d`'s
+    // `compactUnreferenced` closed for the live path — this is its
+    // undo/redo replay twin).
+    m.vertexSetMask = selSetGatherVertexMaskForward(m.vertexSetMask, perm, kept);
+    // Task 1060, Stage 5b: the edge-set registry rides the SAME permutation
+    // — `perm[old] == ~0u` is exactly `selSetRekeyEdges`'s "vertex gone"
+    // sentinel already.
+    selSetRekeyEdges(m, (uint v) => v < perm.length ? perm[v] : uint.max);
     // Rewrite face vertex ids old->new.
     foreach (ref f; m.faces)
         foreach (ref vid; f)
@@ -1119,12 +1135,20 @@ private void applyReindexReverse(ref Mesh m, in uint[] perm) {
         }
         mm.data = nd;
     }
+    // Task 1060: `vertexSetMask` rides the SAME reverse permutation as the
+    // Point-domain meshMaps loop just above.
+    m.vertexSetMask = selSetGatherVertexMaskReverse(m.vertexSetMask, perm);
     // Inverse map: new -> old. Build it once, then rewrite face vids.
     uint[] inv;
     inv.length = m.vertices.length; // == perm.length now; safe upper bound for `new` ids
     // Initialise to identity-ish; only kept `new` slots matter.
     foreach (old, p; perm)
         if (p != ~0u && p < inv.length) inv[p] = cast(uint)old;
+    // Task 1060, Stage 5b: re-key the edge-set registry through the SAME
+    // inverse map that is about to rewrite face vertex ids below — `m`'s
+    // vertices are back at pre-compaction (old) index space after this
+    // function returns, so the edge-set keys must be too.
+    selSetRekeyEdges(m, (uint v) => v < inv.length ? inv[v] : uint.max);
     foreach (ref f; m.faces)
         foreach (ref vid; f) {
             // A face vid here is a post-compaction `new` id; map back to old.
@@ -1180,6 +1204,25 @@ private void removeVertsForward(ref Mesh m, in uint[] idx) {
             if (i >= drop.length || !drop[i]) nd ~= mm.data[i * dim .. i * dim + dim];
         mm.data = nd;
     }
+    // Task 1060: `vertexSetMask` rides the SAME drop-filter as the
+    // Point-domain meshMaps loop just above — computed BEFORE `m.vertices`
+    // was reassigned, so `mm.data`'s pre-drop length still lines up with
+    // `drop`. Re-derive the same relation for `vertexSetMask`.
+    m.vertexSetMask = selSetDropFilterVertexMask(m.vertexSetMask, drop);
+    // Task 1060, Stage 5b: re-key the edge-set registry through THIS drop's
+    // prefix-sum remap — the drop-filter's own old->new correspondence,
+    // built the same way `compactUnreferenced`'s `remap` is (kept indices
+    // renumbered by how many earlier entries were dropped; a dropped
+    // vertex maps to `uint.max`). This must run on the SAME `drop` array
+    // used just above, before any caller reassigns `m.vertices` further.
+    {
+        uint[] vremap;
+        vremap.length = drop.length;
+        uint nextIdx = 0;
+        foreach (i; 0 .. drop.length)
+            vremap[i] = drop[i] ? uint.max : nextIdx++;
+        selSetRekeyEdges(m, (uint v) => v < vremap.length ? vremap[v] : uint.max);
+    }
 }
 
 // Reverse: restore the dropped verts at their recorded (pre-removal) indices.
@@ -1233,6 +1276,10 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
                 const size_t dim = mm.dim;
                 if (vi * dim + dim <= mm.data.length) mm.data[vi * dim .. vi * dim + dim] = 0f;
             }
+            // Task 1060: same "not a restored capture" convention as
+            // vertexMarks/meshMaps just above — the re-inserted vertex's
+            // own set membership was never captured by this entry.
+            if (vi < m.vertexSetMask.length) m.vertexSetMask[vi] = 0UL;
         } else if (vi == m.vertices.length) {
             m.vertices ~= pos[i];             // contiguous append at the tail
             m.vertexMarks ~= 0u;
@@ -1240,6 +1287,7 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
                 if (mm.domain != MapDomain.Point || mm.dim == 0) continue;
                 foreach (_; 0 .. mm.dim) mm.data ~= 0f;
             }
+            m.vertexSetMask ~= 0UL;
         } else {
             m.vertices.insertInPlace(vi, pos[i]); // standalone removal (no Reindex)
             if (vi <= m.vertexMarks.length) m.vertexMarks.insertInPlace(vi, 0u);
@@ -1254,6 +1302,17 @@ private void removeVertsReverse(ref Mesh m, in uint[] idx, in Vec3[] pos) {
                     mm.data.insertInPlace(vi * dim, zeros);
                 }
             }
+            if (vi <= m.vertexSetMask.length) m.vertexSetMask.insertInPlace(vi, 0UL);
+            // Task 1060, Stage 5b: this is the STANDALONE insert branch — no
+            // live producer reaches it today (see the comment above this
+            // function), but the edge-set re-key belongs here for the same
+            // reason the meshMaps insert does: inserting a vertex at `vi`
+            // shifts every vertex index >= vi up by one, so any edge-set
+            // entry with such an endpoint must shift with it or it silently
+            // points at the wrong (or a now-nonexistent) pair. Preventive
+            // close, not measured-by-value — mirrors the note on
+            // `vertexSelectionOrder`'s insert two lines above.
+            selSetRekeyEdges(m, (uint v) => v >= vi ? v + 1 : v);
         }
     }
 }
@@ -1306,6 +1365,14 @@ private void removeFacesForward(ref Mesh m, in FaceIdx[] idx) {
     nprt.reserve(m.facePart.length);
     foreach (i, v; m.facePart) if (i >= drop.length || !drop[i]) nprt ~= v;
     m.facePart = nprt;
+    // Task 1060, Stage 5c: `faceSetMask` rides the SAME drop-filter as
+    // `facePart` just above — this is the undo/redo replay twin of the
+    // face-drop carry `deleteFacesByMask`/`dissolveVerticesByMask`/etc.
+    // already do on the live path.
+    ulong[] nsetm;
+    nsetm.reserve(m.faceSetMask.length);
+    foreach (i, v; m.faceSetMask) if (i >= drop.length || !drop[i]) nsetm ~= v;
+    m.faceSetMask = nsetm;
     int[] nord;
     nord.reserve(m.faceSelectionOrder.length);
     foreach (i, v; m.faceSelectionOrder) if (i >= drop.length || !drop[i]) nord ~= v;
@@ -1313,7 +1380,8 @@ private void removeFacesForward(ref Mesh m, in FaceIdx[] idx) {
 }
 
 private void removeFacesReverse(ref Mesh m, in FaceIdx[] idx, in uint[][] lists,
-                                in uint[] mat, in uint[] prt, in uint[] sub) {
+                                in uint[] mat, in uint[] prt, in uint[] sub,
+                                in ulong[] setm = null) {
     // NEGATIVE CONTROL (test only): stub RemoveFaces^-1 to a no-op under
     // -version=UndoNegControlRemoveFaces so the delete/remove round-trip proves
     // the face re-insertion inverse is load-bearing (without it the deleted
@@ -1378,6 +1446,32 @@ private void removeFacesReverse(ref Mesh m, in FaceIdx[] idx, in uint[][] lists,
         foreach (i, fi; idx) {
             if (fi <= m.facePart.length)
                 m.facePart.insertInPlace(fi, 0u);
+        }
+    }
+    // Task 1060, Stage 5c / review SHOULD-FIX 4: `faceSetMask` rides the SAME
+    // carried/not-carried split `prt` uses just above, NOT an unconditional
+    // 0-insert. The earlier comment here claimed this matched an "inherited"
+    // limit of the per-face-part data — that was wrong: all four live
+    // `recordRemoveFaces` call sites (`Mesh.deleteFacesByMask`,
+    // `Mesh.dissolveVerticesByMask`, the merge path, `extrudeFacesByMask`)
+    // already populate and pass `prt`, so `facePrt`'s "not carried" arm is
+    // dead in practice — only reachable from a hand-built (pre-1060)
+    // `MeshOpEntry`. `faceSetMask` had no capture field at all until this
+    // fix, so its 0-insert was the ONLY reachable arm: every face-delete undo
+    // silently dropped the restored face's set membership while its material
+    // and part id came back correctly. Carried the same way `prt` is.
+    if (setm.length == idx.length) {
+        foreach (i, fi; idx) {
+            if (fi <= m.faceSetMask.length)
+                m.faceSetMask.insertInPlace(fi, setm[i]);
+        }
+    } else {
+        // Not carried (a hand-built entry with no faceSetMsk, e.g. this
+        // module's own S2 unittest fixture): insert 0UL to keep length
+        // aligned with `m.faces`, same as `prt`'s fallback arm above.
+        foreach (i, fi; idx) {
+            if (fi <= m.faceSetMask.length)
+                m.faceSetMask.insertInPlace(fi, 0UL);
         }
     }
     if (sub.length == idx.length) {
@@ -1493,6 +1587,17 @@ private void finalize(ref Mesh m, MeshEditScope scope_,
     m.faceSelectionOrder.length   = m.faces.length;
     m.faceMaterial.length         = m.faces.length;
     m.facePart.length             = m.faces.length;
+    // Task 1060 review SHOULD-FIX 3: `faceSetMask` was missing from this
+    // length sync. `AddFaces`'s forward/reverse (`m.faces ~= …` / `m.faces.length
+    // = f0`) carry NO parallel-array payload of their own — same as
+    // facePart/faceMaterial, they rely entirely on this blanket resize to stay
+    // aligned. Without this line an AddFaces-revert SHRINK left `faceSetMask`
+    // over-long with stale, now out-of-range LIVE bits (add faces, put them in
+    // a polygon set, undo): `selSetMembersPolygon` walks the mask, not
+    // `m.faces`, so those out-of-range indices reached `/api/model` and the
+    // `.v3d` writer, and the loader's own bounds guard then dropped the WHOLE
+    // set on reload rather than the one stale entry.
+    m.faceSetMask.length          = m.faces.length;
     m.resizeAllMeshMaps();
     // Per-corner maps (task 0689): the FALLBACK, reached only when the carry
     // above declined (no map, maps out of step at entry, or its self-check
@@ -1733,4 +1838,66 @@ unittest {
         ~ "index (1)");
     assert(!m.isFaceHidden(0) && !m.isFaceHidden(2) && !m.isFaceHidden(3),
         "S2 reverse: no OTHER face may have picked up the bit");
+}
+
+// ---------------------------------------------------------------------------
+// Task 1060 review SHOULD-FIX 3: `finalize()`'s length sync omitted
+// `faceSetMask`. `AddFaces` (forward: `m.faces ~= …`; reverse: `m.faces.length
+// = f0`) carries no parallel-array payload of its own — like `facePart`/
+// `faceMaterial`, it relies ENTIRELY on finalize()'s blanket resize to stay
+// aligned with `m.faces`. Reproduces the review's exact scenario: add a face,
+// put it in a polygon set, undo the add.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.conv : to;
+    import mesh_selsets : selSetEditPolygon, selSetMembersPolygon, SetEditMode;
+
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0),  Vec3(1, 0, 0),  Vec3(0, 1, 0),      // face0 — pre-existing
+        Vec3(10, 0, 0), Vec3(11, 0, 0), Vec3(10, 1, 0),     // face1 — added by the entry
+    ];
+    m.addFace([0, 1, 2]);
+    m.buildLoops();
+    m.syncSelection();
+    assert(m.faces.length == 1, "setup: one pre-existing face");
+
+    MeshOpEntry addEntry;
+    addEntry.kind      = MeshOpEntry.Kind.AddFaces;
+    addEntry.fIdx      = [FaceIdx.assumeFaceSpace(1)];   // F0 = 1 (pre-add face count)
+    addEntry.faceLists = [[3u, 4u, 5u]];
+
+    MeshEditDelta delta;
+    delta.log = [addEntry];
+
+    assert(delta.apply(m), "forward replay (the add) must succeed");
+    assert(m.faces.length == 2, "setup: the second face must have been appended");
+
+    // Put the newly added face into a polygon set — through the real
+    // selection-set API, not a raw poke, so this exercises the write path a
+    // user's `select.set.store`/`.edit` actually takes.
+    bool[] sel = new bool[](m.faces.length);
+    sel[1] = true;
+    selSetEditPolygon(m, "S", SetEditMode.add, sel);
+    assert(m.faceSetMask.length >= 2 && (m.faceSetMask[1] & 1UL) != 0,
+        "setup: face 1 must be a live member of set S");
+
+    // Undo: AddFaces^-1 truncates m.faces back to 1. Before this fix,
+    // finalize()'s length sync omitted faceSetMask, so it stayed at length 2
+    // with face-index-1's bit still LIVE — an out-of-range member relative to
+    // the post-undo face count.
+    assert(delta.revert(m), "reverse replay (the undo) must succeed");
+    assert(m.faces.length == 1, "setup: the added face must be gone again");
+    assert(m.faceSetMask.length == m.faces.length,
+        "faceSetMask must stay length-aligned with m.faces after an "
+      ~ "AddFaces revert — got " ~ to!string(m.faceSetMask.length)
+      ~ " against " ~ to!string(m.faces.length) ~ " faces");
+
+    // The membership-enumeration consequence the review traced all the way to
+    // /api/model and the .v3d writer (whose loader guard then drops the WHOLE
+    // set on an out-of-range member): no reported member may be out of range.
+    auto members = selSetMembersPolygon(m, "S");
+    foreach (fi; members)
+        assert(fi < m.faces.length,
+            "an out-of-range polygon-set member reached the membership walk");
 }

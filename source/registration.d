@@ -120,6 +120,8 @@ import commands.select.fill     : SelectFillHoles, SelectFillInsideLoop;
 import commands.select.boundary : SelectBoundary;
 import commands.select.by_tag   : SelectByTag;
 import commands.select.by_stat  : SelectByStatVertex, SelectByStatEdge, SelectByStatPolygon;
+import commands.select.sets     : SelectSetStore, SelectSetEdit, SelectSetApply,
+                                   SelectSetRename, SelectSetDelete;
 import commands.viewport.fit_selected;
 import commands.viewport.fit;
 import commands.viewport.view_preset  : ViewportViewPreset;
@@ -1439,6 +1441,21 @@ private void registerSelectionCommands(EditorApp app) {
     reg.commandFactories["select.convert"]   = () => cast(Command)
         (new SelectConvertCommand(&mesh(), cameraView, editMode, &editMode()))
             .setPromoteHook((EditMode m) => promoteGeometryType(m));
+    // select.set.* — named selection sets (task 1060). `apply` is the one
+    // multi-layer command in this family (walks foreground layers via
+    // `Document*`, matching the `layer.*` `&document()` pattern above);
+    // store/edit/rename/delete are single-mesh, primary-only (Stage 0 C2,
+    // measured 2026-08-17).
+    reg.commandFactories["select.set.store"]  = () => cast(Command)
+        new SelectSetStore(&mesh(), cameraView, editMode);
+    reg.commandFactories["select.set.edit"]   = () => cast(Command)
+        new SelectSetEdit(&mesh(), cameraView, editMode);
+    reg.commandFactories["select.set.apply"]  = () => cast(Command)
+        new SelectSetApply(&mesh(), cameraView, editMode, &document());
+    reg.commandFactories["select.set.rename"] = () => cast(Command)
+        new SelectSetRename(&mesh(), cameraView, editMode);
+    reg.commandFactories["select.set.delete"] = () => cast(Command)
+        new SelectSetDelete(&mesh(), cameraView, editMode);
     }
     }
     }

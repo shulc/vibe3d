@@ -16,6 +16,10 @@ import params   : Param, paramToJson, injectParamsInto;
 import io.image_path : storePathFor, resolveStoredPath, refreshImageMeta;
 import seltype  : SelMode;
 import log : logWarn, logInfo;
+import mesh_selsets : selSetNamesVertex, selSetNamesEdge, selSetNamesPolygon,
+    selSetMembersVertex, selSetMembersEdge, selSetMembersPolygon,
+    selSetEditVertex, selSetEditEdge, selSetEditPolygon, SetEditMode,
+    validateSetName;
 
 // Diagnostics for the native reader funnel through the "io" log subsystem.
 // The "V3D" label stays in the message body so the .v3d origin is still
@@ -266,6 +270,13 @@ private void v3dReject(string msg) nothrow { g_v3dRejectReason = msg; v3dWarn("r
 /// note above. A later task filling in an item kind's channels must not need a
 /// bump; if it does, this design failed.
 /// v7 and earlier files are now rejected (deliberate clean break — no migration).
+///
+/// Confirmed still true at task 1062 (the `edgeMaps` block) and task 1060
+/// (the `selectionSets` block, this comment's own addition): both landed as
+/// ADDITIVE OPTIONAL keys under the within-version tolerance rule stated
+/// above — a v8 reader ignores them when absent, a v8 writer omits them when
+/// empty — exactly the growth "8 stays 8" was written to cover. Neither task
+/// bumped the constant.
 enum int kV3dFormatVersion = 8;
 
 // ---------------------------------------------------------------------------
@@ -540,6 +551,54 @@ JSONValue meshToJson(ref const Mesh mesh)
     }
     if (eMaps.length > 0)
         m["edgeMaps"] = JSONValue(eMaps);
+
+    // Selection sets (task 1060 addition, kV3dFormatVersion NOT bumped — the
+    // SAME within-version-tolerance rule `edgeMaps` above rode; see the "8 IS
+    // MEANT TO STAY 8" note above). One optional key per domain, each an
+    // array of `{name, members}`; the whole `selectionSets` object is
+    // omitted when all three domains are empty, matching every other
+    // optional-array convention in this codec.
+    //
+    // Edge members are VERTEX-INDEX PAIRS (`[a,b]`), never an edge index —
+    // this is the load-bearing half of the storage decision
+    // (mesh_selsets.d's doc comment / doc/selection_sets_plan.md §Q1.3/§Q2):
+    // an edge index is invalidated by every topology edit and by this very
+    // loader's own drop of bare wire edges, while a vertex pair degrades
+    // gracefully (the entry vanishes with its vertex rather than silently
+    // reattaching to an unrelated edge).
+    JSONValue[] ssVertexArr, ssEdgeArr, ssPolygonArr;
+    foreach (nm; selSetNamesVertex(mesh)) {
+        JSONValue sj;
+        sj["name"] = JSONValue(nm);
+        JSONValue[] mem;
+        foreach (vi; selSetMembersVertex(mesh, nm)) mem ~= JSONValue(cast(long) vi);
+        sj["members"] = JSONValue(mem);
+        ssVertexArr ~= sj;
+    }
+    foreach (nm; selSetNamesEdge(mesh)) {
+        JSONValue sj;
+        sj["name"] = JSONValue(nm);
+        JSONValue[] mem;
+        foreach (pr; selSetMembersEdge(mesh, nm))
+            mem ~= JSONValue([JSONValue(cast(long) pr[0]), JSONValue(cast(long) pr[1])]);
+        sj["members"] = JSONValue(mem);
+        ssEdgeArr ~= sj;
+    }
+    foreach (nm; selSetNamesPolygon(mesh)) {
+        JSONValue sj;
+        sj["name"] = JSONValue(nm);
+        JSONValue[] mem;
+        foreach (fi; selSetMembersPolygon(mesh, nm)) mem ~= JSONValue(cast(long) fi);
+        sj["members"] = JSONValue(mem);
+        ssPolygonArr ~= sj;
+    }
+    if (ssVertexArr.length > 0 || ssEdgeArr.length > 0 || ssPolygonArr.length > 0) {
+        JSONValue ssj;
+        ssj["vertex"]  = JSONValue(ssVertexArr);
+        ssj["edge"]    = JSONValue(ssEdgeArr);
+        ssj["polygon"] = JSONValue(ssPolygonArr);
+        m["selectionSets"] = ssj;
+    }
 
     return m;
 }
@@ -1673,6 +1732,122 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         }
     }
 
+    // --- optional: selectionSets (task 1060 addition, within-version) ---
+    // Parse into staging lists now; applied after `buildLoops`/`rebuildEdges`
+    // below, same discipline as `uvMaps`/`weightMaps`/`edgeMaps` — the EDGE
+    // domain in particular needs `edgeIndex(a,b)` to resolve, which needs
+    // `edges`/`edgeIndexMap` built. Tolerant per entry: a malformed member,
+    // an invalid name, an out-of-range index, an unresolvable edge pair, or
+    // an over-cap set count is a per-entry SKIP with a warning — never a
+    // hard reject of the whole file (§Q3's standing policy).
+    struct StagedSetVertex  { string name; long[]    members; }
+    struct StagedSetPolygon { string name; long[]    members; }
+    struct StagedSetEdge    { string name; long[2][] members; }
+    StagedSetVertex[]  stagedSetVertex;
+    StagedSetPolygon[] stagedSetPolygon;
+    StagedSetEdge[]    stagedSetEdge;
+    if (auto ssp = "selectionSets" in m) {
+        if (ssp.type == JSONType.object) {
+            if (auto svp = "vertex" in *ssp) {
+                if (svp.type == JSONType.array) {
+                    foreach (vi, vj; svp.array) {
+                        if (vj.type != JSONType.object) {
+                            v3dWarn(format("ignoring selectionSets.vertex[%d]: not an object", vi));
+                            continue;
+                        }
+                        string nm;
+                        if (auto np = "name" in vj) if (np.type == JSONType.string) nm = np.str;
+                        if (nm.length == 0) {
+                            v3dWarn(format("ignoring selectionSets.vertex[%d]: missing/empty name", vi));
+                            continue;
+                        }
+                        auto mp = "members" in vj;
+                        if (mp is null || mp.type != JSONType.array) {
+                            v3dWarn(format("ignoring selectionSets.vertex[%s]: missing/non-array members", nm));
+                            continue;
+                        }
+                        long[] mem;
+                        foreach (ej; mp.array) {
+                            if (ej.type == JSONType.integer)       mem ~= ej.integer;
+                            else if (ej.type == JSONType.uinteger) mem ~= cast(long) ej.uinteger;
+                        }
+                        stagedSetVertex ~= StagedSetVertex(nm, mem);
+                    }
+                } else {
+                    v3dWarn("ignoring non-array \"selectionSets.vertex\"");
+                }
+            }
+            if (auto spp = "polygon" in *ssp) {
+                if (spp.type == JSONType.array) {
+                    foreach (pi, pj; spp.array) {
+                        if (pj.type != JSONType.object) {
+                            v3dWarn(format("ignoring selectionSets.polygon[%d]: not an object", pi));
+                            continue;
+                        }
+                        string nm;
+                        if (auto np = "name" in pj) if (np.type == JSONType.string) nm = np.str;
+                        if (nm.length == 0) {
+                            v3dWarn(format("ignoring selectionSets.polygon[%d]: missing/empty name", pi));
+                            continue;
+                        }
+                        auto mp = "members" in pj;
+                        if (mp is null || mp.type != JSONType.array) {
+                            v3dWarn(format("ignoring selectionSets.polygon[%s]: missing/non-array members", nm));
+                            continue;
+                        }
+                        long[] mem;
+                        foreach (ej; mp.array) {
+                            if (ej.type == JSONType.integer)       mem ~= ej.integer;
+                            else if (ej.type == JSONType.uinteger) mem ~= cast(long) ej.uinteger;
+                        }
+                        stagedSetPolygon ~= StagedSetPolygon(nm, mem);
+                    }
+                } else {
+                    v3dWarn("ignoring non-array \"selectionSets.polygon\"");
+                }
+            }
+            if (auto sep = "edge" in *ssp) {
+                if (sep.type == JSONType.array) {
+                    foreach (ei, ej2; sep.array) {
+                        if (ej2.type != JSONType.object) {
+                            v3dWarn(format("ignoring selectionSets.edge[%d]: not an object", ei));
+                            continue;
+                        }
+                        string nm;
+                        if (auto np = "name" in ej2) if (np.type == JSONType.string) nm = np.str;
+                        if (nm.length == 0) {
+                            v3dWarn(format("ignoring selectionSets.edge[%d]: missing/empty name", ei));
+                            continue;
+                        }
+                        auto mp = "members" in ej2;
+                        if (mp is null || mp.type != JSONType.array) {
+                            v3dWarn(format("ignoring selectionSets.edge[%s]: missing/non-array members", nm));
+                            continue;
+                        }
+                        long[2][] mem;
+                        foreach (pairJ; mp.array) {
+                            if (pairJ.type != JSONType.array || pairJ.array.length != 2) continue;
+                            long a, b;
+                            auto aj = pairJ.array[0], bj = pairJ.array[1];
+                            if (aj.type == JSONType.integer) a = aj.integer;
+                            else if (aj.type == JSONType.uinteger) a = cast(long) aj.uinteger;
+                            else continue;
+                            if (bj.type == JSONType.integer) b = bj.integer;
+                            else if (bj.type == JSONType.uinteger) b = cast(long) bj.uinteger;
+                            else continue;
+                            mem ~= [a, b];
+                        }
+                        stagedSetEdge ~= StagedSetEdge(nm, mem);
+                    }
+                } else {
+                    v3dWarn("ignoring non-array \"selectionSets.edge\"");
+                }
+            }
+        } else {
+            v3dWarn("ignoring non-object \"selectionSets\"");
+        }
+    }
+
     // --- commit: rebuild the mesh on a fresh struct (mirrors importLWO) ---
     mesh = Mesh.init;
     mesh.vertices = verts;
@@ -1776,12 +1951,97 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         ++eMapCount;
     }
 
+    // Apply staged selection sets (task 1060). `edges`/`edgeIndexMap` are
+    // settled by `buildLoops()` above (same reason `edgeMaps` waits this
+    // long), so the EDGE domain can resolve `[a,b]` pairs to a live edge
+    // right here. `SetEditMode.replace` on a fresh (just-`ensureSlot`ed)
+    // name is exactly "set membership to this list" — the same idiom
+    // `weightMaps`'s `map.data[] = sw.data[]` uses for its own domain.
+    int ssVertexCount = 0, ssEdgeCount = 0, ssPolygonCount = 0;
+    foreach (ref sv; stagedSetVertex) {
+        auto err = validateSetName(sv.name);
+        if (err !is null) {
+            v3dWarn(format("ignoring selectionSets.vertex[%s]: %s", sv.name, err));
+            continue;
+        }
+        bool[] want = new bool[](mesh.vertices.length);
+        bool ok = true;
+        foreach (v; sv.members) {
+            if (v < 0 || v >= cast(long) mesh.vertices.length) { ok = false; break; }
+            want[cast(size_t) v] = true;
+        }
+        if (!ok) {
+            v3dWarn(format("ignoring selectionSets.vertex[%s]: member index out of range",
+                           sv.name));
+            continue;
+        }
+        try {
+            selSetEditVertex(mesh, sv.name, SetEditMode.replace, want);
+            ++ssVertexCount;
+        } catch (Exception e) {
+            v3dWarn(format("ignoring selectionSets.vertex[%s]: %s", sv.name, e.msg));
+        }
+    }
+    foreach (ref sp; stagedSetPolygon) {
+        auto err = validateSetName(sp.name);
+        if (err !is null) {
+            v3dWarn(format("ignoring selectionSets.polygon[%s]: %s", sp.name, err));
+            continue;
+        }
+        bool[] want = new bool[](mesh.faces.length);
+        bool ok = true;
+        foreach (f; sp.members) {
+            if (f < 0 || f >= cast(long) mesh.faces.length) { ok = false; break; }
+            want[cast(size_t) f] = true;
+        }
+        if (!ok) {
+            v3dWarn(format("ignoring selectionSets.polygon[%s]: member index out of range",
+                           sp.name));
+            continue;
+        }
+        try {
+            selSetEditPolygon(mesh, sp.name, SetEditMode.replace, want);
+            ++ssPolygonCount;
+        } catch (Exception e) {
+            v3dWarn(format("ignoring selectionSets.polygon[%s]: %s", sp.name, e.msg));
+        }
+    }
+    foreach (ref se; stagedSetEdge) {
+        auto err = validateSetName(se.name);
+        if (err !is null) {
+            v3dWarn(format("ignoring selectionSets.edge[%s]: %s", se.name, err));
+            continue;
+        }
+        // Per-PAIR graceful degrade (not per-entry reject, unlike vertex/
+        // polygon above): a pair that no longer resolves to a live edge —
+        // e.g. one of its two vertices vanished, or (the measured case) a
+        // bare wire edge the loader drops shifted every later edge index —
+        // is exactly the failure mode pair-keying exists to degrade
+        // gracefully from. Dropping just that member, not the whole named
+        // set, is the same conservative arm `selSetRekeyEdges` takes at
+        // every in-session re-key site.
+        bool[] want = new bool[](mesh.edges.length);
+        foreach (pr; se.members) {
+            if (pr[0] < 0 || pr[1] < 0) continue;
+            const ei = mesh.edgeIndex(cast(uint) pr[0], cast(uint) pr[1]);
+            if (ei == ~0u) continue;
+            want[ei] = true;
+        }
+        try {
+            selSetEditEdge(mesh, se.name, SetEditMode.replace, want);
+            ++ssEdgeCount;
+        } catch (Exception e) {
+            v3dWarn(format("ignoring selectionSets.edge[%s]: %s", se.name, e.msg));
+        }
+    }
+
     v3dInfo(format("mesh ready: %d verts, %d edges, %d faces, "
                     ~ "%d marked subpatch, %d surfaces, %d uv map(s), "
-                    ~ "%d weight map(s), %d edge map(s)",
+                    ~ "%d weight map(s), %d edge map(s), %d selection set(s)",
                     mesh.vertices.length, mesh.edges.length,
                     mesh.faces.length, subpatchCount, mesh.surfaces.length,
-                    uvMapCount, wMapCount, eMapCount));
+                    uvMapCount, wMapCount, eMapCount,
+                    ssVertexCount + ssEdgeCount + ssPolygonCount));
     return true;
 }
 

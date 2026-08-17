@@ -58,6 +58,7 @@ import bindbc.assimp;
 import log : logWarn;
 
 import mesh : Mesh, MeshMap, MapDomain, kUvMapName;
+import mesh_selsets : selSetsAnyLive;
 import math : Vec3;
 import document : Document, Layer;
 import io.assimp_runtime : isAssimpAvailable;
@@ -109,6 +110,13 @@ bool exportViaAssimp(ref const Mesh mesh, string path, string formatId) {
         logSupportedFormats(formatId);
         return false;
     }
+
+    // Selection sets (task 1060) have no interchange codec — deferred, see
+    // doc/selection_sets_plan.md §Q3. Warn once so the loss is a message,
+    // not a silent drop.
+    if (selSetsAnyLive(mesh))
+        try logWarn("io", "export " ~ path ~ ": selection sets are not carried by this format and will be dropped");
+        catch (Exception) {}
 
     // --- build the aiScene from GC-allocated, locally-rooted storage ---
     // Every array / struct below is held in a local that outlives the
@@ -199,6 +207,17 @@ bool exportDocumentViaAssimp(ref const Document doc, string path, string formatI
     if (!isExportFormatSupported(formatId)) {
         logSupportedFormats(formatId);
         return false;
+    }
+
+    // Selection sets (task 1060) have no interchange codec — see the note
+    // on `exportViaAssimp` above. Warn once per export call if ANY layer
+    // owns one, rather than once per layer (still not silent; not spam).
+    foreach (const(Layer) l; doc.meshLayers) {
+        if (selSetsAnyLive(l.meshRef())) {
+            try logWarn("io", "export " ~ path ~ ": selection sets are not carried by this format and will be dropped");
+            catch (Exception) {}
+            break;
+        }
     }
 
     SceneStorage st = buildDocumentScene(doc, unitScaleFor(formatId));

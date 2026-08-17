@@ -1,0 +1,239 @@
+{
+ "name": "selection_sets",
+ "description": "select.set.{store,apply,edit,rename,delete} membership laws — measured against the reference editor's command lane (g56_measured.json / cap/g6main.json / cap/fin5.json), applied here to vibe3d's own default-cube geometry. Each case is independently reproducible from a fresh reset. Round-trip (save/load) and the current-type/multi-layer gates are NOT in this fixture — the golden-suite runner has no dynamic file-path or thrown-error primitive; those live in tests/test_selection_sets.d instead.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-16",
+  "harness": "toolcards/selection_sets/cap (task 1060)",
+  "task": "1060",
+  "notes": "Numbers are the reference's MEASURED apply/edit/store/rename/delete laws (union/difference/replace; edit-of-a-missing-name creates; store-of-an-existing-name unions; delete purges the tag string) applied to a unit cube's own face centroids — the same 'claim is the LAW, not a byte-identical capture' shape select_by_tag.json documents, since vibe3d indexes faces differently from the reference. The `drop; apply replace` idiom before every readback is load-bearing: without it a case could pass by doing nothing (select_by_tag.json's own discriminator)."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "apply_select",
+   "description": "S={TOP,FRONT}; pre-selection {FRONT,RIGHT}; apply select must UNION.",
+   "input": [
+    { "reset": true },
+    { "select": { "mode": "polygons", "coords": [
+      [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "S" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]],
+      [[0.5,-0.5,-0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.apply", "params": { "name": "S", "mode": "select" } } }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [[0.0,0.0,0.5],[0.0,0.5,0.0],[0.5,0.0,0.0]]
+   }
+  },
+  {
+   "name": "apply_deselect",
+   "description": "same S/pre-selection; apply deselect must SUBTRACT S from the live selection.",
+   "input": [
+    { "reset": true },
+    { "select": { "mode": "polygons", "coords": [
+      [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "S" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]],
+      [[0.5,-0.5,-0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.apply", "params": { "name": "S", "mode": "deselect" } } }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [[0.5,0.0,0.0]]
+   }
+  },
+  {
+   "name": "apply_replace",
+   "description": "same S/pre-selection; apply replace must REPLACE the live selection with S.",
+   "input": [
+    { "reset": true },
+    { "select": { "mode": "polygons", "coords": [
+      [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]],
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "S" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]],
+      [[0.5,-0.5,-0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.apply", "params": { "name": "S", "mode": "replace" } } }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [[0.0,0.0,0.5],[0.0,0.5,0.0]]
+   }
+  },
+  {
+   "name": "edit_add",
+   "description": "S={TOP}; select FRONT; edit add -> S={TOP,FRONT}.",
+   "input": [
+    { "reset": true },
+    { "select": { "mode": "polygons", "coords": [
+      [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "S" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.edit", "params": { "name": "S", "mode": "add" } } },
+    { "select": { "mode": "polygons", "coords": [] } },
+    { "endpoint": "command", "body": { "id": "select.set.apply", "params": { "name": "S", "mode": "replace" } } }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [[0.0,0.0,0.5],[0.0,0.5,0.0]]
+   }
+  },
+  {
+   "name": "edit_remove",
+   "description": "S={TOP,FRONT} (as edit_add); select TOP; edit remove -> S={FRONT}.",
+   "input": [
+    { "reset": true },
+    { "select": { "mode": "polygons", "coords": [
+      [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "S" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.edit", "params": { "name": "S", "mode": "add" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.edit", "params": { "name": "S", "mode": "remove" } } },
+    { "select": { "mode": "polygons", "coords": [] } },
+    { "endpoint": "command", "body": { "id": "select.set.apply", "params": { "name": "S", "mode": "replace" } } }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [[0.0,0.0,0.5]]
+   }
+  },
+  {
+   "name": "edit_replace",
+   "description": "S={TOP,FRONT}; select RIGHT; edit replace -> S={RIGHT}.",
+   "input": [
+    { "reset": true },
+    { "select": { "mode": "polygons", "coords": [
+      [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "S" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.edit", "params": { "name": "S", "mode": "add" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,-0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.edit", "params": { "name": "S", "mode": "replace" } } },
+    { "select": { "mode": "polygons", "coords": [] } },
+    { "endpoint": "command", "body": { "id": "select.set.apply", "params": { "name": "S", "mode": "replace" } } }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [[0.5,0.0,0.0]]
+   }
+  },
+  {
+   "name": "rename_keeps_members",
+   "description": "S={RIGHT} (as edit_replace); rename S->R; membership must survive the rename.",
+   "input": [
+    { "reset": true },
+    { "select": { "mode": "polygons", "coords": [
+      [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "S" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.edit", "params": { "name": "S", "mode": "add" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,-0.5],[0.5,-0.5,0.5],[0.5,0.5,0.5],[0.5,0.5,-0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.edit", "params": { "name": "S", "mode": "replace" } } },
+    { "endpoint": "command", "body": { "id": "select.set.rename", "params": { "from": "S", "to": "R" } } },
+    { "select": { "mode": "polygons", "coords": [] } },
+    { "endpoint": "command", "body": { "id": "select.set.apply", "params": { "name": "R", "mode": "replace" } } }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [[0.5,0.0,0.0]]
+   }
+  },
+  {
+   "name": "edit_missing_creates",
+   "description": "editing a NAME THAT DOES NOT EXIST creates it (measured surprise #1).",
+   "input": [
+    { "reset": true },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.edit", "params": { "name": "BRANDNEW", "mode": "add" } } },
+    { "select": { "mode": "polygons", "coords": [] } },
+    { "endpoint": "command", "body": { "id": "select.set.apply", "params": { "name": "BRANDNEW", "mode": "replace" } } }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [[0.0,0.0,0.5]]
+   }
+  },
+  {
+   "name": "store_existing_unions",
+   "description": "storing an ALREADY-EXISTING name UNIONS into it, never replaces (measured surprise #2).",
+   "input": [
+    { "reset": true },
+    { "select": { "mode": "polygons", "coords": [
+      [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "A" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "A" } } },
+    { "select": { "mode": "polygons", "coords": [] } },
+    { "endpoint": "command", "body": { "id": "select.set.apply", "params": { "name": "A", "mode": "replace" } } }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [[0.0,0.0,0.5],[0.0,0.5,0.0]]
+   }
+  },
+  {
+   "name": "delete_purges",
+   "description": "A, 'B B', C all on TOP; delete A; store A on FRONT; TOP must NOT resurrect under the recreated A — pins that delete clears the bit column, not merely the name (mutation table: 'delete frees the slot but leaves the bit column').",
+   "input": [
+    { "reset": true },
+    { "select": { "mode": "polygons", "coords": [
+      [[-0.5,0.5,-0.5],[0.5,0.5,-0.5],[0.5,0.5,0.5],[-0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "A" } } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "B B" } } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "C" } } },
+    { "endpoint": "command", "body": { "id": "select.set.delete", "params": { "name": "A" } } },
+    { "select": { "mode": "polygons", "coords": [
+      [[0.5,-0.5,0.5],[-0.5,-0.5,0.5],[-0.5,0.5,0.5],[0.5,0.5,0.5]]
+    ] } },
+    { "endpoint": "command", "body": { "id": "select.set.store", "params": { "name": "A" } } },
+    { "select": { "mode": "polygons", "coords": [] } },
+    { "endpoint": "command", "body": { "id": "select.set.apply", "params": { "name": "A", "mode": "replace" } } }
+   ],
+   "expected": {
+    "mode": "polygons",
+    "polygons": [[0.0,0.0,0.5]]
+   }
+  }
+ ]
+}

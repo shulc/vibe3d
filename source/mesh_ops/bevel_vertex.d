@@ -132,6 +132,7 @@ mixin template MeshBevelVertexOps() {
         uint[][] newFaces;
         uint[]   newMat;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c
         int[]    newOrd;
         uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
@@ -141,6 +142,7 @@ mixin template MeshBevelVertexOps() {
             newFaces ~= rebuildFaceWithVertexSubs(orig, cast(uint)fi in faceSubs);
             newMat  ~=faceAttrOr(faceMaterial, fi);
             newPart ~=faceAttrOr(facePart, fi);
+            newSetMask ~= faceAttrOr(faceSetMask, fi);
             newOrd  ~=faceAttrOr(faceSelectionOrder, fi);
             newWord ~= faceAttrOr(faceMarks, fi);
         }
@@ -180,6 +182,7 @@ mixin template MeshBevelVertexOps() {
             newFaces ~= capRing;
             newMat   ~=faceAttrOr(faceMaterial, srcFi);
             newPart  ~=faceAttrOr(facePart, srcFi);
+            newSetMask ~= faceAttrOr(faceSetMask, srcFi);
             newOrd   ~= 0;
             newWord  ~= faceAttrOr(faceMarks, srcFi);
         }
@@ -188,6 +191,7 @@ mixin template MeshBevelVertexOps() {
         faces              = newFaces;
         faceMaterial       = newMat;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         faceSelectionOrder = newOrd;
 
         // Rebuild faceMarks: zero all, then restore the whole word (task 0613

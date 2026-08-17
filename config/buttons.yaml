@@ -301,6 +301,16 @@ panels:
         buttons:
           - { label: "Fill Holes",       action: { kind: command, id: select.fill.holes } }
           - { label: "Fill Inside Loop", action: { kind: command, id: select.fill.insideLoop } }
+      # Selection sets (task 1060) — named, typed, per-mesh groups the user
+      # can re-select later. Every command opens the auto-generated args
+      # dialog (non-empty params()), so this is the whole UI surface.
+      - title: Sets
+        buttons:
+          - { label: "New Set…",    action: { kind: command, id: select.set.store } }
+          - { label: "Apply Set…",  action: { kind: command, id: select.set.apply } }
+          - { label: "Edit Set…",   action: { kind: command, id: select.set.edit } }
+          - { label: "Rename Set…", action: { kind: command, id: select.set.rename } }
+          - { label: "Delete Set…", action: { kind: command, id: select.set.delete } }
       # Visibility (task 0613). Hiding is a SELECTION-scoped operation — what
       # it hides is decided by the current selection and the current geometry
       # type — so the group lives on this tab next to Grow / Shrink and

@@ -44,6 +44,21 @@ struct MeshSnapshot {
     uint[]    faceMaterial;
     uint[]    facePart;
     MeshMap[] meshMaps;
+    // Selection sets (task 1060) — mesh METADATA, same class as facePart /
+    // meshMaps above, so they capture/restore alongside them rather than
+    // riding the selection-only SelectionSnapshot below. `edgeSetMask` is an
+    // associative array: a plain struct-copy ALIASES it (D AAs are reference
+    // types), so `.dup` here is not optional — without it, mutating the live
+    // mesh's edge-set registry after capture would silently mutate this
+    // snapshot too, and an undo would then restore whatever the live mesh
+    // most recently did instead of the pre-apply state. `meshMaps.dup` above
+    // sets the identical precedent for the array case.
+    string[]     vertexSetNames;
+    ulong[]      vertexSetMask;
+    string[]     edgeSetNames;
+    ulong[ulong] edgeSetMask;
+    string[]     polygonSetNames;
+    ulong[]      faceSetMask;
     bool     filled = false;
 
     static MeshSnapshot capture(in Mesh mesh) {
@@ -68,6 +83,15 @@ struct MeshSnapshot {
         // Deep-dup each map (its `data` too) so later mesh mutations don't
         // alias the snapshot — MeshMap.dup dups the float[] data.
         s.meshMaps             = mesh.meshMaps.map!(mm => mm.dup).array;
+        // Selection sets (task 1060). `.dup` on the AA is REQUIRED — a bare
+        // `= mesh.edgeSetMask` would alias the live mesh's associative
+        // array (see the field's doc comment above).
+        s.vertexSetNames        = mesh.vertexSetNames.dup;
+        s.vertexSetMask         = mesh.vertexSetMask.dup;
+        s.edgeSetNames          = mesh.edgeSetNames.dup;
+        s.edgeSetMask           = mesh.edgeSetMask.dup;
+        s.polygonSetNames       = mesh.polygonSetNames.dup;
+        s.faceSetMask           = mesh.faceSetMask.dup;
         s.filled               = true;
         return s;
     }
@@ -98,6 +122,15 @@ struct MeshSnapshot {
         // they were captured alongside it, but resizeAllMeshMaps keeps them
         // correct if buildLoops were ever to change an element count.
         mesh.meshMaps                    = meshMaps.map!(mm => mm.dup).array;
+        // Selection sets (task 1060) — restore alongside facePart/meshMaps,
+        // `.dup`ing the AA again so the LIVE mesh does not end up aliasing
+        // THIS snapshot going forward (symmetric with capture()'s dup).
+        mesh.vertexSetNames              = vertexSetNames.dup;
+        mesh.vertexSetMask               = vertexSetMask.dup;
+        mesh.edgeSetNames                = edgeSetNames.dup;
+        mesh.edgeSetMask                 = edgeSetMask.dup;
+        mesh.polygonSetNames             = polygonSetNames.dup;
+        mesh.faceSetMask                 = faceSetMask.dup;
         mesh.buildLoops();
         mesh.resizeAllMeshMaps();
         // Snapshot restore rebuilds the WHOLE mesh — geometry, topology, marks
@@ -151,6 +184,15 @@ struct MeshSnapshot {
         mesh.faceMaterial = faceMaterial.dup;
         mesh.facePart     = facePart.dup;
         mesh.meshMaps     = meshMaps.map!(mm => mm.dup).array;
+        // Selection sets (task 1060) — mesh metadata like facePart/meshMaps
+        // just above, so they restore with GEOMETRY here too, never with the
+        // kept live selection marks below.
+        mesh.vertexSetNames  = vertexSetNames.dup;
+        mesh.vertexSetMask   = vertexSetMask.dup;
+        mesh.edgeSetNames    = edgeSetNames.dup;
+        mesh.edgeSetMask     = edgeSetMask.dup;
+        mesh.polygonSetNames = polygonSetNames.dup;
+        mesh.faceSetMask     = faceSetMask.dup;
         mesh.buildLoops();
         mesh.resizeAllMeshMaps();
 

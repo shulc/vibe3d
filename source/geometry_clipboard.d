@@ -17,6 +17,9 @@ struct GeometryClip {
     bool[]   subpatch;  /// per-face subpatch flag (parallel to faces[])
     uint[]   material;  /// per-face material index (parallel to faces[])
     uint[]   part;      /// per-face part id (parallel to faces[])
+    ulong[]  setMask;   /// per-face selection-set membership bits (task 1060,
+                        /// Stage 5c; parallel to faces[], carried the same way
+                        /// `part` is)
 
     bool empty() const { return faces.length == 0; }
 
@@ -26,6 +29,7 @@ struct GeometryClip {
         subpatch = null;
         material = null;
         part     = null;
+        setMask  = null;
     }
 
     /// Build a clip from the currently selected faces of `m`.
@@ -66,6 +70,7 @@ struct GeometryClip {
             clip.subpatch ~= m.isFaceSubpatch(fi);
             clip.material ~= (fi < m.faceMaterial.length ? m.faceMaterial[fi] : 0u);
             clip.part     ~= (fi < m.facePart.length     ? m.facePart[fi]     : 0u);
+            clip.setMask  ~= (fi < m.faceSetMask.length  ? m.faceSetMask[fi]  : 0UL);
         }
 
         return clip;

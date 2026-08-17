@@ -472,6 +472,7 @@ mixin template MeshRevolveOps() {
         uint[][] newFaces;
         uint[]   newMat;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c
         int[]    newOrd;
         uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
@@ -480,6 +481,7 @@ mixin template MeshRevolveOps() {
             newFaces ~= faces[fi];
             newMat   ~= fi < faceMaterial.length       ? faceMaterial[fi]       : 0u;
             newPart  ~= fi < facePart.length           ? facePart[fi]           : 0u;
+            newSetMask ~= fi < faceSetMask.length      ? faceSetMask[fi]        : 0UL;
             newOrd   ~= fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0;
             newWord  ~= fi < faceMarks.length          ? faceMarks[fi]          : 0u;
         }
@@ -495,6 +497,7 @@ mixin template MeshRevolveOps() {
             newFaces ~= cloned;
             newMat   ~= fi < faceMaterial.length ? faceMaterial[fi] : 0u;
             newPart  ~= fi < facePart.length     ? facePart[fi]     : 0u;
+            newSetMask ~= fi < faceSetMask.length ? faceSetMask[fi] : 0UL;
             newOrd   ~= 0;
             newWord  ~= fi < faceMarks.length ? faceMarks[fi] : 0u;
         }
@@ -515,6 +518,7 @@ mixin template MeshRevolveOps() {
             else          newFaces ~= [cloneA, cloneB, b, a];
             newMat  ~= be.selFi < faceMaterial.length ? faceMaterial[be.selFi] : 0u;
             newPart ~= be.selFi < facePart.length     ? facePart[be.selFi]     : 0u;
+            newSetMask ~= be.selFi < faceSetMask.length ? faceSetMask[be.selFi] : 0UL;
             newOrd  ~= 0;
             // Task 0389: revolve wall quads inherit Subpatch from their source
             // profile edge's face, like extrudeFacesByMask — so revolving a
@@ -526,6 +530,7 @@ mixin template MeshRevolveOps() {
         faces              = newFaces;
         faceMaterial       = newMat;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         faceSelectionOrder = newOrd;
 
         // Rebuild faceMarks from scratch: resize+zero ALL bits, then set from

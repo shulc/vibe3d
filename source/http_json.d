@@ -21,6 +21,8 @@ import std.datetime : Clock;
 import std.json;
 
 import mesh : Mesh, Surface;
+import mesh_selsets : selSetNamesVertex, selSetNamesEdge, selSetNamesPolygon,
+    selSetMembersVertex, selSetMembersEdge, selSetMembersPolygon;
 
 // ---------------------------------------------------------------------------
 // jsonEsc — escape `s` for embedding BETWEEN the quotes of a JSON string
@@ -194,7 +196,42 @@ string meshToJsonDetailed(ref const(Mesh) m) {
         if (i > 0) json ~= ", ";
         json ~= format("%d", i < m.facePart.length ? m.facePart[i] : 0u);
     }
-    json ~= "]";
+    json ~= "], ";
+
+    // Selection sets (task 1060) — read-only, so tests (and any future UI)
+    // can see the registry without going through a live-selection round
+    // trip. Edge members are vertex-index PAIRS, per the storage decision
+    // (mesh_selsets.d's doc comment / doc/selection_sets_plan.md §Q1.3):
+    // the same encoding the `.v3d` writer uses.
+    json ~= "\"selectionSets\": {\"vertex\": [";
+    foreach (i, nm; selSetNamesVertex(m)) {
+        if (i > 0) json ~= ", ";
+        json ~= format("{\"name\":\"%s\",\"members\":[", jsonEsc(nm));
+        auto members = selSetMembersVertex(m, nm);
+        foreach (j, vi; members) { if (j > 0) json ~= ", "; json ~= format("%d", vi); }
+        json ~= "]}";
+    }
+    json ~= "], \"edge\": [";
+    foreach (i, nm; selSetNamesEdge(m)) {
+        if (i > 0) json ~= ", ";
+        json ~= format("{\"name\":\"%s\",\"members\":[", jsonEsc(nm));
+        auto members = selSetMembersEdge(m, nm);
+        foreach (j, pr; members) {
+            if (j > 0) json ~= ", ";
+            json ~= format("[%d, %d]", pr[0], pr[1]);
+        }
+        json ~= "]}";
+    }
+    json ~= "], \"polygon\": [";
+    foreach (i, nm; selSetNamesPolygon(m)) {
+        if (i > 0) json ~= ", ";
+        json ~= format("{\"name\":\"%s\",\"members\":[", jsonEsc(nm));
+        auto members = selSetMembersPolygon(m, nm);
+        foreach (j, fi; members) { if (j > 0) json ~= ", "; json ~= format("%d", fi); }
+        json ~= "]}";
+    }
+    json ~= "]}";
+
     json ~= "}";
 
     return json.data;

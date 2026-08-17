@@ -179,11 +179,13 @@ mixin template MeshCleanupOps() {
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c
         newFaces.reserve(faces.length);
         newWord.reserve(faces.length);
         newOrder.reserve(faces.length);
         newMaterial.reserve(faces.length);
         newPart.reserve(faces.length);
+        newSetMask.reserve(faces.length);
 
         size_t removed = 0;
         size_t fixed   = 0;
@@ -216,6 +218,7 @@ mixin template MeshCleanupOps() {
             newOrder    ~= (fi < faceSelectionOrder.length ? faceSelectionOrder[fi] : 0);
             newMaterial ~= (fi < faceMaterial.length      ? faceMaterial[fi]      : 0u);
             newPart     ~= (fi < facePart.length          ? facePart[fi]          : 0u);
+            newSetMask  ~= (fi < faceSetMask.length       ? faceSetMask[fi]       : 0UL);
             if (remapUv)
                 foreach (sc; srcCorner)
                     oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, sc);
@@ -229,6 +232,7 @@ mixin template MeshCleanupOps() {
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
 
         clearFaceSelectionResize();

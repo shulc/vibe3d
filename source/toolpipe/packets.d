@@ -671,7 +671,13 @@ struct SymmetryPacket {
     int          axisIndex    = -1;           // 0=X 1=Y 2=Z; -1 when disabled
     float        offset       = 0.0f;         // plane = axis * offset
     bool         useWorkplane = false;        // mirror ≡ workplane (overrides axis/offset)
-    bool         topology     = false;        // reserved; v1 = false
+    // WIRED, not reserved (stale comment fixed, task 1060 side-errand):
+    // `SymmetryStage.evaluate` branches on this — true routes to
+    // `symmetry.rebuildPairingTopological` (a real connectivity walk from
+    // on-plane seam vertices), false to the plane-distance pairing. Exposed
+    // as the `topology` HTTP setAttr key and the `mesh.symmetrize` `topology`
+    // arg (source/commands/mesh/symmetrize.d).
+    bool         topology     = false;
     float        epsilonWorld = 1e-4f;        // pairing tolerance
 
     // Cached plane (populated by SymmetryStage.evaluate from the axis /

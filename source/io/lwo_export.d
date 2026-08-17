@@ -6,6 +6,8 @@ import lwo2;   // lwo2-writer (core config): Lwo2Object / Lwo2Layer / Lwo2Polygo
 import mesh;
 import document : Document, Layer;
 import math     : Vec3, matrixMirrorsWinding, transformPoint;
+import mesh_selsets : selSetsAnyLive;
+import log : logWarn;
 
 // ---------------------------------------------------------------------------
 // LWO2 export via the lwo2-writer library.
@@ -30,6 +32,14 @@ import math     : Vec3, matrixMirrorsWinding, transformPoint;
 /// Serialize `mesh` to an LWO2 file at `path` (single layer, LAYR 0).
 void exportLwo(ref const Mesh mesh, string path)
 {
+    // Selection sets (task 1060) have no LWO codec — deferred, see
+    // doc/selection_sets_plan.md §Q3 (our exporter emits only TXUV; PTAG is
+    // hardcoded to SURF by the out-of-tree writer package). Warn once so the
+    // loss is a message, not a silent drop.
+    if (selSetsAnyLive(mesh))
+        try logWarn("io", "export " ~ path ~ ": selection sets are not carried by LWO and will be dropped");
+        catch (Exception) {}
+
     Lwo2Object obj;
 
     // Points: Vec3 → float[3], verbatim.
@@ -75,6 +85,16 @@ void exportLwo(ref const Mesh mesh, string path)
 /// buildLwo2(equivalent-single-layers0-obj)`, so the file is byte-identical.
 void exportLwoDocument(ref const Document doc, string path)
 {
+    // Selection sets (task 1060) — same warn-once as the single-mesh path
+    // above, checked across every exported layer.
+    foreach (const(Layer) l; doc.meshLayers) {
+        if (selSetsAnyLive(l.meshRef())) {
+            try logWarn("io", "export " ~ path ~ ": selection sets are not carried by LWO and will be dropped");
+            catch (Exception) {}
+            break;
+        }
+    }
+
     Lwo2Object obj;
 
     // --- ONE global surface table: dedup by name across ALL layers, first-seen

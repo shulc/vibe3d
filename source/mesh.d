@@ -20,6 +20,8 @@ import mesh_ops.extrude : MeshExtrudeOps;
 import mesh_ops.connected_mask : MeshConnectedMaskOps;
 import mesh_ops.select_loop : MeshSelectLoopOps;
 import mesh_ops.poly_bevel : MeshPolyBevelOps;
+import mesh_selsets : selSetResizeVertex, selSetRekeyEdges,
+    selSetGatherVertexMaskForward;
 
 // Half-edge dart type + the topology ranges → extracted to source/mesh_topo.d
 // (task 0717). Re-exported so every `import mesh : Loop;` / `mesh.EdgeFaceRange`
@@ -1146,6 +1148,51 @@ struct Mesh {
     // own `uint[]`. Mesh maps are for CONTINUOUS float attributes only.
     MeshMap[] meshMaps;
 
+    // --- Selection sets (mesh_selsets, task 1060) --------------------------
+    // Named, typed, per-domain groups of elements the user can re-select
+    // later. NOT a MeshMap (see mesh_selsets.d's module doc for why — no Face
+    // domain, and a membership bit is a misuse of a dense float channel).
+    // Every VERB lives in mesh_selsets.d as a free function over `ref Mesh`;
+    // these six fields are the whole of the storage.
+    //
+    // VERTEX / POLYGON: one `ulong` bitmask PER ELEMENT, parallel to
+    // `vertices`/`faces` — bit `s` of an element's mask is membership in the
+    // set occupying slot `s` of that domain's `*SetNames`. `vertexSetMask` is
+    // kept in LENGTH lock-step with `vertices` by `selSetResizeVertex`
+    // (wired into `resizeVertexSelection` below). `faceSetMask` is
+    // deliberately NOT — it is lazy-sized exactly like `facePart` (grows on
+    // write, reads as 0 past its length via `mesh_selsets.memberOf`'s bounds
+    // check); `resizeFaceSelection` below touches only `faceMarks`, so there
+    // is no hook to hang a face-domain grow on, and `facePart` lives with the
+    // identical gap.
+    //
+    // EDGE: keyed by the CANONICAL VERTEX PAIR (`edgeKey`), never by edge
+    // index — an index-parallel edge channel is garbage after the very next
+    // topology edit (`rebuildEdges()` renumbers every edge; nothing resizes
+    // an edge-domain channel by more than length). A pair key survives
+    // `rebuildEdges()` for free, but NOT vertex-index-renumbering events
+    // (`compactUnreferenced`, a weld) — the key EMBEDS vertex indices, so it
+    // rides every event that renumbers or drops a vertex, via
+    // `mesh_selsets.selSetRekeyEdges` at six call sites (Stage 5b of
+    // doc/selection_sets_plan.md: `compactUnreferenced` and
+    // `applyVertexRemapAndRebuild` below, plus the four `mesh_edit_delta.d`
+    // replay functions). Missing any one of them fails SILENTLY — membership
+    // disappears, or reattaches to the WRONG edge, with no length mismatch
+    // and no assertion to trip. An associative array has no length, so it
+    // needs no resize hook at all; its only correctness obligation is the
+    // re-key.
+    //
+    // An empty name string marks a free slot (`ensureSlot` in
+    // mesh_selsets.d reuses it before growing); slot indices are assignment
+    // order and are NOT stable across a save/load, so nothing outside a
+    // mesh ever references a slot — every external reference is by name.
+    string[]     vertexSetNames;
+    ulong[]      vertexSetMask;
+    string[]     edgeSetNames;
+    ulong[ulong] edgeSetMask;
+    string[]     polygonSetNames;
+    ulong[]      faceSetMask;
+
     // --- Mesh-edit change tracker (mesh_edit_delta) -----------------------
     // Nullable recorder. NULL unless an edit batch is open (the common case —
     // it is opened only around a committed topology op, never per drag frame).
@@ -1224,6 +1271,12 @@ struct Mesh {
         resizeSubpatch();
         faceMaterial.length         = faces.length;
         facePart.length             = faces.length;
+        faceSetMask.length          = faces.length;   // NIT (task 1060 review): same
+                                                        // length-sync facePart gets, just
+                                                        // above — benign today (a short
+                                                        // mask reads as "no membership" via
+                                                        // memberOf's bounds check), kept in
+                                                        // lock-step for hygiene/consistency.
         clearVertexSelection();
         clearEdgeSelection();
         clearFaceSelection();
@@ -1251,6 +1304,8 @@ struct Mesh {
         if (isSubpatch.length           < faces.length)    resizeSubpatch();
         if (faceMaterial.length         < faces.length)    faceMaterial.length         = faces.length;
         if (facePart.length             < faces.length)    facePart.length             = faces.length;
+        // NIT (task 1060 review): same length-sync facePart gets just above.
+        if (faceSetMask.length          < faces.length)    faceSetMask.length          = faces.length;
     }
 
     // Rebuild the deduplicated `edges` array from the current `faces`.
@@ -1439,6 +1494,7 @@ struct Mesh {
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c — faceSetMask rides facePart's carry
         newFaces.reserve(faces.length);
         foreach (fi, ref face; faces) {
             uint[] f;
@@ -1454,6 +1510,7 @@ struct Mesh {
                 newOrder    ~= faceAttrOr(faceSelectionOrder, fi);
                 newMaterial ~= faceAttrOr(faceMaterial, fi);
                 newPart     ~= faceAttrOr(facePart, fi);
+                newSetMask  ~= faceAttrOr(faceSetMask, fi);
             }
         }
         faces              = newFaces;
@@ -1461,7 +1518,21 @@ struct Mesh {
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         clearFaceSelectionResize();
+
+        // task 1060, Stage 5b — re-key the edge-set registry through THIS
+        // weld's remap BEFORE compactUnreferenced() runs its own (separate)
+        // renumbering below. `remap` here is the same-space merge map
+        // (every vertex maps to a live survivor — itself or its weld
+        // target, never dropped), so this call carries the COLLAPSE half:
+        // an edge (5,9) whose endpoint 9 welds into 3 follows to (5,3) —
+        // exactly what `facePart` does for faces at this very site
+        // (`newPart ~= faceAttrOr(facePart, fi)` just above). Re-keying
+        // ONLY at compactUnreferenced would instead read endpoint 9 as
+        // "gone" and drop the membership outright.
+        selSetRekeyEdges(this, (uint v) =>
+            v < remap.length ? cast(uint) remap[v] : v);
 
         rebuildEdges();
         clearEdgeSelectionResize();
@@ -2469,6 +2540,7 @@ struct Mesh {
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c
         newFaces.reserve(faces.length);
         int[] faceRemap = new int[](faces.length);
         foreach (fi, ref face; faces) {
@@ -2495,6 +2567,7 @@ struct Mesh {
                 newOrder    ~= faceAttrOr(faceSelectionOrder, fi);
                 newMaterial ~= faceAttrOr(faceMaterial, fi);
                 newPart     ~= faceAttrOr(facePart, fi);
+                newSetMask  ~= faceAttrOr(faceSetMask, fi);
                 if (remapUv)
                     foreach (sc; srcCorner)
                         oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, sc);
@@ -2507,7 +2580,19 @@ struct Mesh {
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
+
+        // task 1060, Stage 5b — re-key the edge-set registry through THIS
+        // weld's remap, same call and same placement (between the face-mask
+        // carry and rebuildEdges()) as the sibling `applyVertexRemapAndRebuild`
+        // makes for the exact same reason: `remap` here is a same-space merge
+        // map (every vertex maps to a live survivor, itself or its weld
+        // target, never dropped) — an edge (5,9) whose endpoint 9 welds into 3
+        // must follow to (5,3) or its set membership vanishes silently on the
+        // very next `rebuildEdges()`/`edgeKey` renumbering.
+        selSetRekeyEdges(this, (uint v) =>
+            v < remap.length ? cast(uint) remap[v] : v);
 
         rebuildEdges();
 
@@ -2635,6 +2720,24 @@ struct Mesh {
             }
             mm.data = nd;
         }
+        // task 1060: `vertexSetMask` rides the SAME gather as the
+        // Point-domain meshMaps loop just above — a survivor's own
+        // membership bits must move from its OLD index to its NEW slot, or
+        // every survivor past a dropped vertex wears its neighbour's set
+        // membership (the exact defect task 0920 fixed for vertexMarks).
+        vertexSetMask = selSetGatherVertexMaskForward(vertexSetMask, remap, newVerts.length);
+        // task 1060, Stage 5b: the OTHER half of the edge-set re-key (the
+        // "vanish" half — an endpoint that is genuinely unreferenced is
+        // gone, so its edge-set membership is gone with it). The MERGE half
+        // (an endpoint that welds into a survivor) already ran in
+        // `applyVertexRemapAndRebuild` above, before this function's own
+        // `rebuildEdges()`/`compactUnreferenced()` tail — but this function
+        // has its OWN independent callers too (`weldVertexPairs`'s wrapper,
+        // any direct `compactUnreferenced()` call after e.g. a bevel), so
+        // the re-key belongs here unconditionally, not only behind the weld
+        // path. `remap[old] == ~0u` here is exactly `selSetRekeyEdges`'s
+        // "vertex gone" sentinel, no translation needed.
+        selSetRekeyEdges(this, (uint v) => v < remap.length ? remap[v] : uint.max);
         vertices = newVerts;
         // Re-derive edges from faces (remap can break edge endpoints).
         rebuildEdges();
@@ -2708,6 +2811,7 @@ struct Mesh {
         int[]    keptOrder;
         uint[]   keptMaterial;
         uint[]   keptPart;
+        ulong[]  keptSetMask;   // task 1060, Stage 5c — faceSetMask rides facePart's carry
         size_t   removed = 0;
         keptFaces.reserve(faces.length);
         keptWord.reserve(faces.length);
@@ -2727,6 +2831,7 @@ struct Mesh {
         uint[]   droppedFaceMat;
         uint[]   droppedFacePart;
         uint[]   droppedFaceSub;
+        ulong[]  droppedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
         const bool recDelete = editRecorder_ !is null;
         // Task 0680 — the delta for a bulk face removal used to cost TWO GC
         // allocations per removed face: `f.dup` here, then a second copy of
@@ -2752,6 +2857,7 @@ struct Mesh {
             droppedFaceMat.reserve(willDrop);
             droppedFacePart.reserve(willDrop);
             droppedFaceSub.reserve(willDrop);
+            droppedFaceSetMask.reserve(willDrop);
             droppedFlat.length = corners;
         }
         // PolyVertex remap, mechanism (a): surviving faces keep their corner
@@ -2779,6 +2885,7 @@ struct Mesh {
                     droppedFaceMat   ~= faceAttrOr(faceMaterial, i);
                     droppedFacePart  ~= faceAttrOr(facePart, i);
                     droppedFaceSub   ~= (isFaceSubpatch(i) ? 1u : 0u);
+                    droppedFaceSetMask ~= faceAttrOr(faceSetMask, i);
                 }
                 continue;
             }
@@ -2801,6 +2908,7 @@ struct Mesh {
             keptOrder    ~= faceAttrOr(faceSelectionOrder, i);
             keptMaterial ~= faceAttrOr(faceMaterial, i);
             keptPart     ~= faceAttrOr(facePart, i);
+            keptSetMask  ~= faceAttrOr(faceSetMask, i);
             if (remapUv)
                 foreach (c; 0 .. f.length)
                     oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)i, cast(uint)c);
@@ -2813,7 +2921,8 @@ struct Mesh {
             // live (pre-drop) index space, which is what the capture wants.
             recordPolyVertexPayload(droppedFaceIdx);
             editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
-                                            droppedFaceMat, droppedFacePart, droppedFaceSub);
+                                            droppedFaceMat, droppedFacePart, droppedFaceSub,
+                                            droppedFaceSetMask);
         }
         faces              = keptFaces;
         // Select is still dropped deliberately (~Marks.Select) — the
@@ -2825,6 +2934,7 @@ struct Mesh {
         faceSelectionOrder = keptOrder;
         faceMaterial       = keptMaterial;
         facePart           = keptPart;
+        faceSetMask        = keptSetMask;
         // PolyVertex relocate (a): per-corner values follow their surviving
         // corners. Done now (before the tail buildLoops); the loop layout this
         // produces is exactly what buildLoops rebuilds from the new `faces`, so
@@ -2958,11 +3068,13 @@ struct Mesh {
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c
         newFaces.reserve(faces.length);
         newWord.reserve(faces.length);
         newOrder.reserve(faces.length);
         newMaterial.reserve(faces.length);
         newPart.reserve(faces.length);
+        newSetMask.reserve(faces.length);
         // Class B tracker hook accumulators — inert unless a batch is open.
         // A face whose boundary shrinks (but stays >= 3) is a ReshapeFaces; a
         // face that becomes degenerate (< 3) and is dropped is a RemoveFaces.
@@ -2994,6 +3106,7 @@ struct Mesh {
         uint[]   removedFaceMat;
         uint[]   removedFacePart;
         uint[]   removedFaceSub;
+        ulong[]  removedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
         // PolyVertex remap, mechanism (b): a masked corner is dropped from its
         // face's corner LIST, so new corner `j` of a surviving face came from a
         // specific OLD corner `k` (its position in the old face). Build
@@ -3028,6 +3141,7 @@ struct Mesh {
                 newOrder    ~= faceAttrOr(faceSelectionOrder, fi);
                 newMaterial ~= faceAttrOr(faceMaterial, fi);
                 newPart     ~= faceAttrOr(facePart, fi);
+                newSetMask  ~= faceAttrOr(faceSetMask, fi);
                 if (remapUv)
                     foreach (kc; keptCorner)
                         oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, kc);
@@ -3039,6 +3153,7 @@ struct Mesh {
                 removedFaceMat   ~= faceAttrOr(faceMaterial, fi);
                 removedFacePart  ~= faceAttrOr(facePart, fi);
                 removedFaceSub   ~= (isFaceSubpatch(fi) ? 1u : 0u);
+                removedFaceSetMask ~= faceAttrOr(faceSetMask, fi);
             }
         }
         if (recDis) {
@@ -3056,13 +3171,15 @@ struct Mesh {
             editRecorder_.recordReshapeFaces(reshapeIdx, reshapeBefore, reshapeAfter);
             recordPolyVertexPayload(removedFaceIdx);
             editRecorder_.recordRemoveFaces(removedFaceIdx, removedFaceLists,
-                                            removedFaceMat, removedFacePart, removedFaceSub);
+                                            removedFaceMat, removedFacePart, removedFaceSub,
+                                            removedFaceSetMask);
         }
         faces              = newFaces;
         setFaceMarksFrom(newWord, ~Marks.Select);
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         // PolyVertex relocate (b): per-corner values follow surviving corners
         // through the arity change. Before the tail buildLoops/compact.
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
@@ -3600,6 +3717,7 @@ struct Mesh {
         int[]    newPolyOrder;
         uint[]   newPolyMaterial;
         uint[]   newPolyPart;
+        ulong[]  newPolySetMask;   // task 1060, Stage 5c
         // Parallel to newPolyList: the OLD loop index that produced each merged
         // corner (mechanism b). `~0u` ⇒ no traceable source ⇒ zero-fill.
         uint[][] newPolySrcLoop;
@@ -3697,6 +3815,7 @@ struct Mesh {
             newPolyOrder     ~= faceAttrOr(faceSelectionOrder, firstFi);
             newPolyMaterial  ~= faceAttrOr(faceMaterial, firstFi);
             newPolyPart      ~= faceAttrOr(facePart, firstFi);
+            newPolySetMask   ~= faceAttrOr(faceSetMask, cast(size_t) firstFi);
             if (remapUv) newPolySrcLoop ~= polySrc;
         }
 
@@ -3730,11 +3849,13 @@ struct Mesh {
         uint[]   droppedFaceMat;
         uint[]   droppedFacePart;
         uint[]   droppedFaceSub;
+        ulong[]  droppedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
         uint[][] keptFaces;
         uint[]   keptWord;   // whole faceMarks word per face (task 0613 §4.2)
         int[]    keptOrder;
         uint[]   keptMaterial;
         uint[]   keptPart;
+        ulong[]  keptSetMask;   // task 1060, Stage 5c
         // PolyVertex relocate accumulator, in final [kept ++ merged] CSR order.
         uint[] oldLoopOfNewLoop;
         foreach (fi; faceIndices) {
@@ -3767,6 +3888,7 @@ struct Mesh {
                     droppedFaceMat   ~= faceAttrOr(faceMaterial, fi);
                     droppedFacePart  ~= faceAttrOr(facePart, fi);
                     droppedFaceSub   ~= (isFaceSubpatch(cast(uint)fi) ? 1u : 0u);
+                    droppedFaceSetMask ~= faceAttrOr(faceSetMask, fi);
                 }
                 continue;
             }
@@ -3775,6 +3897,7 @@ struct Mesh {
             keptOrder    ~= faceAttrOr(faceSelectionOrder, fi);
             keptMaterial ~= faceAttrOr(faceMaterial, fi);
             keptPart     ~= faceAttrOr(facePart, fi);
+            keptSetMask  ~= faceAttrOr(faceSetMask, fi);
             // Kept faces preserve arity → corner c maps to old loop fi/c (a).
             if (remapUv)
                 foreach (c; 0 .. faces[fi].length)
@@ -3788,6 +3911,7 @@ struct Mesh {
             keptOrder    ~= newPolyOrder[i];
             keptMaterial ~= newPolyMaterial[i];
             keptPart     ~= newPolyPart[i];
+            keptSetMask  ~= newPolySetMask[i];
             // Merged poly corners → the old loop traced during the boundary
             // walk (~0u where the walk could not trace a source) (b).
             if (remapUv) oldLoopOfNewLoop ~= newPolySrcLoop[i];
@@ -3803,7 +3927,8 @@ struct Mesh {
             // the live (pre-drop) space, which is what the capture wants.
             recordPolyVertexPayload(droppedFaceIdx);
             editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
-                                            droppedFaceMat, droppedFacePart, droppedFaceSub);
+                                            droppedFaceMat, droppedFacePart, droppedFaceSub,
+                                            droppedFaceSetMask);
             uint[][] mergedLists;
             mergedLists.length = newPolyList.length;
             foreach (i; 0 .. newPolyList.length) mergedLists[i] = newPolyList[i].dup;
@@ -3823,6 +3948,7 @@ struct Mesh {
         faceSelectionOrder = keptOrder;
         faceMaterial       = keptMaterial;
         facePart           = keptPart;
+        faceSetMask        = keptSetMask;
         // PolyVertex relocate (b): per-corner values follow the merged/kept
         // corners. Before the tail buildLoops (which then no-ops the resize).
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
@@ -3922,6 +4048,7 @@ struct Mesh {
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c
         uint[]   faceOrigin;   // faceOrigin[new_fi] = original fi
 
         size_t changed = 0;
@@ -3932,6 +4059,7 @@ struct Mesh {
             int  ord = faceAttrOr(faceSelectionOrder, fi);
             uint mat = faceAttrOr(faceMaterial, fi);
             uint prt = faceAttrOr(facePart, fi);
+            ulong setm = faceAttrOr(faceSetMask, fi);
 
             if (!mask[fi] || f.length <= 3) {
                 // Pass through untouched.
@@ -3940,6 +4068,7 @@ struct Mesh {
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
+                newSetMask  ~= setm;
                 faceOrigin  ~= cast(uint)fi;
                 if (remapUv)
                     foreach (c; 0 .. f.length)
@@ -3958,6 +4087,7 @@ struct Mesh {
                     newOrder    ~= ord;
                     newMaterial ~= mat;
                     newPart     ~= prt;
+                    newSetMask  ~= setm;
                     faceOrigin  ~= cast(uint)fi;
                     if (remapUv) {
                         // Triangle corners map to old corners 0, i, i+1 of fi.
@@ -3976,6 +4106,7 @@ struct Mesh {
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
         clearFaceSelectionResize();
         rebuildEdges();
@@ -4219,6 +4350,7 @@ struct Mesh {
         resizeFaceSelection();
         faceMaterial.length       = faces.length;
         facePart.length           = faces.length;
+        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
         }
@@ -4228,6 +4360,7 @@ struct Mesh {
             setFaceSubpatch(idx, isFaceSubpatch(srcFi));
             faceMaterial[idx] = faceAttrOr(faceMaterial, srcFi);
             facePart[idx]     = faceAttrOr(facePart, srcFi);
+            faceSetMask[idx]  = faceAttrOr(faceSetMask, srcFi);
             selectFace(cast(int)idx);
         }
         resizeVertexSelection();
@@ -4384,6 +4517,7 @@ struct Mesh {
         resizeFaceSelection();
         faceMaterial.length       = faces.length;
         facePart.length           = faces.length;
+        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
         }
@@ -4397,6 +4531,7 @@ struct Mesh {
             setFaceSubpatch(idx, isFaceSubpatch(srcFi));
             faceMaterial[idx] = faceAttrOr(faceMaterial, srcFi);
             facePart[idx]     = faceAttrOr(facePart, srcFi);
+            faceSetMask[idx]  = faceAttrOr(faceSetMask, srcFi);
             selectFace(cast(int)idx);
         }
         // For a detached subset the repointed source faces are copy 0 of the
@@ -4684,6 +4819,7 @@ struct Mesh {
         resizeFaceSelection();
         faceMaterial.length       = faces.length;
         facePart.length           = faces.length;
+        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
         }
@@ -4693,6 +4829,7 @@ struct Mesh {
             setFaceSubpatch(idx, isFaceSubpatch(srcFi));
             faceMaterial[idx] = faceAttrOr(faceMaterial, srcFi);
             facePart[idx]     = faceAttrOr(facePart, srcFi);
+            faceSetMask[idx]  = faceAttrOr(faceSetMask, srcFi);
             selectFace(cast(int)idx);
         }
         // replaceSource re-selects the (mutated) originals too — they are
@@ -4720,12 +4857,14 @@ struct Mesh {
                 bool[]   keptSelected;
                 uint[]   keptMaterial;
                 uint[]   keptPart;
+                ulong[]  keptSetMask;   // task 1060, Stage 5c
                 keptFaces   .reserve(faces.length);
                 keptWord    .reserve(faces.length);
                 keptOrder   .reserve(faces.length);
                 keptSelected.reserve(faces.length);
                 keptMaterial.reserve(faces.length);
                 keptPart    .reserve(faces.length);
+                keptSetMask .reserve(faces.length);
                 // Per-corner (UV) relocate — mechanism (a). This rebuild drops
                 // whole DUPLICATE faces but keeps every survivor's corner
                 // count, so each kept corner has exactly one old corner. Without
@@ -4762,6 +4901,7 @@ struct Mesh {
                     keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
                     keptMaterial ~= faceAttrOr(faceMaterial, fi);
                     keptPart     ~= faceAttrOr(facePart, fi);
+                    keptSetMask  ~= faceAttrOr(faceSetMask, fi);
                 }
                 faces              = keptFaces;
                 if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
@@ -4773,6 +4913,7 @@ struct Mesh {
                 setFacesSelectedFrom(keptSelected);
                 faceMaterial       = keptMaterial;
                 facePart           = keptPart;
+                faceSetMask        = keptSetMask;
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
@@ -4871,6 +5012,7 @@ struct Mesh {
         resizeFaceSelection();
         faceMaterial.length       = faces.length;
         facePart.length           = faces.length;
+        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
         // Mark the new mirrored faces as the active selection; clear
         // the originals' face-selection bits (they keep their geometry
         // unchanged but lose the "this is selected" tag, matching
@@ -4884,6 +5026,7 @@ struct Mesh {
             setFaceSubpatch(newFi, isFaceSubpatch(fi));
             faceMaterial[newFi] = faceAttrOr(faceMaterial, fi);
             facePart[newFi]     = faceAttrOr(facePart, fi);
+            faceSetMask[newFi]  = faceAttrOr(faceSetMask, fi);
             selectFace(cast(int)newFi);
         }
 
@@ -4927,6 +5070,12 @@ struct Mesh {
             int[]     rbFaceSelectionOrder   = faceSelectionOrder.dup;
             uint[]    rbFaceMaterial         = faceMaterial.dup;
             uint[]    rbFacePart             = facePart.dup;
+            ulong[]   rbFaceSetMask          = faceSetMask.dup;    // task 1060, Stage 5c
+            ulong[]   rbVertexSetMask        = vertexSetMask.dup;  // task 1060, Stage 5a
+            ulong[ulong] rbEdgeSetMask       = edgeSetMask.dup;    // task 1060, Stage 5b —
+            // `.dup` is REQUIRED (AA is a reference type; see mesh_selsets.d's
+            // storage doc comment) — a bare `= edgeSetMask` would alias the
+            // live registry, and the weld/compact below re-keys it in place.
             MeshMap[] rbMeshMaps;
             rbMeshMaps.reserve(meshMaps.length);
             foreach (mm; meshMaps) rbMeshMaps ~= mm.dup;
@@ -4978,6 +5127,9 @@ struct Mesh {
                 faceSelectionOrder   = rbFaceSelectionOrder;
                 faceMaterial         = rbFaceMaterial;
                 facePart             = rbFacePart;
+                faceSetMask          = rbFaceSetMask;
+                vertexSetMask        = rbVertexSetMask;   // task 1060, Stage 5a
+                edgeSetMask          = rbEdgeSetMask;     // task 1060, Stage 5b
                 meshMaps             = rbMeshMaps;
                 // The rollback put back the very maps that describe the
                 // restored windings, so the corner space this rebuild will
@@ -5082,6 +5234,7 @@ struct Mesh {
         resizeFaceSelection();
         faceMaterial.length       = faces.length;
         facePart.length           = faces.length;
+        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
         // Clear old face selection first; only new duplicates remain selected.
         foreach (fi; 0 .. origFaceCount) {
             deselectFace(cast(int)fi);
@@ -5092,6 +5245,7 @@ struct Mesh {
             setFaceSubpatch(newFi, isFaceSubpatch(fi));
             faceMaterial[newFi] = faceAttrOr(faceMaterial, fi);
             facePart[newFi]     = faceAttrOr(facePart, fi);
+            faceSetMask[newFi]  = faceAttrOr(faceSetMask, fi);
             selectFace(cast(int)newFi);
         }
 
@@ -5124,7 +5278,8 @@ struct Mesh {
     /// fire commitChange). Returns the number of faces appended; 0 = no-op.
     size_t appendGeometry(in Vec3[] clipVerts, in uint[][] clipFaces,
                           in bool[] clipSubpatch, in uint[] clipMaterial,
-                          in uint[] clipPart = null) {
+                          in uint[] clipPart = null,
+                          in ulong[] clipSetMask = null) {
         if (clipFaces.length == 0) return 0;
 
         const size_t vertBase      = vertices.length;
@@ -5156,6 +5311,7 @@ struct Mesh {
         resizeFaceSelection();
         faceMaterial.length       = faces.length;
         facePart.length           = faces.length;
+        faceSetMask.length        = faces.length;   // task 1060, Stage 5c
 
         // Deselect all pre-existing faces; only pasted faces end up selected.
         foreach (fi; 0 .. origFaceCount) deselectFace(cast(int)fi);
@@ -5167,6 +5323,7 @@ struct Mesh {
             setFaceSubpatch(newFi, (k < clipSubpatch.length ? clipSubpatch[k] : false));
             faceMaterial[newFi] = (k < clipMaterial.length ? clipMaterial[k] : 0u);
             facePart[newFi]     = (k < clipPart.length     ? clipPart[k]     : 0u);
+            faceSetMask[newFi]  = (k < clipSetMask.length  ? clipSetMask[k]  : 0UL);
             selectFace(cast(int)newFi);
         }
 
@@ -5809,6 +5966,7 @@ struct Mesh {
         vertexMarks.length          = vertices.length;
         vertexSelectionOrder.length = vertices.length;
         resizeMeshMaps(MapDomain.Point);
+        selSetResizeVertex(this);   // task 1060 — vertexSetMask rides along
     }
     void resizeEdgeSelection() {
         edgeMarks.length          = edges.length;
@@ -5819,6 +5977,12 @@ struct Mesh {
         // Only the per-face marks array (folding Select + Subpatch). The
         // pick-order / subpatch / material arrays are rebuilt in lock-step with
         // `faces` by the calling mutator.
+        //
+        // `faceSetMask` (task 1060) is deliberately NOT grown here — same
+        // lazy-size convention as `facePart`/`faceMaterial`: it grows on
+        // WRITE (mesh_selsets.writeMembersFromSelection) and reads as 0 past
+        // its length. Do not "fix" that by adding a grow line — there is no
+        // per-face resize hook to hang one on, by design.
         faceMarks.length = faces.length;
     }
 
@@ -10444,6 +10608,7 @@ struct Mesh {
         int[]    newOrder;
         uint[]   newMaterial;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c
         bool[]   newSelected;
         newFacesArr.reserve(origFaceCount + origFaceCount / 2);
 
@@ -10454,6 +10619,7 @@ struct Mesh {
             int   ord = faceAttrOr(faceSelectionOrder, fi);
             uint  mat = faceAttrOr(faceMaterial, fi);
             uint  prt = faceAttrOr(facePart, fi);
+            ulong setm = faceAttrOr(faceSetMask, fi);
             bool  seld = isFaceSelected(fi);
 
             // Faces not in the mask are copied whole (never split).
@@ -10465,6 +10631,7 @@ struct Mesh {
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
+                newSetMask  ~= setm;
                 newSelected ~= seld;
                 continue;
             }
@@ -10481,6 +10648,7 @@ struct Mesh {
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
+                newSetMask  ~= setm;
                 newSelected ~= seld;
                 continue;
             }
@@ -10495,6 +10663,7 @@ struct Mesh {
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
+                newSetMask  ~= setm;
                 newSelected ~= seld;
                 continue;
             }
@@ -10510,6 +10679,7 @@ struct Mesh {
                 newOrder    ~= ord;
                 newMaterial ~= mat;
                 newPart     ~= prt;
+                newSetMask  ~= setm;
                 newSelected ~= seld;
                 continue;
             }
@@ -10520,6 +10690,7 @@ struct Mesh {
             newOrder    ~= ord;
             newMaterial ~= mat;
             newPart     ~= prt;
+            newSetMask  ~= setm;
             newSelected ~= seld;
 
             // f2 (appended slot) — BOTH halves carry parent attrs, including
@@ -10531,6 +10702,7 @@ struct Mesh {
             newOrder    ~= ord;
             newMaterial ~= mat;
             newPart     ~= prt;
+            newSetMask  ~= setm;
             newSelected ~= seld;
 
             nSplit++;
@@ -10544,6 +10716,7 @@ struct Mesh {
         faceSelectionOrder = newOrder;
         faceMaterial       = newMaterial;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         // Inherit each parent's Select bit onto its emitted slot(s) instead of
         // clearing — a selected parent's split halves stay selected, an
         // unselected parent stays unselected, nothing-in ⇒ nothing-out.

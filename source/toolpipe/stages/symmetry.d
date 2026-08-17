@@ -33,8 +33,10 @@ import params            : Param, IntEnumEntry;
 //   `axis`         : "x" / "y" / "z" (lowercase; case-insensitive parse)
 //   `offset`       : float, world units along the chosen axis
 //   `useWorkplane` : "true" / "false"
-//   `topology`     : "true" / "false" — schema-only in v1 (always
-//                    falls back to position pairing in the evaluator)
+//   `topology`     : "true" / "false" — WIRED (stale comment fixed, task 1060
+//                    side-errand): routes to `rebuildPairingTopological`
+//                    (a connectivity walk seeded from on-plane seam
+//                    vertices), not merely schema — see `evaluate` below
 //   `epsilon`      : float, world-space pairing tolerance
 // ---------------------------------------------------------------------------
 class SymmetryStage : Stage, Operator {
@@ -117,7 +119,9 @@ class SymmetryStage : Stage, Operator {
     int   axisIndex     = 0;          // 0=X 1=Y 2=Z (meaningful when enabled)
     float offset        = 0.0f;
     bool  useWorkplane  = false;
-    bool  topology      = false;      // reserved
+    bool  topology      = false;      // WIRED — see the SymmetryPacket doc
+                                       // comment / evaluate() above (stale
+                                       // "reserved" fixed, task 1060)
     float epsilonWorld  = 1e-4f;
 
     // Base side — which side of the plane the user last anchored on.

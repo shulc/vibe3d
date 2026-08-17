@@ -1488,6 +1488,7 @@ mixin template MeshEdgeBevelOps() {
         uint[][] newFaces;
         uint[]   newMat;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c
         int[]    newOrd;
         uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
@@ -1513,6 +1514,7 @@ mixin template MeshEdgeBevelOps() {
                         uniformSrc(newFaces[$ - 1].length, cast(uint)fi));
             newMat  ~=faceAttrOr(faceMaterial, fi);
             newPart ~=faceAttrOr(facePart, fi);
+            newSetMask ~= faceAttrOr(faceSetMask, fi);
             newOrd  ~=faceAttrOr(faceSelectionOrder, fi);
             newWord ~= faceAttrOr(faceMarks, fi);
         }
@@ -1543,7 +1545,7 @@ mixin template MeshEdgeBevelOps() {
                 // slid out of (task 0697).
                 if (remapUvB)
                     noteSrc(newFaces.length - 1, [sp.fL, sp.fL, sp.fR, sp.fR]);
-                newMat ~= 0u; newPart ~= 0u; newOrd ~= 0; newWord ~= word;
+                newMat ~= 0u; newPart ~= 0u; newSetMask ~= 0UL; newOrd ~= 0; newWord ~= word;
                 continue;
             }
 
@@ -1570,7 +1572,7 @@ mixin template MeshEdgeBevelOps() {
                 if (remapUvB)
                     noteSrc(newFaces.length - 1,
                             [srcAt(t), srcAt(t), srcAt(t + 1), srcAt(t + 1)]);
-                newMat ~= 0u; newPart ~= 0u; newOrd ~= 0; newWord ~= word;
+                newMat ~= 0u; newPart ~= 0u; newSetMask ~= 0UL; newOrd ~= 0; newWord ~= word;
             }
         }
 
@@ -1705,6 +1707,7 @@ mixin template MeshEdgeBevelOps() {
                                          gv(i, a + 1, b + 1), gv(i, a, b + 1)];
                             newMat  ~=faceAttrOr(faceMaterial, srcFi);
                             newPart ~=faceAttrOr(facePart, srcFi);
+                            newSetMask ~= faceAttrOr(faceSetMask, srcFi);
                             newOrd  ~= 0;
                             newWord ~= faceAttrOr(faceMarks, srcFi);
                         }
@@ -1796,6 +1799,7 @@ mixin template MeshEdgeBevelOps() {
                                          gv(i, a + 1, b + 1), gv(i, a, b + 1)];
                             newMat  ~=faceAttrOr(faceMaterial, srcFi);
                             newPart ~=faceAttrOr(facePart, srcFi);
+                            newSetMask ~= faceAttrOr(faceSetMask, srcFi);
                             newOrd  ~= 0;
                             newWord ~= faceAttrOr(faceMarks, srcFi);
                         }
@@ -1806,6 +1810,7 @@ mixin template MeshEdgeBevelOps() {
             newFaces ~= ring;
             newMat  ~=faceAttrOr(faceMaterial, srcFi);
             newPart ~=faceAttrOr(facePart, srcFi);
+            newSetMask ~= faceAttrOr(faceSetMask, srcFi);
             newOrd  ~= 0;
             newWord ~= faceAttrOr(faceMarks, srcFi);
         }
@@ -1902,6 +1907,7 @@ mixin template MeshEdgeBevelOps() {
                     newFaces ~= f;
                     newMat  ~=faceAttrOr(faceMaterial, srcFiN);
                     newPart ~=faceAttrOr(facePart, srcFiN);
+                    newSetMask ~= faceAttrOr(faceSetMask, srcFiN);
                     newOrd  ~= 0;
                     newWord ~= faceAttrOr(faceMarks, srcFiN);
                 }
@@ -1955,6 +1961,7 @@ mixin template MeshEdgeBevelOps() {
             }
             newMat  ~=faceAttrOr(faceMaterial, srcFi);
             newPart ~=faceAttrOr(facePart, srcFi);
+            newSetMask ~= faceAttrOr(faceSetMask, srcFi);
             newOrd  ~= 0;
             newWord ~= faceAttrOr(faceMarks, srcFi);
         }
@@ -1963,6 +1970,7 @@ mixin template MeshEdgeBevelOps() {
         faces              = newFaces;
         faceMaterial       = newMat;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         faceSelectionOrder = newOrd;
 
         // Rebuild faceMarks: zero all, then restore the whole word (task 0613
@@ -2084,6 +2092,7 @@ mixin template MeshEdgeBevelOps() {
         int[]    mergedOrder;
         uint[]   mergedMaterial;
         uint[]   mergedPart;
+        ulong[]  mergedSetMask;   // task 1060, Stage 5c
         foreach (fi, f; faces) {
             uint[] kept;
             uint[] keptSrc;
@@ -2108,6 +2117,7 @@ mixin template MeshEdgeBevelOps() {
                 mergedOrder    ~= faceAttrOr(faceSelectionOrder, fi);
                 mergedMaterial ~= faceAttrOr(faceMaterial, fi);
                 mergedPart     ~= faceAttrOr(facePart, fi);
+                mergedSetMask  ~= faceAttrOr(faceSetMask, fi);
                 if (remapUvB) mergedSrc ~= keptSrc;
             } else {
                 faceRemap[fi] = -1; // whole face collapsed below 3 corners (Case C)
@@ -2122,6 +2132,7 @@ mixin template MeshEdgeBevelOps() {
         faceSelectionOrder = mergedOrder;
         faceMaterial       = mergedMaterial;
         facePart           = mergedPart;
+        faceSetMask        = mergedSetMask;
 
         // Relocate the per-corner map now that `faces` is final and BEFORE the
         // tail `buildLoops`, which would otherwise see a length-wrong map and

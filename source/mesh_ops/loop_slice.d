@@ -927,6 +927,8 @@ mixin template MeshLoopSliceOps() {
         uint[] newMat, newPart;
         newMat.reserve(faceArrayEstimate);
         newPart.reserve(faceArrayEstimate);
+        ulong[] newSetMask;   // task 1060, Stage 5c — faceSetMask rides facePart's carry
+        newSetMask.reserve(faceArrayEstimate);
         // Same lock-step law once more, for the CORNER-indexed planes (task
         // 0682): the ORIGINAL face each emitted face came from, `~0u` when
         // there is no single source (a section cap is stitched from a whole
@@ -1143,10 +1145,12 @@ mixin template MeshLoopSliceOps() {
             immutable uint word = faceAttrOr(faceMarks, fi);
             immutable uint mat  = faceAttrOr(faceMaterial, fi);
             immutable uint part = faceAttrOr(facePart, fi);
+            immutable ulong setm = faceAttrOr(faceSetMask, fi);   // task 1060, Stage 5c
             foreach (i; before .. newFaces.length) {
                 newWord ~= word;
                 newMat  ~= mat;
                 newPart ~= part;
+                newSetMask ~= setm;
                 if (carryUv) newSrc ~= fi;   // every sub-face's UV island source
             }
         }
@@ -1280,6 +1284,7 @@ mixin template MeshLoopSliceOps() {
                     newWord  ~= faceAttrOr(faceMarks, fi);
                     newMat   ~= faceAttrOr(faceMaterial, fi);
                     newPart  ~= faceAttrOr(facePart, fi);
+                    newSetMask ~= faceAttrOr(faceSetMask, fi);
                     if (carryUv) newSrc ~= fi;
                 }
             }
@@ -1306,6 +1311,7 @@ mixin template MeshLoopSliceOps() {
                 newWord  ~= faceAttrOr(faceMarks, fi);
                 newMat   ~= faceAttrOr(faceMaterial, fi);
                 newPart  ~= faceAttrOr(facePart, fi);
+                newSetMask ~= faceAttrOr(faceSetMask, fi);
                 if (carryUv) newSrc ~= fi;   // absorbed mids interpolate in THIS face
             }
         }
@@ -1375,6 +1381,7 @@ mixin template MeshLoopSliceOps() {
                     // material would be AA-iteration-order nondeterministic.
                     newMat  ~= 0u;
                     newPart ~= 0u;
+                    newSetMask ~= 0UL;   // task 1060, Stage 5c — same "no source" default
                     // No single source face for a cap (its loop can stitch
                     // several ring faces), so its corners have no island to
                     // interpolate in and stay ZERO — the pre-0682 drop
@@ -1458,9 +1465,12 @@ mixin template MeshLoopSliceOps() {
                "insertEdgeLoopsMulti: newWord/newFaces length mismatch");
         assert(newMat.length == faces.length && newPart.length == faces.length,
                "insertEdgeLoopsMulti: newMat/newPart/newFaces length mismatch");
+        assert(newSetMask.length == faces.length,
+               "insertEdgeLoopsMulti: newSetMask/newFaces length mismatch");
         setFaceMarksFrom(newWord, ~Marks.Select);
         faceMaterial = newMat;
         facePart     = newPart;
+        faceSetMask  = newSetMask;
         rebuildEdges();
         buildLoops();
         resetSelection();   // resizes + clears all selection; calls commitChange

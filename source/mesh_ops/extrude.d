@@ -1466,6 +1466,7 @@ mixin template MeshExtrudeOps() {
             uint srcFace = bridgeMaterialSrc[bi];
             faceMaterial       ~= faceAttrOr(faceMaterial, srcFace);
             facePart           ~= faceAttrOr(facePart, srcFace);
+            faceSetMask        ~= faceAttrOr(faceSetMask, srcFace);   // task 1060, Stage 5c
             faceSelectionOrder ~= 0;
         }
         resizeSubpatch();
@@ -1602,6 +1603,7 @@ mixin template MeshExtrudeOps() {
                 int[]    keptOrder;
                 uint[]   keptMaterial;
                 uint[]   keptPart;
+                ulong[]  keptSetMask;   // task 1060, Stage 5c
                 keptFaces.reserve(faces.length);
                 keptWord.reserve(faces.length);
                 keptOrder.reserve(faces.length);
@@ -1612,6 +1614,7 @@ mixin template MeshExtrudeOps() {
                 uint[]   droppedFaceMat;
                 uint[]   droppedFacePart;
                 uint[]   droppedFaceSub;
+                ulong[]  droppedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
                 size_t newIdx = 0;
                 foreach (fi; faceIndices) {
                     auto f = faces[fi];
@@ -1623,6 +1626,7 @@ mixin template MeshExtrudeOps() {
                             droppedFaceMat   ~= faceAttrOr(faceMaterial, fi);
                             droppedFacePart  ~= faceAttrOr(facePart, fi);
                             droppedFaceSub   ~= (isFaceSubpatch(fi) ? 1u : 0u);
+                            droppedFaceSetMask ~= faceAttrOr(faceSetMask, fi);
                         }
                         continue;
                     }
@@ -1633,10 +1637,12 @@ mixin template MeshExtrudeOps() {
                     keptOrder    ~= faceAttrOr(faceSelectionOrder, fi);
                     keptMaterial ~= faceAttrOr(faceMaterial, fi);
                     keptPart     ~= faceAttrOr(facePart, fi);
+                    keptSetMask  ~= faceAttrOr(faceSetMask, fi);
                 }
                 if (recExtrude && droppedFaceIdx.length)
                     editRecorder_.recordRemoveFaces(droppedFaceIdx, droppedFaceLists,
-                                                    droppedFaceMat, droppedFacePart, droppedFaceSub);
+                                                    droppedFaceMat, droppedFacePart, droppedFaceSub,
+                                                    droppedFaceSetMask);
                 faces              = keptFaces;
                 // Select ends up cleared regardless (clearFaceSelection() runs
                 // later in this function), so dropping it here via keepMask
@@ -1646,6 +1652,7 @@ mixin template MeshExtrudeOps() {
                 faceSelectionOrder = keptOrder;
                 faceMaterial       = keptMaterial;
                 facePart           = keptPart;
+                faceSetMask        = keptSetMask;
             } else {
                 foreach (fi; 0 .. facesLenBeforeCleanup) faceRemap[fi] = cast(int)fi;
             }
@@ -2063,6 +2070,7 @@ mixin template MeshExtrudeOps() {
         uint[][] newFaces;
         uint[]   newMat;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c
         int[]    newOrd;
         uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
@@ -2071,6 +2079,7 @@ mixin template MeshExtrudeOps() {
             newFaces ~= rebuildFaceWithVertexSubs(orig, fi in faceSubs);
             newMat  ~=faceAttrOr(faceMaterial, fi);
             newPart ~=faceAttrOr(facePart, fi);
+            newSetMask ~= faceAttrOr(faceSetMask, fi);
             newOrd  ~=faceAttrOr(faceSelectionOrder, fi);
             newWord ~= faceAttrOr(faceMarks, fi);
         }
@@ -2079,6 +2088,7 @@ mixin template MeshExtrudeOps() {
             newFaces ~= nf.verts;
             newMat   ~=faceAttrOr(faceMaterial, nf.srcFi);
             newPart  ~=faceAttrOr(facePart, nf.srcFi);
+            newSetMask ~= faceAttrOr(faceSetMask, nf.srcFi);
             newOrd   ~= 0;
             newWord  ~= faceAttrOr(faceMarks, nf.srcFi);
         }
@@ -2086,6 +2096,7 @@ mixin template MeshExtrudeOps() {
         faces              = newFaces;
         faceMaterial       = newMat;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         faceSelectionOrder = newOrd;
 
         // Rebuild faceMarks from scratch (resize+zero ALL bits, then set from
@@ -2642,9 +2653,11 @@ mixin template MeshExtrudeOps() {
             int orientFace = orientFaceOf(e);
             uint mat  = faceAttrOr(faceMaterial, orientFace);
             uint part = faceAttrOr(facePart, orientFace);
+            ulong setm = faceAttrOr(faceSetMask, orientFace);   // task 1060, Stage 5c
             foreach (k; 1 .. N + 1) {
                 faceMaterial       ~= mat;
                 facePart           ~= part;
+                faceSetMask        ~= setm;
                 faceSelectionOrder ~= 0;
             }
         }
@@ -2989,6 +3002,7 @@ mixin template MeshExtrudeOps() {
         uint[][] newFaces;
         uint[]   newMat;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c
         int[]    newOrd;
         uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
@@ -3010,6 +3024,7 @@ mixin template MeshExtrudeOps() {
             pushSrc(faces[fi], fi);
             newMat   ~=faceAttrOr(faceMaterial, fi);
             newPart  ~=faceAttrOr(facePart, fi);
+            newSetMask ~= faceAttrOr(faceSetMask, fi);
             newOrd   ~=faceAttrOr(faceSelectionOrder, fi);
             newWord  ~= faceAttrOr(faceMarks, fi);
         }
@@ -3026,6 +3041,7 @@ mixin template MeshExtrudeOps() {
             pushSrc(cloned, fi);
             newMat   ~=faceAttrOr(faceMaterial, fi);
             newPart  ~=faceAttrOr(facePart, fi);
+            newSetMask ~= faceAttrOr(faceSetMask, fi);
             newOrd   ~= 0;
             newWord  ~= faceAttrOr(faceMarks, fi);
         }
@@ -3073,6 +3089,7 @@ mixin template MeshExtrudeOps() {
             }
             newMat  ~=faceAttrOr(faceMaterial, be.selFi);
             newPart ~=faceAttrOr(facePart, be.selFi);
+            newSetMask ~= faceAttrOr(faceSetMask, be.selFi);
             newOrd  ~= 0;
             // Task 0389: side wall inherits Subpatch from the extruded source
             // face it skirts, same as its material/part above (task 0613 §4.2:
@@ -3091,6 +3108,7 @@ mixin template MeshExtrudeOps() {
         faces              = newFaces;
         faceMaterial       = newMat;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         faceSelectionOrder = newOrd;
         // Rebuild faceMarks from scratch: resize+zero ALL bits (clears stale
         // Select from the old ordering), then set from newWord (task 0613
@@ -3310,6 +3328,7 @@ mixin template MeshExtrudeOps() {
         uint[][] newFaces;
         uint[]   newMat;
         uint[]   newPart;
+        ulong[]  newSetMask;   // task 1060, Stage 5c
         int[]    newOrd;
         uint[]   newWord;   // whole faceMarks word per new face (task 0613 §4.2)
 
@@ -3318,6 +3337,7 @@ mixin template MeshExtrudeOps() {
             newFaces ~= faces[fi];
             newMat   ~=faceAttrOr(faceMaterial, fi);
             newPart  ~=faceAttrOr(facePart, fi);
+            newSetMask ~= faceAttrOr(faceSetMask, fi);
             newOrd   ~=faceAttrOr(faceSelectionOrder, fi);
             newWord  ~= faceAttrOr(faceMarks, fi);
         }
@@ -3335,6 +3355,7 @@ mixin template MeshExtrudeOps() {
             newFaces ~= cloned;
             newMat   ~=faceAttrOr(faceMaterial, fi);
             newPart  ~=faceAttrOr(facePart, fi);
+            newSetMask ~= faceAttrOr(faceSetMask, fi);
             newOrd   ~= 0;
             newWord  ~= faceAttrOr(faceMarks, fi);
         }
@@ -3350,6 +3371,7 @@ mixin template MeshExtrudeOps() {
                 newFaces ~= reversed;
                 newMat   ~=faceAttrOr(faceMaterial, fi);
                 newPart  ~=faceAttrOr(facePart, fi);
+                newSetMask ~= faceAttrOr(faceSetMask, fi);
                 newOrd   ~= 0;
                 // Task 0389: the retained skin is a reversed duplicate of the
                 // source face at its ORIGINAL position — inherit its whole
@@ -3379,6 +3401,7 @@ mixin template MeshExtrudeOps() {
             else          newFaces ~= [cloneA, cloneB, b, a];
             newMat  ~=faceAttrOr(faceMaterial, be.selFi);
             newPart ~=faceAttrOr(facePart, be.selFi);
+            newSetMask ~= faceAttrOr(faceSetMask, be.selFi);
             newOrd  ~= 0;
             // Task 0389: skin wall inherits Subpatch from the source face it
             // skirts, same as its material/part above (task 0613 §4.2: now
@@ -3389,6 +3412,7 @@ mixin template MeshExtrudeOps() {
         faces              = newFaces;
         faceMaterial       = newMat;
         facePart           = newPart;
+        faceSetMask        = newSetMask;
         faceSelectionOrder = newOrd;
         setFaceMarksFrom(newWord, ~Marks.Select);
 

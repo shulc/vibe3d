@@ -42,7 +42,8 @@ class MeshPaste : Command, Operator {
             geometryClipboard.faces,
             geometryClipboard.subpatch,
             geometryClipboard.material,
-            geometryClipboard.part);
+            geometryClipboard.part,
+            geometryClipboard.setMask);
         if (n == 0) {
             snap = MeshSnapshot.init;
             return false;

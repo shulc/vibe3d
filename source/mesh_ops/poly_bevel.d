@@ -1356,14 +1356,17 @@ mixin template MeshPolyBevelOps() {
         // grow all arrays (D zero-fills new slots).
         const size_t origMatLen  = faceMaterial.length;
         const size_t origPartLen = facePart.length;
+        const size_t origSetLen  = faceSetMask.length;   // task 1060, Stage 5c
         resizeSubpatch();               // grows faceMarks to faces.length
         faceMaterial.length = faces.length;
         facePart.length     = faces.length;
+        faceSetMask.length  = faces.length;
         foreach (k; 0 .. appendedFi.length) {
             const uint newFi = appendedFi[k];
             const uint srcFi  = fanSrc[k];
             faceMaterial[newFi] = (srcFi < origMatLen  ? faceMaterial[srcFi] : 0u);
             facePart[newFi]     = (srcFi < origPartLen ? facePart[srcFi]     : 0u);
+            faceSetMask[newFi]  = (srcFi < origSetLen  ? faceSetMask[srcFi]  : 0UL);
             setFaceSubpatch(newFi, isFaceSubpatch(srcFi));
         }
 
