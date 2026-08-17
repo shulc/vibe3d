@@ -9,6 +9,13 @@ import tool;
 import edit_session : KeepAliveOnCancel;
 import mesh;
 import math;
+// Task 1054 Phase 4: the band-aware ring preview (`selectionRingPreviewMask`)
+// and the fallback-case scrub rail (`bandFirstRail`) both need to run the
+// SAME `bandWalk` law the kernel commits (`insertEdgeLoopsMulti`'s
+// `bandFaces` branch, source/mesh_ops/loop_slice.d), not re-derive it.
+// `mesh.d` also imports these (privately, for its own mixin) but a private
+// import is not transitive, so this tool needs its own.
+import mesh_ops.loop_slice : bandWalk, BandCell;
 import editmode : EditMode;
 import params : Param, IntEnumEntry, wireTagForValue;
 import hover_state : g_hoveredEdge;
@@ -449,6 +456,23 @@ public:
         root["tool"]        = JSONValue("loopSlice");
         root["hoveredEdge"] = JSONValue(g_hoveredEdge);
         root["seedEdge"]    = JSONValue(seeds_.length > 0 ? cast(int)seeds_[0] : -1);
+        // Task 1054 Phase 4: the WORLD/layer-space scrub rail `onMouseMotion`
+        // drags along (`refreshSeedRail`, above) — test-only debug fields (no
+        // UI control reads these), so the fallback-case rail fix can be
+        // asserted directly rather than inferred from a drag's side effect.
+        // `seedA_`/`seedB_` are D's default float NaN until the first
+        // `refreshSeedRail()` (i.e. an arm) runs — std.json refuses to encode
+        // NaN, so `seedEdge`'s own "-1 until latched" idiom is mirrored here
+        // as an empty array (reproduced: without this guard, `/api/tool/state`
+        // 500s on ANY activation before the tool has ever armed, e.g. a bare
+        // `tool.set mesh.loopSliceTool on`).
+        JSONValue[] emptyVec;
+        root["seedRailA"]   = seeds_.length > 0
+            ? JSONValue([JSONValue(seedA_.x), JSONValue(seedA_.y), JSONValue(seedA_.z)])
+            : JSONValue(emptyVec);
+        root["seedRailB"]   = seeds_.length > 0
+            ? JSONValue([JSONValue(seedB_.x), JSONValue(seedB_.y), JSONValue(seedB_.z)])
+            : JSONValue(emptyVec);
         root["dragging"]    = JSONValue(scrubbing_);   // 0232 renamed dragging_ -> scrubbing_ (mesh drag)
         root["armed"]       = JSONValue(armed_);       // 0232 standing preview held on the mesh
         root["built"]       = JSONValue(built_);
@@ -620,8 +644,35 @@ public:
     // Returns a cage-indexed bool[] (length == mesh.edges.length); an empty
     // selection (or Edges mode, where `activationSeeds()` only seeds from an
     // edge selection, never from here) yields an all-false mask.
+    //
+    // Task 1054 Phase 4: in BAND mode (`select` ON, Polygons, a non-empty
+    // face selection — the exact condition `restrictFor` uses to enter band
+    // mode, mirrored here rather than re-derived) the union-of-full-rings
+    // computation above is WRONG. That union is what `select = off` cuts
+    // (the whole unrestricted belt through each seed); band mode (§3.1) is a
+    // DIFFERENT algorithm that never collects a ring at all, so the old
+    // preview drew edges the cut would never touch and omitted the ones it
+    // would (e.g. a turn's second cut edge). Fixed by running the identical
+    // `bandWalk` law the kernel commits and translating each cell's two
+    // resolved ring-local sides to cage edge indices — by §3.2's
+    // shared-rail identity those ARE the pre-cut edges the walk places a
+    // vertex on (a chain of k cells touches exactly k+1 distinct edges open,
+    // k closed, since consecutive cells share the boundary edge).
     public const(bool)[] selectionRingPreviewMask() const {
         auto res = new bool[](mesh.edges.length);
+        if (sliceSelected_ && *editMode == EditMode.Polygons) {
+            auto sel = selectedFaceIndices();
+            if (sel.length > 0) {
+                foreach (chain; bandWalk(mesh.faces, sel))
+                    foreach (cell; chain) {
+                        if (cell.fi >= mesh.faces.length) continue;
+                        auto f = mesh.faces[cell.fi];
+                        markBandRingEdge(res, f, cell.A);
+                        markBandRingEdge(res, f, cell.B);
+                    }
+                return res;
+            }
+        }
         foreach (seed; activationSeeds()) {
             if (seed >= mesh.edges.length) continue;
             foreach (ei; mesh.loopSliceRingEdges(seed))
@@ -629,6 +680,17 @@ public:
                     res[ei] = true;
         }
         return res;
+    }
+
+    // Marks the cage edge index of `f`'s local ring-edge `localIdx` true in
+    // `res` (k -> f[k]->f[(k+1)%n], the same local-edge convention
+    // `activationSeeds()`'s fallback and `seedRail`/`bandFirstRail` use), if
+    // resolvable. Shared helper for `selectionRingPreviewMask`'s band branch.
+    private void markBandRingEdge(bool[] res, const(uint)[] f, uint localIdx) const {
+        if (f.length == 0 || localIdx >= f.length) return;
+        uint va = f[localIdx], vb = f[(localIdx + 1) % f.length];
+        uint ei = mesh.edgeIndex(va, vb);
+        if (ei != ~0u && ei < res.length) res[ei] = true;
     }
 
     /// HUD marker-select (task 0239 M5): choose WHICH slice a subsequent
@@ -969,7 +1031,7 @@ public:
                 dropArmedPreview();
                 return false;
             }
-            seedRail(seeds_[0], seedA_, seedB_);
+            refreshSeedRail();
             scrubbing_ = true;
             return true;
         }
@@ -1018,7 +1080,7 @@ public:
         // Latch the ORIGINAL selection now, before rebuildCut()'s standing
         // preview overwrites it — Slice Selected restricts to THIS set.
         armedSelFaces_ = selectedFaceIndices();
-        seedRail(seeds_[0], seedA_, seedB_);
+        refreshSeedRail();
         armed_     = true;
         scrubbing_ = true;
         built_     = false;
@@ -1172,7 +1234,12 @@ private:
     // The order is load-bearing since Phase 3 wired the band walk: it is
     // consumed directly as `bandFaces` (`restrictFor`, below) and the band
     // walk chains over it in THIS order (plan §1 step 1), not as a plain SET.
-    uint[] selectedFaceIndices() {
+    // `const` (task 1054 Phase 4): every call it makes (`mesh.
+    // hasAnySelectedFaces`/`mesh.selectedFaceIndicesInSelectionOrder`) is
+    // itself const, and `selectionRingPreviewMask()` — also `const` — needs
+    // to call this to build the band-aware overlay (below) rather than
+    // duplicate its logic.
+    uint[] selectedFaceIndices() const {
         if (!mesh.hasAnySelectedFaces()) return [];
         return mesh.selectedFaceIndicesInSelectionOrder();
     }
@@ -1234,6 +1301,61 @@ private:
         uint va = face[j0], vb = face[(j0 + 1) % face.length];
         a = mesh.vertices[va];
         b = mesh.vertices[vb];
+    }
+
+    // Task 1054 Phase 4 — DECISION, not deferred (per the plan's own flag on
+    // this area): `activationSeeds()`'s fallback branch (empty
+    // `interiorEdgesOfSelectedFaces()`, only reachable for a lone/disjoint
+    // band selection, §3.4) hands `seedRail` an ARBITRARY edge of the
+    // lowest-index selected face — picked only to prove "there is something
+    // to cut" (SHOULD-FIX 3), never meant to describe a drag direction.
+    // Band mode ignores `seeds_`/`candSeeds` entirely for the actual cut
+    // (`insertEdgeLoopsMulti`'s `bandFaces` walk never reads them), so
+    // nothing was geometrically WRONG — but a scrub along that rail can
+    // point a screen direction the cut itself never uses.
+    //
+    // Scope of the fix: ONLY the fallback case. The common band case
+    // (`interiorEdgesOfSelectedFaces()` non-empty — two-or-more mutually
+    // adjacent selected faces) keeps `seedRail(seeds_[0], ...)` unchanged:
+    // there `seeds_[0]` is a real interior edge of the selection, already
+    // meaningful in practice (for a simple chain it IS one of the walk's
+    // own resolved sides), and it is the rail `test_loop_slice_band_
+    // interactive.d`'s two shapes already exercise the arm through — so
+    // widening this beyond the one case the review flagged would re-open
+    // already-tested behaviour for no case the plan named. When the
+    // fallback DID produce `seeds_`, swap in the FIRST band cell's own
+    // resolved side instead — an edge the walk is guaranteed to actually
+    // cut, computed by the identical `bandWalk` law the kernel commits and
+    // the Phase-4 overlay (`selectionRingPreviewMask`) reads. Shared by
+    // both call sites that set the rail (`onMouseButtonDown`'s fresh arm
+    // and its "press while already armed" re-scrub) so the two can never
+    // disagree about which rail is live.
+    void refreshSeedRail() {
+        if (seeds_.length == 0) return;
+        if (restrictFor(armedSelFaces_) !is null
+            && mesh.interiorEdgesOfSelectedFaces().length == 0) {
+            Vec3 a, b;
+            if (bandFirstRail(armedSelFaces_, a, b)) { seedA_ = a; seedB_ = b; return; }
+        }
+        seedRail(seeds_[0], seedA_, seedB_);
+    }
+
+    // The world/layer-space rail of the FIRST cell the band walk will
+    // actually cut (chain 0, cell 0's own A-side) — see `refreshSeedRail`
+    // above. Returns `false` (leaving `a`/`b` untouched) when `sel` yields
+    // no chain, so the caller falls back to the ordinary `seedRail`.
+    bool bandFirstRail(uint[] sel, out Vec3 a, out Vec3 b) const {
+        if (sel.length == 0) return false;
+        auto chains = bandWalk(mesh.faces, sel);
+        if (chains.length == 0 || chains[0].length == 0) return false;
+        auto cell = chains[0][0];
+        if (cell.fi >= mesh.faces.length) return false;
+        auto f = mesh.faces[cell.fi];
+        if (cell.A >= f.length) return false;
+        uint va = f[cell.A], vb = f[(cell.A + 1) % f.length];
+        a = mesh.vertices[va];
+        b = mesh.vertices[vb];
+        return true;
     }
 
     // Re-lay `positions_` per the Mode law (task 0239). A no-op below
