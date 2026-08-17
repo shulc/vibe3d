@@ -7514,18 +7514,18 @@ void main(string[] args) {
                     // mirrors into the preferences. A direct field write here
                     // would skip all four.
                     {
-                        import display_state : DisplayStyle;
+                        import display_state : DisplayStyle,
+                                               kDisplayStyleOrder,
+                                               displayStyleLabel,
+                                               displayStyleId;
                         import std.format : format;
-                        static immutable string[3] dsLabels =
-                            ["Shaded", "Solid", "Wireframe"];
-                        static immutable string[3] dsIds =
-                            ["shaded", "solid", "wireframe"];
-                        static immutable DisplayStyle[3] dsVals = [
-                            DisplayStyle.Shaded, DisplayStyle.Solid,
-                            DisplayStyle.Wireframe
-                        ];
+                        // Task 1090: was three hand-kept `[3]` arrays here and
+                        // three more in ui/panels.d. They are one table in
+                        // display_state.d now — see `kDisplayStyleOrder` for
+                        // why a `final switch` was not already the gate people
+                        // thought it was.
                         int dsIdx = 0;
-                        foreach (i, dv; dsVals)
+                        foreach (i, dv; kDisplayStyleOrder)
                             if (dv == _vcell.display.active.style) dsIdx = cast(int)i;
 
                         // Beside the view combo: its origin is (4,4) and it is
@@ -7536,7 +7536,8 @@ void main(string[] args) {
                         ImGui.SetCursorPos(ImVec2(4 + 120 + 4, 4));
                         ImGui.SetNextItemWidth(100.0f);
                         bool _dsOpen = ImGui.BeginCombo(
-                            "##vpStyle" ~ to!string(k), dsLabels[dsIdx]);
+                            "##vpStyle" ~ to!string(k),
+                            displayStyleLabel(kDisplayStyleOrder[dsIdx]));
                         // Captured while LastItemData is still the combo
                         // BUTTON, before the popup body is submitted, and with
                         // the same two relax flags the view combo uses — so the
@@ -7549,13 +7550,13 @@ void main(string[] args) {
                                 ImGuiHoveredFlags.AllowWhenBlockedByPopup))
                             _cellWidgetHovered = true;
                         if (_dsOpen) {
-                            foreach (i, dl2; dsLabels) {
+                            foreach (i, dv; kDisplayStyleOrder) {
                                 bool sel = (i == dsIdx);
-                                if (ImGui.Selectable(dl2, sel)
+                                if (ImGui.Selectable(displayStyleLabel(dv), sel)
                                     && commandHandlerDelegate !is null)
                                     commandHandlerDelegate("viewport.displayStyle",
                                         format(`{"_positional":["%s"],"viewport":%d}`,
-                                               dsIds[i], k));
+                                               displayStyleId(dv), k));
                                 if (sel) ImGui.SetItemDefaultFocus();
                             }
                             ImGui.EndCombo();
@@ -8257,6 +8258,16 @@ void main(string[] args) {
                         // camera and is therefore already carried by
                         // view/proj above.
                         _newKey.imagePlaneKey = _planeKey;
+                        // Task 1090: the current-weight-map term. Shared, and
+                        // read through the SAME accessor the render pass
+                        // calls, so the key cannot key on a different name
+                        // than the one that was drawn. See
+                        // DirtyKey.weightMapKey for why nothing above carries
+                        // it and for what this term cannot be tested against.
+                        {
+                            import weightmap_view : currentWeightMapKey;
+                            _newKey.weightMapKey = currentWeightMapKey();
+                        }
                         if (_newKey != _cv.lastKey) {
                             needRender      = true;
                             _cv.lastKey     = _newKey;

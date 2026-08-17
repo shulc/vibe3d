@@ -192,14 +192,19 @@ unittest {
     // moved — the fill and the shaded surface share a silhouette, so it would
     // look like a viewport that simply ignores the command.
     import display_state : ViewportDisplay, DisplayStyle, DrawPlan,
-                           resolveDrawPlan;
+                           resolveDrawPlan, SurfaceShading;
 
     // 1. The field alone discriminates.
+    //
+    // Task 1090 turned `facesLit` from storage into a derived accessor over a
+    // three-valued `shading` field, so the mutation is written against the
+    // storage. It is the same mutation: `Fill` is what `facesLit == false`
+    // used to mean, and the accessor still reports it as such below.
     DirtyKey a, b;
     a.fboW = 640; b.fboW = 640;
     a.fboH = 480; b.fboH = 480;
     assert(a == b, "sanity: identical keys must compare equal");
-    b.planActive.facesLit = false;   // DrawPlan's default is true, so this bites
+    b.planActive.shading = SurfaceShading.Fill;  // the default is Material
     assert(b.planActive.facesLit != a.planActive.facesLit,
         "sanity: the mutation must actually change the field");
     assert(a != b,

@@ -91,6 +91,70 @@ unittest {
         ~ "so not even a depth-only face pass is allowed");
     assert(p.drawVerts,
         "Wireframe draws vertices as well as the edges connecting them");
+
+    // Task 1090. Note what `facesLit` alone can and cannot say here: it is
+    // false for Weight exactly as it is for Solid, so the SHADING field is
+    // what separates the two, and asserting only `!facesLit` would pass on a
+    // Weight case that had silently fallen through to the unshaded fill.
+    d.active.style = DisplayStyle.Weight;
+    p = resolveDrawPlan(d, false);
+    assert(p.drawFaces, "the weight style draws a filled surface");
+    assert(!p.facesLit, "the weight style is UNLIT — measured, not inferred");
+    assert(p.shading == SurfaceShading.Weight,
+        "the weight style must resolve to its OWN shading arm; falling "
+        ~ "through to Fill renders the scheme grey and still reports "
+        ~ "facesLit:false, which is why this line exists");
+    assert(!p.drawVerts,
+        "the weight style is not a lines-only style; it must not force "
+        ~ "vertex dots on");
+    assert(p.drawWire,
+        "the surface style must not disturb the overlay axis");
+
+    // And every OTHER style keeps its own arm — a switch that wrote the new
+    // value unconditionally would pass every assertion above.
+    d.active.style = DisplayStyle.Shaded;
+    assert(resolveDrawPlan(d, false).shading == SurfaceShading.Material);
+    d.active.style = DisplayStyle.Solid;
+    assert(resolveDrawPlan(d, false).shading == SurfaceShading.Fill);
+    d.active.style = DisplayStyle.Wireframe;
+    assert(resolveDrawPlan(d, false).shading == SurfaceShading.Fill,
+        "a lines-only style has no face pass, but the field is still resolved "
+        ~ "determinately — and to the value that keeps `facesLit` false");
+}
+
+// Task 1090: the style tables that both viewport combos now build from.
+//
+// WHAT THIS DOES NOT REACH, said plainly. `viewport.displayStyle`'s own parse
+// switch is a THIRD hand-kept spelling of these names, and it is not checked
+// here: the command needs a live `ViewportManager` to construct, which needs a
+// GL context. It is checked where it can be — `tests/test_weightmap_display.d`
+// posts the id and asserts the resulting style, and `tests/test_viewport_display.d`
+// already does the same for the other three. So the chain is combo →
+// `displayStyleId` → (HTTP test) → the parse switch, with no link taken on
+// trust; it just is not all in one file.
+unittest {
+    import std.string : toLower;
+
+    // Every declared style is offered by the combos, exactly once.
+    foreach (s; kDisplayStyleOrder) {
+        int seen = 0;
+        foreach (t; kDisplayStyleOrder) if (t == s) seen++;
+        assert(seen == 1, "kDisplayStyleOrder must list each style once");
+        assert(displayStyleLabel(s).length > 0);
+        assert(displayStyleId(s).length > 0);
+        assert(displayStyleId(s) == displayStyleLabel(s).toLower,
+            "the command id is the label lower-cased; if that ever stops "
+            ~ "being true, this assertion is the place to say so rather than "
+            ~ "letting a combo post an argument the command refuses");
+    }
+
+    // The ids are distinct — two styles sharing one id would make half the
+    // combo unreachable while every other assertion here still passed.
+    foreach (i, a; kDisplayStyleOrder)
+        foreach (j, b; kDisplayStyleOrder)
+            if (i != j)
+                assert(displayStyleId(a) != displayStyleId(b),
+                    "two styles share a command id");
 }
 
 unittest {

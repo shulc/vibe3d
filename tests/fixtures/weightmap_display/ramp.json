@@ -1,0 +1,345 @@
+{
+  "description": "Surface colour for a per-vertex weight display mode, measured off a live viewport's framebuffer and frozen. `rgb8` is what the framebuffer held; it is the ONLY authority here. A derived float column was deliberately left out -- asserting our arithmetic against our own re-derivation of it proves nothing.",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "method": "self-drive",
+    "reference": "a third-party polygon modelling application, driven headlessly by our own capture harness and read back from its own framebuffer",
+    "captured_utc": "2026-08-17T00:00:00Z"
+  },
+  "model": {
+    "neutral_rgb": [
+      0.5,
+      0.55,
+      0.5
+    ],
+    "positive_rgb": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "negative_rgb": [
+      0.0,
+      0.0,
+      1.0
+    ],
+    "blend": "linear in min(abs(w),1) from neutral toward the signed extreme",
+    "unlit": true,
+    "per_vertex_interpolated": true,
+    "zero_and_absent_are_equal": true
+  },
+  "quantiser": "nearest, ties toward zero. Pinned by the RED channel: w=0 reads 127 from an exact 127.5 (so ties go down) and w=0.05 reads 134 from 133.875 (so it is nearest and not truncation). This describes the REFERENCE's float->byte conversion, not ours -- ours is the GL pipeline's. It lives in the test, never in source/.",
+  "near_tie_divergence": "At products within ~0.05 LSB ABOVE a rounding tie the reference rounds DOWN where nearest-rounding goes up. Two instances are present in these cells and no more: green at w=0.4257143 (81 vs 80) and blue at w=0.2114286 (101 vs 100). Attributed to the CONVERSION and not to any constant, because blue's neutral (0.5) was never in dispute and is exact on thirteen cells, yet fails at its own thinnest margin exactly as green does at its. The test asserts this list; it does not widen a tolerance.",
+  "cases": [
+    {
+      "weight": -2.0,
+      "rgb8": [
+        0,
+        0,
+        255
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": -1.0,
+      "rgb8": [
+        0,
+        0,
+        255
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": -0.5,
+      "rgb8": [
+        64,
+        70,
+        191
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": -0.3333333,
+      "rgb8": [
+        85,
+        93,
+        170
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": -0.2,
+      "rgb8": [
+        102,
+        112,
+        153
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": -0.1,
+      "rgb8": [
+        115,
+        126,
+        140
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": 0.0,
+      "rgb8": [
+        127,
+        140,
+        127
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": 0.05,
+      "rgb8": [
+        134,
+        133,
+        121
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": 0.1,
+      "rgb8": [
+        140,
+        126,
+        115
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": 0.2,
+      "rgb8": [
+        153,
+        112,
+        102
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": 0.3333333,
+      "rgb8": [
+        170,
+        93,
+        85
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": 0.5,
+      "rgb8": [
+        191,
+        70,
+        64
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": 0.75,
+      "rgb8": [
+        223,
+        35,
+        32
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": 1.0,
+      "rgb8": [
+        255,
+        0,
+        0
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": 1.5,
+      "rgb8": [
+        255,
+        0,
+        0
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": 2.0,
+      "rgb8": [
+        255,
+        0,
+        0
+      ],
+      "set": "ramp"
+    },
+    {
+      "weight": 0.0,
+      "rgb8": [
+        127,
+        140,
+        127
+      ],
+      "set": "uniform",
+      "role": "control",
+      "discriminating": false
+    },
+    {
+      "weight": 0.14000000059604645,
+      "rgb8": [
+        145,
+        121,
+        110
+      ],
+      "set": "uniform",
+      "role": "plan",
+      "discriminating": true
+    },
+    {
+      "weight": 0.21142859756946564,
+      "rgb8": [
+        154,
+        111,
+        100
+      ],
+      "set": "uniform",
+      "role": "plan",
+      "discriminating": true
+    },
+    {
+      "weight": 0.28285709023475647,
+      "rgb8": [
+        164,
+        101,
+        91
+      ],
+      "set": "uniform",
+      "role": "plan",
+      "discriminating": true
+    },
+    {
+      "weight": 0.35428568720817566,
+      "rgb8": [
+        173,
+        91,
+        82
+      ],
+      "set": "uniform",
+      "role": "plan",
+      "discriminating": true
+    },
+    {
+      "weight": 0.42571431398391724,
+      "rgb8": [
+        182,
+        80,
+        73
+      ],
+      "set": "uniform",
+      "role": "plan",
+      "discriminating": true
+    },
+    {
+      "weight": 0.004459999967366457,
+      "rgb8": [
+        128,
+        140,
+        127
+      ],
+      "set": "uniform",
+      "role": "extra",
+      "discriminating": true
+    },
+    {
+      "weight": 0.040139999240636826,
+      "rgb8": [
+        133,
+        135,
+        122
+      ],
+      "set": "uniform",
+      "role": "extra",
+      "discriminating": true
+    },
+    {
+      "weight": 0.07582999765872955,
+      "rgb8": [
+        137,
+        130,
+        118
+      ],
+      "set": "uniform",
+      "role": "extra",
+      "discriminating": true
+    },
+    {
+      "weight": 0.11151000112295151,
+      "rgb8": [
+        142,
+        125,
+        113
+      ],
+      "set": "uniform",
+      "role": "extra",
+      "discriminating": true
+    },
+    {
+      "weight": 0.18287000060081482,
+      "rgb8": [
+        151,
+        115,
+        104
+      ],
+      "set": "uniform",
+      "role": "extra",
+      "discriminating": true
+    },
+    {
+      "weight": -0.14000000059604645,
+      "rgb8": [
+        110,
+        121,
+        145
+      ],
+      "set": "uniform",
+      "role": "negative",
+      "discriminating": true
+    },
+    {
+      "weight": -0.28285709023475647,
+      "rgb8": [
+        91,
+        101,
+        164
+      ],
+      "set": "uniform",
+      "role": "negative",
+      "discriminating": true
+    },
+    {
+      "weight": 0.3333333134651184,
+      "rgb8": [
+        170,
+        93,
+        85
+      ],
+      "set": "uniform",
+      "role": "tie_recheck",
+      "discriminating": false
+    },
+    {
+      "weight": -0.3333333134651184,
+      "rgb8": [
+        85,
+        93,
+        170
+      ],
+      "set": "uniform",
+      "role": "tie_recheck",
+      "discriminating": false
+    }
+  ],
+  "cases_note": "Two frozen sets. `ramp` is the original sixteen-cell sweep that pinned the shape of the law. `uniform` is a later run of fifteen UNIFORM-weight cells, twelve of which were chosen so that the green neutral 0.55 and its rival 140/255 predict a DIFFERENT byte; every prediction was written down before the run. Keep both: the ramp set alone cannot see the 0.25-LSB constant question, and dropping the uniform set would let the rejected constant pass every case in this file."
+}

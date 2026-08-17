@@ -374,6 +374,16 @@ Prefs loadPrefs(string dir) {
                                 // command's together is exactly what the note
                                 // above asked for.
                                 case "Solid":     p.viewportDisplay[i].style = DisplayStyle.Solid;     break;
+                                // Task 1090: same reason as Solid above — a
+                                // pass draws it, so it is a style we may
+                                // persist. Missing this case is not a loud
+                                // failure: `default: break` below is SILENT,
+                                // so a profile saved in the weight style would
+                                // come back Shaded and the user's chosen
+                                // viewport would vanish once, at the next
+                                // launch. The round-trip unittest below is
+                                // what holds this.
+                                case "Weight":    p.viewportDisplay[i].style = DisplayStyle.Weight;    break;
                                 default: break;   // incl. styles no pass draws yet
                             }
                     if (auto wp = "wire" in cellJson)
@@ -985,6 +995,44 @@ unittest {
     foreach (i; [0, 2, 3])
         assert(q.viewportDisplay[i].style == DisplayStyle.Shaded,
             format("cell %d must be untouched by a write to cell 1", i));
+}
+
+// Task 1090: EVERY drawable style round-trips, the weight style included.
+//
+// Written as a loop over `kDisplayStyleOrder` rather than as a fourth copy of
+// the block above, so the NEXT style added to the enum is covered here with no
+// edit at all — which is the failure this block exists for. The reader's
+// `default: break` is silent, so an unhandled style does not throw, does not
+// warn, and simply comes back as the default; only an assertion notices.
+unittest {
+    import display_state : kDisplayStyleOrder, displayStyleLabel;
+
+    foreach (s; kDisplayStyleOrder) {
+        auto dir = makeScratch("viewportdisplayroundtrip");
+        scope(exit) cleanScratch(dir);
+
+        Prefs p;
+        p.viewportDisplay[2].style = s;
+        savePrefs(p, dir);
+
+        // The artefact must literally name it. `to!string` on the enum and the
+        // reader's case labels are two hand-kept spellings of one name, and
+        // this is where they are compared — in the file, not in the result.
+        import std.file : readText;
+        import std.algorithm : canFind;
+        assert(readText(buildPath(dir, "prefs.json"))
+                   .canFind(`"` ~ displayStyleLabel(s) ~ `"`),
+            format("the saved profile must name the style it is persisting "
+                   ~ "(%s); the enum's own to!string and the UI label have "
+                   ~ "drifted apart", displayStyleLabel(s)));
+
+        auto q = loadPrefs(dir);
+        assert(q.viewportDisplay[2].style == s,
+            format("style %s did not survive a save/load round trip — it came "
+                   ~ "back as %s. The reader's switch is missing a case, and "
+                   ~ "its `default: break` swallowed it silently",
+                   displayStyleLabel(s), displayStyleLabel(q.viewportDisplay[2].style)));
+    }
 }
 
 // missing file → defaults, no throw.

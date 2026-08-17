@@ -1933,6 +1933,13 @@ private void registerMeshCommands(EditorApp app) {
         new WeightmapRename(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.weightmap.set"] = () => cast(Command)
         new WeightmapSet(&mesh(), cameraView, editMode);
+    // Task 1090. The odd sibling of the four above: it writes the SESSION's
+    // current-map name, not the mesh, so it is `CmdFlags.UI` and records no
+    // undo entry. Registered here anyway — the map selection belongs to the
+    // weight-map family, not to the viewport family, because it is global
+    // state about a MESH channel and only its consumer is per-cell.
+    reg.commandFactories["mesh.weightmap.select"] = () => cast(Command)
+        new WeightmapSelect(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.edgeCrease.set"] = () => cast(Command)
         new EdgeCreaseSet(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.edgeCrease.clear"] = () => cast(Command)

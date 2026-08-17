@@ -20,6 +20,16 @@ import params : Param;
 //
 // All four use MeshSnapshot for undo (snapshot.d deep-dups meshMaps so
 // create/remove/rename/set are all reverted by a plain snapshot restore).
+//
+// A fifth (task 1090) authors NO mesh state at all:
+//   mesh.weightmap.select  {name}              — which map the viewport shows
+//
+// It is deliberately the odd sibling. The four above declare no `cmdFlags()`
+// and therefore default to `Model` (command.d) — they mutate the mesh and are
+// undoable. `select` writes a session-scope NAME (weightmap_view.d) and
+// touches neither the mesh nor the document, so it takes `CmdFlags.UI` and
+// lands no undo entry, exactly like `viewport.displayStyle` does for the other
+// half of the same feature (commands/viewport/command_base.d).
 // ---------------------------------------------------------------------------
 
 class WeightmapCreate : Command {
@@ -179,6 +189,47 @@ class WeightmapSet : Command {
     override bool revert() {
         if (!snap.filled) return false;
         snap.restore(*mesh);
+        return true;
+    }
+}
+
+/// `mesh.weightmap.select {name}` — which weight map the viewport's weight
+/// display style shows. `""` deselects (the surface goes neutral).
+///
+/// NOT VALIDATED against the mesh, on purpose. The selection is a NAME and
+/// resolution is lazy (`weightmap_view.resolveWeightMap`), so:
+///   * "select, then create" works — refusing an absent name would forbid it;
+///   * a name that stops resolving (the map is removed, renamed out from under
+///     the selection, or the primary layer changes to a mesh without it)
+///     renders the NEUTRAL, which is exactly what "no map selected" renders
+///     and exactly what was measured. Nothing has to notice; nothing has to
+///     re-point.
+/// Making this command validate would invent a lifetime rule nobody has
+/// measured and would still not cover the three ways a name goes stale AFTER
+/// it was accepted.
+class WeightmapSelect : Command {
+    private string name_;
+
+    this(Mesh* mesh, ref View view, EditMode editMode) {
+        super(mesh, view, editMode);
+    }
+
+    override string name()  const { return "mesh.weightmap.select"; }
+    override string label() const { return "Select Weight Map"; }
+
+    /// UI class: no mesh state, no document state, no undo entry.
+    /// `Command.isUndoable` derives from `Model | UiState | ToolLifecycle`, so
+    /// `UI` alone records nothing — the precedent is `ViewportCommand`, which
+    /// is what `viewport.displayStyle` itself uses.
+    override CmdFlags cmdFlags() const { return CmdFlags.UI; }
+
+    override Param[] params() {
+        return [ Param.string_("name", "Map", &name_, "") ];
+    }
+
+    override bool apply() {
+        import weightmap_view : setCurrentWeightMap;
+        setCurrentWeightMap(name_);
         return true;
     }
 }

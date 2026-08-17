@@ -17,6 +17,15 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 ///     the VBO; the subpatch-preview Tab gate keys on Marks separately.
 /// Includes Material even though it is not geometry: per-face material ids
 /// ARE baked into the VBO (GpuMesh.upload reads faceMaterial into matIdVbo).
+/// SECOND REASON, task 1090 — and it is worth stating because the first one
+/// on its own invites a narrowing: `MeshEditScope.Material` is also the class
+/// a MESH-MAP VALUE WRITE publishes (`Mesh.setMeshMapValue`, hence
+/// `setVertexWeight` and `mesh.weightmap.set`). The weight display style bakes
+/// those values into a per-corner colour buffer, and it is `upload()` that
+/// invalidates it — so dropping Material from this mask would freeze the
+/// weight colours at whatever they were when the map was created, with the
+/// edit visible in `/api/model` and nowhere on screen. `tests/test_weightmap_display.d`
+/// case A2 is that mutation's red.
 /// Includes Visibility for exactly the same reason (task 0613 S3): the Hide
 /// bit is consumed at UPLOAD time — hidden verts / edges leave the buffers
 /// and hidden faces drop to zero triangles — so unlike its Marks siblings it

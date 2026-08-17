@@ -1099,13 +1099,19 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             import std.conv   : to;
 
             static string planJson(in DrawPlan p) {
+                // `facesLit` is KEPT alongside `shading` (task 1090). It is
+                // asserted by the existing suite and it now reads off the
+                // derived accessor, so it cannot disagree with `shading`; but
+                // it can no longer SEPARATE the two unlit styles, which is
+                // exactly why `shading` joins it rather than replaces it.
                 return format(
-                    `{"drawFaces":%s,"facesLit":%s,"dim":%.6f,` ~
+                    `{"drawFaces":%s,"facesLit":%s,"shading":"%s","dim":%.6f,` ~
                     `"fillColor":[%.6f,%.6f,%.6f],` ~
                     `"drawWire":%s,"wireAlpha":%.6f,` ~
                     `"wireColor":[%.6f,%.6f,%.6f],"drawVerts":%s}`,
                     p.drawFaces ? "true" : "false",
                     p.facesLit  ? "true" : "false",
+                    p.shading.to!string,
                     p.dim,
                     p.fillColor[0], p.fillColor[1], p.fillColor[2],
                     p.drawWire  ? "true" : "false",
@@ -1138,9 +1144,35 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     viewGridFadeRadius(gs > 0 ? gs : 1.0f));
             }
 
+            // Task 1090: WHICH weight map is current, and whether it resolves.
+            //
+            // Here rather than on /api/selection because this endpoint's
+            // stated contract (above) is "the render inputs this cell's
+            // passes consume, off the same call the renderer makes" — and
+            // that is exactly what these two are: the same accessor and the
+            // same resolver, against the PRIMARY mesh.
+            //
+            // `weightMapResolved` is the discriminator the delete / rename /
+            // wrong-layer cases need. Those states render IDENTICALLY to "no
+            // map selected" by design (D7), so a pixel probe alone cannot
+            // separate "nothing selected" from "selected but dangling"; this
+            // field can.
+            string wmName;
+            bool   wmResolved;
+            {
+                import weightmap_view : currentWeightMapName, resolveWeightMap;
+                wmName = currentWeightMapName();
+                Mesh* pm = document.activeMesh();
+                wmResolved = wmName.length > 0 && pm !is null
+                    && resolveWeightMap(*pm, wmName) !is null;
+            }
+
             auto buf = appender!string();
-            buf.put(format(`{"activeId":%d,"cellCount":%d,"cells":[`,
-                           vpm.activeId, vpm.cellCount));
+            buf.put(format(`{"activeId":%d,"cellCount":%d,` ~
+                           `"weightMap":%s,"weightMapResolved":%s,"cells":[`,
+                           vpm.activeId, vpm.cellCount,
+                           JSONValue(wmName).toString(),
+                           wmResolved ? "true" : "false"));
             foreach (k; 0 .. vpm.cellCount) {
                 if (k > 0) buf.put(",");
                 Viewport3D cv = vpm.views[k];

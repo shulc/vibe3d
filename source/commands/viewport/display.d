@@ -60,10 +60,15 @@ final class ViewportDisplayStyle : ViewportCommand {
             // (`u_lit` in shader.d) and the face pass reads
             // `DrawPlan.facesLit`, so the value is consumed.
             case "solid":     style_ = DisplayStyle.Solid;     break;
+            // Task 1090: the weight-map surface. Accepted under the same rule
+            // the block above states — a pass DOES read it. With no map
+            // selected it draws the measured neutral, which is not a
+            // placeholder: it is the measured "no map selected" surface.
+            case "weight":    style_ = DisplayStyle.Weight;    break;
             default:
                 throw new Exception(
                     "viewport.displayStyle: expected 'wireframe', "
-                    ~ "'solid' or 'shaded', got '" ~ sval ~ "'");
+                    ~ "'solid', 'shaded' or 'weight', got '" ~ sval ~ "'");
         }
         cell_ = cell;
     }

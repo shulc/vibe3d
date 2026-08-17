@@ -281,6 +281,44 @@ struct DirtyKey {
     // never reaches the compare — the same neutrality argument as every term
     // above.
     ulong     itemHighlightKey = 0;
+
+    // Task 1090 — the current-weight-map term.
+    //
+    // WHY NONE OF THE TERMS ABOVE CARRY IT. Which weight map the viewport
+    // shows is SESSION state held by name (`weightmap_view`), not viewport
+    // state, so `planActive`/`planBackdrop` cannot carry it — the map name is
+    // deliberately kept out of `ViewportDisplay` (two cells must not be able
+    // to show two different maps, and `resolveDrawPlan` is pure). Selecting a
+    // different map moves no mesh version, no selection epoch and no upload
+    // version either: `mesh.weightmap.select` is a `CmdFlags.UI` command that
+    // writes one string. So without this field, switching maps changes what
+    // the pass draws and changes no key — the seventh instance of the bug this
+    // file already documents six times (`toolMat` above, the overlay terms,
+    // `gpuUploadVer`, `overlayHot`, the display term, `imagePlaneKey`,
+    // `itemHighlightKey`).
+    //
+    // A DIGEST, for the `imagePlaneKey` reason and not the display term's:
+    // this is real state that is not plan-shaped, folded from exactly what the
+    // pass reads (`currentWeightMapName()`, through the same accessor). Note
+    // the display term's own block argues for terms DERIVED FROM WHAT THE PASS
+    // READS over enumerated fields — which is this — while its specific advice
+    // ("ride the resolved plan") does not apply, because the name is not in
+    // the plan by design.
+    //
+    // SHARED, not per-cell: the map selection is global. WHICH cells draw the
+    // weight style is per-cell, and `planActive` above already carries that.
+    //
+    // AND SAY THE HONEST THING: this term has NO LIVE EFFECT UNDER `--test`
+    // and therefore no HTTP coverage at all. `app.d`'s cell loop short-
+    // circuits to `needRender = (k == activeId)` in test mode and never
+    // reaches the dirty-key compare — exactly as every sibling term's comment
+    // says. It is covered by `tests/unit/dirty_key_weightmap_test.d`, at the
+    // struct level, and that is the ceiling. Do not try to close the gap with
+    // a cleverer HTTP case; it is a property of the harness.
+    //
+    // `= 0` is CTFE-constant and inert in --test — the same neutrality
+    // argument as every term above.
+    ulong     weightMapKey = 0;
 }
 
 

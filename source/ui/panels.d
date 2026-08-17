@@ -734,25 +734,30 @@ void drawViewportPropsPanel(EditorApp app) {
         ImGui.Dummy(ImVec2(0, 2));
         ImGui.SeparatorText("Active Cell Display");
         {
-            import display_state : DisplayStyle, WireOverlay;
+            import display_state : DisplayStyle, WireOverlay,
+                                   kDisplayStyleOrder, displayStyleLabel,
+                                   displayStyleId;
             import std.format : format;
 
-            static immutable string[3] styleLabels = ["Shaded", "Solid", "Wireframe"];
-            static immutable string[3] styleIds    = ["shaded", "solid", "wireframe"];
-            static immutable DisplayStyle[3] styleVals =
-                [DisplayStyle.Shaded, DisplayStyle.Solid, DisplayStyle.Wireframe];
-
+            // Task 1090: the labels, the ids and the order come from
+            // `display_state` now, not from three hand-kept `[3]` arrays here.
+            // There were six such arrays across this file and app.d, and
+            // adding a style meant remembering all six; the combo below grows
+            // a new entry with no edit at all.
             int si = 0;
-            foreach (i, sv; styleVals) if (sv == v.display.active.style) si = cast(int)i;
+            foreach (i, sv; kDisplayStyleOrder)
+                if (sv == v.display.active.style) si = cast(int)i;
             ImGui.Text("Style");
             ImGui.SameLine();
             ImGui.SetNextItemWidth(-1.0f);
-            if (ImGui.BeginCombo("##vpDisplayStyle", styleLabels[si])) {
-                foreach (i, sl; styleLabels) {
+            if (ImGui.BeginCombo("##vpDisplayStyle",
+                                 displayStyleLabel(kDisplayStyleOrder[si]))) {
+                foreach (i, sv; kDisplayStyleOrder) {
                     bool sel = (i == si);
-                    if (ImGui.Selectable(sl, sel) && commandHandlerDelegate !is null)
+                    if (ImGui.Selectable(displayStyleLabel(sv), sel)
+                        && commandHandlerDelegate !is null)
                         commandHandlerDelegate("viewport.displayStyle",
-                            `{"_positional":["` ~ styleIds[i] ~ `"]}`);
+                            `{"_positional":["` ~ displayStyleId(sv) ~ `"]}`);
                     if (sel) ImGui.SetItemDefaultFocus();
                 }
                 ImGui.EndCombo();

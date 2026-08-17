@@ -75,6 +75,105 @@ enum DisplayStyle : ubyte {
     /// Lit surface from the material definition (diffuse / specular /
     /// glossiness). No image maps — we have none.
     Shaded,
+    /// The surface coloured by the CURRENT WEIGHT MAP's per-vertex value
+    /// (task 1090): neutral at zero, red toward +1, blue toward −1, clamped.
+    ///
+    /// REPLACES the surface pass — it is not a tint over shading, and it is
+    /// not lit: the measured colour carries no light, material or gamma term
+    /// (a control on the same quad, the same camera, the same run read the
+    /// shaded style at `(59,59,59)` and the unshaded fill at `(153,153,153)`,
+    /// while this style read the exact neutral). Drawing weights as an
+    /// OVERLAY on top of another style is a separate reference control with
+    /// its own switch, and so are numeric weight labels; neither is this.
+    ///
+    /// PER VERTEX, with the COLOUR interpolated across the face — measured,
+    /// not chosen (see `weightmap_view.weightSurfaceColor`).
+    ///
+    /// Which map: the session's current one (`weightmap_view`), by name. None
+    /// selected, or a name that does not resolve on this mesh, renders the
+    /// same neutral a zero weight does — which is what was measured, and here
+    /// it is reached structurally rather than by a branch.
+    ///
+    /// NOT the other single-component ramp that ships alongside it in the
+    /// reference (`2t + 0.5(1−t)`, saturating a third of the way along). That
+    /// one exists, it is adjacent, it serves other scalar channels, and it was
+    /// rejected by pixels at 51/255 and 85/255.
+    Weight,
+}
+
+/// How the face pass shades the surface — the SHADING half of `DisplayStyle`,
+/// resolved.
+///
+/// Replaces `DrawPlan`'s former `bool facesLit`, which could only say two
+/// things and now has three to say. Reaches GL as the lit shader's
+/// `u_shading`.
+enum SurfaceShading : ubyte {
+    /// Blinn-Phong from the material definition. Today's `Shaded`.
+    Material,
+    /// A flat fill at `DrawPlan.fillColor`, consulting no material and no
+    /// light. Today's `Solid`. Also what `Wireframe` resolves to — moot with
+    /// no face pass, kept determinate.
+    Fill,
+    /// The per-vertex weight colour, interpolated, with no light term at all.
+    Weight,
+}
+
+/// The order the surface styles are OFFERED in, and their UI text.
+///
+/// WHY THIS EXISTS. Until task 1090 the claim was that `resolveDrawPlan`'s
+/// `final switch` is the compiler's gate on a new `DisplayStyle` value. It is
+/// not, and the count is worth stating: `resolveDrawPlan` was the ONLY
+/// `final switch` over this enum. Every other consumer was hand-listed — a
+/// string switch in `prefs.d` with a SILENT `default: break` (so a persisted
+/// style the parser does not know vanishes without a word), a throwing switch
+/// in `commands/viewport/display.d`, and SIX `[3]`-sized static arrays across
+/// two UI files. A `[3]` array with four initialisers is a compile error, so
+/// the compiler would have caught the arrays — but only file by file, and only
+/// if you edited that file at all. Missing one leaves the new style
+/// unreachable from half the UI while every test still passes, because the
+/// tests drive the command.
+///
+/// So the tables live here, behind two `final switch`es, and both UI surfaces
+/// build their combo from `kDisplayStyleOrder`. After this, a new enum value
+/// breaks the build in `displayStyleLabel`, `displayStyleId`,
+/// `resolveDrawPlan` and the `static assert` below.
+///
+/// THE ORDER IS EXPLICIT AND IS NOT ENUM ORDER. The shipped combos read
+/// Shaded, Solid, Wireframe — which is neither declaration order nor
+/// alphabetical — and reordering a combo is a UI change nobody asked for.
+immutable DisplayStyle[] kDisplayStyleOrder = [
+    DisplayStyle.Shaded,
+    DisplayStyle.Solid,
+    DisplayStyle.Wireframe,
+    DisplayStyle.Weight,
+];
+
+static assert(kDisplayStyleOrder.length == __traits(allMembers, DisplayStyle).length,
+    "every DisplayStyle must appear in kDisplayStyleOrder — a value missing "
+    ~ "from it is a value no combo offers");
+
+/// The style's UI label (what a combo shows).
+string displayStyleLabel(DisplayStyle s) pure nothrow @safe @nogc {
+    final switch (s) {
+        case DisplayStyle.Shaded:    return "Shaded";
+        case DisplayStyle.Solid:     return "Solid";
+        case DisplayStyle.Wireframe: return "Wireframe";
+        case DisplayStyle.Weight:    return "Weight";
+    }
+}
+
+/// The style's command-argument spelling (what `viewport.displayStyle` parses).
+///
+/// Lower case, and it must stay in step with that command's own switch. The
+/// two are cross-checked in `tests/unit/display_state_test.d` (which may
+/// import the command; this module deliberately may not).
+string displayStyleId(DisplayStyle s) pure nothrow @safe @nogc {
+    final switch (s) {
+        case DisplayStyle.Shaded:    return "shaded";
+        case DisplayStyle.Solid:     return "solid";
+        case DisplayStyle.Wireframe: return "wireframe";
+        case DisplayStyle.Weight:    return "weight";
+    }
 }
 
 /// Wireframe-overlay style: whether, and how, lines are drawn over the
@@ -238,13 +337,29 @@ struct DrawPlan {
     /// Draw the solid surface at all. False ⇒ no face pass, not even
     /// depth-only: the model must be see-through.
     bool  drawFaces = true;
-    /// Light the surface. False ⇒ flat unshaded fill: the face pass runs
-    /// unchanged (same geometry, same hover/selection branches) with the
-    /// diffuse and specular terms removed AND the material no longer
-    /// consulted, so the fill carries no information about how the surface is
-    /// oriented and none about what it is made of. Reaches GL as the lit
-    /// shader's `u_lit`.
-    bool  facesLit  = true;
+    /// How the surface is shaded. Reaches GL as the lit shader's `u_shading`.
+    ///
+    /// `Fill` ⇒ flat unshaded fill: the face pass runs unchanged (same
+    /// geometry, same hover/selection branches) with the diffuse and specular
+    /// terms removed AND the material no longer consulted, so the fill carries
+    /// no information about how the surface is oriented and none about what it
+    /// is made of. `Weight` ⇒ the same face pass again, taking its base colour
+    /// from a per-vertex attribute instead (task 1090).
+    ///
+    /// This was a `bool facesLit` until task 1090 gave the axis a third value.
+    /// `facesLit` survives as a derived accessor below because it is what the
+    /// display endpoint reports and what several assertions read; it is no
+    /// longer storage, so there is exactly one field to resolve and no way for
+    /// the two to disagree.
+    SurfaceShading shading = SurfaceShading.Material;
+    /// Is the surface lit? DERIVED from `shading` — see above.
+    ///
+    /// Note what this does NOT distinguish: `Fill` and `Weight` are both
+    /// "not lit", so a test that only reads this cannot tell an unshaded fill
+    /// from a weight-coloured surface. Read `shading` for that.
+    bool facesLit() const pure nothrow @safe @nogc {
+        return shading == SurfaceShading.Material;
+    }
     /// Brightness multiplier for this pass (1.0 = full).
     float dim       = 1.0f;
     /// The unshaded fill colour, read by the face pass ONLY when
@@ -348,15 +463,22 @@ DrawPlan resolveDrawPlan(in ViewportDisplay d, bool isBackdrop) pure nothrow @sa
     final switch (st.style) {
         case DisplayStyle.Wireframe:
             p.drawFaces = false;
-            p.facesLit  = false;   // moot with no face pass; kept determinate
+            // Moot with no face pass; kept determinate. `Fill` and not
+            // `Material` so the endpoint keeps reporting `facesLit: false`
+            // here, exactly as it did when this was a bool.
+            p.shading   = SurfaceShading.Fill;
             break;
         case DisplayStyle.Solid:
             p.drawFaces = true;
-            p.facesLit  = false;
+            p.shading   = SurfaceShading.Fill;
             break;
         case DisplayStyle.Shaded:
             p.drawFaces = true;
-            p.facesLit  = true;
+            p.shading   = SurfaceShading.Material;
+            break;
+        case DisplayStyle.Weight:
+            p.drawFaces = true;
+            p.shading   = SurfaceShading.Weight;
             break;
     }
 

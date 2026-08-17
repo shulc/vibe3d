@@ -21,6 +21,7 @@ module ui.viewport_render;
 
 import math;                 // Vec3, Viewport, ModelSpace, identityMatrix, matMul4
 import mesh;                 // Mesh
+import weightmap_view       : currentWeightMapName;  // task 1090
 import editmode;             // EditMode
 import seltype;              // SelType, viewportPickType
 import mesh_gpu              : BaseWire;
@@ -76,7 +77,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                                bool showFaceHover) {
     with (app) {
     import bindbc.opengl;
-    import display_state : DrawPlan, resolveDrawPlan;
+    import display_state : DrawPlan, resolveDrawPlan, SurfaceShading;
 
     // The value `LitShader`'s constructor seeds `u_fillColor` to. Restoring to
     // it (rather than to whichever plan just drew) keeps the program in the
@@ -432,13 +433,21 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             // and the fixes for those two are not the same fix.
             auto zBackdrop = g_fc.backdrop();
             if (backdropPlan.drawFaces) {
+                // Task 1090, D6: a background layer under `SameAsActive`
+                // mirrors the active style, so it gets its own weight colours
+                // resolved against ITS OWN mesh — the map is selected by name
+                // and a background layer may or may not carry that name. One
+                // that does not takes the disable path and reads the neutral,
+                // dimmed, which is the same rule the active pass follows.
+                if (backdropPlan.shading == SurfaceShading.Weight)
+                    bg.gpu.uploadWeightColors(lyr.meshRef(), currentWeightMapName());
                 litShader.useProgram(bgModel, vp);
                 litShader.setSurfaces(lyr.meshRef().surfaces);
                 litShader.setDim(backdropPlan.dim);
-                litShader.setLit(backdropPlan.facesLit);
+                litShader.setShading(backdropPlan.shading);
                 litShader.setFillColor(backdropPlan.fillColor);
                 bg.gpu.drawFaces(litShader);
-                litShader.setLit(true);
+                litShader.setShading(SurfaceShading.Material);
                 litShader.setFillColor(kDefaultFill);
                 litShader.setDim(1.0f);
             }
@@ -558,9 +567,19 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     {
         auto zMesh = g_perf.scope_(Cat.drawMesh);
         if (activePlan.drawFaces) {
+            // Task 1090: fill the per-corner weight colours before the
+            // program is bound, and only when this cell asked for them.
+            //
+            // LAZY, IN THE RENDER PASS, and not in app.d's upload block: the
+            // weight style is PER CELL, and the upload block has no idea
+            // which cells want it. The stamp inside `uploadWeightColors`
+            // makes the other three cells of a Quad layout free, so "once per
+            // cell" costs the same as "once per frame" would.
+            if (activePlan.shading == SurfaceShading.Weight)
+                gpu.uploadWeightColors(mesh, currentWeightMapName());
             litShader.useProgram(meshModel, vp);
             litShader.setSurfaces(mesh.surfaces);
-            litShader.setLit(activePlan.facesLit);
+            litShader.setShading(activePlan.shading);
             litShader.setFillColor(activePlan.fillColor);
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
@@ -574,7 +593,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             }
             // Restore, same discipline as the backdrop pass's setDim: the
             // program is shared with every preview/gizmo draw downstream.
-            litShader.setLit(true);
+            litShader.setShading(SurfaceShading.Material);
             litShader.setFillColor(kDefaultFill);
         }
     }

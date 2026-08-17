@@ -8,7 +8,8 @@ import view;
 import math;
 import mesh : Surface, GpuMesh;
 import gl_thread_guard : glThreadGuard;
-import display_state : kSchemeSolidFill;
+import display_state : kSchemeSolidFill, SurfaceShading;
+import weightmap_view : kWeightRamp;   // task 1090: the parked neutral
 // ---------------------------------------------------------------------------
 // Shaders
 // ---------------------------------------------------------------------------
@@ -188,17 +189,32 @@ private immutable string litVertSrc = q{
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec3 aNormal;
     layout(location = 2) in uint aMatId;
+    // Task 1090: the per-corner weight COLOUR, already evaluated on the CPU
+    // (weightmap_view.weightSurfaceColor). Not the weight — the colour: the
+    // measurement says the reference evaluates the law per vertex and lets
+    // the rasteriser interpolate the RESULT, and computing it here as well
+    // would put a second implementation of one measured law on the far side
+    // of the unit test.
+    //
+    // When the array is DISABLED, GL supplies the current generic vertex
+    // attribute for location 3, whose default is (0,0,0,1) — BLACK. That is
+    // why `LitShader.useProgram` parks the ramp's neutral there; see it.
+    layout(location = 3) in vec3 aWeightColor;
     uniform mat4 u_model;
     uniform mat4 u_view;
     uniform mat4 u_proj;
     out vec3      vNormal;
     out vec3      vWorldPos;
     flat out uint vMatId;
+    // Smooth-interpolated, deliberately: that IS the measured interpolation
+    // order. Do not make it `flat`.
+    out vec3      vWeightColor;
     void main() {
         vec4 worldPos = u_model * vec4(aPos, 1.0);
         vWorldPos     = worldPos.xyz;
         vNormal       = mat3(u_model) * aNormal;
         vMatId        = aMatId;
+        vWeightColor  = aWeightColor;
         gl_Position   = u_proj * u_view * worldPos;
     }
 };
@@ -208,6 +224,7 @@ private immutable string litFragSrc = q{
     in       vec3 vNormal;
     in       vec3 vWorldPos;
     flat in  uint vMatId;
+    in       vec3 vWeightColor;     // task 1090; see the vertex shader
     uniform vec3  u_color;          // override colour for hover/highlight paths
     uniform float u_overrideMix;    // 0 = use material UBO, 1 = use u_color
     uniform vec3  u_lightDir;
@@ -216,7 +233,7 @@ private immutable string litFragSrc = q{
     uniform float u_specStr;
     uniform float u_specPow;
     uniform float u_dim;            // brightness multiplier; 1.0 = neutral (layers Stage 5)
-    uniform bool  u_lit;            // false = flat unshaded fill (Solid style, task 0589)
+    uniform int   u_shading;        // display_state.SurfaceShading: 0 Material, 1 Fill, 2 Weight
     uniform vec3  u_fillColor;      // the unlit fill's base; NOT the material (task 0592)
     layout(std140) uniform Materials {
         vec4 mat_base[64];     // .rgb = baseColor, .a = opacity
@@ -242,8 +259,15 @@ private immutable string litFragSrc = q{
         // the hover/highlight override colour still reaches the fill —
         // selection and rollover are their own display axes and must survive
         // every surface style) and `u_dim`.
+        //
+        // TASK 1090 added a THIRD arm, and it was a `bool u_lit` until then.
+        // The weight arm keeps both of those properties for the same reasons:
+        // the override mix, because `display_state.d`'s load-bearing invariant
+        // is that no selection or hover term ever reaches the draw plan, so
+        // hover has to survive every style; and `u_dim`, because the backdrop
+        // pass dims whatever the active style resolved to.
         vec3 col;
-        if (u_lit) {
+        if (u_shading == 0) {
             uint  mi  = (vMatId < uint(64)) ? vMatId : uint(0);
             vec3  bc  = mix(mat_base[mi].rgb, u_color, u_overrideMix);
             vec3 N    = normalize(vNormal);
@@ -254,8 +278,16 @@ private immutable string litFragSrc = q{
             float spc = pow(max(dot(N, H), 0.0), u_specPow);
             col = bc * (u_ambient + dif * (1.0 - u_ambient))
                 + vec3(1.0) * spc * u_specStr;
-        } else {
+        } else if (u_shading == 1) {
             col = mix(u_fillColor, u_color, u_overrideMix);
+        } else {
+            // Weight (task 1090). UNLIT in the strong sense: no light term, no
+            // material lookup, no gamma — the interpolated per-vertex colour
+            // IS the output. Nothing may be added here without a measurement
+            // saying so; the control frames say the shaded style read
+            // (59,59,59) and the unshaded fill (153,153,153) on the same quad
+            // where this style read the exact neutral (127,140,127).
+            col = mix(vWeightColor, u_color, u_overrideMix);
         }
         fragColor = vec4(col * u_dim, 1.0);
     }
@@ -647,7 +679,7 @@ class LitShader {
     GLint locSpecStr;
     GLint locSpecPow;
     GLint locDim;
-    GLint locLit;
+    GLint locShading;
     GLint locFillColor;
     GLuint matsUbo;            // Material Groups (MG3) — Materials UBO
     enum  MATS_BINDING = 0;    // binding point index, matches std140 layout
@@ -665,7 +697,7 @@ class LitShader {
         locSpecStr     = glGetUniformLocation(program, "u_specStr");
         locSpecPow     = glGetUniformLocation(program, "u_specPow");
         locDim         = glGetUniformLocation(program, "u_dim");
-        locLit         = glGetUniformLocation(program, "u_lit");
+        locShading     = glGetUniformLocation(program, "u_shading");
         locFillColor   = glGetUniformLocation(program, "u_fillColor");
 
         // Materials UBO — std140-sized for two arrays of 64 × vec4.
@@ -758,18 +790,42 @@ class LitShader {
         // dimmed background pass sets it explicitly with setDim() before
         // its draws and restores 1.0 afterwards.
         glUniform1f(locDim, 1.0f);
-        // Default to LIT, for exactly the reason u_dim defaults to neutral:
-        // every caller that does not care about the display style gets the
-        // behaviour that predates it. The Solid pass flips this with setLit()
-        // before its draws and restores true afterwards.
-        glUniform1i(locLit, 1);
+        // Default to the MATERIAL (lit) arm, for exactly the reason u_dim
+        // defaults to neutral: every caller that does not care about the
+        // display style gets the behaviour that predates it. The Solid and
+        // Weight passes flip this with setShading() before their draws and
+        // restore Material afterwards.
+        glUniform1i(locShading, cast(int)SurfaceShading.Material);
         // Seed the unlit fill to the colour-scheme value. A GLSL uniform
         // defaults to 0, so an unseeded `u_fillColor` would render the Solid
         // style BLACK for any caller that draws without going through the
         // display plan (the create-tool previews below, for one). Not
-        // observable at all while `u_lit` is true, which is the default.
+        // observable at all under the Material arm, which is the default.
         glUniform3f(locFillColor,
             kSchemeSolidFill, kSchemeSolidFill, kSchemeSolidFill);
+        // ---- PARK THE NEUTRAL IN GENERIC VERTEX ATTRIBUTE 3 (task 1090) ----
+        //
+        // THIS IS LOAD-BEARING AND IT IS THE ONE REAL GL TRAP IN THE WEIGHT
+        // STYLE. When the loc-3 array is DISABLED — which is every draw except
+        // a weight draw with a resolved map, i.e. every create-tool preview,
+        // every gizmo draw, every shaded and solid frame, and every weight
+        // frame with no map selected — GL 3.3 core supplies the CURRENT
+        // GENERIC VERTEX ATTRIBUTE for that location. Its default is
+        // (0,0,0,1): BLACK, not the ramp's neutral. Without this call the
+        // weight style renders a black surface the moment no map resolves,
+        // which is precisely the state the measurement says must be neutral.
+        //
+        // WHY HERE, and not paired with each `glDisableVertexAttribArray(3)`.
+        // The generic attribute value is CONTEXT state, not VAO state, so a
+        // single park at init would in principle be enough — but only until
+        // something resets the context, and nothing in this file would notice
+        // if it did. Parking inside `useProgram` is self-healing, costs one
+        // call per program bind, and cannot be lost. When the array IS
+        // enabled the generic value is ignored, so this is inert on the
+        // paying path.
+        glVertexAttrib3f(3, kWeightRamp.neutral.x,
+                            kWeightRamp.neutral.y,
+                            kWeightRamp.neutral.z);
     }
 
     /// Override the brightness multiplier for the next draws on this
@@ -780,22 +836,24 @@ class LitShader {
         glUniform1f(locDim, dim);
     }
 
-    /// Light the surface, or fill it flat (task 0589, `DrawPlan.facesLit`).
+    /// How the next draws on this program shade the surface (task 0589's
+    /// `facesLit`, widened by task 1090 to `DrawPlan.shading`).
     ///
     /// Same restore discipline as `setDim`: the caller that switches it off
     /// switches it back on, because uniforms are program state and the next
     /// draw on this program may be someone else's.
-    void setLit(bool lit) {
+    void setShading(SurfaceShading s) {
         glUseProgram(program);
-        glUniform1i(locLit, lit ? 1 : 0);
+        glUniform1i(locShading, cast(int)s);
     }
 
     /// The unshaded fill's base colour (task 0592, `DrawPlan.fillColor`).
     ///
-    /// Same restore discipline as `setDim`/`setLit`. Paired with `setLit` at
-    /// every call site rather than set only on the unlit path: the pair is one
-    /// decision ("draw the Solid style"), and splitting them is how the fill
-    /// would later be set by a pass that forgot to unset the lighting.
+    /// Same restore discipline as `setDim`/`setShading`. Paired with
+    /// `setShading` at every call site rather than set only on the unlit path:
+    /// the pair is one decision ("draw the Solid style"), and splitting them is
+    /// how the fill would later be set by a pass that forgot to unset the
+    /// lighting.
     void setFillColor(in float[3] c) {
         glUseProgram(program);
         glUniform3f(locFillColor, c[0], c[1], c[2]);
@@ -832,7 +890,12 @@ void drawLitPreview(const ref LitShader litShader, const ref Shader shader,
     // flat fill. The scene pass does restore it, so this is belt-and-braces;
     // the alternative is a cross-file invariant nobody can see from here.
     // (`u_dim` has the same shape and the same restore discipline.)
-    glUniform1i(litShader.locLit, 1);
+    //
+    // Task 1090 widened this from a bool to `SurfaceShading`. The NEUTRAL PARK
+    // that `useProgram` also performs is deliberately NOT repeated here: it is
+    // context state, not program state, so seeding the shading arm to
+    // `Material` is enough — this path never reads `vWeightColor` at all.
+    glUniform1i(litShader.locShading, cast(int)SurfaceShading.Material);
     previewGpu.drawFaces(litShader);
 
     // Wireframe edges.

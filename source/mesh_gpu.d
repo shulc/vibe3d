@@ -122,6 +122,42 @@ struct GpuMesh {
     // provoking-vertex value applies to the whole triangle.
     GLuint matIdVbo;
 
+    // ---- Weight display (task 1090) ----------------------------------
+    //
+    // Per face-VBO vertex, the SOURCE-MESH vertex index that corner came
+    // from. Filled by `upload()` inside the existing fill loop, from the
+    // ia/ib/ic it already has in hand.
+    //
+    // THIS IS THE WHOLE ANTI-DRIFT MECHANISM, and it is why the weight
+    // uploader does not walk faces itself. Walking them again would mean a
+    // second implementation of the fan triangulation, of the hidden-face
+    // skip (`hideSkipFace` — a hidden face keeps its slot with
+    // `faceTriCount == 0` and contributes no corners) and of the degenerate
+    // skip; a colour buffer built from a triangulation that disagreed with
+    // the position buffer's by even one corner mis-colours the surface with
+    // no error anywhere.
+    uint[] faceCornerVert;
+    // Per face-VBO vertex, the weight COLOUR (vec3), bound into faceVao at
+    // attrib location 3. Only ever filled while the weight display style is
+    // on; `disableWeightColors` turns the array off and the lit shader's
+    // parked generic attribute supplies the neutral instead.
+    GLuint weightColorVbo;
+    // Validity stamp for `weightColorVbo`.
+    //
+    // KEYED ON THE MESH ADDRESS AND THE MAP NAME, AND ON NOTHING ELSE —
+    // deliberately not on a version. What this buffer must agree with is the
+    // face VBO's LAYOUT, and neither available version tracks that:
+    // `uploadSelectedVertices` bumps `uploadVersion` without touching the
+    // face layout at all (so keying on it would rebuild the colours every
+    // frame of a drag), while a positions-only re-upload rebuilds the layout
+    // WITHOUT bumping `Mesh.mutationVersion`. The invariant is
+    // "`faceCornerVert` has not been rebuilt since", and the exact way to
+    // express that is to have the one function that rebuilds it say so —
+    // which is why `upload()` calls `disableWeightColors()` at its tail.
+    const(Mesh)* weightStampMesh;
+    string       weightStampName;
+    bool         weightStampValid;
+
     // Bumps on every VBO write (full upload, refreshPositions, partial
     // uploadSelectedVertices). Distinct from Mesh.mutationVersion: the
     // transform tools (Move / Rotate / Scale) mutate `mesh.vertices`
@@ -142,6 +178,7 @@ struct GpuMesh {
     private float[] scratchFaceData;
     private uint[]  scratchFaceIdData;
     private uint[]  scratchMatIdData;
+    private float[] scratchWeightColor;   // task 1090, filled on demand
     private float[] scratchEdgeData;
     private float[] scratchVertData;
 
@@ -151,6 +188,7 @@ struct GpuMesh {
         glGenVertexArrays(1, &vertVao); glGenBuffers(1, &vertVbo);
         glGenBuffers(1, &faceIdVbo);
         glGenBuffers(1, &matIdVbo);
+        glGenBuffers(1, &weightColorVbo);   // task 1090
     }
 
     void destroy() {
@@ -159,6 +197,7 @@ struct GpuMesh {
         glDeleteVertexArrays(1, &vertVao); glDeleteBuffers(1, &vertVbo);
         glDeleteBuffers(1, &faceIdVbo);
         glDeleteBuffers(1, &matIdVbo);
+        glDeleteBuffers(1, &weightColorVbo);   // task 1090
     }
 
     // When `edgeOrigin`/`vertOrigin` are provided (same length as the mesh's
@@ -255,6 +294,10 @@ struct GpuMesh {
             scratchFaceIdData.length = totalFaceCorners;
         if (scratchMatIdData.length < totalFaceCorners)
             scratchMatIdData.length = totalFaceCorners;
+        // Task 1090: parallel to scratchFaceIdData, same length, same
+        // grow-only discipline.
+        if (faceCornerVert.length < totalFaceCorners)
+            faceCornerVert.length = totalFaceCorners;
         faceTriStart.length = mesh.faces.length;
         faceTriCount.length = mesh.faces.length;
         faceOriginGpu    .length = 0;
@@ -327,6 +370,13 @@ struct GpuMesh {
                     scratchMatIdData[fw + 0] = mid;
                     scratchMatIdData[fw + 1] = mid;
                     scratchMatIdData[fw + 2] = mid;
+                    // Task 1090: which SOURCE vertex each corner came from.
+                    // Written here, beside the position write that uses the
+                    // same three indices, so the two cannot describe
+                    // different triangulations.
+                    faceCornerVert[fw + 0] = ia;
+                    faceCornerVert[fw + 1] = ib;
+                    faceCornerVert[fw + 2] = ic;
                     fw += 3;
                 }
                 faceTriCount[fi] = cast(int)(fw - faceTriStart[fi]);
@@ -464,6 +514,126 @@ struct GpuMesh {
         glEnableVertexAttribArray(0);
 
         glBindVertexArray(0);
+
+        // ── Weight colours: INVALIDATE (task 1090) ────────────────
+        //
+        // TWO things go wrong without this, and the second one is a memory
+        // error rather than a stale picture.
+        //
+        // 1. `faceCornerVert` has just been rebuilt, so any colour buffer
+        //    built from the previous one now describes a different
+        //    triangulation. The stamp is what says otherwise, and this is the
+        //    one function that can honestly clear it.
+        // 2. The block above rebound `faceVao` and rewrote locations 0, 1 and
+        //    2 — but it never touches location 3. So after a re-upload that
+        //    changed the corner count, loc 3 would STILL be enabled and still
+        //    pointing at a `weightColorVbo` sized for the PREVIOUS
+        //    `faceVertCount`: an out-of-range attribute fetch on every
+        //    subsequent face draw, whatever style is current.
+        //
+        // The next weight draw re-uploads, because the stamp was cleared.
+        // Deliberately NOT also on the `suppressCageUpload` early return at
+        // the top: that path returns before `++uploadVersion`, touches
+        // neither `faceVao` nor `faceVertCount`, and publishes a Position
+        // change which drives a later real upload through here.
+        disableWeightColors();
+    }
+
+    // ---- Weight display: the per-corner colour buffer (task 1090) --------
+
+    /// Turn the weight-colour attribute OFF and drop the validity stamp.
+    ///
+    /// After this the lit shader's location 3 reads the CURRENT GENERIC
+    /// VERTEX ATTRIBUTE, which `LitShader.useProgram` parks at the ramp's
+    /// neutral — so "no colours uploaded" renders the measured neutral rather
+    /// than the (0,0,0,1) black GL would otherwise supply. The park lives
+    /// there and not here on purpose: the generic value is CONTEXT state, so
+    /// setting it next to every disable would be N places to lose it.
+    void disableWeightColors() {
+        glBindVertexArray(faceVao);
+        glDisableVertexAttribArray(3);
+        glBindVertexArray(0);
+        weightStampValid = false;
+        weightStampMesh  = null;
+        weightStampName  = null;
+    }
+
+    /// Fill and bind the per-corner weight colours for `mapName` on `m`.
+    ///
+    /// Idempotent within a frame: the stamp makes the second, third and
+    /// fourth cell of a Quad layout free.
+    ///
+    /// Takes the DISABLE path — which renders the neutral — in every case
+    /// where a colour cannot honestly be produced. Each of those is a
+    /// measured or memory-safety reason, not a shrug:
+    void uploadWeightColors(ref const Mesh m, string mapName) {
+        import weightmap_view : resolveWeightMap, weightSurfaceColor;
+
+        // (a) PREVIEW LAYOUT — a memory-safety guard, not a scope note.
+        //
+        // `faceOriginGpu.length > 0` is this module's existing sentinel for
+        // "the face VBO is not 1:1 with the mesh handed to me": the buffers
+        // were built from the SUBPATCH PREVIEW mesh, so `faceCornerVert`
+        // holds PREVIEW vertex indices — while the caller hands us the CAGE,
+        // because that is the mesh the render pass draws and the mesh that
+        // carries `meshMaps`. Indexing the cage's weight array (one float per
+        // cage vertex) by a preview index (up to hundreds of thousands) is an
+        // out-of-range read.
+        //
+        // Colouring a subdivided surface by a subdivided weight channel is a
+        // real feature and a separate one; until it exists, a preview renders
+        // the neutral.
+        if (faceOriginGpu.length > 0) { disableWeightColors(); return; }
+
+        // (b) The name does not resolve — nothing selected, the map was
+        //     removed or renamed out from under the selection, or this is a
+        //     mesh that never had it. All three render the neutral, which is
+        //     also what a zero weight renders. Measured.
+        const(MeshMap)* wm = resolveWeightMap(m, mapName);
+        if (wm is null) { disableWeightColors(); return; }
+
+        // (c) Nothing to draw.
+        if (faceVertCount <= 0) { disableWeightColors(); return; }
+
+        // Already current for exactly this (mesh, map). See the stamp's own
+        // comment for why it keys on those two and on no version.
+        if (weightStampValid && weightStampMesh is &m && weightStampName == mapName)
+            return;
+
+        immutable size_t need = cast(size_t)faceVertCount * 3;
+        if (scratchWeightColor.length < need)
+            scratchWeightColor.length = need;
+
+        foreach (i; 0 .. cast(size_t)faceVertCount) {
+            immutable uint vi = faceCornerVert[i];
+            // Defensive, and it should never fire: `faceCornerVert` came from
+            // this mesh's own faces and `resolveWeightMap` guarantees one
+            // float per vertex. A face index out of range would mean the mesh
+            // and its map disagree about the vertex count, which the resize
+            // path maintains — so falling back to 0 (the neutral) is right
+            // and silent-corruption is not.
+            immutable float w = (vi < wm.data.length) ? wm.data[vi] : 0.0f;
+            immutable Vec3 c = weightSurfaceColor(w);
+            scratchWeightColor[i * 3 + 0] = c.x;
+            scratchWeightColor[i * 3 + 1] = c.y;
+            scratchWeightColor[i * 3 + 2] = c.z;
+        }
+
+        // Bound INTO faceVao, exactly as matIdVbo is above, so the pointer is
+        // captured in the same VAO state the position and normal pointers are.
+        glBindVertexArray(faceVao);
+        glBindBuffer(GL_ARRAY_BUFFER, weightColorVbo);
+        glBufferData(GL_ARRAY_BUFFER,
+            cast(GLsizeiptr)(need * float.sizeof),
+            scratchWeightColor.ptr, GL_DYNAMIC_DRAW);
+        glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE,
+                              cast(GLsizei)(3 * float.sizeof), cast(void*)0);
+        glEnableVertexAttribArray(3);
+        glBindVertexArray(0);
+
+        weightStampMesh  = &m;
+        weightStampName  = mapName;
+        weightStampValid = true;
     }
 
     /// Refresh vertex POSITIONS only — assumes the face / edge / vert

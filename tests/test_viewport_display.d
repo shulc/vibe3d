@@ -47,6 +47,12 @@ import std.algorithm : maxElement;
 import core.thread   : Thread;
 import core.time     : msecs;
 
+// Task 1090: the sampling lattice, shared with tests/test_weightmap_display.d
+// so the two suites cannot disagree about which pixels they read.
+import viewport_lattice_helpers : kFillNX, kFillNY, kFillStride,
+                                  fillLattice, latticePoint,
+                                  sharedErodedFillIndices = erodedFillIndices;
+
 // --------------------------------------------------------------------------
 // Helpers
 // --------------------------------------------------------------------------
@@ -580,23 +586,19 @@ void restoreDisplayDefaults() {
 // should depend on which side of a boundary a rounding went.
 // --------------------------------------------------------------------------
 
-enum int kFillNX = 60, kFillNY = 50, kFillStride = 6;
-
-/// The regular lattice, centred on the cell. REGULAR is load-bearing: the
-/// erosion below is index arithmetic over it.
-string fillLattice(int W, int H) {
-    immutable int x0 = W / 2 - kFillNX * kFillStride / 2;
-    immutable int y0 = H / 2 - kFillNY * kFillStride / 2;
-    string pts;
-    foreach (j; 0 .. kFillNY)
-        foreach (i; 0 .. kFillNX)
-            pts ~= format("%d,%d;", x0 + i * kFillStride, y0 + j * kFillStride);
-    return pts;
-}
+// TASK 1090 MOVED THE LATTICE ITSELF into `tests/viewport_lattice_helpers.d`,
+// imported at the top of this file, because a second suite needs to sample the
+// same pixels and a copy is how the two would drift. `kFillNX`, `kFillNY`,
+// `kFillStride`, `fillLattice` and the erosion now live there unchanged; what
+// stays here is the part that is about THIS file's pixel type.
 
 /// Indices into a `fillLattice` probe that a face covered, eroded by one
 /// lattice step. `shaded` and `wire` are probes of the SAME lattice in the
 /// shaded and lines-only styles.
+///
+/// The fill CRITERION is local (it needs `Px` and `samePixel`); the erosion
+/// and the grid are shared. Same behaviour as before the extraction — this is
+/// the same body with its middle third called instead of inlined.
 size_t[] erodedFillIndices(in Px[] shaded, in Px[] wire) {
     enforce(shaded.length == kFillNX * kFillNY && wire.length == shaded.length,
         format("the probe returned %d/%d points for a %d-point lattice — the "
@@ -606,16 +608,7 @@ size_t[] erodedFillIndices(in Px[] shaded, in Px[] wire) {
     foreach (i; 0 .. shaded.length)
         isFill[i] = shaded[i].valid && wire[i].valid
                  && !samePixel(shaded[i], wire[i]);
-
-    size_t[] keep;
-    foreach (j; 1 .. kFillNY - 1)
-        foreach (i; 1 .. kFillNX - 1) {
-            immutable size_t k = j * kFillNX + i;
-            if (isFill[k] && isFill[k - 1] && isFill[k + 1]
-                && isFill[k - kFillNX] && isFill[k + kFillNX])
-                keep ~= k;
-        }
-    return keep;
+    return sharedErodedFillIndices(isFill);
 }
 
 /// A camera that frames the stock cube with its SIDE faces dominant (a
