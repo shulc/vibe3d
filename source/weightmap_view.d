@@ -40,7 +40,53 @@ import mesh : Mesh, MeshMap, MapDomain;
 /// an unmeasured question is a guess written into a file.
 private __gshared string g_currentWeightMap = "";
 
+// ---------------------------------------------------------------------------
+// THE THREAD CONTRACT the three `@trusted` accessors below rest on.
+// Read this before adding a fourth caller.
+//
+// `g_currentWeightMap` IS MAIN-THREAD-ONLY, and each `@trusted` below is a
+// promise to `@safe` callers that rests on THAT CONTRACT — not on the type,
+// which offers no protection at all. What is shared is a `string`: a FAT
+// pointer, `ptr` + `length`, sixteen bytes with no atomicity between the two
+// halves. A read racing a write is therefore a genuine TORN read — the new
+// pointer with the old length is an out-of-range slice, not a merely stale
+// name. (`hover_state.g_hoveredItem` is NOT precedent for this: it is a bare
+// single-word `__gshared int` with no accessors and no `@trusted` on it, so it
+// makes no promise to anybody and its worst case is one stale index — whereas
+// these three functions hand a `@safe` caller a slice and vouch for it.)
+//
+// The contract holds today because every party is on the main thread, which
+// was verified by reading the handler BODIES:
+//
+//   WRITER   `commands/mesh/weightmap.d`'s `WeightmapSelect.apply` — the only
+//            call to `setCurrentWeightMap` outside tests. It arrives either
+//            from the UI (dispatched on the frame loop) or from
+//            `/api/command`, which answers through `commandBridge`.
+//   READERS  · the render pass — `ui/viewport_render.d`, both the background
+//              and the foreground `uploadWeightColors` call;
+//            · the viewport dirty key — `app.d`'s `weightMapKey` term, via
+//              `currentWeightMapKey`;
+//            · the display endpoint — `http_providers.d`'s viewport-display
+//              provider, which the HTTP thread reaches only through
+//              `vpDisplayBridge`, so the READ happens on the main thread even
+//              though the request did not arrive on it.
+//
+// NOTHING ENFORCES THIS. `http_server.d`'s route table says of its `Answered`
+// column, in as many words, that it "is DATA, not an assertion" — the compiler
+// cannot see whether a handler reaches a bridge. So a future endpoint that
+// answered straight on the HTTP thread and called `currentWeightMapName()`
+// would compile silently and break the contract with nothing here to catch it.
+// If that is ever wanted, the fix is a lock or an atomically published
+// `immutable` — never a wider attribute here.
+//
+// (The unittests in this module and in `tests/unit/dirty_key_weightmap_test.d`
+// also write it; the runner is single-threaded and they save/restore.)
+// ---------------------------------------------------------------------------
+
 /// The name of the map the weight display mode is showing. Empty == none.
+///
+/// Main-thread only — see THE THREAD CONTRACT above for what the `@trusted`
+/// is promising and what it is resting on.
 string currentWeightMapName() nothrow @trusted @nogc {
     return g_currentWeightMap;
 }
@@ -52,6 +98,9 @@ string currentWeightMapName() nothrow @trusted @nogc {
 /// "select, then create" impossible and would invent a lifetime rule nobody
 /// has measured. An unresolvable name renders the neutral, which is the same
 /// thing "no map selected" renders, which is what was measured.
+///
+/// Main-thread only — see THE THREAD CONTRACT above. This is the WRITE half of
+/// it, and the one the torn read would be racing.
 void setCurrentWeightMap(string name) nothrow @trusted {
     g_currentWeightMap = (name is null) ? "" : name;
 }
@@ -79,6 +128,9 @@ ulong weightMapKeyFor(string name) pure nothrow @safe @nogc {
 ///
 /// Reads through the same accessor the render pass calls, so the key cannot
 /// key on a different name than the one that was drawn.
+///
+/// Main-thread only — see THE THREAD CONTRACT above; its caller is the frame
+/// loop's dirty-key stamp.
 ulong currentWeightMapKey() nothrow @trusted @nogc {
     return weightMapKeyFor(g_currentWeightMap);
 }

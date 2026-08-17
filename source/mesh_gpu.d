@@ -549,7 +549,14 @@ struct GpuMesh {
     /// than the (0,0,0,1) black GL would otherwise supply. The park lives
     /// there and not here on purpose: the generic value is CONTEXT state, so
     /// setting it next to every disable would be N places to lose it.
-    void disableWeightColors() {
+    ///
+    /// PRIVATE: every caller is in this module (`upload`'s tail and
+    /// `uploadWeightColors`'s three give-up paths). "Render the neutral" is
+    /// reached from outside by asking `uploadWeightColors` for a name that
+    /// does not resolve — which is the same door the dangling-selection case
+    /// already comes through — not by turning the attribute off directly and
+    /// leaving the stamp's invariants to the caller.
+    private void disableWeightColors() {
         glBindVertexArray(faceVao);
         glDisableVertexAttribArray(3);
         glBindVertexArray(0);

@@ -369,6 +369,24 @@ size_t[] locateFill(int W, int H, out Px[] weightSamples,
     return idx;
 }
 
+/// A FOLLOW-UP probe of the same fill lattice, carrying `locateFill`'s length
+/// check.
+///
+/// Every such probe is then indexed by an `idx` set that was chosen against
+/// the FULL lattice, so a short return is an out-of-range read, and a raw
+/// `probe(...).points` would surface it as a bare range error from inside a
+/// `foreach` — with no mention of the probe, the lattice, or which flow was
+/// running. This names it at the point where the length is still known.
+Px[] probeFill(int W, int H) {
+    auto pts = probe(0, fillLattice(W, H)).points;
+    enforce(pts.length == kFillNX * kFillNY,
+        format("the probe did not return the full lattice: %d points, not "
+               ~ "%d — the sample indices below were chosen against the full "
+               ~ "one and would read past the end",
+               pts.length, kFillNX * kFillNY));
+    return pts;
+}
+
 void restoreDefaults() {
     foreach (cell; 0 .. 4) {
         try {
@@ -534,7 +552,7 @@ bool testFlowA2() {
     postCommandObj("mesh.weightmap.set",
         format(`{"name":"wmA","vert":%d,"weight":-1.0}`, vis));
     settle();
-    auto after = probe(0, fillLattice(W, H)).points;
+    auto after = probeFill(W, H);
 
     size_t moved = 0;
     foreach (i; idx) if (!samePixel(before[i], after[i])) moved++;
@@ -611,7 +629,7 @@ bool testFlowC() {
 
     // No mesh command at all between these two probes — only the selection.
     selectMap("wmB");
-    auto b = probe(0, fillLattice(W, H)).points;
+    auto b = probeFill(W, H);
 
     size_t offA = 0, offB = 0;
     foreach (i; idx) {
@@ -724,7 +742,7 @@ bool testFlowD() {
 
     // --- a name that does not resolve ---
     selectMap("no-such-map");
-    auto dangling = probe(0, fillLattice(W, H)).points;
+    auto dangling = probeFill(W, H);
     j = displayDump();
     enforce(j["weightMap"].str == "no-such-map",
         "the command must ACCEPT a name no map carries — resolution is lazy, "
@@ -1149,7 +1167,7 @@ bool testFlowH() {
 
     void checkAt(double w, double sameAs) {
         setAllWeights("wmA", w);
-        auto img = probe(0, fillLattice(W, H)).points;
+        auto img = probeFill(W, H);
         size_t off = 0; string firstWhy;
         foreach (i; idx) {
             string why;

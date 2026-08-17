@@ -22,8 +22,10 @@
 //
 // THE PRECISION TRAP, WHICH IS NOT HYPOTHETICAL. The `* 255` must happen in
 // float32. At w = +-0.3333333 the green product is EXACTLY 93.5 in float32
-// (-> 93 under ties-toward-zero, which is what was measured) and 93.500005 in
-// double (-> 94, a spurious failure). This cost the plan a whole review round:
+// (-> 93 under ties-toward-zero, which is what was measured) and 93.500002027
+// once the `* 255` is done in double (-> 94, because `refQuantise` tests the
+// fraction `> 0.5f` strictly, so two millionths above the tie is the whole
+// difference — a spurious failure). This cost the plan a whole review round:
 // a double-precision derivation was read as evidence against the measured
 // green constant. Every product below is bound to a `float` before it is
 // compared, because D permits higher-precision intermediates and an unbound
