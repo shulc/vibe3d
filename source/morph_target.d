@@ -23,7 +23,7 @@ module morph_target;
 // another layer — a duplicated layer carries the same map names by
 // construction — and silently retargeting an edit at a same-named map on a
 // layer the user just switched to is worse than dropping the target. OUR
-// choice, not a measurement — registry row 43.
+// choice, not a measurement — registry row 50.
 //
 // Those three call sites are the WHOLE list, and `clearMorphTarget` is
 // otherwise called only by `MorphSelect` and `forgetMorphTargetIfNamed`. The
