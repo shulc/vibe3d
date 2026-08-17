@@ -69,6 +69,32 @@ private StatSection[] emit(ref Document d, SelType current, ref StatExpand e) {
     return buf;
 }
 
+// ---------------------------------------------------------------------------
+// HOW MANY CATEGORIES THE TREE EMITS — the number, not a floor.
+//
+// Every sweep over "every category" is worth exactly this constant: with a
+// floor (`>= 10` against eighteen emitters) a whole section could stop emitting
+// its categories and the sweep whose claim is that it covers a LEVEL would still
+// pass. `tests/test_stat_panel_rows.d` carries the same total for the same
+// reason, against the DRAWN record rather than the model.
+// ---------------------------------------------------------------------------
+private size_t expectedCategories(string section) {
+    switch (section) {
+        // By Edge, By Polygon, By Boundary, By Vertex Map, By Selection Set
+        case "Vertices": return 5;
+        // By Polygon, By Boundary, By Vertex Map, By Selection Set
+        case "Edges":    return 4;
+        // By Type, By Vertex, Part, Material, By Selection Set,
+        // Smoothing Groups, Layer
+        case "Polygons": return 7;
+        // By Type, By Selection Set
+        case "Items":    return 2;
+        default: assert(false, "unknown section: " ~ section);
+    }
+}
+
+private enum size_t kCategoryCount = 18;   // 5 + 4 + 7 + 2
+
 private const(StatSection)* findSection(const StatSection[] buf, string label) {
     foreach (ref s; buf) if (s.label == label) return &s;
     return null;
@@ -192,6 +218,50 @@ unittest {
     assert(!unknown.num.known, "an unmeasured row knows neither number");
     assert(gated.avail == StatAvail.live && unknown.avail == StatAvail.unmeasured,
         "the two states differ by StatAvail, not only by `known`");
+
+    // ---- THE SECTION SHELLS READ NO MARKS BEHIND A SHUT GATE ---------------
+    //
+    // The same assertion `mesh_stats_test.d` makes about the kernel, made here
+    // about the three SHELLS — the layer the kernel's own gate test cannot see,
+    // and where all three `countSelected*` scans actually live. It is the same
+    // trick and it works for the same reason: the fixture is FULLY SELECTED, so
+    // a shell that counted the marks and merely declined to publish `known`
+    // would still carry the count in `value`. `sectionShell` deliberately stores
+    // what it is handed instead of re-zeroing, which is what turns "did it READ
+    // the marks" into a question a value can answer.
+    //
+    // Measured on the Edges arm: restoring `m.countSelectedEdges()` to the
+    // unconditional form reddens this loop with "Edges carries 12". The other
+    // two arms are the same three lines against a different component and were
+    // NOT separately mutated — said plainly rather than claimed.
+    auto full = cubeDoc();
+    {
+        auto fm = full.primary.meshOrNull();
+        foreach (vi; 0 .. fm.vertices.length) fm.selectVertex(cast(int) vi);
+        foreach (ei; 0 .. fm.edges.length)    fm.selectEdge(cast(int) ei);
+        foreach (fi; 0 .. fm.faces.length)    fm.selectFace(cast(int) fi);
+        assert(fm.countSelectedVertices() > 0 && fm.countSelectedEdges() > 0
+            && fm.countSelectedFaces() > 0,
+            "setup: the fixture must be selected, or this proves nothing");
+    }
+    auto ef   = allOpen(full, SelType.Item);
+    auto shutAll = emit(full, SelType.Item, ef);
+    foreach (name; ["Vertices", "Edges", "Polygons"]) {
+        auto sec = findSection(shutAll, name);
+        assert(sec !is null && !sec.sel.known,
+            "with Item current, every geometry section's Sel is gated: " ~ name);
+        assert(sec.sel.value == 0,
+            "a shut section gate must not READ the marks at all — " ~ name
+            ~ " carries " ~ sec.sel.value.to!string);
+        assert(sec.num.value > 0, "…while Num is counted regardless: " ~ name);
+    }
+    // …and the open gate still reports the real number, so the assertion above
+    // is not passing because the count was broken outright.
+    auto ep2 = allOpen(full, SelType.Polygon);
+    auto openPoly = findSection(emit(full, SelType.Polygon, ep2), "Polygons");
+    assert(openPoly.sel.known && openPoly.sel.value == 6,
+        "an open section gate reports the real count, got "
+        ~ openPoly.sel.value.to!string);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,8 +330,10 @@ unittest {
 
     size_t seen = 0;
     foreach (ref s; buf) {
+        size_t inSection = 0;
         foreach (ref c; s.categories) {
             ++seen;
+            ++inSection;
             assert(c.avail == StatAvail.noAffordance,
                 "category rows carry no affordance: " ~ c.key);
             assert(c.add.empty && c.remove.empty,
@@ -269,12 +341,26 @@ unittest {
             assert(!c.num.known && !c.sel.known,
                 "…and no numbers at all: " ~ c.key);
         }
+        // PER SECTION as well as in total, so a section that stops emitting is
+        // NAMED by the failure instead of being inferred from a smaller number.
+        assert(inSection == expectedCategories(s.label),
+            "the " ~ s.label ~ " section emits "
+            ~ expectedCategories(s.label).to!string ~ " categories, saw "
+            ~ inSection.to!string);
         // Section rows and leaves DO carry actions where they can act — the
         // other half of the same measurement.
         if (s.label != "Items")
             assert(!s.add.empty, "section headers act: " ~ s.label);
     }
-    assert(seen >= 10, "the sweep must cover every category, saw " ~ seen.to!string);
+    // EXACTLY the number the tree emits, not a floor. `>= 10` against eighteen
+    // emitters was a check that could not fail: a whole section's categories
+    // could stop being emitted and the sweep — whose entire claim is that it
+    // covers a LEVEL of the tree — would still pass. Measured: dropping the
+    // Edges section's four categories reddens this line and nothing else in the
+    // sweep. When a category is legitimately added, this number moves WITH it.
+    assert(seen == kCategoryCount,
+        "the sweep must cover every category, saw " ~ seen.to!string
+        ~ " of " ~ kCategoryCount.to!string);
 
     auto live = findLeaf(buf, "Polygons", "By Vertex", "4");
     assert(!live.add.empty && !live.remove.empty, "leaves act");

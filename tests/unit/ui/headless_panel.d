@@ -135,16 +135,27 @@ struct HeadlessPanel {
     /// Screen point at the centre of row `row` (0-based, submission order),
     /// inside the widget itself — the labels sit to the RIGHT of the widget in
     /// this panel, so a small inset from the left edge is always on the widget.
-    ImVec2 rowPoint(size_t row) const {
+    ///
+    /// `dx` moves the point further right ALONG the row, for a panel whose rows
+    /// hold more than one widget. The Statistics panel's rows begin with TWO
+    /// action buttons side by side, and with `dx` fixed at zero every press in
+    /// this file landed inside the first one — so a second column wired to the
+    /// first's arguments would have stayed green through the whole suite.
+    /// Callers pass a width the panel RECORDED (`DrawnStatFrame.actionW`), never
+    /// a pixel constant: that is the same contract as the row pitch above.
+    ImVec2 rowPoint(size_t row, float dx = 0.0f) const {
         assert(stride > 0, "rowPoint() before the first frame()");
-        return ImVec2(origin.x + 6.0f,
+        return ImVec2(origin.x + 6.0f + dx,
                       origin.y + cast(float) row * stride + rowH * 0.5f);
     }
 
     /// Move the pointer onto a row and settle one frame (ImGui needs the
     /// position a frame before the click to compute `HoveredId`).
-    void hoverRow(size_t row) {
-        auto p = rowPoint(row);
+    void hoverRow(size_t row) { hoverRowAt(row, 0.0f); }
+
+    /// …at a horizontal offset into the row.
+    void hoverRowAt(size_t row, float dx) {
+        auto p = rowPoint(row, dx);
         ImGuiIO_AddMousePosEvent(io, p.x, p.y);
         frame();
     }
@@ -152,8 +163,11 @@ struct HeadlessPanel {
     /// Press and hold the left button on a row. Asserts the press landed on an
     /// item: a gesture that hits the gap between rows must fail here, not
     /// silently assert nothing later.
-    void pressRow(size_t row) {
-        hoverRow(row);
+    void pressRow(size_t row) { pressRowAt(row, 0.0f); }
+
+    /// …at a horizontal offset into the row, for a row with several widgets.
+    void pressRowAt(size_t row, float dx) {
+        hoverRowAt(row, dx);
         ImGuiIO_AddMouseButtonEvent(io, 0, true);
         frame();
         assert(anyActive,

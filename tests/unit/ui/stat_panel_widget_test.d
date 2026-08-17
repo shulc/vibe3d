@@ -17,9 +17,24 @@
 //      apply-then-revert count: undo restores the marks byte for byte and
 //      leaves those moved.
 //
-//   C. A CLICK ON A ROW'S `+` REACHES THAT ROW'S ACTION. `/api/stats` reports
-//      labels and numbers; it says nothing about which command a cell is wired
-//      to. This presses the real widget.
+//   C. A CLICK ON A ROW'S `+` REACHES THAT ROW'S ACTION — AND A CLICK ON ITS
+//      `-` REACHES THE OTHER ONE. `/api/stats` reports labels and numbers; it
+//      says nothing about which command a cell is wired to. This presses the
+//      real widget, in BOTH columns: the version of this file that pressed only
+//      at a fixed inset landed inside the first button every time, so a minus
+//      cell wired to the add arguments would have stayed green through the whole
+//      suite (the drawn record's remove arguments come from the model, and the
+//      HTTP test fires the remove command itself rather than through the
+//      widget). Measured — that mutation was applied and this file reddened.
+//
+//   D. A DISABLED ROW'S TOOLTIP IS ACTUALLY EMITTED. `reason` in the drawn
+//      record is copied from the model, so it says a tip EXISTS, not that one
+//      was drawn; `DrawnStatRow.tipShown` is written from the hover query
+//      itself. Both action cells are hovered, because the query is per-item.
+//
+//   E. THE COLUMN HEADERS SIT OVER THEIR COLUMNS. The row records where each
+//      numeric slot began, the header record does the same, and this compares
+//      them — the one relationship no row-model assertion can express.
 
 import command   : Command, g_testMode;
 import document  : Document, Layer;
@@ -29,11 +44,12 @@ import mesh_edit_delta : MeshEditTracker, MeshEditScope;
 import seltype   : SelType, SelMode;
 import ui.panels : drawStatisticsBody;
 import ui.stat_rows;
-import ui.stat_record : drawnStatRows;
+import ui.stat_record : drawnStatRows, drawnStatFrame;
 import tests.unit.ui.headless_panel : HeadlessPanel, openPanel;
 import tests.unit.ui.stat_dispatch  : dispatchStatAction;
 import std.algorithm : canFind;
 import std.conv : to;
+import std.math : abs;
 
 // ---------------------------------------------------------------------------
 // The rig: a mesh, a document whose primary is that layer, an expand state, and
@@ -242,6 +258,13 @@ unittest {
     assert(target != size_t.max, "the Polygons → By Vertex → 4 row must be drawn");
     assert(wantCmd == "select.byStat.polygon", wantCmd);
 
+    // The action cell's DRAWN width, read from the frame record. A constant
+    // here would rot with the font — and 0 here is what made the second column
+    // untested for the whole of stage 4.
+    immutable float actionW = drawnStatFrame().actionW;
+    assert(actionW > 12.0f,
+        "the frame must publish its action-cell width, got " ~ actionW.to!string);
+
     ui.pressRow(target);                 // asserts SOME item took ActiveId
     ui.release();
 
@@ -257,4 +280,156 @@ unittest {
     assert(rig.mesh().countSelectedFaces() == 6,
         "the click must reach the ACTION, not just the delegate: "
         ~ rig.mesh().countSelectedFaces().to!string);
+
+    // ---- THE SECOND COLUMN, pressed where it actually is ------------------
+    // `+6` past the first cell's right edge, i.e. inside the `-` cell. Nothing
+    // in this file pressed here before, so nothing checked that the minus
+    // button carries the REMOVE arguments rather than a copy of the add ones.
+    ui.pressRowAt(target, actionW);
+    ui.release();
+
+    assert(rig.fired.length == 2,
+        "the second press must fire exactly one more command, got "
+        ~ rig.fired.length.to!string);
+    assert(rig.fired[1].canFind("select.byStat.polygon"), rig.fired[1]);
+    assert(rig.fired[1].canFind(`"compare":"equal","value":4`), rig.fired[1]);
+    assert(rig.fired[1].canFind(`"mode":"remove"`),
+        "the SECOND column is `-`, i.e. mode:remove — " ~ rig.fired[1]);
+    assert(!rig.fired[1].canFind(`"mode":"add"`), rig.fired[1]);
+
+    // …and by value: the six quads it just selected are deselected again.
+    assert(rig.mesh().countSelectedFaces() == 0,
+        "the `-` click must reach the REMOVE action: "
+        ~ rig.mesh().countSelectedFaces().to!string);
+}
+
+// ---------------------------------------------------------------------------
+// D — a disabled row's reason is a TOOLTIP THE SCREEN DRAWS, in both cells.
+//
+// The mistake this catches is small and completely silent: `IsItemHovered()`
+// with no flags is false for a disabled item, so every unmeasured,
+// structural-zero and inert row carries a reason string no user can read, while
+// the model — and therefore `/api/stats` — reports one.
+//
+// What it does NOT catch, said plainly because the review predicted otherwise
+// and the mutation disagreed: moving the query inside the `BeginDisabled`
+// bracket. That comes back GREEN — `IsItemHovered` reads the flag state
+// captured when the button was submitted, not the current stack. This file
+// pins the FLAG and the per-cell query; the bracket is style, not behaviour.
+// ---------------------------------------------------------------------------
+unittest {
+    auto rig = makeRig();
+    rig.exp.category["Polygons/By Type"] = true;
+
+    const bool prevTestMode = g_testMode;
+    g_testMode = true;
+    scope (exit) g_testMode = prevTestMode;
+
+    auto ui = openPanel(() {
+        drawStatisticsBody(&rig.doc, rig.current, rig.exp, rig.runner());
+    }, "Statistics");
+    scope (exit) ui.close();
+
+    ui.frame();
+
+    // Guarded, because the `-` hover below offsets by exactly this: at 0 the
+    // second probe would repeat the first and pass without testing anything.
+    immutable float actionW = drawnStatFrame().actionW;
+    assert(actionW > 12.0f,
+        "the frame must publish its action-cell width, got " ~ actionW.to!string);
+    auto rows = drawnStatRows();
+    size_t target = size_t.max;
+    string wantReason;
+    foreach (i, ref r; rows) {
+        // A row with buttons that are NOT clickable — the only kind that has a
+        // tooltip to show at all.
+        if (!r.hasActions || r.actionsEnabled || r.reason.length == 0) continue;
+        target     = i + 1;              // +1 for the header line
+        wantReason = r.reason;
+        break;
+    }
+    assert(target != size_t.max,
+        "the fixture must draw at least one disabled row with a reason");
+
+    // Nothing is hovered yet, so nothing may claim to have drawn a tip.
+    foreach (ref r; rows)
+        assert(!r.tipShown, "no tip without a pointer on the row: " ~ r.label);
+
+    // ---- the `+` cell ----
+    ui.hoverRowAt(target, 0.0f);
+    ui.frame();                          // one settled frame under the pointer
+    auto hovered = drawnStatRows();
+    assert(hovered.length >= target, "the frame must still record its rows");
+    assert(hovered[target - 1].reason == wantReason,
+        "row addressing moved: " ~ hovered[target - 1].label);
+    assert(hovered[target - 1].tipShown,
+        "a disabled row must DRAW its reason when hovered: "
+        ~ hovered[target - 1].label ~ " / " ~ wantReason);
+
+    // …and exactly that row, not the panel at large.
+    size_t shown = 0;
+    foreach (ref r; hovered) if (r.tipShown) ++shown;
+    assert(shown == 1, "exactly one row shows a tip, got " ~ shown.to!string);
+
+    // ---- the `-` cell: a SECOND query, over a second `BeginDisabled` ----
+    ui.hoverRowAt(target, actionW);
+    ui.frame();
+    auto hovered2 = drawnStatRows();
+    assert(hovered2[target - 1].tipShown,
+        "the second action cell must show the reason too: "
+        ~ hovered2[target - 1].label);
+
+    // ---- and a LIVE row shows none: the tip belongs to the disabled state ----
+    size_t liveRow = size_t.max;
+    foreach (i, ref r; rows)
+        if (r.hasActions && r.actionsEnabled) { liveRow = i + 1; break; }
+    assert(liveRow != size_t.max, "the fixture must draw a live row too");
+    ui.hoverRowAt(liveRow, 0.0f);
+    ui.frame();
+    foreach (ref r; drawnStatRows())
+        assert(!r.tipShown, "a live row has no tip: " ~ r.label);
+}
+
+// ---------------------------------------------------------------------------
+// E — the column HEADERS sit over the columns they name.
+//
+// The drawn record used to begin after the header line, so the header's own
+// geometry was the one part of this panel nothing could see. It shipped wrong:
+// "Name" was followed by a spacer of the FULL name-column width (advancing by
+// the width of the word more than the column), and "Sel" by an arbitrary
+// quarter-of-Num pad, so both titles sat to the right of their columns while the
+// widths above were being recomputed FROM them.
+// ---------------------------------------------------------------------------
+unittest {
+    auto rig = makeRig();
+    rig.exp.category["Polygons/By Vertex"] = true;
+
+    const bool prevTestMode = g_testMode;
+    g_testMode = true;
+    scope (exit) g_testMode = prevTestMode;
+
+    auto ui = openPanel(() {
+        drawStatisticsBody(&rig.doc, rig.current, rig.exp, rig.runner());
+    }, "Statistics");
+    scope (exit) ui.close();
+
+    ui.frame();
+
+    auto hdr  = drawnStatFrame();
+    auto rows = drawnStatRows();
+    assert(rows.length > 0);
+    assert(hdr.numX > 0 && hdr.selX > hdr.numX,
+        "the header must publish its two slot origins");
+
+    // EVERY row, because a column is a property of the whole table: the section
+    // rows, the indented categories and the twice-indented leaves all end their
+    // name column at the same x, and the header must land on it too.
+    foreach (ref r; rows) {
+        assert(abs(r.numX - hdr.numX) < 0.5f,
+            "the Num header is not over the Num column: header " ~ hdr.numX.to!string
+            ~ " vs row '" ~ r.label ~ "' " ~ r.numX.to!string);
+        assert(abs(r.selX - hdr.selX) < 0.5f,
+            "the Sel header is not over the Sel column: header " ~ hdr.selX.to!string
+            ~ " vs row '" ~ r.label ~ "' " ~ r.selX.to!string);
+    }
 }

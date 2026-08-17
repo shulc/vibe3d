@@ -287,13 +287,18 @@ private string layerSelectArgs(string kindToken, bool add) {
 /// `sel.known` is part of the rule and is PUBLIC and directly tested for a
 /// reason worth stating, because it is not visible from the tree: no caller
 /// today can produce a gated cell with a non-zero `value` — the kernel leaves
-/// `sel` at 0 when the gate is shut, and the section shells write an explicit
-/// 0 — so dropping the `known` term changes NOTHING about any row this model
-/// currently emits. That was measured (the mutation came back green). The term
-/// is kept because it is the rule the frames show (a gated section is drawn
+/// `sel` at 0 when the gate is shut, and the section shells' callers do not
+/// compute one — so dropping the `known` term changes NOTHING about any row this
+/// model currently emits. That was measured (the mutation came back green). The
+/// term is kept because it is the rule the frames show (a gated section is drawn
 /// normal), and because the day a caller fills `value` regardless of the gate,
 /// its absence would dim every gated row in the panel. The unittest that pins
 /// it therefore asks this function directly, with a cell the tree cannot build.
+///
+/// Note that "no caller today produces one" is now a CHECKED property rather
+/// than a shape of the code: `sectionShell` deliberately stores the value it is
+/// handed, so that a caller which counted the marks behind a shut gate would
+/// produce exactly such a cell — and `stat_rows_test.d` asserts none does.
 StatTone toneFor(StatCell sel) {
     return (sel.known && sel.value > 0) ? StatTone.dimmed : StatTone.normal;
 }
@@ -533,6 +538,24 @@ void statSectionsInto(const(Document)* doc, SelType current,
     outBuf ~= itemsSection(doc, current, exp);
 }
 
+/// The three geometry sections' common head.
+///
+/// `selected` IS THE CALLER'S GATE OBLIGATION, and the shell does not paper over
+/// it. `mesh_stats.d`'s header states the rule the kernel lives by — a shut gate
+/// "must not merely discard `sel`, it must not READ the marks at all" — and the
+/// three shells were breaking it from outside the kernel, each handing over a
+/// full `countSelected*` scan the shell then threw away. Three linear scans per
+/// frame, and invisible to every assertion, because the shell re-zeroed the
+/// value it discarded.
+///
+/// So: each caller computes `selected` UNDER ITS OWN GATE, and this shell stores
+/// what it was handed rather than re-zeroing it. That second half is what makes
+/// the first half checkable — a caller that reads the marks anyway now shows up
+/// as a non-zero `sel.value` on a gated section, which is exactly how
+/// `mesh_stats_test.d`'s gate case catches the same mistake inside the kernel
+/// (fully select the fixture, then assert the shut gate reports 0). Rendering is
+/// unaffected: `known == false` prints the gate placeholder whatever the value
+/// is, and `toneFor` ignores the value of an unknown cell — both pinned.
 private StatSection sectionShell(string label, SelType type, const(Mesh)* m,
                                  long total, long selected, SelType current,
                                  string cmdId, string test,
@@ -553,7 +576,7 @@ private StatSection sectionShell(string label, SelType type, const(Mesh)* m,
         return s;
     }
     s.num   = StatCell(true, total);
-    s.sel   = StatCell(gate, gate ? selected : 0);
+    s.sel   = StatCell(gate, selected);   // NOT `gate ? selected : 0` — see above
     s.avail = StatAvail.live;
     s.tone  = toneOf(s.sel);
     // The section row's own action selects EVERYTHING of its component —
@@ -569,9 +592,12 @@ private StatSection verticesSection(const(Mesh)* m, ref const StatContext ctx,
     enum string kCmd     = "select.byStat.vertex";
     const bool gate = (current == SelType.Vertex);
 
+    // UNDER THE GATE, not merely discarded by it — see `sectionShell`.
+    const long selTotal = (gate && m !is null)
+                        ? cast(long) m.countSelectedVertices() : 0;
     auto s = sectionShell(kSection, SelType.Vertex, m,
                           m is null ? 0 : cast(long) m.vertices.length,
-                          m is null ? 0 : cast(long) m.countSelectedVertices(),
+                          selTotal,
                           current, kCmd, "edgeCount", exp);
     if (!s.expanded) return s;
 
@@ -650,9 +676,12 @@ private StatSection edgesSection(const(Mesh)* m, ref const StatContext ctx,
     enum string kCmd     = "select.byStat.edge";
     const bool gate = (current == SelType.Edge);
 
+    // UNDER THE GATE, not merely discarded by it — see `sectionShell`.
+    const long selTotal = (gate && m !is null)
+                        ? cast(long) m.countSelectedEdges() : 0;
     auto s = sectionShell(kSection, SelType.Edge, m,
                           m is null ? 0 : cast(long) m.edges.length,
-                          m is null ? 0 : cast(long) m.countSelectedEdges(),
+                          selTotal,
                           current, kCmd, "polygonCount", exp);
     if (!s.expanded) return s;
 
@@ -764,9 +793,12 @@ private StatSection polygonsSection(const(Document)* doc, const(Mesh)* m,
     enum string kCmd     = "select.byStat.polygon";
     const bool gate = (current == SelType.Polygon);
 
+    // UNDER THE GATE, not merely discarded by it — see `sectionShell`.
+    const long selTotal = (gate && m !is null)
+                        ? cast(long) m.countSelectedFaces() : 0;
     auto s = sectionShell(kSection, SelType.Polygon, m,
                           m is null ? 0 : cast(long) m.faces.length,
-                          m is null ? 0 : cast(long) m.countSelectedFaces(),
+                          selTotal,
                           current, kCmd, "vertexCount", exp);
     if (!s.expanded) return s;
 

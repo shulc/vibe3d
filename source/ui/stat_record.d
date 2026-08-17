@@ -30,10 +30,41 @@ struct DrawnStatRow {
     string addArgs;    ///< …and its argument object, verbatim
     string removeArgs; ///< the `-` cell's argument object, verbatim
     string reason;     ///< the disabled tooltip, or ""
+    bool   tipShown;   ///< did this row ACTUALLY emit its tooltip this frame —
+                       ///< read from the hover query itself, NOT copied from the
+                       ///< model. `reason` says a tip EXISTS; only this says the
+                       ///< screen drew one. A disabled item answers `false` to a
+                       ///< flagless `IsItemHovered`, so a row could carry a
+                       ///< reason no user was ever able to read while this
+                       ///< record reported one — which is exactly what shipped
+                       ///< until this field existed. (Measured: the bracket the
+                       ///< query sits in is NOT part of that; see the note at
+                       ///< the query itself in `ui/panels.d`.)
+    float  numX = 0;   ///< screen x of the LEFT edge of the Num slot
+    float  selX = 0;   ///< …and of the Sel slot
+}
+
+/// The frame's COLUMN GEOMETRY — one record per frame, alongside the rows.
+///
+/// The rows alone cannot answer "does the header sit over its columns", because
+/// the header is not a row: it is drawn before the loop and records nothing. It
+/// records here instead, so the two x's can be compared by VALUE rather than by
+/// reading the drawing code and believing it.
+///
+/// `actionW` is the drawn width of ONE action cell. The widget test needs it to
+/// press the SECOND action column: a pixel constant there would rot with the
+/// font, and the harness's whole row-addressing contract is that no test holds
+/// one.
+struct DrawnStatFrame {
+    float actionW = 0;
+    float numX    = 0;   ///< left edge of the HEADER's Num slot
+    float selX    = 0;   ///< …and of its Sel slot
 }
 
 private __gshared DrawnStatRow[] g_scratch;
 private __gshared DrawnStatRow[] g_published;
+private __gshared DrawnStatFrame g_frameScratch;
+private __gshared DrawnStatFrame g_framePublished;
 private __gshared Object         g_mx;
 
 shared static this() { g_mx = new Object(); }
@@ -44,6 +75,7 @@ void beginStatFrame() {
     if (!g_testMode) return;
     g_scratch.length = 0;
     g_scratch.assumeSafeAppend();
+    g_frameScratch = DrawnStatFrame.init;
 }
 
 void recordDrawnStatRow(DrawnStatRow r) {
@@ -52,12 +84,22 @@ void recordDrawnStatRow(DrawnStatRow r) {
     g_scratch ~= r;
 }
 
+/// Record the frame's column geometry. Called once, from the header block.
+void recordDrawnStatFrame(DrawnStatFrame f) {
+    import command : g_testMode;
+    if (!g_testMode) return;
+    g_frameScratch = f;
+}
+
 /// Publish the frame just drawn. One assignment under the lock: a reader gets
 /// a whole frame or the previous whole frame, never a prefix.
 void endStatFrame() {
     import command : g_testMode;
     if (!g_testMode) return;
-    synchronized (g_mx) { g_published = g_scratch.dup; }
+    synchronized (g_mx) {
+        g_published      = g_scratch.dup;
+        g_framePublished = g_frameScratch;
+    }
 }
 
 /// `GET /api/stats` payload — every row of the last complete frame.
@@ -84,6 +126,7 @@ string statRowsJson() {
         j["addArgs"]        = JSONValue(r.addArgs);
         j["removeArgs"]     = JSONValue(r.removeArgs);
         j["reason"]         = JSONValue(r.reason);
+        j["tipShown"]       = JSONValue(r.tipShown);
         items ~= j;
     }
     JSONValue root;
@@ -97,4 +140,11 @@ DrawnStatRow[] drawnStatRows() {
     DrawnStatRow[] snap;
     synchronized (g_mx) { snap = g_published.dup; }
     return snap;
+}
+
+/// The column geometry of the last published frame — same reader, same lock.
+DrawnStatFrame drawnStatFrame() {
+    DrawnStatFrame f;
+    synchronized (g_mx) { f = g_framePublished; }
+    return f;
 }

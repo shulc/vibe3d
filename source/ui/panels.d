@@ -4276,7 +4276,8 @@ void drawStatisticsPanel(const(Document)* doc, SelType current,
 void drawStatisticsBody(const(Document)* doc, SelType current,
                         ref StatExpand exp,
                         void delegate(string cmdId, string argsJson) run) {
-    import ui.stat_record : DrawnStatRow, beginStatFrame, recordDrawnStatRow,
+    import ui.stat_record : DrawnStatRow, DrawnStatFrame, beginStatFrame,
+                            recordDrawnStatRow, recordDrawnStatFrame,
                             endStatFrame;
     import ui.item_glyphs : drawDisclosure, kGlyphCellRatio,
                             kGlyphRadiusRatio, kIndentRatio;
@@ -4353,20 +4354,53 @@ void drawStatisticsBody(const(Document)* doc, SelType current,
     // ---- Column headers, ONE row of the same pitch ------------------------
     // No `Separator()` anywhere in this panel: a separator is its own line of
     // height, and the row pitch is what the click test addresses rows by.
+    //
+    // THE HEADER IS LAID OUT BY THE DATA ROWS' OWN RULE, not by a second one.
+    // A data row ends its name column at `right - numW - selW` and then draws
+    // each number right-aligned inside its slot; the header does exactly that,
+    // with "Name"/"Num"/"Sel" in place of the cell text. The version before this
+    // one advanced by `nameW` AFTER "Name" — i.e. by the width of the word MORE
+    // than the column — and padded "Sel" by an arbitrary `numW * 0.25f`, so both
+    // titles sat to the right of the column they name. The widths are recomputed
+    // FROM these titles above, which is only meaningful if the titles are in the
+    // columns.
     {
+        // Bound to locals, not passed as literals: `ImDrawList.AddText` has both
+        // a `string` and a `const(char)*` overload, and a string LITERAL matches
+        // both. The data cells below pass locals for the same reason.
+        immutable string hName = "Name";
+        immutable string hNum  = "Num";
+        immutable string hSel  = "Sel";
+        // All three titles through the SAME ink as the cells they head. Mixing
+        // `TextDisabled` (the style's colour) with `dl.AddText` (this panel's
+        // own `inkDim`) would put two greys on one line.
         ImGui.Dummy(ImVec2(actionW * 2.0f, rowH));
         ImGui.SameLine(0.0f, 0.0f);
         immutable float nameW = ImGui.GetContentRegionAvail().x - numW - selW;
-        ImGui.TextDisabled("Name");
-        ImGui.SameLine(0.0f, 0.0f);
-        ImVec2 hp = ImGui.GetCursorScreenPos();
-        ImGui.Dummy(ImVec2((nameW > 0 ? nameW : 0.0f), rowH));
-        ImGui.SameLine(0.0f, 0.0f);
-        ImGui.TextDisabled("Num");
-        ImGui.SameLine(0.0f, 0.0f);
-        ImGui.Dummy(ImVec2(numW * 0.25f, rowH));
-        ImGui.SameLine(0.0f, 0.0f);
-        ImGui.TextDisabled("Sel");
+        DrawnStatFrame fr;
+        fr.actionW = actionW;
+        {   // the name column: LEFT-aligned, exactly as a row's label is
+            immutable ImVec2 hp = ImGui.GetCursorScreenPos();
+            ImGui.Dummy(ImVec2(nameW > 0 ? nameW : 0.0f, rowH));
+            dl.AddText(hp, inkDim, hName);
+            ImGui.SameLine(0.0f, 0.0f);
+        }
+        {   // …and the two numeric columns: RIGHT-aligned, exactly as a cell is
+            immutable ImVec2 np = ImGui.GetCursorScreenPos();
+            fr.numX = np.x;
+            ImGui.Dummy(ImVec2(numW, rowH));
+            dl.AddText(ImVec2(np.x + numW - ImGui.CalcTextSize(hNum).x, np.y),
+                       inkDim, hNum);
+            ImGui.SameLine(0.0f, 0.0f);
+        }
+        {
+            immutable ImVec2 sp = ImGui.GetCursorScreenPos();
+            fr.selX = sp.x;
+            ImGui.Dummy(ImVec2(selW, rowH));
+            dl.AddText(ImVec2(sp.x + selW - ImGui.CalcTextSize(hSel).x, sp.y),
+                       inkDim, hSel);
+        }
+        recordDrawnStatFrame(fr);
     }
 
     // ---- One row -----------------------------------------------------------
@@ -4394,20 +4428,52 @@ void drawStatisticsBody(const(Document)* doc, SelType current,
         immutable bool enabled     = (avail == StatAvail.live);
 
         // ---- the two action columns, FIRST and NEVER indented ----
+        //
+        // THE DISABLED TOOLTIP IS QUERIED WITH `AllowWhenDisabled`. Without the
+        // flag `IsItemHovered` returns false for any item carrying
+        // `ImGuiItemFlags_Disabled`, so every unmeasured / structural-zero /
+        // inert-actions row carried a reason string no user could ever read —
+        // while `StatAvail` and this panel's header both promise "disabled,
+        // reason in the tip". The form is `renderPopupItems`' (this file, the
+        // `MenuItem` arm).
+        //
+        // WHICH HALF OF THAT IS LOAD-BEARING, MEASURED, because the obvious
+        // reading is wrong: the flag is, and the position of the query relative
+        // to `EndDisabled` is NOT. `IsItemHovered` reads `g.LastItemData`, which
+        // is the flag state captured when the BUTTON was submitted, not the
+        // current stack — so asking inside the bracket answers identically.
+        // (Mutation: move `tipHere()` back inside. It comes back green.) The
+        // query stays outside anyway, matching the one correct site this
+        // repository already had; but do not believe the bracket is the fix.
+        //
+        // ONE QUERY PER BUTTON, because `IsItemHovered` speaks about the LAST
+        // item: a single query, wherever it sits, can only ever describe the
+        // `-` cell, and the `+` cell's reason would go unread. Mutation:
+        // delete the first `tipHere()` — the `+` half of verification D
+        // reddens. (The two brackets are a consequence of putting both queries
+        // outside; they are not themselves load-bearing, per the note above.)
+        bool tipShown = false;
+        void tipHere() {
+            if (!enabled && reason.length
+                && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled)) {
+                ImGui.SetTooltip(reason);
+                tipShown = true;
+            }
+        }
         if (showButtons) {
             if (!enabled) ImGui.BeginDisabled(true);
             if (ImGui.Button("+", ImVec2(actionW, rowH)) && enabled
                 && run !is null && !add.empty)
                 run(add.commandId, add.argsJson);
-            if (!enabled && reason.length && ImGui.IsItemHovered())
-                ImGui.SetTooltip(reason);
+            if (!enabled) ImGui.EndDisabled();
+            tipHere();
             ImGui.SameLine(0.0f, 0.0f);
+            if (!enabled) ImGui.BeginDisabled(true);
             if (ImGui.Button("-", ImVec2(actionW, rowH)) && enabled
                 && run !is null && !remove.empty)
                 run(remove.commandId, remove.argsJson);
-            if (!enabled && reason.length && ImGui.IsItemHovered())
-                ImGui.SetTooltip(reason);
             if (!enabled) ImGui.EndDisabled();
+            tipHere();
         } else {
             // EMPTY cells — not a greyed button. A greyed button is still an
             // affordance; this row has none.
@@ -4449,8 +4515,10 @@ void drawStatisticsBody(const(Document)* doc, SelType current,
             ImGui.Dummy(ImVec2(gap > 0 ? gap : 0.0f, rowH));
             ImGui.SameLine(0.0f, 0.0f);
         }
+        float numX = 0, selX = 0;
         {
             immutable ImVec2 np = ImGui.GetCursorScreenPos();
+            numX = np.x;
             ImGui.Dummy(ImVec2(numW, rowH));
             dl.AddText(ImVec2(np.x + numW - ImGui.CalcTextSize(numTx).x, np.y), ink,
                        numTx);
@@ -4458,6 +4526,7 @@ void drawStatisticsBody(const(Document)* doc, SelType current,
         }
         {
             immutable ImVec2 sp = ImGui.GetCursorScreenPos();
+            selX = sp.x;
             ImGui.Dummy(ImVec2(selW, rowH));
             dl.AddText(ImVec2(sp.x + selW - ImGui.CalcTextSize(selTx).x, sp.y), ink,
                        selTx);
@@ -4477,6 +4546,11 @@ void drawStatisticsBody(const(Document)* doc, SelType current,
         rec.addArgs        = add.argsJson;
         rec.removeArgs     = remove.argsJson;
         rec.reason         = reason;
+        // NOT `reason.length > 0` — that is the MODEL's claim that a tip exists.
+        // This is the DRAWER's answer that one was emitted.
+        rec.tipShown       = tipShown;
+        rec.numX           = numX;
+        rec.selX           = selX;
         recordDrawnStatRow(rec);
     }
 

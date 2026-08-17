@@ -176,7 +176,13 @@ unittest { // the category LEVEL has no action cells; sections and leaves do
         assert(r["num"].str.length == 0 && r["sel"].str.length == 0,
             "…and no numbers: " ~ r["label"].str);
     }
-    assert(cats >= 10, "the sweep must cover the whole level, saw "
+    // EXACTLY eighteen — the tree's whole category level, counted rather than
+    // floored. `>= 10` against eighteen emitters could not fail for the thing
+    // this sweep exists to hold: a whole section's categories could stop being
+    // DRAWN and the assertion would still pass. Measured: dropping the Edges
+    // section's four categories reddens this line (and its twin in
+    // `tests/unit/ui/stat_rows_test.d`).
+    assert(cats == 18, "the sweep must cover the whole level — 18 categories, saw "
         ~ cats.to!string);
 
     auto polySec = rowOf(rs, "section", "Polygons");
@@ -233,8 +239,17 @@ unittest { // the panel draws LEAVES, not only section rows
 // reset rebuilds from a cold cache whatever the refresh policy is — so this
 // control passes on a correct implementation either way.
 //
-// The RESET COMES FIRST, before the panel opens: a reset taken on a
-// warm open panel can legitimately read zero.
+// THE TWO STEPS ORDER THEIR RESET OPPOSITELY, and each order is forced:
+//
+//   * OPEN — the reset comes FIRST, before the panel opens, because a reset
+//     taken on a warm open panel can legitimately read zero.
+//   * CLOSED — the reset comes LAST, after the hide has taken effect and
+//     settled. Resetting while the panel is still open leaves a window in
+//     which it is still drawing, entirely correctly, and every frame that
+//     lands there is counted against the closed state. That is not a
+//     hypothetical: under `-j` this failed with `got 1` — one frame, drawn
+//     between the counter reset and the hide arriving. The window exists at
+//     any load; contention only widens it.
 // --------------------------------------------------------------------------
 unittest {
     long totalRebuilds() {
@@ -252,10 +267,13 @@ unittest {
         "an OPEN panel must rebuild its row model at least once, got "
         ~ open.to!string);
 
-    // 2. reset → close → step → read: it costs nothing while closed. Without
-    // step 1 this assertion would pass on a panel that never worked at all.
-    httpPost("/api/frames/counts/reset", "{}");
+    // 2. close → settle → reset → step → read: it costs nothing while closed.
+    // Without step 1 this assertion would pass on a panel that never worked at
+    // all. The reset is AFTER the settle so that the frames the panel drew
+    // while it was still legitimately open are not counted against it.
     cmd("ui.statistics hide");
+    settle();
+    httpPost("/api/frames/counts/reset", "{}");
     settle();
     immutable long closed = totalRebuilds();
     assert(closed == 0,
