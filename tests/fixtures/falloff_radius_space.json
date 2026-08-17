@@ -843,5 +843,15 @@
    "rmsVsWorld": 9.567e-09,
    "rmsVsLayerLocal": 0.4172
   }
- ]
+ ],
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "unknown",
+  "harness": "private capture harness (task 0644)",
+  "task": "0644",
+  "notes": "Block back-filled 2026-08-17 (task 1063) from the fixture's OWN `capturedBy` field, not from a guess: \"committed translate under a falloff, weight recovered from the per-vertex displacement as w = d . T / |T|^2 with T taken from the falloff-free control of the same item transform; every displacement was verified parallel to T (largest off-axis residual 4.0e-8)\". `captured_utc` stays unknown because the record does not carry a date."
+ }
 }

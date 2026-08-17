@@ -693,6 +693,38 @@ void requireProvenance(JSONValue fx, string name) {
                ~ "every golden must carry structured provenance; back-fill it "
                ~ "via tools/local/fixture_gen/backfill_provenance.py or stamp "
                ~ "it at generation time via provenance.make_provenance)", name));
+
+    // Task 1063: check the block's CONTENT, not merely its presence.
+    // Presence-only let seven fixtures reach the remote carrying a `method`
+    // outside the vocabulary — three of them through review and both gate
+    // lanes — because the offline Python checker that would have caught it is
+    // in NEITHER lane, and this assertion, which IS in both, was not looking.
+    // The two vocabularies are duplicated here on purpose: a test lane must
+    // not shell out to a private script, and a fixture whose provenance the
+    // two sides disagree about is exactly the case worth failing on.
+    auto prov = fx["provenance"];
+    static immutable string[] kSources = ["live-capture", "simulated", "analytic", "unknown"];
+    static immutable string[] kMethods = ["capture-drag", "command", "from-trace",
+                                          "rr-memory", "self-drive", "closed-form",
+                                          "hand", "unknown"];
+    void requireOneOf(string field, const string[] allowed) {
+        assert(field in prov,
+            format("%s: provenance is missing '%s'", name, field));
+        assert(prov[field].type == JSONType.string,
+            format("%s: provenance.%s must be a string, got %s",
+                   name, field, prov[field].toString));
+        immutable v = prov[field].str;
+        bool ok = false;
+        foreach (a; allowed) if (v == a) { ok = true; break; }
+        assert(ok, format(
+            "%s: provenance.%s is %s, which is not one of %s. If the real "
+            ~ "value is genuinely unknown, write \"unknown\" — every "
+            ~ "vocabulary carries it deliberately. Prose belongs in 'notes'; "
+            ~ "putting it here is the exact mistake task 1063 was filed for.",
+            name, field, prov[field].toString, allowed));
+    }
+    requireOneOf("source", kSources);
+    requireOneOf("method", kMethods);
 }
 
 /// Run a frozen-state fixture given as its JSON text. Executes the setup

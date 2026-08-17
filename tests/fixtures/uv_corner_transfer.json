@@ -6,11 +6,11 @@
   "schema": 1,
   "source": "live-capture",
   "reference": "ref-editor@11.2v3",
-  "method": "headless-numeric",
+  "method": "command",
   "captured_utc": "2026-08-13T00:00:00Z",
   "harness": "private capture harness, uv_dump.py + t0682_uvcap.py: raw-mesh build, explicit per-corner and per-vertex UV authoring, one fresh headless boot per case, tool attributes reset to factory before every run",
   "task": "0682",
-  "notes": "vibe3d's loop-slice / bevel / extrude do not touch the UV plane at all today, so this fixture is NEW target behaviour, not a regression lock. The `edge_bevel_uv_seam` case records reference behaviour that looks like a defect (the new strip collapses a seam onto one island, and the corner caps get values from neither island) -- it is frozen as MEASURED, and a port should decide deliberately whether to copy it."
+  "notes": "vibe3d's loop-slice / bevel / extrude do not touch the UV plane at all today, so this fixture is NEW target behaviour, not a regression lock. The `edge_bevel_uv_seam` case records reference behaviour that looks like a defect (the new strip collapses a seam onto one island, and the corner caps get values from neither island) -- it is frozen as MEASURED, and a port should decide deliberately whether to copy it.\nThe `method` field previously read \"headless-numeric\", a name predating the vocabulary; the lane it describes is the headless command capture the enum now calls `command`."
  },
  "classification": {
   "_comment": "vibe3d-side annotation (task 0697), NOT part of the capture above. One entry per behaviour we deliberately do not reproduce; `status` is one of open (a gap we intend to close), closed (already closed, entry retired), permanent (we diverge on purpose and will not converge). tests/test_uv_carry_bevel_extrude.d reads these and refuses to run an open/closed branch for a permanent entry.",

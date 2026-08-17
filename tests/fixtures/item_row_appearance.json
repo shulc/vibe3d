@@ -1,129 +1,760 @@
 {
-  "schema": "item_row_appearance/1",
-  "captured": "2026-08-10",
-  "source": "reference editor, stock colour scheme, item list in its full (tree) view, 1920x1080, two independent boots",
-  "summary": "The item list gives a row THREE state-dependent treatments. None of them encodes the mesh edit target. A row that is the edit target but not selected is drawn pixel-identically to a row that is neither. Among selected rows, the FIRST element of the item selection gets a darker background and a brighter text; every other selected row gets a background 8 lighter and a text 11/12/12 dimmer. The dark treatment goes to the first selected item whatever its type, including an item that can never be a mesh edit target.",
-
-  "geometry": {
-    "row_height_px": 21,
-    "row_pitch_px": 21,
-    "row_span_x": [1176, 1900],
-    "icon_columns_span_x": [1176, 1250],
-    "name_column_span_x": [1251, 1900],
-    "note": "The state treatment repaints the WHOLE row span. Hover repaints only the name column."
-  },
-
-  "treatments": [
-    {
-      "id": "unselected",
-      "row_background_rgb": [156, 164, 172],
-      "row_background_rgb_alternate": [152, 160, 168],
-      "name_text_rgb": [0, 0, 0],
-      "mode_icon": false,
-      "note": "The two backgrounds are zebra striping by row index, not by state: adjacent rows alternate and the pair differs by exactly 4 per channel."
-    },
-    {
-      "id": "selected_first",
-      "row_background_rgb": [64, 72, 80],
-      "name_text_rgb": [255, 168, 40],
-      "mode_icon": true,
-      "note": "Applies to the FIRST element of the item selection, of any item type. Exactly one row per frame."
-    },
-    {
-      "id": "selected_not_first",
-      "row_background_rgb": [72, 80, 88],
-      "name_text_rgb": [244, 156, 28],
-      "mode_icon": true,
-      "note": "Applies to every other selected row. Background = selected_first + 8 per channel; text = selected_first - 11/-12/-12."
-    }
+ "schema": "item_row_appearance/1",
+ "captured": "2026-08-10",
+ "source": "reference editor, stock colour scheme, item list in its full (tree) view, 1920x1080, two independent boots",
+ "summary": "The item list gives a row THREE state-dependent treatments. None of them encodes the mesh edit target. A row that is the edit target but not selected is drawn pixel-identically to a row that is neither. Among selected rows, the FIRST element of the item selection gets a darker background and a brighter text; every other selected row gets a background 8 lighter and a text 11/12/12 dimmer. The dark treatment goes to the first selected item whatever its type, including an item that can never be a mesh edit target.",
+ "geometry": {
+  "row_height_px": 21,
+  "row_pitch_px": 21,
+  "row_span_x": [
+   1176,
+   1900
   ],
-  "distinct_state_treatments": 3,
-
-  "state_to_treatment": [
-    {"selected": false, "edit_target": false, "foreground": false, "treatment": "unselected"},
-    {"selected": false, "edit_target": true,  "foreground": true,  "treatment": "unselected"},
-    {"selected": false, "edit_target": false, "foreground": true,  "treatment": "unselected"},
-    {"selected": true,  "selection_index": 0, "edit_target": true,  "treatment": "selected_first"},
-    {"selected": true,  "selection_index": 0, "edit_target": false, "treatment": "selected_first"},
-    {"selected": true,  "selection_index": 1, "edit_target": true,  "treatment": "selected_not_first"},
-    {"selected": true,  "selection_index": 1, "edit_target": false, "treatment": "selected_not_first"},
-    {"selected": true,  "selection_index": 2, "edit_target": false, "treatment": "selected_not_first"}
+  "icon_columns_span_x": [
+   1176,
+   1250
   ],
-
-  "assertions": {
-    "must_render_identically": [
-      ["edit_target_not_selected", "neither"],
-      ["foreground_not_target_not_selected", "neither"],
-      ["selected_first_and_target", "selected_first_not_target"],
-      ["selected_not_first_and_target", "selected_not_first_not_target"]
-    ],
-    "must_render_differently": [
-      ["unselected", "selected_first"],
-      ["unselected", "selected_not_first"],
-      ["selected_first", "selected_not_first"]
-    ],
-    "note": "The exact colours belong to the reference's scheme and are recorded as provenance. What must port is the partition: the edit target is NOT a visual state of a row, and the selection's first element IS."
+  "name_column_span_x": [
+   1251,
+   1900
+  ],
+  "note": "The state treatment repaints the WHOLE row span. Hover repaints only the name column."
+ },
+ "treatments": [
+  {
+   "id": "unselected",
+   "row_background_rgb": [
+    156,
+    164,
+    172
+   ],
+   "row_background_rgb_alternate": [
+    152,
+    160,
+    168
+   ],
+   "name_text_rgb": [
+    0,
+    0,
+    0
+   ],
+   "mode_icon": false,
+   "note": "The two backgrounds are zebra striping by row index, not by state: adjacent rows alternate and the pair differs by exactly 4 per channel."
   },
-
-  "orthogonal_treatments": {
-    "hover": {
-      "delta_rgb": [8, 8, 8],
-      "span": "name column only (x >= 1251); the icon columns keep their colour",
-      "measured": [
-        {"base": [152, 160, 168], "hovered": [160, 168, 176], "row_state": "unselected"},
-        {"base": [64, 72, 80], "hovered": [72, 80, 88], "row_state": "selected_first"}
-      ],
-      "warning": "A hovered selected_first row and an unhovered selected_not_first row share the background value [72,80,88]. They are told apart by span: hover leaves the icon columns dark, the state treatment does not."
+  {
+   "id": "selected_first",
+   "row_background_rgb": [
+    64,
+    72,
+    80
+   ],
+   "name_text_rgb": [
+    255,
+    168,
+    40
+   ],
+   "mode_icon": true,
+   "note": "Applies to the FIRST element of the item selection, of any item type. Exactly one row per frame."
+  },
+  {
+   "id": "selected_not_first",
+   "row_background_rgb": [
+    72,
+    80,
+    88
+   ],
+   "name_text_rgb": [
+    244,
+    156,
+    28
+   ],
+   "mode_icon": true,
+   "note": "Applies to every other selected row. Background = selected_first + 8 per channel; text = selected_first - 11/-12/-12."
+  }
+ ],
+ "distinct_state_treatments": 3,
+ "state_to_treatment": [
+  {
+   "selected": false,
+   "edit_target": false,
+   "foreground": false,
+   "treatment": "unselected"
+  },
+  {
+   "selected": false,
+   "edit_target": true,
+   "foreground": true,
+   "treatment": "unselected"
+  },
+  {
+   "selected": false,
+   "edit_target": false,
+   "foreground": true,
+   "treatment": "unselected"
+  },
+  {
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": true,
+   "treatment": "selected_first"
+  },
+  {
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": false,
+   "treatment": "selected_first"
+  },
+  {
+   "selected": true,
+   "selection_index": 1,
+   "edit_target": true,
+   "treatment": "selected_not_first"
+  },
+  {
+   "selected": true,
+   "selection_index": 1,
+   "edit_target": false,
+   "treatment": "selected_not_first"
+  },
+  {
+   "selected": true,
+   "selection_index": 2,
+   "edit_target": false,
+   "treatment": "selected_not_first"
+  }
+ ],
+ "assertions": {
+  "must_render_identically": [
+   [
+    "edit_target_not_selected",
+    "neither"
+   ],
+   [
+    "foreground_not_target_not_selected",
+    "neither"
+   ],
+   [
+    "selected_first_and_target",
+    "selected_first_not_target"
+   ],
+   [
+    "selected_not_first_and_target",
+    "selected_not_first_not_target"
+   ]
+  ],
+  "must_render_differently": [
+   [
+    "unselected",
+    "selected_first"
+   ],
+   [
+    "unselected",
+    "selected_not_first"
+   ],
+   [
+    "selected_first",
+    "selected_not_first"
+   ]
+  ],
+  "note": "The exact colours belong to the reference's scheme and are recorded as provenance. What must port is the partition: the edit target is NOT a visual state of a row, and the selection's first element IS."
+ },
+ "orthogonal_treatments": {
+  "hover": {
+   "delta_rgb": [
+    8,
+    8,
+    8
+   ],
+   "span": "name column only (x >= 1251); the icon columns keep their colour",
+   "measured": [
+    {
+     "base": [
+      152,
+      160,
+      168
+     ],
+     "hovered": [
+      160,
+      168,
+      176
+     ],
+     "row_state": "unselected"
     },
-    "empty_layer_text": {
-      "name_text_rgb": [100, 108, 116],
-      "applies_when": "the mesh layer holds no geometry",
-      "overrides_selection_text": true,
-      "note": "Measured identical (100,108,116) whether the empty layer is selected or not: the selection text colour does not reach an empty layer's name."
-    },
-    "row_wash_unattributed": {
-      "row_background_rgb": [152, 160, 144],
-      "observed_on": "the empty mesh layer of the active scene, constant across all 18 cells",
-      "not_observed_on": "an empty mesh layer belonging to a non-active scene",
-      "status": "not attributed; it is constant across the four states, so it is not a state treatment"
+    {
+     "base": [
+      64,
+      72,
+      80
+     ],
+     "hovered": [
+      72,
+      80,
+      88
+     ],
+     "row_state": "selected_first"
     }
+   ],
+   "warning": "A hovered selected_first row and an unhovered selected_not_first row share the background value [72,80,88]. They are told apart by span: hover leaves the icon columns dark, the state treatment does not."
   },
-
-  "controls": {
-    "row_identity_proved_by": "clicking each row and reading back which item the editor selected; 6/6 in wave A, 6/6 re-proved in wave B",
-    "liveness_repaint_px": 59805,
-    "cursor_not_composited_px_inside_rows": 0,
-    "reversibility_px_per_row": 0,
-    "specificity": "selecting one item changed that row only; the other five rows changed 0 px",
-    "second_boot_agreement": "every treatment value reproduced exactly in the second, independent boot"
+  "empty_layer_text": {
+   "name_text_rgb": [
+    100,
+    108,
+    116
+   ],
+   "applies_when": "the mesh layer holds no geometry",
+   "overrides_selection_text": true,
+   "note": "Measured identical (100,108,116) whether the empty layer is selected or not: the selection text colour does not reach an empty layer's name."
   },
-
-  "observations": [
-    {"cell": "C0",  "ops": "set:M1;drop",           "row": "M1",     "selected": false, "selection_index": null, "edit_target": true,  "foreground": true,  "row_background_rgb": [156, 164, 172], "name_text_rgb": [0, 0, 0],       "mode_icon": false},
-    {"cell": "C1",  "ops": "set:M1",                "row": "M1",     "selected": true,  "selection_index": 0,    "edit_target": true,  "foreground": true,  "row_background_rgb": [64, 72, 80],    "name_text_rgb": [255, 168, 40],  "mode_icon": true},
-    {"cell": "C2",  "ops": "set:M2;add:M1",         "row": "M1",     "selected": true,  "selection_index": 1,    "edit_target": false, "foreground": true,  "row_background_rgb": [72, 80, 88],    "name_text_rgb": [244, 156, 28],  "mode_icon": true},
-    {"cell": "C2",  "ops": "set:M2;add:M1",         "row": "M2",     "selected": true,  "selection_index": 0,    "edit_target": true,  "foreground": true,  "row_background_rgb": [64, 72, 80],    "name_text_rgb": [255, 168, 40],  "mode_icon": true},
-    {"cell": "C3",  "ops": "set:M1;set:LOC",        "row": "M1",     "selected": false, "selection_index": null, "edit_target": true,  "foreground": true,  "row_background_rgb": [156, 164, 172], "name_text_rgb": [0, 0, 0],       "mode_icon": false},
-    {"cell": "C3",  "ops": "set:M1;set:LOC",        "row": "LOC",    "selected": true,  "selection_index": 0,    "edit_target": false, "foreground": false, "row_background_rgb": [64, 72, 80],    "name_text_rgb": [255, 168, 40],  "mode_icon": true},
-    {"cell": "C4",  "ops": "set:M1;add:LOC",        "row": "M1",     "selected": true,  "selection_index": 0,    "edit_target": true,  "foreground": true,  "row_background_rgb": [64, 72, 80],    "name_text_rgb": [255, 168, 40],  "mode_icon": true},
-    {"cell": "C4",  "ops": "set:M1;add:LOC",        "row": "LOC",    "selected": true,  "selection_index": 1,    "edit_target": false, "foreground": false, "row_background_rgb": [72, 80, 88],    "name_text_rgb": [244, 156, 28],  "mode_icon": true},
-    {"cell": "C5",  "ops": "set:M3",                "row": "M1",     "selected": false, "selection_index": null, "edit_target": false, "foreground": false, "row_background_rgb": [156, 164, 172], "name_text_rgb": [0, 0, 0],       "mode_icon": false},
-    {"cell": "C5",  "ops": "set:M3",                "row": "M3",     "selected": true,  "selection_index": 0,    "edit_target": true,  "foreground": true,  "row_background_rgb": [64, 72, 80],    "name_text_rgb": [255, 168, 40],  "mode_icon": true},
-    {"cell": "C6",  "ops": "set:M3;drop",           "row": "M3",     "selected": false, "selection_index": null, "edit_target": true,  "foreground": true,  "row_background_rgb": [156, 164, 172], "name_text_rgb": [0, 0, 0],       "mode_icon": false},
-    {"cell": "C7",  "ops": "set:M1;add:M2;set:LOC", "row": "M1",     "selected": false, "selection_index": null, "edit_target": true,  "foreground": true,  "row_background_rgb": [156, 164, 172], "name_text_rgb": [0, 0, 0],       "mode_icon": false},
-    {"cell": "C7",  "ops": "set:M1;add:M2;set:LOC", "row": "M2",     "selected": false, "selection_index": null, "edit_target": false, "foreground": true,  "row_background_rgb": [152, 160, 168], "name_text_rgb": [0, 0, 0],       "mode_icon": false},
-    {"cell": "C7b", "ops": "set:M2;add:M1;set:LOC", "row": "M1",     "selected": false, "selection_index": null, "edit_target": false, "foreground": true,  "row_background_rgb": [156, 164, 172], "name_text_rgb": [0, 0, 0],       "mode_icon": false},
-    {"cell": "C7b", "ops": "set:M2;add:M1;set:LOC", "row": "M2",     "selected": false, "selection_index": null, "edit_target": true,  "foreground": true,  "row_background_rgb": [152, 160, 168], "name_text_rgb": [0, 0, 0],       "mode_icon": false},
-    {"cell": "C8",  "ops": "set:MEMPTY",            "row": "MEMPTY", "selected": true,  "selection_index": 0,    "edit_target": true,  "foreground": true,  "row_background_rgb": [64, 72, 80],    "name_text_rgb": [100, 108, 116], "mode_icon": true},
-    {"cell": "D1",  "ops": "set:LOC;add:M1",        "row": "LOC",    "selected": true,  "selection_index": 0,    "edit_target": false, "foreground": false, "row_background_rgb": [64, 72, 80],    "name_text_rgb": [255, 168, 40],  "mode_icon": true},
-    {"cell": "D1",  "ops": "set:LOC;add:M1",        "row": "M1",     "selected": true,  "selection_index": 1,    "edit_target": true,  "foreground": true,  "row_background_rgb": [72, 80, 88],    "name_text_rgb": [244, 156, 28],  "mode_icon": true},
-    {"cell": "D2",  "ops": "set:LOC;add:M1;add:M2", "row": "LOC",    "selected": true,  "selection_index": 0,    "edit_target": false, "foreground": false, "row_background_rgb": [64, 72, 80],    "name_text_rgb": [255, 168, 40],  "mode_icon": true},
-    {"cell": "D2",  "ops": "set:LOC;add:M1;add:M2", "row": "M1",     "selected": true,  "selection_index": 1,    "edit_target": true,  "foreground": true,  "row_background_rgb": [72, 80, 88],    "name_text_rgb": [244, 156, 28],  "mode_icon": true},
-    {"cell": "D2",  "ops": "set:LOC;add:M1;add:M2", "row": "M2",     "selected": true,  "selection_index": 2,    "edit_target": false, "foreground": true,  "row_background_rgb": [72, 80, 88],    "name_text_rgb": [244, 156, 28],  "mode_icon": true},
-    {"cell": "D3",  "ops": "set:M1;add:M2;add:M3",  "row": "M1",     "selected": true,  "selection_index": 0,    "edit_target": true,  "foreground": true,  "row_background_rgb": [64, 72, 80],    "name_text_rgb": [255, 168, 40],  "mode_icon": true},
-    {"cell": "D3",  "ops": "set:M1;add:M2;add:M3",  "row": "M2",     "selected": true,  "selection_index": 1,    "edit_target": false, "foreground": true,  "row_background_rgb": [72, 80, 88],    "name_text_rgb": [244, 156, 28],  "mode_icon": true},
-    {"cell": "D3",  "ops": "set:M1;add:M2;add:M3",  "row": "M3",     "selected": true,  "selection_index": 2,    "edit_target": false, "foreground": true,  "row_background_rgb": [72, 80, 88],    "name_text_rgb": [244, 156, 28],  "mode_icon": true},
-    {"cell": "D6",  "ops": "set:M1;drop",           "row": "M1",     "selected": false, "selection_index": null, "edit_target": true,  "foreground": true,  "row_background_rgb": [156, 164, 172], "name_text_rgb": [0, 0, 0],       "mode_icon": false},
-    {"cell": "D7",  "ops": "set:M1",                "row": "M1",     "selected": true,  "selection_index": 0,    "edit_target": true,  "foreground": true,  "row_background_rgb": [64, 72, 80],    "name_text_rgb": [255, 168, 40],  "mode_icon": true}
-  ]
+  "row_wash_unattributed": {
+   "row_background_rgb": [
+    152,
+    160,
+    144
+   ],
+   "observed_on": "the empty mesh layer of the active scene, constant across all 18 cells",
+   "not_observed_on": "an empty mesh layer belonging to a non-active scene",
+   "status": "not attributed; it is constant across the four states, so it is not a state treatment"
+  }
+ },
+ "controls": {
+  "row_identity_proved_by": "clicking each row and reading back which item the editor selected; 6/6 in wave A, 6/6 re-proved in wave B",
+  "liveness_repaint_px": 59805,
+  "cursor_not_composited_px_inside_rows": 0,
+  "reversibility_px_per_row": 0,
+  "specificity": "selecting one item changed that row only; the other five rows changed 0 px",
+  "second_boot_agreement": "every treatment value reproduced exactly in the second, independent boot"
+ },
+ "observations": [
+  {
+   "cell": "C0",
+   "ops": "set:M1;drop",
+   "row": "M1",
+   "selected": false,
+   "selection_index": null,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    156,
+    164,
+    172
+   ],
+   "name_text_rgb": [
+    0,
+    0,
+    0
+   ],
+   "mode_icon": false
+  },
+  {
+   "cell": "C1",
+   "ops": "set:M1",
+   "row": "M1",
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    64,
+    72,
+    80
+   ],
+   "name_text_rgb": [
+    255,
+    168,
+    40
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "C2",
+   "ops": "set:M2;add:M1",
+   "row": "M1",
+   "selected": true,
+   "selection_index": 1,
+   "edit_target": false,
+   "foreground": true,
+   "row_background_rgb": [
+    72,
+    80,
+    88
+   ],
+   "name_text_rgb": [
+    244,
+    156,
+    28
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "C2",
+   "ops": "set:M2;add:M1",
+   "row": "M2",
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    64,
+    72,
+    80
+   ],
+   "name_text_rgb": [
+    255,
+    168,
+    40
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "C3",
+   "ops": "set:M1;set:LOC",
+   "row": "M1",
+   "selected": false,
+   "selection_index": null,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    156,
+    164,
+    172
+   ],
+   "name_text_rgb": [
+    0,
+    0,
+    0
+   ],
+   "mode_icon": false
+  },
+  {
+   "cell": "C3",
+   "ops": "set:M1;set:LOC",
+   "row": "LOC",
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": false,
+   "foreground": false,
+   "row_background_rgb": [
+    64,
+    72,
+    80
+   ],
+   "name_text_rgb": [
+    255,
+    168,
+    40
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "C4",
+   "ops": "set:M1;add:LOC",
+   "row": "M1",
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    64,
+    72,
+    80
+   ],
+   "name_text_rgb": [
+    255,
+    168,
+    40
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "C4",
+   "ops": "set:M1;add:LOC",
+   "row": "LOC",
+   "selected": true,
+   "selection_index": 1,
+   "edit_target": false,
+   "foreground": false,
+   "row_background_rgb": [
+    72,
+    80,
+    88
+   ],
+   "name_text_rgb": [
+    244,
+    156,
+    28
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "C5",
+   "ops": "set:M3",
+   "row": "M1",
+   "selected": false,
+   "selection_index": null,
+   "edit_target": false,
+   "foreground": false,
+   "row_background_rgb": [
+    156,
+    164,
+    172
+   ],
+   "name_text_rgb": [
+    0,
+    0,
+    0
+   ],
+   "mode_icon": false
+  },
+  {
+   "cell": "C5",
+   "ops": "set:M3",
+   "row": "M3",
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    64,
+    72,
+    80
+   ],
+   "name_text_rgb": [
+    255,
+    168,
+    40
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "C6",
+   "ops": "set:M3;drop",
+   "row": "M3",
+   "selected": false,
+   "selection_index": null,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    156,
+    164,
+    172
+   ],
+   "name_text_rgb": [
+    0,
+    0,
+    0
+   ],
+   "mode_icon": false
+  },
+  {
+   "cell": "C7",
+   "ops": "set:M1;add:M2;set:LOC",
+   "row": "M1",
+   "selected": false,
+   "selection_index": null,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    156,
+    164,
+    172
+   ],
+   "name_text_rgb": [
+    0,
+    0,
+    0
+   ],
+   "mode_icon": false
+  },
+  {
+   "cell": "C7",
+   "ops": "set:M1;add:M2;set:LOC",
+   "row": "M2",
+   "selected": false,
+   "selection_index": null,
+   "edit_target": false,
+   "foreground": true,
+   "row_background_rgb": [
+    152,
+    160,
+    168
+   ],
+   "name_text_rgb": [
+    0,
+    0,
+    0
+   ],
+   "mode_icon": false
+  },
+  {
+   "cell": "C7b",
+   "ops": "set:M2;add:M1;set:LOC",
+   "row": "M1",
+   "selected": false,
+   "selection_index": null,
+   "edit_target": false,
+   "foreground": true,
+   "row_background_rgb": [
+    156,
+    164,
+    172
+   ],
+   "name_text_rgb": [
+    0,
+    0,
+    0
+   ],
+   "mode_icon": false
+  },
+  {
+   "cell": "C7b",
+   "ops": "set:M2;add:M1;set:LOC",
+   "row": "M2",
+   "selected": false,
+   "selection_index": null,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    152,
+    160,
+    168
+   ],
+   "name_text_rgb": [
+    0,
+    0,
+    0
+   ],
+   "mode_icon": false
+  },
+  {
+   "cell": "C8",
+   "ops": "set:MEMPTY",
+   "row": "MEMPTY",
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    64,
+    72,
+    80
+   ],
+   "name_text_rgb": [
+    100,
+    108,
+    116
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "D1",
+   "ops": "set:LOC;add:M1",
+   "row": "LOC",
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": false,
+   "foreground": false,
+   "row_background_rgb": [
+    64,
+    72,
+    80
+   ],
+   "name_text_rgb": [
+    255,
+    168,
+    40
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "D1",
+   "ops": "set:LOC;add:M1",
+   "row": "M1",
+   "selected": true,
+   "selection_index": 1,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    72,
+    80,
+    88
+   ],
+   "name_text_rgb": [
+    244,
+    156,
+    28
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "D2",
+   "ops": "set:LOC;add:M1;add:M2",
+   "row": "LOC",
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": false,
+   "foreground": false,
+   "row_background_rgb": [
+    64,
+    72,
+    80
+   ],
+   "name_text_rgb": [
+    255,
+    168,
+    40
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "D2",
+   "ops": "set:LOC;add:M1;add:M2",
+   "row": "M1",
+   "selected": true,
+   "selection_index": 1,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    72,
+    80,
+    88
+   ],
+   "name_text_rgb": [
+    244,
+    156,
+    28
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "D2",
+   "ops": "set:LOC;add:M1;add:M2",
+   "row": "M2",
+   "selected": true,
+   "selection_index": 2,
+   "edit_target": false,
+   "foreground": true,
+   "row_background_rgb": [
+    72,
+    80,
+    88
+   ],
+   "name_text_rgb": [
+    244,
+    156,
+    28
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "D3",
+   "ops": "set:M1;add:M2;add:M3",
+   "row": "M1",
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    64,
+    72,
+    80
+   ],
+   "name_text_rgb": [
+    255,
+    168,
+    40
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "D3",
+   "ops": "set:M1;add:M2;add:M3",
+   "row": "M2",
+   "selected": true,
+   "selection_index": 1,
+   "edit_target": false,
+   "foreground": true,
+   "row_background_rgb": [
+    72,
+    80,
+    88
+   ],
+   "name_text_rgb": [
+    244,
+    156,
+    28
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "D3",
+   "ops": "set:M1;add:M2;add:M3",
+   "row": "M3",
+   "selected": true,
+   "selection_index": 2,
+   "edit_target": false,
+   "foreground": true,
+   "row_background_rgb": [
+    72,
+    80,
+    88
+   ],
+   "name_text_rgb": [
+    244,
+    156,
+    28
+   ],
+   "mode_icon": true
+  },
+  {
+   "cell": "D6",
+   "ops": "set:M1;drop",
+   "row": "M1",
+   "selected": false,
+   "selection_index": null,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    156,
+    164,
+    172
+   ],
+   "name_text_rgb": [
+    0,
+    0,
+    0
+   ],
+   "mode_icon": false
+  },
+  {
+   "cell": "D7",
+   "ops": "set:M1",
+   "row": "M1",
+   "selected": true,
+   "selection_index": 0,
+   "edit_target": true,
+   "foreground": true,
+   "row_background_rgb": [
+    64,
+    72,
+    80
+   ],
+   "name_text_rgb": [
+    255,
+    168,
+    40
+   ],
+   "mode_icon": true
+  }
+ ],
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "hand",
+  "captured_utc": "2026-08-10",
+  "harness": "screen capture of the item list (task 0670-era panel work)",
+  "task": "unknown",
+  "notes": "Block back-filled 2026-08-17 (task 1063) from the fixture's own `source` field: \"reference editor, stock colour scheme, item list in its full (tree) view, 1920x1080, two independent boots\". Method is `hand` because this is a READ OF PIXELS, not a driven command or gesture \u2014 the distinction matters: nothing here can be re-derived by a script."
+ }
 }
