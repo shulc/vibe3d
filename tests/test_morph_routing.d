@@ -57,12 +57,28 @@ bool approxEq(double a, double b, double eps = 1e-5) { return fabs(a - b) < eps;
 
 private int g_seq = 0;
 
-JSONValue saveAndReadMesh(string tag) {
+/// The whole saved document — needed by any case with more than one layer.
+JSONValue saveAndReadDoc(string tag) {
     string path = format("/tmp/vibe3d-test-morphroute-%s-%d.v3d", tag, g_seq++);
     if (exists(path)) remove(path);
     scope(exit) if (exists(path)) remove(path);
     runCmd("file.save", `{"path":"` ~ path ~ `"}`);
-    return parseJSON(readText(path))["layers"][0]["mesh"];
+    return parseJSON(readText(path));
+}
+
+JSONValue saveAndReadMesh(string tag) {
+    return saveAndReadDoc(tag)["layers"][0]["mesh"];
+}
+
+/// The PRIMARY layer's mesh, by the document's own recorded primary index —
+/// not `layers[0]`, which stops being the edit target the moment a case adds
+/// or duplicates a layer.
+JSONValue primaryMeshOf(JSONValue doc) {
+    const long p = doc["primaryLayer"].integer;
+    assert(p >= 0 && p < doc["layers"].array.length,
+        format("primaryLayer=%d is out of range for %d layer(s)",
+               p, doc["layers"].array.length));
+    return doc["layers"].array[cast(size_t) p]["mesh"];
 }
 
 struct MorphBlock {
@@ -391,4 +407,77 @@ unittest { // SYMMETRY under routing: BOTH sides land in the map and NEITHER
     assert(b.entryCount == 2,
         format("exactly the driver and its partner have entries, got %d",
                b.entryCount));
+}
+
+unittest { // TASK 1073, review B2 — a PRIMARY-LAYER CHANGE drops the routing
+           // target.
+           //
+           // The binding is one app-global NAME resolved per use, so carrying
+           // it across a layer switch re-points it at whatever same-named map
+           // the NEW primary happens to hold. `layer.duplicate` is the case
+           // that makes this certain rather than unlucky: the clone carries a
+           // copy of every map, name included, so a surviving binding ALWAYS
+           // resolves — and the user's next drag silently deepens a morph on
+           // a layer they never selected a target on.
+           //
+           // `app.d`'s `onActiveLayerChanged` is the fix site and it is not
+           // reachable from a module unittest (it is a local delegate in the
+           // entry module), so this is the case that covers it. The two
+           // COMMAND sites — `scene.reset` and `file.load` — are pinned
+           // directly in `tests/unit/morph_target_lifecycle_test.d`.
+           //
+           // Mutation: delete the `clearMorphTarget()` block from
+           // `onActiveLayerChanged` -> the clone's base stays at 0.5 and its
+           // map accumulates to 0.5, reddening both assertions below.
+    resetCube();
+
+    // Author a morph on the ORIGINAL layer. `create` steals the target, so the
+    // move below routes.
+    runCmd("mesh.morph.create", `{"name":"m","kind":"relative"}`);
+    postSelect("vertices", [6]);
+    numericMoveX(0.25);
+    {
+        auto pre = saveAndReadMesh("b2-pre");
+        double[3] v;
+        assert(morphOf(pre, "m").valueOf(6, v),
+            "setup: the first move must have ROUTED -- if it did not, nothing "
+          ~ "below is testing the layer switch");
+        assertVec(v, [0.25, 0, 0], "setup: the stored delta");
+        assertVec(vertexAt(pre, 6), [0.5, 0.5, 0.5],
+            "setup: a routed move leaves the base alone");
+    }
+
+    // Switch the primary. The clone is appended and becomes the edit target,
+    // and it carries its own map named "m" with the same 0.25 entry.
+    cmd("layer.duplicate");
+
+    // The SAME gesture again, now on the clone.
+    postSelect("vertices", [6]);
+    numericMoveX(0.25);
+
+    auto doc   = saveAndReadDoc("b2-post");
+    assert(doc["layers"].array.length == 2, "the duplicate produced 2 layers");
+    auto clone = primaryMeshOf(doc);
+
+    assertVec(vertexAt(clone, 6), [0.75, 0.5, 0.5],
+        "with the target dropped by the layer switch, the move must land in "
+      ~ "the clone's BASE. A surviving binding re-resolves against the "
+      ~ "clone's same-named map and leaves the base at 0.5");
+
+    double[3] w;
+    assert(morphOf(clone, "m").valueOf(6, w),
+        "the clone still carries the copied map");
+    assertVec(w, [0.25, 0, 0],
+        "...and its VALUE is the copy, untouched. This is the half that "
+      ~ "discriminates: a surviving binding would have accumulated it to "
+      ~ "0.5, and 'the base moved' alone could not tell a dropped target "
+      ~ "from a target that wrote to the map AND the base");
+
+    // The layer the user left is untouched by the second gesture.
+    auto original = doc["layers"].array[0]["mesh"];
+    assertVec(vertexAt(original, 6), [0.5, 0.5, 0.5],
+        "the background layer's base must not move");
+    double[3] o;
+    assert(morphOf(original, "m").valueOf(6, o));
+    assertVec(o, [0.25, 0, 0], "nor its map");
 }

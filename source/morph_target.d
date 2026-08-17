@@ -17,10 +17,22 @@ module morph_target;
 // Main-thread only, like `io.doc_state` — the HTTP command routes are
 // dispatched as `Answered.mainThread`.
 //
-// Cleared on a primary-layer change (the app-side hook): the same NAME may
-// denote a different map on another layer, and silently retargeting an edit
-// at a same-named map on a layer the user just switched to is worse than
-// dropping the target. OUR choice, not a measurement — registry row 43.
+// Cleared on a primary-layer change (`app.d`'s `onActiveLayerChanged` hook),
+// by File → New / `scene.reset` (`commands/scene/reset.d`) and by File → Open
+// (`commands/file/load.d`): the same NAME may denote a different map on
+// another layer — a duplicated layer carries the same map names by
+// construction — and silently retargeting an edit at a same-named map on a
+// layer the user just switched to is worse than dropping the target. OUR
+// choice, not a measurement — registry row 43.
+//
+// Those three call sites are the WHOLE list, and `clearMorphTarget` is
+// otherwise called only by `MorphSelect` and `forgetMorphTargetIfNamed`. The
+// gate is `grep -rn 'clearMorphTarget' source/`; if this comment ever names a
+// site the grep does not, the comment is the thing that is wrong. (It was:
+// task 1069 shipped this paragraph with none of the three wired, so a bound
+// target survived a layer switch, a File → New AND `/api/reset` — the last of
+// which is a cross-test bleed vector in the shared `--test` process. Task
+// 1073, review B2.)
 
 import mesh : MapKind, Mesh, isMorphKind;
 
@@ -50,22 +62,53 @@ void setMorphTarget(string name, MapKind kind) {
     g_targetKind = kind;
 }
 
-/// Drop the binding. Called on a primary-layer change and by File → New.
+/// Drop the binding. Called on a primary-layer change, by File → New /
+/// `scene.reset` (which is what `/api/reset` fires) and by File → Open.
 void clearMorphTarget() {
     g_targetName = null;
     g_targetKind = MapKind.unclassified;
 }
 
+/// Is `m` the mesh the binding applies to — the PRIMARY (edit-target) layer's
+/// mesh? (task 1073, review SF2.)
+///
+/// The binding is ONE app-global name, and the resolution below is by name
+/// against whatever mesh it is handed. Background layers are handed to the
+/// same readers as the primary — `ui/viewport_render.d` uploads every visible
+/// background layer through `GpuMesh.upload`, and `snap.d` walks them for
+/// snap candidates — so without this test a background layer carrying a map
+/// of the same name (which a DUPLICATED layer does by construction) is drawn,
+/// snapped to and picked MORPHED by the primary's binding. The user bound a
+/// target on one layer and three others silently deformed.
+///
+/// The authority is `display_sync.activeMeshResolver`, which `app.d` installs
+/// once as `() => document.activeMesh()` — i.e. the primary's mesh. Reused
+/// rather than duplicated so there is one answer to "which mesh is the edit
+/// target" and one place to wire it.
+///
+/// NULL RESOLVER MEANS YES. Module unittests and every headless construction
+/// build a bare `Mesh` with no `Document` and no app behind it; there is
+/// exactly one mesh there and it is the edit target by definition. This is
+/// what keeps the existing morph unittests byte-identical.
+private bool isMorphPreviewMesh(const Mesh* m) {
+    if (m is null) return false;
+    import display_sync : activeMeshResolver;
+    if (activeMeshResolver is null) return true;
+    const(Mesh)* primary = activeMeshResolver();
+    return primary is m;
+}
+
 /// Resolve the binding against a live mesh: returns true, plus the name and
-/// the map's OWN stored kind, only when a map of that name exists on `m` and
-/// is a morph kind. The kind returned is the mesh's, not the binding's — if
-/// they ever disagree (a `.v3d` load replacing a map with one of the other
-/// kind under the same name) the mesh is the authority, because it is what
-/// the write will land in.
+/// the map's OWN stored kind, only when `m` is the primary mesh AND a map of
+/// that name exists on it AND is a morph kind. The kind returned is the
+/// mesh's, not the binding's — if they ever disagree (a `.v3d` load replacing
+/// a map with one of the other kind under the same name) the mesh is the
+/// authority, because it is what the write will land in.
 bool resolveMorphTarget(const Mesh* m, out string name, out MapKind kind) {
     name = null;
     kind = MapKind.unclassified;
     if (m is null || !hasMorphTarget()) return false;
+    if (!isMorphPreviewMesh(m)) return false;
     const k = m.mapKind(g_targetName);
     if (!isMorphKind(k)) return false;
     name = g_targetName;

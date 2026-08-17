@@ -277,8 +277,11 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                     p += 2;
                     uint[] face;
                     face.reserve(numVerts);
-                    for (int i = 0; i < numVerts && p < chunkEnd; i++)
-                        face ~= readVX(data, p);
+                    for (int i = 0; i < numVerts && p < chunkEnd; i++) {
+                        uint vx;
+                        if (!readVX(data, p, chunkEnd, vx)) break;
+                        face ~= vx;
+                    }
                     // Record (kind, POLS-local) -> this part's polys[] slot in
                     // on-disk POLS order, BEFORE the append, so the slot index is
                     // `cur.polys.length`. EVERY on-disk poly gets an entry: a
@@ -396,7 +399,10 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                 mb.absolute = (mapType == kMorphAbsoluteTag);
                 size_t entries = 0, dropped = 0;
                 while (p < chunkEnd) {
-                    uint point = readVX(data, p);
+                    uint point;
+                    // A truncated VX ends the chunk cleanly — it used to read
+                    // past the buffer instead (review SF1).
+                    if (!readVX(data, p, chunkEnd, point)) break;
                     float[3] xyz = [0.0f, 0.0f, 0.0f];
                     bool short_ = false;
                     foreach (d; 0 .. 3) {
@@ -423,7 +429,8 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             } else if (mapType == "TXUV" && dim >= 1) {
                 size_t entries = 0;
                 while (p < chunkEnd) {
-                    uint point = readVX(data, p);
+                    uint point;
+                    if (!readVX(data, p, chunkEnd, point)) break;
                     // Read `dim` floats; keep [0..2] (default v=0 for a 1-D map).
                     float[2] uv = [0.0f, 0.0f];
                     bool short_ = false;
@@ -468,8 +475,9 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                     auto l2g = cur.localToGlobal[kind][cur.polsBase[kind] .. $];
                     size_t entries = 0, dropped = 0;
                     while (p < chunkEnd) {
-                        uint point     = readVX(data, p);
-                        uint localPoly = readVX(data, p);
+                        uint point, localPoly;
+                        if (!readVX(data, p, chunkEnd, point))     break;
+                        if (!readVX(data, p, chunkEnd, localPoly)) break;
                         float[2] uv = [0.0f, 0.0f];
                         bool short_ = false;
                         foreach (d; 0 .. dim) {
@@ -595,7 +603,8 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             // was a REGRESSION on legacy files, see below).
             size_t entryCount = 0;
             for (size_t q = 4; q < body.length; ) {
-                readVX(body, q);
+                uint skipped;
+                if (!readVX(body, q, body.length, skipped)) break;
                 if (q + 2 > body.length) break;
                 q += 2;
                 ++entryCount;
@@ -632,7 +641,8 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
             size_t ordinal = 0;
             size_t p = 4;
             while (p < body.length) {
-                uint localIdx = readVX(body, p);
+                uint localIdx;
+                if (!readVX(body, p, body.length, localIdx)) break;
                 if (p + 2 > body.length) break;
                 ushort tagIdx = readU16(body, p);
                 p += 2;
@@ -774,18 +784,42 @@ float readF32(const ubyte[] buf, size_t off) {
     return *cast(float*)&bits;
 }
 
-uint readVX(const ubyte[] buf, ref size_t pos) {
+/// Read a variable-length index (VX) at `pos`, advancing `pos` past it.
+///
+/// `limit` is the EXCLUSIVE end of the readable window — the enclosing
+/// chunk's end, which every caller already carries — and is clamped to
+/// `buf.length` here so a chunk header that overruns the file cannot widen
+/// it. Returns false, leaves `idx` at 0 and parks `pos` AT `limit` when the
+/// index does not fit; since every caller loop is `while (pos < limit)`,
+/// parking at the limit terminates the loop even for a caller that drops the
+/// bool on the floor.
+///
+/// UNTRUSTED INPUT (task 1073, review SF1). This used to read `buf[pos + 1]`
+/// (2-byte form) or `buf[pos + 3]` (4-byte form) with no bound of its OWN,
+/// while every caller guarded only `pos < chunkEnd`. A VMAP truncated
+/// mid-entry — one trailing byte at the very end of the file is enough —
+/// therefore indexed past `buf`: a `RangeError` in the default build, which
+/// is an `Error` and so is NOT caught by the `catch (Exception)` this reader
+/// wraps itself in, and a real out-of-bounds READ under `--build=perf` where
+/// bounds checks are off. It falsified the "Never a throw: one bad byte must
+/// not cost the whole load" contract stated at the morph call site. Fixed
+/// once HERE rather than at each of the six call sites, because "the caller
+/// checked the byte count" is exactly the assumption that was wrong.
+bool readVX(const ubyte[] buf, ref size_t pos, size_t limit, out uint idx) {
+    if (limit > buf.length) limit = buf.length;
+    if (pos >= limit) { pos = limit; return false; }
     if (buf[pos] == 0xFF) {
-        uint idx = (cast(uint) buf[pos + 1] << 16)
-                 | (cast(uint) buf[pos + 2] <<  8)
-                 |  cast(uint) buf[pos + 3];
+        if (pos + 4 > limit) { pos = limit; return false; }
+        idx = (cast(uint) buf[pos + 1] << 16)
+            | (cast(uint) buf[pos + 2] <<  8)
+            |  cast(uint) buf[pos + 3];
         pos += 4;
-        return idx;
     } else {
-        uint idx = readU16(buf, pos);
+        if (pos + 2 > limit) { pos = limit; return false; }
+        idx = readU16(buf, pos);
         pos += 2;
-        return idx;
     }
+    return true;
 }
 
 
@@ -1098,4 +1132,92 @@ version (unittest) {
         }
         return iffChunk("VMAD", p);
     }
+
+    /// One sparse morph entry: (point, dx, dy, dz). 14 bytes on the wire —
+    /// a 2-byte VX plus three big-endian f32.
+    struct MorphFix { ushort point; float x, y, z; }
+
+    /// VMAP MORF (relative morph). Payload = type(4) + dim(2) + S0 name
+    /// (even) + 14 per entry, so the payload length is EVEN and `iffChunk`
+    /// appends no pad byte — which is what lets the truncation test below put
+    /// the parse position at the very last byte of the file.
+    ubyte[] vmapMorphChunk(string name, const MorphFix[] entries) {
+        ubyte[] p;
+        p ~= cast(const(ubyte)[]) kMorphRelativeTag;
+        putU2(p, 3);                 // dim
+        putName(p, name);
+        foreach (e; entries) {
+            putU2(p, e.point);
+            putF4(p, e.x); putF4(p, e.y); putF4(p, e.z);
+        }
+        return iffChunk("VMAP", p);
+    }
+}
+
+// TASK 1073, review SF1 — a morph VMAP truncated MID-ENTRY must end the chunk,
+// not read past the buffer.
+//
+// The morph decode loop guards only `p < chunkEnd`, and `readVX` used to have
+// no bound of its own: it reads a second byte (2-byte form) or a fourth
+// (4-byte form) unconditionally. With the VMAP as the file's LAST chunk and
+// its final entry cut to a single byte, `p == data.length - 1 < chunkEnd`, so
+// the read went one past the array. That is a `RangeError` in the default
+// build — an `Error`, so the `catch (Exception)` this reader wraps itself in
+// does NOT save it — and a genuine out-of-bounds read under `--build=perf`,
+// where bounds checks are compiled out. Either way it falsifies the reader's
+// own "Never a throw: one bad byte must not cost the whole load" contract.
+//
+// The file is truncated by 13 of the last entry's 14 bytes, leaving exactly
+// one — `end` is `min(8 + formSize, data.length)`, so a short file pulls the
+// container end down to the real length and the clamp on `chunkEnd` follows,
+// which is what puts the parse position on the last byte rather than safely
+// inside an IFF pad.
+//
+// Mutation: restore the unbounded `readVX` (drop the `pos + 2 > limit` /
+// `pos + 4 > limit` guards) -> this unittest dies with `core.exception.
+// RangeError` instead of asserting (verified). Note the SECOND assertion is
+// what makes this more than a crash test: the two SOUND entries must still
+// import, i.e. the fix must end the chunk cleanly rather than discard the
+// whole VMAP or the whole load.
+unittest {
+    import std.file : tempDir, write, remove, exists;
+    import std.path : buildPath;
+    import std.process : thisProcessID;
+
+    ubyte[] body_;
+    body_ ~= pntsChunk([[0f,0f,0f],[1f,0f,0f],[1f,1f,0f],[0f,1f,0f]]);
+    body_ ~= polsChunk("FACE", [[0u,1u,2u,3u]]);
+    // Three entries; the third is the one the truncation eats.
+    body_ ~= vmapMorphChunk("mm", [
+        MorphFix(0, 0.5f, 0f,    0f),
+        MorphFix(1, 0f,   0.25f, 0f),
+        MorphFix(2, 0f,   0f,    0.125f)]);
+
+    ubyte[] file = lwoContainer(body_);
+    assert(file.length > 13);
+    // Chop 13 of the last entry's 14 bytes: one byte of its 2-byte VX
+    // survives, so the loop enters `readVX` with a single readable byte left.
+    ubyte[] truncated = file[0 .. $ - 13];
+
+    const string path = buildPath(tempDir,
+        format("vibe3d_1073_sf1_trunc_vmap_%d.lwo", thisProcessID));
+    scope (exit) if (exists(path)) remove(path);
+    write(path, truncated);
+
+    ImportedScene scene;
+    assert(sceneFromLwo(path, scene),
+        "a VMAP truncated mid-entry must still import the file -- one bad "
+      ~ "byte must not cost the whole load");
+    assert(scene.parts.length == 1);
+    auto part = scene.parts[0];
+    assert(part.morphs.length == 1, "the morph channel survives the truncation");
+    assert(part.morphs[0].verts.length == 2,
+        "the two COMPLETE entries must land and the truncated one must be "
+      ~ "dropped -- a reader that bails on the whole chunk loses data it "
+      ~ "already read correctly");
+    assert(part.morphs[0].verts[0] == 0 && part.morphs[0].verts[1] == 1);
+    assert(part.morphs[0].values.length == 6);
+    assert(part.morphs[0].values[0] == 0.5f && part.morphs[0].values[4] == 0.25f,
+        "and their VALUES are the ones written, not shifted by a half-read "
+      ~ "entry");
 }

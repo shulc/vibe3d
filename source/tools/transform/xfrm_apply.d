@@ -309,6 +309,31 @@ mixin template XfrmApplyImpl() {
                                bool hasT, bool hasS,
                                Vec3 viewAxis, float viewAngleDeg) {
         import std.math : PI, fabs;
+        // TASK 1073 (review SF3) — this arm is entirely UNROUTED. Every pass
+        // below reads and writes `mesh.vertices` directly, so a routed
+        // gesture arriving here would move the BASE while the user believes
+        // it is authoring a morph map: silent corruption of the one surface
+        // the whole seam exists to protect, with no visible symptom until the
+        // map is cleared and the geometry does not come back.
+        //
+        // It cannot happen today — this branch is reached only when
+        // `dragFalloff.compoundPasses != 1`, and nothing in the tree
+        // publishes anything but 1.0 — which is exactly why it is worth an
+        // assert rather than a route: routing a dormant path is untestable
+        // work, while this costs one resolve and turns the failure from
+        // silent into loud the moment the branch is woken up.
+        //
+        // `morphRoutingActive()` rather than `buildMorphRouteFor(baseline)`:
+        // the latter CAPTURES the run baseline as a side effect, and a
+        // side-effecting assert changes behaviour between `-release` (where
+        // asserts are stripped entirely) and every other build. This form is
+        // a pure read and is strictly stronger — it is true whenever a target
+        // is bound, including the cases where the route would fail to build
+        // and the fold would write the base anyway.
+        assert(!morphRoutingActive(),
+            "applyTRSLegacyPowPath is unrouted: a morph target is bound and "
+          ~ "this arm would write the BASE. Route it (or refuse) before "
+          ~ "waking compoundPasses != 1 -- see tools/transform/morph_route.d");
         // WORLD -> LAYER (task 0649), applied per pass at each kernel call
         // rather than once up front: the passes BUILD their matrices from the
         // world basis, so the conversion has to happen after each build. The

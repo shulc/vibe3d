@@ -204,6 +204,19 @@ class FileLoad : Command {
             }
         }
 
+        // The load succeeded, so the document the morph ROUTING TARGET was
+        // bound against is gone (task 1073, review B2). The binding is a NAME
+        // resolved per use, so leaving it standing means the next edit lands
+        // in whatever same-named map the loaded file happens to carry — a map
+        // the user never selected, in a document they have not looked at yet.
+        // Dropping it degrades to "editing the base", which the whole routing
+        // seam already handles. Deliberately AFTER the parse: a load that
+        // rejected has returned above and must leave the session untouched.
+        {
+            import morph_target : clearMorphTarget;
+            clearMorphTarget();
+        }
+
         // Document-path memory: a successful NATIVE load (File → Open of a
         // .v3d) becomes the current document so plain Save needs no dialog.
         // Interchange imports leave the document untitled (a later Save

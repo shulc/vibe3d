@@ -40,13 +40,18 @@ import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 /// Like the Hide bit it is consumed at UPLOAD time (`GpuMesh.upload` reads the
 /// drawn positions through `morph_target.displayVertices`), so it cannot be
 /// honoured by a per-frame draw-time read either.
+/// Includes MapsDisplay for the SAME display reason and for no other reason:
+/// binding or unbinding the morph routing target changes the drawn surface
+/// while changing no saveable datum, so it must refresh the display and must
+/// NOT reach `ChangeBus.docRevision` (see mesh_edit_delta.MapsDisplay).
 enum uint DisplayRefreshMask =
       MeshEditScope.Position
     | MeshEditScope.Points
     | MeshEditScope.Polygons
     | MeshEditScope.Material
     | MeshEditScope.Visibility
-    | MeshEditScope.Maps;
+    | MeshEditScope.Maps
+    | MeshEditScope.MapsDisplay;
 
 // The display-refresh gate (seam 2b) — since task 0427 a TOOL-side seam.
 //

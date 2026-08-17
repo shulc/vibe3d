@@ -2873,6 +2873,20 @@ void main(string[] args) {
         //    it just needs to run before step 1's setActiveTool(null).
         if (auto lst = cast(LoopSliceTool) activeTool) lst.dropArmedPreview();
         if (auto est = cast(EdgeSliceTool) activeTool) est.dropArmedPreview();
+        // 0b. Drop the morph ROUTING TARGET (task 1073, review B2). It is a
+        //     NAME resolved per use, so carrying it across a primary change
+        //     silently routes the next edit into a same-named map on the new
+        //     layer — and a DUPLICATED layer carries the same map names by
+        //     construction, so that is the common case rather than the exotic
+        //     one. `morph_target`'s own header has claimed this since task
+        //     1069; nothing implemented it. Must run BEFORE step 3's
+        //     `gpu.upload`, which reads the drawn positions through the
+        //     binding: clearing after it would upload the new layer morphed
+        //     by the old layer's target and leave that on screen.
+        {
+            import morph_target : clearMorphTarget;
+            clearMorphTarget();
+        }
         // 1. tool-drop (same path as Esc / scene.reset's onResetTool).
         setActiveTool(null);
         // 2. explicit coalesce barrier on the history.

@@ -229,6 +229,17 @@ class SceneReset : Command {
         // Intentionally NOT restored in revert() — session/UI state, same
         // policy as the camera (see the revert() note below).
         clearCurrentDoc();
+        // Same clean-slate rule for the morph ROUTING TARGET (task 1073,
+        // review B2). It is an app-global NAME, so without this it survived a
+        // File → New into a document that no longer has that map — and,
+        // because `/api/reset` fires this command, it survived from one HTTP
+        // test into the next in the shared `--test` process, which is a
+        // cross-test bleed vector rather than merely a stale binding.
+        // Not restored in revert(), same policy as the doc path above.
+        {
+            import morph_target : clearMorphTarget;
+            clearMorphTarget();
+        }
         // A reset is a fresh untitled document: start clean (task 0434). The
         // reset's own mesh mutation flushes after this command, so the
         // rebaseline lands on the next syncDocRevision.

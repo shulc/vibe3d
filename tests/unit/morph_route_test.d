@@ -124,26 +124,62 @@ unittest {
 unittest { // the ON-PLANE branch projects the DRAWN point and stores it -- it
            // does NOT move the base, which is what a naive substitution here
            // would do (it writes the driver's own position).
+           //
+           // THE STORED VALUE MUST VARY OFF THE PLANE NORMAL. This block used
+           // to store (0.7, 0, 0) and assert only `p.x == 0` -- and the
+           // projection kills x, so the right answer and the naive
+           // `projectOnPlane(sp, route.base[i])` BOTH produce x == 0. The
+           // mutation came back green (task 1073, review SF4), while the live
+           // cost of the bug it failed to see is severe: an on-plane vertex
+           // dragged WITHIN the plane has its whole stored delta zeroed on
+           // every apply, so it never moves at all. The displacement below
+           // therefore carries an IN-PLANE component (z) that must SURVIVE
+           // the projection, alongside the off-plane one (x) that must not.
     Mesh m = rig();
     m.addMeshMapOfKind(MapKind.morphRelative, "mm");
     auto route = routeFor(m, "mm", MapKind.morphRelative);
     auto sp = packetX();
     auto map = m.morphMapForWrite("mm");
 
-    // Vertex 2 sits ON the x=0 plane and the kernel has pushed it off, +X.
-    map.setEntry(2, Vec3(0.7f, 0, 0));
+    // Vertex 2 sits ON the x=0 plane and the kernel has pushed it off the
+    // plane by +0.7 in x AND along it by +0.5 in z.
+    map.setEntry(2, Vec3(0.7f, 0, 0.5f));
     Vec3[] baseBefore = m.vertices.dup;
 
     bool[] selected = [false, false, true];
     bool[] touched;  touched.length = 3;
     applySymmetryMirrorRouted(&m, sp, selected, touched, route);
 
-    // Projected back onto the plane: the drawn point (0.7, 2, 3) becomes
-    // (0, 2, 3), whose delta from the base (0,2,3) is zero.
+    // Drawn point = base (0,2,3) + (0.7,0,0.5) = (0.7, 2, 3.5).
+    // Projected onto x = 0 -> (0, 2, 3.5). Stored as a delta from the base:
+    // (0, 0, 0.5) -- x flattened, z untouched.
     auto p = stored(m, "mm", 2);
-    assert(p.x == 0.0f,
+    assert(p.x == 0.0f && p.y == 0.0f,
         "an on-plane driver must be projected back onto the plane IN THE MAP "
       ~ "-- the 'centre stays on the plane' contract");
+    assert(p.z > 0.499f && p.z < 0.501f,
+        "...and the IN-PLANE half of the displacement must SURVIVE. A "
+      ~ "projection applied to the wrong point flattens this to zero and the "
+      ~ "vertex never moves");
+
+    // House discriminator: compute the rejected form in this test's own
+    // arithmetic and show it gives a DIFFERENT answer here. The naive
+    // substitution projects the BASE rather than the drawn point, so it
+    // stores the base's own projection -- a zero delta -- for any
+    // displacement whatsoever.
+    {
+        import symmetry     : projectOnPlane;
+        import mesh_morph   : morphRoutedStore;
+        const Vec3 naive = morphRoutedStore(route.base[2],
+                                            projectOnPlane(sp, route.base[2]),
+                                            MapKind.morphRelative);
+        assert(naive.z == 0.0f && p.z != naive.z,
+            "the naive `projectOnPlane(base)` form must differ from the "
+          ~ "correct one HERE -- a fixture where they agree cannot fail when "
+          ~ "the branch regresses, which is exactly what the (0.7,0,0) "
+          ~ "displacement this test used to carry produced");
+    }
+
     foreach (i; 0 .. m.vertices.length)
         assert(m.vertices[i] == baseBefore[i],
             "the on-plane branch must not write the BASE -- left unrouted it "

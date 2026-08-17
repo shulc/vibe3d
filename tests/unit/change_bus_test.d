@@ -323,3 +323,51 @@ unittest {
     assert(drained == (LayerChange.Added | LayerChange.ActiveChanged));
     assert(pendingLayerChanges == 0, "drain zeroes the pending word");
 }
+
+// ---------------------------------------------------------------------------
+// Task 1073 (review B1) — the MAP channel and the unsaved-changes counter.
+//
+// The bug: every morph write (the routed drag, mesh.morph.set / .clear /
+// .create / .remove / .rename) published ONLY `MeshEditScope.Maps`, and
+// `docRevision()` — the counter `io.doc_state` diffs to decide "dirty" —
+// summed five classes that did not include it. A whole morph session
+// therefore left the document reading CLEAN: no asterisk in the title, and
+// Quit closed WITHOUT the save prompt. Work was lost silently.
+//
+// The second half is the one that makes this a pair of assertions rather than
+// one: `mesh.morph.select` also has to publish, because binding a target
+// changes what the viewport DRAWS — but it must NOT dirty a clean document,
+// because it changes nothing a `.v3d` would carry. That is what the separate
+// `MapsDisplay` bit buys, and asserting only the first half would go green on
+// the naive fix of routing the target change through `Maps` as well.
+//
+// Mutations, both run:
+//   * drop `totalMaps` from `docRevision()`      -> the first block reddens.
+//   * bump `totalMaps` on `MapsDisplay` too (or publish `Maps` from
+//     `MorphSelect.publishTargetChange`)         -> the second block reddens.
+unittest {
+    {
+        ChangeBus bus;
+        const before = bus.docRevision();
+        bus.flush(MeshEditScope.Maps, 0, 0);
+        assert(bus.totalMaps == 1, "a Maps flush is counted");
+        assert(bus.docRevision() == before + 1,
+            "a per-element MAP write is PERSISTED document content (.v3d "
+          ~ "meshMaps / edgeMaps, .lwo VMAPs), so it must move docRevision -- "
+          ~ "without this a whole morph session leaves the document reading "
+          ~ "clean and Quit closes with no save prompt");
+    }
+    {
+        ChangeBus bus;
+        const before = bus.docRevision();
+        bus.flush(MeshEditScope.MapsDisplay, 0, 0);
+        assert(bus.totalMapsDisplay == 1,
+            "the display-only route is still DELIVERED (the GPU must "
+          ~ "re-upload) and still observable");
+        assert(bus.totalMaps == 0,
+            "...but it is not a map WRITE");
+        assert(bus.docRevision() == before,
+            "binding a morph target to look at it is not an edit -- it must "
+          ~ "not dirty a clean, freshly-opened document");
+    }
+}

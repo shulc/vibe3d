@@ -137,6 +137,18 @@ struct ChangeBus {
     ulong totalPolygons;
     ulong totalMarks;
     ulong totalMaterial;
+    // Per-element MAP values (task 1069): morph entries and the crease weight.
+    // PERSISTED document content — `.v3d` writes `meshMaps` / `edgeMaps` and
+    // `.lwo` writes VMAPs — so unlike `totalMapsDisplay` below this one is
+    // summed into `docRevision()`. Without it a whole morph session (the
+    // routed drag, `mesh.morph.set`, `mesh.morph.clear`, create / remove /
+    // rename) published ONLY `Maps` and left the document reading clean, so
+    // Quit closed with no save prompt and the title showed no asterisk.
+    ulong totalMaps;
+    // The display-only twin. Counted here so `/api/changes` and a test can
+    // still SEE the target-change deliveries; deliberately absent from
+    // `docRevision()` — picking a morph to look at is not an edit.
+    ulong totalMapsDisplay;
 
     // Per-domain running totals for selection.
     ulong totalSelVertex;
@@ -159,16 +171,21 @@ struct ChangeBus {
     ulong currentTypeChanged;
 
     /// Monotonic count of DOCUMENT-CONTENT mutations delivered so far: the
-    /// persisted mesh classes (geometry + marks + material) plus the
-    /// persisted layer-structural kinds (add / remove / reorder / rename /
-    /// visibility / per-item property). Deliberately EXCLUDES selection,
-    /// current-type flips, and layer-active changes — those are view/edit
-    /// state, not saved document content. io.doc_state compares this value
-    /// against the revision at the last save/open/new to detect unsaved
-    /// changes (see doc/tasks/work/0434-window-title-unsaved-changes.md).
+    /// persisted mesh classes (geometry + marks + material + per-element
+    /// maps) plus the persisted layer-structural kinds (add / remove /
+    /// reorder / rename / visibility / per-item property). Deliberately
+    /// EXCLUDES selection, current-type flips, layer-active changes and
+    /// `MapsDisplay` — those are view/edit state, not saved document content.
+    /// io.doc_state compares this value against the revision at the last
+    /// save/open/new to detect unsaved changes (see
+    /// doc/tasks/work/0434-window-title-unsaved-changes.md).
+    ///
+    /// THE RULE FOR ADDING A CLASS HERE: does a `.v3d` written before and
+    /// after the change differ? `Maps` does (morph entries and crease weights
+    /// are both persisted), so it is summed; `MapsDisplay` does not.
     ulong docRevision() const {
         return totalPosition + totalPoints + totalPolygons
-             + totalMarks + totalMaterial
+             + totalMarks + totalMaterial + totalMaps
              + totalLayerAdded + totalLayerRemoved + totalLayerReordered
              + totalLayerRenamed + totalLayerVisible + totalLayerProperty;
     }
@@ -229,6 +246,8 @@ struct ChangeBus {
         if (meshFlags & MeshEditScope.Polygons) ++totalPolygons;
         if (meshFlags & MeshEditScope.Marks)    ++totalMarks;
         if (meshFlags & MeshEditScope.Material) ++totalMaterial;
+        if (meshFlags & MeshEditScope.Maps)        ++totalMaps;
+        if (meshFlags & MeshEditScope.MapsDisplay) ++totalMapsDisplay;
 
         if (selDomains & SelDomain.Vertex) ++totalSelVertex;
         if (selDomains & SelDomain.Edge)   ++totalSelEdge;

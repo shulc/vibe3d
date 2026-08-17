@@ -106,6 +106,24 @@ enum MeshEditScope : uint {
     // `setMeshMapValue` keeps publishing Material so no existing consumer
     // changes behaviour.
     Maps = 1 << 6,
+    // The DISPLAY-ONLY twin of `Maps` (task 1073 / review B1). What the
+    // viewport DRAWS changed because the morph ROUTING TARGET was bound or
+    // unbound — but no saveable datum moved: the binding lives in app state
+    // (`morph_target`), not in the document, and a `.v3d` written before and
+    // after is byte-identical.
+    //
+    // It is a separate bit and not a flag on `Maps` because the ONE consumer
+    // that must tell them apart cannot see anything else: `ChangeBus.flush`
+    // is handed a bare `uint` of scope bits, and `docRevision()` — the
+    // unsaved-changes counter behind the window-title asterisk and the
+    // quit-time save prompt — is a sum over those counters. Publishing `Maps`
+    // for a target change would mark a freshly-opened, unedited document
+    // dirty the moment the user picked a morph to look at; publishing nothing
+    // would leave the last-uploaded surface on screen (measured — see
+    // `MorphSelect.publishTargetChange`). This bit is the third answer: it
+    // rides `DisplayRefreshMask` exactly like `Maps`, and is counted by
+    // NOTHING in `docRevision`.
+    MapsDisplay = 1 << 7,
     Geometry = Points | Polygons,
 }
 

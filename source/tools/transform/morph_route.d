@@ -38,9 +38,28 @@ module tools.transform.morph_route;
 ///
 ///     grep -rl 'MorphRoute' source/ | sort
 ///
-/// must print exactly this file plus `xform_kernels.d`, `xfrm_apply.d`,
-/// `xfrm_transform.d`, `transform.d` and `commands/mesh/morph_edit.d`.
-/// Anything else in that output is an unreviewed second routing site.
+/// Every line of that output must be one of FOUR files:
+///
+///     source/tools/transform/morph_route.d      (this one)
+///     source/tools/transform/xform_kernels.d
+///     source/tools/transform/xfrm_apply.d
+///     source/tools/transform/xfrm_transform.d
+///
+/// It is a SUBSET check — "nothing outside this set" — and NOT an equality
+/// check. Read as equality it fails on a correct tree, which is how it
+/// shipped: the original list also named `transform.d` and
+/// `commands/mesh/morph_edit.d`, neither of which mentions the type. Both are
+/// routing-ADJACENT (they import `defaultStored` and carry the routed
+/// gesture's undo record) and neither takes a `MorphRoute`, so neither can
+/// appear here no matter how the seam grows — a gate that demands them is a
+/// gate nobody can pass and everybody learns to ignore. Anything in the
+/// output that is NOT in the four above is an unreviewed second routing site.
+/// (Task 1073, review SF12.)
+///
+/// And it is RUN, not merely written down: the `morphRouteHomes` list and the
+/// two unittests at the bottom of this file ARE the paragraph above. A gate
+/// that only a reader can execute is a gate that goes stale in silence, which
+/// is precisely what this one did.
 
 import math    : Vec3;
 import mesh    : Mesh, MeshMap, MapKind, isMorphKind;
@@ -194,6 +213,111 @@ void applySymmetryMirrorRouted(Mesh* mesh, const ref SymmetryPacket sp,
         import mesh_edit_delta : MeshEditScope;
         mesh.noteChange(MeshEditScope.Maps);
     }
+}
+
+// ---------------------------------------------------------------------------
+// THE COMPLETENESS GATE, EXECUTABLE (task 1073, review SF12).
+//
+// The header's `grep -rl 'MorphRoute' source/` is run here rather than left to
+// a reader. The scan is deliberately for the TYPE NAME as text, matching the
+// documented grep exactly: a file that so much as names `MorphRoute` in a
+// comment is a file whose author was thinking about routing, and the whole
+// point of the gate is that someone reviews that.
+// ---------------------------------------------------------------------------
+
+/// The files allowed to mention `MorphRoute`, repo-relative with `/`.
+private static immutable string[] morphRouteHomes = [
+    "source/tools/transform/morph_route.d",
+    "source/tools/transform/xform_kernels.d",
+    "source/tools/transform/xfrm_apply.d",
+    "source/tools/transform/xfrm_transform.d",
+];
+
+/// The SUBSET rule as a pure function of a scan result, so it can be exercised
+/// on a synthetic input as well as on the real tree. Returns the offenders.
+private string[] morphRouteOutsiders(const(string)[] hits) {
+    import std.algorithm : canFind;
+    string[] bad;
+    foreach (h; hits) if (!morphRouteHomes.canFind(h)) bad ~= h;
+    return bad;
+}
+
+version (unittest) {
+    import std.path : dirName;
+
+    // .../source/tools/transform/morph_route.d -> .../  (four levels up)
+    private enum morphRouteRepoRoot =
+        dirName(dirName(dirName(dirName(__FILE_FULL_PATH__))));
+
+    /// Every `.d` under `source/` whose text contains `MorphRoute`,
+    /// repo-relative with `/` separators — the documented grep, in D.
+    private string[] morphRouteHits(string root) {
+        import std.file      : dirEntries, exists, isDir, read, SpanMode;
+        import std.path      : buildPath, relativePath;
+        import std.algorithm : canFind, sort;
+        import std.array     : array, replace;
+        import std.string    : endsWith;
+
+        const dir = buildPath(root, "source");
+        if (!exists(dir) || !isDir(dir)) return null;
+        string[] hits;
+        foreach (entry; dirEntries(dir, SpanMode.depth)) {
+            if (!entry.isFile || !entry.name.endsWith(".d")) continue;
+            auto text = cast(const(char)[]) read(entry.name);
+            if (!text.canFind("MorphRoute")) continue;
+            auto rel = relativePath(entry.name, root);
+            version (Windows) rel = rel.replace("\\", "/");
+            hits ~= rel;
+        }
+        sort(hits);
+        return hits;
+    }
+}
+
+// The gate against the REAL tree.
+//
+// The lower-bound assertion is not decoration: a scanner that resolved the
+// wrong root, or matched nothing, would return an empty list and satisfy the
+// subset rule vacuously — the "inert measurement" failure this repo keeps
+// finding. Requiring the four known homes back makes the scan prove it ran.
+//
+// Mutation: add the text `MorphRoute` to any other file under `source/`
+// (e.g. a comment in `source/mesh.d`) -> this reddens naming that file
+// (verified).
+unittest {
+    import std.algorithm : canFind;
+    import std.format    : format;
+
+    auto hits = morphRouteHits(morphRouteRepoRoot);
+    assert(hits.length >= morphRouteHomes.length,
+        format("the MorphRoute scan found %d file(s) under %s/source — it must "
+             ~ "find at least the %d known homes, so an empty or mis-rooted "
+             ~ "scan cannot pass the subset rule vacuously",
+               hits.length, morphRouteRepoRoot, morphRouteHomes.length));
+    foreach (home; morphRouteHomes)
+        assert(hits.canFind(home),
+            "the scan did not see " ~ home ~ " — it is one of the seam's own "
+          ~ "files and must be in its own gate's input");
+
+    auto bad = morphRouteOutsiders(hits);
+    assert(bad.length == 0,
+        format("%s mention(s) MorphRoute and is not one of the seam's four "
+             ~ "homes. A second routing site writes the map from somewhere "
+             ~ "this file's reasoning does not cover — review it, then add it "
+             ~ "to `morphRouteHomes` and to the header list.", bad));
+}
+
+// The rule itself, on a synthetic input — so the gate's PREDICATE is pinned
+// independently of the tree it happens to be run against. Without this, the
+// block above goes green both when the rule works and when
+// `morphRouteOutsiders` always returns empty.
+unittest {
+    assert(morphRouteOutsiders(morphRouteHomes).length == 0,
+        "the four homes are, by definition, not outsiders");
+    auto bad = morphRouteOutsiders(
+        ["source/tools/transform/xfrm_apply.d", "source/tools/mystery.d"]);
+    assert(bad.length == 1 && bad[0] == "source/tools/mystery.d",
+        "a hit outside the home set must be REPORTED, not silently accepted");
 }
 
 /// Routed twin of `applySymmetryMirrorDelta` (topological symmetry). The

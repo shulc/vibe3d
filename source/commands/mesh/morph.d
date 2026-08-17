@@ -39,13 +39,24 @@ import params : Param;
 // / apply alike. The per-gesture routed drag is a different mechanism entirely
 // and lives in `commands/mesh/morph_edit.d`.
 //
-// Refusals use `baseRefusal_` + `return false`, not `throw`, for anything
-// selection-driven — the same rule `edge_crease.d` documents: the UI's plain
-// `runCommand` path passes `throwMsg = null`, and an uncaught throw there
-// unwinds past the args dialog's popup-close and leaves the ImGui popup stack
-// one deep. Lifecycle argument errors (empty name, unknown map) keep throwing,
-// matching `weightmap.d`, because those come from a caller mistake rather
-// than from the document's state.
+// REFUSAL POLICY, and it is decided by ONE question: can the args dialog
+// reach this command? (task 1073, review B3.)
+//
+// `config/buttons.yaml` dispatches `mesh.morph.create` and `mesh.morph.apply`
+// from buttons, so both open `ArgsDialog` — and `ArgsDialog.draw` calls
+// `runCmd` from INSIDE the `if (Button("OK"))` block with `EndPopup()` after
+// it, while neither `App.runCommand` nor `applyOrRefire` catches. A throw out
+// of `apply()` therefore unwinds past `EndPopup()` and leaves the ImGui popup
+// stack one deep. Both of those commands default `name` to `""`, so OK on a
+// freshly-opened dialog was exactly the throwing path: the DEFAULT state of a
+// dialog the user is meant to type into.
+//
+// So the two DIALOG-REACHABLE commands refuse the house way — `baseRefusal_`
+// + `return false`, which `ui/command_notice.d` renders as a notice — for
+// every rejection they can be handed, argument errors included. The
+// script-only commands (`remove` / `rename` / `set` / `clear`) keep throwing:
+// their only caller is `/api/command`, which wants a non-ok status, and no
+// popup frame is unwound. Same rule, same reason, as `edge_crease.d`.
 // ---------------------------------------------------------------------------
 
 /// Parse the `kind` parameter. Only the two morph kinds are namable here —
@@ -94,21 +105,28 @@ class MorphCreate : Command {
         ];
     }
 
+    // DIALOG-REACHABLE (config/buttons.yaml "New Morph Map…"), so every
+    // rejection is a refusal and none is a throw — see the module header.
     override bool apply() {
-        if (name_.length == 0)
-            throw new Exception("mesh.morph.create: name must not be empty");
+        baseRefusal_ = "";
+        if (name_.length == 0) {
+            baseRefusal_ = "a morph map needs a name";
+            return false;
+        }
         MapKind kind;
-        if (!parseMorphKind(kind_, kind))
-            throw new Exception(
-                "mesh.morph.create: kind must be 'relative' or 'absolute', got '"
-              ~ kind_ ~ "'");
+        if (!parseMorphKind(kind_, kind)) {
+            baseRefusal_ =
+                "kind must be 'relative' or 'absolute', got '" ~ kind_ ~ "'";
+            return false;
+        }
         snap = MeshSnapshot.capture(*mesh);
         auto m = mesh.addMeshMapOfKind(kind, name_);
         if (m is null) {
             snap = MeshSnapshot.init;
-            throw new Exception(
-                "mesh.morph.create: map '" ~ name_ ~ "' already exists, or the "
-              ~ "per-mesh map cap was reached");
+            baseRefusal_ =
+                "map '" ~ name_ ~ "' already exists, or the per-mesh map cap "
+              ~ "was reached";
+            return false;
         }
         // The ABSOLUTE kind is created DENSE: an entry for every vertex,
         // holding that vertex's own base position. That is measured, and it is
@@ -242,6 +260,18 @@ class MorphSelect : Command {
     override string name()  const { return "mesh.morph.select"; }
     override string label() const { return "Select Morph Map"; }
 
+    /// UI-undo class, NOT Model (task 1073, review SF5). This command mutates
+    /// no mesh datum at all — it moves a name in `morph_target`, app state —
+    /// so `Model` was wrong twice over. The visible cost was the second one:
+    /// `app.d`'s post-dispatch tool-drop fires for every `Model` command
+    /// outside the `tool.` / `scene.` / `file.` / `layer.attr` families, so
+    /// picking a morph target while a transform tool was armed dropped the
+    /// tool and took the gizmo with it — in the one workflow where the two
+    /// are used together. `UiState` still lands an undo entry (so the
+    /// binding is undoable, which `revert()` below implements), just in the
+    /// UI-undo class where selection and edit-mode changes live.
+    override CmdFlags cmdFlags() const { return CmdFlags.UiState; }
+
     override Param[] params() {
         return [ Param.string_("name", "Name", &name_, "") ];
     }
@@ -282,8 +312,17 @@ class MorphSelect : Command {
     /// disagrees with the document. (Found by measurement: with this missing,
     /// clearing the target left the morphed surface on screen AND left face
     /// picking resolving against it.)
+    ///
+    /// `MapsDisplay`, NOT `Maps` (task 1073, review B1). The two carry the
+    /// same display obligation — both sit in `DisplayRefreshMask`, and
+    /// `commitChange` bumps `mutationVersion` so the GPU re-uploads either
+    /// way — and differ on exactly one thing: `Maps` is summed into
+    /// `ChangeBus.docRevision()` because a map WRITE is persisted content,
+    /// and this is not a write. Publishing `Maps` here would put an asterisk
+    /// on the title bar and a save prompt in front of Quit for a user who
+    /// only picked a morph to look at.
     private void publishTargetChange() {
-        mesh.commitChange(MeshEditScope.Maps);
+        mesh.commitChange(MeshEditScope.MapsDisplay);
     }
 }
 
@@ -413,13 +452,19 @@ class MorphApplyCmd : Command {
         ];
     }
 
+    // DIALOG-REACHABLE (config/buttons.yaml "Apply Morph…"), so every
+    // rejection is a refusal and none is a throw — see the module header.
     override bool apply() {
-        if (name_.length == 0)
-            throw new Exception("mesh.morph.apply: name must not be empty");
+        baseRefusal_ = "";
+        if (name_.length == 0) {
+            baseRefusal_ = "name a morph map to apply";
+            return false;
+        }
         auto m = morphMapOrNull(mesh, name_);
-        if (m is null)
-            throw new Exception(
-                "mesh.morph.apply: morph map '" ~ name_ ~ "' not found");
+        if (m is null) {
+            baseRefusal_ = "no morph map named '" ~ name_ ~ "'";
+            return false;
+        }
         const MapKind kind = m.kind;
         snap = MeshSnapshot.capture(*mesh);
         // Only PRESENT entries move a vertex. For the relative kind an absent
@@ -443,4 +488,96 @@ class MorphApplyCmd : Command {
         snap.restore(*mesh);
         return true;
     }
+}
+
+version (unittest) {
+    private View morphFreshView() { return new View(0, 0, 1, 1); }
+}
+
+// The two DIALOG-REACHABLE commands must REFUSE, not throw, on the state a
+// freshly-opened args dialog hands them — which for both is the DEFAULT one:
+// `name` is `""` until the user types. `ArgsDialog.draw` runs the command
+// inside the `if (Button("OK"))` block and calls `EndPopup()` after it, and
+// nothing between here and there catches, so a throw unwinds past the
+// popup-close and leaves the ImGui popup stack one deep (task 1073 review B3;
+// the same finding, and the same fix, as task 1062's SHOULD-FIX 1 on
+// `mesh.edgeCrease.set`).
+//
+// Every rejection each of the two can be handed is covered, not just the
+// empty name — a typo'd `kind` and a name that does not resolve are equally
+// reachable by typing into the dialog and pressing OK.
+//
+// Mutation: turn any one of the four `baseRefusal_ = …; return false;` pairs
+// below back into `throw new Exception(...)` -> that block's `apply()` call
+// throws out of the unittest and it reddens (verified). Note the refusal
+// REASON is asserted alongside the return value: a refusal without a reason
+// renders as a completely silent no-op (ui/command_notice.d), which for a
+// dialog the user just pressed OK in is its own bug.
+unittest {
+    auto m = new Mesh;
+    *m = makeCube();
+    View v = morphFreshView();
+    // `morph_target` is process-global app state and MorphCreate steals it on
+    // success — leave it as this block found it.
+    scope (exit) clearMorphTarget();
+
+    // mesh.morph.create, straight out of the dialog: no name typed yet.
+    auto create = new MorphCreate(m, v, EditMode.Vertices);
+    assert(!create.apply(),
+        "mesh.morph.create must refuse (not throw) on the empty name a "
+      ~ "freshly-opened args dialog hands it");
+    assert(create.refusalReason().length > 0,
+        "a refusal without a reason renders as a SILENT no-op after the user "
+      ~ "pressed OK");
+
+    // ...and on a `kind` the user mistyped.
+    auto badKind = new MorphCreate(m, v, EditMode.Vertices);
+    badKind.name_ = "m1";
+    badKind.kind_ = "realtive";
+    assert(!badKind.apply(), "mesh.morph.create must refuse an unknown kind");
+    assert(badKind.refusalReason().length > 0);
+    assert(m.meshMap("m1") is null, "a refused create must not leave a map");
+
+    // ...and on a name that is already taken.
+    auto first = new MorphCreate(m, v, EditMode.Vertices);
+    first.name_ = "m1";
+    assert(first.apply(), "the happy path still applies");
+    auto dup = new MorphCreate(m, v, EditMode.Vertices);
+    dup.name_ = "m1";
+    assert(!dup.apply(), "mesh.morph.create must refuse a duplicate name");
+    assert(dup.refusalReason().length > 0);
+
+    // mesh.morph.apply, straight out of the dialog: no name typed yet.
+    auto applyCmd = new MorphApplyCmd(m, v, EditMode.Vertices);
+    assert(!applyCmd.apply(),
+        "mesh.morph.apply must refuse (not throw) on the empty name a "
+      ~ "freshly-opened args dialog hands it");
+    assert(applyCmd.refusalReason().length > 0);
+
+    // ...and on a name that does not resolve to a morph map.
+    auto missing = new MorphApplyCmd(m, v, EditMode.Vertices);
+    missing.name_ = "nope";
+    assert(!missing.apply(), "mesh.morph.apply must refuse an unknown map");
+    assert(missing.refusalReason().length > 0);
+}
+
+// mesh.morph.select is UI state, not model state (task 1073 review SF5).
+// `app.d`'s post-dispatch tool-drop fires on `CmdFlags.Model`, so this flag is
+// the whole reason binding a target no longer disarms an armed transform tool
+// — the one workflow where a morph target and a transform tool are used
+// together. It also keeps the command out of `docRevision`'s Model class by
+// construction.
+//
+// Mutation: delete the `cmdFlags()` override (the base class returns Model)
+// -> the first assertion reddens.
+unittest {
+    auto m = new Mesh;
+    *m = makeCube();
+    View v = morphFreshView();
+    auto sel = new MorphSelect(m, v, EditMode.Vertices);
+    assert((sel.cmdFlags() & CmdFlags.Model) == 0,
+        "mesh.morph.select mutates no mesh datum, and app.d drops the armed "
+      ~ "tool for every Model command outside the tool./scene./file. families");
+    assert((sel.cmdFlags() & CmdFlags.UiState) != 0,
+        "...but the binding is still undoable, in the UI-undo class");
 }
