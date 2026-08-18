@@ -303,6 +303,14 @@ bool sceneFromLwo(string path, ref ImportedScene scene) {
                     // no polygon for it, so it takes a SENTINEL instead of being
                     // skipped — skipping shifted every later PTAG/VMAD index by
                     // one (task 0683 D1). Consumers drop sentinel hits.
+                    //
+                    // The threshold is THREE and the kernel's floor is TWO —
+                    // deliberately, not by oversight (task 1290): a 2-point
+                    // POLS entry is an LWO2 line, and interchange normalises it
+                    // away. `io/scene_ir.d`'s `flattenToMesh` carries the full
+                    // statement; the sentinel above is what keeps the drop free
+                    // of the positional-attribute shift that class of filter
+                    // otherwise brings with it.
                     const size_t slot = (face.length >= 3) ? cur.polys.length : size_t.max;
                     cur.localToGlobal[kindIdx] ~= slot;
                     cur.polsFlatOrder          ~= slot;

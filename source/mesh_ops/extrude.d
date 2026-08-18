@@ -1152,6 +1152,22 @@ mixin template MeshExtrudeOps() {
         //     just tracked ones.
         bool[uint] sideTouched;
         foreach (fi; faceIndices) {
+            // Task 1290 (P3): `faceIndices` is EVERY face in the mesh, not the
+            // extrude set, so a pre-existing two-corner face reaches this
+            // rewrite. On a 2-ring `prev` and `next` are the SAME vertex
+            // (`(k+len-1)%2 == (k+1)%2`), so the two `faceOfEdge` lookups
+            // below resolve one edge, `iArrive == iLeave`, and each corner
+            // emits its inset TWICE — the face is inflated from 2 corners to
+            // 4. The consecutive-dup reduce at the bottom of this kernel then
+            // collapses it back to 2 and DROPS it, so the face vanishes with
+            // no trace: measured on a cube plus a standing `[6,7]`, extruding
+            // edge (6,7) gave a face set byte-identical to the same extrude on
+            // a clean cube. The cleanup loop already declines a short face
+            // ("pre-existing invalid face — not ours to fix"); this is the
+            // same declination, moved to where the inflation happens, and it
+            // is what makes that later guard reachable at all. A face with
+            // fewer than three corners has no side to rewrite.
+            if (faces[fi].length < 3) continue;
             auto f = faces[fi].dup;
             // Snapshot the pre-rewrite normal so we can preserve orientation.
             bool touched = false;

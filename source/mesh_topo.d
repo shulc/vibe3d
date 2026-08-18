@@ -33,7 +33,34 @@ struct Loop {
     uint face;   // face this loop belongs to
     uint next;   // index of the next loop in the same face (CCW)
     uint prev;   // index of the previous loop in the same face
-    uint twin;   // dart in the adjacent face (reverse direction); ~0u if boundary
+
+    /// Dart in the adjacent face (reverse direction).
+    ///
+    /// `~0u` IS OVERLOADED AND MEANS TWO DIFFERENT THINGS. Read this before
+    /// using it as a rim test — "no twin" is NOT "open boundary":
+    ///
+    ///   1. an OPEN BOUNDARY edge  — exactly ONE incident face, and
+    ///   2. a NON-MANIFOLD edge    — THREE OR MORE incident faces.
+    ///
+    /// `buildLoops` puts case 2 here deliberately ("treatment A"): a 3-face
+    /// edge has no unique partner to name, so it clears BOTH slots and every
+    /// dart on that edge comes out carrying the boundary sentinel. The two
+    /// cases are byte-identical here and cannot be told apart from this field.
+    ///
+    /// Every consumer that asked "is there a twin?" and concluded "border"
+    /// therefore answered a 3-face edge WRONG, and there were six of them
+    /// (task 1290): the ring walk yielded one face of three, `isEdgeBorder`
+    /// said border, the vertex fan walks truncated mid-fan,
+    /// `computeEdgeSharpness` called the edge never-sharp,
+    /// `computeOrientationFlipMask` treated it as a hard component wall, and
+    /// `uv_relax` pinned it as a mesh rim. One conflation, six wrong answers.
+    ///
+    /// **Ask `Mesh.isEdgeNonManifold(ei)` to separate the two cases.** A
+    /// genuine rim test is `twin == ~0u && !isEdgeNonManifold(ei)`; a genuine
+    /// count is `edgePolygonCounts` / `edgeFaceUseCounts`, which read off
+    /// `faces[]` and cannot undercount. Reaching for a bare `~0u` re-creates
+    /// the bug.
+    uint twin;
 }
 
 // ---------------------------------------------------------------------------
@@ -399,13 +426,40 @@ struct VertexEdgeRange {
 // EdgeFaceRange
 // ---------------------------------------------------------------------------
 
-/// Forward range over the 1–2 faces incident to an edge.
+/// Forward range over the faces incident to an edge — 1–2 on a manifold edge,
+/// and (since task 1290) the TRUE count on a non-manifold one.
 /// Finds the dart va→vb by walking darts around va (O(valence)).
 /// Yields the face of that dart, then the face of its twin (if not boundary).
 struct EdgeFaceRange {
+    // Two faces sit inline, which is every manifold edge and therefore every
+    // edge on an ordinary mesh: that path allocates nothing, exactly as before
+    // task 1290. A third and further face spills to `_spill`, which is
+    // allocated ONLY on the non-manifold path.
     private uint[2] _faces;
+    private const(uint)[] _spill;
     private uint    _count;
     private uint    _i;
+
+    // Append WITHOUT dedup — `_tryFrom` below pushes a dart's face and its
+    // twin's face unconditionally, and it must keep doing so: on a keyhole
+    // face (one face listing the edge twice, task 1220) those are the SAME
+    // face and the pre-1290 code yielded it twice, which is what
+    // `isEdgeBorder`'s "exactly one incident face" reads as NOT a border.
+    // Deduping here would silently reclassify every keyhole edge. The one
+    // caller that needs dedup (`_collectViaCsr`, which scans both endpoints
+    // and so meets each face twice) does its own check.
+    private void _push(uint fi) {
+        if (_count < _faces.length) _faces[_count] = fi;
+        else                        _spill ~= fi;
+        ++_count;
+    }
+    private bool _has(uint fi) const {
+        foreach (k; 0 .. _count) if (_faceAt(k) == fi) return true;
+        return false;
+    }
+    private uint _faceAt(uint k) const {
+        return k < _faces.length ? _faces[k] : _spill[k - _faces.length];
+    }
 
     this(const(Loop)[] loops, const(uint[2])[] edges,
          const(uint)[] vertLoop, const(bool)[] vertFanOrdered,
@@ -451,10 +505,16 @@ struct EdgeFaceRange {
     /// collect the faces of the darts INCIDENT to the edge from BOTH endpoints
     /// via the CSR vertex→dart adjacency, never through `.twin` (which is
     /// exactly what is undefined-in-meaning on these edges). A dart at `from`
-    /// is incident to this edge when its next vertex is `to`. `_faces` stays
-    /// `uint[2]` (documented 1-2-face contract) — capped defensively so a
-    /// non-manifold (3+ face) edge can never write past it; enumerating all
-    /// 3+ faces there is out of scope (§5.2), not overflowing is the contract.
+    /// is incident to this edge when its next vertex is `to`.
+    ///
+    /// Task 1290 lifted the two-face cap that used to sit here. It was written
+    /// as "not overflowing is the contract, enumerating all 3+ faces is out of
+    /// scope (§5.2)" — but that cap, together with treatment A's
+    /// `twin==~0u`, is what made a 3-face edge answer with ONE face and read
+    /// as an open boundary everywhere downstream. `_push` spills past the
+    /// inline pair, so this now reports the true incidence; an ordinary
+    /// manifold edge still fills only the inline `uint[2]` and allocates
+    /// nothing.
     private void _collectViaCsr(const(Loop)[] loops,
                                  const(uint)[] vertDartStart,
                                  const(uint)[] vertDartAdj,
@@ -465,10 +525,7 @@ struct EdgeFaceRange {
             foreach (i; vertDartStart[from] .. vertDartStart[from + 1]) {
                 uint li = vertDartAdj[i];
                 if (loops[loops[li].next].vert != to) continue;
-                uint fi = loops[li].face;
-                bool dup = false;
-                foreach (k; 0 .. _count) if (_faces[k] == fi) { dup = true; break; }
-                if (!dup && _count < 2) _faces[_count++] = fi;
+                if (!_has(loops[li].face)) _push(loops[li].face);
             }
         }
         scanFrom(va, vb);
@@ -483,10 +540,10 @@ struct EdgeFaceRange {
         if (from >= vertLoop.length || vertLoop[from] == ~0u) return false;
         foreach (li; VertexDartRange(loops, vertLoop[from])) {
             if (loops[loops[li].next].vert == to) {
-                _faces[_count++] = loops[li].face;
+                _push(loops[li].face);
                 uint twin = loops[li].twin;
                 if (twin != ~0u)
-                    _faces[_count++] = loops[twin].face;
+                    _push(loops[twin].face);
                 return true;
             }
         }
@@ -494,7 +551,7 @@ struct EdgeFaceRange {
     }
 
     @property bool empty() const { return _i >= _count; }
-    @property uint front() const { return _faces[_i]; }
+    @property uint front() const { return _faceAt(_i); }
     void popFront() { ++_i; }
     @property EdgeFaceRange save() const { return this; }
 }

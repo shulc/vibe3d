@@ -540,13 +540,35 @@ struct Mesh {
     // §1.2). Instead every vertex incident to a same-direction edge is marked
     // NOT `vertexFanOrdered`: the fan walk stops there as at a boundary and
     // slot-position consumers (`bevelEdgesByMask`,
-    // `symmetry.rebuildPairingTopological`) decline. Keyed STRICTLY on
-    // same-directionness, NOT on `twin==~0u` — a genuine non-manifold ("book")
-    // edge (3+ faces, `twin==~0u` under treatment A) leaves its endpoints
-    // fan-ordered, so meaning-2 (non-manifold) and meaning-3 (same-direction)
-    // stay distinct. Always sized to vertices.length (same class as
+    // `symmetry.rebuildPairingTopological`) decline.
+    //
+    // TASK 1290 WIDENED THIS. It used to be keyed STRICTLY on
+    // same-directionness, leaving a genuine non-manifold ("book") vertex
+    // ordered — and that is precisely how a 3-face edge stayed invisible.
+    // Under treatment A all of its darts carry `twin==~0u`, so the ordered
+    // twin-walk truncates there exactly as at an open boundary: measured on
+    // three quads sharing edge (0,1), `facesAroundEdge` yielded ONE face,
+    // `isEdgeBorder` said "border", and `edgesAroundVertex(0)` enumerated 2 of
+    // the vertex's 4 edges. Both endpoints of a non-manifold edge are now
+    // marked unordered too, which routes those fans through the COMPLETE CSR
+    // walk instead of the truncating one. A non-manifold hub has no cyclic
+    // slot order to speak of, so the two slot-position consumers declining
+    // there (they `continue`) is the correct answer, not a lost capability.
+    // `edgeNonManifold_` below keeps the two meanings distinct for callers
+    // that need to tell them apart.
+    // Always sized to vertices.length (same class as
     // `vertLoop`) so `vertexFanOrdered` is an O(1) read.
     private bool[] vertFanOrdered_;
+
+    // Per-edge: does this edge carry THREE OR MORE incident face corners?
+    // Filled by `buildLoops` from the same pass that already discovers it
+    // (task 1290) and sized to `edges.length`; a shorter/empty array means
+    // "not built yet", and every reader treats an out-of-range index as
+    // manifold. This is the one bit that separates the two meanings of
+    // `twin == ~0u`: an OPEN BOUNDARY edge (one face) and a NON-MANIFOLD edge
+    // (three or more). Without it the two are byte-identical to every twin
+    // reader in the tree, which is the root of the whole 1290 cascade.
+    private bool[] edgeNonManifold_;
 
     // CSR vertex→dart adjacency for the fan-walk fallback on unordered
     // vertices: for vertex v, `vertDartAdj[vertDartStart[v] .. vertDartStart[v
@@ -3956,15 +3978,45 @@ struct Mesh {
         //
         // Stale loops fall back to the hashed path, so the contract that made
         // `buildEdgeFaces` the safe answer is preserved, not traded away.
+        // Task 1290 (P1): the union below may only join TWO faces, so an edge
+        // must border EXACTLY two before it is allowed to dissolve. The
+        // slot-filling idiom alone cannot say "exactly": both `int[2]` and
+        // `buildEdgeFaces` fill their second slot from the second face and
+        // then ignore every further one, so a NON-MANIFOLD edge (three
+        // incident polygons — reachable from Edge Extend and from an LWO
+        // import, so ordinary state, not an emergency) read as an ordinary
+        // interior edge. It then merged an ARBITRARY two of the three (the
+        // first two in dart order), counted itself dissolved, and left the
+        // edge standing — still bounded by the third face, which the merged
+        // polygon no longer touches. Measured on three quads sharing edge
+        // (0,1): `removeEdgesByMask` returned 1, faces 0 and 1 came back as
+        // one hexagon, and edge (0,1) was still there.
+        //
+        // So each arm now carries a true dart tally beside the slots and
+        // requires it to be 2. `nmdEdgeDartCount` / `nmdEdgePolyCount` count
+        // CORNERS, not distinct faces: together with the existing
+        // distinct-face slot test that keeps the two pre-existing skips
+        // byte-identical (a border edge has one dart; a keyhole edge has two
+        // darts on ONE face and already failed `ef[e][0] != fi`) and adds
+        // exactly one new one — three or more.
+        //
+        // This is not a new refusal. `consumedFanVertexMask`, this kernel's
+        // own companion query, has always documented the rule as "an edge with
+        // other than exactly two incident polygons is skipped, matching
+        // removeEdgesByMask's own boundary-edge skip" and has always
+        // implemented it (`*pc != 2`). Only the kernel disagreed with its
+        // companion; now it does not.
         size_t dissolved = 0;
         bool[ulong] dissolvedEdgeKeys;   // edges ACTUALLY merged (interior, both faces)
         if (loopsValid() && loopEdge.length == loops.length) {
             auto ef = new int[2][](edges.length);
+            auto nmdEdgeDartCount = new int[](edges.length);
             foreach (ref slot; ef) slot = [-1, -1];
             foreach (li, ref lp; loops) {
                 if (li >= loopEdge.length) break;
                 immutable uint e = loopEdge[li];
                 if (e >= ef.length) continue;
+                ++nmdEdgeDartCount[e];
                 immutable int fi = cast(int) lp.face;
                 if (ef[e][0] == -1) ef[e][0] = fi;
                 else if (ef[e][1] == -1 && ef[e][0] != fi) ef[e][1] = fi;
@@ -3972,7 +4024,7 @@ struct Mesh {
             foreach (i; 0 .. edges.length) {
                 if (!mask[i]) continue;
                 immutable int fA = ef[i][0], fB = ef[i][1];
-                if (fA != -1 && fB != -1) {
+                if (fA != -1 && fB != -1 && nmdEdgeDartCount[i] == 2) {
                     unite(fA, fB);
                     dissolvedEdgeKeys[edgeKey(edges[i][0], edges[i][1])] = true;
                     ++dissolved;
@@ -3980,12 +4032,21 @@ struct Mesh {
             }
         } else {
             auto edgeFaces = buildEdgeFaces();
+            // Stale loops: the count comes off `faces[]` by key, the same way
+            // `consumedFanVertexMask` builds it — `buildEdgeFaces`' own
+            // `int[2]` cannot witness a third incident polygon.
+            int[ulong] nmdEdgePolyCount;
+            foreach (ref f; faces)
+                foreach (k; 0 .. f.length)
+                    ++nmdEdgePolyCount[edgeKey(f[k], f[(k + 1) % f.length])];
             bool[ulong] selectedEdgeKeys;
             foreach (i; 0 .. edges.length)
                 if (mask[i]) selectedEdgeKeys[edgeKey(edges[i][0], edges[i][1])] = true;
             foreach (key; selectedEdgeKeys.byKey) {
                 auto p = key in edgeFaces;
                 if (p is null) continue;
+                auto pc = key in nmdEdgePolyCount;
+                if (pc is null || *pc != 2) continue;
                 int fA = (*p)[0], fB = (*p)[1];
                 if (fA != -1 && fB != -1) {
                     unite(fA, fB);
@@ -8943,6 +9004,18 @@ struct Mesh {
     /// decreasing on [0, π], so this avoids an `acos` per edge and is
     /// numerically identical to the pre-extraction code). Boundary edges
     /// (`twin == uint.max`) are left at `EdgeSharpness.init`.
+    ///
+    /// A NON-MANIFOLD edge is answered separately, at the bottom (task 1290).
+    /// It also carries `twin == uint.max` on every one of its darts, so before
+    /// that it fell through the `continue` above and came back "not interior,
+    /// never sharp" — an edge where three sheets meet reported as smooth, so
+    /// `MeshSmooth.lockSharp` did not lock it and smoothing dragged the sheets
+    /// through each other. There is no single dihedral to report on such an
+    /// edge; the number given is the LARGEST over its incident face pairs,
+    /// which is well defined and independent of the order the faces happen to
+    /// be stored in, and `sharp` is forced true regardless of it, because
+    /// three sheets meeting IS a crease however nearly coplanar they are.
+    /// That last part is a stated choice, not a measurement.
     EdgeSharpness[] computeEdgeSharpness(float thresholdDeg) const {
         import std.math : cos, acos, PI;
 
@@ -8970,6 +9043,32 @@ struct Mesh {
             result[ei].faceA    = l.face;
             result[ei].faceB    = faceB;
         }
+
+        // Task 1290: the non-manifold edges the loop above could not see.
+        // `edgeNonManifold_` is empty until a `buildLoops`, and this whole
+        // function already requires one, so an unbuilt array simply means
+        // "no such edge" and the block is inert — as it is on every ordinary
+        // mesh, which has none.
+        foreach (ei; 0 .. result.length) {
+            if (!isEdgeNonManifold(cast(uint) ei)) continue;
+            uint[] inc;
+            foreach (fi; facesAroundEdge(cast(uint) ei)) inc ~= fi;
+            if (inc.length < 2) continue;
+            float worstDot = 1.0f;
+            uint  wa = inc[0], wb = inc[1];
+            foreach (i; 0 .. inc.length)
+                foreach (j; i + 1 .. inc.length) {
+                    Vec3 n1 = fn[inc[i]], n2 = fn[inc[j]];
+                    immutable float d = n1.x * n2.x + n1.y * n2.y + n1.z * n2.z;
+                    if (d < worstDot) { worstDot = d; wa = inc[i]; wb = inc[j]; }
+                }
+            immutable dc = worstDot < -1.0f ? -1.0f : (worstDot > 1.0f ? 1.0f : worstDot);
+            result[ei].interior = true;
+            result[ei].angleDeg = acos(dc) * (180.0f / PI);
+            result[ei].sharp    = true;
+            result[ei].faceA    = wa;
+            result[ei].faceB    = wb;
+        }
         return result;
     }
 
@@ -8996,13 +9095,41 @@ struct Mesh {
     /// slot-position consumers (`bevelEdgesByMask`,
     /// `symmetry.rebuildPairingTopological`) must check this and decline
     /// rather than trust slot k. Keyed STRICTLY on same-directionness, NOT on
-    /// the overloaded `twin==~0u` sentinel: a genuine non-manifold ("book")
-    /// vertex (meaning-2) stays ordered, so its twin-walk still truncates at
-    /// the boundary-like edge under treatment A (it does NOT trip the CSR
-    /// fallback). Backed by a persistent per-vertex bool array rebuilt in
-    /// `buildLoops` — O(1).
+    /// the overloaded `twin==~0u` sentinel — with ONE addition made by task
+    /// 1290: a genuine non-manifold ("book") vertex is now marked unordered
+    /// too, because treatment A gives every dart on its 3-face edge
+    /// `twin==~0u` and the ordered walk therefore truncates there exactly as
+    /// at an open rim, enumerating only the sub-fan it started in. Such a
+    /// vertex now takes the CSR fallback (complete, arbitrary order) like a
+    /// same-direction one. Backed by a persistent per-vertex bool array
+    /// rebuilt in `buildLoops` — O(1).
     bool vertexFanOrdered(uint vi) const {
         return vi >= vertFanOrdered_.length || vertFanOrdered_[vi];
+    }
+
+    /// True when edge `ei` carries THREE OR MORE incident face corners — a
+    /// non-manifold ("book") edge. The single fact that separates the two
+    /// meanings of `twin == ~0u`: an OPEN BOUNDARY edge (one incident face)
+    /// and a non-manifold one (three or more) are otherwise indistinguishable
+    /// to every twin reader in the tree, and that ambiguity is the root of the
+    /// wrong answers task 1290 collected — `isEdgeBorder` calling a 3-face
+    /// edge a border, `computeEdgeSharpness` calling it never-sharp,
+    /// `computeOrientationFlipMask` treating it as a hard component wall.
+    ///
+    /// Answers from the array `buildLoops` fills, so it is O(1) and needs no
+    /// pass over `faces[]`. PRECONDITION: `buildLoops()` since the last
+    /// topology edit — an unbuilt/stale-length array reads as "manifold"
+    /// everywhere, which is the same conservative answer the tree gave before
+    /// this existed. When the loops may be stale, ask `edgePolygonCounts`
+    /// instead: it answers off `faces[]` alone and cannot undercount.
+    bool isEdgeNonManifold(uint ei) const {
+        // The length equality is the staleness gate, not decoration: a kernel
+        // that shrank or grew `edges[]` without a rebuild would otherwise have
+        // an in-range index land on a FLAG THAT BELONGS TO A DIFFERENT EDGE.
+        // Answering "manifold" there is the same conservative answer the tree
+        // gave before this array existed.
+        return edgeNonManifold_.length == edges.length
+            && ei < edgeNonManifold_.length && edgeNonManifold_[ei];
     }
 
     /// Return a range over all vertices directly connected to vertex `vi` by an edge.
@@ -10524,6 +10651,11 @@ struct Mesh {
         int[]  edgeLoopA        = new int[] (edges.length);
         int[]  edgeLoopB        = new int[] (edges.length);
         bool[] edgeNonManifold  = new bool[](edges.length);  // zero-inited
+        // Task 1290: set the moment the third dart is seen, so the endpoint
+        // marking further down costs a clean mesh ONE bool test instead of a
+        // scan over every edge. buildLoops runs per frame under a subpatch
+        // preview drag; a new unconditional O(E) pass here is not free.
+        bool anyNonManifold = false;
         edgeLoopA[] = -1;
         edgeLoopB[] = -1;
         foreach (idx; 0 .. total) {
@@ -10535,8 +10667,25 @@ struct Mesh {
             else {
                 // Third (or later) loop for this edge: non-manifold.
                 // Reset A/B so fillTwin's b==-1 guard fires → all loops
-                // on this edge keep twin=~0u (indistinguishable from boundary).
+                // on this edge keep twin=~0u.
+                //
+                // THIS LINE IS WHERE `~0u` BECOMES OVERLOADED, and it is the
+                // root of the whole 1290 cascade. From here on the sentinel
+                // means EITHER "open rim, one incident face" OR "non-manifold,
+                // three or more" — byte-identical, with no diagnostic. Six
+                // separate consumers asked "is there a twin?", got "no", and
+                // concluded "border"; see `Loop.twin`'s comment for the list.
+                //
+                // Clearing the slots is still right: a 3-face edge has no
+                // unique partner and a half-truth ("here are two of the three")
+                // would be worse than none. What was missing is that the
+                // OTHER meaning was never published. `edgeNonManifold` is now
+                // carried out of this function (`edgeNonManifold_` /
+                // `isEdgeNonManifold`) precisely so a caller can tell the two
+                // apart, and both endpoints below are marked fan-unordered so
+                // the walks stop trusting the sentinel as a rim.
                 edgeNonManifold[ei] = true;
+                anyNonManifold        = true;
                 edgeLoopA[ei] = -1;
                 edgeLoopB[ei] = -1;
             }
@@ -10575,13 +10724,28 @@ struct Mesh {
                 anySameDir = true;
             }
         }
-        if (anySameDir) {
+        // Task 1290: publish the non-manifold flag and mark BOTH endpoints of
+        // every non-manifold edge unordered as well. `edgeNonManifold` above
+        // is the same array the twin pass already filled; it costs one copy of
+        // one bool per edge and it is the only thing in the mesh that can tell
+        // an open boundary edge from a three-face one. The endpoint marking is
+        // what makes the fan walks COMPLETE at such a vertex — treatment A
+        // gives every dart on that edge `twin==~0u`, so the ordered walk stops
+        // there as at a rim and enumerates only the sub-fan it started in.
+        edgeNonManifold_ = edgeNonManifold;
+        if (anyNonManifold)
+            foreach (ei; 0 .. edges.length) {
+                if (!edgeNonManifold[ei]) continue;
+                foreach (v; edges[ei])
+                    if (v < vertFanOrdered_.length) vertFanOrdered_[v] = false;
+            }
+        if (anySameDir || anyNonManifold) {
             // CSR vertex→dart adjacency: same count / prefix-sum / fill shape
             // as the edgeIndexMap build above, keyed by `loops[idx].vert`
             // instead of an edge's two endpoints, one entry per dart since
             // each dart has exactly one tail vertex. Built ONLY here (some
-            // edge is same-direction), so the
-            // consistently-wound fast path never allocates it (Risk #1). The
+            // edge is same-direction, or — task 1290 — non-manifold), so the
+            // clean manifold fast path never allocates it (Risk #1). The
             // fan-walk ranges use it to enumerate the WHOLE fan of an
             // unordered vertex, complete and winding-independent (but in
             // arbitrary order — only consumers tolerant of any order reach it,
@@ -10599,17 +10763,23 @@ struct Mesh {
                 vertDartAdj[vertDartStart[v] + vertDartCursor[v]++] = cast(uint)idx;
             }
 
-            import log : logWarnOnce;
-            logWarnOnce("mesh", "sameDirTwin",
-                "buildLoops: inconsistently-wound faces detected (a shared "
-                ~ "edge traversed the same direction by both faces) — the "
-                ~ "affected vertex fans are unordered/incomplete for "
-                ~ "slot-position consumers. Run mesh.fixOrientation to repair "
-                ~ "winding.");
+            // Only the SAME-DIRECTION finding is a winding fault the user can
+            // repair; a non-manifold edge is legal state (Edge Extend makes
+            // them on purpose, an LWO import brings them in) and must not be
+            // reported as bad winding (task 1290).
+            if (anySameDir) {
+                import log : logWarnOnce;
+                logWarnOnce("mesh", "sameDirTwin",
+                    "buildLoops: inconsistently-wound faces detected (a shared "
+                    ~ "edge traversed the same direction by both faces) — the "
+                    ~ "affected vertex fans are unordered/incomplete for "
+                    ~ "slot-position consumers. Run mesh.fixOrientation to repair "
+                    ~ "winding.");
+            }
         } else {
             // Keep the CSR arrays empty on the clean fast path (the ranges
             // only ever read them when !vertexFanOrdered, which never happens
-            // when anySameDir is false).
+            // when neither anySameDir nor anyNonManifold is set).
             vertDartStart.length = 0;
             vertDartAdj.length   = 0;
         }
@@ -12936,8 +13106,14 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
     uint nF = cast(uint)m.faces.length;
     uint nE = cast(uint)m.edges.length;
 
+    // Task 1290 (P3): a face with fewer than three corners is never a
+    // subdivision candidate — see the emit loop below for what the two arms
+    // did to one. Declining it HERE as well as there is what keeps the
+    // vertex budget honest: this same predicate gates edge activation and
+    // centroid allocation, so a 2-corner face no longer books a midpoint and
+    // a centroid that nothing then references.
     bool isSelected(size_t fi) {
-        return fi < faceMask.length && faceMask[fi];
+        return fi < faceMask.length && faceMask[fi] && m.faces[fi].length >= 3;
     }
 
     // Map edge key → index in m.edges.
@@ -12991,6 +13167,24 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
     outFaceOrigin.reserve(m.faces.length);
     foreach (fi, face; m.faces) {
         uint len = cast(uint)face.length;
+        // Task 1290 (P3): a face with fewer than three corners is legal state
+        // (the kernel's arity floor is two — Edge Extend and `.v3d` both
+        // produce one) and has NO subdivision. Both arms below assume the ring
+        // visits each of its edges once, which a 2-ring does not: the selected
+        // arm resolves `eFwd` and `eBack` to the SAME edge and emitted
+        // `[v0, mid, c, mid]` — a quad with a repeated corner, of zero area,
+        // twice (measured: `[0,1]` came back as `[0,4,5,4]` + `[1,4,5,4]`,
+        // with the midpoint and the centroid at the identical position); the
+        // widen arm spliced the one midpoint in twice and grew an UNSELECTED
+        // `[0,1]` to `[0,4,1,4]`. Pass it through untouched instead — it keeps
+        // its identity, its arity and its corner count, and it can still be
+        // hidden/selected/materialled like any other face because the origin
+        // array below is still appended in lockstep.
+        if (len < 3) {
+            result.addFaceFast(resultEdgeLookup, face.dup);
+            outFaceOrigin ~= cast(uint)fi;
+            continue;
+        }
         if (isSelected(fi)) {
             uint cIdx = faceCentroidIdx[fi];
             foreach (i; 0 .. len) {

@@ -237,8 +237,28 @@ Mesh flattenToMesh(const ref ImportedScene scene) {
             // Validate before appending so allFaces / allSubpatch / allMaterial /
             // allUv stay parallel. The LWO reader already validates upstream, but
             // this generic seam also serves assimp (Phase 4), whose parts are not
-            // pre-checked. Skip policy intentionally mirrors importLWO/native's
-            // "drop < 3-vert faces"; we extend it to out-of-range indices here.
+            // pre-checked. We extend it to out-of-range indices here.
+            //
+            // WHOSE THRESHOLD IS THIS (task 1290). Not the kernel's: the kernel
+            // holds faces down to TWO corners, and the native `.v3d` reader was
+            // lowered to two (task 1200) precisely so the lossless format
+            // round-trips everything the kernel can represent. The line above
+            // used to claim it "mirrors importLWO/native" — it no longer does,
+            // and saying so was how three places came to pick a number
+            // independently and disagree. THREE is deliberate HERE and at the
+            // two sites below: interchange NORMALISES foreign data, and a
+            // 1- or 2-index polygon in OBJ / glTF / FBX / LWO2 is a point or a
+            // line primitive, not a face. Raising the kernel's floor to match,
+            // or lowering this to two, are both real behaviour changes and
+            // neither has been measured against real files.
+            //
+            // The drop is CLEAN, and that is the part that had to be checked
+            // rather than assumed: every parallel per-face channel (subpatch,
+            // material, per-corner UV) is appended INSIDE the surviving branch
+            // below, and the UV corner cursor advances before the test — so a
+            // dropped face shifts nothing after it. `io/native.d` had exactly
+            // that shift and every face after a dropped one wore its
+            // neighbour's attributes (fixed in task 1200).
             if (face.length < 3) continue;                 // drop degenerate (UV corners drop too)
             bool bad = false;
             foreach (idx; face)
@@ -364,6 +384,10 @@ private Mesh partToMesh(const ref ImportedPart part) {
         const size_t faceBase = cornerBase;
         cornerBase += face.length;                     // advance regardless of drop
 
+        // Three, not the kernel's two — see `flattenToMesh` above for whose
+        // threshold this is and why interchange normalises above the kernel
+        // floor (task 1290). Every parallel channel is appended after the
+        // `continue`, so the drop shifts nothing.
         if (face.length < 3) continue;                 // drop degenerate (UV corners drop too)
         bool bad = false;
         foreach (idx; face)
@@ -573,6 +597,10 @@ Mesh flattenDocument(const ref Document doc) {
 
         foreach (fi; 0 .. src.faces.length) {
             auto face = src.faces[fi];
+            // EXPORT side, and the same deliberate three — see `flattenToMesh`
+            // (task 1290). A two-corner face the kernel legitimately holds does
+            // NOT survive an interchange export; `.v3d` is the format that
+            // keeps it.
             if (face.length < 3) continue;            // drop degenerate (UV corners drop too)
             // `srcCorner(k)` is THE corner-order mapping for this face: the
             // identity normally, reversed when the bake below mirrors. The index

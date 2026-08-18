@@ -1070,26 +1070,45 @@ unittest { // non-manifold book: spine edge (3 faces) → all spine twins == ~0u
                    "twin graph not involutive at loop");
     }
 
-    // Ring walks terminate (length is finite — no MAX_STEPS truncation needed).
-    // verticesAroundVertex(0): all edges are boundary/non-manifold (twin==~0u).
-    // The anchor walk starts at vertLoop[0] = dart from the last face that
-    // wrote v0 in the serial seed pass.  With serial fill and faces in order
-    // [0,1,2],[0,1,3],[0,1,4], the last face touching v0 is face 2 ([0,1,4]),
-    // so vertLoop[0] = dart from face 2.  In face [0,1,4] the dart at v0 has
-    // next=v1; prev-dart is the dart at v4, whose edge v0-v4 is boundary →
-    // twin==~0u → _atExtra fires immediately.
-    // Result: front=v1 (next of start dart), _atExtra front=v4.
+    // Ring walks terminate (length is finite — no MAX_STEPS truncation needed)
+    // AND, since task 1290, they are COMPLETE at a spine vertex.
+    //
+    // WHAT THIS BLOCK USED TO ASSERT, AND WHY IT NO LONGER DOES. It pinned
+    // `nb0.length == 2` with the reasoning "treatment A: the walk truncates at
+    // the first boundary/non-manifold edge, so each spine vertex sees exactly
+    // 2 neighbours from its single anchored dart". That truncation was the
+    // defect, not the contract: treatment A gives every spine dart
+    // `twin == ~0u`, which is the same sentinel an OPEN RIM carries, so the
+    // ordered twin-walk stopped there and v0 — a vertex genuinely on four
+    // edges — reported two. Task 1290 marks both endpoints of a non-manifold
+    // edge NOT `vertexFanOrdered`, which routes them through the complete CSR
+    // fan walk (the same fallback a same-direction edge has always taken). The
+    // twin values themselves are unchanged and are still asserted above; only
+    // the WALK is no longer truncated by them.
     uint[] nb0;
     foreach (v; m.verticesAroundVertex(0)) nb0 ~= v;
-    // Treatment A: walk truncates at first boundary/non-manifold edge.
-    // Each spine vertex sees exactly 2 neighbors from its single anchored dart.
-    assert(nb0.length == 2,
-           "book v0: truncated to 2 neighbors under treatment A (boundary-like)");
+    nb0.sort();
+    assert(nb0 == [1u, 2u, 3u, 4u],
+           "book v0: the complete fan is {1,2,3,4} — the spine plus all three "
+           ~ "page tips (2 under the old truncating walk)");
 
-    // Spine endpoint v1 is symmetric — also truncated to 2 neighbors.
+    // Spine endpoint v1 is symmetric.
     uint[] nb1;
     foreach (v; m.verticesAroundVertex(1)) nb1 ~= v;
-    assert(nb1.length == 2, "book v1: truncated to 2 neighbors");
+    nb1.sort();
+    assert(nb1 == [0u, 2u, 3u, 4u], "book v1: the complete fan is {0,2,3,4}");
+
+    // Both spine faces are reachable from a spine vertex, all three of them.
+    uint[] fr0;
+    foreach (f; m.facesAroundVertex(0)) fr0 ~= f;
+    fr0.sort();
+    assert(fr0 == [0u, 1u, 2u],
+           "book v0: all three pages are incident on the spine vertex");
+
+    // Non-vacuous: a PAGE TIP is not on the non-manifold edge, so its fan is
+    // untouched by any of this and still walks the ordered path.
+    assert(m.vertexFanOrdered(2),
+           "a page tip's fan stays ordered — only the spine endpoints change");
 
     // Page tip v2 has 2 incident edges (v0-v2 and v1-v2), both boundary → 2 neighbors.
     uint[] nb2;
@@ -1109,17 +1128,27 @@ unittest { // non-manifold book: spine edge (3 faces) → all spine twins == ~0u
     assert(edgeRing0.length > 0 && edgeRing0.length < 64,
            "book v0 edge ring terminates");
 
-    // vertexAdjacencyCSR (relation D, edge-based) vs verticesAroundVertex(0)
-    // (relation E, loop-based fan walk, already captured in nb0 above): on
-    // this non-manifold vertex the two relations yield DIFFERENT neighbor
-    // SETS. v0 has 4 incident edges (spine to v1, page edges to v2/v3/v4)
-    // ⇒ CSR sees all 4 {1,2,3,4}; the loop-based fan walk truncates at the
-    // first boundary/non-manifold dart and only ever sees 2 {1,4} (asserted
-    // above). This is the concrete, runtime-checked reason `connect.d`'s
-    // Vertices mode (loop-based, see `verticesAroundVertex` there) is left
-    // unfolded onto `vertexAdjacencyCSR` in task 0190 — substituting CSR
-    // there would silently change connected-component reachability on
-    // non-manifold meshes. Guards against a future accidental fold.
+    // vertexAdjacencyCSR (relation D, edge-based) vs verticesAroundVertex
+    // (relation E, loop-based fan walk): the two relations are NOT the same
+    // relation, and `connect.d`'s Vertices mode is left unfolded onto
+    // `vertexAdjacencyCSR` (task 0190) because substituting one for the other
+    // would silently change connected-component reachability.
+    //
+    // THIS GUARD'S WITNESS MOVED IN TASK 1290, AND THAT IS THE POINT OF
+    // WRITING IT DOWN. It used to be anchored HERE, on the book: CSR saw v0's
+    // four incident edges while the fan walk truncated at the non-manifold
+    // spine and saw two, so `csrSet0 != loopSet0` held. That inequality was
+    // not a property of the two relations — it was the truncation bug, and the
+    // guard was resting on it. With the fan walk fixed the two now AGREE on
+    // this vertex, so asserting inequality here would be asserting that the
+    // bug is still present.
+    //
+    // The guard itself is still true and still needed; it just needs a witness
+    // that is a real difference between the relations rather than a defect.
+    // That witness is a BARE WIRE EDGE: `vertexAdjacencyCSR` reads `edges[]`,
+    // while `vertLoop` is seeded only from FACE CORNERS, so an edge no face
+    // uses is invisible to every fan walk. Measured below, and it is the same
+    // asymmetry `vertexEdgeCounts` exists for.
     import std.algorithm : sort;
     const(size_t)[] csrOff;
     const(uint)[]   csrNbrs;
@@ -1128,11 +1157,48 @@ unittest { // non-manifold book: spine edge (3 faces) → all spine twins == ~0u
     csrSet0.sort();
     uint[] loopSet0 = nb0.dup;
     loopSet0.sort();
-    assert(csrSet0 != loopSet0,
-        "book v0: CSR (edge-based, relation D) neighbor set must differ from "
-        ~ "the loop-based verticesAroundVertex (relation E) set on this "
-        ~ "non-manifold vertex — proves connect.d Vertices cannot be folded "
-        ~ "onto vertexAdjacencyCSR without a behaviour change");
+    assert(csrSet0 == loopSet0,
+        "book v0: with the fan walk no longer truncating at a non-manifold "
+        ~ "edge, the edge-based CSR and the loop-based walk must now agree "
+        ~ "here — {1,2,3,4} both ways");
+}
+
+unittest { // the CSR (relation D) and the fan walk (relation E) still differ,
+           // on a bare wire edge — the witness that survives task 1290 and the
+           // one that actually guards connect.d's Vertices mode against being
+           // folded onto vertexAdjacencyCSR (task 0190).
+    import std.algorithm : sort;
+
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 1, 0), Vec3(0, 1, 0),
+        Vec3(-1, 0, 0),   // 4 — reachable from v0 by an edge NO FACE uses
+    ];
+    m.faces = [[0u, 1u, 2u, 3u]];
+    m.rebuildEdgesFromFaces();
+    m.addEdge(0u, 4u);          // bare wire
+    m.buildLoops();
+    m.resetSelection();
+
+    uint[] loopSet;
+    foreach (v; m.verticesAroundVertex(0)) loopSet ~= v;
+    loopSet.sort();
+
+    const(size_t)[] off;
+    const(uint)[]   nbrs;
+    m.vertexAdjacencyCSR(off, nbrs);
+    uint[] csrSet = nbrs[off[0] .. off[1]].dup;
+    csrSet.sort();
+
+    assert(csrSet == [1u, 3u, 4u],
+        "the edge-based CSR sees the wire's far endpoint");
+    assert(loopSet == [1u, 3u],
+        "the loop-based fan walk cannot: vertLoop is seeded from face corners "
+        ~ "only, so an edge no face uses is invisible to it");
+    assert(csrSet != loopSet,
+        "the two relations must still differ somewhere — folding connect.d's "
+        ~ "Vertices mode onto vertexAdjacencyCSR would change connected-"
+        ~ "component reachability across loose wire geometry");
 }
 
 unittest { // facetedSubdivide: a hidden cage face comes through as exactly ONE
@@ -4579,14 +4645,21 @@ unittest { // a WHOLE fan in the mask: the shared vertex goes, its neighbours
 }
 
 // ---------------------------------------------------------------------------
-// Task 0502 — `edgePolygonCounts` sees a NON-MANIFOLD fan; `facesAroundEdge`
-// cannot. Three quads share edge 0-1 here. The ring walk reports ONE face —
-// not three, and not even two — because the half-edge rings have no
-// representation for the fan; the direct face scan reports 3.
+// Task 0502 — `edgePolygonCounts` sees a NON-MANIFOLD fan. Three quads share
+// edge 0-1 here.
 //
 // This is the fixture that separates a real count from an undercount, and it
 // is why every "how many polygons border this edge" test in the repo must run
 // on it rather than on a grid (where the two agree).
+//
+// TASK 1290 CLOSED THE BLIND SPOT THIS BLOCK USED TO PIN. `facesAroundEdge`
+// reported ONE face here — not three, and not even two — and the assertion
+// below was written as `viaRings < 3` with an explicit instruction attached:
+// "if the rings ever learn to enumerate a non-manifold fan, delete this line —
+// but do NOT weaken edgePolygonCounts to match". They have, so it is replaced
+// by the equality rather than deleted, and the counter is untouched: it is
+// still the answer for a COUNT, still reads off `faces[]`, and still cannot
+// undercount whatever the rings do.
 // ---------------------------------------------------------------------------
 unittest {
     Mesh m;
@@ -4602,11 +4675,18 @@ unittest {
     auto counts = m.edgePolygonCounts();
     assert(counts[shared_] == 3, "three quads border this edge, and the count says so");
 
-    uint viaRings = 0;
-    foreach (_; m.facesAroundEdge(shared_)) ++viaRings;
-    assert(viaRings < 3,
-        "the documented blind spot: if the rings ever learn to enumerate a "
-      ~ "non-manifold fan, delete this line — but do NOT weaken edgePolygonCounts to match");
+    uint[] viaRings;
+    foreach (fi; m.facesAroundEdge(shared_)) viaRings ~= fi;
+    import std.algorithm : sort;
+    auto ringSet = viaRings.dup;
+    ringSet.sort();
+    assert(ringSet == [0u, 1u, 2u],
+        "task 1290: the rings enumerate the whole fan now — all three quads, "
+      ~ "as a SET. This used to be `< 3` (the walk yielded one face) and the "
+      ~ "old line carried the instruction that replaced it.");
+    assert(viaRings.length == counts[shared_],
+        "and the two answers agree on the number: the ring walk no longer "
+      ~ "undercounts, and edgePolygonCounts was NOT weakened to meet it");
 
     // The other two answers the counter has to get right on the same mesh.
     assert(counts[m.edgeIndex(1, 3)] == 1, "a border edge of one quad");

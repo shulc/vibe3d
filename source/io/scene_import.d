@@ -237,6 +237,10 @@ private ImportedPart partFromMesh(const(aiMesh)* mesh, const float[16] world,
     if (mesh.mFaces !is null)
     foreach (fi; 0 .. mesh.mNumFaces) {
         const aiFace f = mesh.mFaces[fi];
+        // Three, not the kernel's floor of two — an aiFace with fewer than
+        // three indices is assimp's POINT or LINE primitive, not a polygon.
+        // See `io/scene_ir.d`'s `flattenToMesh` for the full statement of
+        // whose threshold this is (task 1290).
         if (f.mNumIndices < 3) continue;   // dropped here ⇒ its UV corners are never appended
         // `srcCorner(k)` is THE corner-order mapping for this face: the identity
         // normally, reversed when the bake above mirrors (0691). The index array
