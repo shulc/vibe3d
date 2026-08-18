@@ -31,7 +31,7 @@ jobs:
   # commits in the last 24h. A manual dispatch keeps its tag / with_render inputs
   # (so with-render can still be exercised on demand).
   check:
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted, Linux, ci-vm]
     outputs:
       should_run:  ${{ steps.decide.outputs.should_run }}
       tag:         ${{ steps.decide.outputs.tag }}
@@ -109,7 +109,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: [self-hosted, Linux]
+          - runner: [self-hosted, Linux, ci-vm]
             name: linux
             binary: vibe3d
           - runner: [self-hosted, macOS, ARM64]
@@ -553,7 +553,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: [self-hosted, Linux]
+          - runner: [self-hosted, Linux, ci-vm]
             name: linux
             bundle: tools/release/bundle_linux.sh
           - runner: [self-hosted, Windows]
@@ -685,7 +685,7 @@ jobs:
     needs: [check, build, build-render]
     if: always() && needs.check.outputs.should_run == 'true' && needs.build.result == 'success'
     # Needs the `gh` CLI on the host to create the release.
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted, Linux, ci-vm]
 
     steps:
       - name: Download all zips

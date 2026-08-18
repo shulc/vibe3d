@@ -25,7 +25,7 @@ jobs:
     # Self-hosted Ubuntu runner. DMD + dub are pre-installed on the host
     # (system dmd via dpkg), so we skip dlang-community/setup-dlang and call
     # `dmd` directly instead of the $DC it would otherwise export.
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted, Linux, ci-vm]
 
     steps:
     - uses: actions/checkout@v4

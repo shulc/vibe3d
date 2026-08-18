@@ -1714,7 +1714,7 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
         foreach (r; results)
             if (r.status == CaseStatus.OK)
                 p99ByScenario[r.name] = msFromNs(r.stats.p99Ns);
-        lib.history.appendHistory(g_repoRoot, curHeader, p99ByScenario);
+        lib.history.appendHistory(g_repoRoot, curHeader, p99ByScenario, "frames");
     } catch (Exception e) {
         stderr.writeln("warning: history append failed: ", e.msg);
     }
@@ -1979,6 +1979,9 @@ int main(string[] args) {
     bool   updateFramesBaseline = false;
     bool   trend = false;
     int    trendLast = 20;
+    bool   vsLast = false;
+    double vsLastThreshold = 0.20;
+    double vsLastFloorUs   = 200.0;
     int    flameFreq = 999;
     int    flameCapture = 8;
     bool   ciMode = false;
@@ -1998,6 +2001,9 @@ int main(string[] args) {
         "tolerance",       "absolute-regression threshold as a fraction (default 0.30 = +30%)", &tolerance,
         "update-frames-baseline", "write tools/perf/frames_baseline.json from this `frames` run", &updateFramesBaseline,
         "trend",     "print per-case median drift from tools/perf/history/<host>.jsonl and exit", &trend,
+        "vs-last",   "compare the latest history entry against the previous comparable run and exit nonzero on any regression (the day-over-day gate for scheduled runs)", &vsLast,
+        "vs-last-threshold", "`--vs-last` regression threshold as a fraction (default 0.20 = +20%)", &vsLastThreshold,
+        "vs-last-floor",     "`--vs-last` ignores cases where both medians sit under this many µs (default 200)", &vsLastFloorUs,
         "last",      "`--trend` window size (default 20 runs)", &trendLast,
         "freq",      "`flame` perf sampling frequency Hz (default 999)", &flameFreq,
         "capture",   "`flame` idle-capture seconds after the drag/scenario (default 8)", &flameCapture,
@@ -2050,6 +2056,16 @@ int main(string[] args) {
         auto entries = lib.history.loadHistory(path);
         lib.history.printTrend(entries, trendLast);
         return 0;
+    }
+
+    // `--vs-last` is a pure history-file read too: the scheduled lane runs it
+    // right after `ops` so a fresh regression fails the run even while the
+    // absolute lane is knowingly red against a stale committed baseline.
+    if (vsLast) {
+        auto path = lib.history.historyPath(g_repoRoot, Socket.hostName);
+        auto entries = lib.history.loadHistory(path);
+        int regressions = lib.history.checkVsLast(entries, vsLastThreshold, vsLastFloorUs);
+        return regressions > 0 ? 1 : 0;
     }
 
     signal(SIGINT,  &onSignal);
@@ -2237,7 +2253,7 @@ int main(string[] args) {
         foreach (r; results)
             if (r.status == CaseStatus.OK)
                 kernelMedianByCase[r.name] = r.kernelMedianUs;
-        lib.history.appendHistory(g_repoRoot, curHeader, kernelMedianByCase);
+        lib.history.appendHistory(g_repoRoot, curHeader, kernelMedianByCase, "ops");
     } catch (Exception e) {
         stderr.writeln("warning: history append failed: ", e.msg);
     }

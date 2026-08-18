@@ -31,8 +31,11 @@ string historyPath(string repoRoot, string host) {
 // Appends one line: the RunHeader fields + a unix timestamp + a per-case (or
 // per-scenario) median map. `medians` is {caseName: kernelApplyMedianUs} for
 // `ops`, {scenarioName: p99Ms} for `frames` — the caller picks the metric,
-// this module is metric-agnostic.
-void appendHistory(string repoRoot, RunHeader h, double[string] medians) {
+// this module is metric-agnostic. `kind` ("ops" / "frames") tags the entry so
+// readers can keep the two metric spaces apart; entries written before the
+// tag existed are classified by entryKind()'s name-shape fallback.
+void appendHistory(string repoRoot, RunHeader h, double[string] medians,
+                   string kind = "") {
     string dir = historyDir(repoRoot);
     if (!exists(dir)) mkdirRecurse(dir);
     string path = historyPath(repoRoot, h.host);
@@ -40,6 +43,7 @@ void appendHistory(string repoRoot, RunHeader h, double[string] medians) {
     auto a = appender!string();
     a.put("{");
     a.put(format(`"ts":%d,`, Clock.currTime.toUnixTime!long));
+    if (kind.length) a.put(format(`"kind":"%s",`, kind));
     a.put(format(`"buildType":"%s","compiler":"%s","host":"%s","meshType":"%s",`,
                  h.buildType, h.compiler, h.host, h.meshType));
     a.put(format(`"n":%d,"faceCount":%d,"viewport":"%s","repeats":%d,`,
@@ -59,8 +63,34 @@ void appendHistory(string repoRoot, RunHeader h, double[string] medians) {
 
 struct HistoryEntry {
     long   ts;
+    string kind;          // "ops" / "frames"; "" on pre-tag entries
     RunHeader header;
     double[string] medians;
+}
+
+// The entry's metric space. Pre-tag entries are classified by name shape:
+// every ops case name carries a '/' (tool/axis or verb/type/extent); no
+// frames scenario name does.
+string entryKind(const ref HistoryEntry e) {
+    if (e.kind.length) return e.kind;
+    import std.algorithm : canFind, all;
+    if (e.medians.length == 0) return "";
+    foreach (name; e.medians.byKey)
+        if (!name.canFind('/')) return "frames";
+    return "ops";
+}
+
+// Two entries are comparable when their runs measured the same thing: same
+// metric space, build, mesh, and viewport. `compiler`/`repeats`/`host` are
+// deliberately not compared (host is fixed per file; a repeats change moves
+// noise, not the median).
+bool comparableEntries(const ref HistoryEntry a, const ref HistoryEntry b) {
+    return entryKind(a) == entryKind(b)
+        && a.header.buildType == b.header.buildType
+        && a.header.meshType  == b.header.meshType
+        && a.header.n         == b.header.n
+        && a.header.faceCount == b.header.faceCount
+        && a.header.viewport  == b.header.viewport;
 }
 
 HistoryEntry[] loadHistory(string path) {
@@ -74,6 +104,7 @@ HistoryEntry[] loadHistory(string path) {
         catch (Exception) continue;   // skip a malformed/partial line
         HistoryEntry e;
         e.ts = ("ts" in j) ? j["ts"].integer : 0;
+        e.kind = ("kind" in j) ? j["kind"].str : "";
         e.header.buildType = j["buildType"].str;
         e.header.compiler  = j["compiler"].str;
         e.header.host      = j["host"].str;
@@ -113,8 +144,17 @@ void printTrend(HistoryEntry[] entries, int last) {
         writeln("no history yet — run `ops` or `frames` at least once first");
         return;
     }
-    auto window = entries.length > last ? entries[$ - last .. $] : entries;
-    writefln("history: %d run(s) total, showing last %d", entries.length, window.length);
+    // Only runs comparable with the most recent one belong in one drift
+    // table: an n=64 smoke run next to the n=316 matrix (or a `frames` ms
+    // entry next to an `ops` µs entry) would fabricate thousand-percent
+    // "drift" out of the config change alone.
+    auto current = entries[$ - 1];
+    HistoryEntry[] comparable;
+    foreach (e; entries) if (comparableEntries(e, current)) comparable ~= e;
+    auto window = comparable.length > last ? comparable[$ - last .. $] : comparable;
+    writefln("history: %d run(s) total, %d comparable with the latest (%s n=%d %s), showing last %d",
+             entries.length, comparable.length, entryKind(current),
+             current.header.n, current.header.meshType, window.length);
 
     bool[string] namesSet;
     foreach (e; window) foreach (k; e.medians.byKey) namesSet[k] = true;
@@ -137,4 +177,70 @@ void printTrend(HistoryEntry[] entries, int last) {
         writefln("%-32s %12.2f %12.2f %+8.1f%%  %s",
                  name, first, lastV, driftPct, sparkline(series));
     }
+}
+
+// `--vs-last` — the day-over-day gate for a scheduled run. Compares the most
+// recent entry against the latest EARLIER comparable entry (same kind /
+// build / mesh / n / viewport) and fails on any per-case median that grew
+// past `threshold` (a fraction: 0.20 = +20%). Cases where BOTH sides sit
+// under `floorUs` are skipped — sub-100µs medians jitter multiplicatively
+// and gate nothing real (the absolute lane excludes them for the same
+// reason). Only `ops` entries gate: `frames` p99 is hitch-shaped and too
+// flaky for a ±20% day-over-day assert (its counter invariants F-I* are the
+// gate there). Returns the number of regressions (0 = pass), -1 when there
+// is nothing to compare (first run / no comparable predecessor) — the
+// caller treats -1 as pass.
+int checkVsLast(HistoryEntry[] entries, double threshold, double floorUs) {
+    if (entries.length == 0) {
+        writeln("vs-last: no history yet — nothing to compare (PASS)");
+        return -1;
+    }
+    auto current = entries[$ - 1];
+    if (entryKind(current) != "ops") {
+        writeln("vs-last: latest entry is not an `ops` run — nothing to gate (PASS)");
+        return -1;
+    }
+    // Latest earlier comparable entry.
+    HistoryEntry prev;
+    bool found = false;
+    foreach_reverse (e; entries[0 .. $ - 1]) {
+        if (comparableEntries(e, current)) { prev = e; found = true; break; }
+    }
+    if (!found) {
+        writeln("vs-last: no comparable previous run — nothing to compare (PASS)");
+        return -1;
+    }
+
+    import std.datetime.systime : SysTime;
+    writefln("vs-last: comparing ts=%d against ts=%d (ops n=%d %s, threshold +%.0f%%, floor %.0f µs)",
+             current.ts, prev.ts, current.header.n, current.header.meshType,
+             threshold * 100.0, floorUs);
+
+    struct Row { string name; double prevUs, curUs; }
+    Row[] regressed;
+    Row[] improved;
+    int compared = 0;
+    auto names = current.medians.keys;
+    names.sort();
+    foreach (name; names) {
+        auto pp = name in prev.medians;
+        if (pp is null) continue;                       // new case — no reference
+        double cur = current.medians[name], prv = *pp;
+        if (cur.isNaN || prv.isNaN) continue;
+        if (cur < floorUs && prv < floorUs) continue;   // µs-jitter band
+        compared++;
+        if (cur > prv * (1.0 + threshold)) regressed ~= Row(name, prv, cur);
+        else if (prv > cur * (1.0 + threshold)) improved ~= Row(name, prv, cur);
+    }
+
+    foreach (r; improved)
+        writefln("  [ok]   %-32s %12.1f -> %12.1f µs  (%+.0f%%, improved)",
+                 r.name, r.prevUs, r.curUs, (r.curUs / r.prevUs - 1.0) * 100.0);
+    foreach (r; regressed)
+        writefln("  [FAIL] %-32s %12.1f -> %12.1f µs  (%+.0f%%)",
+                 r.name, r.prevUs, r.curUs, (r.curUs / r.prevUs - 1.0) * 100.0);
+    writefln("vs-last: %d case(s) compared, %d regressed, %d improved — %s",
+             compared, cast(int)regressed.length, cast(int)improved.length,
+             regressed.length ? "FAIL" : "PASS");
+    return cast(int)regressed.length;
 }

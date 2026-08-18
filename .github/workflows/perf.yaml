@@ -1,0 +1,133 @@
+name: nightly-perf
+
+# Nightly perf measurement on the dedicated perf-fedora runner — the ONLY
+# host where tools/perf/baseline.json's absolute comparison is valid (the
+# baseline header is host-guarded; every other machine silently downgrades
+# to invariants-only). The runner lives INSIDE the owner's graphical session
+# (systemd user service, PartOf=graphical-session.target), so vibe3d renders
+# through the real display/GPU — same conditions the committed baselines
+# were captured under. Do not point any other job at this runner: it is a
+# workstation, and a daytime build would both slow the desktop and pollute
+# any concurrently-running measurement.
+#
+# Three signals, two of them gating:
+#   1. ops absolute vs committed baseline — RECORDED ONLY for now
+#      (continue-on-error): the Jun-07 baseline is knowingly stale and red
+#      (see doc/tasks/backlog/0680 + the 2026-08-18 audit); re-baselining
+#      before those fixes land would legitimize the debt. FLIP THIS STEP TO
+#      GATING when the baseline is regenerated post-fix.
+#   2. --vs-last day-over-day gate — GATING. Any per-case kernel median
+#      +20% over the previous comparable nightly fails the run. This is the
+#      "new regression since yesterday" detector that stays meaningful even
+#      while (1) is red with known debt.
+#   3. frames --ci counter invariants — GATING (machine-stable counters
+#      only; p99/hitch budgets are recorded in the log, not gated — see
+#      doc/frame_scenarios_ci_plan.md for why F-I4/GC is host-flaky).
+
+on:
+  schedule:
+    - cron: '30 0 * * *'   # 03:30 MSK; build.yml's nightly (03:00 UTC) runs on ci-vm, no overlap
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-perf
+  cancel-in-progress: false
+
+jobs:
+  perf:
+    runs-on: [self-hosted, Linux, perf-fedora]
+    timeout-minutes: 90
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: 'D toolchain on PATH'
+      # The runner is a systemd user service with the user-manager's minimal
+      # PATH; rdmd/dub live in the dmd2 tarball dir (run.d's perf build uses
+      # its own absolute ldc2 path independently of this).
+      run: echo "$HOME/.local/dlang/dmd2/linux/bin64" >> "$GITHUB_PATH"
+
+    - name: 'Persist run history outside the workspace'
+      # actions/checkout cleans untracked files (git clean -ffdx) on every
+      # run, which would wipe the gitignored tools/perf/history/ — the very
+      # data --vs-last and --trend live on. Keep it in $HOME and symlink in.
+      run: |
+        mkdir -p "$HOME/perf-history"
+        rm -rf tools/perf/history
+        ln -s "$HOME/perf-history" tools/perf/history
+
+    - name: 'Ops matrix, absolute vs committed baseline (recorded)'
+      id: ops
+      continue-on-error: true
+      run: |
+        set -o pipefail
+        env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 DISPLAY=:0 \
+          rdmd tools/perf/run.d --n 316 2>&1 | tee ops.log
+
+    - name: 'Day-over-day gate (--vs-last)'
+      id: vslast
+      run: |
+        set -o pipefail
+        rdmd tools/perf/run.d --vs-last 2>&1 | tee vslast.log
+
+    - name: 'Ops trend snapshot'
+      # Runs while the latest history entry is still the ops run above (the
+      # frames step below appends a frames entry, which would flip --trend's
+      # comparable-with-latest filter to the frames table).
+      if: always()
+      run: rdmd tools/perf/run.d --trend --last 14 > trend.log 2>&1 || true
+
+    - name: 'Frame scenario counter invariants (frames --ci)'
+      id: frames
+      run: |
+        set -o pipefail
+        env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 DISPLAY=:0 \
+          rdmd tools/perf/run.d frames --no-build --ci --n 316 2>&1 | tee frames.log
+
+    - name: 'Job summary'
+      if: always()
+      run: |
+        {
+          echo "### nightly-perf"
+          echo ""
+          echo "| signal | outcome |"
+          echo "|---|---|"
+          echo "| ops absolute vs baseline (recorded) | ${{ steps.ops.outcome }} |"
+          echo "| day-over-day --vs-last (gating) | ${{ steps.vslast.outcome }} |"
+          echo "| frames --ci counters (gating) | ${{ steps.frames.outcome }} |"
+          echo ""
+          echo "#### vs-last"
+          echo '```'
+          cat vslast.log 2>/dev/null || echo "(no output)"
+          echo '```'
+          echo "#### ops verdict"
+          echo '```'
+          grep -A4 "=== verdict ===" ops.log 2>/dev/null || echo "(no output)"
+          echo '```'
+          echo "#### trend (last 14 comparable runs)"
+          echo '```'
+          cat trend.log 2>/dev/null || echo "(no output)"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: perf-${{ github.run_id }}
+        path: |
+          tools/perf/results.json
+          tools/perf/frames_results.json
+          ops.log
+          vslast.log
+          frames.log
+          trend.log
+        retention-days: 90
+
+    - name: 'Gate'
+      # Mirrors ci.yaml's aggregate pattern: the job is red iff a GATING
+      # signal failed. The ops step is recorded above but deliberately not
+      # aggregated until the baseline is regenerated post-0680/snap fixes.
+      if: always()
+      run: |
+        echo "ops=${{ steps.ops.outcome }} vslast=${{ steps.vslast.outcome }} frames=${{ steps.frames.outcome }}"
+        [ "${{ steps.vslast.outcome }}" = "success" ] && \
+        [ "${{ steps.frames.outcome }}" = "success" ]

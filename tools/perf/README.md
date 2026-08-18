@@ -259,7 +259,43 @@ rdmd tools/perf/run.d --trend --last 5      # last 5 runs
 
 `--trend` reads the history file for the CURRENT host and prints a
 per-case/scenario table of first→last median drift plus a coarse ASCII
-sparkline — no vibe3d launch, no build, pure file read.
+sparkline — no vibe3d launch, no build, pure file read. Entries carry a
+`kind` tag (`ops`/`frames`; older tag-less lines are classified by case-name
+shape) and the table only includes runs COMPARABLE with the most recent one
+(same kind / buildType / meshType / n / faceCount / viewport) — an n=64
+smoke run next to the n=316 matrix would otherwise fabricate thousand-percent
+"drift" out of the config change alone.
+
+### `--vs-last` — the day-over-day gate
+
+```bash
+rdmd tools/perf/run.d --vs-last                        # exit 1 on any regression
+rdmd tools/perf/run.d --vs-last --vs-last-threshold 0.3 --vs-last-floor 500
+```
+
+Compares the latest history entry against the previous COMPARABLE `ops` run
+and exits nonzero when any per-case kernel median grew past the threshold
+(default +20%). Cases where both sides sit under the floor (default 200 µs)
+are skipped — sub-100µs medians jitter multiplicatively. Like `--trend` it
+is a pure history read. This is the gating signal of the **nightly-perf
+workflow** (`.github/workflows/perf.yaml`): it stays meaningful while the
+absolute lane is knowingly red against a stale committed baseline, because
+it answers a different question — "did TONIGHT's run regress against last
+night's?".
+
+## Nightly runs (`.github/workflows/perf.yaml`)
+
+A scheduled workflow (03:30 MSK) runs the full n=316 `ops` matrix + `frames
+--ci` on the dedicated `perf-fedora` self-hosted runner — the baseline host,
+where the absolute comparison is valid. The runner is a systemd **user**
+service (`~/.config/systemd/user/github-runner-perf.service`) bound to
+`graphical-session.target`, so jobs render through the real display/GPU; it
+is online only while the owner's session is. Gating signals: `--vs-last` +
+the `frames --ci` counters; the ops absolute verdict is recorded in the job
+summary but does not gate until the baseline is regenerated post-0680. Run
+history persists in `~/perf-history/` on the runner host (symlinked into the
+workspace, out of `actions/checkout`'s clean sweep). Every other Linux CI
+job targets the `ci-vm` label, so nothing else lands on this runner.
 
 ## `baseline.json` is committed but MACHINE-SPECIFIC
 
