@@ -127,8 +127,17 @@ mixin template MeshPolyBevelOps() {
     /// the original ones (a degenerate zero-width ring) — the reference tool
     /// does not skip the split at its default value either.
     ///
-    /// Returns the number of faces processed (0 only when `mask` selects no
-    /// face, e.g. an empty/undersized mask).
+    /// RING-ORDER DEPENDENT (task 1230, ledger rows 42/47/49) — deliberately.
+    /// Where the ring STARTS decides the sign of the offset, and a face whose
+    /// ring starts at a COLLINEAR corner is REFUSED outright rather than
+    /// inset. See the `ringStartCornerSign` block inside the loop; the reason
+    /// this reads a bookkeeping detail at all is `math.ringStartCornerSign`'s
+    /// own comment.
+    ///
+    /// Returns the number of faces processed (0 when `mask` selects no face —
+    /// an empty/undersized mask — AND when every masked face refused, which is
+    /// the same answer for a caller: `MeshPolygonInset.evaluate` turns it into
+    /// `status:error, "did not apply"`).
     size_t insetFacesByMask(const bool[] maskIn, float inset) {
         const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         size_t processed = 0;
@@ -141,6 +150,26 @@ mixin template MeshPolyBevelOps() {
             // Build per-corner position slice.
             Vec3[] origPos = new Vec3[](N);
             foreach (i; 0 .. N) origPos[i] = vertices[origFaceVerts[i]];
+            // --- Task 1230: the reference reads where the ring starts ------
+            // `sign(cross(r1-r0, r[n-1]-r0) · Newell(ring))` — is the corner
+            // at ring index 0 convex with respect to the ring's own normal.
+            // Measured over the frozen orbit corpus
+            // (`tests/fixtures/ring_order_orbit_divergence.json`, cases
+            // `inset_*` / `outset_dart`): the reference's inset is the one we
+            // already produce at a CONVEX start, the exact MIRROR of it at a
+            // REFLEX start (residual < 2e-4 on every measured rotation of the
+            // dart, the reflex+flat hexagon and the notched octagon), and at
+            // a COLLINEAR start it does nothing at all — 5 verts / 1 face
+            // unchanged on `zerocorner_first`, where the corner triangle is
+            // exactly zero and the reference has no fallback corner to reach
+            // for. The refusal is inset's ALONE: `bevelFacesByMask` further
+            // down this same file scales its offset to zero on that input
+            // instead, and smooth shift does not notice it at all (ledger row
+            // 49 — one input, three answers, which is why these are three
+            // separate call sites and not one shared helper with flags).
+            immutable int ringSign = ringStartCornerSign(origPos);
+            if (ringSign == 0) continue;      // refusal — face NOT processed
+            immutable float effInset = inset * cast(float)ringSign;
             // Polygon centroid (plain average of corners) — no longer the
             // inset DIRECTION (task 1190, ledger row 48), only the fallback
             // for a degenerate corner; see insetCornerBisector.
@@ -162,7 +191,7 @@ mixin template MeshPolyBevelOps() {
             uint[] newVerts = new uint[](N);
             foreach (i; 0 .. N)
                 newVerts[i] = addVertex(
-                    insetCornerBisector(origPos, i, nrm, centroid, inset));
+                    insetCornerBisector(origPos, i, nrm, centroid, effInset));
             // Replace the original face with the inner (inset) face.
             // The face slot index is unchanged, so faceMarks[fi] (select mark
             // AND subpatch mark) carries over to the inner face automatically.
@@ -774,8 +803,36 @@ mixin template MeshPolyBevelOps() {
             foreach (i; 0 .. Nc) origPos[i] = vertices[origFaceVerts[i]];
             const Vec3 n = faceNormal(cast(uint)fi);
 
-            float effInset = inset;
-            if (inset > 0) {
+            // --- Task 1230: the reference reads where the ring starts ------
+            // The SAME predicate poly.inset reads (`math.ringStartCornerSign`)
+            // and a DIFFERENT answer to its zero, which is why this is its own
+            // call site: measured on `poly_bevel_reflex_and_flat_hex` and
+            // `poly_bevel_two_flat_corners_hex`, the reference's bevel is what
+            // we already produce at a CONVEX ring start, its exact MIRROR at a
+            // REFLEX one, and at a COLLINEAR one it still BUILDS the ring but
+            // moves it nowhere — every new corner lands on the original vertex
+            // (12 verts / 18 edges / 7 faces, zero displacement). That is
+            // `s` used as a FACTOR rather than as a branch: -1 mirrors, +1
+            // leaves alone, and 0 falls out as a zero-width ring, which this
+            // kernel already builds deliberately (see the fuzz-D6 note above —
+            // inset==0 && shift==0 was never a no-op here). poly.inset REFUSES
+            // on that same input and smooth shift ignores it; three families,
+            // three answers, ledger row 49.
+            //
+            // KNOWN LIMITATION, flagged rather than guessed: this scales only
+            // the per-face terms. The `group=true` pre-pass above solves
+            // SHARED corners from `inset`/`shift` unsigned, because a shared
+            // corner belongs to several faces at once and the sign is a
+            // property of a face's ring, not of a corner. Every measured cell
+            // selects ONE face, where the pre-pass produces nothing at all
+            // (no internal edges ⇒ `sharedCornerPos` stays empty), so nothing
+            // in the corpus separates the two. A grouped selection in which
+            // some face's ring starts at a reflex corner is unmeasured.
+            immutable int   ringSign = ringStartCornerSign(origPos);
+            immutable float effShift = shift * cast(float)ringSign;
+
+            float effInset = inset * cast(float)ringSign;
+            if (effInset > 0) {
                 Vec3[] probe = new Vec3[](Nc);
                 foreach (i; 0 .. Nc) probe[i] = insetCorner(origPos, i, n, 1.0f) - origPos[i];
                 const float capT = maxSafeUniformInset(origPos, probe);
@@ -866,7 +923,7 @@ mixin template MeshPolyBevelOps() {
                         boundaryContourInset(origPos[(i + 1) % Nc]      - origPos[i],
                                              origPos[(i + Nc - 1) % Nc] - origPos[i],
                                              n, effInset, bcOffset)) {
-                        finalPos[i] = origPos[i] + n * shift + bcOffset;
+                        finalPos[i] = origPos[i] + n * effShift + bcOffset;
                     } else if (faceGrouped[fi] && dot(cn, n) < 1.0f - 1e-6f &&
                         boundaryContourInset(origPos[(i + 1) % Nc]      - origPos[i],
                                              origPos[(i + Nc - 1) % Nc] - origPos[i],
@@ -889,9 +946,9 @@ mixin template MeshPolyBevelOps() {
                         // so every FLAT grouped face (cube corner, tent, square,
                         // segments) where `cn==n` stays BYTE-IDENTICAL to the
                         // old `offsetMeet` law, and on a well-conditioned miter.
-                        finalPos[i] = origPos[i] + cn * shift + bcOffset;
+                        finalPos[i] = origPos[i] + cn * effShift + bcOffset;
                     } else {
-                        finalPos[i] = insetCorner(origPos, i, n, effInset) + n * shift;
+                        finalPos[i] = insetCorner(origPos, i, n, effInset) + n * effShift;
                     }
                     finalVerts[i] = addVertex(finalPos[i]);
                     noteRing(finalVerts[i], i, Nseg);

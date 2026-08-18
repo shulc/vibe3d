@@ -19,6 +19,14 @@ import snapshot : MeshSnapshot;
 /// Mesh.extrudeFacesByMask; deferred — reference harness absent from this
 /// checkout so empirical capture is infeasible.
 ///
+/// Ring-order dependent since task 1230 (ledger rows 41/49): a face whose
+/// vertex ring starts at a REFLEX corner shifts the other way, matching the
+/// reference. A COLLINEAR ring start changes nothing here — that is smooth
+/// shift's own answer, and it differs from poly.inset's (refuse) and
+/// poly.bevel's (zero offset) to the same input. See
+/// `math.ringStartCornerSign` and the smooth branch of
+/// `Mesh.extrudeFacesByMask`; the RIGID branch (poly.extrude) has no ring term.
+///
 /// Polygons-mode only; empty selection ⇒ whole mesh; shift==0 or a closed
 /// island (no boundary edges) are clean no-ops (snapshot discarded).
 class MeshSmoothShift : Command, Operator {

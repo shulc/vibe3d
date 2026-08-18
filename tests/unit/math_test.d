@@ -1466,3 +1466,117 @@ unittest { // vec3Lerp
     auto b = vec3Lerp(Vec3(1,2,3), Vec3(5,6,7), 1.0f);
     assert(isClose(b.x, 5.0f) && isClose(b.y, 6.0f) && isClose(b.z, 7.0f));
 }
+
+// ===========================================================================
+// ringStartCornerSign — task 1230, the reference's ring-start rule for the
+// OFFSET family (divergence-ledger rows 41 / 42 / 47 / 49).
+// ===========================================================================
+//
+// The three classes are pinned on the exact rings the reference was measured
+// on (`tests/fixtures/ring_order_orbit_divergence.json`) so that a change to
+// the predicate is caught HERE, in one place with no HTTP and no mesh, and not
+// only as a pattern shift six kernels downstream. Every ring below is planar
+// and rotated by hand — the vertex SET never changes, only where the ring
+// starts, which is the whole subject.
+unittest { // the three classes, on the measured rings
+    // The dart of `inset_dart` / `outset_dart`: (2,0,1.2) is its reflex corner.
+    static Vec3[] dartFrom(int start) {
+        Vec3[4] r = [Vec3(0,0,0), Vec3(2,0,1.2f), Vec3(4,0,0), Vec3(2,0,3)];
+        Vec3[] outp;
+        foreach (i; 0 .. 4) outp ~= r[(start + i) % 4];
+        return outp;
+    }
+    assert(ringStartCornerSign(dartFrom(0)) ==  1, "convex start (0,0,0)");
+    assert(ringStartCornerSign(dartFrom(1)) == -1, "REFLEX start (2,0,1.2)");
+    assert(ringStartCornerSign(dartFrom(2)) ==  1, "convex start (4,0,0)");
+    assert(ringStartCornerSign(dartFrom(3)) ==  1, "convex start (2,0,3)");
+
+    // The pentagon of `inset_flat_corner_pentagon`: (1.5,0,0) sits exactly on
+    // the segment (0,0,0)-(3,0,0), so its corner triangle is EXACTLY zero and
+    // the class is the third one, not a small +1 or a small -1. That is the
+    // rotation the reference's inset refuses on.
+    static Vec3[] pentFrom(int start) {
+        Vec3[5] r = [Vec3(0,0,0), Vec3(1.5f,0,0), Vec3(3,0,0),
+                     Vec3(3,0,2), Vec3(0,0,2)];
+        Vec3[] outp;
+        foreach (i; 0 .. 5) outp ~= r[(start + i) % 5];
+        return outp;
+    }
+    assert(ringStartCornerSign(pentFrom(1)) == 0, "COLLINEAR start (1.5,0,0)");
+    foreach (s; [0, 2, 3, 4])
+        assert(ringStartCornerSign(pentFrom(s)) == 1,
+               "every other start of the flat-corner pentagon is convex");
+
+    // The hexagon of `*_reflex_and_flat_hex` carries BOTH a collinear corner
+    // (2,0,0) and a reflex one (2,0,1.4) — the only ring in the corpus that
+    // can show all three classes at once, and the reason the zero is kept
+    // apart from +1 instead of folded into it.
+    static Vec3[] hexFrom(int start) {
+        Vec3[6] r = [Vec3(0,0,0), Vec3(2,0,0), Vec3(4,0,0),
+                     Vec3(4,0,4), Vec3(2,0,1.4f), Vec3(0,0,4)];
+        Vec3[] outp;
+        foreach (i; 0 .. 6) outp ~= r[(start + i) % 6];
+        return outp;
+    }
+    int[6] want = [1, 0, 1, 1, -1, 1];
+    foreach (s; 0 .. 6)
+        assert(ringStartCornerSign(hexFrom(s)) == want[s],
+               "hexagon rotation " ~ s.stringof ~ ": all three classes appear");
+}
+
+unittest { // REVERSING the ring does not change the answer; ROTATING it does
+    // This asymmetry is the content of the `· Newell(ring)` term, and it is
+    // why the rival predicate — the corner triangle at vertex 0 read ALONE —
+    // scored 76/81 instead of 81/81 in the measurement: on a reversed ring the
+    // corner triangle flips, but so does the ring's own normal, and their
+    // product does not. Nothing else in the corpus separates the two.
+    Vec3[] dart = [Vec3(0,0,0), Vec3(2,0,1.2f), Vec3(4,0,0), Vec3(2,0,3)];
+    Vec3[] rev;
+    foreach_reverse (v; dart) rev ~= v;
+    // `rev` starts at (2,0,3) — rotate it back so BOTH rings start at the same
+    // corner and the only difference is which way round they go.
+    Vec3[] revSameStart;
+    foreach (i; 0 .. 4) revSameStart ~= rev[(3 + i) % 4];
+    assert(revSameStart[0] == dart[0], "same starting corner, opposite winding");
+    assert(ringStartCornerSign(dart) == ringStartCornerSign(revSameStart),
+           "reversal must not change the class");
+
+    // The index-addressed overload is the same rule, not a second one.
+    uint[] ringIdx = [0, 1, 2, 3];
+    assert(ringStartCornerSign(dart, ringIdx) == ringStartCornerSign(dart));
+    uint[] fromReflex = [1, 2, 3, 0];
+    assert(ringStartCornerSign(dart, fromReflex) == -1);
+
+    // Degenerate inputs answer 0 rather than guessing.
+    assert(ringStartCornerSign(dart[0 .. 2]) == 0, "an edge is not a polygon");
+    Vec3[] collapsed = [Vec3(1,1,1), Vec3(1,1,1), Vec3(1,1,1)];
+    assert(ringStartCornerSign(collapsed) == 0, "a collapsed ring has no class");
+}
+
+unittest { // SCALE INVARIANCE — a small polygon is not a degenerate one
+    // The regression this pins is a real one, caught by a frozen agreement and
+    // not by anything written for the port: `dot(cross, Newell)` grows as the
+    // FOURTH power of the ring's size, so the first version of this predicate
+    // tested it against an ABSOLUTE 1e-9 floor and classified an ordinary
+    // right angle on a 0.002-unit square as COLLINEAR. `poly.inset` then
+    // refused a face it had to inset, and
+    // `tests/fixtures/poly_inset_dirty_parity.json`'s `inset_tiny_next_big`
+    // came back with 11 vertices where it froze 15. The degeneracy test is
+    // made on the corner triangle relative to its own two edges instead, so
+    // the class cannot depend on the units the model is drawn in.
+    static Vec3[] square(float s) {
+        return [Vec3(0,0,0), Vec3(s,0,0), Vec3(s,0,s), Vec3(0,0,s)];
+    }
+    // Six orders of magnitude, one answer. The 0.002 case IS the fixture's.
+    foreach (s; [1000.0f, 1.0f, 0.002f, 1e-3f, 1e-5f])
+        assert(ringStartCornerSign(square(s)) == ringStartCornerSign(square(1.0f)),
+               "the class must not move with the polygon's size");
+    // And the collinear class survives the same shrink: the corner triangle is
+    // exactly zero at every scale, so it is zero here too.
+    static Vec3[] flatFirst(float s) {
+        return [Vec3(s/2,0,0), Vec3(s,0,0), Vec3(s,0,s), Vec3(0,0,s), Vec3(0,0,0)];
+    }
+    foreach (s; [1000.0f, 1.0f, 0.002f, 1e-5f])
+        assert(ringStartCornerSign(flatFirst(s)) == 0,
+               "a collinear ring start is collinear at every scale");
+}

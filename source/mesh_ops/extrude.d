@@ -2917,6 +2917,42 @@ mixin template MeshExtrudeOps() {
             foreach (fi; 0 .. faces.length) {
                 if (!mask[fi]) continue;
                 Vec3 fn = faceNormal(cast(uint)fi);
+                // --- Task 1230: the reference reads where the ring starts --
+                // SMOOTH ONLY, and in the COARSE reading of
+                // `math.ringStartCornerSign`: a face whose ring starts at a
+                // REFLEX corner contributes its normal turned around, so a
+                // single-face smooth shift comes out shifted the other way —
+                // measured to the sign on `smooth_shift_reflex_and_flat_hex`
+                // r4, where the reference's every vertex moves +0.1 against
+                // our -0.1. A COLLINEAR ring start is folded in with convex
+                // and changes NOTHING, which is this family's own answer and
+                // not the offset families': poly.inset refuses on that same
+                // input and poly.bevel zeroes its offset (ledger row 49).
+                // What is MEASURED is that OUTCOME — the hexagon's collinear
+                // rotation matches the reference, and a whole separate cell
+                // agrees: `smooth_shift/zerocorner_first` is invariant on both
+                // sides with 5/5 cross-agreement in the ring capture.
+                //
+                // What is NOT measured is this SPELLING of it, and saying so is
+                // the honest half. Writing the FINE reading here instead
+                // (`fn *= sign`, so a collinear start contributes a ZERO
+                // normal) is observationally identical over the whole corpus:
+                // with one selected face the accumulated sum is then zero, the
+                // `nlen > 1e-6f` guard below falls back to `regionNormal`, and
+                // the unsigned normal arrives by another road. That mutation
+                // was run and reddened NOTHING — 0 of 45 rotations — so the
+                // corpus cannot separate the two forms, and no claim is made
+                // that it can. The coarse reading is written because it states
+                // the law directly instead of arriving at it through a
+                // degenerate-value fallback. What IS pinned is WHICH corner
+                // class the sign is read at: flipping at the COLLINEAR class
+                // instead of the REFLEX one reddens both rotations (2 of 45).
+                //
+                // The RIGID branch below (poly.extrude, `smooth == false`) is
+                // deliberately left alone: no cell of the corpus drove the
+                // reference's face extrude over a rotated ring, so giving it a
+                // ring term would be a guess, not a port.
+                if (ringStartCornerSign(vertices, faces[fi]) < 0) fn = fn * -1.0f;
                 int island = islandOf[fi];
                 foreach (vid; faces[fi]) {
                     ulong k = ivKey(island, vid);

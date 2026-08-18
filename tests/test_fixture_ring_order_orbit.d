@@ -8,10 +8,15 @@
 // reference's, in three channels, plus every rotation's own output and
 // whether it matched the reference at all.
 //
-// This is NOT a parity test. A green run means the divergence is still
-// exactly the shape it was measured to be; it reddens when the gap moves in
-// either direction, including when someone closes it (see runRingOrbitSuite's
-// header for what each of the six assertions means).
+// This file holds BOTH kinds of case, and the difference is per case, not per
+// file. Where a case still records a gap, a green run means the gap is still
+// exactly the shape it was measured to be, and it reddens when the gap moves
+// in EITHER direction, including when someone closes it. Where a case has been
+// CONVERTED — the eight offset-family orbits, task 1230 — the two patterns are
+// equal, every rotation declares `matches_reference`, and the same six
+// assertions now hold a PARITY in place: it reddens the moment either side
+// moves. Nothing was deleted to make that happen; converting the pattern IS
+// the assertion (see runRingOrbitSuite's header for what each assertion means).
 //
 // WHY AN ORBIT AND NOT A BASE. Every one of these findings is invisible on a
 // single mesh. In the run they came from, sixteen apparent parities turned out
@@ -73,13 +78,43 @@
 //     reference's answer at every rotation where the reference does not read
 //     the ring.
 //
+// WHAT TASK 1230 CHANGED, AND WHY IT IS THE OPPOSITE DIRECTION FROM 1190.
+// The owner decided to MATCH the reference in the offset family, so we now
+// deliberately READ where the ring starts there -- an ordinary polygon
+// rotated in its own ring now gives a different answer, on purpose. Say it
+// plainly: this is a decision to follow the reference, not an improvement to
+// the geometry. It is the exact opposite of what 1190 did to triangulation,
+// where the reference is the ring-INVARIANT side and we were the ones
+// reading the start; getting the two backwards would undo that work.
+//
+//   * the SIGN law (rows 41/47/49) is ported into all three offset kernels:
+//     `Mesh.insetFacesByMask`, `Mesh.bevelFacesByMask`, and the SMOOTH branch
+//     of `Mesh.extrudeFacesByMask` (`math.ringStartCornerSign` is the one
+//     home of the predicate). All eight `inset_*` / `outset_*` /
+//     `poly_bevel_*` / `smooth_shift_*` orbits now reproduce the reference's
+//     pattern in all three channels and match it at EVERY rotation, so they
+//     reclassify `reference_reads_the_ring` -> `both_read_the_ring`.
+//   * the REFUSAL on a collinear ring start (row 42) is ported too, and only
+//     into inset: `mesh.poly_inset` answers `status:error, "did not apply"`
+//     on that rotation and leaves the mesh alone, which is the same 5-vertex
+//     1-face mesh the reference leaves. The other two families answer that
+//     same input differently on purpose (row 49) -- poly.bevel builds its ring
+//     with a ZERO offset, smooth shift does not notice the collinear start at
+//     all -- so they are three separate call sites, not one helper with flags.
+//
 // NOT ported, on purpose:
 //
-//   * the reference's SIGN law (rows 41/47/49) and its REFUSAL on a collinear
-//     ring start (row 42). Those are its reading of the ring, not our defect.
-//     `inset_*` / `poly_bevel_*` / `smooth_shift_*` therefore stay
-//     `reference_reads_the_ring`, with the mismatching rotations being exactly
-//     the ones the sign predicate names.
+//   * THICKEN, although divergence-ledger row 41 names it alongside the other
+//     three. It has no orbit case in this fixture, so nothing here could
+//     assert it; and the ring capture shows the gap that matters there is not
+//     the ring one -- `thicken/np_saddle` and `thicken/triquad_np` are
+//     invariant on BOTH sides and still diverge at 0/4 rotations, and even
+//     `thicken/reflex_first` r0 only reaches AGREE_WINDING_DIFFERS. Porting a
+//     ring term into it would move an unmeasured law under an unmeasured gap.
+//   * TRIANGULATION. The predicate is violated there on 11 of 25 measured
+//     orbits and the fixture keeps the counterexample declared `violated`
+//     (`triangulate_five_point_star`). It is not a universal rule and must not
+//     be extended to a family that does not answer to it.
 //   * the reference's triangulation WINDING (row 51). Its triangle SET does
 //     not follow the ring start but its winding DOES: `faces` = `0100` against
 //     `faces_any_winding` = `0000` on the dart. Ours is invariant in both, so
@@ -97,24 +132,28 @@
 //
 // Two findings the shape buys are worth naming:
 //
-//   * Rows 41/47/49 -- the reference's inset / outset / bevel / smooth-shift
-//     DIRECTION is decided by the corner the ring happens to start at. On the
-//     hexagon carrying both a collinear AND a reflex corner the orbit splits
-//     into THREE classes (`010020`), which a ring with one special corner
-//     cannot show. The suite recomputes the measured predicate --
+//   * Rows 41/47/49 -- the inset / outset / bevel / smooth-shift DIRECTION is
+//     decided by the corner the ring happens to start at. On the hexagon
+//     carrying both a collinear AND a reflex corner the orbit splits into
+//     THREE classes (`010020`), which a ring with one special corner cannot
+//     show. The suite recomputes the measured predicate --
 //     `sign(cross(r1-r0, r[n-1]-r0) . Newell(ring))`, "is the corner at ring
 //     index 0 convex with respect to the ring's OWN normal" -- from the
 //     fixture's own base rings and asserts it still predicts that split, on
 //     eight orbits. Smooth shift answers to the COARSER reading that folds
 //     the collinear class into the convex one (`000010`), which is how three
-//     families that look like one mechanism come apart. We have no ring term
-//     at all: `000000` everywhere.
+//     families that look like one mechanism come apart. Since task 1230 our
+//     side answers the same way, so these patterns are read TWICE per case --
+//     ours and the reference's -- and a port that drifted on either side is
+//     the same red as a port that never happened.
 //
 //   * Row 42 -- at the rotation that starts the ring on the collinear corner
-//     the reference's inset does NOTHING: that corner's triangle is exactly
-//     degenerate and it has no fallback. We inset identically at all five.
-//     The fixture carries that as an `applied` flag per rotation, which the
-//     runner RE-DERIVES from the mesh rather than taking on trust.
+//     the inset does NOTHING: that corner's triangle is exactly degenerate and
+//     there is no fallback. The fixture carries that as an `applied` flag per
+//     rotation, which the runner RE-DERIVES from the mesh rather than taking
+//     on trust, and as an `expectStatus`/`expectMessageContains` pair on the
+//     op step, because a refused command and a deleted op step leave exactly
+//     the same mesh behind and only the answer tells them apart.
 //
 // The predicate is NOT universal, and the fixture says so rather than quietly
 // dropping the counterexample: `triangulate_five_point_star` declares the

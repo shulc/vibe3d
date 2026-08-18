@@ -17,6 +17,10 @@ import selection_product : repointToFaceBorder;
 /// Empty face-selection ⇒ whole VISIBLE mesh; empty edge-selection likewise
 /// (Mesh.operand{Face,Edge}Mask — the L1 funnel, per sibling convention).
 /// |inset|<1e-6 && |shift|<1e-6 (polygon) or width<1e-6 (edge) → status:error.
+/// The POLYGON path is ring-order dependent since task 1230 (ledger rows
+/// 41/47/49): a face whose ring starts at a REFLEX corner bevels the other
+/// way, and one whose ring starts at a COLLINEAR corner still builds its ring
+/// but moves it nowhere. Deliberate — see `math.ringStartCornerSign`.
 ///
 /// Neutral param names (task 0391 — NEVER the reference-editor's own names
 /// in source/tests/config — repo neutrality convention):

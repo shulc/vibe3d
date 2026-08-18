@@ -16,9 +16,15 @@ import snapshot : MeshSnapshot;
 /// boundary with N ring quads.
 /// Polygons-mode only; empty selection ⇒ whole mesh. `inset == 0` is NOT a
 /// no-op (task 0359, reference-matched: the split always happens, landing a
-/// degenerate zero-width ring at inset=0) — the only remaining no-op case is
-/// an empty/undersized selection mask (evaluate returns false, snapshot
-/// discarded).
+/// degenerate zero-width ring at inset=0) — the remaining no-op cases are an
+/// empty/undersized selection mask AND, since task 1230, a selection in which
+/// every face's ring starts at a COLLINEAR corner: the reference refuses that
+/// face outright (ledger row 42), the kernel skips it, and a selection with
+/// nothing left to process comes back through the same `evaluate → false`
+/// door, i.e. `status:error, "command 'mesh.poly_inset' did not apply"`.
+/// The OFFSET SIGN is ring-order dependent for the same reason — see
+/// `math.ringStartCornerSign`. Both are deliberate adoptions of the
+/// reference's reading of the ring, not repairs.
 ///
 /// Default is deliberately NON-zero (task 0359 review): the reference tool's
 /// own default is bit-exact 0.0, but that value is a degenerate zero-area

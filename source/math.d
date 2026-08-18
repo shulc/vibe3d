@@ -1576,6 +1576,171 @@ bool frontFacingLocal(const(Vec3)[] verts, const(uint)[] ring, Vec3 eyeLocal)
     return !(nx * dx + ny * dy + nz * dz > 0.0);
 }
 
+// ===========================================================================
+// ringStartCornerSign — the OTHER measured rule that reads WHERE a polygon's
+// vertex ring starts. Task 1230; divergence-ledger rows 41 / 42 / 47 / 49.
+// ===========================================================================
+//
+// Same corner triangle as `frontFacingLocal` directly above, a different
+// question, a different answer — which is exactly why it sits BESIDE it and
+// not inside it:
+//
+//     N0 = cross(ring[1] - ring[0], ring[$-1] - ring[0])   corner at index 0
+//     s  = sign( dot(N0, Newell(ring)) )
+//
+// "Is the corner the ring HAPPENS TO START AT convex with respect to the
+// ring's own normal." `frontFacingLocal` measures that same `N0` against the
+// EYE and answers a visibility question; this measures it against the ring's
+// own area-weighted normal and answers an ORIENTATION one. No camera enters
+// it, and its zero is not `frontFacingLocal`'s "visible from both sides" — it
+// is a class of its own that three callers answer three different ways.
+//
+// THREE CLASSES, and the third is load-bearing:
+//   +1  ring starts at a CONVEX corner    — the ordinary case; every op in the
+//                                           offset family behaves here exactly
+//                                           as it did before this rule existed
+//   -1  ring starts at a REFLEX corner    — N0 is turned 180 degrees from the
+//                                           surface it belongs to
+//    0  ring starts at a COLLINEAR corner — N0 is EXACTLY the zero vector and
+//                                           there is no second corner to fall
+//                                           back to
+//
+// WHY THIS EXISTS AT ALL — it is a DECISION, not an improvement. Rotating a
+// polygon's ring does not change the polygon, so an op that reads the start is
+// answering a question about bookkeeping. Ours did not read it; the reference
+// does, and the owner chose to match the reference (task 1230). We are
+// deliberately INTRODUCING a ring-order dependence in the offset family. The
+// sibling rule for triangulation went the other way in task 1190 — there the
+// reference is the ring-INVARIANT one and we were the ones reading the start —
+// so the two must not be reasoned about as one thing. This predicate does NOT
+// govern triangulation: measured over 25 orbits it is violated on 11 of them,
+// and `tests/fixtures/ring_order_orbit_divergence.json` keeps the
+// counterexample declared `violated` on purpose.
+//
+// WHERE IT IS MEASURED AND WHERE IT IS APPLIED (all three read it separately,
+// because one input gets three different answers out of them — ledger row 49):
+//   * `Mesh.insetFacesByMask` (poly.inset / outset)  — signed offset, and the
+//     ZERO class REFUSES the face outright.
+//   * `Mesh.bevelFacesByMask` (poly.bevel)           — offset scaled by `s`
+//     itself, so the zero class builds the ring with NO offset.
+//   * `Mesh.extrudeFacesByMask`, smooth branch only (poly.smshift) — the
+//     COARSE reading, in which zero merges with +1, so a collinear ring start
+//     is not noticed at all.
+// Scored 58/58 exact on the offset families over the frozen orbit corpus, and
+// 8/8 on smooth shift under the coarse reading.
+//
+// PRECISION, AND WHY THE ZERO TEST IS RELATIVE. The cross, the Newell sum and
+// the dot are all carried in DOUBLE while the positions stay float, for the
+// same reason `frontFacingLocal` gives above: products of float32 values are
+// exact in double, so a truly collinear corner yields an EXACT zero instead of
+// noise with an arbitrary sign — and here the zero is a CLASS, so getting it
+// wrong picks the wrong branch, not merely the wrong side of a tie.
+//
+// The degeneracy test is therefore made on the corner triangle ITSELF and
+// SCALE-FREE — `|cross| <= 1e-9 · |a| · |b|`, i.e. `sin(theta) <= 1e-9` — and
+// NOT on the dot product against an absolute floor. That was the first thing
+// written here and it was WRONG: `dot(cross, Newell)` grows as the FOURTH
+// power of the ring's size, so on the 0.002-unit square of
+// `tests/fixtures/poly_inset_dirty_parity.json`'s `inset_tiny_next_big` an
+// ordinary RIGHT ANGLE evaluates to 3.2e-11, an absolute 1e-9 floor calls it
+// collinear, and poly.inset then REFUSES a face it must inset. The frozen
+// agreement caught it — 15 vertices expected, 11 produced. A small polygon is
+// not a degenerate one, and only a relative test knows the difference.
+//
+// The fixture runner carries a twin of this formula (`corner0Sign` in
+// `tests/fixture_helpers.d`) which still reads the ABSOLUTE form. The two
+// classify the measured corpus identically — every ring there is 1 to 4 units
+// across, where a non-degenerate corner's dot is of order 1 and a degenerate
+// one is EXACTLY zero — so the frozen `sign_predicate` blocks still describe
+// what these kernels do. The implementations are deliberately kept apart so
+// those frozen classes stay an INDEPENDENT oracle; they can part company only
+// on geometry far from unit scale, which is exactly the geometry the orbit
+// corpus does not contain. If you change the reading here, check it there.
+//
+/// The reference's ring-start corner sign for the polygon `ring` (positions).
+/// +1 convex, -1 reflex, 0 collinear/degenerate. A ring shorter than 3 is not
+/// a polygon and answers 0.
+int ringStartCornerSign(const(Vec3)[] ring) @safe pure nothrow @nogc {
+    immutable size_t n = ring.length;
+    if (n < 3) return 0;
+    const Vec3 r0 = ring[0], r1 = ring[1], rL = ring[n - 1];
+    const double ux = cast(double)r1.x - r0.x,
+                 uy = cast(double)r1.y - r0.y,
+                 uz = cast(double)r1.z - r0.z;
+    const double wx = cast(double)rL.x - r0.x,
+                 wy = cast(double)rL.y - r0.y,
+                 wz = cast(double)rL.z - r0.z;
+    const double cx = uy * wz - uz * wy,
+                 cy = uz * wx - ux * wz,
+                 cz = ux * wy - uy * wx;
+    // The ZERO class is a degenerate CORNER TRIANGLE, judged against the
+    // corner's own two edges so the answer cannot depend on how big the
+    // polygon is: |cross| <= 1e-9 * |a| * |b| is sin(theta) <= 1e-9.
+    if (cx*cx + cy*cy + cz*cz
+        <= 1e-18 * (ux*ux + uy*uy + uz*uz) * (wx*wx + wy*wy + wz*wz))
+        return 0;
+    // Newell over the WHOLE ring — the reference frame the corner is judged
+    // against. It reverses with the ring, which is why a REVERSED ring answers
+    // the same as the original (both terms flip) while a ROTATED one does not
+    // (only the corner moves). That asymmetry is the finding.
+    double nx = 0.0, ny = 0.0, nz = 0.0;
+    foreach (i; 0 .. n) {
+        const Vec3 p = ring[i], q = ring[(i + 1) % n];
+        nx += (cast(double)p.y - q.y) * (cast(double)p.z + q.z);
+        ny += (cast(double)p.z - q.z) * (cast(double)p.x + q.x);
+        nz += (cast(double)p.x - q.x) * (cast(double)p.y + q.y);
+    }
+    const double d = cx * nx + cy * ny + cz * nz;
+    // Reaching here the corner triangle is non-degenerate, so a zero can only
+    // mean the ring's own normal is zero (a degenerate ring) or stands exactly
+    // perpendicular to the corner (a non-planar oddity no measurement covers).
+    // Both answer "no class" rather than guessing one.
+    if (d > 0.0) return  1;
+    if (d < 0.0) return -1;
+    return 0;
+}
+
+/// Index-addressed form: `ring` are indices into `verts`. Same rule.
+int ringStartCornerSign(const(Vec3)[] verts, const(uint)[] ring)
+    @safe pure nothrow @nogc
+{
+    immutable size_t n = ring.length;
+    if (n < 3) return 0;
+    // Cannot slice `verts` by an index ring, so the formula is spelled once
+    // more rather than allocating a positions copy in an @nogc predicate.
+    const Vec3 r0 = verts[ring[0]], r1 = verts[ring[1]], rL = verts[ring[n - 1]];
+    const double ux = cast(double)r1.x - r0.x,
+                 uy = cast(double)r1.y - r0.y,
+                 uz = cast(double)r1.z - r0.z;
+    const double wx = cast(double)rL.x - r0.x,
+                 wy = cast(double)rL.y - r0.y,
+                 wz = cast(double)rL.z - r0.z;
+    const double cx = uy * wz - uz * wy,
+                 cy = uz * wx - ux * wz,
+                 cz = ux * wy - uy * wx;
+    // The ZERO class is a degenerate CORNER TRIANGLE, judged against the
+    // corner's own two edges so the answer cannot depend on how big the
+    // polygon is: |cross| <= 1e-9 * |a| * |b| is sin(theta) <= 1e-9.
+    if (cx*cx + cy*cy + cz*cz
+        <= 1e-18 * (ux*ux + uy*uy + uz*uz) * (wx*wx + wy*wy + wz*wz))
+        return 0;
+    double nx = 0.0, ny = 0.0, nz = 0.0;
+    foreach (i; 0 .. n) {
+        const Vec3 p = verts[ring[i]], q = verts[ring[(i + 1) % n]];
+        nx += (cast(double)p.y - q.y) * (cast(double)p.z + q.z);
+        ny += (cast(double)p.z - q.z) * (cast(double)p.x + q.x);
+        nz += (cast(double)p.x - q.x) * (cast(double)p.y + q.y);
+    }
+    const double d = cx * nx + cy * ny + cz * nz;
+    // Reaching here the corner triangle is non-degenerate, so a zero can only
+    // mean the ring's own normal is zero (a degenerate ring) or stands exactly
+    // perpendicular to the corner (a non-planar oddity no measurement covers).
+    // Both answer "no class" rather than guessing one.
+    if (d > 0.0) return  1;
+    if (d < 0.0) return -1;
+    return 0;
+}
+
 // Closest distance from point (px,py) to segment (ax,ay)-(bx,by).
 // t is the interpolation parameter [0..1] of the closest point on segment.
 float closestOnSegment2D(float px, float py,
