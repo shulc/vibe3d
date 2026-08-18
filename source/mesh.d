@@ -4182,18 +4182,280 @@ struct Mesh {
     // Triangulation family: Triple / Quadruple / Detriangulate
     // -----------------------------------------------------------------------
 
-    /// Split each masked face (n-gon, n > 3) into (n−2) triangles by fanning
-    /// from the first vertex: [f[0],f[i],f[i+1]] for i = 1 .. n−2. Already-
-    /// triangles (length ≤ 3) pass through untouched regardless of the mask.
-    /// Returns the number of faces changed.
+    // Above this ring size `earClipRingCorners` stops clipping and fans.
+    // Clipping is O(n^3) worst case (n clips x n corners x n containment
+    // probes), so one pathological n-gon could otherwise stall an edit; 256
+    // corners caps a single face at ~1.7e7 probes. The fallback fans from a
+    // GEOMETRICALLY chosen anchor, so "our answer does not depend on where the
+    // ring starts" holds at every size, not only below the ceiling.
+    private enum size_t kMaxEarClipRing = 256;
+
+    private static bool posLess(const double[3] a, const double[3] b) pure nothrow @nogc {
+        if (a[0] != b[0]) return a[0] < b[0];
+        if (a[1] != b[1]) return a[1] < b[1];
+        return a[2] < b[2];
+    }
+
+    private static bool keyLess(size_t N)(const double[N] a, const double[N] b) pure nothrow @nogc {
+        foreach (i; 0 .. N) if (a[i] != b[i]) return a[i] < b[i];
+        return false;
+    }
+
+    // The canonical geometric NAME of a candidate: its corner positions,
+    // sorted. Independent of winding, of which corner is the apex, and — the
+    // whole point — of where the ring started. Used ONLY to break exact ties.
+    private static double[9] triKey(const double[3] a, const double[3] b,
+                                    const double[3] c) pure nothrow @nogc {
+        double[3][3] p = [a, b, c];
+        if (posLess(p[1], p[0])) { auto t = p[0]; p[0] = p[1]; p[1] = t; }
+        if (posLess(p[2], p[1])) { auto t = p[1]; p[1] = p[2]; p[2] = t; }
+        if (posLess(p[1], p[0])) { auto t = p[0]; p[0] = p[1]; p[1] = t; }
+        double[9] k;
+        foreach (i; 0 .. 3) foreach (j; 0 .. 3) k[3*i + j] = p[i][j];
+        return k;
+    }
+
+    private static double[6] diagKey(const double[3] a, const double[3] b) pure nothrow @nogc {
+        double[3][2] p = [a, b];
+        if (posLess(p[1], p[0])) { auto t = p[0]; p[0] = p[1]; p[1] = t; }
+        double[6] k;
+        foreach (i; 0 .. 2) foreach (j; 0 .. 3) k[3*i + j] = p[i][j];
+        return k;
+    }
+
+    /// Triangulate ONE face ring, returning the triangles as triples of RING
+    /// CORNER indices (0 .. ring.length-1) — corner indices and not vertex ids
+    /// because the caller has to carry per-corner maps (UVs, weights) through
+    /// the split and therefore needs to know which OLD corner each new one
+    /// came from.
+    ///
+    /// WHY NOT A FAN FROM ring[0] (divergence-ledger rows 25, 43, 50; task
+    /// 1190). The old body fanned from the ring's first corner, which is wrong
+    /// twice over:
+    ///
+    ///   * CORRECTNESS. On the dart (0,0,0)(2,0,1.2)(4,0,0)(2,0,3) the fan
+    ///     emitted (0,0,0)-(2,0,1.2)-(4,0,0) — a triangle lying OUTSIDE the
+    ///     polygon — and on the reflex pentagon (0,0,0)(4,0,0)(4,0,4)(2,0,1)
+    ///     (0,0,4) it emitted (0,0,0)-(4,0,0)-(4,0,4), which CONTAINS the
+    ///     reflex corner. Either way the triangulation overlapped itself.
+    ///   * RING ORDER. The same face re-emitted with its ring rotated
+    ///     triangulated differently — measured period 2 on a quad, n on an
+    ///     n-gon. The reference is invariant on 13 of 25 measured geometries;
+    ///     we were invariant on none of them.
+    ///
+    /// THE TWO LAWS, and why they are two. The measurement does not support a
+    /// single rule, and forcing one would have to break a cell that is
+    /// currently green:
+    ///
+    ///   * n == 4 — the SHORTER of the two diagonals, among the splits that do
+    ///     not fold (a reflex corner leaves only one). Pinned by two cells of
+    ///     `tests/fixtures/poly_flip_triple_dirty_parity.json` where both
+    ///     engines already agree: `tri_pole_quad3` (0.62 against 1.732 —
+    ///     largest-area would take the LONGER one and lose the agreement) and
+    ///     `tri_np_one` (1.41421 against 1.41774, which is also the LESS even
+    ///     area split, so it separates "shorter" from "more balanced").
+    ///   * n >= 5 — greedy ear clipping, taking the ear with the LARGEST
+    ///     projected area. Pinned by `tests/fixtures/poly_triple_reflex_divergence.json`'s
+    ///     hexagon, where the areas separate the candidates outright (2.25
+    ///     against 1.5 twice) and the resulting four triangles match the
+    ///     reference's exactly — winding, ring rotation, AND the greedy
+    ///     emission order.
+    ///
+    /// The two are not reconcilable: the hexagon demands the LARGEST ear, the
+    /// pole quad demands the SMALLEST-area split. Any rule monotone in area or
+    /// in chord length must lose one of them, so the kernel keeps them apart
+    /// and says why here rather than picking a loser silently.
+    ///
+    /// TIES ARE A CONVENTION, NOT A LAW. Congruent candidates (any square; the
+    /// four equal ears of a reflex-and-flat hexagon; the five tips of a regular
+    /// star) leave both metrics with nothing to say. Ties go to the smaller
+    /// `triKey`/`diagKey`. That direction is arbitrary — it is chosen because
+    /// it keeps `tri_np_twist` (four quads whose two diagonals are EXACTLY
+    /// equal) agreeing with the reference, and for no deeper reason. The
+    /// reference's own tie-break is not geometric at all: on the regular star
+    /// its answer changes with the ring start (measured pattern `0011` over
+    /// four rotations), so no ring-invariant rule can follow it through a tie.
+    /// Two tied cells therefore stay declared divergences rather than being
+    /// fitted: `triangulate_reflex_and_flat_hex` and `triangulate_five_point_star`.
+    ///
+    /// INVARIANCE. Every decision is a function of the remaining ring's
+    /// GEOMETRY — area, containment, length, a positional key — with no index
+    /// term anywhere. Rotating the input ring rotates the working ring
+    /// identically, so each step picks the same corner and the triangle SET
+    /// comes out identical. The one hole is a ring carrying two corners at the
+    /// SAME position, where the positional key cannot separate them; such a
+    /// ring is degenerate for triangulation anyway.
+    ///
+    /// WINDING. Each triangle is emitted (prev, apex, next) in the ring's own
+    /// order, inheriting the face's winding — so ours does not follow the ring
+    /// start in the winding channel either. The reference's DOES (ledger row
+    /// 51: same triangles, wound the other way, on a rotated ring), and that
+    /// stays a declared divergence; it is their behaviour, not our defect.
+    ///
+    /// Always returns exactly ring.length - 2 triangles (the caller asserts it).
+    private static uint[3][] earClipRingCorners(const Vec3[] ring) {
+        immutable size_t n = ring.length;
+        uint[3][] tris;
+        if (n < 3) return tris;
+        if (n == 3) { tris ~= cast(uint[3])[0u, 1u, 2u]; return tris; }
+
+        auto P = new double[3][](n);
+        foreach (i; 0 .. n)
+            P[i] = [cast(double)ring[i].x, cast(double)ring[i].y, cast(double)ring[i].z];
+
+        // Newell over the WHOLE ring: the one normal that does not move when
+        // the ring start does (the same reason `faceNormal` uses it).
+        double[3] nrm = [0.0, 0.0, 0.0];
+        foreach (i; 0 .. n) {
+            const a = P[i], b = P[(i + 1) % n];
+            nrm[0] += (a[1] - b[1]) * (a[2] + b[2]);
+            nrm[1] += (a[2] - b[2]) * (a[0] + b[0]);
+            nrm[2] += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        // |Newell| is TWICE the ring's area — the natural scale for the
+        // epsilons below, so neither of them is tied to world units.
+        immutable double ringArea2 = sqrt(nrm[0]*nrm[0] + nrm[1]*nrm[1] + nrm[2]*nrm[2]);
+        if (ringArea2 > 1e-30) { nrm[0] /= ringArea2; nrm[1] /= ringArea2; nrm[2] /= ringArea2; }
+
+        auto idx = new uint[](n);
+        foreach (i; 0 .. n) idx[i] = cast(uint)i;
+
+        // The geometric stand-in for a clip that cannot run: fan from the
+        // lexicographically smallest live corner. Still no index term, so a
+        // rotated ring still lands on the same corner.
+        uint[3][] fanFallback(const uint[] live) {
+            uint[3][] outT;
+            if (live.length < 3) return outT;
+            size_t anchor = 0;
+            foreach (k; 1 .. live.length)
+                if (posLess(P[live[k]], P[live[anchor]])) anchor = k;
+            foreach (t; 1 .. live.length - 1)
+                outT ~= cast(uint[3])[live[anchor],
+                                      live[(anchor + t)     % live.length],
+                                      live[(anchor + t + 1) % live.length]];
+            return outT;
+        }
+
+        if (ringArea2 <= 1e-30 || n > kMaxEarClipRing) return fanFallback(idx);
+
+        immutable double scale = ringArea2 > 1.0 ? ringArea2 : 1.0;
+        immutable double eps    = 1e-12 * scale;   // convex / containment slack
+        immutable double tieTol = 1e-9  * scale;   // "the same area" band
+
+        // twice the signed area of (a,b,c) measured on the ring's own plane
+        double area2(const double[3] a, const double[3] b, const double[3] c) {
+            const double[3] u = [b[0]-a[0], b[1]-a[1], b[2]-a[2]];
+            const double[3] v = [c[0]-a[0], c[1]-a[1], c[2]-a[2]];
+            return (u[1]*v[2] - u[2]*v[1]) * nrm[0]
+                 + (u[2]*v[0] - u[0]*v[2]) * nrm[1]
+                 + (u[0]*v[1] - u[1]*v[0]) * nrm[2];
+        }
+
+        if (n == 4) {
+            static double distOf(const double[3] a, const double[3] b) {
+                immutable double dx = a[0]-b[0], dy = a[1]-b[1], dz = a[2]-b[2];
+                return sqrt(dx*dx + dy*dy + dz*dz);
+            }
+            bool[2]      live;
+            double[2]    len;
+            double[6][2] key;
+            foreach (d; 0 .. 2) {
+                const p = P[d], q = P[d + 1], r = P[d + 2], s = P[(d + 3) % 4];
+                // A split whose either half is reflex or degenerate folds the
+                // quad over itself — exactly the old fan's bug on the dart.
+                live[d] = area2(p, q, r) > eps && area2(r, s, p) > eps;
+                len[d]  = distOf(p, r);
+                key[d]  = diagKey(p, r);
+            }
+            size_t take = size_t.max;
+            if (live[0] && live[1]) {
+                immutable double lscale = len[0] > len[1] ? len[0] : len[1];
+                immutable double lTie   = 1e-9 * (lscale > 1.0 ? lscale : 1.0);
+                if      (len[0] < len[1] - lTie) take = 0;
+                else if (len[1] < len[0] - lTie) take = 1;
+                else                             take = keyLess(key[0], key[1]) ? 0 : 1;
+            } else if (live[0]) take = 0;
+            else if (live[1])   take = 1;
+            if (take == size_t.max) return fanFallback(idx);   // both halves fold
+            immutable uint d0 = cast(uint)take;
+            tris ~= cast(uint[3])[d0, cast(uint)(d0 + 1), cast(uint)(d0 + 2)];
+            tris ~= cast(uint[3])[cast(uint)(d0 + 2), cast(uint)((d0 + 3) % 4), d0];
+            return tris;
+        }
+
+        // A corner ON a candidate ear's closing chord must VETO that ear, or
+        // the clip emits a triangle the ring immediately re-enters — hence
+        // inside-OR-ON, not strictly inside. Measured: this is what the
+        // reference does too (the collinear corner of the reflex-and-flat
+        // hexagon vetoes exactly this way).
+        bool encloses(const double[3] p, const double[3] a,
+                      const double[3] b, const double[3] c) {
+            return area2(a, b, p) >= -eps
+                && area2(b, c, p) >= -eps
+                && area2(c, a, p) >= -eps;
+        }
+
+        static struct Ear { size_t k; uint ip, iv, inx; double a2; }
+        Ear[] ears;
+
+        while (idx.length > 3) {
+            immutable size_t m = idx.length;
+            ears.length = 0;
+            ears.assumeSafeAppend();
+            foreach (k; 0 .. m) {
+                immutable uint ip  = idx[(k + m - 1) % m];
+                immutable uint iv  = idx[k];
+                immutable uint inx = idx[(k + 1) % m];
+                immutable double a2 = area2(P[ip], P[iv], P[inx]);
+                if (a2 <= eps) continue;               // reflex, or a zero-area corner
+                bool clear = true;
+                foreach (j; idx) {
+                    if (j == ip || j == iv || j == inx) continue;
+                    if (encloses(P[j], P[ip], P[iv], P[inx])) { clear = false; break; }
+                }
+                if (clear) ears ~= Ear(k, ip, iv, inx, a2);
+            }
+            if (ears.length == 0) {
+                // No ear at all — a self-intersecting or numerically hopeless
+                // remainder. Fan what is left rather than dropping corners.
+                foreach (t; fanFallback(idx)) tris ~= t;
+                return tris;
+            }
+
+            // TWO passes on purpose. A single greedy pass carrying a tolerance
+            // is not a function of the candidate SET ("within tieTol" is not
+            // transitive), and an order-dependent pick is precisely the ring
+            // dependence being removed here.
+            double best = -double.infinity;
+            foreach (e; ears) if (e.a2 > best) best = e.a2;
+            size_t pick = size_t.max;
+            double[9] bestKey;
+            foreach (ei, e; ears) {
+                if (e.a2 < best - tieTol) continue;
+                auto k = triKey(P[e.ip], P[e.iv], P[e.inx]);
+                if (pick == size_t.max || keyLess(k, bestKey)) { pick = ei; bestKey = k; }
+            }
+            const chosen = ears[pick];
+            tris ~= cast(uint[3])[chosen.ip, chosen.iv, chosen.inx];
+            idx = idx[0 .. chosen.k] ~ idx[chosen.k + 1 .. $];
+        }
+        tris ~= cast(uint[3])[idx[0], idx[1], idx[2]];
+        return tris;
+    }
+
+    /// Split each masked face (n-gon, n > 3) into (n−2) triangles, choosing the
+    /// diagonals GEOMETRICALLY — see `earClipRingCorners` for the law and for
+    /// what pins it. Already-triangles (length ≤ 3) pass through untouched
+    /// regardless of the mask. Returns the number of faces changed.
     ///
     /// `faceOriginOut` (optional): receives a mapping new_fi → original_fi,
     /// useful for re-selecting children of previously-selected parents after
-    /// the topology swap.
+    /// the topology swap. A face's own triangles stay CONTIGUOUS and in source
+    /// order, which several callers lean on.
     ///
-    /// v1 restriction: fan triangulation is correct for convex polygons (every
-    /// quad and convex n-gon). Concave polygons may produce inverted triangles;
-    /// ear-clipping is the planned follow-up upgrade (same API, no test changes).
+    /// Task 1190 retired the v1 fan from `f[0]`: it inverted triangles on a
+    /// concave ring and made the whole result follow the ring's starting
+    /// corner (divergence-ledger rows 25, 43, 50).
     size_t triangulateFacesByMask(in bool[] maskIn, uint[]* faceOriginOut = null) {
         const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
@@ -4244,13 +4506,19 @@ struct Mesh {
                                                              cast(uint)fi,
                                                              cast(uint)c);
             } else {
-                // Fan from vertex 0: [f[0], f[i], f[i+1]] for i = 1 .. n-2.
-                // Every triangle of the fan inherits the source face's WHOLE
-                // marks word (Subpatch + Hide), same "each piece keeps the
-                // parent's word" rule as every other 1-to-many split above.
+                // Diagonals chosen by geometry (earClipRingCorners), never by
+                // ring position. Every triangle inherits the source face's
+                // WHOLE marks word (Subpatch + Hide), the same "each piece
+                // keeps the parent's word" rule as every other 1-to-many split
+                // above.
                 ++changed;
-                for (uint i = 1; i + 1 < f.length; ++i) {
-                    newFaces    ~= [f[0], f[i], f[i + 1]];
+                auto ringPos = new Vec3[](f.length);
+                foreach (c; 0 .. f.length) ringPos[c] = vertices[f[c]];
+                const tri = earClipRingCorners(ringPos);
+                assert(tri.length == f.length - 2,
+                    "earClipRingCorners must return exactly n-2 triangles");
+                foreach (t; tri) {
+                    newFaces    ~= [f[t[0]], f[t[1]], f[t[2]]];
                     newWord     ~= word;
                     newOrder    ~= ord;
                     newMaterial ~= mat;
@@ -4258,10 +4526,12 @@ struct Mesh {
                     newSetMask  ~= setm;
                     faceOrigin  ~= cast(uint)fi;
                     if (remapUv) {
-                        // Triangle corners map to old corners 0, i, i+1 of fi.
-                        oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, 0u);
-                        oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, i);
-                        oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, i + 1);
+                        // A triangle corner comes from the OLD corner the clip
+                        // named — its ring index, not a fan's 0/i/i+1. Getting
+                        // this wrong carries UVs onto foreign corners silently.
+                        foreach (k; 0 .. 3)
+                            oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop,
+                                                                 cast(uint)fi, t[k]);
                     }
                 }
             }

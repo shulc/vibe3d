@@ -3,7 +3,7 @@ module mesh_ops.poly_bevel;
 // ---------------------------------------------------------------------------
 // MeshPolyBevelOps — the POLYGON bevel family: poly.bevel (bevelFacesByMask),
 // poly.inset (insetFacesByMask) and poly.spike (spikeFacesByMask), with the
-// corner/normal helpers they share (insetCorner, insetCornerCentroid,
+// corner/normal helpers they share (insetCorner, insetCornerBisector,
 // maxSafeUniformInset, cornerNormalAt, aveNormal) and the group-boundary
 // contour pair (findGroupBoundaryContour, boundaryContourInset). Mixed into
 // struct Mesh (source/mesh.d) via `mixin MeshPolyBevelOps;`.
@@ -40,39 +40,84 @@ mixin template MeshPolyBevelOps() {
         return offsetMeet(origPos[i], ePrev, eNext, n, inset, inset);
     }
 
-    // Per-corner constant-distance-toward-centroid helper for
-    // insetFacesByMask (poly.inset). Deliberately SEPARATE from insetCorner/
-    // offsetMeet above (used by bevelFacesByMask / poly.bevel's per-edge
-    // perpendicular-offset miter law) — task 0359's toolcard capture showed
-    // poly.inset uses a DIFFERENT per-vertex law (a constant absolute
-    // displacement toward the polygon centroid, NOT a per-edge miter
-    // offset), so sharing insetCorner would have silently changed
-    // poly.bevel's already-verified geometry.
+    // Per-corner direction for insetFacesByMask (poly.inset). Deliberately
+    // SEPARATE from insetCorner/offsetMeet above (used by bevelFacesByMask /
+    // poly.bevel's per-edge perpendicular-offset miter law) — task 0359's
+    // toolcard capture showed poly.inset uses a DIFFERENT per-vertex law: a
+    // constant absolute displacement, NOT a per-edge miter offset. Sharing
+    // insetCorner would silently change poly.bevel's verified geometry.
     //
-    // Reference-captured law (toolcard `behavior.per_vertex_law` /
-    // `sign_law`): each new boundary vertex sits at `orig` moved toward the
-    // polygon centroid by an ABSOLUTE distance of exactly `inset` world
-    // units. Positive inset shrinks (toward centroid); negative grows
-    // (moves away — the duplicate scales larger), which falls out of this
-    // formula automatically via the signed `inset` multiply.
+    // THE MAGNITUDE is settled and unchanged: both engines move every corner
+    // by exactly `inset` world units (measured |d| = 0.1200 at inset 0.12,
+    // agreeing to 7.2e-7). Positive inset shrinks, negative grows; that falls
+    // out of the signed multiply.
     //
-    // OPEN AMBIGUITY (documented in the toolcard, not resolved by capture):
-    // the only parity case captured is a perfect square, where "move by a
-    // constant absolute distance" and "scale proportionally toward the
-    // centroid" are numerically indistinguishable (every corner starts
-    // equidistant from the centroid). This implementation picks the
-    // constant-distance law per the captured wording; unverified on a
-    // non-regular (asymmetric) selected polygon.
-    private Vec3 insetCornerCentroid(Vec3 orig, Vec3 centroid, float inset) {
-        Vec3 toCenter = centroid - orig;
-        const float len = toCenter.length;
-        if (len < 1e-9f) return orig;   // corner already at the centroid — no direction to move
-        return orig + (toCenter / len) * inset;
+    // THE DIRECTION was ours, and it was wrong (divergence-ledger row 48, task
+    // 1190). We used to head for the polygon CENTROID. The reference follows
+    // the corner's angle BISECTOR, and the two are not the same thing:
+    //   * on a plain rectangle corner they differ by 16.927 degrees — the
+    //     reference puts the right-angle corner at 0.12/sqrt(2) on both axes
+    //     and nothing but the bisector does that;
+    //   * on a REFLEX corner they are 180.000 degrees apart. Toward-the-
+    //     centroid points OUT of the polygon there, so our inset ring bulged
+    //     out of the dart's notch where the reference's tucked in.
+    //
+    // The bisector is built as the normalized sum of the two adjacent edges'
+    // INWARD in-plane normals rather than as `unit(prev-v) + unit(next-v)`.
+    // The two are parallel wherever both exist (for unit u,w the difference
+    // w-u is perpendicular to the sum u+w, so rotating one by 90 degrees in
+    // the face plane gives the other), but the normal form is better behaved
+    // at both ends the naive sum falls over:
+    //   * it picks the INWARD side by itself at a reflex corner, with no
+    //     convexity test and no sign flip to get backwards;
+    //   * it survives an exactly COLLINEAR corner, where unit(prev-v) +
+    //     unit(next-v) is the zero vector but the edge normal is not. On the
+    //     measured rectangle-with-a-flat-corner both engines put that corner
+    //     at (0,0,0.12), which this reproduces with no special case.
+    // Verified against the frozen reference on both cells of
+    // `tests/fixtures/inset_corner_direction_divergence.json`: worst residual
+    // 4.4e-7 (fixture tolerance 1e-3).
+    //
+    // `n` is the ring's Newell normal, unit length — Newell over the WHOLE
+    // ring, so the direction does not move when the ring's starting corner
+    // does. NOT a per-corner normal: the reference's out-of-plane behaviour on
+    // a non-planar ring is a separate, still-open finding (ledger row 24) and
+    // is deliberately not guessed at here.
+    //
+    // The degenerate case this handles is a corner whose two edges point the
+    // SAME way (a zero-width spike), where the in-plane normals cancel. There
+    // the old toward-the-centroid direction is kept as the fallback — it is
+    // defined there, it is still ring-order-independent, and no measurement
+    // covers it.
+    //
+    // A ring edge of ZERO length is NOT special-cased: `safeNormalize` answers
+    // (0,1,0) for it, and this deliberately keeps the same convention as the
+    // sibling `insetCorner` five lines up, which feeds `offsetMeet` the same
+    // way. Two kernels this close together should not disagree about a
+    // degenerate ring, and inventing a second policy here would be a guess no
+    // measurement backs.
+    private Vec3 insetCornerBisector(const Vec3[] origPos, int i, Vec3 n,
+                                     Vec3 centroid, float inset) {
+        const int  N     = cast(int)origPos.length;
+        const int  prevI = (i + N - 1) % N;
+        const int  nextI = (i + 1)     % N;
+        const Vec3 v     = origPos[i];
+        const Vec3 toPrev = safeNormalize(origPos[prevI] - v);
+        const Vec3 toNext = safeNormalize(origPos[nextI] - v);
+        // cross(n, toNext - toPrev) == inwardNormal(v->next) + inwardNormal(prev->v)
+        Vec3 dir = cross(n, toNext - toPrev);
+        float len = dir.length;
+        if (len < 1e-9f) {
+            dir = centroid - v;                 // spike fallback, see above
+            len = dir.length;
+            if (len < 1e-9f) return v;          // and the corner IS the centroid
+        }
+        return v + (dir / len) * inset;
     }
 
     /// Per-face polygon inset: for each face flagged true in `mask`, move
-    /// each corner toward the polygon centroid by an absolute distance of
-    /// `inset` world units (see insetCornerCentroid) and bridge the original
+    /// each corner along its angle bisector by an absolute distance of
+    /// `inset` world units (see insetCornerBisector) and bridge the original
     /// boundary to the new inner boundary with N ring quads. The original
     /// face slot is replaced by the inner face so its selection mark is
     /// preserved.
@@ -96,16 +141,28 @@ mixin template MeshPolyBevelOps() {
             // Build per-corner position slice.
             Vec3[] origPos = new Vec3[](N);
             foreach (i; 0 .. N) origPos[i] = vertices[origFaceVerts[i]];
-            // Polygon centroid (plain average of corners — matches the
-            // reference's "toward the centroid" wording; N-gon area-weighted
-            // centroids are not what was captured).
+            // Polygon centroid (plain average of corners) — no longer the
+            // inset DIRECTION (task 1190, ledger row 48), only the fallback
+            // for a degenerate corner; see insetCornerBisector.
             Vec3 centroid = Vec3(0, 0, 0);
             foreach (p; origPos) centroid = centroid + p;
             centroid = centroid * (1.0f / cast(float)N);
+            // Ring normal by Newell over the WHOLE ring, so the inset
+            // direction does not follow the ring's starting corner.
+            Vec3 nrm = Vec3(0, 0, 0);
+            foreach (i; 0 .. N) {
+                const Vec3 a = origPos[i];
+                const Vec3 b = origPos[(i + 1) % N];
+                nrm = nrm + Vec3((a.y - b.y) * (a.z + b.z),
+                                 (a.z - b.z) * (a.x + b.x),
+                                 (a.x - b.x) * (a.y + b.y));
+            }
+            nrm = safeNormalize(nrm);
             // Add one inset vertex per corner.
             uint[] newVerts = new uint[](N);
             foreach (i; 0 .. N)
-                newVerts[i] = addVertex(insetCornerCentroid(origPos[i], centroid, inset));
+                newVerts[i] = addVertex(
+                    insetCornerBisector(origPos, i, nrm, centroid, inset));
             // Replace the original face with the inner (inset) face.
             // The face slot index is unchanged, so faceMarks[fi] (select mark
             // AND subpatch mark) carries over to the inner face automatically.

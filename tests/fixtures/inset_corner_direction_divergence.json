@@ -1,6 +1,6 @@
 {
  "name": "inset_corner_direction_divergence",
- "description": "Task 1150, divergence-ledger row 48. Polygon inset moves every corner of the new ring by exactly the inset distance in BOTH engines; what differs is the direction. The reference follows the corner's angle bisector; we head for the face centroid, which on a non-convex ring points outward. Frozen as a KNOWN DIVERGENCE: our own output, the reference golden, the exact gap between them, and -- because a vertex-set diff would lose the actual finding -- the per-corner displacement VECTORS, checked for equal magnitude and unequal direction.",
+ "description": "Divergence-ledger row 48, measured by task 1150 and CLOSED by task 1190. Polygon inset moves every corner of the new ring by exactly the inset distance in both engines; what used to differ was the direction -- the reference follows the corner's angle bisector, we headed for the face centroid, which on a non-convex ring points outward (180.000 degrees wrong at the dart's reflex corner). We now follow the bisector too, so the declared gap is EMPTY and the runner asserts it stays empty. The per-corner displacement VECTORS are kept: a vertex-set diff would say \"the sets match\" and lose the law itself.",
  "source": "Reference side: frozen headless command capture of 2026-08-17/18. Our side: read live off vibe3d at generation time through the same HTTP steps the test replays.",
  "provenance": {
   "schema": 1,
@@ -10,14 +10,14 @@
   "captured_utc": "2026-08-18",
   "harness": "tools/local/fixture_gen/ring_order (task 1150), over tools/local/capture/dirty (task 1124)",
   "task": "1150",
-  "notes": "offset_law pairs each moved corner with its base corner by proximity; the runner re-derives both offsets from the frozen/live vertex sets rather than trusting the numbers."
+  "notes": "offset_law pairs each moved corner with its base corner by proximity; the runner re-derives both offsets from the frozen/live vertex sets rather than trusting the numbers. Regenerated 2026-08-18 by task 1190 after the direction law was ported; the reference side is the 1150 capture, untouched."
  },
  "tolerance": 0.001,
  "cases": [
   {
    "name": "inset_right_angles_pentagon",
    "ledger_rows": [48],
-   "note": "a rectangle carrying one exactly-collinear corner: four right angles where the bisector direction is (1,0,1)/sqrt(2) and nothing else is",
+   "note": "a rectangle carrying one exactly-collinear corner: four right angles where the bisector direction is (1,0,1)/sqrt(2) and nothing else is, plus the collinear corner where the bisector as a SUM OF EDGE DIRECTIONS does not exist at all and both engines answer (0,0,0.12)",
    "input": [
     {
      "reset": true,
@@ -96,38 +96,28 @@
      [3.0, 0.0, 0.0],
      [3.0, 0.0, 2.0],
      [0.0, 0.0, 2.0],
-     [0.105882, 0.0, 0.056471],
-     [1.5, 0.0, 0.12],
-     [2.894118, 0.0, 0.056471],
-     [2.906296, 0.0, 1.925037],
-     [0.093704, 0.0, 1.925037]
-    ]
-   },
-   "divergence": {
-    "extra_in_vibe3d": [
-     [0.105882, 0.0, 0.056471],
-     [2.894118, 0.0, 0.056471],
-     [2.906296, 0.0, 1.925037],
-     [0.093704, 0.0, 1.925037]
-    ],
-    "missing_in_vibe3d": [
      [0.084853, 0.0, 0.084853],
+     [1.5, 0.0, 0.12],
      [2.915147, 0.0, 0.084853],
      [2.915147, 0.0, 1.915147],
      [0.084853, 0.0, 1.915147]
     ]
    },
+   "divergence": {
+    "extra_in_vibe3d": [],
+    "missing_in_vibe3d": []
+   },
    "offset_law": {
-    "note": "both engines move each corner by the SAME distance; only the direction differs, and per corner it differs by exactly the angle recorded here",
+    "note": "both engines move each corner by the same distance AND, since task 1190 ported the bisector law, in the same direction; the per-corner angle recorded here is what the runner re-derives and asserts, so a regression in either engine's direction reddens it",
     "magnitudes_agree_within": 0.0001,
     "angle_tolerance_deg": 0.5,
-    "worst_angle_deg": 16.927,
+    "worst_angle_deg": 0.0,
     "pairs": [
      {
       "corner": [0.0, 0.0, 0.0],
       "reference_offset": [0.084853, 0.0, 0.084853],
-      "vibe3d_offset": [0.105882, 0.0, 0.056471],
-      "angle_deg": 16.927
+      "vibe3d_offset": [0.084853, 0.0, 0.084853],
+      "angle_deg": 0.0
      },
      {
       "corner": [1.5, 0.0, 0.0],
@@ -138,20 +128,20 @@
      {
       "corner": [3.0, 0.0, 0.0],
       "reference_offset": [-0.084853, 0.0, 0.084853],
-      "vibe3d_offset": [-0.105882, 0.0, 0.056471],
-      "angle_deg": 16.927
+      "vibe3d_offset": [-0.084853, 0.0, 0.084853],
+      "angle_deg": 0.0
      },
      {
       "corner": [3.0, 0.0, 2.0],
       "reference_offset": [-0.084853, 0.0, -0.084853],
-      "vibe3d_offset": [-0.093704, 0.0, -0.074963],
-      "angle_deg": 6.34
+      "vibe3d_offset": [-0.084853, 0.0, -0.084853],
+      "angle_deg": 0.0
      },
      {
       "corner": [0.0, 0.0, 2.0],
       "reference_offset": [0.084853, 0.0, -0.084853],
-      "vibe3d_offset": [0.093704, 0.0, -0.074963],
-      "angle_deg": 6.34
+      "vibe3d_offset": [0.084853, 0.0, -0.084853],
+      "angle_deg": 0.0
      }
     ]
    }
@@ -159,7 +149,7 @@
   {
    "name": "inset_reflex_corner_dart",
    "ledger_rows": [48],
-   "note": "the smallest non-convex ring there is: toward-the-centroid sends the reflex corner OUT of the face where the bisector sends it in",
+   "note": "the smallest non-convex ring there is, and the cell that used to be 180 degrees wrong: toward-the-centroid sent the reflex corner OUT of the face where the bisector sends it in",
    "input": [
     {
      "reset": true,
@@ -233,47 +223,39 @@
      [2.0, 0.0, 1.2],
      [4.0, 0.0, 0.0],
      [2.0, 0.0, 3.0],
-     [0.106248, 0.0, 0.05578],
-     [2.0, 0.0, 1.08],
-     [3.893752, 0.0, 0.05578],
+     [0.086847, 0.0, 0.08281],
+     [2.0, 0.0, 1.32],
+     [3.913153, 0.0, 0.08281],
      [2.0, 0.0, 2.88]
     ]
    },
    "divergence": {
-    "extra_in_vibe3d": [
-     [0.106248, 0.0, 0.05578],
-     [2.0, 0.0, 1.08],
-     [3.893752, 0.0, 0.05578]
-    ],
-    "missing_in_vibe3d": [
-     [0.086847, 0.0, 0.08281],
-     [2.0, 0.0, 1.32],
-     [3.913153, 0.0, 0.08281]
-    ]
+    "extra_in_vibe3d": [],
+    "missing_in_vibe3d": []
    },
    "offset_law": {
-    "note": "both engines move each corner by the SAME distance; only the direction differs, and per corner it differs by exactly the angle recorded here",
+    "note": "both engines move each corner by the same distance AND, since task 1190 ported the bisector law, in the same direction; the per-corner angle recorded here is what the runner re-derives and asserts, so a regression in either engine's direction reddens it",
     "magnitudes_agree_within": 0.0001,
     "angle_tolerance_deg": 0.5,
-    "worst_angle_deg": 180.0,
+    "worst_angle_deg": 0.0,
     "pairs": [
      {
       "corner": [0.0, 0.0, 0.0],
       "reference_offset": [0.086847, 0.0, 0.08281],
-      "vibe3d_offset": [0.106248, 0.0, 0.05578],
-      "angle_deg": 15.938
+      "vibe3d_offset": [0.086847, 0.0, 0.08281],
+      "angle_deg": 0.0
      },
      {
       "corner": [2.0, 0.0, 1.2],
       "reference_offset": [0.0, 0.0, 0.12],
-      "vibe3d_offset": [0.0, 0.0, -0.12],
-      "angle_deg": 180.0
+      "vibe3d_offset": [0.0, 0.0, 0.12],
+      "angle_deg": 0.0
      },
      {
       "corner": [4.0, 0.0, 0.0],
       "reference_offset": [-0.086847, 0.0, 0.08281],
-      "vibe3d_offset": [-0.106248, 0.0, 0.05578],
-      "angle_deg": 15.938
+      "vibe3d_offset": [-0.086847, 0.0, 0.08281],
+      "angle_deg": 0.0
      },
      {
       "corner": [2.0, 0.0, 3.0],

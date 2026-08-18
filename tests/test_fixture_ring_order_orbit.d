@@ -23,32 +23,47 @@
 // not ring-order laws; and the two `loop_slice_annulus_*` cases are a control
 // pair showing that what differs there is the placement law, not the ring.
 // Without the orbit none of the three is distinguishable in a diff from the
-// nine that are ring-order laws.
+// ones that are ring-order laws.
 //
-// The cases, and the divergence-ledger rows each carries:
+// WHAT TASK 1190 CHANGED, AND WHAT IT DELIBERATELY DID NOT. 1190 ported the
+// two laws in this file that were OURS:
 //
-//   the reference reads the ring, we do not
-//     inset_dart                        rows 41, 47, 48
-//     inset_flat_corner_pentagon        rows 42, 49
-//     inset_reflex_and_flat_hex         rows 47, 49
-//     inset_notched_octagon             row  47
-//     outset_dart                       rows 47, 48
-//     poly_bevel_reflex_and_flat_hex    rows 23, 41, 49
-//     poly_bevel_two_flat_corners_hex   rows 47, 49
-//     smooth_shift_reflex_and_flat_hex  rows 23, 41, 49
-//   WE read the ring
-//     triangulate_dart                  rows 43, 50, 51
-//     triangulate_reflex_pentagon       rows 43, 50, 51
-//     triangulate_reflex_and_flat_hex   rows 43, 50
-//   both read it
-//     triangulate_five_point_star       rows 43, 50
-//   not a ring-order law at all
-//     vertex_bevel_dart                 row  52   (capability gap)
-//     loop_slice_pentagon_quad          row  53   (capability gap)
-//     loop_slice_annulus_midpoint       row  53   (control: both agree)
-//     loop_slice_annulus_offcentre      row  53   (placement, not ring order)
+//   * TRIANGULATION no longer fans from ring index 0. All four `triangulate_*`
+//     orbits were `0101` / `01234` / `012345` / `0123` and are now INVARIANT
+//     in every channel. Three of them reclassified `we_read_the_ring` ->
+//     `neither_reads_the_ring`; `triangulate_five_point_star` went
+//     `both_read_the_ring` -> `reference_reads_the_ring`, because the
+//     reference still answers `0011` there and we no longer answer at all.
+//   * INSET's corner DIRECTION is the bisector, not the face centroid (ledger
+//     row 48, its own fixture). Our orbit patterns did not move -- the law was
+//     already ring-invariant, it was pointing the wrong way -- but the
+//     cross-engine `matches_reference` flags did: we now land on the
+//     reference's answer at every rotation where the reference does not read
+//     the ring.
 //
-// Four findings are worth naming, because they are what the shape buys:
+// NOT ported, on purpose:
+//
+//   * the reference's SIGN law (rows 41/47/49) and its REFUSAL on a collinear
+//     ring start (row 42). Those are its reading of the ring, not our defect.
+//     `inset_*` / `poly_bevel_*` / `smooth_shift_*` therefore stay
+//     `reference_reads_the_ring`, with the mismatching rotations being exactly
+//     the ones the sign predicate names.
+//   * the reference's triangulation WINDING (row 51). Its triangle SET does
+//     not follow the ring start but its winding DOES: `faces` = `0100` against
+//     `faces_any_winding` = `0000` on the dart. Ours is invariant in both, so
+//     the two channels are kept apart and row 51 stays declared -- making our
+//     SET invariant must not be read as parity in the winding channel, and the
+//     `faces` patterns in this fixture are what says so.
+//   * the tie-break. Two orbits still disagree with the reference and both are
+//     exact ties, where the metric has nothing to say:
+//     `triangulate_reflex_and_flat_hex` (four congruent ears) and
+//     `triangulate_five_point_star` (five congruent tips, then a regular inner
+//     pentagon). The star proves the reference's own tie-break is not
+//     geometric -- same geometry, different ring start, different answer -- so
+//     no ring-invariant rule can follow it through a tie, and fitting one to a
+//     tied cell would be fitting noise.
+//
+// Two findings the shape buys are worth naming:
 //
 //   * Rows 41/47/49 -- the reference's inset / outset / bevel / smooth-shift
 //     DIRECTION is decided by the corner the ring happens to start at. On the
@@ -69,20 +84,11 @@
 //     The fixture carries that as an `applied` flag per rotation, which the
 //     runner RE-DERIVES from the mesh rather than taking on trust.
 //
-//   * Rows 50/51 -- our triangulation always fans from ring index 0, so its
-//     orbit has a PERIOD: 2 on a quad (`0101`), n on an n-gon (`012345`). The
-//     reference's triangle SET is invariant (`faces_any_winding` = `0000`),
-//     but its WINDING is not (`faces` = `0100`) -- which is why the runner
-//     keeps the two channels apart, using task 1140's names: `faces` compares
-//     rings up to ROTATION only, `faces_any_winding` also accepts the
-//     reversed ring. On the dart at rotation 0 our fan builds a triangle that
-//     lies OUTSIDE the polygon.
-//
-//   * The predicate is NOT universal, and the fixture says so rather than
-//     quietly dropping the counterexample: `triangulate_five_point_star`
-//     declares the relation `violated` -- the predicate calls two rotations
-//     equal that the reference separates. Triangulation does not answer to
-//     it; the offset families do.
+// The predicate is NOT universal, and the fixture says so rather than quietly
+// dropping the counterexample: `triangulate_five_point_star` declares the
+// relation `violated` -- the predicate calls two rotations equal that the
+// reference separates. Triangulation does not answer to it; the offset
+// families do.
 
 import fixture_helpers;
 

@@ -33,7 +33,10 @@ alias PolyInsetEditFactory = MeshSessionEdit delegate();
 // mesh.insetFacesByMask):
 //   - ONE attribute (`inset`, world units, default 0.0).
 //   - Always per-polygon (no group/island toggle exists to diverge from).
-//   - Sign law: positive shrinks (toward centroid), negative grows (away).
+//   - Sign law: positive shrinks (inward along the corner bisector), negative
+//     grows (outward). The captured wording was "toward the centroid"; task
+//     1190 measured that the DIRECTION is the bisector, not the centroid — the
+//     two coincide on the square faces the toolcard was captured on.
 //   - `inset == 0` is NOT a no-op — the kernel always performs the split.
 //   - NO drawn gizmo/handle in the viewport (confirmed by capture screenshots
 //     at idle/hover/drag) — draw() is intentionally empty. A plain click+drag

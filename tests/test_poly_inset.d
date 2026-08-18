@@ -1,10 +1,15 @@
 // Tests for mesh.poly_inset (Polygon Inset kernel + command).
 //
-// Geometry model (task 0359, reference-parity rewrite): for each selected
-// face of N verts, one inset vertex is added per corner, moved TOWARD the
-// polygon centroid by an ABSOLUTE distance of `inset` world units (see
-// mesh.insetFacesByMask / insetCornerCentroid) — NOT a per-edge perpendicular/
-// miter offset. The original face slot is replaced by the inner face (same
+// Geometry model (task 0359, reference-parity rewrite; DIRECTION corrected by
+// task 1190): for each selected face of N verts, one inset vertex is added per
+// corner, moved along that corner's angle BISECTOR by an ABSOLUTE distance of
+// `inset` world units (see mesh.insetFacesByMask / insetCornerBisector) — NOT
+// a per-edge perpendicular/miter offset, and NOT toward the face centroid,
+// which is what 0359 wrote and what 1190 measured to be 180 degrees wrong at a
+// reflex corner. Every case in THIS file is a cube face, i.e. a square, where
+// the bisector and the centroid direction coincide exactly — which is why the
+// numbers below did not move. The cells that separate the two laws live in
+// tests/fixtures/inset_corner_direction_divergence.json. The original face slot is replaced by the inner face (same
 // slot → selection mark preserved), and N ring quads bridge original
 // boundary to inner boundary. `inset == 0` is NOT a no-op — the split always
 // happens (reference-matched), landing a degenerate zero-width ring.

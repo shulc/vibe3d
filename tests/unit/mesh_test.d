@@ -1572,6 +1572,232 @@ unittest { // triangulateFacesByMask: faceOrigin maps children → parent
             ~ ", expected " ~ (fi / 2).to!string);
 }
 
+unittest { // triangulateFacesByMask: SOUNDNESS + ring-order invariance over
+           // adversarial rings, every rotation — task 1190.
+    //
+    // A geometric fan anchor makes the orbit invariant but says nothing about
+    // whether the triangles are any good, and the reverse is also true. This
+    // asserts both, on the ring families that separate them, at EVERY rotation
+    // of each:
+    //
+    //   1. exactly n-2 triangles;
+    //   2. every triangle wound the same way as the ring and non-degenerate
+    //      (signed area strictly positive against the ring's own normal) — so
+    //      no inverted and no zero-area triangle;
+    //   3. the triangle areas SUM to the ring's area. This is the one that
+    //      catches an overlap or a gap: a triangle that strays outside the
+    //      polygon, or two that cover the same ground, break the sum while
+    //      leaving the count and the winding intact;
+    //   4. rotating the ring gives the SAME set of triangles.
+    //
+    // Measured against the old fan from `ring[0]` on a 306-cell corpus of the
+    // same four families: 126 cells failed (3), 259 triangles fell outside the
+    // ring, 330 were zero-area, and all 36 orbits were ring-order dependent.
+    // The families are chosen for that reason — a convex ring cannot fail any
+    // of these and would make the test vacuous.
+    import std.conv : to;
+    import std.math : fabs, cos, sin, PI;
+
+    static double ringArea2(const Vec3[] r) {
+        double s = 0;
+        foreach (i; 0 .. r.length) {
+            const a = r[i], b = r[(i + 1) % r.length];
+            s += cast(double)a.x * b.z - cast(double)b.x * a.z;
+        }
+        return s;
+    }
+    static double tri2(Vec3 a, Vec3 b, Vec3 c) {
+        return (cast(double)b.x - a.x) * (cast(double)c.z - a.z)
+             - (cast(double)c.x - a.x) * (cast(double)b.z - a.z);
+    }
+    // A triangle named by its three positions, order-free, so two rotations
+    // can be compared without assuming anything about vertex numbering.
+    static string triKeyOf(Vec3 a, Vec3 b, Vec3 c) {
+        string[3] k = [format("%.4f,%.4f", a.x, a.z),
+                       format("%.4f,%.4f", b.x, b.z),
+                       format("%.4f,%.4f", c.x, c.z)];
+        foreach (i; 0 .. 3) foreach (j; i + 1 .. 3)
+            if (k[j] < k[i]) { auto t = k[i]; k[i] = k[j]; k[j] = t; }
+        return k[0] ~ "|" ~ k[1] ~ "|" ~ k[2];
+    }
+
+    Vec3[][] corpus;
+    string[] names;
+    // eight-pointed star: four reflex corners, four congruent tips (an exact
+    // tie the area metric cannot break)
+    {
+        Vec3[] r;
+        foreach (i; 0 .. 8) {
+            immutable double a = 2.0 * PI * i / 8.0;
+            immutable double rad = (i % 2 == 0) ? 1.0 : 0.35;
+            r ~= Vec3(cast(float)(cos(a) * rad), 0, cast(float)(sin(a) * rad));
+        }
+        corpus ~= r; names ~= "star8";
+    }
+    // a square with three EXTRA collinear points on one edge — the family the
+    // old fan turned into zero-area triangles
+    {
+        Vec3[] r = [Vec3(0,0,0), Vec3(0.75f,0,0), Vec3(1.5f,0,0), Vec3(2.25f,0,0),
+                    Vec3(3,0,0), Vec3(3,0,3), Vec3(0,0,3)];
+        corpus ~= r; names ~= "collinear_run";
+    }
+    // deep notches: thin ears and many reflex corners
+    {
+        Vec3[] r;
+        foreach (i; 0 .. 4) {
+            r ~= Vec3(cast(float)i, 0, 0);
+            r ~= Vec3(cast(float)i + 0.5f, 0, 1.6f);
+        }
+        r ~= Vec3(4, 0, 0); r ~= Vec3(4, 0, -1); r ~= Vec3(0, 0, -1);
+        corpus ~= r; names ~= "comb";
+    }
+    // the dart — the smallest ring the old fan got wrong
+    {
+        corpus ~= [Vec3(0,0,0), Vec3(2,0,1.2f), Vec3(4,0,0), Vec3(2,0,3)];
+        names ~= "dart";
+    }
+    // one reflex AND one exactly-collinear corner on the same ring
+    {
+        corpus ~= [Vec3(0,0,0), Vec3(2,0,0), Vec3(4,0,0),
+                   Vec3(4,0,4), Vec3(2,0,1.4f), Vec3(0,0,4)];
+        names ~= "reflex_and_flat_hex";
+    }
+
+    foreach (ci, base; corpus) {
+        immutable size_t n = base.length;
+        immutable double want = fabs(ringArea2(base));
+        immutable double tol  = 1e-4 * (want > 1.0 ? want : 1.0);
+        string[] firstKeys;
+        foreach (rot; 0 .. n) {
+            Vec3[] r;
+            foreach (k; 0 .. n) r ~= base[(rot + k) % n];
+            immutable double sgn = ringArea2(r) > 0 ? 1.0 : -1.0;
+
+            Mesh m;
+            m.vertices = r.dup;
+            uint[] ring;
+            foreach (k; 0 .. n) ring ~= cast(uint)k;
+            m.addFace(ring);
+            m.buildLoops();
+            m.resetSelection();
+            auto mask = new bool[](m.faces.length);
+            mask[] = true;
+            m.triangulateFacesByMask(mask);
+
+            immutable string who = names[ci] ~ " rot" ~ rot.to!string;
+            assert(m.faces.length == n - 2,
+                who ~ ": expected " ~ (n - 2).to!string ~ " triangles, got "
+                ~ m.faces.length.to!string);
+
+            double sum = 0;
+            string[] keys;
+            foreach (fi; 0 .. m.faces.length) {
+                assert(m.faces[fi].length == 3, who ~ ": face " ~ fi.to!string
+                    ~ " is not a triangle");
+                const a = m.vertices[m.faces[fi][0]];
+                const b = m.vertices[m.faces[fi][1]];
+                const c = m.vertices[m.faces[fi][2]];
+                immutable double s = tri2(a, b, c) * sgn;
+                assert(s > tol * 1e-3,
+                    who ~ ": triangle " ~ fi.to!string ~ " has signed area "
+                    ~ s.to!string ~ " against the ring's own winding — it is "
+                    ~ "inverted or degenerate, which is what a fan from a fixed "
+                    ~ "ring index produced on this shape");
+                sum += s;
+                keys ~= triKeyOf(a, b, c);
+            }
+            assert(fabs(sum - want) <= tol,
+                who ~ ": the triangles cover " ~ sum.to!string
+                ~ " but the ring encloses " ~ want.to!string
+                ~ " — they overlap or leave a gap");
+
+            foreach (i; 0 .. keys.length)
+                foreach (j; i + 1 .. keys.length)
+                    if (keys[j] < keys[i]) { auto t = keys[i]; keys[i] = keys[j]; keys[j] = t; }
+            if (rot == 0) firstKeys = keys;
+            else assert(keys == firstKeys,
+                who ~ ": rotating the ring changed the triangle SET — "
+                ~ "triangulation must not depend on where the ring starts "
+                ~ "(rot0 gave " ~ firstKeys.to!string ~ ", this gave "
+                ~ keys.to!string ~ ")");
+        }
+    }
+}
+
+unittest { // triangulateFacesByMask: a per-CORNER map value must travel with
+           // the corner the ear clip actually named — task 1190.
+    //
+    // The kernel used to hardcode the fan's mapping (old corners 0, i, i+1).
+    // Now the diagonals are chosen geometrically, so a triangle's corners can
+    // be any three ring positions, and `declareCornerProvenance` has to be
+    // told the REAL ones. Get this wrong and UVs land on foreign corners in
+    // silence — the geometry is identical either way, which is exactly why
+    // this needs its own check.
+    //
+    // The ring is the reflex pentagon from ledger row 25, chosen because the
+    // clip does NOT fan from corner 0 on it (it fans from the reflex corner,
+    // ring index 3). On a convex quad the two mappings would coincide and this
+    // test would prove nothing.
+    import std.conv : to;
+    import mesh : kUvMapName, MapDomain;
+
+    Mesh m;
+    m.vertices = [
+        Vec3(0, 0, 0),   // 0
+        Vec3(4, 0, 0),   // 1
+        Vec3(4, 0, 4),   // 2
+        Vec3(2, 0, 1),   // 3  — the reflex corner
+        Vec3(0, 0, 4),   // 4
+    ];
+    m.addFace([0u, 1u, 2u, 3u, 4u]);
+    m.buildLoops();
+    m.resetSelection();
+
+    auto uv = m.addMeshMap(kUvMapName, 2, MapDomain.PolyVertex);
+    assert(uv !is null, "failed to register the UV map");
+    assert(uv.data.length == 10, "UV map must be sized to 5 corners * dim 2");
+    // One unmistakable value per corner: u = vertex id, v = 100 + vertex id.
+    foreach (c; 0 .. 5) {
+        uv.data[2*c]     = cast(float)c;
+        uv.data[2*c + 1] = 100.0f + cast(float)c;
+    }
+
+    auto mask = new bool[](m.faces.length);
+    mask[] = true;
+    const changed = m.triangulateFacesByMask(mask);
+    assert(changed == 1, "expected 1 triangulated face, got " ~ changed.to!string);
+    assert(m.faces.length == 3, "a pentagon must give 3 triangles, got "
+        ~ m.faces.length.to!string);
+
+    auto after = m.meshMap(kUvMapName);
+    assert(after !is null, "UV map lost by triangulation");
+    assert(after.data.length == m.loops.length * 2,
+        "UV map length " ~ after.data.length.to!string ~ " != loops "
+        ~ m.loops.length.to!string ~ " * 2");
+
+    // No vertex is created or moved here, and every vertex appears in exactly
+    // one corner of the source pentagon — so the authored value for a corner
+    // is recoverable from its vertex id, and a corner that ended up with a
+    // DIFFERENT vertex's value is a mis-mapped corner, not a lost one.
+    size_t slot = 0;
+    foreach (fi; 0 .. m.faces.length) {
+        foreach (c; 0 .. m.faces[fi].length) {
+            immutable uint v = m.faces[fi][c];
+            assert(after.data[2*slot] == cast(float)v
+                && after.data[2*slot + 1] == 100.0f + cast(float)v,
+                "face " ~ fi.to!string ~ " corner " ~ c.to!string
+                ~ " (vertex " ~ v.to!string ~ ") carries UV ("
+                ~ after.data[2*slot].to!string ~ ", "
+                ~ after.data[2*slot + 1].to!string
+                ~ ") — it belongs to vertex "
+                ~ (cast(uint)after.data[2*slot]).to!string
+                ~ ". The corner provenance declared by triangulateFacesByMask "
+                ~ "does not name the corners the ear clip actually used.");
+            ++slot;
+        }
+    }
+}
+
 unittest { // quadrupleFacesByMask: triple → quadruple round-trips a cube
     import std.conv : to;
     Mesh m = makeCube();

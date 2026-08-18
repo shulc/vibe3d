@@ -1,22 +1,30 @@
-// Task 1140 -- KNOWN DIVERGENCE: polygon inset on a non-planar ring.
-// Ledger row 24.
+// Ledger row 24 — polygon inset on a NON-PLANAR ring. Measured by task 1140
+// as a KNOWN DIVERGENCE; CLOSED by task 1190, and kept here with an EMPTY
+// declared gap.
 //
-// On a folded quad the reference's inset-ring corners follow the bend; ours
-// do not. The two engines agree to 2.7e-4 in the two in-plane axes and part
-// by up to 4.230e-3 along the fold axis, at inset 0.12 -- 3.5% of the inset.
-// Every corner of the inset ring is affected, in both cases.
+// On a folded quad the reference's inset-ring corners follow the bend. Ours
+// did not: heading for the face CENTROID put all four on one approximating
+// plane (out-of-plane 4.24e-3 four times over, against the reference's
+// 2.1e-5 / 8.443e-3 / 2.1e-5 / 9.1557e-2). The two engines agreed to 2.7e-4
+// in the two in-plane axes and parted by up to 4.230e-3 along the fold axis
+// at inset 0.12 — 3.5% of the inset, at every corner of both cells.
 //
-// WHY they differ -- a per-corner offset plane on their side versus a single
-// approximating plane on ours -- is an INFERENCE consistent with these two
-// cells, not something this capture settled. What is frozen here is the two
-// sets of coordinates and the gap between them.
+// This closed for free with ledger row 48. `insetCornerBisector` builds the
+// direction from the two adjacent EDGES (rotated into the ring plane), and an
+// edge of a bent ring is on the bend — so the corner lands on the surface by
+// construction rather than by a separate out-of-plane rule. Worst residual is
+// now 2.12e-5, two hundred times smaller and at the reference's own
+// six-decimal print precision; the 1140 note that the mechanism was "an
+// INFERENCE consistent with these two cells" turned out to be the right
+// inference.
 //
-// This is NOT a parity test. A green run means three things at once: our
-// output still matches its recorded output, the reference golden is still
-// what it was measured to be, and the gap between them is EXACTLY the
-// declared delta. If the gap narrows OR widens this suite goes red -- and
-// closing it entirely is a red run too, which is the point: whoever closes
-// it deletes the case and adds a parity one in its place.
+// It is NOT bit-exact and this fixture does not claim it is: 2.12e-5 is below
+// the 1e-4 tolerance, not zero. Two of the four corners do land exactly.
+//
+// An EMPTY divergence is the strict reading of this schema: the runner
+// recomputes `extra_in_vibe3d` / `missing_in_vibe3d` live against the frozen
+// reference and asserts they are empty, so restoring the flat approximation
+// reddens this at 4.230e-3.
 
 import fixture_helpers;
 

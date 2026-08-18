@@ -9,9 +9,11 @@ import params : Param;
 import snapshot : MeshSnapshot;
 
 /// Polygon Inset (one-shot, undoable): for each selected face, move each
-/// corner toward the polygon centroid by an absolute distance of `inset`
-/// world units (see mesh.insetFacesByMask / insetCornerCentroid) and connect
-/// the original boundary to the inset boundary with N ring quads.
+/// corner along its angle BISECTOR by an absolute distance of `inset` world
+/// units (see mesh.insetFacesByMask / insetCornerBisector — task 1190 ported
+/// that direction off "toward the polygon centroid", which pointed OUT of the
+/// face at a reflex corner) and connect the original boundary to the inset
+/// boundary with N ring quads.
 /// Polygons-mode only; empty selection ⇒ whole mesh. `inset == 0` is NOT a
 /// no-op (task 0359, reference-matched: the split always happens, landing a
 /// degenerate zero-width ring at inset=0) — the only remaining no-op case is
