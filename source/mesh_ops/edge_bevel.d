@@ -61,7 +61,10 @@ mixin template MeshEdgeBevelOps() {
     /// face `f_k` borders edge `e_k` (V's SUCCESSOR side within `f_k`) and
     /// edge `e_(k+1)` (V's PREDECESSOR side within `f_k`)):
     ///   - `f_k` bordered by 2 SELECTED edges → MITER: one new vertex via
-    ///     `offsetMeet` (both-bevel meet, matches `insetCorner`'s convention).
+    ///     `bevelMiterPoint` — the point in the PLANE OF THOSE TWO EDGES at
+    ///     perpendicular distance `width` from both of their lines, with the
+    ///     face's whole-ring normal deciding only which of the two such
+    ///     points is the inward one (measured law, task 1170).
     ///     If ALL of V's edges are selected (K == valence), the per-face
     ///     miters trace a closed K-gon boundary (each selected edge's own
     ///     chamfer quad already threads a rail between 2 consecutive miters)
@@ -1132,7 +1135,13 @@ mixin template MeshEdgeBevelOps() {
                         ? width * edgeFactor[vEdges[kr]] : width;
                     immutable float wNext = (edgeFactor.length && vEdges[k] < edgeFactor.length)
                         ? width * edgeFactor[vEdges[k]] : width;
-                    Vec3 m = offsetMeet(vpos, ePrev, eNext, faceNormal(fi), wPrev, wNext);
+                    // The mitre point is in the PLANE OF THE TWO BEVELLED
+                    // EDGES, at perpendicular distance w from each of their
+                    // lines — measured, task 1170 / ledger row 1. The face's
+                    // whole-ring Newell normal is passed for the BRANCH ONLY
+                    // (which of the two such points points into the face); it
+                    // does not decide the plane. See `math.bevelMiterPoint`.
+                    Vec3 m = bevelMiterPoint(vpos, ePrev, eNext, faceNormal(fi), wPrev, wNext);
                     uint nv = addVertex(m);
                     cornerAtVF[vfKey(V, fi)] = CornerInfo(
                         nv, CornerKind.Miter, false, cast(uint)K, isFullHub, Vec3(0,0,0));
@@ -1184,8 +1193,41 @@ mixin template MeshEdgeBevelOps() {
                 // that the rounded ring replaces at L>=1.
                 uint[] ring = new uint[](d);
                 foreach (k; 0 .. d) ring[k] = cornerAtVF[vfKey(V, vFaces[k])].vert;
-                hubCapRing[V] = ring;
-                hubCapSrc[V]  = vFaces[0];
+                // ...but only if those corners are d DISTINCT POINTS. Two of
+                // them at the same position do not trace a K-gon, and every
+                // consumer downstream assumes they do: the flat cap becomes a
+                // ring with a repeated corner (a zero-area face and a
+                // non-manifold edge once the identity pool merges the two), and
+                // the L>=1 Gregory ring builds a patch side whose two ends are
+                // one point.
+                //
+                // Reachable since task 1170 and by exactly one route. The
+                // ported mitre reads only the two bevelled edge DIRECTIONS, so
+                // two faces at one vertex whose ring-edge pairs span the same
+                // directions get the same point — which needs two of the
+                // vertex's edges to be exactly parallel. That is the
+                // `parallel-edge K3 hub` fixture in the unittests, built that
+                // way on purpose; the coincidence is what the measured law
+                // says, and it is the CAP that has no meaning, not the mitres.
+                //
+                // Dropping the registration is what L0 already did downstream
+                // (a ring with fewer than 3 distinct corners emits no face);
+                // doing it here makes L0, L1 and L2 agree instead of leaving
+                // the rounded paths to build on a ring the flat path rejects.
+                // No reference capture covers a degenerate hub at any level
+                // (task 0707), so this is not a parity claim — it is the
+                // structural precondition that keeps the output a mesh.
+                bool distinctCorners = true;
+                scan: foreach (k; 0 .. d)
+                    foreach (j; k + 1 .. d)
+                        if ((vertices[ring[k]] - vertices[ring[j]]).length <= 1e-9f) {
+                            distinctCorners = false;
+                            break scan;
+                        }
+                if (distinctCorners) {
+                    hubCapRing[V] = ring;
+                    hubCapSrc[V]  = vFaces[0];
+                }
             }
 
             // Free-end / partial-fan cap (task 0439, Decision B): a CLOSED

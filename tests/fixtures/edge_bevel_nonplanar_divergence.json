@@ -1,6 +1,6 @@
 {
  "name": "edge_bevel_nonplanar_divergence",
- "description": "Three measured cells of edge bevel on NON-PLANAR bases. They share a tool and, on the evidence of the wider sweep, a suspected root -- which plane the offset corner is placed in when the incident faces are not flat -- but each is frozen on its own numbers, and this fixture does not claim the three are one proven law. (a) WIDTH mode at 0.08 on a folded quad+triangle base: the corners part by 0.079188, essentially the whole width, so the two engines convert a perpendicular width into a corner slide against different dihedrals. (b) Round level 2 at 0.08 on a folded pair: the arc points part by 0.016540, 21% of the bevel. (c) The whole STAR of an interior vertex (4 edges, so every incident face has BOTH of its ring edges beveled) at 0.06 on a saddle: 0.007414, 12% of the bevel. Counts agree in all three (7/9/3, 14/19/6 and 25/40/16); it is only positions that move, and the face rings that follow them.",
+ "description": "Three measured cells of edge bevel on NON-PLANAR bases, and the wider sweep's suspected shared root -- which plane the offset corner is placed in when the incident faces are not flat -- has since been MEASURED and PORTED, which split the three apart rather than confirming them as one law. (a) WIDTH mode at 0.08 on a folded quad+triangle base: the corners still part by 0.079188, essentially the whole width, so the two engines convert a perpendicular width into a corner slide against different dihedrals. (b) Round level 2 at 0.08 on a folded pair: the arc points still part by 0.016540, 21% of the bevel. (c) The whole STAR of an interior vertex (4 edges, so every incident face has BOTH of its ring edges bevelled) at 0.06 on a saddle: CLOSED by task 1170, gap now EMPTY in both the vertex and the face channel, where it was 0.007414. That (c) closed while (a) and (b) did not move by a single coordinate is the content of the split: (c) is the only one of the three with a mitred corner, so it is the only one the offset law reaches. (a) and (b) each pose their own unmeasured question -- how a perpendicular width becomes a slide, and where an arc's interior points go -- and neither is answered here. Counts agree in all three (7/9/3, 14/19/6 and 25/40/16); it is only positions that move, and the face rings that follow them.",
  "source": "Reference side: headless command-port capture of the edge-bevel tool (dirty-geometry sweep, task 1123, cases w2_ebev_width_triquad_np, ebev_round2_np_pair_e1, w3_ebev_star_np_saddle). vibe3d side: live drive of this build.",
  "provenance": {
   "schema": 1,
@@ -1216,7 +1216,7 @@
   },
   {
    "name": "whole_star_of_interior_vertex",
-   "note": "All 4 edges at one interior vertex of a saddle, bevel 0.06 -- the only cell where every incident face has BOTH ring edges beveled. 25 verts / 40 edges / 16 faces on both sides; 4 corners differ by 0.007414 and 9 of 16 face rings follow.",
+   "note": "All 4 edges at one interior vertex of a saddle, bevel 0.06 -- the only cell of the three where every incident face has BOTH ring edges bevelled, i.e. the only one that poses the in-face MITRE question at all. 25 verts / 40 edges / 16 faces on both sides. CLOSED by task 1170: the 4 corners that differed by 0.007414 (12 % of the bevel) and the 9 of 16 face rings that followed them now match the reference exactly -- the gap declared below is EMPTY, and the runner asserts an empty gap exactly as strictly as a full one. What closed it: `math.bevelMiterPoint` puts the mitre in the PLANE OF THE TWO BEVELLED EDGES at perpendicular distance `width` from both of their lines, where the old `offsetMeet` intersected the two offset LINES by projecting along the face's whole-ring normal and so, on a bent face, landed in no plane at all. The law is the 53-cell / 117-mitred-corner measurement in tests/fixtures/edge_bevel_offset_law.json (ledger row 1); this cell is an INDEPENDENT confirmation of it -- different geometry, different rig, not one of those 53. The case is kept rather than deleted so the reference golden stays in the tree and a regression reddens here too.",
    "capture_case": "w3_ebev_star_np_saddle",
    "input": [
     {
@@ -2016,24 +2016,24 @@
       1.05618
      ],
      [
-      0.94,
-      0.055227,
-      1.058182
+      0.940456,
+      0.0625,
+      1.059544
      ],
      [
-      0.941714,
-      0.084136,
-      0.941714
+      0.940456,
+      0.077386,
+      0.940456
      ],
      [
-      1.058182,
-      0.055227,
-      0.94
+      1.059544,
+      0.0625,
+      0.940456
      ],
      [
-      1.06,
-      0.055,
-      1.06
+      1.059544,
+      0.047614,
+      1.059544
      ],
      [
       2.0,
@@ -2079,9 +2079,9 @@
        0.0
       ],
       [
-       0.941714,
-       0.084136,
-       0.941714
+       0.940456,
+       0.077386,
+       0.940456
       ],
       [
        0.0,
@@ -2106,9 +2106,9 @@
        0.940463
       ],
       [
-       1.058182,
-       0.055227,
-       0.94
+       1.059544,
+       0.0625,
+       0.940456
       ]
      ],
      [
@@ -2145,9 +2145,9 @@
        1.05618
       ],
       [
-       0.94,
-       0.055227,
-       1.058182
+       0.940456,
+       0.0625,
+       1.059544
       ],
       [
        0.940463,
@@ -2162,9 +2162,9 @@
      ],
      [
       [
-       1.06,
-       0.055,
-       1.06
+       1.059544,
+       0.047614,
+       1.059544
       ],
       [
        2.0,
@@ -2292,14 +2292,14 @@
        0.0
       ],
       [
-       1.058182,
-       0.055227,
-       0.94
+       1.059544,
+       0.0625,
+       0.940456
       ],
       [
-       0.941714,
-       0.084136,
-       0.941714
+       0.940456,
+       0.077386,
+       0.940456
       ],
       [
        0.94382,
@@ -2309,9 +2309,9 @@
      ],
      [
       [
-       0.94,
-       0.055227,
-       1.058182
+       0.940456,
+       0.0625,
+       1.059544
       ],
       [
        0.0,
@@ -2324,9 +2324,9 @@
        0.94382
       ],
       [
-       0.941714,
-       0.084136,
-       0.941714
+       0.940456,
+       0.077386,
+       0.940456
       ]
      ],
      [
@@ -2336,14 +2336,14 @@
        1.059537
       ],
       [
-       1.06,
-       0.055,
-       1.06
+       1.059544,
+       0.047614,
+       1.059544
       ],
       [
-       1.058182,
-       0.055227,
-       0.94
+       1.059544,
+       0.0625,
+       0.940456
       ],
       [
        2.0,
@@ -2353,9 +2353,9 @@
      ],
      [
       [
-       1.06,
-       0.055,
-       1.06
+       1.059544,
+       0.047614,
+       1.059544
       ],
       [
        1.059537,
@@ -2368,31 +2368,31 @@
        2.0
       ],
       [
-       0.94,
-       0.055227,
-       1.058182
+       0.940456,
+       0.0625,
+       1.059544
       ]
      ],
      [
       [
-       0.94,
-       0.055227,
-       1.058182
+       0.940456,
+       0.0625,
+       1.059544
       ],
       [
-       0.941714,
-       0.084136,
-       0.941714
+       0.940456,
+       0.077386,
+       0.940456
       ],
       [
-       1.058182,
-       0.055227,
-       0.94
+       1.059544,
+       0.0625,
+       0.940456
       ],
       [
-       1.06,
-       0.055,
-       1.06
+       1.059544,
+       0.047614,
+       1.059544
       ]
      ],
      [
@@ -2432,450 +2432,10 @@
     ]
    },
    "divergence": {
-    "extra_in_vibe3d": [
-     [
-      0.94,
-      0.055227,
-      1.058182
-     ],
-     [
-      0.941714,
-      0.084136,
-      0.941714
-     ],
-     [
-      1.058182,
-      0.055227,
-      0.94
-     ],
-     [
-      1.06,
-      0.055,
-      1.06
-     ]
-    ],
-    "missing_in_vibe3d": [
-     [
-      1.059544,
-      0.0625,
-      0.940456
-     ],
-     [
-      1.059544,
-      0.047614,
-      1.059544
-     ],
-     [
-      0.940456,
-      0.0625,
-      1.059544
-     ],
-     [
-      0.940456,
-      0.077386,
-      0.940456
-     ]
-    ],
-    "extra_faces_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.5625,
-       0.0
-      ],
-      [
-       0.94382,
-       0.208567,
-       0.0
-      ],
-      [
-       0.941714,
-       0.084136,
-       0.941714
-      ],
-      [
-       0.0,
-       0.208567,
-       0.94382
-      ]
-     ],
-     [
-      [
-       1.05618,
-       0.166433,
-       0.0
-      ],
-      [
-       2.0,
-       -0.1875,
-       0.0
-      ],
-      [
-       2.0,
-       -0.069942,
-       0.940463
-      ],
-      [
-       1.058182,
-       0.055227,
-       0.94
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.166433,
-       1.05618
-      ],
-      [
-       0.94,
-       0.055227,
-       1.058182
-      ],
-      [
-       0.940463,
-       -0.069942,
-       2.0
-      ],
-      [
-       0.0,
-       -0.1875,
-       2.0
-      ]
-     ],
-     [
-      [
-       1.06,
-       0.055,
-       1.06
-      ],
-      [
-       2.0,
-       -0.055058,
-       1.059537
-      ],
-      [
-       2.0,
-       0.0625,
-       2.0
-      ],
-      [
-       1.059537,
-       -0.055058,
-       2.0
-      ]
-     ],
-     [
-      [
-       1.05618,
-       0.166433,
-       0.0
-      ],
-      [
-       1.058182,
-       0.055227,
-       0.94
-      ],
-      [
-       0.941714,
-       0.084136,
-       0.941714
-      ],
-      [
-       0.94382,
-       0.208567,
-       0.0
-      ]
-     ],
-     [
-      [
-       0.94,
-       0.055227,
-       1.058182
-      ],
-      [
-       0.0,
-       0.166433,
-       1.05618
-      ],
-      [
-       0.0,
-       0.208567,
-       0.94382
-      ],
-      [
-       0.941714,
-       0.084136,
-       0.941714
-      ]
-     ],
-     [
-      [
-       2.0,
-       -0.055058,
-       1.059537
-      ],
-      [
-       1.06,
-       0.055,
-       1.06
-      ],
-      [
-       1.058182,
-       0.055227,
-       0.94
-      ],
-      [
-       2.0,
-       -0.069942,
-       0.940463
-      ]
-     ],
-     [
-      [
-       1.06,
-       0.055,
-       1.06
-      ],
-      [
-       1.059537,
-       -0.055058,
-       2.0
-      ],
-      [
-       0.940463,
-       -0.069942,
-       2.0
-      ],
-      [
-       0.94,
-       0.055227,
-       1.058182
-      ]
-     ],
-     [
-      [
-       0.94,
-       0.055227,
-       1.058182
-      ],
-      [
-       0.941714,
-       0.084136,
-       0.941714
-      ],
-      [
-       1.058182,
-       0.055227,
-       0.94
-      ],
-      [
-       1.06,
-       0.055,
-       1.06
-      ]
-     ]
-    ],
-    "missing_faces_in_vibe3d": [
-     [
-      [
-       2.0,
-       -0.055058,
-       1.059537
-      ],
-      [
-       2.0,
-       0.0625,
-       2.0
-      ],
-      [
-       1.059537,
-       -0.055058,
-       2.0
-      ],
-      [
-       1.059544,
-       0.047614,
-       1.059544
-      ]
-     ],
-     [
-      [
-       0.940456,
-       0.0625,
-       1.059544
-      ],
-      [
-       0.940463,
-       -0.069942,
-       2.0
-      ],
-      [
-       0.0,
-       -0.1875,
-       2.0
-      ],
-      [
-       0.0,
-       0.166433,
-       1.05618
-      ]
-     ],
-     [
-      [
-       2.0,
-       -0.1875,
-       0.0
-      ],
-      [
-       2.0,
-       -0.069942,
-       0.940463
-      ],
-      [
-       1.059544,
-       0.0625,
-       0.940456
-      ],
-      [
-       1.05618,
-       0.166433,
-       0.0
-      ]
-     ],
-     [
-      [
-       0.94382,
-       0.208567,
-       0.0
-      ],
-      [
-       0.940456,
-       0.077386,
-       0.940456
-      ],
-      [
-       0.0,
-       0.208567,
-       0.94382
-      ],
-      [
-       0.0,
-       0.5625,
-       0.0
-      ]
-     ],
-     [
-      [
-       0.940456,
-       0.077386,
-       0.940456
-      ],
-      [
-       0.94382,
-       0.208567,
-       0.0
-      ],
-      [
-       1.05618,
-       0.166433,
-       0.0
-      ],
-      [
-       1.059544,
-       0.0625,
-       0.940456
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.208567,
-       0.94382
-      ],
-      [
-       0.940456,
-       0.077386,
-       0.940456
-      ],
-      [
-       0.940456,
-       0.0625,
-       1.059544
-      ],
-      [
-       0.0,
-       0.166433,
-       1.05618
-      ]
-     ],
-     [
-      [
-       1.059544,
-       0.0625,
-       0.940456
-      ],
-      [
-       2.0,
-       -0.069942,
-       0.940463
-      ],
-      [
-       2.0,
-       -0.055058,
-       1.059537
-      ],
-      [
-       1.059544,
-       0.047614,
-       1.059544
-      ]
-     ],
-     [
-      [
-       0.940463,
-       -0.069942,
-       2.0
-      ],
-      [
-       0.940456,
-       0.0625,
-       1.059544
-      ],
-      [
-       1.059544,
-       0.047614,
-       1.059544
-      ],
-      [
-       1.059537,
-       -0.055058,
-       2.0
-      ]
-     ],
-     [
-      [
-       1.059544,
-       0.0625,
-       0.940456
-      ],
-      [
-       1.059544,
-       0.047614,
-       1.059544
-      ],
-      [
-       0.940456,
-       0.0625,
-       1.059544
-      ],
-      [
-       0.940456,
-       0.077386,
-       0.940456
-      ]
-     ]
-    ]
+    "extra_in_vibe3d": [],
+    "missing_in_vibe3d": [],
+    "extra_faces_in_vibe3d": [],
+    "missing_faces_in_vibe3d": []
    }
   }
  ]

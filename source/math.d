@@ -2610,6 +2610,62 @@ Vec3 offsetMeet(Vec3 jv, Vec3 ePrev, Vec3 eNext, Vec3 faceNorm,
     return p1 + ePrev * t;
 }
 
+// bevelMiterPoint: where an EDGE bevel puts the vertex at a face corner whose
+// BOTH ring edges are bevelled. Task 1170; the law is measured, not derived.
+//
+// THE PLANE IS THE TWO EDGES, AND NO FACE NORMAL DECIDES IT. This is the
+// whole content of the finding (divergence-ledger row 1, toolcard
+// `edge_bevel_offset_normal`, 53 cells / 520 created vertices / 117 mitred
+// corners, worst residual 1.53e-5 x inset — the reference's float32 vertex
+// storage floor). The point is the one in `span{ePrev, eNext}` at
+// perpendicular distance `wPrev` from the ePrev line and `wNext` from the
+// eNext line:
+//
+//     p = jv + sign * (wPrev*eNext + wNext*ePrev) / sin(theta)
+//
+// (write p = alpha*eNext + beta*ePrev; the distance from the ePrev line is
+// |alpha|*sin(theta), so alpha = wPrev/sin(theta), and symmetrically. With
+// wPrev == wNext == inset this is exactly the measured
+// `inset * (a + b) / sin(theta)`, the bisector at length inset/sin(theta/2).)
+//
+// `ringNormal` — Newell over the WHOLE ring — appears in exactly ONE place:
+// the branch. Both `+(...)` and `-(...)` sit at those two distances, and the
+// engine takes the one pointing into the face:
+//
+//     sign = +1  iff  dot(cross(eNext, ePrev), ringNormal) > 0     (strict)
+//
+// i.e. "is this corner convex with respect to its own ring's normal". That
+// scored 117/117 overall and 16/16 on the corners built reflex to separate
+// the sign candidates, while the rule that owns the PLANE (the corner
+// triangle at the moving vertex) is the WORST rule for the branch at 106/117.
+// Plane and branch are two different questions and are ported as two — do not
+// collapse them back into one normal. The operand order in that cross product
+// is load-bearing and was pinned by data, not by derivation: `cross(eNext,
+// ePrev)` reproduces all 117 corners and `cross(ePrev, eNext)` reproduces 0.
+//
+// NOT `offsetMeet` — and deliberately not a change TO it. `offsetMeet`
+// intersects the two offset LINES by projecting along `faceNorm`, so on a
+// non-planar face its answer lies in no plane at all (the measured 4.86 deg
+// of direction error, 8 % of the bevel width). It stays as it is because
+// poly.bevel's `insetCorner` is its other caller and answers to a separately
+// measured law. On a PLANAR face the two functions agree identically by
+// construction (offsetMeet's own offset directions cross(faceNorm, -+e) are
+// the same orientation convention as `sign` here), which is why the mitres on
+// planar faces do not move.
+//
+// Degenerate corner (the two edges collinear — a straight-through "pipe"
+// corner, sin(theta) ~ 0): there is no unique such point, and the reference
+// was never measured there. Delegates to `offsetMeet`, whose own degenerate
+// branch then answers exactly as it does today.
+Vec3 bevelMiterPoint(Vec3 jv, Vec3 ePrev, Vec3 eNext, Vec3 ringNormal,
+                     float wPrev, float wNext) @safe pure nothrow @nogc {
+    Vec3  n    = cross(eNext, ePrev);
+    float sinT = n.length;              // |a x b| = sin(theta) for unit a, b
+    if (sinT < 1e-6f)
+        return offsetMeet(jv, ePrev, eNext, ringNormal, wPrev, wNext);
+    immutable float sign = dot(n, ringNormal) > 0 ? 1.0f : -1.0f;
+    return jv + (eNext * wPrev + ePrev * wNext) * (sign / sinT);
+}
 
 
 // bevelArcPoints: Edge Bevel Round Level — TRUE CIRCULAR ARC generator

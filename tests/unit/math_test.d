@@ -991,6 +991,141 @@ unittest { // offsetMeet: 90° corner, both bev — meets at the diagonal
     assert(isClose(r.z, 0.0f, 1e-5));
 }
 
+unittest { // bevelMiterPoint — THE PLANE IS THE TWO EDGES (task 1170).
+    // The measured law: the mitre is the point in span{ePrev, eNext} at
+    // perpendicular distance wPrev from the ePrev line and wNext from the
+    // eNext line. This block asserts exactly that, on a corner whose ring
+    // normal is deliberately NOT the two-edge plane's normal — and asserts in
+    // the same breath that `offsetMeet` (the pre-1170 kernel) answers
+    // differently there, so the block cannot pass with the old function
+    // substituted back in. A planar corner would make both claims vacuous.
+    static float distToLine(Vec3 p, Vec3 d) {   // line through the origin
+        return (p - d * dot(p, d)).length;
+    }
+    immutable Vec3 jv    = Vec3(0, 0, 0);
+    immutable Vec3 ePrev = Vec3(1, 0, 0);
+    immutable Vec3 eNext = Vec3(0, 1, 0);
+    immutable Vec3 planeN = Vec3(0, 0, 1);          // normal OF THE TWO EDGES
+    // A whole-ring Newell normal off that plane by ~17° — what a bent quad
+    // actually hands the kernel. Its -Z component makes this corner convex.
+    immutable Vec3 ringN = safeNormalize(Vec3(0, 0.3f, -1));
+    immutable float w = 0.1f;
+
+    Vec3 m = bevelMiterPoint(jv, ePrev, eNext, ringN, w, w);
+    assert(isClose(dot(m, planeN), 0.0f, 1e-5f, 1e-6f),
+        "the mitre lies IN the plane of the two edges");
+    assert(isClose(distToLine(m, ePrev), w, 1e-5f),
+        "perpendicular distance w from the ePrev line");
+    assert(isClose(distToLine(m, eNext), w, 1e-5f),
+        "perpendicular distance w from the eNext line");
+    assert(isClose(m.x, w, 1e-5f) && isClose(m.y, w, 1e-5f),
+        "and for a 90° corner that point is (w, w)");
+
+    // The rejected kernel, same inputs: it intersects the two OFFSET LINES by
+    // projecting along the ring normal, so it is off both distances here.
+    Vec3 old = offsetMeet(jv, ePrev, eNext, ringN, w, w);
+    assert((old - m).length > 0.03f * w,
+        "offsetMeet must disagree here — otherwise this corner is not bent "
+        ~ "enough to discriminate and the block above proves nothing");
+    assert(!isClose(distToLine(old, ePrev), w, 1e-3f)
+        || !isClose(distToLine(old, eNext), w, 1e-3f)
+        || !isClose(dot(old, planeN), 0.0f, 1e-3f, 1e-4f),
+        "offsetMeet fails at least one of the three measured properties");
+}
+
+unittest { // bevelMiterPoint — THE BRANCH, and only the branch, reads the ring.
+    // (a + b) and -(a + b) both sit at distance w from both lines; the engine
+    // takes the one pointing INTO the face, and a whole-ring normal is what
+    // says which. Measured 117/117, and 16/16 on the corners built reflex.
+    //
+    // The operand order in `cross(eNext, ePrev)` is load-bearing and was
+    // pinned by data (117/117 vs 0/117), so it is pinned here too: this is a
+    // CCW square in XY whose Newell normal is +Z, with the corner at the
+    // origin, its ring predecessor at (0,1,0) and its successor at (1,0,0).
+    // The square's interior is the +X+Y quadrant. Swap the two operands and
+    // the answer flips to (-w,-w) — outside the square.
+    immutable Vec3 jv    = Vec3(0, 0, 0);
+    immutable Vec3 ePrev = Vec3(0, 1, 0);           // toward ring predecessor
+    immutable Vec3 eNext = Vec3(1, 0, 0);           // toward ring successor
+    immutable float w = 0.1f;
+
+    Vec3 conv = bevelMiterPoint(jv, ePrev, eNext, Vec3(0, 0, 1), w, w);
+    assert(isClose(conv.x, w, 1e-5f) && isClose(conv.y, w, 1e-5f)
+        && isClose(conv.z, 0.0f, 1e-5f, 1e-6f),
+        "convex corner: the mitre goes INTO the ring, (+w, +w)");
+
+    // The same two edges inside a ring wound the other way — the corner is now
+    // reflex with respect to its own ring, and the branch must flip.
+    Vec3 reflex = bevelMiterPoint(jv, ePrev, eNext, Vec3(0, 0, -1), w, w);
+    assert(isClose(reflex.x, -w, 1e-5f) && isClose(reflex.y, -w, 1e-5f),
+        "reflex corner: the branch flips to (-w, -w)");
+    assert((conv + reflex).length < 1e-6f,
+        "the two branches are exact opposites about the corner");
+}
+
+unittest { // bevelMiterPoint — a PLANAR corner does not move (task 1170).
+    // Why the 22 slide-only cells and the planar mitres inside the other 31
+    // are untouched by the port: where the ring normal IS the two-edge plane's
+    // normal, the closed form and the old line intersection are the same
+    // point, at equal AND unequal per-edge widths, convex AND reflex.
+    immutable Vec3 jv    = Vec3(0, 0, 0);
+    immutable Vec3 ePrev = Vec3(1, 0, 0);
+    immutable Vec3 eNext = Vec3(0, 1, 0);
+    foreach (n; [Vec3(0, 0, -1), Vec3(0, 0, 1)])
+        foreach (ws; [[0.1f, 0.1f], [0.1f, 0.03f], [0.02f, 0.15f]]) {
+            Vec3 a = bevelMiterPoint(jv, ePrev, eNext, n, ws[0], ws[1]);
+            Vec3 b = offsetMeet     (jv, ePrev, eNext, n, ws[0], ws[1]);
+            assert((a - b).length < 1e-6f,
+                "planar corner: the ported mitre is the old point exactly");
+        }
+    // A non-90° planar corner too, so the agreement is not an artefact of the
+    // right angle: 60° between the edges, unequal widths.
+    immutable Vec3 e60 = safeNormalize(Vec3(0.5f, 0.8660254f, 0));
+    Vec3 p = bevelMiterPoint(jv, ePrev, e60, Vec3(0, 0, -1), 0.07f, 0.02f);
+    Vec3 q = offsetMeet     (jv, ePrev, e60, Vec3(0, 0, -1), 0.07f, 0.02f);
+    assert((p - q).length < 1e-6f, "60° planar corner agrees too");
+}
+
+unittest { // bevelMiterPoint — unequal per-edge widths keep BOTH distances.
+    // Inset mode always hands this kernel wPrev == wNext, so this is the width
+    // -mode generalisation and it is NOT part of what was measured. It is
+    // pinned as what it is: the same closed form, whose coefficient on eNext
+    // is wPrev and on ePrev is wNext, and which is provably the old point on a
+    // planar face (block above). It is asserted here so the generalisation is
+    // at least self-consistent, not so it can be mistaken for measured parity.
+    static float distToLine(Vec3 p, Vec3 d) {
+        return (p - d * dot(p, d)).length;
+    }
+    immutable Vec3 jv    = Vec3(0, 0, 0);
+    immutable Vec3 ePrev = Vec3(1, 0, 0);
+    immutable Vec3 eNext = safeNormalize(Vec3(0.4f, 1, 0));   // ~68°
+    immutable Vec3 ringN = safeNormalize(Vec3(0.25f, 0, -1)); // bent ~14°
+    immutable float wP = 0.07f, wN = 0.02f;
+    Vec3 m = bevelMiterPoint(jv, ePrev, eNext, ringN, wP, wN);
+    assert(isClose(distToLine(m, ePrev), wP, 1e-4f),
+        "wPrev is the distance from the ePrev line");
+    assert(isClose(distToLine(m, eNext), wN, 1e-4f),
+        "wNext is the distance from the eNext line");
+    assert(isClose(dot(m, safeNormalize(cross(ePrev, eNext))), 0.0f, 1e-5f, 1e-6f),
+        "still in the plane of the two edges");
+}
+
+unittest { // bevelMiterPoint — the collinear corner delegates, unchanged.
+    // Two bevelled edges that run straight through the vertex ("pipe"): there
+    // is no unique point at distance w from both lines, and the reference was
+    // never measured there. The kernel hands that case back to `offsetMeet`
+    // so its behaviour is exactly today's, and this block is what says the
+    // delegation is real rather than intended.
+    immutable Vec3 jv    = Vec3(0, 0, 0);
+    immutable Vec3 ePrev = Vec3(1, 0, 0);
+    immutable Vec3 eNext = Vec3(-1, 0, 0);          // antiparallel: sin θ = 0
+    immutable Vec3 faceN = Vec3(0, 0, -1);
+    Vec3 m = bevelMiterPoint(jv, ePrev, eNext, faceN, 0.1f, 0.1f);
+    Vec3 o = offsetMeet     (jv, ePrev, eNext, faceN, 0.1f, 0.1f);
+    assert((m - o).length < 1e-9f, "collinear corner: byte-identical to offsetMeet");
+    assert(isClose(m.y, 0.1f, 1e-5f), "and that is the in-face perpendicular offset");
+}
+
 unittest { // bevelArcPoints: level=0 returns exactly the 2 flat endpoints
     Vec3 c = Vec3(0, 0, 0);
     auto pts = bevelArcPoints(c, Vec3(1, 0, 0), Vec3(0, 1, 0), 0.1f, 0);

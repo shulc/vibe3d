@@ -1650,39 +1650,57 @@ unittest { // bevelEdgesByMask: K=3 junction round cap, matches the reference at
     }
 }
 
-unittest { // bevelEdgesByMask: DEGENERATE ("parallel-edge") K3 hub — the shape
-           // on which the N=3 and N≥4 ring branches disagree (task 0698).
+unittest { // bevelEdgesByMask: DEGENERATE ("parallel-edge") K3 hub — the one
+           // shape where two of a vertex's edges are EXACTLY parallel, and
+           // therefore the one shape where the ported mitre law (task 1170)
+           // makes two per-face corners of one hub coincide.
            //
-           // The two branches gate a side on DIFFERENT flags: N=3 on `hasBez`
-           // (set for every full hub, no non-degeneracy test), N≥4 on `hubRail`
-           // (`hasBez` AND distinct poles AND distinct finding-(I) pivots). They
-           // can only differ where one of those two extra tests fails, so this
-           // fixture makes one fail EXACTLY: cube vertex 7 is moved onto the ray
-           // 6→5, which makes `dir(6→7) == dir(6→5)` bit-for-bit. The rail along
-           // edge (6,2) then takes its two neighbour pivots from edges 6→5 and
-           // 6→7 — the same direction, so |jA − jB| == 0 exactly — and is
-           // registered `hasBez=true, hubRail=false`. (Measured with the two
-           // lengths printed from `registerRail`: |jA−jB| = 0, |P0−P3| = 0.0786;
-           // every rail of the pristine cube reads 0.1414 for both.)
+           // THE FIXTURE. Cube vertex 7 is moved onto the ray 6→5, so
+           // `dir(6→7) == dir(6→5)` bit-for-bit. All three of vertex 6's edges
+           // are bevelled, so it is a full K3 hub and each of its three faces
+           // is a MITER. Two of those faces carry the direction pair
+           // {dir(6→2), dir(6→5)} and {dir(6→2), dir(6→7)} — the SAME pair,
+           // because the second and third directions are equal — and the third
+           // face carries {dir(6→5), dir(6→7)}, which is collinear.
            //
-           // WHAT THIS TEST IS. It is a one-sided characterization, NOT a parity
+           // WHAT THE PORT CHANGED, AND WHY IT IS NOT A REGRESSION IN THE
+           // GEOMETRY. `math.bevelMiterPoint` reads only the two bevelled edge
+           // directions and the branch sign; it does not read the face's plane.
+           // So the two faces with the equal direction pair now get the SAME
+           // point, (0.5, 0.4, 0.4) — which is the correct one: perpendicular
+           // distance 0.1 from both edge lines, in the plane those two edges
+           // span. The pre-1170 `offsetMeet` separated them only because it
+           // projected along each face's own whole-ring normal, and those two
+           // normals differ; that projection is exactly what the 53-cell
+           // measurement refuted. The third (collinear) face still lands on the
+           // uncut corner through `offsetMeet`'s parallel fallback, unchanged.
+           //
+           // WHAT THE PORT THEREFORE BROKE, AND WHAT FIXED IT. A hub cap is a
+           // K-gon over the per-face corners, and two coincident corners do not
+           // trace one. Before the guard in `bevelEdgesByMask`, L1 emitted a
+           // ring with a repeated vertex — a zero-area face and three
+           // non-manifold edges (measured: 17v/15f, euler 4). The cap is now
+           // registered only when its d corners are d distinct POINTS, which is
+           // what the flat path already did downstream, so L0 and every L>=1
+           // now agree: this hub does not cap and does not round.
+           //
+           // WHAT THIS TEST IS. Still a one-sided characterization, NOT a parity
            // freeze: no reference capture covers a degenerate hub (the four
            // `tests/fixtures/edge_bevel_*.json` goldens are a pristine cube and
            // an open grid, and the `edge_bevel_*` rows of
            // `tests/fixtures/uv_corner_transfer.json` are a flat grid with a
            // single selected edge — none of them reaches a hub cap ring at all),
            // so there is no `reference_*` half to record and none is invented
-           // here. It pins what vibe3d does TODAY so that the divergence is a
-           // measurement instead of a code reading, and so that the day task 0707
-           // settles the rule, the change is visible rather than silent.
+           // here. Task 0707's question — `hasBez` versus `hubRail` on a hub
+           // with DISTINCT poles and coincident finding-(I) pivots — is still
+           // open and still untested by this fixture: the port moved this hub
+           // out of that class entirely, into the coincident-POLE class, which
+           // the distinctness guard now settles on soundness grounds alone.
            //
-           // THE MEASURED ALTERNATIVE. Swapping the N=3 branch's gate to
-           // `hubRail` (i.e. applying the N≥4 rule here) leaves the pristine cube
-           // untouched at 20v/15f and 38v/30f, and turns THIS fixture into
-           // 19v/13f at L1 and 31v/19f at L2: the ring is dropped and the cap
-           // becomes one flat n-gon (a hexagon at L1, a 12-gon at L2) bounded by
-           // the still-rounded arcs. Both outcomes are defensible; picking one is
-           // 0707's job, not this test's.
+           // The SOUNDNESS half below is not a characterization, though. A
+           // repeated ring vertex, a zero-area face, a non-manifold edge or a
+           // broken Euler number are wrong on any geometry and against any
+           // reference, so those arms are asserted as invariants.
     static Mesh parallelEdgeHub() {
         auto mm = makeCube();
         // v7 = (-0.5, 0.5, 0.5) -> onto the ray 6→5. Both offsets are exact
@@ -1704,8 +1722,9 @@ unittest { // bevelEdgesByMask: DEGENERATE ("parallel-edge") K3 hub — the shap
         foreach (ei; m.edgesAroundVertex(6)) ++deg;
         assert(deg == 3, "degenerate-K3 fixture must keep vertex 6 at valence 3");
     }
-    foreach (level; [1, 2]) {
+    foreach (level; [0, 1, 2]) {
         auto m = parallelEdgeHub();
+        immutable size_t baseVerts = m.vertices.length;
         bool[] mask; mask.length = m.edges.length; mask[] = false;
         foreach (pair; [[6u, 5u], [6u, 2u], [6u, 7u]]) {
             immutable int ei = findEdge(m, pair[0], pair[1]);
@@ -1713,39 +1732,69 @@ unittest { // bevelEdgesByMask: DEGENERATE ("parallel-edge") K3 hub — the shap
             mask[ei] = true;
         }
         assert(m.bevelEdgesByMask(mask, 0.1f, level) == 3);
-        int[int] fvd;
-        foreach (f; m.faces) ++fvd[cast(int)f.length];
-        if (level == 1) {
-            assert(m.vertices.length == 20 && m.faces.length == 15,
-                "degenerate K3 hub rounds TODAY (20v/15f); the N≥4 rule would "
-                ~ "give 19v/13f — see task 0707 before changing either gate");
-            // The ring signature: three cap quads and no flat cap n-gon. Under
-            // the N≥4 rule the three quads collapse into a fourth hexagon.
-            assert(fvd.get(6, 0) == 3 && fvd.get(4, 0) == 12,
-                "L1 degenerate hub must emit the 3-quad Gregory fan, not a flat "
-                ~ "hexagonal cap");
-        } else {
-            assert(m.vertices.length == 38 && m.faces.length == 30,
-                "degenerate K3 hub rounds TODAY (38v/30f); the N≥4 rule would "
-                ~ "give 31v/19f — see task 0707 before changing either gate");
-            assert(fvd.get(12, 0) == 0,
-                "L2 degenerate hub must not emit the flat 12-gon cap");
-        }
-        // The degeneracy IS visible in the output: the sliver face (6,5,…,7),
-        // whose two edges at the corner are parallel, takes `offsetMeet`'s
-        // parallel fallback, whose two perpendicular offsets are opposite — so
-        // its miter lands EXACTLY on the uncut corner. That pole is what the
-        // ring is then built on. The pristine cube's K3 golden has no vertex
-        // there (every corner is cut), so this is a real discriminator.
+
+        // (1) The mitre the LAW places, and the coincidence it implies. This
+        // is the measured half — level 0, inset. `offsetMeet` put the two
+        // corners at (0.5,0.4,0.4) AND (0.429289,0.417815,0.429289), 13
+        // vertices instead of 12: it produced the right one as well as a
+        // second one off the plane of its own two edges. So the count below
+        // takes BOTH halves — one at the law's point, and none at the old
+        // one — and it is the second half that does the work on a revert.
+        int atMiter = 0;
+        foreach (i; baseVerts .. m.vertices.length)
+            if ((m.vertices[i] - Vec3(0.5f, 0.4f, 0.4f)).length < 1e-6f) ++atMiter;
+        assert(atMiter == 1,
+            "the two faces with the same bevelled-edge direction pair share ONE "
+            ~ "mitre, at perpendicular distance 0.1 from both edge lines");
+        // ...and the point the OLD law put the second one at is gone. Without
+        // this line the arm above is INERT against a revert: `offsetMeet` also
+        // produced a corner at (0.5,0.4,0.4) — it produced this one AS WELL,
+        // off the plane of its own two edges, which is the whole divergence.
+        // (Same idiom as poly_bevel.d's "the pre-0467 off-plane offsetMeet
+        // corner must be gone".)
+        foreach (v; m.vertices)
+            assert((v - Vec3(0.429289f, 0.417815f, 0.429289f)).length > 1e-4f,
+                "the pre-1170 off-plane offsetMeet corner must be gone");
+
+        // (2) The collinear face's corner still lands on the uncut corner
+        // through offsetMeet's parallel fallback — the property that makes this
+        // fixture the degenerate shape task 0698 measured.
         bool uncutPole = false;
         foreach (v; m.vertices)
             if (v.x == 0.5f && v.y == 0.5f && v.z == 0.5f) uncutPole = true;
         assert(uncutPole,
             "the sliver face's miter must land on the uncut corner — without it "
             ~ "this fixture is no longer the degenerate shape task 0698 measured");
+
+        // (3) The hub does not cap and does not round, identically at every
+        // level. Drop the distinctness guard in `bevelEdgesByMask` and L1 goes
+        // to 17v/15f with a zero-area face; that is what this arm catches.
+        assert(m.vertices.length == 12 && m.faces.length == 9,
+            "a hub whose corners are not distinct points emits no cap, and "
+            ~ "nothing at it rounds — same output at L0, L1 and L2");
+        int[int] fvd;
+        foreach (f; m.faces) ++fvd[cast(int)f.length];
+        assert(fvd.get(5, 0) == 3 && fvd.get(4, 0) == 5 && fvd.get(3, 0) == 1,
+            "and its face-valence signature does not move with the level either");
+
+        // (4) SOUNDNESS — invariants, not a characterization.
+        foreach (f; m.faces)
+            foreach (i; 0 .. f.length)
+                foreach (j; i + 1 .. f.length)
+                    assert(f[i] != f[j], "no face may repeat a vertex in its ring");
+        int[uint[2]] fanout;
+        foreach (f; m.faces)
+            foreach (i; 0 .. f.length) {
+                immutable uint a = f[i], b = f[(i + 1) % f.length];
+                immutable uint[2] k = a < b ? [a, b] : [b, a];
+                ++fanout[k];
+            }
+        foreach (k, v; fanout)
+            assert(v == 2, "every edge of a closed bevel carries exactly 2 faces");
+        assert(cast(int)m.vertices.length - cast(int)fanout.length
+             + cast(int)m.faces.length == 2, "V - E + F must stay 2");
     }
 }
-
 unittest { // bevelEdgesByMask: mixed adjacent K2 at a valence-4 octahedron
            // (task 0439). Vertex 0's own K=2-adjacent shape was already
            // MITER/SLIDE-supported pre-0439 (one miter + one both-unselected
