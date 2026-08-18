@@ -1,6 +1,6 @@
 {
  "name": "poly_merge_boundary_divergence",
- "description": "Merging a polygon selection into one face: which boundary the merge walks. Two measured cells. (a) An ANNULUS -- a 3x3 grid of quads with the centre face missing, all 8 faces selected. The reference emits one face whose ring has 18 corners: the walk enters the hole along the edge (2,0,2)-(2,0,3), goes round the hole and leaves along that same edge, so both of those vertices stand in the ring twice; it keeps all 16 vertices and 17 edges. We emit the 12-corner OUTER boundary only -- the hole is paved over, and the 4 vertices that bounded it are deleted, leaving 12 vertices and 12 edges. (b) Two quads that share an edge but are wound OPPOSITELY. The reference merges them into one hexagon (6 vertices, 6 edges, 1 face). We leave both quads standing, shared edge and all (2 faces, 7 edges) -- the vertex set is identical on both sides, so this cell is invisible to any check that compares vertices alone.",
+ "description": "Merging a polygon selection into one face: which boundary the merge walks. Two measured cells, both CLOSED by task 1220; the declared gap is empty in the vertex AND the face channel and the runner recomputes both live, so any drift on either side reddens this suite. (a) An ANNULUS -- a 3x3 grid of quads with the centre face missing, all 8 faces selected. The reference emits one face whose ring has 18 corners: the walk enters the hole along the edge (2,0,2)-(2,0,3), goes round the hole and leaves along that same edge, so both of those vertices stand in the ring twice; it keeps all 16 vertices and 17 edges. As measured we emitted the 12-corner OUTER boundary only -- the hole paved over and the 4 vertices that bounded it deleted, 12 vertices and 12 edges. `removeEdgesByMask` now keeps walking after the first closed loop and bridges the leftover rims into it along one interior edge, so we return the same 18-corner keyhole. (b) Two quads that share an edge but are wound OPPOSITELY. The reference merges them into one hexagon (6 vertices, 6 edges, 1 face). As measured we left both quads standing, shared edge and all (2 faces, 7 edges) -- the vertex set is identical on both sides, so this cell is invisible to any check that compares vertices alone. The same kernel now orients the whole component from its first face before the walk, and the two half-edges of the shared edge cancel.",
  "source": "Reference side: headless command-port capture of the merge command on the two bases below (dirty-geometry sweep, task 1123, cases merge_all_grid_hole / merge_all_wind_flip). vibe3d side: live drive of this build through the steps stored in each case.",
  "provenance": {
   "schema": 1,
@@ -16,7 +16,7 @@
  "cases": [
   {
    "name": "annulus_walks_into_the_hole",
-   "note": "Reference: 1 face, 18-corner ring, 16 vertices, 17 edges -- the ring visits (2,0,2) and (2,0,3) twice each, which is the walk entering and leaving the hole along one edge. Ours: 1 face, 12-corner outer ring, 12 vertices, 12 edges; the hole is filled and its 4 corner vertices are gone. The 4 missing vertices are exactly the hole's corners.",
+   "note": "CLOSED by task 1220. 1 face, 18-corner ring, 16 vertices, 17 edges on BOTH sides -- the ring visits (2,0,2) and (2,0,3) twice each, which is the walk entering and leaving the hole along one edge, and that edge survives, used twice by the one face. As measured before the fix we returned a 12-corner outer ring, 12 vertices and 12 edges, the hole filled and its 4 corner vertices gone. Those 4 -- (1,0,1) (2,0,1) (1,0,2) (2,0,2) -- are the ones to look for by VALUE if this ever regresses: a count check alone cannot tell a kept rim from a re-paved one.",
    "capture_case": "merge_all_grid_hole",
    "input": [
     {
@@ -538,8 +538,8 @@
    },
    "vibe3d_current": {
     "counts": {
-     "verts": 12,
-     "edges": 12,
+     "verts": 16,
+     "edges": 17,
      "faces": 1
     },
     "vertices": [
@@ -569,12 +569,32 @@
       1.0
      ],
      [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
       3.0,
       0.0,
       1.0
      ],
      [
       0.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
       0.0,
       2.0
      ],
@@ -607,21 +627,6 @@
     "faces": [
      [
       [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
        3.0,
        0.0,
        0.0
@@ -647,6 +652,36 @@
        3.0
       ],
       [
+       2.0,
+       0.0,
+       2.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       2.0
+      ],
+      [
+       2.0,
+       0.0,
+       2.0
+      ],
+      [
+       2.0,
+       0.0,
+       3.0
+      ],
+      [
        1.0,
        0.0,
        3.0
@@ -665,197 +700,35 @@
        0.0,
        0.0,
        1.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
       ]
      ]
     ]
    },
    "divergence": {
     "extra_in_vibe3d": [],
-    "missing_in_vibe3d": [
-     [
-      1.0,
-      0.0,
-      1.0
-     ],
-     [
-      2.0,
-      0.0,
-      1.0
-     ],
-     [
-      1.0,
-      0.0,
-      2.0
-     ],
-     [
-      2.0,
-      0.0,
-      2.0
-     ]
-    ],
-    "extra_faces_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
-       3.0,
-       0.0,
-       0.0
-      ],
-      [
-       3.0,
-       0.0,
-       1.0
-      ],
-      [
-       3.0,
-       0.0,
-       2.0
-      ],
-      [
-       3.0,
-       0.0,
-       3.0
-      ],
-      [
-       2.0,
-       0.0,
-       3.0
-      ],
-      [
-       1.0,
-       0.0,
-       3.0
-      ],
-      [
-       0.0,
-       0.0,
-       3.0
-      ],
-      [
-       0.0,
-       0.0,
-       2.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "missing_faces_in_vibe3d": [
-     [
-      [
-       3.0,
-       0.0,
-       0.0
-      ],
-      [
-       3.0,
-       0.0,
-       1.0
-      ],
-      [
-       3.0,
-       0.0,
-       2.0
-      ],
-      [
-       3.0,
-       0.0,
-       3.0
-      ],
-      [
-       2.0,
-       0.0,
-       3.0
-      ],
-      [
-       2.0,
-       0.0,
-       2.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       2.0
-      ],
-      [
-       2.0,
-       0.0,
-       2.0
-      ],
-      [
-       2.0,
-       0.0,
-       3.0
-      ],
-      [
-       1.0,
-       0.0,
-       3.0
-      ],
-      [
-       0.0,
-       0.0,
-       3.0
-      ],
-      [
-       0.0,
-       0.0,
-       2.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ]
+    "missing_in_vibe3d": [],
+    "extra_faces_in_vibe3d": [],
+    "missing_faces_in_vibe3d": []
    }
   },
   {
    "name": "opposite_winding_pair_refused",
-   "note": "Reference: one hexagon (6 verts / 6 edges / 1 face). Ours: the two input quads survive unchanged (6 verts / 7 edges / 2 faces). The vertex sets MATCH COMPLETELY -- vertices report parity here and the face channel is the only one that sees the gap.",
+   "note": "CLOSED by task 1220. One hexagon, 6 verts / 6 edges / 1 face on both sides, wound like the FIRST face of the component. As measured before the fix the two input quads survived unchanged (6 verts / 7 edges / 2 faces). The vertex sets MATCH COMPLETELY in both states -- vertices report parity here either way, and the face channel is the only one that ever saw this cell.",
    "capture_case": "merge_all_wind_flip",
    "input": [
     {
@@ -1050,8 +923,8 @@
    "vibe3d_current": {
     "counts": {
      "verts": 6,
-     "edges": 7,
-     "faces": 2
+     "edges": 6,
+     "faces": 1
     },
     "vertices": [
      [
@@ -1088,31 +961,9 @@
     "faces": [
      [
       [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
+       2.0,
        0.0,
        0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       1.0
       ],
       [
        2.0,
@@ -1120,7 +971,17 @@
        1.0
       ],
       [
-       2.0,
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
        0.0,
        0.0
       ],
@@ -1135,86 +996,8 @@
    "divergence": {
     "extra_in_vibe3d": [],
     "missing_in_vibe3d": [],
-    "extra_faces_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "missing_faces_in_vibe3d": [
-     [
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ]
+    "extra_faces_in_vibe3d": [],
+    "missing_faces_in_vibe3d": []
    }
   }
  ]

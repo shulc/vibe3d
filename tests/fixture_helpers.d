@@ -2106,7 +2106,10 @@ private double[3][][] jgroups(JSONValue v) {
 ///     compared; only which faces share a tag with which. Gap declared as
 ///     `divergence.material_partition.{reference,vibe3d}_group_sizes`, and the
 ///     runner additionally requires the two partitions to still DIFFER — a
-///     material carry that started working reddens here.
+///     material carry that started working reddens here. Once it is CLOSED and
+///     the case converted (both frozen sides carrying the same partition, the
+///     declared sizes equal), that requirement inverts: the runner then demands
+///     the live partition MATCH the reference, so a re-opened gap reddens too.
 ///
 /// Both are opt-in per case: a case that omits `faces` gets exactly the
 /// pre-1140 vertex-only behaviour.
@@ -2276,10 +2279,26 @@ void runKnownDivergenceSuite(string fixtureJson) {
                 if ("vibe3d_group_sizes" in mp)
                     sameSizes("vibe3d", groupSizes(gotG), mp["vibe3d_group_sizes"]);
             }
-            assert(!partitionEq(gotG, refG, tol),
-                format("%s: vibe3d's material partition now MATCHES the "
-                       ~ "reference's. The divergence has CLOSED — delete this "
-                       ~ "case and add a parity one in its place.", cn));
+            // A case whose two FROZEN sides already agree is a CONVERTED one:
+            // the divergence closed, the declaration was updated to an empty
+            // gap, and what it now pins is parity. Asserting the two still
+            // differ would make closing a divergence impossible to record
+            // without deleting the case — and the case, with its input, its op
+            // and its measured reference, is the part worth keeping (task
+            // 1220). Which arm runs is derived from the fixture's own data, not
+            // from a flag someone can set by hand.
+            // A CONVERTED case needs no assertion of its own here, and adding
+            // one would be inert: with the two frozen partitions equal, check
+            // (1) above — live == `vibe3d_current` — IS the parity check, and
+            // it fails first on any drift. What must not survive conversion is
+            // the demand that the two still differ.
+            if (!partitionEq(refG, mineG, tol))
+                assert(!partitionEq(gotG, refG, tol),
+                    format("%s: vibe3d's material partition now MATCHES the "
+                           ~ "reference's. The divergence has CLOSED — convert "
+                           ~ "this case: set `vibe3d_current.material_groups` "
+                           ~ "to the reference's partition and declare the two "
+                           ~ "group-size lists equal.", cn));
         }
         // ---- optional: the DISPLACEMENT law behind the vertex gap ---------
         // Some divergences are not "these vertices differ" but "both engines

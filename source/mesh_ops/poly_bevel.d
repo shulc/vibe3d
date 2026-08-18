@@ -1024,6 +1024,27 @@ mixin template MeshPolyBevelOps() {
             // Ring quads inherit Subpatch from the beveled source face.
             resizeSubpatch();
             foreach (rfi; ringStart .. faces.length) setFaceSubpatch(rfi, srcSub);
+            // ...and its SURFACE (task 1220, ledger row 35b). `addFace` grows
+            // the PolyVertex maps but NOT faceMaterial / facePart / faceSetMask,
+            // so the kernel tail's `syncSelection()` used to zero-grow them and
+            // every rim face came back on the default surface — the inset cap
+            // kept the tag only because it reuses slot `fi`. Measured against
+            // the reference on an annulus with one painted face: the tag rides
+            // ALL FIVE faces the painted one generated (a 5 + 7 partition),
+            // where we returned 1 + 11. Read the source's values BEFORE the
+            // grow — growing first makes the read land in the freshly zeroed
+            // tail (the same order `spikeFacesByMask` keeps in this file).
+            immutable uint  srcMat  = fi < faceMaterial.length ? faceMaterial[fi] : 0u;
+            immutable uint  srcPart = fi < facePart.length     ? facePart[fi]     : 0u;
+            immutable ulong srcSet  = fi < faceSetMask.length  ? faceSetMask[fi]  : 0UL;
+            if (faceMaterial.length < faces.length) faceMaterial.length = faces.length;
+            if (facePart.length     < faces.length) facePart.length     = faces.length;
+            if (faceSetMask.length  < faces.length) faceSetMask.length  = faces.length;
+            foreach (rfi; ringStart .. faces.length) {
+                faceMaterial[rfi] = srcMat;
+                facePart[rfi]     = srcPart;
+                faceSetMask[rfi]  = srcSet;
+            }
             // Every face this source face appended reads its island (task 0697).
             if (remapUv) {
                 faceSrcOf.length = faces.length;

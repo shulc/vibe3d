@@ -71,6 +71,51 @@ class MeshSpinEdge : Command, Operator {
                 snap = MeshSnapshot.init;
                 return false;
             }
+
+            // TRANSACTION (task 1220, ledger row 10). A spin rewrites BOTH of
+            // its edge's faces, so two selected edges that share a face are two
+            // rewrites of one face. Applied one after another — which is what
+            // the loop below does, each spin rebuilding edges and loops before
+            // the next reads them — the second spin acts on a face the first
+            // already replaced, and the mesh that comes out depends on the
+            // order the edges happened to be selected in. The reference
+            // CANCELS the whole command in that case and changes nothing;
+            // measured on a 3x3 grid, two interior edges whose face pairs
+            // overlap. Its control — the same two edges with DISJOINT pairs —
+            // spins both on both engines, so what is refused is the overlap and
+            // not multi-edge spin.
+            //
+            // This is a GATE and not a rollback ON PURPOSE, and the difference
+            // is measured, not stylistic: neither of the two overlapping spins
+            // FAILS here. Both return true and both apply, so there is no
+            // failure for a revert to react to — `MeshSnapshot` would restore
+            // nothing because nothing reported trouble. The conflict is only
+            // visible BEFORE the first spin, in the incidence of the original
+            // mesh.
+            //
+            // Scoped to the EDGES branch, which is the gesture the reference
+            // was driven through (`edge.spinQuads` over an edge selection). The
+            // polygon branch below is our own extension — its operand is
+            // derived from a face selection, not named edge by edge — and no
+            // measurement covers it, so it is left sequential rather than given
+            // an invented rule.
+            {
+                auto edgeFaces = mesh.buildEdgeFaces();
+                bool[int] faceSeen;
+                foreach (k; selKeys) {
+                    auto p = k in edgeFaces;
+                    if (p is null) continue;
+                    immutable int fA = (*p)[0], fB = (*p)[1];
+                    if (fA < 0 || fB < 0) continue;   // boundary — spins nothing
+                    if (fA in faceSeen || fB in faceSeen) {
+                        snap = MeshSnapshot.init;     // nothing was mutated
+                        return false;
+                    }
+                    faceSeen[fA] = true;
+                    faceSeen[fB] = true;
+                }
+            }
+
             ulong[] productKeys;
             foreach (k; selKeys) {
                 uint ei = mesh.edgeIndexByKey(k);

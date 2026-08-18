@@ -2489,7 +2489,8 @@ struct Mesh {
     /// task 0402 Phase 4 risk #2) so the two can never drift apart — see
     /// `weldCoincidentVertices`'s doc comment for the full search rationale
     /// and `epsSq`/`protectBelow` semantics.
-    int[] computeWeldRemap(double epsSq = 1e-12, size_t protectBelow = 0) const {
+    int[] computeWeldRemap(double epsSq = 1e-12, size_t protectBelow = 0,
+                           bool pairsMustCrossBound = false) const {
         int[] remap;
         remap.length = vertices.length;
         foreach (i; 0 .. vertices.length) remap[i] = cast(int)i;
@@ -2524,6 +2525,18 @@ struct Mesh {
                     if (j <= i) continue;
                     if (remap[j] != cast(int)j) continue;
                     if (i < protectBelow && j < protectBelow) continue;
+                    // Task 1220, ledger row 32: the SCOPE of a mirror's weld.
+                    // With the bound alone a pair of freshly appended vertices
+                    // is eligible, so two IMAGES of two distinct source
+                    // vertices weld to each other — measured on a base whose
+                    // near-duplicate pair is 7.071e-4 apart against a 1e-3
+                    // threshold: the reference keeps BOTH images (10 verts),
+                    // we returned 9. Note what this is NOT: the pair is inside
+                    // the threshold under a strict AND a non-strict compare,
+                    // so no comparison at the boundary is involved. What the
+                    // cell measures is which pairs are looked at at all.
+                    if (pairsMustCrossBound &&
+                        i >= protectBelow && j >= protectBelow) continue;
                     Vec3 d = vertices[i] - vertices[j];
                     if (d.x * d.x + d.y * d.y + d.z * d.z < epsSq)
                         remap[j] = cast(int)i;
@@ -2548,9 +2561,18 @@ struct Mesh {
     /// needs (a clone landing back on ITS OWN or on some OTHER pre-existing
     /// vertex is the legitimate case; two pre-existing vertices merging
     /// with each other is not).
-    size_t weldCoincidentVertices(double epsSq = 1e-12, size_t protectBelow = 0) {
+    ///
+    /// `pairsMustCrossBound` narrows that to pairs that CROSS the bound —
+    /// exactly one index below it. It closes the remaining case the bound
+    /// alone lets through: two NEWLY-APPENDED vertices welding to each other.
+    /// For a mirror those are the images of two distinct source vertices, and
+    /// the reference does not join them (task 1220, ledger row 32; frozen in
+    /// `tests/fixtures/mirror_weld_scope_divergence.json`). Default false, so
+    /// every caller that does not ask for it is byte-unchanged.
+    size_t weldCoincidentVertices(double epsSq = 1e-12, size_t protectBelow = 0,
+                                  bool pairsMustCrossBound = false) {
         if (vertices.length < 2) return 0;
-        int[] remap = computeWeldRemap(epsSq, protectBelow);
+        int[] remap = computeWeldRemap(epsSq, protectBelow, pairsMustCrossBound);
 
         size_t welded = 0;
         foreach (i; 0 .. vertices.length)
@@ -3928,11 +3950,102 @@ struct Mesh {
             // interior and dissolves. On a clean merge where every interior
             // edge WAS selected (e.g. the cube-corner fan) this is identical to
             // the selected-only drop, so those results stay byte-for-byte.
-            int[ulong] compEdgeCount;
+            // One pass, one table: how many of the component's faces use each
+            // edge, AND the (up to two, distinct-face) darts that use it. Task
+            // 1220 needs the darts for the orientation pass and the bridge
+            // below; folding them into the multiplicity tally keeps this at the
+            // ONE associative-array build per component it has always been —
+            // this loop walks every corner of every component face, and on the
+            // perf lane's 99 856-face grid a second table here would be paid on
+            // every dissolve (task 0688 measured what that costs).
+            struct CompEdge {
+                int    count;
+                uint[2] dartFace   = uint.max;
+                uint[2] dartCorner;
+            }
+            CompEdge[ulong] compEdges;
             foreach (fi; comp) {
                 auto f = faces[fi];
-                foreach (k; 0 .. f.length)
-                    ++compEdgeCount[edgeKey(f[k], f[(k + 1) % f.length])];
+                foreach (k; 0 .. f.length) {
+                    immutable ulong key = edgeKey(f[k], f[(k + 1) % f.length]);
+                    auto p = key in compEdges;
+                    if (p is null) {
+                        CompEdge ce;
+                        ce.count         = 1;
+                        ce.dartFace[0]   = cast(uint) fi;
+                        ce.dartCorner[0] = cast(uint) k;
+                        compEdges[key]   = ce;
+                    } else {
+                        ++p.count;
+                        if (p.dartFace[1] == uint.max &&
+                            p.dartFace[0] != cast(uint) fi) {
+                            p.dartFace[1]   = cast(uint) fi;
+                            p.dartCorner[1] = cast(uint) k;
+                        }
+                    }
+                }
+            }
+
+            // ---- task 1220 (ledger row 33): ONE ORIENTATION PER COMPONENT ---
+            // Two faces that share an edge and traverse it in the SAME
+            // direction are wound against each other. The boundary walk below
+            // cancels a shared edge only through the multiplicity tally, which is
+            // winding-blind, so on a counter-wound pair the two surviving
+            // half-edge chains never join head to tail: the walk dies after
+            // two corners and the whole component is skipped — measured as
+            // "poly.merge leaves both quads standing" (7 edges, 2 faces).
+            // The reference merges them into one hexagon wound like the FIRST
+            // face of the component, so flip every face reached across a
+            // same-direction edge, seeded by `comp[0]` — the same face the
+            // merged polygon already inherits its marks / material / part /
+            // selection-order from.
+            //
+            // On an already-consistent component NOTHING flips and every line
+            // below sees the arrays it saw before this block existed.
+            size_t[uint] localOf;
+            foreach (li, fi; comp) localOf[cast(uint) fi] = li;
+            bool[] flip = new bool[](comp.length);
+            {
+                bool[] seenFace = new bool[](comp.length);
+                size_t[] pending = [cast(size_t) 0];
+                seenFace[0] = true;
+                while (pending.length) {
+                    immutable size_t li = pending[0];
+                    pending = pending[1 .. $];
+                    auto f = faces[comp[li]];
+                    foreach (k; 0 .. f.length) {
+                        immutable uint a = f[k], b = f[(k + 1) % f.length];
+                        if (a == b) continue;
+                        auto dp = edgeKey(a, b) in compEdges;
+                        if (dp is null) continue;
+                        foreach (slot; 0 .. 2) {
+                            immutable uint df = dp.dartFace[slot];
+                            if (df == uint.max || df == cast(uint) comp[li]) continue;
+                            immutable size_t lj = localOf[df];
+                            if (seenFace[lj]) continue;
+                            auto g = faces[df];
+                            // `g` stores this edge as a→b as well ⇒ the two
+                            // rings disagree and one of them must be reversed.
+                            immutable bool sameDir = (g[dp.dartCorner[slot]] == a);
+                            seenFace[lj] = true;
+                            flip[lj]     = flip[li] ^ sameDir;
+                            pending ~= lj;
+                        }
+                    }
+                }
+            }
+
+            // The component's rings, read through `flip`. A flipped face is
+            // its own vertex list reversed, so oriented corner k sits at
+            // ORIGINAL corner n-1-k — which is the corner the per-corner maps
+            // (UVs, weights) must be traced to.
+            uint orientedVert(size_t li, size_t k) {
+                auto f = faces[comp[li]];
+                return flip[li] ? f[f.length - 1 - k] : f[k];
+            }
+            uint orientedCorner(size_t li, size_t k) {
+                auto f = faces[comp[li]];
+                return cast(uint)(flip[li] ? f.length - 1 - k : k);
             }
 
             // Gather directed half-edges from the component, dropping
@@ -3943,14 +4056,16 @@ struct Mesh {
             // START corner, parallel to `outAt`.
             uint[][uint] outAt;  // outAt[u] = list of `v` for each surviving u→v
             uint[][uint] outSrc; // outSrc[u][i] = old loop index of u→v's start
-            foreach (fi; comp) {
+            foreach (li, fi; comp) {
                 auto f = faces[fi];
                 foreach (k; 0 .. f.length) {
-                    uint a = f[k], b = f[(k + 1) % f.length];
-                    if (compEdgeCount[edgeKey(a, b)] >= 2) continue;
+                    uint a = orientedVert(li, k);
+                    uint b = orientedVert(li, (k + 1) % f.length);
+                    if (compEdges[edgeKey(a, b)].count >= 2) continue;
                     outAt[a] ~= b;
                     if (remapUv)
-                        outSrc[a] ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, cast(uint)k);
+                        outSrc[a] ~= oldFaceLoopIndex(oldFaceLoop, cast(uint) fi,
+                                                      orientedCorner(li, k));
                 }
             }
 
@@ -3958,39 +4073,185 @@ struct Mesh {
             // until back to start. A simple connected face fan produces one
             // closed loop; degenerate inputs may leave half-edges behind
             // (we accept the first walk).
+            void walkLoop(uint startV, out uint[] poly, out uint[] polySrc) {
+                uint cur = startV;
+                while (true) {
+                    poly ~= cur;
+                    auto p = cur in outAt;
+                    if (p is null || (*p).length == 0) {
+                        if (remapUv) polySrc ~= ~0u; // dangling start ⇒ zero-fill
+                        break;
+                    }
+                    uint nxt = (*p)[0];
+                    *p = (*p)[1 .. $];
+                    if (remapUv) {
+                        // Consume the parallel source entry. The corner just pushed
+                        // (`cur`) is the START of this consumed half-edge, so its old
+                        // loop index is the source for this poly corner.
+                        auto ps = cur in outSrc;
+                        if (ps !is null && (*ps).length > 0) {
+                            polySrc ~= (*ps)[0];
+                            *ps = (*ps)[1 .. $];
+                        } else {
+                            polySrc ~= ~0u;
+                        }
+                    }
+                    if (nxt == startV) break;
+                    cur = nxt;
+                }
+            }
+
             if (outAt.length == 0) continue;
             uint startV = uint.max;
             foreach (k; outAt.byKey) { startV = k; break; }
 
             uint[] poly;
             uint[] polySrc; // old loop index per poly corner (mechanism b)
-            uint cur = startV;
-            while (true) {
-                poly ~= cur;
-                auto p = cur in outAt;
-                if (p is null || (*p).length == 0) {
-                    if (remapUv) polySrc ~= ~0u; // dangling start ⇒ zero-fill
-                    break;
-                }
-                uint nxt = (*p)[0];
-                *p = (*p)[1 .. $];
-                if (remapUv) {
-                    // Consume the parallel source entry. The corner just pushed
-                    // (`cur`) is the START of this consumed half-edge, so its old
-                    // loop index is the source for this poly corner.
-                    auto ps = cur in outSrc;
-                    if (ps !is null && (*ps).length > 0) {
-                        polySrc ~= (*ps)[0];
-                        *ps = (*ps)[1 .. $];
-                    } else {
-                        polySrc ~= ~0u;
-                    }
-                }
-                if (nxt == startV) break;
-                cur = nxt;
-            }
+            walkLoop(startV, poly, polySrc);
 
             if (poly.length < 3) continue;
+
+            // ---- task 1220 (ledger row 8): A REGION WITH A HOLE -------------
+            // Half-edges left over after that walk mean the union's boundary is
+            // MORE than one closed loop: the merged region has a hole, and the
+            // walk above described only one of its rims. Until now the rest was
+            // simply abandoned — the hole got paved over and its rim vertices,
+            // referenced by nothing, were dropped by the tail compaction (an
+            // annulus of eight quads came back as a 12-corner square, four
+            // vertices short).
+            //
+            // The reference returns ONE face whose ring enters the hole along
+            // an edge, goes round it and leaves along that same edge, so both
+            // of that edge's vertices stand in the ring twice and the edge
+            // itself survives, used twice by the one face — a keyhole.
+            //
+            // WHICH edge it bridges along is the part that is inferred rather
+            // than measured (one cell, `merge_all_grid_hole`): every one of the
+            // annulus's eight interior edges joins the two rims, and the one
+            // the reference used is the one a SEQUENTIAL dissolve reaches last
+            // — the edge whose two faces are already merged by the time it is
+            // processed, i.e. the CYCLE-closing edge of a union-find over the
+            // component's faces in ascending edge-array order. That is also the
+            // only mechanism under which a 2x2 block (whose dual is a cycle
+            // too, closed around an interior VERTEX and not a hole) keeps
+            // collapsing to a plain square, which it must. Interior edges that
+            // close no cycle are still tried afterwards, so a component that
+            // needs more bridges than it has cycle edges still closes.
+            uint[][] rings  = [poly];
+            uint[][] ringSrc = [polySrc];
+            foreach (v; outAt.byKey) {
+                while (true) {
+                    auto p = v in outAt;
+                    if (p is null || (*p).length == 0) break;
+                    uint[] hp, hs;
+                    walkLoop(v, hp, hs);
+                    if (hp.length < 3) break;   // dangling — not a rim
+                    rings ~= hp;
+                    ringSrc ~= hs;
+                }
+            }
+
+            if (rings.length > 1) {
+                // Interior edges of the component in ascending edge-array
+                // order, split into the ones that CLOSE a cycle of the dual and
+                // the ones that do not; the cycle-closers are tried first.
+                int[] cparent;
+                cparent.length = comp.length;
+                foreach (i; 0 .. comp.length) cparent[i] = cast(int) i;
+                int cfind(int x) {
+                    while (cparent[x] != x) { cparent[x] = cparent[cparent[x]]; x = cparent[x]; }
+                    return x;
+                }
+                uint[] cycleEdges, treeEdges;
+                foreach (ei; 0 .. edges.length) {
+                    immutable ulong key = edgeKey(edges[ei][0], edges[ei][1]);
+                    auto cc = key in compEdges;
+                    if (cc is null || cc.count < 2) continue;
+                    immutable uint fa = cc.dartFace[0], fb = cc.dartFace[1];
+                    if (fa == uint.max || fb == uint.max) continue;
+                    immutable int ra = cfind(cast(int) localOf[fa]);
+                    immutable int rb = cfind(cast(int) localOf[fb]);
+                    if (ra == rb) cycleEdges ~= cast(uint) ei;
+                    else { cparent[ra] = rb; treeEdges ~= cast(uint) ei; }
+                }
+
+                // The old loop index of the ORIENTED half-edge u→v, so a
+                // bridge corner carries the same per-corner payload the corner
+                // it stands on always did.
+                uint bridgeSrc(uint u, uint v) {
+                    if (!remapUv) return ~0u;
+                    auto dp = edgeKey(u, v) in compEdges;
+                    if (dp is null) return ~0u;
+                    foreach (slot; 0 .. 2) {
+                        immutable uint df = dp.dartFace[slot];
+                        if (df == uint.max) continue;
+                        immutable size_t li = localOf[df];
+                        auto f = faces[df];
+                        immutable size_t kk = dp.dartCorner[slot];
+                        immutable size_t nx = (kk + 1) % f.length;
+                        immutable uint su = flip[li] ? f[nx] : f[kk];
+                        immutable uint sv = flip[li] ? f[kk] : f[nx];
+                        if (su == u && sv == v)
+                            return oldFaceLoopIndex(oldFaceLoop, df,
+                                                    cast(uint)(flip[li] ? nx : kk));
+                    }
+                    return ~0u;
+                }
+
+                bool[] ringAlive = new bool[](rings.length);
+                ringAlive[] = true;
+                size_t aliveRings = rings.length;
+                foreach (ei; cycleEdges ~ treeEdges) {
+                    if (aliveRings == 1) break;
+                    immutable uint e0 = edges[ei][0], e1 = edges[ei][1];
+                    size_t r0 = size_t.max, p0, r1 = size_t.max, p1;
+                    foreach (r; 0 .. rings.length) {
+                        if (!ringAlive[r]) continue;
+                        foreach (t, x; rings[r]) {
+                            if (r0 == size_t.max && x == e0) { r0 = r; p0 = t; }
+                            if (r1 == size_t.max && x == e1) { r1 = r; p1 = t; }
+                        }
+                    }
+                    if (r0 == size_t.max || r1 == size_t.max || r0 == r1) continue;
+
+                    // Splice the higher-indexed ring INTO the lower one, so
+                    // rings[0] — the ring the untouched walk above produced —
+                    // stays the survivor.
+                    size_t ra = r0, pa = p0, rb = r1, pb = p1;
+                    uint a = e0, b = e1;
+                    if (rb < ra) {
+                        ra = r1; pa = p1; rb = r0; pb = p0;
+                        a = e1; b = e0;
+                    }
+                    auto A = rings[ra], As = ringSrc[ra];
+                    auto B = rings[rb], Bs = ringSrc[rb];
+
+                    // a → b → (all of B, from b) → b → a → (rest of A)
+                    uint[] merged = A[0 .. pa + 1].dup;
+                    uint[] mergedSrc;
+                    if (remapUv) {
+                        mergedSrc = As[0 .. pa].dup;
+                        mergedSrc ~= bridgeSrc(a, b);   // `a` now leaves along the bridge
+                    }
+                    foreach (t; 0 .. B.length) {
+                        merged ~= B[(pb + t) % B.length];
+                        if (remapUv) mergedSrc ~= Bs[(pb + t) % Bs.length];
+                    }
+                    merged ~= b;
+                    if (remapUv) mergedSrc ~= bridgeSrc(b, a);
+                    merged ~= a;
+                    if (remapUv) mergedSrc ~= As[pa];    // `a`'s original exit
+                    merged ~= A[pa + 1 .. $];
+                    if (remapUv) mergedSrc ~= As[pa + 1 .. $];
+
+                    rings[ra]   = merged;
+                    ringSrc[ra] = mergedSrc;
+                    ringAlive[rb] = false;
+                    --aliveRings;
+                }
+                poly    = rings[0];
+                polySrc = ringSrc[0];
+            }
 
             // Mark every face in the component for removal; the new
             // merged polygon will replace them.
@@ -5553,6 +5814,14 @@ struct Mesh {
             // are eligible. Without this, a large `weld` folds arbitrary
             // far-apart original vertices together across the whole mesh.
             //
+            // Task 1220 (ledger row 32) narrows it one step further with
+            // `pairsMustCrossBound`: eligible pairs must CROSS the bound, so a
+            // clone welds to an ORIGINAL and never to another clone. Measured:
+            // a base carrying a near-duplicate pair 7.071e-4 apart, mirrored
+            // with weld 1e-3, keeps BOTH images in the reference (10 verts) and
+            // lost one here (9). The pair is inside the threshold either way,
+            // so this is a question of scope, not of the comparison.
+            //
             // FULL PARITY (weld coincident-face convention): the weld merges
             // coincident VERTS only — it does NOT fingerprint-dedup faces. When
             // the mirror maps geometry onto itself — a symmetric object
@@ -5566,7 +5835,8 @@ struct Mesh {
             // welded-away vert slots via compactUnreferenced — the same
             // keep-doubled convention as arrayFaces / radialArrayFaces.
             const size_t cornersBeforeWeld = cornerCount();
-            if (weldCoincidentVertices(epsSq, origVertexCount) > 0) {
+            if (weldCoincidentVertices(epsSq, origVertexCount,
+                                       /*pairsMustCrossBound*/ true) > 0) {
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
@@ -12650,6 +12920,29 @@ Mesh facetedSubdivide(ref const Mesh m, const bool[] faceMask) {
     result.resizeFaceSelection();
     foreach (k, parentFi; outFaceOrigin)
         result.setFaceHiddenBit(k, m.isFaceHidden(parentFi));
+
+    // MATERIAL (task 1220, ledger row 35a) — the same class of drop the Hide
+    // block above describes, and it was still open for the surface tag: the
+    // result is a freshly constructed Mesh, so `surfaces`, `faceMaterial`,
+    // `facePart` and `faceSetMask` were all empty and every output face came
+    // back on the default surface. Measured against the reference: paint one
+    // face of a non-planar pair, subdivide it, and the tag rides ALL FOUR
+    // children — a 1 + 4 partition where we returned a single group of 5.
+    //
+    // `outFaceOrigin[k]` is the cage face that emitted output face k, which is
+    // exactly the carry vector: a split face hands its tag to every child, an
+    // un-split face carries its own across whole — the same shape as the Hide
+    // stamp directly above. The registry travels too; a face index into a
+    // registry that did not survive names nothing.
+    result.surfaces = m.surfaces.dup;
+    result.faceMaterial.length = result.faces.length;
+    result.facePart.length     = result.faces.length;
+    result.faceSetMask.length  = result.faces.length;
+    foreach (k, parentFi; outFaceOrigin) {
+        result.faceMaterial[k] = parentFi < m.faceMaterial.length ? m.faceMaterial[parentFi] : 0u;
+        result.facePart[k]     = parentFi < m.facePart.length     ? m.facePart[parentFi]     : 0u;
+        result.faceSetMask[k]  = parentFi < m.faceSetMask.length  ? m.faceSetMask[parentFi]  : 0UL;
+    }
     // Derived vertex/edge planes, computed on the OUTPUT topology. Must come
     // AFTER the three resizes — refreshHiddenDerived writes vertexMarks /
     // edgeMarks in place — and it early-outs to three word-OR scans when

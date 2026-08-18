@@ -1,6 +1,6 @@
 {
  "name": "mirror_weld_scope_divergence",
- "description": "Which pairs a mirror's weld is allowed to join. Base: a quad plus a triangle whose corner (1.0005, 0, 0.0005) sits 7.071e-4 from the quad's corner (1,0,0). Mirrored through x = 0 with weld distance 1e-3, the reference returns 10 vertices, keeping BOTH images (-1,0,0) and (-1.0005,0,0.0005); we return 9, having welded that pair into one. The surviving face rings follow: our mirrored triangle is (-1,0,1)-(-2,0,1)-(-1,0,0) where the reference's is (-1.0005,0,0.0005)-(-1,0,1)-(-2,0,1). NOTE, and it corrects the ledger row that prompted this fixture: the pair in question is 7.071e-4 apart, which is INSIDE 1e-3 under either a strict or a non-strict comparison, so this cell does not measure a threshold comparison at all. What it measures is SCOPE -- our weld considers the freshly created images against each other, the reference's does not join two images of two distinct source vertices. That reading is an INFERENCE from this one cell; the frozen numbers are the measurement.",
+ "description": "Which pairs a mirror's weld is allowed to join. CLOSED by task 1220; the declared gap is empty in the vertex AND the face channel and the runner recomputes both live. Base: a quad plus a triangle whose corner (1.0005, 0, 0.0005) sits 7.071e-4 from the quad's corner (1,0,0). Mirrored through x = 0 with weld distance 1e-3, the reference returns 10 vertices, keeping BOTH images (-1,0,0) and (-1.0005,0,0.0005); as measured we returned 9, having welded that pair into one, and the mirrored triangle's ring lost its own corner with them. NOTE, and it corrects the ledger row that prompted this fixture: the pair in question is 7.071e-4 apart, which is INSIDE 1e-3 under a strict AND a non-strict comparison, so this cell does not measure a threshold comparison at all. What it measures is SCOPE -- our weld considered the freshly created images against each other, the reference's does not join two images of two distinct source vertices. The fix states that as its own parameter: `weldCoincidentVertices(..., pairsMustCrossBound: true)` makes a pair eligible only when exactly one of its two indices is a fresh image. That reading of the MECHANISM is still an INFERENCE from this one cell; the frozen numbers are the measurement.",
  "source": "Reference side: headless command-port capture of the mirror command with axis x, centre 0, merge on, fixed range, distance 1e-3 (dirty-geometry sweep, task 1123, case mirr_x_neardup). vibe3d side: live drive of this build.",
  "provenance": {
   "schema": 1,
@@ -16,7 +16,7 @@
  "cases": [
   {
    "name": "two_images_of_a_near_duplicate_pair",
-   "note": "Reference: 10 vertices, 13 edges, 4 faces -- both (-1,0,0) and (-1.0005,0,0.0005) survive. Ours: 9 vertices, 12 edges, 4 faces -- (-1.0005,0,0.0005) is welded away. The source pair (1,0,0)/(1.0005,0,0.0005), 7.071e-4 apart, survives intact on both sides; only their images differ.",
+   "note": "CLOSED by task 1220. 10 vertices, 13 edges, 4 faces on both sides -- both (-1,0,0) and (-1.0005,0,0.0005) survive, and the mirrored triangle's ring is (-1.0005,0,0.0005)-(-1,0,1)-(-2,0,1) on both. As measured before the fix we returned 9 vertices and 12 edges, (-1.0005,0,0.0005) welded away. The source pair (1,0,0)/(1.0005,0,0.0005), 7.071e-4 apart, survives intact on both sides and always did; only their images ever differed.",
    "capture_case": "mirr_x_neardup",
    "input": [
     {
@@ -239,8 +239,8 @@
    },
    "vibe3d_current": {
     "counts": {
-     "verts": 9,
-     "edges": 12,
+     "verts": 10,
+     "edges": 13,
      "faces": 4
     },
     "vertices": [
@@ -283,6 +283,11 @@
       -1.0,
       0.0,
       1.0
+     ],
+     [
+      -1.0005,
+      0.0,
+      0.0005
      ],
      [
       -2.0,
@@ -334,72 +339,24 @@
       [
        0.0,
        0.0,
-       1.0
-      ],
-      [
-       -1.0,
-       0.0,
-       1.0
-      ],
-      [
-       -1.0,
-       0.0,
        0.0
       ],
       [
        0.0,
+       0.0,
+       1.0
+      ],
+      [
+       -1.0,
+       0.0,
+       1.0
+      ],
+      [
+       -1.0,
        0.0,
        0.0
       ]
      ],
-     [
-      [
-       -1.0,
-       0.0,
-       1.0
-      ],
-      [
-       -2.0,
-       0.0,
-       1.0
-      ],
-      [
-       -1.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ]
-   },
-   "divergence": {
-    "extra_in_vibe3d": [],
-    "missing_in_vibe3d": [
-     [
-      -1.0005,
-      0.0,
-      0.0005
-     ]
-    ],
-    "extra_faces_in_vibe3d": [
-     [
-      [
-       -1.0,
-       0.0,
-       1.0
-      ],
-      [
-       -2.0,
-       0.0,
-       1.0
-      ],
-      [
-       -1.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "missing_faces_in_vibe3d": [
      [
       [
        -1.0005,
@@ -418,6 +375,12 @@
       ]
      ]
     ]
+   },
+   "divergence": {
+    "extra_in_vibe3d": [],
+    "missing_in_vibe3d": [],
+    "extra_faces_in_vibe3d": [],
+    "missing_faces_in_vibe3d": []
    }
   }
  ]
