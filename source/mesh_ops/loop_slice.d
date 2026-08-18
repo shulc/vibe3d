@@ -269,21 +269,34 @@ mixin template MeshLoopSliceOps() {
         foreach (fi; facesAroundEdge(seedEdge))
             if (nFaces < 2) incFaces[nFaces++] = fi;
         if (nFaces == 0) return [];
-        // Both seed-incident faces must be quads.  If either is a non-quad the
-        // seed edge would still receive a midpoint vertex while the non-quad
-        // face stays unsplit → T-junction (non-manifold).  Return empty so the
-        // caller treats the op as a no-op / error.
+        // The ring only PROPAGATES through quads — but since task 1240 (ledger
+        // rows 27/53) it no longer REFUSES TO START because the seed's OTHER
+        // face is not one. The old guard read: "the seed edge would still get a
+        // midpoint while the non-quad face stayed unsplit → T-junction", which
+        // was true when it was written and has not been since the
+        // watertight-by-default change. The terminating midpoint is ABSORBED
+        // into that neighbour's boundary by `insertEdgeLoopsMulti`'s two-pass
+        // path — exactly as it already was for the non-quad the walk stops at
+        // MID-ring, which this guard never covered. Refusing at the seed and
+        // absorbing mid-walk were two different answers to one question, and
+        // the reference measurement gives the second: on a quad+triangle it
+        // cuts the quad half and re-rings the triangle through the new vertex
+        // (2 faces → 3, +2 vertices). A seed with NO quad at all is still
+        // empty — there is no quad frame to take the p/q rails from, and
+        // nothing measured says what should happen there.
+        uint[] quadSides;
         foreach (i; 0 .. nFaces)
-            if (faces[incFaces[i]].length != 4) return [];
+            if (faces[incFaces[i]].length == 4) quadSides ~= incFaces[i];
+        if (quadSides.length == 0) return [];
 
         bool closedA;
-        auto sideA = walkRingSide(seedEdge, incFaces[0], closedA, ngon);
+        auto sideA = walkRingSide(seedEdge, quadSides[0], closedA, ngon);
         if (closedA) { closed = true; return sideA; }  // one pass hit closure
 
-        if (nFaces == 1) return sideA;                 // boundary edge, open
+        if (quadSides.length == 1) return sideA;       // boundary / non-quad other side
 
         bool closedB;
-        auto sideB = walkRingSide(seedEdge, incFaces[1], closedB, ngon);
+        auto sideB = walkRingSide(seedEdge, quadSides[1], closedB, ngon);
         // Task 0398: side B's rail senses run opposite to side A's (the seed
         // edge carries opposite darts in its two incident faces) — mark every
         // side-B entry so `getMids` mirrors a FRESH rail's fraction and lands
@@ -670,6 +683,20 @@ mixin template MeshLoopSliceOps() {
                 seenRingKey[key] = true;
                 rings ~= ring;
                 if (!closed) anyOpenRing = true;    // terminating ring → absorb pass
+                // Task 1240 note — why `!closed` still covers the newly
+                // allowed seed (a quad on one side, a non-quad on the other),
+                // with no extra term here: for the walk to CLOSE it must reach
+                // a face whose exit edge IS the seed edge, and the seed edge's
+                // only faces are the start quad (which `walkRingSide`'s
+                // visited set refuses to re-enter) and that non-quad (which
+                // the walk will not step onto). So such a ring is always open
+                // and always takes the absorb pass. Under `ngon` the walk may
+                // cross an N >= 5 face and can close through it — but a
+                // traversed n-gon is a RING face, split rather than absorbed,
+                // so it needs no absorb either. A defensive `anyOpenRing =
+                // true` for that seed was written here and then removed: no
+                // mutation could redden it, which is the definition of a line
+                // that is not doing anything.
             }
             if (rings.length == 0) return false;
 

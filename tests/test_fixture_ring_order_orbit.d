@@ -19,11 +19,43 @@
 // pinning one rotation would have frozen the false parity and lost the
 // finding. Three cases here exist to say the opposite thing just as loudly:
 // `vertex_bevel_dart` and `loop_slice_pentagon_quad` came back INVARIANT on
-// both sides, so they are CAPABILITY gaps -- our op does not run at all -- and
+// both sides, so they were CAPABILITY gaps -- our op did not run at all -- and
 // not ring-order laws; and the two `loop_slice_annulus_*` cases are a control
 // pair showing that what differs there is the placement law, not the ring.
 // Without the orbit none of the three is distinguishable in a diff from the
 // ones that are ring-order laws.
+//
+// WHAT TASK 1240 CHANGED. The two capability gaps above are CLOSED, by
+// implementing the ops rather than by adjusting anything here:
+//
+//   * `vertex_bevel_dart` (ledger row 52) -- the vertex bevel's acceptance
+//     test demanded an interior-manifold vertex of valence >= 3, so the dart's
+//     valence-2 boundary corner was declined. It is chamfered now, and lands
+//     on the reference's five vertices and its pentagon ring at every
+//     rotation.
+//   * `loop_slice_pentagon_quad` (row 53) -- the ring walk refused any seed
+//     with a non-quad on either side. It now starts from the quad side and
+//     the pentagon absorbs the terminating midpoint, giving the reference's
+//     9 verts / 11 edges / 3 faces at every rotation.
+//
+// Both reclassified `capability_gap` -> `neither_reads_the_ring`, which the
+// runner RE-DERIVES from the applied flags and the two orbit patterns rather
+// than reading off the fixture -- so the reclassification is the data's, not
+// an edit. The cases are kept and converted: the orbit still asserts that
+// neither engine reads the ring on these shapes, and the per-rotation
+// `matches_reference` flags -- which flipped from false to true -- now assert
+// the parity where they used to assert the gap.
+//
+// STILL OPEN, and deliberately not touched by 1240: the
+// `loop_slice_annulus_*` pair. The midpoint cut agrees; the off-centre one
+// does not, because the two engines measure `position` from OPPOSITE ends of
+// the seed rail (we take the seed edge's direction in its first incident
+// face's winding; the reference lands at 1-t relative to that). It is a
+// placement law rather than a capability, and the whole frozen corpus has
+// exactly ONE shape that can see it -- every other reference-measured ring cut
+// is either at 0.5 or on a palindromic position set. One cell is not enough to
+// choose between the rules that fit it, so the pair stays declared. See the
+// task 1240 card for the candidates and what would separate them.
 //
 // WHAT TASK 1190 CHANGED, AND WHAT IT DELIBERATELY DID NOT. 1190 ported the
 // two laws in this file that were OURS:

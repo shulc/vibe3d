@@ -196,10 +196,19 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// T4. No-op seed: triangulate one cube face (mesh.triple), then seed on an
-//     edge shared between a triangle-half and a still-quad neighbour — the
-//     kernel's T-junction guard makes collectEdgeRing (and therefore the
-//     tool) a no-op. No crash, no geometry change.
+// T4. Triangle-adjacent seed: triangulate one cube face (mesh.triple), then
+//     seed on an edge shared between a triangle-half and a still-quad
+//     neighbour. The tool CUTS the quad side and the triangle absorbs the
+//     terminating midpoint.
+//
+//     TASK 1240 REVERSED THIS CASE (ledger rows 27/53). It used to assert the
+//     tool was a no-op here, because `collectEdgeRing` refused any seed with a
+//     non-quad incident face to avoid a T-junction. The absorb pass makes that
+//     unnecessary — the terminating midpoint has been spliced into the
+//     non-quad neighbour by default since the watertight change — and the
+//     reference cuts on this shape. What the case now pins is that the cut
+//     happens AND stays watertight: the triangle picks up the midpoint and
+//     comes back one corner wider, so no face is left on an un-split edge.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -216,19 +225,42 @@ unittest {
     assert(ei >= 0, "edge 0-1 not found after triple");
     postSelect("edges", [ei]);
 
+    // How many corners the incident triangle has BEFORE the cut, so the
+    // absorb is asserted by the count it changes rather than by arity alone.
+    int triBefore = 0;
+    foreach (fi; 0 .. before["faceCount"].integer)
+        if (before["faces"].array[fi].array.length == 3) ++triBefore;
+    assert(triBefore == 2, "mesh.triple must leave exactly 2 triangles");
+
     cmd("tool.set mesh.loopSliceTool on");
     cmd("tool.attr mesh.loopSliceTool count 1");
-    // doApply may report ok:false (nothing applied, à la the edge-extrude
-    // identity-params test) — assert geometry didn't change regardless.
     post("http://localhost:8080/api/command", "tool.doApply");
 
     auto after = getModel();
-    assert(after["vertexCount"].integer == before["vertexCount"].integer,
-        "no-op seed changed vertex count");
-    assert(after["faceCount"].integer == before["faceCount"].integer,
-        "no-op seed changed face count");
-    assert(after["edgeCount"].integer == before["edgeCount"].integer,
-        "no-op seed changed edge count");
+    assert(after["vertexCount"].integer > before["vertexCount"].integer,
+        "triangle-adjacent seed must now cut: vertex count did not grow");
+    assert(after["faceCount"].integer > before["faceCount"].integer,
+        "triangle-adjacent seed must now cut: face count did not grow");
+    // Euler stays 2 — the cut is watertight, not a T-junction.
+    assert(cast(int)after["vertexCount"].integer
+           - cast(int)after["edgeCount"].integer
+           + cast(int)after["faceCount"].integer == 2,
+        "cut across a triangle border must keep Euler == 2");
+    // The ring runs the cube's belt and terminates at the tripled face from
+    // BOTH ends, so BOTH triangles absorb a midpoint and come back as quads.
+    int triAfter = 0;
+    foreach (fi; 0 .. after["faceCount"].integer)
+        if (after["faces"].array[fi].array.length == 3) ++triAfter;
+    assert(triAfter == 0,
+        "both triangles on the terminating ring must absorb their midpoint and "
+        ~ "become quads (expected 0 triangles left, got " ~ triAfter.to!string ~ ")");
+    // Named, so "all quads" cannot be reached by losing the triangles some
+    // other way: the two absorbed points are the ring's own terminating
+    // midpoints on the tripled -z face.
+    assert(vertAt(after, V3(0.0, -0.5, -0.5)) >= 0,
+        "seed-edge midpoint (0,-0.5,-0.5) missing");
+    assert(vertAt(after, V3(0.0,  0.5, -0.5)) >= 0,
+        "far-end terminating midpoint (0,0.5,-0.5) missing");
 }
 
 // ---------------------------------------------------------------------------

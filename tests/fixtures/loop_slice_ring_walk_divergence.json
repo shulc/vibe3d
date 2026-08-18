@@ -1,6 +1,6 @@
 {
  "name": "loop_slice_ring_walk_divergence",
- "description": "How the loop-slice ring walk differs from the reference's, in two unrelated ways. (a) A ring that runs into a TRIANGLE: the reference cuts the quad half of a quad+triangle base at 0.5 and re-rings the triangle through the new vertex on the shared edge (5 vertices -> 7, 2 faces -> 3); our walk stops and the command is rejected, so nothing is cut. That half is a CAPABILITY GAP -- closing it means teaching the walk to terminate into a non-quad, not adjusting a parameter. (b) Three cuts across a 3x3 grid from one seed edge: the two engines produce THE SAME 28 VERTICES, THE SAME 45 EDGES AND THE SAME 18 FACES, and still disagree about 8 of those 18 face rings. Both cut the same band at the same three parameters; on our side the cut order along alternate rails is reversed, so a quad joins parameter t on one rail to 1-t on the next and the four quads of a column overlap each other instead of tiling it. The cut set {0.25, 0.5, 0.75} is its own mirror image, which is exactly why the vertex channel cannot see this.",
+ "description": "How the loop-slice ring walk differs from the reference's -- in two unrelated ways, of which the FIRST is now closed. (a) CLOSED BY IMPLEMENTATION (task 1240, ledger rows 27/53): a ring that runs into a TRIANGLE. The reference cuts the quad half of a quad+triangle base at 0.5 and re-rings the triangle through the new vertex on the shared edge (5 vertices -> 7, 2 faces -> 3); our walk used to stop and the command was rejected. The refusal lived in `collectEdgeRing`'s SEED guard -- 'a non-quad neighbour would keep its old ring while the seed edge gained a midpoint, so: T-junction' -- which had stopped being true when the terminating absorb became the default: the walk already stopped at a non-quad MID-ring and the neighbour already absorbed the midpoint there. The seed was the only place still refusing. That case declares an EMPTY gap now, in the vertex and the face channel, and is kept rather than deleted. (b) STILL OPEN (ledger row 28): three cuts across a 3x3 grid from one seed edge. The two engines produce THE SAME 28 VERTICES, THE SAME 45 EDGES AND THE SAME 18 FACES, and still disagree about 8 of those 18 face rings. Both cut the same band at the same three parameters; on our side the cut order along alternate rails is reversed, so a quad joins parameter t on one rail to 1-t on the next and the four quads of a column overlap each other instead of tiling it. The cut set {0.25, 0.5, 0.75} is its own mirror image, which is exactly why the vertex channel cannot see this.",
  "source": "Reference side: headless command-port capture of the loop-slice tool (dirty-geometry sweep, task 1123, cases loop_mid_triquad at count 1 / pos 0.5, and loop_three_grid33 at count 3). vibe3d side: live drive of this build.",
  "provenance": {
   "schema": 1,
@@ -16,7 +16,7 @@
  "cases": [
   {
    "name": "ring_stops_at_triangle",
-   "note": "Reference: 7 vertices, 9 edges, 3 faces -- new vertices at (1,0,0.5) and (0,0,0.5), and the triangle re-rung as a quad (1,0,0)-(2,0,0.5)-(1,0,1)-(1,0,0.5). Ours: input mesh unchanged, command rejected. CAPABILITY GAP -- closing it means implementing the walk's termination into a non-quad.",
+   "note": "Both engines: 7 vertices, 9 edges, 3 faces -- new vertices at (1,0,0.5) and (0,0,0.5), and the triangle re-rung as a quad (1,0,0)-(2,0,0.5)-(1,0,1)-(1,0,0.5). EMPTY GAP since task 1240 (ledger rows 27/53): the walk now starts from the quad side of a mixed seed and the triangle absorbs the terminating midpoint, so the cut is watertight rather than refused. The three face rings match the reference's including winding, not just the vertex set.",
    "capture_case": "loop_mid_triquad",
    "input": [
     {
@@ -97,7 +97,7 @@
        "position": 0.5
       }
      },
-     "allowError": true
+     "expectStatus": "ok"
     }
    ],
    "reference": {
@@ -214,9 +214,9 @@
    },
    "vibe3d_current": {
     "counts": {
-     "verts": 5,
-     "edges": 6,
-     "faces": 2
+     "verts": 7,
+     "edges": 9,
+     "faces": 3
     },
     "vertices": [
      [
@@ -243,53 +243,7 @@
       2.0,
       0.0,
       0.5
-     ]
-    ],
-    "faces": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
      ],
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.5
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ]
-   },
-   "divergence": {
-    "extra_in_vibe3d": [],
-    "missing_in_vibe3d": [
      [
       1.0,
       0.0,
@@ -301,48 +255,7 @@
       0.5
      ]
     ],
-    "extra_faces_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.5
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "missing_faces_in_vibe3d": [
+    "faces": [
      [
       [
        1.0,
@@ -410,6 +323,12 @@
       ]
      ]
     ]
+   },
+   "divergence": {
+    "extra_in_vibe3d": [],
+    "missing_in_vibe3d": [],
+    "extra_faces_in_vibe3d": [],
+    "missing_faces_in_vibe3d": []
    }
   },
   {

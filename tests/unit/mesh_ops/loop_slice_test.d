@@ -1467,19 +1467,58 @@ unittest {
     uint eiSeed = m.edgeIndex(1, 2);
     assert(eiSeed != ~0u, "edge 1-2 must exist in the mixed-valence mesh");
 
-    // collectEdgeRing must return empty: the triangle makes the seed non-manifold-safe.
+    // TASK 1240 REVERSED THIS BLOCK (ledger rows 27/53). It used to require
+    // `collectEdgeRing` to return [] here, because a non-quad on the seed edge
+    // would leave a T-junction. The absorb pass has answered that since the
+    // watertight-by-default change — it already spliced the terminating
+    // midpoint into whatever non-quad the walk stopped at MID-ring — so the
+    // seed was the last place still refusing, and the reference cuts here.
+    // The ring is now collected from the QUAD side only: one entry, open.
     bool closed;
     auto ring = m.collectEdgeRing(eiSeed, closed);
-    assert(ring.length == 0,
-           "collectEdgeRing must return [] when a non-quad is incident on the seed");
+    assert(ring.length == 1,
+           "collectEdgeRing must collect the quad side of a quad+triangle seed");
+    assert(!closed, "a ring that starts beside a non-quad is always open");
+    assert(m.faces[ring[0].fi].length == 4,
+           "the collected ring entry must be the QUAD, never the triangle");
 
-    // insertEdgeLoops must propagate the no-op.
+    // insertEdgeLoops cuts the quad and the triangle absorbs the midpoint.
+    bool ok = m.insertEdgeLoops(eiSeed, [0.5f]);
+    assert(ok, "insertEdgeLoops must now cut a triangle-adjacent seed");
+    assert(m.vertices.length == 7, "expected 7 verts after the cut");
+    assert(m.edges.length    == 9, "expected 9 edges after the cut");
+    assert(m.faces.length    == 3, "expected 3 faces after the cut");
+    // Watertight: the triangle took the seed midpoint into its own ring, so
+    // nothing is left at arity 3.
+    foreach (fi; 0 .. m.faces.length)
+        assert(m.faces[fi].length == 4,
+               "every face must be a quad after the absorb — a surviving "
+               ~ "triangle would mean a T-junction on the seed edge");
+}
+
+// Task 1240 — the refusal that SURVIVED: no quad on EITHER side of the seed.
+// There is no quad frame to take the p/q rails from, and nothing measured says
+// what should happen, so this stays a no-op. Without this block the relaxation
+// above would read as "any seed cuts", which is not what was implemented.
+unittest {
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,1,0), Vec3(0,1,0)];
+    m.addFace([0u, 1u, 2u]);
+    m.addFace([0u, 2u, 3u]);
+    m.buildLoops();
+
+    uint eiSeed = m.edgeIndex(0, 2);       // shared by the two triangles
+    assert(eiSeed != ~0u, "edge 0-2 must exist");
+
+    bool closed;
+    assert(m.collectEdgeRing(eiSeed, closed).length == 0,
+           "collectEdgeRing must still return [] when NO quad borders the seed");
+
     uint vBefore = cast(uint)m.vertices.length;
     uint eBefore = cast(uint)m.edges.length;
     uint fBefore = cast(uint)m.faces.length;
-
-    bool ok = m.insertEdgeLoops(eiSeed, [0.5f]);
-    assert(!ok, "insertEdgeLoops must return false for a triangle-adjacent seed");
+    assert(!m.insertEdgeLoops(eiSeed, [0.5f]),
+           "insertEdgeLoops must return false with no quad on the seed");
     assert(m.vertices.length == vBefore, "vertex count must not change");
     assert(m.edges.length    == eBefore, "edge count must not change");
     assert(m.faces.length    == fBefore, "face count must not change");

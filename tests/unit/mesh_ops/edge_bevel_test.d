@@ -6172,6 +6172,140 @@ unittest {
     assert(m.faces.length    == 6, "bevelVert no-op: face count unchanged");
 }
 
+// Task 1240 (ledger rows 26/52) — the ACCEPTANCE TEST, at kernel level.
+//
+// Everything above this line runs on a CUBE, and a cube cannot see the change:
+// every one of its corners is interior-manifold of valence 3, which is exactly
+// the set the old guard already accepted. The reference chamfered 181 of 181
+// measured cells and we chamfered 21 precisely because the ones it declined
+// were BOUNDARY corners, and a closed solid has none. So these three blocks
+// use OPEN meshes on purpose.
+
+// (a) Valence-2 boundary corner of a single quad: 4 verts → 5, the quad
+//     becomes a PENTAGON, and NO cap face is emitted (a cap would be a
+//     two-point polygon; the reference emits none).
+unittest {
+    import std.conv : to;
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0.1f,1)];
+    m.addFace([0, 1, 2, 3]);
+    m.buildLoops();
+
+    bool[] mask = new bool[](m.vertices.length);
+    mask[0] = true;
+    size_t n = m.bevelVerticesByMask(mask, 0.12f);
+    assert(n == 1, "bevelVert boundary: valence-2 corner must be accepted");
+    assert(m.vertices.length == 5,
+           "bevelVert boundary: expected 5 verts, got " ~ m.vertices.length.to!string);
+    assert(m.faces.length == 1,
+           "bevelVert boundary: expected 1 face (no cap at valence 2), got "
+           ~ m.faces.length.to!string);
+    assert(m.faces[0].length == 5,
+           "bevelVert boundary: the quad must come back a pentagon, got arity "
+           ~ m.faces[0].length.to!string);
+    // Each split point sits `amount` along its own edge, measured from the
+    // corner — 0.12 along (1,0,0) and 0.12 along the unit direction of
+    // (0,0.1,1), which is NOT 0.12 in z.
+    bool p1 = false, p2 = false;
+    foreach (v; m.vertices) {
+        if (sqrt((v.x-0.12f)*(v.x-0.12f) + v.y*v.y + v.z*v.z) < 1e-4f) p1 = true;
+        if (sqrt(v.x*v.x + (v.y-0.01194f)*(v.y-0.01194f)
+                 + (v.z-0.119404f)*(v.z-0.119404f)) < 1e-4f) p2 = true;
+    }
+    assert(p1, "bevelVert boundary: split point (0.12,0,0) missing");
+    assert(p2, "bevelVert boundary: split point (0,0.01194,0.119404) missing");
+}
+
+// (b) Valence-3 BOUNDARY corner (two of its three edges carry one face each):
+//     7 verts, 3 faces, and the cap triangle IS emitted — so it is the open
+//     fan, not the valence, that the old guard was refusing. The cap's ring is
+//     asserted in ORDER (up to rotation) because its winding comes out of the
+//     umbrella chain, not out of a normal comparison.
+unittest {
+    import std.conv : to;
+    Mesh m;
+    m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1), Vec3(2,0,0.5f)];
+    m.addFace([0, 1, 2, 3]);
+    m.addFace([1, 4, 2]);
+    m.buildLoops();
+
+    bool[] mask = new bool[](m.vertices.length);
+    mask[1] = true;
+    size_t n = m.bevelVerticesByMask(mask, 0.12f);
+    assert(n == 1, "bevelVert open fan: valence-3 boundary corner must be accepted");
+    assert(m.vertices.length == 7,
+           "bevelVert open fan: expected 7 verts, got " ~ m.vertices.length.to!string);
+    assert(m.faces.length == 3,
+           "bevelVert open fan: expected 3 faces, got " ~ m.faces.length.to!string);
+
+    // The cap is the only triangle; its ring must run
+    // (1.107331,0,0.053666) → (1,0,0.12) → (0.88,0,0), which is the winding
+    // that agrees with the two faces it borders. The REVERSE of it has the
+    // same three points, so a set comparison could not tell them apart.
+    Vec3[3] want = [Vec3(1.107331f, 0, 0.053666f), Vec3(1, 0, 0.12f), Vec3(0.88f, 0, 0)];
+    bool capFound = false;
+    foreach (fi; 0 .. m.faces.length) {
+        if (m.faces[fi].length != 3) continue;
+        foreach (r; 0 .. 3) {
+            bool ok = true;
+            foreach (k; 0 .. 3) {
+                Vec3 v = m.vertices[m.faces[fi][(k + r) % 3]];
+                Vec3 w = want[k];
+                if (sqrt((v.x-w.x)*(v.x-w.x) + (v.y-w.y)*(v.y-w.y)
+                         + (v.z-w.z)*(v.z-w.z)) >= 1e-4f) { ok = false; break; }
+            }
+            if (ok) { capFound = true; break; }
+        }
+    }
+    assert(capFound,
+        "bevelVert open fan: the cap triangle must be wound "
+        ~ "(1.107331,0,0.053666)->(1,0,0.12)->(0.88,0,0)");
+}
+
+// (b2) A NON-FINITE amount is refused, not applied. `amount < 1e-6f` -- the
+//      form this guard had until task 1240 -- lets NaN straight through,
+//      because every comparison with NaN is false, and NaN*direction would
+//      poison every split point AND every face that references one. Reachable
+//      from outside: `mesh.vertexBevel amount:nan` parses and reaches this
+//      kernel (the argstring path does not reject it upstream the way the JSON
+//      body parser rejects an infinity).
+unittest {
+    foreach (bad; [float.nan, float.infinity, -float.infinity]) {
+        Mesh m;
+        m.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1)];
+        m.addFace([0, 1, 2, 3]);
+        m.buildLoops();
+        bool[] mask = new bool[](m.vertices.length);
+        mask[0] = true;
+        assert(m.bevelVerticesByMask(mask, bad) == 0,
+               "bevelVert: a non-finite amount must be refused");
+        assert(m.vertices.length == 4 && m.faces.length == 1,
+               "bevelVert: a non-finite amount must leave the mesh untouched");
+    }
+}
+
+// (c) The guard that SURVIVED the relaxation: a bow-tie vertex, where two
+//     quads meet at ONE point and nowhere else. Its incident faces do not
+//     chain into a single fan (the `succ -> pred` links form two runs), there
+//     is no one cap to emit, and nothing measured says what should happen —
+//     so it is declined, and the mesh is untouched.
+unittest {
+    Mesh m;
+    m.vertices = [Vec3(0,0,0),
+                  Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1),
+                  Vec3(-1,0,0), Vec3(-1,0,-1), Vec3(0,0,-1)];
+    m.addFace([0, 1, 2, 3]);
+    m.addFace([0, 6, 5, 4]);
+    m.buildLoops();
+
+    bool[] mask = new bool[](m.vertices.length);
+    mask[0] = true;
+    size_t n = m.bevelVerticesByMask(mask, 0.12f);
+    assert(n == 0, "bevelVert bow-tie: two fans at one point must be declined");
+    assert(m.vertices.length == 7, "bevelVert bow-tie: vertex count unchanged");
+    assert(m.faces.length    == 2, "bevelVert bow-tie: face count unchanged");
+}
+
 // Task 0724 / audit-4 M6 — the settled-mesh precondition on bevelEdgesByMask
 // is LIVE. Twin of the extrudeVerticesByMask block in
 // tests/unit/mesh_ops/extrude_test.d; see that one for why `addFaceFast` is

@@ -327,10 +327,22 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Case 6 — Triangle-adjacent seed: mesh.addLoop must no-op (non-manifold guard).
+// Case 6 — Triangle-adjacent seed: mesh.addLoop CUTS the quad half and
+//   re-rings the triangle through the new vertex.
 //   Mesh: quad [0,1,2,3] and triangle [2,1,4] share edge 1-2.
-//   collectEdgeRing detects a non-quad incident face on the seed edge and
-//   returns empty → evaluate() returns false → non-ok status, mesh unchanged.
+//
+//   TASK 1240 REVERSED THIS CASE (ledger rows 27/53). It used to assert a
+//   no-op: `collectEdgeRing` refused any seed with a non-quad incident face,
+//   on the reasoning that the seed edge would gain a midpoint while the
+//   triangle kept its old ring — a T-junction. That reasoning stopped being
+//   true when the terminating absorb became the default: the walk ALREADY
+//   stopped at a non-quad mid-ring and the neighbour ALREADY absorbed the
+//   midpoint there, so the seed was the only place still refusing. The
+//   reference cuts here (measured headlessly, `loop_mid_triquad`: 5 verts → 7,
+//   2 faces → 3, the triangle coming back as a quad), and so do we now.
+//
+//   What is still a no-op: a seed with NO quad incident face at all — there is
+//   no quad frame to take the rails from. Asserted at the end of this case.
 // ---------------------------------------------------------------------------
 unittest {
     postReset();
@@ -347,17 +359,69 @@ unittest {
     postSelect("edges", [eiSeed]);
 
     auto r = postCommandRaw("mesh.addLoop");
-    assert(r["status"].str != "ok",
-           "mesh.addLoop on a triangle-adjacent seed must not return ok");
+    assert(r["status"].str == "ok",
+           "mesh.addLoop on a triangle-adjacent seed must cut the quad half: "
+           ~ r.toString);
 
-    // Mesh must be completely unchanged.
+    auto after = getModel();
+    assert(after["vertexCount"].integer == 7,
+           "triangle-adjacent seed: expected 7 verts, got "
+           ~ after["vertexCount"].integer.to!string);
+    assert(after["edgeCount"].integer   == 9,
+           "triangle-adjacent seed: expected 9 edges, got "
+           ~ after["edgeCount"].integer.to!string);
+    assert(after["faceCount"].integer   == 3,
+           "triangle-adjacent seed: expected 3 faces, got "
+           ~ after["faceCount"].integer.to!string);
+
+    // The two midpoints: on the seed edge 1-2 and on the quad's opposite
+    // rail 3-0.
+    assert(vertNear(after, 1.0f, 0.5f, 0.0f) >= 0,
+           "midpoint of the seed edge (1,0.5,0) missing");
+    assert(vertNear(after, 0.0f, 0.5f, 0.0f) >= 0,
+           "midpoint of the opposite rail (0,0.5,0) missing");
+
+    // WATERTIGHT, not a T-junction: the triangle absorbed the seed midpoint
+    // and is now a QUAD, so no face is left referencing the un-split edge.
+    int tri = 0, quads = 0;
+    foreach (fi; 0 .. after["faceCount"].integer) {
+        immutable n = after["faces"].array[fi].array.length;
+        if (n == 3) ++tri;
+        else if (n == 4) ++quads;
+    }
+    assert(tri == 0 && quads == 3,
+           "expected 3 quads and no triangle after the absorb, got "
+           ~ quads.to!string ~ " quads / " ~ tri.to!string ~ " tris");
+}
+
+// ---------------------------------------------------------------------------
+// Case 6b — the refusal that SURVIVED task 1240: a seed with no quad on
+//   EITHER side. There is no quad frame to take the p/q rails from, nothing
+//   measured says what should happen, and the command stays a no-op.
+// ---------------------------------------------------------------------------
+unittest {
+    postReset();
+    postLoadMesh(
+        `{"vertices":[[0,0,0],[1,0,0],[1,1,0],[0,1,0]],` ~
+        ` "faces":[[0,1,2],[0,2,3]]}`);
+    auto before = getModel();
+    assert(before["faceCount"].integer == 2);
+
+    int eiSeed = edgeIdx(before, 0, 2);   // shared by the two triangles
+    assert(eiSeed >= 0, "edge 0-2 must exist");
+    postSelect("edges", [eiSeed]);
+
+    auto r = postCommandRaw("mesh.addLoop");
+    assert(r["status"].str != "ok",
+           "mesh.addLoop with no quad incident on the seed must not return ok");
+
     auto after = getModel();
     assert(after["vertexCount"].integer == before["vertexCount"].integer,
-           "vertex count must not change when triangle is incident on seed");
+           "vertex count must not change with no quad on the seed");
     assert(after["edgeCount"].integer   == before["edgeCount"].integer,
-           "edge count must not change when triangle is incident on seed");
+           "edge count must not change with no quad on the seed");
     assert(after["faceCount"].integer   == before["faceCount"].integer,
-           "face count must not change when triangle is incident on seed");
+           "face count must not change with no quad on the seed");
 }
 
 // ---------------------------------------------------------------------------

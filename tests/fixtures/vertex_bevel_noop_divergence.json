@@ -1,6 +1,6 @@
 {
  "name": "vertex_bevel_noop_divergence",
- "description": "A CAPABILITY GAP, not a law: the reference bevels a vertex and we do nothing at all. Our command answers `did not apply` and the mesh comes back byte-identical to its input, in 46 of the 57 vertex-bevel cells of the sweep; the two frozen here are two of them. The reference's rule is readable off the frozen numbers: each edge at the beveled vertex contributes a point at `inset` along it measured from the vertex, the vertex itself is removed, and every incident face is re-rung through those points -- at valence 3 a new triangle closes the corner. At a boundary corner of a folded quad (valence 2, inset 0.12) that is 4 vertices -> 5 and quad -> pentagon; at a valence-3 corner it is 5 vertices -> 7 and 2 faces -> 3. CLOSING THIS GAP MEANS IMPLEMENTING VERTEX BEVEL, not adjusting a constant.",
+ "description": "CLOSED BY IMPLEMENTATION (task 1240, ledger rows 26/52). This file was frozen as a CAPABILITY GAP: the reference chamfered a vertex and we did nothing at all -- our command answered `did not apply` and the mesh came back byte-identical to its input, in 46 of the 57 vertex-bevel cells of the sweep, and in 181 of 181 cells of the ring-rotation sweep. The kernel required an INTERIOR-MANIFOLD vertex of valence >= 3, so a boundary corner -- including the smallest case there is, one corner of one quad -- was declined outright. The rule the frozen numbers state was implemented as stated: each edge at the chamfered vertex contributes a point at `inset` along it measured from the vertex, the vertex itself is removed, every incident face is re-rung through those points, and at valence >= 3 a new face closes the corner (at valence 2 there is none -- a two-point polygon is not what the reference emits). Both cases now declare an EMPTY gap in the vertex AND the face channel, which the same runner checks just as strictly as a full one: our counts, our vertex set and our face rings WITH WINDING equal the reference's. The cases are kept, not deleted -- the reference measurement is the valuable half and it is unchanged.",
  "source": "Reference side: headless command-port capture of the vertex-bevel tool at inset 0.12 (dirty-geometry sweep, task 1123, cases vbev_pole_np_one / vbev_pole_triquad). vibe3d side: live drive of this build -- the command is rejected, which the fixture records with allowError.",
  "provenance": {
   "schema": 1,
@@ -16,7 +16,7 @@
  "cases": [
   {
    "name": "boundary_corner_of_folded_quad",
-   "note": "Valence-2 boundary corner (0,0,0) of a folded quad, inset 0.12. Reference: 5 vertices, 5 edges, one PENTAGON -- the corner is replaced by (0.12,0,0) and (0,0.01194,0.119404). Ours: the input quad, unchanged, command rejected.",
+   "note": "Valence-2 boundary corner (0,0,0) of a folded quad, inset 0.12. Both engines: 5 vertices, 5 edges, one PENTAGON -- the corner is replaced by (0.12,0,0) and (0,0.01194,0.119404), and NO cap face is emitted at valence 2. This is the smallest case in the family and the one the old interior-manifold guard rejected most bluntly. EMPTY GAP since task 1240.",
    "capture_case": "vbev_pole_np_one",
    "input": [
     {
@@ -80,7 +80,7 @@
        "amount": 0.12
       }
      },
-     "allowError": true
+     "expectStatus": "ok"
     }
    ],
    "reference": {
@@ -148,16 +148,11 @@
    },
    "vibe3d_current": {
     "counts": {
-     "verts": 4,
-     "edges": 4,
+     "verts": 5,
+     "edges": 5,
      "faces": 1
     },
     "vertices": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ],
      [
       1.0,
       0.0,
@@ -172,12 +167,27 @@
       0.0,
       0.1,
       1.0
+     ],
+     [
+      0.12,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.01194,
+      0.119404
      ]
     ],
     "faces": [
      [
       [
        0.0,
+       0.01194,
+       0.119404
+      ],
+      [
+       0.12,
        0.0,
        0.0
       ],
@@ -200,83 +210,15 @@
     ]
    },
    "divergence": {
-    "extra_in_vibe3d": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ]
-    ],
-    "missing_in_vibe3d": [
-     [
-      0.12,
-      0.0,
-      0.0
-     ],
-     [
-      0.0,
-      0.01194,
-      0.119404
-     ]
-    ],
-    "extra_faces_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.1,
-       1.0
-      ]
-     ]
-    ],
-    "missing_faces_in_vibe3d": [
-     [
-      [
-       0.12,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.1,
-       1.0
-      ],
-      [
-       0.0,
-       0.01194,
-       0.119404
-      ]
-     ]
-    ]
+    "extra_in_vibe3d": [],
+    "missing_in_vibe3d": [],
+    "extra_faces_in_vibe3d": [],
+    "missing_faces_in_vibe3d": []
    }
   },
   {
    "name": "valence_three_corner",
-   "note": "Valence-3 corner (1,0,0) of a quad+triangle base, inset 0.12. Reference: 7 vertices, 9 edges, 3 faces -- the corner becomes (0.88,0,0), (1,0,0.12) and (1.107331,0,0.053666), each 0.12 along one of its three edges, with a new triangle closing the corner. Ours: the input mesh, unchanged, command rejected.",
+   "note": "Valence-3 corner (1,0,0) of a quad+triangle base, inset 0.12 -- a BOUNDARY vertex (two of its three edges carry one face each), which is why valence alone never explained the old refusal. Both engines: 7 vertices, 9 edges, 3 faces -- the corner becomes (0.88,0,0), (1,0,0.12) and (1.107331,0,0.053666), each 0.12 along one of its three edges, with a new triangle closing the corner. That triangle's ring order and winding are the reference's exactly, not merely its vertex set. EMPTY GAP since task 1240.",
    "capture_case": "vbev_pole_triquad",
    "input": [
     {
@@ -350,7 +292,7 @@
        "amount": 0.12
       }
      },
-     "allowError": true
+     "expectStatus": "ok"
     }
    ],
    "reference": {
@@ -467,18 +409,13 @@
    },
    "vibe3d_current": {
     "counts": {
-     "verts": 5,
-     "edges": 6,
-     "faces": 2
+     "verts": 7,
+     "edges": 9,
+     "faces": 3
     },
     "vertices": [
      [
       0.0,
-      0.0,
-      0.0
-     ],
-     [
-      1.0,
       0.0,
       0.0
      ],
@@ -496,59 +433,7 @@
       2.0,
       0.0,
       0.5
-     ]
-    ],
-    "faces": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
      ],
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.5
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ]
-   },
-   "divergence": {
-    "extra_in_vibe3d": [
-     [
-      1.0,
-      0.0,
-      0.0
-     ]
-    ],
-    "missing_in_vibe3d": [
      [
       1.107331,
       0.0,
@@ -565,71 +450,13 @@
       0.0
      ]
     ],
-    "extra_faces_in_vibe3d": [
+    "faces": [
      [
       [
        0.0,
        0.0,
        0.0
       ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.5
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "missing_faces_in_vibe3d": [
-     [
-      [
-       1.107331,
-       0.0,
-       0.053666
-      ],
-      [
-       2.0,
-       0.0,
-       0.5
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.12
-      ]
-     ],
-     [
       [
        0.88,
        0.0,
@@ -649,11 +476,28 @@
        0.0,
        0.0,
        1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.12
       ],
       [
+       1.107331,
        0.0,
+       0.053666
+      ],
+      [
+       2.0,
        0.0,
-       0.0
+       0.5
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
       ]
      ],
      [
@@ -674,6 +518,12 @@
       ]
      ]
     ]
+   },
+   "divergence": {
+    "extra_in_vibe3d": [],
+    "missing_in_vibe3d": [],
+    "extra_faces_in_vibe3d": [],
+    "missing_faces_in_vibe3d": []
    }
   }
  ]
