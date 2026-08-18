@@ -10541,14 +10541,20 @@ struct Mesh {
 
         // Project every vertex once. Behind-camera verts get vsValid=false
         // and skip both candidate selection and occluder polygon membership.
+        //
+        // The projected DEPTH is deliberately not kept (task 1350). It was
+        // stored in a fourth per-call `new float[]` that nothing in the tree
+        // ever read: pass 2's occlusion test is a ray/plane solve in local
+        // space against the occluder's own plane, so it derives its depth
+        // from the candidate and the plane, never from the window Z. `ndcZ`
+        // stays as the out-parameter `projectToWindowFull` requires.
         auto vsx     = new float[](vertices.length);
         auto vsy     = new float[](vertices.length);
-        auto vsZ     = new float[](vertices.length);
         auto vsValid = new bool [](vertices.length);
         foreach (vi, q; vertices) {
             float sx, sy, ndcZ;
             if (projectToWindowFull(q, vpLocal, sx, sy, ndcZ)) {
-                vsx[vi] = sx; vsy[vi] = sy; vsZ[vi] = ndcZ;
+                vsx[vi] = sx; vsy[vi] = sy;
                 vsValid[vi] = true;
             }
         }

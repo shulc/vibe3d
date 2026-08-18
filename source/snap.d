@@ -252,6 +252,23 @@ void setItemSnapFrames(ItemSnapFrame[] frames) {
 // Under Global all types pass; under Component only Component + guides;
 // under Item only Item + guides.
 // ---------------------------------------------------------------------------
+/// The discrete types whose candidates are gated by the VISIBILITY MASK —
+/// i.e. the ones `walkSource`'s `vertVisible` / `edgeVisible` / `faceVisible`
+/// stand in front of. Exactly the Component bucket above, named once because
+/// two readers want it: the scope filter, and the perf lane's non-vacuity
+/// invariant (task 1350/1355), which has to tell "a mask-gated candidate won"
+/// from "something else supplied the position while the mask rejected
+/// everything". Grid / Workplane / the constraint types reach `SnapElection`
+/// without ever consulting the mask, so a snap of those types proves nothing
+/// about it.
+bool isMaskGatedType(SnapType t)
+    pure nothrow @nogc @safe
+{
+    return t == SnapType.Vertex     || t == SnapType.Edge         ||
+           t == SnapType.EdgeCenter || t == SnapType.Polygon      ||
+           t == SnapType.PolyCenter || t == SnapType.Intersection;
+}
+
 bool typeEligible(SnapType t, SnapMode snapScope_)
     pure nothrow @nogc @safe
 {
@@ -261,9 +278,7 @@ bool typeEligible(SnapType t, SnapMode snapScope_)
         t == SnapType.RightAngle)
         return true;
 
-    bool isComponent = (t == SnapType.Vertex    || t == SnapType.Edge        ||
-                        t == SnapType.EdgeCenter || t == SnapType.Polygon     ||
-                        t == SnapType.PolyCenter || t == SnapType.Intersection);
+    bool isComponent = isMaskGatedType(t);
     bool isItem      = (t == SnapType.Pivot      || t == SnapType.Box);
 
     final switch (snapScope_) {
@@ -672,19 +687,103 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         const Viewport vpLocal = projectionSpace(vp, ms);
         // Visibility array for occlusion/front-face gating. Built when any
         // geometric type is enabled (faces present + at least one geo type active).
-        bool[] vis;
         bool needVis = m.faces.length > 0
             && (cfg.enabledTypes & (SnapType.Vertex | SnapType.Edge
                   | SnapType.EdgeCenter | SnapType.Polygon | SnapType.PolyCenter
                   | SnapType.Intersection));
-        if (needVis) vis = m.visibleVertices(vp.eye, vp, ms);
+
+        // ------------------------------------------------------------------
+        // THE MASK, ON FIRST CONSULTATION (task 1350).
+        //
+        // It used to be computed HERE, unconditionally, whenever `needVis`.
+        // Its three consumers below are called only for candidates the
+        // candidate GRID returned and `kindExcluded` kept — and in the common
+        // whole-mesh drag the moving set is every vertex, so `kindExcluded`
+        // drops every candidate and NOT ONE consumer ever runs. The mask was
+        // then an O(V+F) pass plus ~1.4 MB of fresh arrays per motion event
+        // (~1.0 MB now that the write-only depth array is gone with it),
+        // computed and thrown away: 46-66 ms per drag on a 100K mesh
+        // (measured 2026-08-18, seven perf cases).
+        //
+        // It also does NOT make the mask cheap where it IS consulted: its
+        // occlusion pass is O(V x |front faces|), so with the faces actually
+        // facing the eye one query on that same mesh costs ~5.2 s. That is a
+        // separate defect with its own task; laziness only stops paying for
+        // an answer nobody asked for.
+        //
+        // Deferring it changes exactly one observable thing: a query that
+        // consults nothing computes nothing. Every query that DOES consult
+        // gets the same array from the same inputs at the same point in the
+        // walk (nothing between here and the first consultation can move
+        // `m`, `vp` or `ms` — they are `const ref` / by-value), so the
+        // election is bit-identical by construction.
+        //
+        // WHY `visReady` AND NOT "is `visStore` empty". An EMPTY mask is a
+        // MEANINGFUL value in this function: it is the sentinel for "nothing
+        // can occlude, everything is visible", which is what the consumers
+        // below still spell as `vis.length == 0` — it is reached when the
+        // mesh has no faces, when no geometric type is enabled, and (via
+        // `visibleVertices`) when the mesh has no vertices. If "not computed
+        // yet" were spelled the same way, the two states would be one: every
+        // consultation on such a mesh would re-enter the builder, and any
+        // future reader that touched the array directly instead of calling
+        // the accessor would silently read "everything visible" rather than
+        // computing. The separate flag makes the two states distinct by
+        // construction rather than by discipline.
+        //
+        // `visStore` therefore has EXACTLY ONE WRITER — this accessor — and
+        // no reader outside it. Do not add a second one; take the slice the
+        // accessor returns.
+        bool[] visStore;      // do NOT read directly — call `visMask()`
+        bool   visReady;      // "`visStore` is the answer", NOT "it is non-empty"
+        const(bool)[] visMask() {
+            if (!visReady) {
+                if (needVis) {
+                    visStore = m.visibleVertices(vp.eye, vp, ms);
+                    g_perf.count(Cat.snapVisBuild, 1);
+                }
+                // SET AFTER the assignment it guards, not before (review fix,
+                // task 1356). The flag's stated meaning is "`visStore` is the
+                // answer", and between the two statements it was not one.
+                // Nothing observes the window today — `visibleVertices`
+                // neither re-enters this accessor nor throws — so this is not
+                // a bug fix; it is the flag telling the truth at every point,
+                // so the next reader does not have to establish those two
+                // facts before trusting it.
+                visReady = true;
+            }
+            g_perf.count(Cat.snapVisConsult, 1);
+            return visStore;
+        }
+
+        // A consultation that came back NO (task 1355). Counted for exactly
+        // one reason: a mask that admits everything and a mask that is not
+        // consulted at all are the same measurement from outside, and the
+        // perf lane needs to tell them apart — see invariant I7b in
+        // `tools/perf/run.d`.
+        //
+        // What is NOT counted here, deliberately:
+        //   * `faceVisible`'s hidden-face early-out — it returns BEFORE the
+        //     consultation, so there is no answer to record;
+        //   * `faceVisible`'s front-facing cull — that is
+        //     `math.frontFacingLocal`, a different predicate that would keep
+        //     rejecting back-facing faces even if the mask array were
+        //     all-true. Counting it would let a case claim "the mask
+        //     mattered" on the strength of a test that never read the mask.
+        // So this counts MASK-ARRAY rejections only, and its name means that.
+        bool visAdmit(bool ok) {
+            if (!ok) g_perf.count(Cat.snapVisReject, 1);
+            return ok;
+        }
 
         bool vertVisible(uint vi) {
-            return vis.length == 0 || (vi < vis.length && vis[vi]);
+            const vis = visMask();
+            return visAdmit(vis.length == 0 || (vi < vis.length && vis[vi]));
         }
         bool edgeVisible(uint a, uint b) {
-            return vis.length == 0
-                || (a < vis.length && b < vis.length && vis[a] && vis[b]);
+            const vis = visMask();
+            return visAdmit(vis.length == 0
+                || (a < vis.length && b < vis.length && vis[a] && vis[b]));
         }
         bool faceVisible(size_t fi, const(uint)[] face) {
             // Hide (task 0613 S4). By INDEX, because the `vis[]` mask cannot
@@ -710,6 +809,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             // Placed inside the named gate rather than at its one call site so
             // a second caller inherits it.
             if (m.isFaceHidden(fi)) return false;
+            const vis = visMask();
             if (vis.length == 0) return true;
             // FACING — task 0832. This line used to be a THIRD spelling of the
             // predicate (the first triangle's cross, in float, culled at
@@ -722,7 +822,8 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             // snap gesture, so nobody has measured that the reference culls
             // this way here. See `frontFacingLocal`'s comment.
             if (!frontFacingLocal(m.vertices, face, vpLocal.eye)) return false;
-            foreach (v; face) if (v >= vis.length || !vis[v]) return false;
+            foreach (v; face)
+                if (v >= vis.length || !vis[v]) return visAdmit(false);
             return true;
         }
         // Local -> world, only where the fine-phase math below needs a real
@@ -1121,7 +1222,31 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
     // `SnapElection.resolve` now; what is left here is the enumeration that
     // fed it.
     // -----------------------------------------------------------------------
-    return el.resolve();
+    auto elected = el.resolve();
+    // Task 1350 — the perf lane's non-vacuity half. A snap case can call
+    // `snapCursor` on every motion event (that is all invariant I5 checks)
+    // and still elect NOTHING on every one of them, which is what happens
+    // when the camera leaves every face back-facing: the mask comes out
+    // all-false and no geometric candidate is ever offered. Counting the
+    // elections is what tells a case that measures the occlusion path from a
+    // case that measures an empty one.
+    if (elected.snapped) {
+        g_perf.count(Cat.snapHit, 1);
+        // ...and the SECOND counter, because the first one cannot carry that
+        // claim alone (review fix, task 1355). `snapped` is also true when
+        // the grid / workplane tier or a LINE/PLANE constraint supplied the
+        // position, and NONE of those consult the visibility mask. So an
+        // all-false mask — every geometric candidate rejected — still leaves
+        // `snapHit` non-zero while `snapQuery` gets CHEAPER, which a
+        // day-over-day gate then reports as an improvement. This counter
+        // fires only when the discrete tier won (`constraintType == None`)
+        // with a type the mask actually stood in front of, which is the
+        // literal statement "a mask-gated candidate won".
+        if (elected.constraintType == SnapType.None
+            && isMaskGatedType(elected.targetType))
+            g_perf.count(Cat.snapHitGeom, 1);
+    }
+    return elected;
 }
 
 // ---------------------------------------------------------------------------

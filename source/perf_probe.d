@@ -65,6 +65,52 @@ enum Cat {
     // firstCounter): used by the `undo-spam` frame scenario (task 0200) to
     // assert an exact undo-apply count immune to main-loop frame batching.
     undoApply,
+    // --- snap visibility mask (task 1350, extended by 1355) ---
+    //
+    // The five counters that make the snap mask's LAZINESS — and its
+    // RELEVANCE — observable from outside the process, which is the only
+    // reason they exist:
+    //
+    //   snapVisBuild   — one per `Mesh.visibleVertices` computation inside a
+    //                    snap query. That call is O(V+F) plus ~1.4 MB of
+    //                    fresh arrays on a 100K mesh, so "how many times did
+    //                    a drag pay for it" IS the regression this task was
+    //                    opened for.
+    //   snapVisConsult — one per CONSULTATION of the mask by a candidate
+    //                    (`vertVisible`/`edgeVisible`/`faceVisible`).
+    //                    Zero consultations is the whole-mesh drag: every
+    //                    candidate is excluded before the mask is reached, so
+    //                    a build there is pure waste. "Whole-mesh case ⇒
+    //                    consultations == 0" is the invariant that catches a
+    //                    reader hoisting the accessor back to the top of the
+    //                    walk — `build > 0 ⇒ consult > 0` cannot, because
+    //                    the build happens INSIDE the consultation.
+    //   snapVisReject  — one per consultation whose MASK ARRAY said no.
+    //                    Separates "the mask admitted everything" from "the
+    //                    mask was never consulted", which are the same
+    //                    measurement without it. Excludes the front-facing
+    //                    cull and the hidden-face early-out — see
+    //                    `visAdmit`'s comment in snap.d for why.
+    //   snapHit        — one per `snapCursor` call that actually SNAPPED,
+    //                    by ANY tier.
+    //   snapHitGeom    — one per `snapCursor` call where the DISCRETE tier
+    //                    won with a mask-gated type (`snap.isMaskGatedType`).
+    //                    `snapHit` alone cannot stand in for it: grid,
+    //                    workplane and the LINE/PLANE constraints all set
+    //                    `snapped` without consulting the mask, so an
+    //                    all-false mask leaves `snapHit` non-zero while the
+    //                    query gets CHEAPER — a regression that reads as an
+    //                    improvement. This is the counter that says a
+    //                    mask-gated candidate won.
+    //
+    // Counters, not timers: `snapQuery` already times the whole walk, and a
+    // MonoTime per candidate would be exactly the per-element instrumentation
+    // the plan's rules forbid.
+    snapVisBuild,
+    snapVisConsult,
+    snapVisReject,
+    snapHit,
+    snapHitGeom,
 }
 
 /// First counter category. Categories with ordinal < this are timers.
