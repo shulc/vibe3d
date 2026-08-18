@@ -92,7 +92,10 @@ bool launchVibe(ushort port, string viewport, string logPath) {
     }
     g_vibePid = pid.processID;
     // Wait for /api/camera to respond 200.
-    string probe = format("curl -s -o /dev/null -w '%%{http_code}' " ~
+    // --noproxy '*': a CI runner may inject lowercase http_proxy into the
+    // job env, and curl (unlike with the uppercase form) then routes even
+    // localhost through the proxy — where our port does not exist.
+    string probe = format("curl -s --noproxy '*' -o /dev/null -w '%%{http_code}' " ~
                           "http://localhost:%d/api/camera", port);
     for (int i = 0; i < 150; ++i) {
         auto r = executeShell(probe);

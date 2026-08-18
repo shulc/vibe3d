@@ -2049,6 +2049,22 @@ int main(string[] args) {
     g_keep = keep;
     g_baseUrl = format("http://localhost:%d", port);
 
+    // Keep every localhost HTTP hop (std.net.curl in lib/http.d, the curl
+    // probe in lib/lifecycle.d, and any child process) off a configured
+    // proxy: a CI runner injects lowercase http_proxy into job envs, and
+    // libcurl then tunnels even http://localhost through the proxy host.
+    // Merging (not overwriting) no_proxy preserves whatever the host set.
+    {
+        import std.process : environment;
+        foreach (nm; ["no_proxy", "NO_PROXY"]) {
+            auto cur = environment.get(nm, "");
+            import std.algorithm : canFind;
+            if (!cur.canFind("localhost"))
+                environment[nm] = cur.length ? cur ~ ",localhost,127.0.0.1"
+                                             : "localhost,127.0.0.1";
+        }
+    }
+
     // `--trend` needs no vibe3d (pure history-file read) and short-circuits
     // before killStaleVibe/launchVibe/dubBuildPerf (task 0197 Phase 4).
     if (trend) {
