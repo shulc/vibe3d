@@ -6,7 +6,15 @@ subcommands:
 - **`ops`** (bare invocation == `ops`) — the interactive `move` / `rotate` /
   `scale` tools benchmarked across a selection × falloff × symmetry × ACEN ×
   snap matrix, synthesizing real gizmo drags and reading per-stage timers out
-  of `/api/perf`. See `doc/perf_harness_plan.md` for the full design.
+  of `/api/perf`, PLUS the one-shot command benches (`commandApply` timer):
+  `delete`/`remove` across modes/extents and the wider tool set added
+  2026-08-18 — per-face `bevel`, `inset`, `polyExtrude`, `smoothShift`,
+  `thicken`, `subdivide`, `triple`, `mirror`, `collapse`, the deform trio
+  `smooth`/`jitter`/`quantize`, `edgeExtend`, `edgeExtrude`, `vertexBevel`,
+  `vertexExtrude`. Command sanity reads `/api/layers` (counts +
+  `mutationVersion`), not the full `/api/model` dump — the 5×-growth
+  commands push past the model bridge's serialization timeout. See
+  `doc/perf_harness_plan.md` for the full design.
 - **`frames`** — per-frame smoothness scenarios reading `/api/frames` (task
   0195). See "`frames`" below.
 - **`flame`** — attaches `perf record` to a running vibe3d and profiles ONE

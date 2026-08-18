@@ -509,7 +509,8 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
 
 struct CmdCase {
     string name;       // "delete/polygons/whole"
-    string commandId;  // "mesh.delete" | "mesh.remove"
+    string commandId;  // full argstring POSTed to /api/command, args included
+                       // (e.g. "mesh.bevel inset:0.02 shift:0.02 group:false")
     string mode;       // "vertices" | "edges" | "polygons"
     string selection;  // "whole" | "half"
 }
@@ -537,6 +538,31 @@ CmdCase[] commandCases() {
         cs ~= CmdCase(s.verb ~ "/polygons/whole", s.id, "polygons", "whole");
         cs ~= CmdCase(s.verb ~ "/polygons/half",  s.id, "polygons", "half");
     }
+    // The wider one-shot tool set (2026-08-18). Args were picked so every
+    // command actually mutates the grid fixture; "whole" == empty selection
+    // (the operand falls back to the full mesh). mesh.bevel gets
+    // group:false — the per-face bevel (~5x geometry growth); the default
+    // group bevel only rings the selection boundary and measures nothing.
+    // smooth/jitter/quantize are pure deforms: counts stay, the sanity
+    // check passes on the mutationVersion bump alone.
+    cs ~= CmdCase("bevel/polygons/whole",
+                  "mesh.bevel inset:0.02 shift:0.02 group:false", "polygons", "whole");
+    cs ~= CmdCase("inset/polygons/whole",         "mesh.poly_inset",   "polygons", "whole");
+    cs ~= CmdCase("polyExtrude/polygons/whole",   "poly.extrude distance:0.05", "polygons", "whole");
+    cs ~= CmdCase("smoothShift/polygons/whole",   "mesh.smooth_shift", "polygons", "whole");
+    cs ~= CmdCase("thicken/polygons/whole",       "mesh.thicken",      "polygons", "whole");
+    cs ~= CmdCase("subdivide/polygons/whole",     "mesh.subdivide",    "polygons", "whole");
+    cs ~= CmdCase("triple/polygons/whole",        "mesh.triple",       "polygons", "whole");
+    cs ~= CmdCase("mirror/polygons/whole",        "mesh.mirror",       "polygons", "whole");
+    cs ~= CmdCase("collapse/polygons/half",       "mesh.collapse",     "polygons", "half");
+    cs ~= CmdCase("smooth/polygons/whole",        "mesh.smooth",       "polygons", "whole");
+    cs ~= CmdCase("jitter/vertices/whole",        "mesh.jitter",       "vertices", "whole");
+    cs ~= CmdCase("quantize/vertices/whole",      "mesh.quantize",     "vertices", "whole");
+    cs ~= CmdCase("edgeExtend/edges/whole",       "mesh.edge_extend",  "edges",    "whole");
+    cs ~= CmdCase("edgeExtrude/edges/whole",      "mesh.edge_extrude", "edges",    "whole");
+    cs ~= CmdCase("vertexBevel/vertices/whole",   "mesh.vertexBevel amount:0.02", "vertices", "whole");
+    cs ~= CmdCase("vertexExtrude/vertices/whole",
+                  "mesh.vertexExtrude shift:0.05 width:0.02", "vertices", "whole");
     return cs;
 }
 
@@ -551,6 +577,7 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
     long lastCount = 0;
     long beforeFaces = 0, afterFaces = 0;
     long beforeVerts = 0, afterVerts = 0;
+    long beforeVer = 0, afterVer = 0;
 
     foreach (r; 0 .. repeats) {
         // Rebuild the cage every repeat — delete is destructive.
@@ -561,9 +588,14 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
             res.detail = "selection failed";
             return res;
         }
-        auto mb = modelInfo();
+        // activeLayerInfo, NOT modelInfo: the full /api/model dump times
+        // out the main-thread bridge past ~half a million faces (which the
+        // 5x-growth commands reach from the 100K grid), and the layer
+        // probe also carries mutationVersion for the deform-only sanity.
+        auto mb = activeLayerInfo();
         beforeFaces = mb.faceCount;
         beforeVerts = mb.vertexCount;
+        beforeVer   = mb.mutationVersion;
         perfReset();
         if (!postCommand(c.commandId)) {
             res.status = CaseStatus.ERROR;
@@ -574,24 +606,27 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
         applyUs ~= cast(double)sumNs(perf, "commandApply") / 1000.0;
         lastCount = ("commandApply" in perf)
             ? perf["commandApply"]["count"].integer : 0;
-        auto ma = modelInfo();
+        auto ma = activeLayerInfo();
         afterFaces = ma.faceCount;
         afterVerts = ma.vertexCount;
+        afterVer   = ma.mutationVersion;
         last = perf;
     }
 
-    // Topology-change sanity: a delete/remove must actually alter the cage.
-    // Vertices/Polygons modes drop faces; whole-mesh Edges dissolve merges
-    // adjacent faces and cleans up degree-2 verts WITHOUT reducing the face
-    // count (the boundary walk reconstructs the same perimeter, only the 4
-    // corner verts dissolve). So accept a change in EITHER face OR vertex
-    // count, not a strict face reduction.
+    // Mutation sanity: the command must actually touch the cage. Count
+    // changes cover the topology commands in both directions (delete/remove
+    // shrink, bevel/extrude/subdivide grow); the mutationVersion bump covers
+    // the pure deforms (smooth/jitter/quantize move positions without
+    // changing a single count). A "successful" no-op leaves all three equal
+    // and fails the case.
     bool changed = beforeFaces > 0 &&
-                   (afterFaces < beforeFaces || afterVerts != beforeVerts);
+                   (afterFaces != beforeFaces || afterVerts != beforeVerts
+                    || afterVer != beforeVer);
     if (!changed) {
         res.status = CaseStatus.ERROR;
-        res.detail = format("no geometry changed (faces %d→%d, verts %d→%d)",
-                            beforeFaces, afterFaces, beforeVerts, afterVerts);
+        res.detail = format("no mutation (faces %d→%d, verts %d→%d, ver %d→%d)",
+                            beforeFaces, afterFaces, beforeVerts, afterVerts,
+                            beforeVer, afterVer);
         return res;
     }
 

@@ -141,6 +141,29 @@ FrameStats fetchFrames() {
 }
 
 struct ModelInfo { long vertexCount; long faceCount; }
+// Lightweight geometry probe for command cases: /api/layers reports the
+// active layer's vertex/face counts AND its mutationVersion without
+// serializing the mesh (the full /api/model dump times out the main-thread
+// bridge past ~half a million faces). mutationVersion moves on EVERY
+// mutation, including pure deforms (smooth/jitter/quantize), so
+// "counts unchanged but version bumped" still proves the command ran.
+struct LayerInfo { long vertexCount, faceCount, mutationVersion; }
+
+LayerInfo activeLayerInfo() {
+    import std.json : JSONType;
+    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/layers"));
+    LayerInfo li;
+    foreach (l; j["layers"].array) {
+        if (l["active"].type == JSONType.true_) {
+            li.vertexCount     = l["vertexCount"].integer;
+            li.faceCount       = l["faceCount"].integer;
+            li.mutationVersion = l["mutationVersion"].integer;
+            break;
+        }
+    }
+    return li;
+}
+
 ModelInfo modelInfo() {
     auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/model"));
     ModelInfo m;
