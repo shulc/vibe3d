@@ -1,7 +1,7 @@
 {
  "name": "make_polygon_gates",
- "description": "Ledger row 7: our make-polygon has four refusal gates and the reference has none of them. It builds a zero-area triangle from collinear points, a polygon from two points, a self-intersecting quad from a bow-tie click order, and a DUPLICATE face on top of an existing one.",
- "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 7.",
+ "description": "Ledger row 7: our make-polygon had four refusal gates and the reference has none of them. It builds a zero-area triangle from collinear points, a polygon from two points, a self-intersecting quad from a bow-tie click order, and a DUPLICATE face on top of an existing one. PORTED (task 1200): the gates are off for the mesh.makePolygon command and all four cases now declare an EMPTY gap. The cases are kept, not deleted \u2014 an empty gap is asserted per-dimension, exactly as strictly as a full one, and these four dimensions are where the gap used to live.",
+ "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: re-measured live against this tree after task 1200 removed the gates. Ledger rows: 7.",
  "provenance": {
   "schema": 1,
   "source": "live-capture",
@@ -16,7 +16,7 @@
  "cases": [
   {
    "name": "three_collinear_points",
-   "note": "zero area \u2014 the reference builds the triangle anyway",
+   "note": "zero area - the reference builds the triangle anyway, and since task 1200 so do we. Newell's normal is exactly the length the gate used to reject on.",
    "input": [
     {
      "reset": true,
@@ -176,8 +176,8 @@
    "vibe3d_current": {
     "counts": {
      "verts": 3,
-     "edges": 0,
-     "faces": 0
+     "edges": 3,
+     "faces": 1
     },
     "vertices": [
      [
@@ -196,11 +196,46 @@
       0.0
      ]
     ],
-    "edges": [],
-    "faces": [],
-    "selection": {
-     "mode": "vertices",
-     "vertices": [
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
       [
        0.0,
        0.0,
@@ -216,117 +251,40 @@
        0.0,
        0.0
       ]
-     ],
+     ]
+    ],
+    "selection": {
+     "mode": "polygons",
+     "vertices": [],
      "edges": [],
-     "polygons": []
+     "polygons": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
     },
     "applied": [
      true,
-     false
+     true
     ]
    },
-   "divergence": {
-    "applied": {
-     "reference": [
-      true,
-      true
-     ],
-     "vibe3d": [
-      true,
-      false
-     ]
-    },
-    "counts_delta": {
-     "verts": 0,
-     "edges": 3,
-     "faces": 1
-    },
-    "edges_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "faces_only_in_reference": [
-     [
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "sel_vertices_only_in_vibe3d": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ],
-     [
-      1.0,
-      0.0,
-      0.0
-     ],
-     [
-      2.0,
-      0.0,
-      0.0
-     ]
-    ],
-    "sel_polygons_only_in_reference": [
-     [
-      1.0,
-      0.0,
-      0.0
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   },
   {
    "name": "two_points_only",
-   "note": "below any sane minimum \u2014 the reference builds a 2-point polygon",
+   "note": "below any sane minimum - a 2-point polygon, one edge, one face. This is the case that fixes the FLOOR: mesh.makePolygon refuses at one corner, not at three.",
    "input": [
     {
      "reset": true,
@@ -462,8 +420,8 @@
    "vibe3d_current": {
     "counts": {
      "verts": 4,
-     "edges": 0,
-     "faces": 0
+     "edges": 1,
+     "faces": 1
     },
     "vertices": [
      [
@@ -487,11 +445,8 @@
       1.0
      ]
     ],
-    "edges": [],
-    "faces": [],
-    "selection": {
-     "mode": "vertices",
-     "vertices": [
+    "edges": [
+     [
       [
        0.0,
        0.0,
@@ -502,83 +457,54 @@
        0.0,
        0.0
       ]
-     ],
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "selection": {
+     "mode": "polygons",
+     "vertices": [],
      "edges": [],
-     "polygons": []
+     "polygons": [
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ]
     },
     "applied": [
      true,
-     false
+     true
     ]
    },
-   "divergence": {
-    "applied": {
-     "reference": [
-      true,
-      true
-     ],
-     "vibe3d": [
-      true,
-      false
-     ]
-    },
-    "counts_delta": {
-     "verts": 0,
-     "edges": 1,
-     "faces": 1
-    },
-    "edges_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "faces_only_in_reference": [
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "sel_vertices_only_in_vibe3d": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ],
-     [
-      1.0,
-      0.0,
-      0.0
-     ]
-    ],
-    "sel_polygons_only_in_reference": [
-     [
-      0.5,
-      0.0,
-      0.0
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   },
   {
    "name": "bowtie_click_order",
-   "note": "a self-intersecting ring, built as given",
+   "note": "a self-intersecting ring, built as given. There is no ring-crossing test on either side; what refused this cell was the ZERO-AREA gate, because a bow-tie over a square has a Newell normal of exactly zero - the two lobes are equal and opposite. So this is the same gate as three_collinear_points seen from a second angle, and the click ORDER is the independent variable: the same four points in ring order build a clean quad and are a different case.",
    "input": [
     {
      "reset": true,
@@ -770,8 +696,8 @@
    "vibe3d_current": {
     "counts": {
      "verts": 4,
-     "edges": 0,
-     "faces": 0
+     "edges": 4,
+     "faces": 1
     },
     "vertices": [
      [
@@ -795,18 +721,10 @@
       1.0
      ]
     ],
-    "edges": [],
-    "faces": [],
-    "selection": {
-     "mode": "vertices",
-     "vertices": [
+    "edges": [
+     [
       [
        0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
        0.0,
        0.0
       ],
@@ -814,6 +732,25 @@
        1.0,
        0.0,
        1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
       ],
       [
        0.0,
@@ -821,138 +758,75 @@
        1.0
       ]
      ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "selection": {
+     "mode": "polygons",
+     "vertices": [],
      "edges": [],
-     "polygons": []
+     "polygons": [
+      [
+       0.5,
+       0.0,
+       0.5
+      ]
+     ]
     },
     "applied": [
      true,
-     false
+     true
     ]
    },
-   "divergence": {
-    "applied": {
-     "reference": [
-      true,
-      true
-     ],
-     "vibe3d": [
-      true,
-      false
-     ]
-    },
-    "counts_delta": {
-     "verts": 0,
-     "edges": 4,
-     "faces": 1
-    },
-    "edges_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "faces_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "sel_vertices_only_in_vibe3d": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ],
-     [
-      1.0,
-      0.0,
-      0.0
-     ],
-     [
-      1.0,
-      0.0,
-      1.0
-     ],
-     [
-      0.0,
-      0.0,
-      1.0
-     ]
-    ],
-    "sel_polygons_only_in_reference": [
-     [
-      0.5,
-      0.0,
-      0.5
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   },
   {
    "name": "duplicate_over_existing_face",
-   "note": "the ring of an EXISTING face: a duplicate appears, edges do not grow",
+   "note": "the ring of an EXISTING face: a duplicate appears, edges do not grow. TWO gates had to come off for this one - the duplicate-face set test and the <=2-faces-per-edge manifold test (the shared edge of the two plate quads is already saturated). The reference's duplicate is wound OPPOSITE to the original, and our adjacency auto-orient reproduces that ring without being told to.",
    "input": [
     {
      "reset": true,
@@ -1258,7 +1132,7 @@
     "counts": {
      "verts": 6,
      "edges": 7,
-     "faces": 2
+     "faces": 3
     },
     "vertices": [
      [
@@ -1319,21 +1193,9 @@
      ],
      [
       [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
        1.0,
        0.0,
        1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
       ],
       [
        0.0,
@@ -1343,36 +1205,48 @@
      ],
      [
       [
-       1.0,
        0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
        0.0,
        1.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
       ]
      ],
      [
       [
        1.0,
        0.0,
-       1.0
+       0.0
       ],
       [
        2.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
        0.0,
        1.0
       ]
@@ -1422,110 +1296,58 @@
        0.0,
        1.0
       ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
      ]
     ],
     "selection": {
-     "mode": "vertices",
-     "vertices": [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ],
+     "mode": "polygons",
+     "vertices": [],
      "edges": [],
-     "polygons": []
+     "polygons": [
+      [
+       0.5,
+       0.0,
+       0.5
+      ]
+     ]
     },
     "applied": [
      true,
-     false
+     true
     ]
    },
-   "divergence": {
-    "applied": {
-     "reference": [
-      true,
-      true
-     ],
-     "vibe3d": [
-      true,
-      false
-     ]
-    },
-    "counts_delta": {
-     "verts": 0,
-     "edges": 0,
-     "faces": 1
-    },
-    "faces_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "sel_vertices_only_in_vibe3d": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ],
-     [
-      1.0,
-      0.0,
-      0.0
-     ],
-     [
-      0.0,
-      0.0,
-      1.0
-     ],
-     [
-      1.0,
-      0.0,
-      1.0
-     ]
-    ],
-    "sel_polygons_only_in_reference": [
-     [
-      0.5,
-      0.0,
-      0.5
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   }
  ]
 }

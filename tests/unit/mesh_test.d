@@ -2428,7 +2428,7 @@ unittest { // bevelFacesByMask: segments DoS clamp — an absurd segment count
         "ring-quad count should reflect the CLAMPED segment count, not the raw request");
 }
 
-unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over no-op
+unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over SPINS (task 1200)
     // ---- case 1: successful tri–tri spin ----
     // Four vertices of a unit quad split along diagonal 0–2.
     //   v0=(0,0,0) v1=(1,0,0) v2=(1,0,1) v3=(0,0,1)
@@ -2478,8 +2478,15 @@ unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over no-op
     assert(m2.faces.length  == 1, "faces unchanged after boundary no-op");
     assert(m2.edges.length  == 3, "edges unchanged after boundary no-op");
 
-    // ---- case 3: fold-over guard — prospective diagonal already exists ----
-    // [0,1,2] + [0,2,3] share edge 0-2.  [1,2,3] adds edge 1-3 → spin blocked.
+    // ---- case 3: fold-over — the prospective diagonal already exists ----
+    // [0,1,2] + [0,2,3] share edge 0-2.  [1,2,3] already owns edge 1-3.
+    //
+    // Task 1200 (ledger row 17): the reference spins ANYWAY, and the owner's
+    // call (2026-08-18) was to match it. The result is non-manifold by
+    // construction, and both halves of that are asserted here rather than
+    // described: the EDGE COUNT FALLS (the "new" diagonal was already in the
+    // mesh, so one edge leaves and none arrives) and edge 1-3 ends up with
+    // THREE incident faces.
     Mesh m3;
     m3.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(0.5f,0,1), Vec3(0.5f,0.5f,0.5f)];
     m3.addFace([0u, 1u, 2u]);
@@ -2489,13 +2496,29 @@ unittest { // spinEdge: tri–tri flip, boundary no-op, fold-over no-op
 
     uint ei02m3 = m3.edgeIndex(0, 2);
     assert(ei02m3 != ~0u);
-    assert(!m3.spinEdge(ei02m3),
-           "spinEdge must be no-op when new diagonal already exists");
-    assert(m3.edgeIndex(1, 3) != ~0u, "edge 1-3 still present after fold-over guard");
-    assert(m3.edgeIndex(0, 2) != ~0u, "edge 0-2 still present (no spin happened)");
+    assert(m3.edges.length == 6, "fixture: six edges before the spin");
+    assert(m3.spinEdge(ei02m3),
+           "spinEdge must APPLY even though the new diagonal already exists");
+    assert(m3.edgeIndex(0, 2) == ~0u, "the spun diagonal 0-2 is gone");
+    assert(m3.edgeIndex(1, 3) != ~0u, "1-3 is now the shared diagonal too");
+    assert(m3.edges.length == 5,
+           "edge count must FALL 6 -> 5 — the created diagonal already existed");
+    assert(m3.faces.length == 3, "still three faces");
+    assert(m3.edgeFaceUseCounts()[m3.edgeIndex(1, 3)] == 3,
+           "edge 1-3 now carries THREE faces — non-manifold, measured");
+    // Two faces on the same vertex set {1,2,3}: the spin's product duplicates
+    // the pre-existing third face, exactly as the reference's does.
+    int on123 = 0;
+    foreach (ref f; m3.faces) {
+        if (f.length != 3) continue;
+        bool[uint] fs;
+        foreach (v; f) fs[v] = true;
+        if (1u in fs && 2u in fs && 3u in fs) ++on123;
+    }
+    assert(on123 == 2, "TWO faces must stand on {1,2,3} after the spin");
 }
 
-unittest { // spinEdge: quad–quad spin, mixed reject, quad fold-over, d==e degenerate
+unittest { // spinEdge: quad–quad spin, MIXED spin, quad fold-over spin, d==e reject
     // ---- case 4: quad–quad positive spin ----
     // Six vertices, two quads sharing edge 1–2.
     //   v0=(0,0,0) v1=(1,0,0) v2=(1,0,1) v3=(0,0,1) v4=(2,0,0) v5=(2,0,1)
@@ -2537,8 +2560,12 @@ unittest { // spinEdge: quad–quad spin, mixed reject, quad fold-over, d==e deg
     assert(m4.faces[0].length == 4, "face 0 must remain a quad");
     assert(m4.faces[1].length == 4, "face 1 must remain a quad");
 
-    // ---- case 5: mixed tri–quad pair → no-op ----
+    // ---- case 5: mixed tri–quad pair → SPINS, valences preserved ----
     // f0=[0,1,2] (tri) and f1=[1,3,4,2] (quad) share edge 1–2.
+    // Task 1200 (ledger row 9): the reference's gate never asked for equal
+    // valence. Each face keeps its OWN arity across the spin — the triangle
+    // stays a triangle — which is the part a rule that merely "supported mixed
+    // pairs" could get wrong while still returning true.
     Mesh m5;
     m5.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(2,0,0), Vec3(2,0,1)];
     m5.addFace([0u, 1u, 2u]);
@@ -2547,14 +2574,24 @@ unittest { // spinEdge: quad–quad spin, mixed reject, quad fold-over, d==e deg
 
     uint ei12m5 = m5.edgeIndex(1, 2);
     assert(ei12m5 != ~0u, "shared edge 1-2 must exist for mixed case");
-    assert(!m5.spinEdge(ei12m5), "mixed tri–quad must return false");
-    assert(m5.faces[0].length == 3, "triangle unchanged after mixed no-op");
-    assert(m5.faces[1].length == 4, "quad unchanged after mixed no-op");
-    assert(m5.edgeIndex(1, 2) != ~0u, "edge 1-2 must survive mixed no-op");
+    assert(m5.spinEdge(ei12m5), "mixed tri–quad must APPLY");
+    assert(m5.edgeIndex(1, 2) == ~0u, "the old diagonal 1-2 is gone");
+    assert(m5.edgeIndex(0, 3) != ~0u, "the new diagonal is 0-3");
+    assert(m5.edges.length == 6, "one diagonal out, one in — six edges either way");
+    assert(m5.faces.length == 2, "still two faces");
+    assert(m5.faces[0].length == 3, "the triangle is STILL a triangle");
+    assert(m5.faces[1].length == 4, "the quad is STILL a quad");
+    {
+        bool[uint] t, q;
+        foreach (v; m5.faces[0]) t[v] = true;
+        foreach (v; m5.faces[1]) q[v] = true;
+        assert(0u in t && 1u in t && 3u in t, "the triangle is {0,1,3}");
+        assert(0u in q && 2u in q && 3u in q && 4u in q, "the quad is {0,2,3,4}");
+    }
 
-    // ---- case 6: quad fold-over guard ----
+    // ---- case 6: quad fold-over → SPINS (task 1200, row 17's law on quads) ----
     // Two quads sharing edge 1–2, plus a triangle [3,4,6] that pre-creates
-    // edge 3–4 (the prospective diagonal c–e).  spinEdge must return false.
+    // edge 3–4 (the prospective diagonal c–e).
     Mesh m6;
     m6.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1),
                    Vec3(2,0,0), Vec3(2,0,1), Vec3(1,-1,0.5f)];
@@ -2566,16 +2603,23 @@ unittest { // spinEdge: quad–quad spin, mixed reject, quad fold-over, d==e deg
     uint ei12m6 = m6.edgeIndex(1, 2);
     assert(ei12m6 != ~0u, "shared edge 1-2 must exist for quad fold-over case");
     assert(m6.edgeIndex(3, 4) != ~0u, "edge 3-4 must pre-exist (fold-over setup)");
-    assert(!m6.spinEdge(ei12m6), "quad fold-over must return false");
-    assert(m6.edgeIndex(1, 2) != ~0u, "edge 1-2 must survive quad fold-over guard");
-    assert(m6.edgeIndex(3, 4) != ~0u, "edge 3-4 must still exist after guard");
+    assert(m6.edges.length == 10, "fixture: ten edges before the spin");
+    assert(m6.spinEdge(ei12m6), "quad fold-over must APPLY");
+    assert(m6.edgeIndex(1, 2) == ~0u, "the old diagonal 1-2 is gone");
+    assert(m6.edges.length == 9,
+           "edge count falls 10 -> 9: the created diagonal 3-4 already existed");
+    assert(m6.edgeFaceUseCounts()[m6.edgeIndex(3, 4)] == 3,
+           "edge 3-4 now carries THREE faces");
 
     // ---- case 7: d==e degenerate case (Risk 3a) ----
     // Two quads sharing edge 1–2 where a boundary vertex coincides across faces.
     //   f0=[0,1,2,3]: dart 1→2 at j=1; c=3, d=0.
     //   f1=[2,1,0,4]: dart 2→1 at j=0; e=0, f_=4.
-    //   → d==e==0; "two faces share two edges" non-manifold — all-distinct guard
-    //     must fire and return false without mutating the mesh.
+    //   → d==e==0; "two faces share two edges" — the spin would build a face
+    //     with a REPEATED corner, which the shape guard still refuses. Task
+    //     1200 replaced the six-way all-distinct test with a direct
+    //     repeated-vertex test on the two rings the spin is about to write;
+    //     this case is what pins that the replacement did not lose it.
     Mesh m7;
     m7.vertices = [Vec3(0,0,0), Vec3(1,0,0), Vec3(1,0,1), Vec3(0,0,1), Vec3(2,0,1)];
     m7.addFace([0u, 1u, 2u, 3u]);   // dart 1→2 at j=1; c=3, d=0
@@ -4266,6 +4310,87 @@ unittest { // makePolygonFromVerts(autoOrient:false) — the winding bypass
     assert(m.makePolygonFromVerts([0u, 1u, 2u, 3u], false, false) == -1,
         "duplicate face (same unordered vertex set as fi0) must still reject "
         ~ "with autoOrient:false");
+}
+
+// ---------------------------------------------------------------------------
+// Task 1200 — `MakePolyGates`: each of the four refusals can be switched OFF
+// INDEPENDENTLY, and the default is still every one of them ON.
+//
+// This is the kernel half of ledger row 7. The command half (`mesh.makePolygon`
+// asking for `none`, and agreeing with the reference cell for cell) is
+// tests/test_make_polygon.d and tests/fixtures/make_polygon_gates.json.
+//
+// Testing each flag ALONE is the point. `gates: none` on its own would pass
+// even if the four refusals had been collapsed into one switch, and then the
+// Topology Pen — which asks for the default and relies on the zero-area
+// refusal specifically — would have no test standing between it and a later
+// "simplification" of the flag into a bool.
+// ---------------------------------------------------------------------------
+unittest {
+    // Four coplanar points, plus three collinear ones on the X axis.
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 1),
+                  Vec3(2, 0, 0), Vec3(3, 0, 0)];
+    m.buildLoops();
+
+    alias G = Mesh.MakePolyGates;
+
+    // --- the degenerate gate, alone ---------------------------------------
+    assert(m.makePolygonFromVerts([0u, 1u, 4u], false, true, G.all) == -1,
+        "collinear must reject under the default gates");
+    assert(m.makePolygonFromVerts([0u, 1u, 4u], false, true,
+                                  G.duplicate | G.manifold) >= 0,
+        "collinear must BUILD once the degenerate gate alone is off");
+    assert(m.faces.length == 1 && m.faces[0].length == 3,
+        "the zero-area triangle is a real face with three corners");
+
+    // Two corners: refused by the same gate, through the ARITY floor rather
+    // than through Newell's normal — and the floor moves with the flag.
+    assert(m.makePolygonFromVerts([2u, 3u], false, true, G.all) == -1,
+        "a 2-corner ring must reject under the default gates");
+    immutable int twoFi = m.makePolygonFromVerts([2u, 3u], false, true, G.none);
+    assert(twoFi >= 0, "a 2-corner ring must build with the gates off");
+    assert(m.faces[twoFi].length == 2, "and it must keep BOTH corners, not be padded");
+    // The floor itself does not move: one corner is refused however the flag
+    // reads. Two is the smallest ring the reference was measured to build.
+    assert(m.makePolygonFromVerts([5u], false, true, G.none) == -1,
+        "one corner is refused whatever `gates` says — the floor is not a gate");
+    assert(m.makePolygonFromVerts([], false, true, G.none) == -1,
+        "and so is an empty ring");
+
+    // --- the duplicate gate, alone ----------------------------------------
+    Mesh d;
+    d.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 1)];
+    d.buildLoops();
+    assert(d.makePolygonFromVerts([0u, 1u, 2u, 3u], false) >= 0, "seed quad");
+    assert(d.makePolygonFromVerts([2u, 3u, 0u, 1u], false, true, G.all) == -1,
+        "the same unordered vertex set must reject under the default gates");
+    assert(d.makePolygonFromVerts([2u, 3u, 0u, 1u], false, true,
+                                  G.degenerate | G.manifold) >= 0,
+        "and must build once the duplicate gate alone is off");
+    assert(d.faces.length == 2, "two faces now stand on the same four corners");
+    assert(d.edges.length == 4, "and the duplicate adds no edge at all");
+
+    // --- the manifold gate, alone -----------------------------------------
+    // Two quads of a plate share edge 1-4; a third face on that edge would
+    // push it to three.
+    Mesh n;
+    n.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(2, 0, 0),
+                  Vec3(0, 0, 1), Vec3(1, 0, 1), Vec3(2, 0, 1),
+                  Vec3(1, 1, 0.5f)];
+    n.faces = [[0u, 1u, 4u, 3u], [1u, 2u, 5u, 4u]];
+    n.rebuildEdgesFromFaces();
+    n.buildLoops();
+    assert(n.edgeFaceUseCounts()[n.edgeIndex(1, 4)] == 2,
+        "fixture: edge 1-4 starts saturated");
+    assert(n.makePolygonFromVerts([1u, 4u, 6u], false, true, G.all) == -1,
+        "a third face on a saturated edge must reject under the default gates");
+    assert(n.makePolygonFromVerts([1u, 4u, 6u], false, true,
+                                  G.degenerate | G.duplicate) >= 0,
+        "and must build once the manifold gate alone is off");
+    assert(n.edgeFaceUseCounts()[n.edgeIndex(1, 4)] == 3,
+        "edge 1-4 now carries THREE faces — the non-manifold state the owner "
+        ~ "chose to allow (ledger row 7, duplicate_over_existing_face)");
 }
 
 // ---------------------------------------------------------------------------

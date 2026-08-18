@@ -9,19 +9,26 @@ import shader;
 import snapshot : MeshSnapshot;
 import selection_product : repointToEdgeKeys;
 
-/// Spin (rotate) the shared edge of two adjacent triangle or quad faces to the
-/// other diagonal of the combined boundary polygon.
+/// Spin (rotate) the shared edge of two adjacent faces to the next diagonal of
+/// the combined boundary polygon.
 ///
 /// Edge scope   — spin every selected qualifying edge.
 /// Polygon scope — spin the shared interior edges between pairs of selected
 ///                 faces that both qualify.
 /// Vertex scope  — explicit no-op guard (returns false before snapshot).
 ///
-/// Supported face pairs: tri–tri (n=3) and quad–quad (n=4).
-/// Quad direction: new diagonal = (c, e) = (successor-of-b-in-f1,
-///   successor-of-a-in-f2); this is the vibe3d default (vibe3d-divergence;
-///   Phase-0 reference capture deferred — see doc/spin_quads_plan.md).
-/// Mixed tri↔quad pairs and n-gon (n≥5) pairs are silently skipped.
+/// Supported face pairs (task 1200, ledger rows 9 + 16): ANY two faces with at
+/// least three sides each — a triangle beside a quad, two pentagons, anything.
+/// Both faces keep their own valence. This used to demand equal valence and
+/// that it be 3 or 4; the reference's gate never asked for either.
+/// Direction: new diagonal = (c, e) = (successor-of-b-in-f1,
+///   successor-of-a-in-f2); the vibe3d default, and it reproduces the reference
+///   on every frozen cell (see doc/spin_quads_plan.md for the quad question the
+///   Phase-0 capture never settled).
+/// There is no FOLD-OVER guard (ledger row 17): a spin whose new diagonal
+/// already exists is performed anyway and leaves a NON-MANIFOLD mesh — three
+/// faces on that edge, and an edge count that FALLS. Deliberate; see
+/// tests/fixtures/spin_gate_narrower.json.
 ///
 /// Undo via full MeshSnapshot (same pattern as MeshSplitEdge).
 class MeshSpinEdge : Command, Operator {
@@ -100,8 +107,14 @@ class MeshSpinEdge : Command, Operator {
                     uint ei = mesh.edgeIndexByKey(ek);
                     if (ei == ~0u) continue;
                     // Both incident faces must be selected.
+                    // Bounded write: see the same collector in Mesh.spinEdge —
+                    // `EdgeFaceRange` caps at two today, and a `uint[2]` filled
+                    // by a bare `[n++]` overflows the day it does not.
                     uint[2] ifaces; uint nif = 0;
-                    foreach (f; mesh.facesAroundEdge(ei)) ifaces[nif++] = f;
+                    foreach (f; mesh.facesAroundEdge(ei)) {
+                        if (nif >= 2) { nif = 3; break; }
+                        ifaces[nif++] = f;
+                    }
                     if (nif != 2) continue;
                     if (!mesh.isFaceSelected(ifaces[0]) ||
                         !mesh.isFaceSelected(ifaces[1])) continue;

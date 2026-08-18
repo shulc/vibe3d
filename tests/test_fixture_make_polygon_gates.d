@@ -1,22 +1,31 @@
-// Task 1130 -- our make-polygon has four refusal gates; the reference has
-// none of them. Frozen as a KNOWN DIVERGENCE, ledger row 7.
+// Task 1130 measured it, task 1200 CLOSED it — our make-polygon had four
+// refusal gates and the reference has none of them. Ledger row 7.
 //
-//   three_collinear_points        zero-area triangle -- built there
-//   two_points_only               a 2-point polygon -- built there
-//   bowtie_click_order            a self-intersecting ring -- built as given
+//   three_collinear_points        zero-area triangle
+//   two_points_only               a 2-point polygon
+//   bowtie_click_order            a self-intersecting ring, built as given
 //   duplicate_over_existing_face  a DUPLICATE face on an existing ring:
 //                                 2 faces -> 3, and the edge count does not
 //                                 grow at all
 //
-// The click ORDER is the independent variable in the bow-tie cell, so the
-// selection is keyed on an ORDERED coordinate list -- the same four points in
-// ring order build a clean quad, and that is a different case entirely.
+// All four now declare an EMPTY gap, and every dimension they were ever open
+// in is declared a CONTROL. That is stronger than deleting them: an empty gap
+// is re-asserted per-dimension on every run, so this file still fails if the
+// counts, the rings, the winding, the selection, or the applied-flags drift —
+// and it fails naming the dimension.
 //
-// This fixture takes no position on which engine is right. Three of these four
-// gates protect invariants our mesh kernel genuinely relies on; what the
-// fixture pins is that the disagreement exists and has not silently moved. If
-// a gate is ever removed to match, this reddens on the case that changed, and
-// that case is then retired into a parity fixture.
+// Three of the four gates protected invariants the mesh kernel relies on; the
+// owner's call (2026-08-18) was to match the reference anyway and make the
+// results survivable instead. The gates are NOT deleted from the kernel —
+// `Mesh.MakePolyGates` switches them, the default is still `all`, and the
+// Topology Pen (which builds every face it makes through the same kernel and
+// relies on the zero-area refusal) is untouched. Only `mesh.makePolygon` asks
+// for `none`. What the removal cost, and what had to be fixed downstream to
+// pay it, is in doc/tasks/work/1200-ref-refusals.md.
+//
+// The click ORDER is the independent variable in the bow-tie cell, so the
+// selection is keyed on an ORDERED coordinate list — the same four points in
+// ring order build a clean quad, and that is a different case entirely.
 
 import fixture_helpers;
 

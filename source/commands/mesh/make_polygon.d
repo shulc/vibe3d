@@ -19,10 +19,23 @@ import selection_product : repointToFaces;
 /// `mesh.hasAnySelectedVertices()`), matching the existing vertex-command
 /// convention used by vert.join and vert.merge.
 ///
+/// Task 1200 — this command has NO refusal gate beyond "give me at least two
+/// corners". The reference editor's Make Polygon has none either (ledger row
+/// 7): it builds a zero-area triangle from three collinear free vertices, a
+/// two-point polygon from two, a self-intersecting quad from a bow-tie click
+/// order, and a DUPLICATE face on the ring of an existing one (2 faces -> 3,
+/// edge count unchanged). Each of those four cells is frozen in
+/// `tests/fixtures/make_polygon_gates.json`.
+///
+/// So the kernel is asked for `Mesh.MakePolyGates.none`. The gates themselves
+/// are not deleted — the Topology Pen builds every face it makes through the
+/// same kernel and relies on the zero-area refusal, and it is a different tool
+/// with a deliberately different law.
+///
 /// Rejections (no-op, no snapshot, no undo entry):
-///   - fewer than 3 selected vertices
-///   - collinear / zero-area selection (Newell normal < 1e-6)
-///   - duplicate face (same unordered vertex set already exists)
+///   - fewer than 2 selected vertices. Not a gate that was left in place: a
+///     one-corner polygon is a shape nobody has measured on either engine, and
+///     the smallest ring the reference was actually seen to build has two.
 class MeshMakePolygon : Command, Operator {
     mixin OperatorActrCommon;
     private MeshSnapshot     snap;
@@ -82,8 +95,10 @@ class MeshMakePolygon : Command, Operator {
             pairs ~= VOrderPair(cast(uint)vi, ord);
         }
 
-        // Pre-check: fewer than 3 distinct verts → no-op, no snapshot
-        if (pairs.length < 3) return false;
+        // Pre-check: fewer than 2 distinct verts → no-op, no snapshot.
+        // TWO, not three — see the class doc: the reference builds a two-point
+        // polygon and we now do too.
+        if (pairs.length < 2) return false;
 
         // Sort: click-ordered first (ascending order value), then unordered
         // (order==0) appended in ascending vertex-index order.
@@ -101,10 +116,13 @@ class MeshMakePolygon : Command, Operator {
         // Snapshot before mutation (mirrors vert_join.d / split_edge.d pattern).
         snap = MeshSnapshot.capture(*mesh);
 
-        int fi = mesh.makePolygonFromVerts(ordered, flip_);
+        int fi = mesh.makePolygonFromVerts(ordered, flip_, /*autoOrient*/true,
+                                           Mesh.MakePolyGates.none);
         if (fi < 0) {
-            // Kernel rejected (collinear, degenerate, duplicate, etc.) —
-            // restore snapshot so the undo stack is left untouched.
+            // With every gate off the only remaining refusals are structural
+            // (an out-of-range index, or a ring that collapses below two
+            // corners once consecutive duplicates are removed) — restore the
+            // snapshot so the undo stack is left untouched.
             snap.restore(*mesh);
             snap = MeshSnapshot.init;
             return false;

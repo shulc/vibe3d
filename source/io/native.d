@@ -1546,9 +1546,20 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
                 ? cast(long) ij.uinteger : ij.integer;
             face ~= cast(uint) raw;
         }
-        // Mirror importLWO: silently drop degenerate (< 3-vert) faces rather
-        // than reject the whole file.
-        if (face.length >= 3)
+        // Silently drop faces below the smallest ring the editor can BUILD,
+        // rather than reject the whole file (the policy importLWO uses).
+        //
+        // The floor is TWO, not three, and that is load-bearing since task
+        // 1200: `mesh.makePolygon` now builds a two-point polygon, because the
+        // reference does (ledger row 7). At `>= 3` this reader silently ate it
+        // on the way back in — and not only it: `faceSubpatch`, `faceMaterial`,
+        // `facePart` and the Hide bits are applied BY POSITION against `polys`
+        // below, so every face after the dropped one inherited its neighbour's
+        // attributes, and the corner count shifted enough to fail every UV
+        // map's length check and drop those too. A document whose only face was
+        // the two-point one failed to load at all ("no polygons"). Silent
+        // corruption of a document the editor itself had just written.
+        if (face.length >= 2)
             polys ~= face;
     }
 

@@ -8,11 +8,12 @@ import editmode;
 import snapshot : MeshSnapshot;
 import geometry_clipboard : geometryClipboard;
 
-/// Append the clipboard geometry to the active mesh and select the pasted
-/// faces. Snapshot undo restores the pre-paste cage.
+/// Append the clipboard geometry to the active mesh and select what it pasted —
+/// the faces for a face clip, the points for a vertex-mode clip (task 1200,
+/// ledger row 19). Snapshot undo restores the pre-paste cage.
 ///
-/// Mode-agnostic: paste works in any edit mode — it always injects face
-/// topology regardless of the current picking mode. This is the intended
+/// Mode-agnostic: paste works in any edit mode — what it injects is decided by
+/// the CLIP, not by the current picking mode. This is the intended
 /// asymmetry vs. mesh.copy / mesh.cut (Polygons-only): paste should remain
 /// available from any mode so a future UI Paste button can stay enabled
 /// everywhere (button gating reads supportedModes).
@@ -37,13 +38,20 @@ class MeshPaste : Command, Operator {
         if (geometryClipboard.empty) return false;
 
         snap = MeshSnapshot.capture(*mesh);
-        size_t n = mesh.appendGeometry(
-            geometryClipboard.verts,
-            geometryClipboard.faces,
-            geometryClipboard.subpatch,
-            geometryClipboard.material,
-            geometryClipboard.part,
-            geometryClipboard.setMask);
+        // A clip with points and no faces is a VERTEX-mode copy (task 1200,
+        // ledger row 19). `appendGeometry` answers 0 to an empty face list by
+        // design — it has nothing to remap or to select — so the loose points
+        // get their own append, which selects them the same way appendGeometry
+        // selects the faces it pasted.
+        size_t n = geometryClipboard.looseOnly
+            ? mesh.appendLooseVertices(geometryClipboard.verts)
+            : mesh.appendGeometry(
+                geometryClipboard.verts,
+                geometryClipboard.faces,
+                geometryClipboard.subpatch,
+                geometryClipboard.material,
+                geometryClipboard.part,
+                geometryClipboard.setMask);
         if (n == 0) {
             snap = MeshSnapshot.init;
             return false;

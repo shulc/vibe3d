@@ -1,6 +1,10 @@
 // Tests for mesh.copy / mesh.paste / mesh.cut (geometry clipboard bundle).
-// The clipboard fills on copy/cut (Polygons-mode only) and is consumed
-// (non-destructively) by paste (mode-agnostic). Paste lands at the same
+// The clipboard fills on copy (Polygons or Vertices mode) and on cut (Polygons
+// only) and is consumed (non-destructively) by paste (mode-agnostic).
+//
+// TASK 1200 (ledger row 19): copy in VERTICES mode used to refuse; the
+// reference takes the points and its paste puts them back as free vertices.
+// EDGES mode still refuses — nobody measured it there. Paste lands at the same
 // position as the copied faces (v1 = overlapping, no offset).
 //
 // Cube layout (centered at origin, size 1):
@@ -336,23 +340,61 @@ unittest { // empty-selection cut: no selected faces → rejected, mesh unchange
         ~ m["faceCount"].integer.to!string);
 }
 
-unittest { // non-Polygons copy: Vertices mode with a selection → rejected
+unittest { // VERTICES-mode copy: task 1200 (ledger row 19) — it takes the
+           // points, and the paste puts that many free vertices back.
     resetCube();
     postSelect("vertices", [0, 1, 2, 3]);  // switches to Vertices mode
 
-    postCommandRaw(`{"id":"mesh.copy"}`);  // tolerate non-ok
+    postCommand(`{"id":"mesh.copy"}`);
+    auto m0 = getModel();
+    assert(m0["vertexCount"].integer == 8 && m0["faceCount"].integer == 6,
+        "copy is read-only — it must not touch the mesh");
+
+    postCommand(`{"id":"mesh.paste"}`);
     auto m = getModel();
-    assert(m["vertexCount"].integer == 8,
-        "non-Polygons copy must not change verts; got "
+    assert(m["vertexCount"].integer == 12,
+        "paste must add the four copied points, expected 12 got "
         ~ m["vertexCount"].integer.to!string);
     assert(m["faceCount"].integer == 6,
-        "non-Polygons copy must not change faces; got "
+        "and no face: a loose vertex borders nothing; got "
         ~ m["faceCount"].integer.to!string);
+    assert(m["edgeCount"].integer == 12,
+        "and no edge either; got " ~ m["edgeCount"].integer.to!string);
+
+    // The pasted points land on their originals, so position alone cannot see
+    // the paste — the count is what sees it — but WHICH four are selected can
+    // still be checked: exactly four, and they are the new tail indices.
+    auto sel = getSelection()["selectedVertices"].array;
+    assert(sel.length == 4,
+        "exactly the four pasted points stay selected, got "
+        ~ sel.length.to!string);
+    foreach (v; sel)
+        assert(v.integer >= 8,
+            "the selection must name the PASTED points (indices 8..11), not "
+            ~ "the originals; got index " ~ v.integer.to!string);
+
+    // Undo restores the cage.
+    postUndo();
+    assert(getModel()["vertexCount"].integer == 8,
+        "undo must remove the pasted points");
+}
+
+unittest { // EDGES-mode copy still refuses — an absence of measurement, not a
+           // decision: the reference was never driven with an edge selection.
+    resetCube();
+    postSelect("edges", [0, 1, 2, 3]);
+
+    auto r = postCommandRaw(`{"id":"mesh.copy"}`);
+    assert(r["status"].str != "ok",
+        "edge-mode copy must still refuse");
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 8 && m["faceCount"].integer == 6,
+        "and must not change the mesh");
     // Clipboard not filled → paste rejected.
     auto p = postCommandRaw(`{"id":"mesh.paste"}`);
     assert(p["status"].str != "ok"
            || getModel()["faceCount"].integer == 6,
-        "paste after non-Polygons copy should be a no-op");
+        "paste after a refused edge-mode copy should be a no-op");
 }
 
 unittest { // non-Polygons cut: Edges mode with a selection → rejected

@@ -1506,6 +1506,33 @@ struct Mesh {
         return vertices.length == 0 || faces.length == 0;
     }
 
+    /// Append free-standing vertices — no face refers to any of them — and
+    /// leave EXACTLY the appended ones selected. The loose-vertex counterpart of
+    /// `appendGeometry`, for `mesh.paste` after a VERTEX-mode `mesh.copy`
+    /// (task 1200, ledger row 19: the reference's copy takes the vertices and
+    /// its paste adds them back as four free points).
+    ///
+    /// Returns the number appended, so a caller can gate on it the same way it
+    /// gates on `appendGeometry`'s face count. Faces, edges and the face/edge
+    /// selections are untouched: a loose vertex borders nothing.
+    size_t appendLooseVertices(in Vec3[] newVerts) {
+        if (newVerts.length == 0) return 0;
+        const size_t base = vertices.length;
+        foreach (ref v; newVerts) addVertex(v);
+        // Grows vertexMarks / vertexSelectionOrder / every Point-domain MeshMap
+        // to the new count, zero-filled — the same call `appendGeometry` and
+        // `splitSelectedVertices` make after their own appends.
+        resizeVertexSelection();
+        // The pasted points are the product; nothing else stays selected. This
+        // mirrors `appendGeometry`, which deselects every pre-existing face and
+        // selects only what it pasted.
+        clearVertexSelection();
+        foreach (i; 0 .. newVerts.length) selectVertex(cast(int)(base + i));
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return newVerts.length;
+    }
+
     /// Merge coincident vertices (within `epsSq` squared distance) by
     /// remapping each later-indexed coincident vert onto the lowest-indexed
     /// vert at that position. Face vertex references are rewritten;
@@ -9667,27 +9694,63 @@ struct Mesh {
         return -1;
     }
 
-    /// Reconnect the shared edge of two adjacent triangles or quads to the other
-    /// diagonal of the combined boundary polygon.  Returns true iff the mesh was
-    /// mutated.
+    /// True when `ring` names the same vertex twice. Small-n quadratic on
+    /// purpose: a face ring is a handful of entries and an associative-array
+    /// probe per corner costs more than the compare. Used by `spinEdge`'s
+    /// repeated-corner guard (task 1200), which is the only refusal left in it
+    /// that is about the SHAPE of the result rather than the input.
+    private static bool hasRepeatedVertex_(const(uint)[] ring) {
+        foreach (i; 0 .. ring.length)
+            foreach (j; i + 1 .. ring.length)
+                if (ring[i] == ring[j]) return true;
+        return false;
+    }
+
+    /// Reconnect the shared edge of two adjacent faces to the next diagonal of
+    /// the combined boundary polygon.  Returns true iff the mesh was mutated.
     ///
-    /// Supported pairs: tri–tri (n=3) and quad–quad (n=4).
-    /// Quad direction: new diagonal = (c, e) where c = successor-of-b in f1 and
-    ///   e = successor-of-a in f2.  This is the vibe3d default (vibe3d-divergence;
-    ///   Phase-0 reference capture deferred — see doc/spin_quads_plan.md).
+    /// **The gate is the reference editor's** (task 1200, ledger rows 9+16+17):
+    /// the edge has exactly two incident faces, and each has at least three
+    /// sides. That is the whole of it — the two faces need NOT have the same
+    /// valence, need not be triangles or quads, and the new diagonal is allowed
+    /// to be an edge that already exists.
+    ///
+    /// Before 1200 the gate was narrower in three ways at once, and the ledger
+    /// read them as one law being applied too tightly:
+    ///   row 9  — a triangle and a quad sharing an edge: refused, reference spins.
+    ///   row 16 — two pentagons: refused (equal valence, but neither 3 nor 4),
+    ///            reference spins and both stay pentagons.
+    ///   row 17 — the new diagonal already belongs to a THIRD face: refused by a
+    ///            fold-over guard, reference spins anyway. The result is
+    ///            NON-MANIFOLD by construction — that diagonal ends up with
+    ///            three incident faces and the edge count DROPS (6 -> 5 on the
+    ///            frozen cell), because the "new" edge was already there.
+    /// The owner's call was to match the reference, non-manifold results
+    /// included; `tests/fixtures/spin_gate_narrower.json` freezes all three.
+    ///
+    /// Direction: the new diagonal is (c, e) where c = successor-of-b in f1 and
+    ///   e = successor-of-a in f2 (f1 being the face that traverses a→b). This
+    ///   is the vibe3d default and it reproduces the reference on all three
+    ///   frozen cells, rings included. Both faces KEEP their valence: f1 loses b
+    ///   and gains e, f2 loses a and gains c.
     ///   Period: 2 for tri pairs, 3 for quad pairs (a second spin advances to the
     ///   (d,f) diagonal, not back to the original).
     ///
     /// Guards (all → false, no crash):
     ///   - `ei` out of range.
-    ///   - Edge not shared by exactly 2 faces (boundary or non-manifold).
-    ///   - Faces have different lengths, or length ∉ {3, 4} (mixed or n-gon pair).
-    ///   - Any two of the 2n boundary vertices coincide (covers fold-over and the
-    ///     "two faces share two edges" non-manifold cases such as d==e or c==f).
-    ///   - Prospective new diagonal c–e already exists in the mesh (fold-over guard).
+    ///   - Edge not bordered by exactly 2 faces (a boundary edge, a wire edge, or
+    ///     a fan the ring walk cannot see past — see `facesAroundEdge`).
+    ///   - Either face has fewer than 3 sides.
+    ///   - The spin would build a face with a REPEATED vertex: `c == e`, or `e`
+    ///     already in f1's ring away from b, or `c` already in f2's ring away
+    ///     from a. This covers the two-faces-share-two-edges cases (the old
+    ///     `d == e` / `c == f_` among the quad's six boundary vertices) without
+    ///     forbidding the reference's non-manifold result, which repeats no
+    ///     vertex inside either face.
     ///
     /// Vertex count never changes; only face vertex lists and the derived
-    /// edge + half-edge structure are rewritten.
+    /// edge + half-edge structure are rewritten. The EDGE count may fall (row
+    /// 17) when the diagonal the spin creates was already in the mesh.
     bool spinEdge(uint ei) {
         uint[2] discard;
         return spinEdge(ei, discard);
@@ -9704,17 +9767,27 @@ struct Mesh {
     bool spinEdge(uint ei, out uint[2] newDiagonal) {
         if (ei >= edges.length) return false;
 
-        // Collect at most 2 incident faces (EdgeFaceRange cap).
+        // Collect at most 2 incident faces. `EdgeFaceRange` caps ITSELF at two
+        // (`mesh_topo.d`'s `uint[2] _faces`), but the bound is written here as
+        // well: task 1200 made a three-face edge an ordinary product of this
+        // very function, and a `uint[2]` filled by an unbounded `[n++]` is a
+        // stack-buffer overflow the day that cap moves. Same shape as
+        // `mesh_ops/loop_slice.d`'s collector, which already bounds it.
         uint[2] incFaces;
         uint nFaces = 0;
-        foreach (fi; facesAroundEdge(ei)) incFaces[nFaces++] = fi;
+        foreach (fi; facesAroundEdge(ei)) {
+            if (nFaces >= 2) { nFaces = 3; break; }   // 3 = "more than two"
+            incFaces[nFaces++] = fi;
+        }
         if (nFaces != 2) return false;   // boundary or non-manifold
 
         uint f1i = incFaces[0], f2i = incFaces[1];
 
-        // Support n∈{3,4} pairs only; both faces must have equal length.
-        uint n = cast(uint)faces[f1i].length;
-        if (faces[f2i].length != n || (n != 3 && n != 4)) return false;
+        // The reference's whole gate (task 1200): two faces, each with at least
+        // three sides. No equal-valence demand, no {3,4} restriction.
+        uint n1 = cast(uint)faces[f1i].length;
+        uint n2 = cast(uint)faces[f2i].length;
+        if (n1 < 3 || n2 < 3) return false;
 
         uint a = edges[ei][0], b = edges[ei][1];
         ulong ek = edgeKey(a, b);
@@ -9728,46 +9801,54 @@ struct Mesh {
         if (faces[f1i][j1] == b) {
             uint tmp = f1i; f1i = f2i; f2i = tmp;
             int jtmp = j1; j1 = j2; j2 = jtmp;
+            uint ntmp = n1; n1 = n2; n2 = ntmp;
         }
         // Invariant after possible swap:
-        //   faces[f1i][j1]         == a   (a→b dart in f1)
-        //   faces[f1i][(j1+1)%n]   == b
-        //   faces[f2i][j2]         == b   (b→a dart in f2)
-        //   faces[f2i][(j2+1)%n]   == a
+        //   faces[f1i][j1]          == a   (a→b dart in f1)
+        //   faces[f1i][(j1+1)%n1]   == b
+        //   faces[f2i][j2]          == b   (b→a dart in f2)
+        //   faces[f2i][(j2+1)%n2]   == a
 
-        uint c = faces[f1i][(j1 + 2) % n];   // successor of b in f1  (= p for n=3)
-        uint e = faces[f2i][(j2 + 2) % n];   // successor of a in f2  (= q for n=3)
-        uint d  = (n == 4) ? faces[f1i][(j1 + 3) % n] : 0;  // pred of a in f1 (quad)
-        uint f_ = (n == 4) ? faces[f2i][(j2 + 3) % n] : 0;  // pred of b in f2 (quad)
+        uint c = faces[f1i][(j1 + 2) % n1];   // successor of b in f1  (= p for n1=3)
+        uint e = faces[f2i][(j2 + 2) % n2];   // successor of a in f2  (= q for n2=3)
 
-        // Guard: all 2n boundary vertices must be distinct.
-        //   For n=3: reduces to c≠e (the only degenerate mode).
-        //   For n=4: covers c==e AND the "two faces share two edges" cases such as
-        //            d==e or c==f_ that pass nFaces==2 but build repeated-vertex faces.
-        if (n == 3) {
-            if (c == e) return false;
-        } else {
-            uint[6] bv = [a, b, c, d, e, f_];
-            foreach (ii; 0 .. 6)
-                foreach (jj; ii + 1 .. 6)
-                    if (bv[ii] == bv[jj]) return false;
-        }
+        // The two rings the spin will write, for any valences n1, n2 ≥ 3:
+        //   f1' = f1 with b replaced — walk f1 from c round to a, then append e
+        //   f2' = f2 with a replaced — walk f2 from e round to b, then append c
+        // Each keeps its own length, which is why a triangle+quad pair stays a
+        // triangle and a quad (ledger row 9) and two pentagons stay pentagons
+        // (row 16). For n1 == n2 == 3 this is exactly the old [c,a,e] / [e,b,c];
+        // for n1 == n2 == 4, exactly the old [c,d,a,e] / [e,f_,b,c].
+        uint[] ring1;
+        ring1.reserve(n1);
+        foreach (k; 2 .. n1) ring1 ~= faces[f1i][(j1 + k) % n1];   // c … pred(a)
+        ring1 ~= a;
+        ring1 ~= e;
+        uint[] ring2;
+        ring2.reserve(n2);
+        foreach (k; 2 .. n2) ring2 ~= faces[f2i][(j2 + k) % n2];   // e … pred(b)
+        ring2 ~= b;
+        ring2 ~= c;
 
-        // Fold-over guard: prospective new diagonal c–e must not already exist.
-        if (edgeIndex(c, e) != ~0u) return false;
+        // Guard: neither new ring may repeat a vertex. `c == e` is the whole of
+        // it for a tri–tri pair; the other two arms are what the old six-way
+        // "all 2n boundary vertices distinct" test was actually catching on
+        // quads (d == e, c == f_) — two faces sharing two edges, which passes
+        // the two-incident-faces test and would build a face with a doubled
+        // corner. It deliberately does NOT reject the reference's non-manifold
+        // spin (row 17): there the new diagonal already exists in a THIRD face,
+        // which repeats nothing inside f1' or f2'.
+        if (c == e) return false;
+        if (hasRepeatedVertex_(ring1) || hasRepeatedVertex_(ring2)) return false;
 
-        // Build new face pair; new shared diagonal = c–e.
-        if (n == 3) {
-            // Tri–tri: reproduces prior [p,a,q] / [q,b,p] with c=p, e=q.
-            faces[f1i] = [c, a, e];
-            faces[f2i] = [e, b, c];
-        } else {
-            // Quad–quad: hexagon boundary [a,e,f_,b,c,d]; split by diagonal c–e.
-            // Direction: (c,e) is the vibe3d default (vibe3d-divergence;
-            // Phase-0 reference capture deferred).
-            faces[f1i] = [c, d, a, e];
-            faces[f2i] = [e, f_, b, c];
-        }
+        // NO fold-over guard. The reference has none, and removing ours is the
+        // whole of ledger row 17: `edgeIndex(c, e) != ~0u` used to refuse here,
+        // and the mesh the spin now produces has one edge with three incident
+        // faces. `rebuildEdges()` below dedups the diagonal, so the edge count
+        // FALLS by one on that cell instead of staying put.
+
+        faces[f1i] = ring1;
+        faces[f2i] = ring2;
         newDiagonal = [c, e];   // the product, for the post-op selection
 
         rebuildEdges();
@@ -10213,16 +10294,57 @@ struct Mesh {
     // Make Polygon (mesh.makePolygon)
     // -----------------------------------------------------------------------
 
+    /// Which of this kernel's four REFUSALS are in force. Task 1200: the
+    /// reference editor's Make Polygon has none of them — it builds a zero-area
+    /// triangle from three collinear points, a two-point polygon from two, a
+    /// self-intersecting ring from a bow-tie click order, and a DUPLICATE face
+    /// on the ring of an existing one (ledger row 7). The `mesh.makePolygon`
+    /// COMMAND therefore asks for `MakePolyGates.none`.
+    ///
+    /// The flag exists rather than a blanket removal because the gates are not
+    /// all one law: the Topology Pen builds every one of its faces through this
+    /// kernel and RELIES on the zero-area refusal to reject a collapsed
+    /// triangle mid-gesture (`tools/edit/topology_pen/tool.d`), and that tool
+    /// is a different tool with a deliberately different law (the same way
+    /// `orientationAdmits` is). So the default stays `all`, every existing
+    /// caller keeps the behaviour it was written against, and only the command
+    /// opts out.
+    ///
+    /// The bow-tie is not on this list because there was never a ring-crossing
+    /// test to switch off — a self-intersecting ring already passed every gate.
+    enum MakePolyGates : uint {
+        none       = 0,
+        /// < 3 corners after collapsing consecutive duplicates, or a ring whose
+        /// Newell normal is shorter than 1e-6 (collinear / zero area).
+        degenerate = 1 << 0,
+        /// A face on the same UNORDERED vertex set already exists.
+        duplicate  = 1 << 1,
+        /// Some boundary edge of the new ring already carries two faces, so the
+        /// ring would push it to three (task 0316; non-manifold).
+        manifold   = 1 << 2,
+        all        = degenerate | duplicate | manifold,
+    }
+
     /// Build one face from an ORDERED list of vertex indices.
     /// Winding follows `orderedIdx` order; `flip` reverses it.
     /// Generates missing deduped edges via addEdge. Returns the new face
     /// index, or -1 on rejection.
     ///
-    /// Rejections:
-    ///   - any index >= vertices.length
-    ///   - fewer than 3 distinct vertices (after collapsing consecutive dupes)
-    ///   - collinear / zero-area (Newell normal magnitude < 1e-6)
-    ///   - duplicate of an existing face (same unordered vertex set)
+    /// Rejections (each one switchable off through `gates`, see MakePolyGates):
+    ///   - any index >= vertices.length                       [never switchable]
+    ///   - fewer than 2 corners after collapsing consecutive
+    ///     dupes                                              [never switchable]
+    ///   - fewer than 3 corners, or collinear / zero area
+    ///     (Newell normal magnitude < 1e-6)                   [gate: degenerate]
+    ///   - duplicate of an existing face (same unordered
+    ///     vertex set)                                        [gate: duplicate]
+    ///   - a boundary edge of the new ring already carries
+    ///     two faces                                          [gate: manifold]
+    ///
+    /// The floor of TWO corners is not a gate and does not move with `gates`: a
+    /// one-corner face is a shape nobody has measured on either engine, and a
+    /// zero-corner one has no ring at all. Two is the smallest ring the
+    /// reference was actually seen to build (ledger row 7, `two_points_only`).
     ///
     /// `autoOrient` (task 0477, topology-pen P3): when true (default, every
     /// pre-task-0477 caller), the majority-vote `orientFaceConsistent` below
@@ -10231,10 +10353,14 @@ struct Mesh {
     /// (post-`flip`) VERBATIM — for a caller building a fixed
     /// construction-order convention (e.g. topology-pen's captured
     /// `[hub, newest, older-neighbor]` triangle winding) that must not be
-    /// re-derived from adjacency. Every other guard (dedup, Newell zero-area,
-    /// duplicate-face, ≤2-per-edge manifold) still runs unconditionally.
-    int makePolygonFromVerts(const(uint)[] orderedIdx, bool flip, bool autoOrient = true) {
-        if (orderedIdx.length < 3) return -1;
+    /// re-derived from adjacency. `autoOrient` is orthogonal to `gates`:
+    /// consecutive-duplicate collapse and the index bounds check run whatever
+    /// either says, and whichever gates `gates` leaves on run whatever
+    /// `autoOrient` says.
+    int makePolygonFromVerts(const(uint)[] orderedIdx, bool flip, bool autoOrient = true,
+                             MakePolyGates gates = MakePolyGates.all) {
+        immutable size_t minRing = (gates & MakePolyGates.degenerate) ? 3 : 2;
+        if (orderedIdx.length < minRing) return -1;
 
         // --- 1. copy + optional winding reversal ---
         uint[] idx = orderedIdx.dup;
@@ -10259,11 +10385,11 @@ struct Mesh {
         // Also remove the last element if it equals the first (wrap-around dup).
         while (deduped.length >= 2 && deduped[$ - 1] == deduped[0])
             deduped = deduped[0 .. $ - 1];
-        if (deduped.length < 3) return -1;
+        if (deduped.length < minRing) return -1;
         idx = deduped;
 
         // --- 4. collinearity / zero-area via Newell normal ---
-        {
+        if (gates & MakePolyGates.degenerate) {
             float nx = 0, ny = 0, nz = 0;
             foreach (i; 0 .. idx.length) {
                 Vec3 a = vertices[idx[i]];
@@ -10277,9 +10403,11 @@ struct Mesh {
         }
 
         // --- 5. duplicate-face guard (same unordered vertex set) ---
-        foreach (const ref f; faces) {
-            if (f.length != idx.length) continue;
-            if (makePolyVertexSetMatch_(f[], idx[])) return -1;
+        if (gates & MakePolyGates.duplicate) {
+            foreach (const ref f; faces) {
+                if (f.length != idx.length) continue;
+                if (makePolyVertexSetMatch_(f[], idx[])) return -1;
+            }
         }
 
         // --- 5.5. adjacency-driven auto-orient + manifold-safety guard.
@@ -10306,10 +10434,12 @@ struct Mesh {
         // face reusing an edge already shared by two faces of a closed
         // solid). Fuzz-found: task 0316. (Orientation-independent — reject
         // check is unaffected by the auto-orient reversal above.)
-        foreach (i; 0 .. idx.length) {
-            ulong key = edgeKey(idx[i], idx[(i + 1) % idx.length]);
-            auto p = key in edgeFaces;
-            if (p !is null && (*p)[1] != -1) return -1;
+        if (gates & MakePolyGates.manifold) {
+            foreach (i; 0 .. idx.length) {
+                ulong key = edgeKey(idx[i], idx[(i + 1) % idx.length]);
+                auto p = key in edgeFaces;
+                if (p !is null && (*p)[1] != -1) return -1;
+            }
         }
 
         // --- 6. append face + rebuild ---

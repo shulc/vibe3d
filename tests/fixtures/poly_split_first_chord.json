@@ -1,6 +1,6 @@
 {
  "name": "poly_split_first_chord",
- "description": "Ledger row 20: with THREE vertices selected on one n-gon the reference cuts exactly ONE chord \u2014 between the first two SELECTED vertices \u2014 and we refuse the whole command.",
+ "description": "Ledger row 20: with THREE vertices selected on one n-gon the reference cuts exactly ONE chord - between the first two SELECTED vertices - and we refused the whole command because the count was not exactly two. PORTED (task 1200): the cell declares an EMPTY gap.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 20.",
  "provenance": {
   "schema": 1,
@@ -16,7 +16,7 @@
  "cases": [
   {
    "name": "three_vertices_cut_one_chord",
-   "note": "the reference splits into a triangle and a quad; we do nothing",
+   "note": "the reference splits into a triangle and a quad. NOTE what this cell cannot tell you: verts 0, 2 and 4 are picked in that order, so selection order and ascending index order coincide here. It pins that ONE chord is cut and WHICH one on this geometry; it does not discriminate 'first two selected' from 'two lowest indices'. The implementation follows selection order, which is the law the ledger records.",
    "input": [
     {
      "reset": true,
@@ -272,8 +272,8 @@
    "vibe3d_current": {
     "counts": {
      "verts": 5,
-     "edges": 5,
-     "faces": 1
+     "edges": 6,
+     "faces": 2
     },
     "vertices": [
      [
@@ -329,38 +329,50 @@
      ],
      [
       [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
        4.0,
        0.0,
        4.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       4.0
       ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
       [
        0.0,
        0.0,
        0.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       0.0,
+       4.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       1.0
       ],
       [
        0.0,
        0.0,
        4.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       4.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
       ]
      ]
     ],
@@ -380,6 +392,13 @@
        4.0,
        0.0,
        4.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       0.0,
+       4.0
       ],
       [
        2.0,
@@ -390,6 +409,11 @@
        0.0,
        0.0,
        4.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
       ]
      ]
     ],
@@ -417,110 +441,20 @@
     },
     "applied": [
      true,
-     false
+     true
     ]
    },
-   "divergence": {
-    "applied": {
-     "reference": [
-      true,
-      true
-     ],
-     "vibe3d": [
-      true,
-      false
-     ]
-    },
-    "counts_delta": {
-     "verts": 0,
-     "edges": 1,
-     "faces": 1
-    },
-    "edges_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       4.0,
-       0.0,
-       4.0
-      ]
-     ]
-    ],
-    "faces_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       4.0,
-       0.0,
-       4.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       4.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       4.0,
-       0.0,
-       0.0
-      ],
-      [
-       4.0,
-       0.0,
-       4.0
-      ]
-     ]
-    ],
-    "faces_only_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       4.0,
-       0.0,
-       0.0
-      ],
-      [
-       4.0,
-       0.0,
-       4.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       4.0
-      ]
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   }
  ]
 }

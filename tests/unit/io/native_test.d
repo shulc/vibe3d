@@ -296,3 +296,80 @@ unittest {
       ~ "which is why the fixture focuses E — got \""
       ~ loaded.focusedItem.name ~ "\"");
 }
+
+// ---------------------------------------------------------------------------
+// Task 1200 — a TWO-CORNER polygon survives the .v3d round trip, and every
+// face-parallel array stays aligned to it.
+//
+// The reader used to drop every face with fewer than three corners, silently,
+// on the way in. That was harmless while nothing could BUILD such a face; task
+// 1200 made `mesh.makePolygon` build one (the reference does — ledger row 7,
+// `two_points_only`), and the drop turned into data loss in the editor's OWN
+// format: the writer wrote the face, the reader ate it, and — worse than losing
+// it — `faceSubpatch` / `faceMaterial` / `facePart` are applied BY POSITION
+// against the post-drop list, so every face after the dropped one inherited its
+// neighbour's attributes.
+//
+// The fixture puts the 2-corner face in the MIDDLE for exactly that reason.
+// Three implementations, three different reads:
+//   * a reader that still drops it       -> 2 faces, and the trailing quad
+//                                           wears the middle face's material;
+//   * a reader that keeps it but shifts  -> 3 faces, wrong materials;
+//   * the correct reader                 -> 3 faces, materials 7 / 5 / 9.
+// ---------------------------------------------------------------------------
+unittest {
+    import std.file   : tempDir, remove, exists;
+    import std.path   : buildPath;
+    import std.format : format;
+    import std.random : uniform;
+
+    auto path = buildPath(tempDir(),
+        format("vibe3d_twocorner_%d.v3d", uniform(0, int.max)));
+    scope(exit) if (exists(path)) remove(path);
+
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 1),
+                  Vec3(2, 0, 0), Vec3(3, 0, 0),
+                  Vec3(4, 0, 0), Vec3(5, 0, 0), Vec3(5, 0, 1), Vec3(4, 0, 1)];
+    m.faces = [[0u, 1u, 2u, 3u], [4u, 5u], [6u, 7u, 8u, 9u]];
+    m.rebuildEdgesFromFaces();
+    m.buildLoops();
+    m.faceMaterial = [7u, 5u, 9u];
+    m.facePart     = [1u, 2u, 3u];
+    assert(m.faces[1].length == 2, "fixture: the middle face really has 2 corners");
+
+    writeV3d(m, path);
+
+    Mesh back;
+    assert(readV3d(path, back),
+        "a document whose faces include a 2-corner polygon must LOAD — before "
+        ~ "task 1200 a file of nothing but such faces was rejected outright "
+        ~ "with 'no polygons'");
+
+    assert(back.faces.length == 3,
+        format("all three faces must come back, got %d — the 2-corner face was "
+               ~ "dropped", back.faces.length));
+    assert(back.faces[1].length == 2,
+        "and the middle one must still have exactly two corners");
+    assert(back.vertices.length == 10, "no vertex is lost either");
+
+    // The alignment, which is the half a bare face count cannot see.
+    assert(back.faceMaterial[0] == 7 && back.faceMaterial[1] == 5
+        && back.faceMaterial[2] == 9,
+        format("per-face materials must stay on their own faces, got [%d,%d,%d]",
+               back.faceMaterial[0], back.faceMaterial[1], back.faceMaterial[2]));
+    assert(back.facePart[0] == 1 && back.facePart[1] == 2 && back.facePart[2] == 3,
+        "per-face parts must stay on their own faces too");
+
+    // The floor is TWO, and it did not become "anything goes": a face the
+    // editor cannot build is still dropped rather than loaded.
+    auto raw = cast(string) read(path);
+    auto j = parseJSON(raw);
+    j["layers"].array[0]["mesh"]["faces"].array ~= JSONValue([JSONValue(6)]);
+    write(path, j.toString());
+    Mesh back2;
+    assert(readV3d(path, back2), "the file must still load");
+    assert(back2.faces.length == 3,
+        "a ONE-corner face is still dropped — the reader's floor tracks the "
+        ~ "kernel's, and neither engine was ever seen to build one");
+}

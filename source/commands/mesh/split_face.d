@@ -17,15 +17,31 @@ import selection_product : dropConsumedFaces;
 ///   1. Explicit params: `a` and `b` are valid vertex indices.  If `face` is
 ///      also provided, that face is split; otherwise the first face containing
 ///      both `a` and `b` non-adjacently is used.
-///   2. Selection mode: exactly two selected vertices that share at least one
-///      face non-adjacently.  The first qualifying face is used.
+///   2. Selection mode: at least two selected vertices; the chord runs between
+///      the FIRST TWO IN SELECTION ORDER (`Mesh.vertexSelectionOrder`, the same
+///      1-based click counter `mesh.makePolygon` reads its winding from), and
+///      the first face containing both non-adjacently is used.
+///
+///      Task 1200, ledger row 20: with THREE vertices selected on one n-gon the
+///      reference cuts exactly ONE chord — between the first two selected — and
+///      leaves the third alone. We used to refuse the whole command whenever the
+///      count was not exactly two. Frozen in
+///      `tests/fixtures/poly_split_first_chord.json`.
+///
+///      A caveat worth stating because the frozen cell cannot: on that cell the
+///      selection order and the ascending index order COINCIDE (verts 0, 2, 4
+///      picked in that order), so it does not discriminate "first two selected"
+///      from "two lowest indices". Selection order is what the ledger records as
+///      the reference's law and what is implemented here; if that is ever
+///      measured to be wrong, this is the line to change, and it needs a cell
+///      whose click order runs against its index order.
 ///
 /// Winding: the two child faces are `face[i..j+1]` and `face[j..]~face[0..i+1]`
 /// (scan order, i < j); the ordering of `a` vs `b` does not affect geometry
 /// since `rebuildFacesWithChordSplits` always scans the winding in order.
 ///
 /// Rejections (no-op — no snapshot, no undo entry):
-///   - Fewer or more than 2 selected vertices (selection mode).
+///   - Fewer than 2 selected vertices (selection mode).
 ///   - Specified / derived verts are the same, out-of-bounds, or absent from
 ///     the target face winding.
 ///   - Verts are adjacent in the face winding (chord == existing edge).
@@ -78,14 +94,34 @@ class MeshSplitFace : Command, Operator {
             // ----- Selection mode -----
             if (!mesh.hasAnySelectedVertices()) return false;
 
+            // Order by the click counter, exactly as mesh.makePolygon does:
+            // click-ordered verts first by ascending counter, then any that were
+            // selected through a bulk path (order == 0, e.g. select.all / box /
+            // lasso) by ascending index. Two entries is all this command needs,
+            // but the SORT has to see the whole selection to know which two come
+            // first.
             const sv = mesh.selectedVertices;
-            uint[] sel;
-            foreach (vi; 0 .. sv.length)
-                if (sv[vi]) sel ~= cast(uint)vi;
+            const so = mesh.vertexSelectionOrder;
+            struct VOrderPair { uint vi; int order; }
+            VOrderPair[] sel;
+            foreach (vi; 0 .. sv.length) {
+                if (!sv[vi]) continue;
+                sel ~= VOrderPair(cast(uint)vi, (vi < so.length) ? so[vi] : 0);
+            }
 
-            if (sel.length != 2) return false;
-            vA = sel[0];
-            vB = sel[1];
+            if (sel.length < 2) return false;
+            import std.algorithm : sort;
+            sort!((x, y) {
+                int ox = (x.order > 0) ? x.order : int.max;
+                int oy = (y.order > 0) ? y.order : int.max;
+                if (ox != oy) return ox < oy;
+                return x.vi < y.vi;
+            })(sel);
+            // The first two SELECTED, and only they — a third selected vertex is
+            // not a second chord and not a fallback pair to try if this one does
+            // not qualify (ledger row 20: ONE chord).
+            vA = sel[0].vi;
+            vB = sel[1].vi;
 
             faceIdx = findQualifyingFace(*mesh, vA, vB, uint.max);
         }

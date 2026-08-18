@@ -7,6 +7,10 @@ import mesh : Mesh;
 /// Faces are stored as 0-based indices into `verts` (the clip-local vertex
 /// array), so the clip is self-contained and independent of any specific Mesh.
 ///
+/// A clip may hold verts and NO faces — that is a VERTEX-mode copy (task 1200,
+/// ledger row 19), and `mesh.paste` turns it back into that many free-standing
+/// vertices. `empty` therefore asks about both arrays, not just `faces`.
+///
 /// Thread-safety: this module is main-thread-only. HTTP /api/command is
 /// bridged through the main loop so commands run on the main thread only;
 /// no locking is needed. Do NOT read or write `geometryClipboard` from the
@@ -21,7 +25,10 @@ struct GeometryClip {
                         /// Stage 5c; parallel to faces[], carried the same way
                         /// `part` is)
 
-    bool empty() const { return faces.length == 0; }
+    bool empty() const { return faces.length == 0 && verts.length == 0; }
+
+    /// True for the vertex-mode clip: points with no topology on them.
+    bool looseOnly() const { return faces.length == 0 && verts.length > 0; }
 
     void clear() {
         verts    = null;
@@ -73,6 +80,27 @@ struct GeometryClip {
             clip.setMask  ~= (fi < m.faceSetMask.length  ? m.faceSetMask[fi]  : 0UL);
         }
 
+        return clip;
+    }
+
+    /// Build a clip from the currently selected VERTICES of `m` — positions
+    /// only, no faces (task 1200, ledger row 19). Copying in vertex mode used to
+    /// refuse outright; the reference takes the points, and a paste puts that
+    /// many free vertices back.
+    ///
+    /// Order is ascending vertex index, not click order. The reference cell that
+    /// froze this behaviour pastes every point on top of its original, so it
+    /// cannot see any order at all; ascending index is the deterministic choice
+    /// and nothing measured argues for another.
+    static GeometryClip fromSelectedVertices(const ref Mesh m) {
+        if (!m.hasAnySelectedVertices()) return GeometryClip.init;
+
+        GeometryClip clip;
+        const sv = m.selectedVertices;         // materialised bool[] snapshot
+        foreach (vi; 0 .. sv.length)
+            if (sv[vi]) clip.verts ~= m.vertices[vi];
+        // `faces` (and every per-face array beside it) stays null: there is no
+        // face to carry a material, a part, a subpatch flag or a set mask.
         return clip;
     }
 }

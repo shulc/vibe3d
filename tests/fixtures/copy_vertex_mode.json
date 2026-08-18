@@ -1,6 +1,6 @@
 {
  "name": "copy_vertex_mode",
- "description": "Ledger row 19: with a VERTEX selection the reference's copy takes the vertices \u2014 pasting adds four free vertices \u2014 while our copy refuses outright. Our copy's operand domain is polygons only.",
+ "description": "Ledger row 19: with a VERTEX selection the reference's copy takes the vertices - pasting adds four free vertices - while our copy refused outright, its operand domain being polygons only. PORTED (task 1200): GeometryClip carries a face-less clip, mesh.paste appends the loose points, and the cell declares an EMPTY gap.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 19.",
  "provenance": {
   "schema": 1,
@@ -16,7 +16,7 @@
  "cases": [
   {
    "name": "copy_takes_the_vertices",
-   "note": "four selected vertices of an open plate",
+   "note": "four selected vertices of an open plate. The paste lands each point exactly on top of the original, so the vertex COUNT is the only channel that can see it - 6 to 10 - and the four pasted points are what stays selected.",
    "input": [
     {
      "reset": true,
@@ -341,7 +341,7 @@
    },
    "vibe3d_current": {
     "counts": {
-     "verts": 6,
+     "verts": 10,
      "edges": 7,
      "faces": 2
     },
@@ -375,6 +375,26 @@
       2.0,
       0.0,
       1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
      ]
     ],
     "edges": [
@@ -404,21 +424,9 @@
      ],
      [
       [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
        1.0,
        0.0,
        1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
       ],
       [
        0.0,
@@ -428,36 +436,48 @@
      ],
      [
       [
-       1.0,
        0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
        0.0,
        1.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
       ]
      ],
      [
       [
        1.0,
        0.0,
-       1.0
+       0.0
       ],
       [
        2.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
        0.0,
        1.0
       ]
@@ -538,51 +558,21 @@
     },
     "applied": [
      true,
-     false,
-     false
+     true,
+     true
     ]
    },
-   "divergence": {
-    "applied": {
-     "reference": [
-      true,
-      true,
-      true
-     ],
-     "vibe3d": [
-      true,
-      false,
-      false
-     ]
-    },
-    "counts_delta": {
-     "verts": 4,
-     "edges": 0,
-     "faces": 0
-    },
-    "vertices_only_in_reference": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ],
-     [
-      1.0,
-      0.0,
-      0.0
-     ],
-     [
-      0.0,
-      0.0,
-      1.0
-     ],
-     [
-      1.0,
-      0.0,
-      1.0
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   }
  ]
 }

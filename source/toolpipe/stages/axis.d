@@ -917,12 +917,39 @@ private:
                 if (!mesh_.hasAnySelectedFaces()) return false;
                 foreach (i, _; mesh_.faces) {
                     if (mesh_.isFaceSelected(i)) {
+                        // A face needs two corners before it has a first edge.
+                        // Task 1200 made a TWO-CORNER polygon reachable
+                        // (mesh.makePolygon no longer refuses one), and this
+                        // was the one `face[0]`/`face[1]` pair in the tree with
+                        // no arity guard in front of it. One corner would index
+                        // out of bounds; skip to the next selected face instead.
+                        const uint[] face = mesh_.faces[i];
+                        if (face.length < 2) continue;
                         nUp = nrmAt(cast(uint)i);
                         // Tangent: first edge of the face, projected
                         // perpendicular to the face normal.
-                        const uint[] face = mesh_.faces[i];
                         Vec3 e0 = dirOf(face[0], face[1]);
                         Vec3 proj = e0 - nUp * dot(e0, nUp);
+                        // ... and the projection can cancel exactly. On a
+                        // healthy polygon it cannot — the first edge lies IN
+                        // the face, so it is perpendicular to the normal — but
+                        // `faceNormal` answers (0,1,0) for a face it cannot
+                        // normal (fewer than three corners, or zero area), and
+                        // a two-point or collinear face lying along +Y then
+                        // cancels the projection to exactly zero. `normalize`
+                        // is the unguarded one (math.d: v/len), so that used to
+                        // publish a NaN axis frame — and this stage's frame is
+                        // the transform basis, so the NaN reached stored vertex
+                        // positions. Same world-Z-then-world-X ladder the Edges
+                        // and Vertices arms below already use.
+                        if (proj.x == 0 && proj.y == 0 && proj.z == 0) {
+                            Vec3 worldZ = Vec3(0, 0, 1);
+                            proj = worldZ - nUp * dot(worldZ, nUp);
+                            if (proj.x == 0 && proj.y == 0 && proj.z == 0) {
+                                Vec3 worldX = Vec3(1, 0, 0);
+                                proj = worldX - nUp * dot(worldX, nUp);
+                            }
+                        }
                         nRight = normalize(proj);
                         got = true;
                         break;
@@ -1218,4 +1245,87 @@ unittest {
     assert(rows >= 7,
         "the statusline Axis submenu lost rows — it offered 7 modes when this "
         ~ "pin was written; removing one is a UI decision, so say so here");
+}
+
+// ---------------------------------------------------------------------------
+// Task 1200 — `computeElementBasis` must publish a FINITE frame for a face
+// whose first edge runs along the face normal it was handed.
+//
+// Why that is reachable at all: `Mesh.faceNormal` answers `(0,1,0)` for any
+// face it cannot normal — fewer than three corners, or zero area — and task
+// 1200 made both shapes buildable (`mesh.makePolygon` no longer refuses them,
+// because the reference does not; ledger row 7). On such a face the tangent
+// projection `e0 - nUp*dot(e0,nUp)` no longer has the "the first edge lies IN
+// the face" guarantee behind it, and for a face lying along +Y it cancels to
+// EXACTLY zero. `normalize` is the unguarded one (`math.d`: `v / len`), so what
+// this stage published was a NaN basis — and this stage's basis is the
+// transform basis, so the NaN reached stored vertex positions.
+//
+// Both shapes are tested, because they fail through different halves of the
+// same expression: the 2-corner face has no third corner to give Newell
+// anything to work with, the collinear triangle has three and still sums to
+// zero. The healthy face beside them is the control — without it, a
+// `computeElementBasis` that returned false for everything would pass.
+unittest {
+    import std.math : isFinite;
+
+    static bool finite(Vec3 v) {
+        return isFinite(v.x) && isFinite(v.y) && isFinite(v.z);
+    }
+
+    static void check(string what, Mesh* m, EditMode* em) {
+        auto st = new AxisStage(() => m, em);
+        Vec3 r, u, f;
+        assert(st.computeElementBasis(r, u, f),
+            what ~ ": the element basis must be produced, not declined");
+        assert(finite(r) && finite(u) && finite(f),
+            what ~ ": the element basis went non-finite — right=" ~ format("%s", r)
+                 ~ " up=" ~ format("%s", u) ~ " fwd=" ~ format("%s", f));
+    }
+
+    auto em = EditMode.Polygons;
+
+    // (a) a two-corner polygon lying along +Y.
+    {
+        Mesh m;
+        m.vertices = [Vec3(0, 0, 0), Vec3(0, 1, 0)];
+        m.faces = [[0u, 1u]];
+        m.rebuildEdgesFromFaces();
+        m.buildLoops();
+        m.resetSelection();
+        m.selectFace(0);
+        check("2-corner face along +Y", &m, &em);
+    }
+
+    // (b) a zero-area triangle, three collinear points along +Y.
+    {
+        Mesh m;
+        m.vertices = [Vec3(0, 0, 0), Vec3(0, 1, 0), Vec3(0, 2, 0)];
+        m.faces = [[0u, 1u, 2u]];
+        m.rebuildEdgesFromFaces();
+        m.buildLoops();
+        m.resetSelection();
+        m.selectFace(0);
+        check("collinear triangle along +Y", &m, &em);
+    }
+
+    // (c) CONTROL: an ordinary quad still gets the frame it always got —
+    // its own first edge as `right`, its own normal as `up`.
+    {
+        Mesh m;
+        m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 1)];
+        m.faces = [[0u, 1u, 2u, 3u]];
+        m.rebuildEdgesFromFaces();
+        m.buildLoops();
+        m.resetSelection();
+        m.selectFace(0);
+        auto st = new AxisStage(() => &m, &em);
+        Vec3 r, u, f;
+        assert(st.computeElementBasis(r, u, f));
+        assert(finite(r) && finite(u) && finite(f));
+        assert(abs(dot(r, Vec3(1, 0, 0))) > 0.999f,
+            "control: a healthy quad's tangent is still its first edge");
+        assert(abs(dot(u, Vec3(0, 1, 0))) > 0.999f,
+            "control: and its up is still its own face normal");
+    }
 }

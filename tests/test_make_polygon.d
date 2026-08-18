@@ -2,6 +2,19 @@
 //
 // Fixture: 4 free coplanar vertices with no faces, loaded via /api/load-mesh.
 // All cases use the standard raw-HTTP helpers.
+//
+// TASK 1200 REVERSED FOUR OF THESE. This command used to refuse a zero-area
+// ring, a two-corner ring, a duplicate face and a face on a saturated edge; the
+// reference editor refuses none of them (ledger row 7), the owner's call
+// (2026-08-18) was to match it, and the four cases below now assert that each
+// one is BUILT. They are asserted by shape and by count, not merely by "the
+// command returned ok", because "ok" is what a command that silently did
+// nothing would also return.
+//
+// The KERNEL still has all four refusals — `Mesh.MakePolyGates`, default `all`,
+// pinned per-flag in tests/unit/mesh_test.d. Only this command asks for `none`.
+// The Topology Pen goes through the same kernel with the default and relies on
+// the zero-area refusal, which is why the flag exists instead of a deletion.
 
 import std.net.curl;
 import std.json;
@@ -106,44 +119,93 @@ unittest { // flip param reverses winding
         "flip winding mismatch: expected [3,2,1,0]");
 }
 
-unittest { // <3 verts selected → no-op (geometry unchanged)
+unittest { // TWO verts selected → a 2-point polygon (task 1200, ledger row 7)
     loadFreeQuadVerts();
     postSelect("vertices", [0, 1]);
-    auto m0 = getModel();
-    long fc0 = m0["faceCount"].integer;
-    long ec0 = m0["edgeCount"].integer;
-    // The command is a no-op; the HTTP layer may return error or ok depending
-    // on whether the evaluate returns false; check geometry unchanged.
-    postCommandRaw(`{"id":"mesh.makePolygon"}`);
-    auto m1 = getModel();
-    assert(m1["faceCount"].integer == fc0,
-        "faceCount must not change on <3 vert reject");
-    assert(m1["edgeCount"].integer == ec0,
-        "edgeCount must not change on <3 vert reject");
+    postCommand(`{"id":"mesh.makePolygon"}`);
+    auto m = getModel();
+    assert(m["faceCount"].integer == 1,
+        "two selected verts must BUILD a face, got " ~
+        m["faceCount"].integer.to!string);
+    auto corners = m["faces"].array[0].array;
+    assert(corners.length == 2,
+        "and it must keep BOTH corners, not be padded to a triangle, got " ~
+        corners.length.to!string);
+    assert(corners[0].integer == 0 && corners[1].integer == 1,
+        "the ring follows the selection order");
+    assert(m["edgeCount"].integer == 1,
+        "a 2-corner ring has ONE edge, not two: its two darts share a key");
+    assert(m["vertexCount"].integer == 4, "no vertex is created or lost");
 }
 
-unittest { // collinear selection → no-op
-    loadCollinearPlusFree();
-    // Select the 3 collinear points (indices 0,1,2 on the x-axis)
-    postSelect("vertices", [0, 1, 2]);
+unittest { // ...and ONE vert is still refused. The floor is not a gate.
+    loadFreeQuadVerts();
+    postSelect("vertices", [0]);
     auto m0 = getModel();
     postCommandRaw(`{"id":"mesh.makePolygon"}`);
     auto m1 = getModel();
     assert(m1["faceCount"].integer == m0["faceCount"].integer,
-        "collinear verts must not produce a face");
+        "a single vertex must not produce a face — a one-corner polygon is a "
+        ~ "shape nobody has measured on either engine");
+    assert(m1["edgeCount"].integer == m0["edgeCount"].integer,
+        "and must not produce an edge either");
 }
 
-unittest { // duplicate face → no-op (faceCount stays 1)
+unittest { // collinear selection → a zero-area triangle (task 1200, row 7)
+    loadCollinearPlusFree();
+    // Select the 3 collinear points (indices 0,1,2 on the x-axis)
+    postSelect("vertices", [0, 1, 2]);
+    postCommand(`{"id":"mesh.makePolygon"}`);
+    auto m = getModel();
+    assert(m["faceCount"].integer == 1,
+        "three collinear verts must BUILD the triangle, got " ~
+        m["faceCount"].integer.to!string);
+    auto corners = m["faces"].array[0].array;
+    assert(corners.length == 3, "a triangle, with all three corners kept");
+    assert(corners[0].integer == 0 && corners[1].integer == 1 &&
+           corners[2].integer == 2, "ring follows the selection order");
+    assert(m["edgeCount"].integer == 3,
+        "and it carries three edges — including the long one, 0-2, that the "
+        ~ "other two lie on");
+}
+
+unittest { // bow-tie click order → a self-intersecting quad (task 1200, row 7)
+    // The same four points in ring order build a clean quad; the ORDER is the
+    // independent variable. What refused this before was the ZERO-AREA gate:
+    // a bow-tie over a square has a Newell normal of exactly zero, the two
+    // lobes being equal and opposite.
+    loadFreeQuadVerts();
+    postSelect("vertices", [0, 2, 1, 3]);
+    postCommand(`{"id":"mesh.makePolygon"}`);
+    auto m = getModel();
+    assert(m["faceCount"].integer == 1, "the bow-tie must be built as given");
+    auto corners = m["faces"].array[0].array;
+    assert(corners.length == 4, "four corners");
+    assert(corners[0].integer == 0 && corners[1].integer == 2 &&
+           corners[2].integer == 1 && corners[3].integer == 3,
+        "the ring is the CLICK order, crossing and all — not re-sorted into a "
+        ~ "simple polygon");
+    assert(m["edgeCount"].integer == 4,
+        "four edges, two of which cross in space");
+}
+
+unittest { // duplicate face → a SECOND face on the same ring (task 1200, row 7)
     loadFreeQuadVerts();
     postSelect("vertices", [0, 1, 2, 3]);
     postCommand(`{"id":"mesh.makePolygon"}`);
-    assert(getModel()["faceCount"].integer == 1, "first make: expected 1 face");
-    // Re-select same verts (same unordered set, different order)
+    auto m0 = getModel();
+    assert(m0["faceCount"].integer == 1, "first make: expected 1 face");
+    assert(m0["edgeCount"].integer == 4, "first make: expected 4 edges");
+    // Re-select the same verts (same unordered set, different order)
     postSelect("vertices", [2, 3, 0, 1]);
-    postCommandRaw(`{"id":"mesh.makePolygon"}`);
+    postCommand(`{"id":"mesh.makePolygon"}`);
     auto m = getModel();
-    assert(m["faceCount"].integer == 1,
-        "duplicate vertex set must not produce a second face");
+    assert(m["faceCount"].integer == 2,
+        "the duplicate vertex set must produce a SECOND face, got " ~
+        m["faceCount"].integer.to!string);
+    assert(m["edgeCount"].integer == 4,
+        "and it must add no edge at all — every one of its edges already "
+        ~ "existed, which is the half of ledger row 7 a face count cannot see");
 }
 
 unittest { // edge dedup: shared edge with existing face → only 2 new edges added
@@ -199,10 +261,22 @@ int edgeUseCount(JSONValue model, int a, int b) {
     return count;
 }
 
-unittest { // manifold-safety guard: reusing an already-saturated edge must
-           // reject, not push the edge to 3 faces (task 0316).
+unittest { // task 0316's manifold-safety guard, REVERSED by task 1200: reusing
+           // an already-saturated edge now BUILDS, and the edge goes to 3 faces.
     // Default cube: face 0 = [0,3,2,1], face 5 = [0,1,5,4] — both already
     // share edge (0,1). Vertex 6 is the far corner of the top face.
+    //
+    // The guard came off because the reference has none: its Make Polygon
+    // builds a duplicate face on the ring of an existing one (ledger row 7,
+    // `duplicate_over_existing_face`), and there the shared edge of the two
+    // plate quads is already saturated too — the duplicate gate and this one
+    // both had to go for that single cell to converge.
+    //
+    // The mesh this leaves is non-manifold, and that is measured here rather
+    // than assumed: `edgeUseCount` reads 3. `Mesh.buildLoops` survives it
+    // (Treatment A leaves all three darts of such an edge twinless), which is
+    // why the state is degraded rather than corrupt. The readers that ARE
+    // degraded by it are listed in doc/tasks/work/1200-ref-refusals.md.
     resetCube();
     postSelect("vertices", [0, 1, 6]);
     auto m0 = getModel();
@@ -210,31 +284,36 @@ unittest { // manifold-safety guard: reusing an already-saturated edge must
     long ec0 = m0["edgeCount"].integer;
     assert(edgeUseCount(m0, 0, 1) == 2, "sanity: edge (0,1) starts at 2 faces");
 
-    postCommandRaw(`{"id":"mesh.makePolygon","params":{"flip":false}}`);
+    postCommand(`{"id":"mesh.makePolygon","params":{"flip":false}}`);
 
     auto m1 = getModel();
-    assert(m1["faceCount"].integer == fc0,
-        "reusing a saturated edge must reject (no new face), got " ~
+    assert(m1["faceCount"].integer == fc0 + 1,
+        "reusing a saturated edge must now BUILD one new face, got " ~
         m1["faceCount"].integer.to!string ~ " vs " ~ fc0.to!string);
-    assert(m1["edgeCount"].integer == ec0,
-        "reusing a saturated edge must reject (no new edges)");
-    assert(edgeUseCount(m1, 0, 1) == 2,
-        "edge (0,1) must remain manifold (exactly 2 faces) after the rejected makePolygon");
+    assert(m1["edgeCount"].integer == ec0 + 2,
+        "the triangle [0,1,6] reuses edge (0,1) and adds the two new ones, "
+        ~ "expected " ~ (ec0 + 2).to!string ~ " got " ~
+        m1["edgeCount"].integer.to!string);
+    assert(edgeUseCount(m1, 0, 1) == 3,
+        "edge (0,1) now carries THREE faces — the non-manifold result the "
+        ~ "owner chose to allow");
 }
 
-unittest { // manifold-safety guard: same repro on the other saturated edge
-           // documented in the bug report ([2,3,5]).
+unittest { // same repro on the other saturated edge documented in the 0316 bug
+           // report ([2,3,5]) — also builds now.
     resetCube();
     postSelect("vertices", [2, 3, 5]);
     auto m0 = getModel();
     long fc0 = m0["faceCount"].integer;
 
-    postCommandRaw(`{"id":"mesh.makePolygon","params":{"flip":false}}`);
+    postCommand(`{"id":"mesh.makePolygon","params":{"flip":false}}`);
 
     auto m1 = getModel();
-    assert(m1["faceCount"].integer == fc0,
-        "reusing a saturated edge must reject, got " ~
+    assert(m1["faceCount"].integer == fc0 + 1,
+        "reusing a saturated edge must now build, got " ~
         m1["faceCount"].integer.to!string ~ " vs " ~ fc0.to!string);
+    assert(edgeUseCount(m1, 2, 3) == 3,
+        "edge (2,3) now carries three faces");
 }
 
 unittest { // legitimate makePolygon on OPEN boundary edges must still succeed:

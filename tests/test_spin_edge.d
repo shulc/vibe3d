@@ -12,6 +12,14 @@
 // Quad-quad spin (cases 4–4e): the shared edge of two adjacent quads is
 // re-diagonalized to the (c,e) diagonal (vibe3d default; Phase-0 reference
 // capture deferred — see doc/spin_quads_plan.md).
+//
+// TASK 1200 REVERSED CASES 4d, 4e AND 5. The gate used to demand that both
+// faces have the SAME valence and that it be 3 or 4, and a fold-over guard
+// refused when the new diagonal already existed. The reference's whole gate is
+// "the edge has two faces, each with at least three sides" (ledger rows 9, 16,
+// 17); the owner's call (2026-08-18) was to match it. 4e and 5 therefore leave
+// a NON-MANIFOLD mesh on purpose — one edge with three incident faces — and
+// each asserts that by counting, not by assuming.
 
 import std.net.curl;
 import std.json;
@@ -71,6 +79,22 @@ int edgeIdx(JSONValue m, int a, int b) {
         if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
     }
     return -1;
+}
+
+/// How many faces use the undirected edge {a,b} as a consecutive corner pair.
+/// Task 1200: a spin can now leave an edge with THREE incident faces, and
+/// "non-manifold" has to be a measured number rather than a claim in a comment.
+int spinEdgeUseCount(JSONValue m, int a, int b) {
+    int count = 0;
+    foreach (f; m["faces"].array) {
+        auto corners = f.array;
+        foreach (i; 0 .. corners.length) {
+            int va = cast(int)corners[i].integer;
+            int vb = cast(int)corners[(i + 1) % corners.length].integer;
+            if ((va == a && vb == b) || (va == b && vb == a)) { ++count; break; }
+        }
+    }
+    return count;
 }
 
 /// Return true if any face in model["faces"] has exactly the vertex set {vs}.
@@ -287,7 +311,8 @@ unittest {
 }
 
 // ---------------------------------------------------------------------------
-// Case 4d — Mixed tri–quad reject: triangle and quad sharing an edge → no-op.
+// Case 4d — Mixed tri–quad: task 1200 (ledger row 9) — it SPINS, and each face
+//           keeps its own valence. The triangle stays a triangle.
 // ---------------------------------------------------------------------------
 unittest {
     postReset();
@@ -300,22 +325,31 @@ unittest {
     assert(eiShared >= 0, "shared edge 1-2 must exist for mixed case");
     postSelect("edges", [eiShared]);
 
-    postCommandRaw("mesh.spinEdge");   // mixed pair → no-op, status != ok
+    postCommand("mesh.spinEdge");
 
     auto after = getModel();
     assert(after["vertexCount"].integer == before["vertexCount"].integer,
-           "vertex count unchanged on mixed tri-quad no-op");
+           "a spin never adds or removes a vertex");
     assert(after["edgeCount"].integer   == before["edgeCount"].integer,
-           "edge count unchanged on mixed tri-quad no-op");
+           "one diagonal out, one in — the edge count holds at 6");
     assert(after["faceCount"].integer   == before["faceCount"].integer,
-           "face count unchanged on mixed tri-quad no-op");
-    assert(edgeIdx(after, 1, 2) >= 0, "shared edge 1-2 must still exist");
+           "still two faces");
+    assert(edgeIdx(after, 1, 2) < 0, "the old diagonal 1-2 is gone");
+    assert(edgeIdx(after, 0, 3) >= 0, "the new diagonal is 0-3");
+    // Valence preservation is the content of the general rule: the old gate
+    // could only spin equal-valence pairs, so a rule that made both faces the
+    // same shape would have passed every test that existed before this one.
+    assert(faceWithVerts(after, [0, 1, 3]),
+           "the TRIANGLE stays a triangle, now {0,1,3}");
+    assert(faceWithVerts(after, [0, 2, 3, 4]),
+           "the QUAD stays a quad, now {0,2,3,4}");
 }
 
 // ---------------------------------------------------------------------------
-// Case 4e — Quad fold-over reject: prospective new diagonal c–e already exists.
+// Case 4e — Quad fold-over: task 1200 (ledger row 17's law on a quad pair).
 //           f0=[0,1,2,3] + f1=[1,4,5,2] share edge 1–2 (c=3, e=4).
-//           Triangle [3,4,5] pre-creates edge 3–4 → spin must be no-op.
+//           Triangle [3,4,5] pre-creates edge 3–4 — and the spin happens
+//           anyway, leaving edge 3-4 with THREE incident faces.
 // ---------------------------------------------------------------------------
 unittest {
     postReset();
@@ -329,20 +363,40 @@ unittest {
     assert(edgeIdx(before, 3, 4) >= 0, "edge 3-4 must pre-exist (fold-over setup)");
 
     postSelect("edges", [eiShared]);
-    postCommandRaw("mesh.spinEdge");   // fold-over blocked → no-op
+    postCommand("mesh.spinEdge");
 
     auto after = getModel();
-    assert(after["vertexCount"].integer == before["vertexCount"].integer);
-    assert(after["edgeCount"].integer   == before["edgeCount"].integer);
-    assert(after["faceCount"].integer   == before["faceCount"].integer);
-    assert(edgeIdx(after, 1, 2) >= 0, "edge 1-2 must survive quad fold-over guard");
-    assert(edgeIdx(after, 3, 4) >= 0, "edge 3-4 must still exist after quad fold-over guard");
+    assert(after["vertexCount"].integer == before["vertexCount"].integer,
+           "no vertex moves or appears");
+    assert(after["faceCount"].integer   == before["faceCount"].integer,
+           "still three faces");
+    // The edge count FALLS. That is the signature of this case and the reason
+    // it cannot be folded into 4d: the diagonal the spin "creates" was already
+    // in the mesh, so one edge leaves and none arrives.
+    assert(after["edgeCount"].integer == before["edgeCount"].integer - 1,
+           "edge count must fall by one, from " ~
+           before["edgeCount"].integer.to!string ~ " to " ~
+           (before["edgeCount"].integer - 1).to!string ~ ", got " ~
+           after["edgeCount"].integer.to!string);
+    assert(edgeIdx(after, 1, 2) < 0, "the old diagonal 1-2 is gone");
+    assert(edgeIdx(after, 3, 4) >= 0, "edge 3-4 is now the shared diagonal too");
+    assert(faceWithVerts(after, [0, 1, 3, 4]), "quad {0,1,3,4}");
+    assert(faceWithVerts(after, [2, 3, 4, 5]), "quad {2,3,4,5}");
+    assert(faceWithVerts(after, [3, 4, 5]),   "the pre-existing triangle survives");
+    assert(spinEdgeUseCount(after, 3, 4) == 3,
+           "edge 3-4 now carries THREE faces — measured, not assumed");
 }
 
 // ---------------------------------------------------------------------------
-// Case 5 — Fold-over guard: prospective new diagonal already exists.
-//          Mesh [0,1,2] + [0,2,3] + [1,2,3]: spinning edge 0–2 would want 1–3
-//          which already appears in face [1,2,3] → no-op.
+// Case 5 — Fold-over on a TRI pair: ledger row 17 itself.
+//          Mesh [0,1,2] + [0,2,3] + [1,2,3]: spinning edge 0–2 wants 1–3, which
+//          already appears in face [1,2,3]. The reference spins anyway; edges
+//          fall 6 -> 5 and edge 1-3 ends with three incident faces.
+//
+//          The frozen reference half of this exact cell is
+//          tests/fixtures/spin_gate_narrower.json / foldover_makes_third_face.
+//          This test is the same shape read from our own side: rings and
+//          counts the kernel is expected to emit, not a comparison.
 // ---------------------------------------------------------------------------
 unittest {
     postReset();
@@ -356,16 +410,31 @@ unittest {
     assert(edgeIdx(before, 1, 3) >= 0, "edge 1-3 must already exist (fold-over setup)");
 
     postSelect("edges", [ei02]);
-    postCommandRaw("mesh.spinEdge");  // must not crash
+    postCommand("mesh.spinEdge");
 
     auto after = getModel();
-    assert(after["vertexCount"].integer == before["vertexCount"].integer);
-    assert(after["edgeCount"].integer   == before["edgeCount"].integer);
-    assert(after["faceCount"].integer   == before["faceCount"].integer);
-    assert(edgeIdx(after, 0, 2) >= 0,
-           "edge 0-2 must still exist (fold-over blocked spin)");
-    assert(edgeIdx(after, 1, 3) >= 0,
-           "edge 1-3 must still exist after fold-over guard");
+    assert(after["vertexCount"].integer == before["vertexCount"].integer,
+           "no vertex moves");
+    assert(after["faceCount"].integer   == before["faceCount"].integer,
+           "still three faces");
+    assert(after["edgeCount"].integer == before["edgeCount"].integer - 1,
+           "edges must fall 6 -> 5, got " ~ after["edgeCount"].integer.to!string);
+    assert(edgeIdx(after, 0, 2) < 0, "the spun diagonal 0-2 is gone");
+    assert(edgeIdx(after, 1, 3) >= 0, "1-3 is now the shared diagonal as well");
+    assert(spinEdgeUseCount(after, 1, 3) == 3,
+           "edge 1-3 carries THREE faces — the non-manifold result, measured");
+    // Two faces on the same vertex set: the spin's product duplicates the
+    // pre-existing third face. That is what the reference produces too.
+    int onSet123 = 0;
+    foreach (f; after["faces"].array) {
+        if (f.array.length != 3) continue;
+        bool[int] fs;
+        foreach (v; f.array) fs[cast(int)v.integer] = true;
+        if (1 in fs && 2 in fs && 3 in fs) ++onSet123;
+    }
+    assert(onSet123 == 2,
+           "TWO faces must stand on {1,2,3} after the spin, got " ~
+           onSet123.to!string);
 }
 
 // ---------------------------------------------------------------------------
