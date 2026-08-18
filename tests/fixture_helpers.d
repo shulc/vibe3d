@@ -1001,49 +1001,6 @@ private void assertCounts(string name, string phase, JSONValue exp, long[3] got)
 // engine anyway.
 // ---------------------------------------------------------------------------
 
-// GET /api/model and return each face as its ring of vertex COORDINATES.
-private double[3][][] readFaceRings() {
-    auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
-    auto V = model["vertices"].array;
-    double[3][][] outf;
-    foreach (f; model["faces"].array) {
-        double[3][] ring;
-        foreach (fi; f.array) ring ~= jvec3(V[cast(size_t) fi.integer]);
-        outf ~= ring;
-    }
-    return outf;
-}
-
-// GET /api/model and return the per-face material id. The two engines name
-// materials differently (a string there, an int here), so these VALUES are
-// never compared across the seam -- only the PARTITION they induce is.
-private long[] readFaceMaterials() {
-    auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
-    long[] outM;
-    if ("faceMaterial" !in model) return outM;
-    foreach (v; model["faceMaterial"].array) outM ~= v.integer;
-    return outM;
-}
-
-// Two rings are the same face iff they have the same length and agree
-// position-by-position under SOME rotation. Rotation only, never reversal:
-// where a ring starts is a storage detail, which way it goes round is not.
-private bool ringEq(const double[3][] a, const double[3][] b, double tol) {
-    if (a.length != b.length) return false;
-    immutable n = a.length;
-    if (n == 0) return true;
-    immutable double t2 = tol * tol;
-    foreach (r; 0 .. n) {
-        bool ok = true;
-        foreach (i; 0 .. n) {
-            double[3] x = a[i], y = b[(i + r) % n];
-            if (dist2(x, y) > t2) { ok = false; break; }
-        }
-        if (ok) return true;
-    }
-    return false;
-}
-
 // True iff some vibe3d vertex sits within `tol` of `p`.
 private bool hasVertexNear(double[3][] verts, double[3] p, double tol) {
     double t2 = tol * tol;
