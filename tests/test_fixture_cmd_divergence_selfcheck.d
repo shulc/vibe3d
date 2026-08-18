@@ -60,21 +60,34 @@ private JSONValue oneCase(string json, size_t idx) {
 }
 
 unittest {
-    enum string spinJson = import("fixtures/spin_gate_narrower.json");
     enum string selJson  = import("fixtures/cmd_selection_product.json");
     enum string joinJson = import("fixtures/vert_join_survivor.json");
 
+    // TASK 1200 re-pointed every arm that needs a GENUINELY DIVERGENT case,
+    // for the same reason task 1180 re-pointed arm 4b below. They all used to
+    // run on spin_gate_narrower case 0; the reference's spin gate has since
+    // been ported (ledger rows 9 + 16 + 17), that fixture declares an EMPTY gap
+    // now, and arms 1, 4, 5 and 9 would have gone quietly inert on it — worse
+    // than red, because each would still claim to prove its guard.
+    //
+    // The carrier has to be a case with a LIVE gap and no control list.
+    // vert_join_survivor case 0 is one (ledger row 11: which vertex survives a
+    // join — still open), and this file already imports the fixture. If that
+    // law is ported too, re-point these arms again rather than deleting them,
+    // and say which task closed the old carrier.
+    //
     // The unmutated case must PASS -- otherwise every "rejected" below could
     // be an artefact of the extraction rather than of the mutation.
+    enum size_t DIVERGENT = 0;              // vert_join_survivor/forward_order_diverges
     {
-        auto fx = oneCase(spinJson, 0);
+        auto fx = oneCase(joinJson, DIVERGENT);
         runCommandDivergenceSuite(fx.toString);
     }
 
     // 1. drop a declared divergence entry: the recomputed gap now exceeds the
     //    declaration, which is what a QUIETLY WIDENED divergence looks like.
     {
-        auto fx = oneCase(spinJson, 0);
+        auto fx = oneCase(joinJson, DIVERGENT);
         auto dv = fx["cases"].array[0]["divergence"];
         string victim;
         foreach (k, _; dv.object) { victim = k; break; }
@@ -88,7 +101,7 @@ unittest {
 
     // 2. flip a recorded op outcome: the pin on our own behaviour.
     {
-        auto fx = oneCase(spinJson, 0);
+        auto fx = oneCase(joinJson, DIVERGENT);
         auto cur = fx["cases"].array[0]["vibe3d_current"];
         auto ap  = cur["applied"].array.dup;
         ap[$ - 1] = JSONValue(!(ap[$ - 1].type == JSONType.true_));
@@ -101,7 +114,7 @@ unittest {
 
     // 3. corrupt one of OUR recorded vertices: same pin, geometry side.
     {
-        auto fx = oneCase(spinJson, 0);
+        auto fx = oneCase(joinJson, DIVERGENT);
         auto cur = fx["cases"].array[0]["vibe3d_current"];
         auto vs  = cur["vertices"].array.dup;
         assert(vs.length, "case records no vertices of ours");
@@ -116,7 +129,7 @@ unittest {
     // 4. declare a genuinely divergent case a whole-case CONTROL. A control
     //    that has acquired a divergence is a finding, and must be loud.
     {
-        auto fx = oneCase(spinJson, 0);
+        auto fx = oneCase(joinJson, DIVERGENT);
         fx["cases"].array[0].object["control"] = JSONValue(true);
         assert(rejected(fx),
             "a divergent case marked `control: true` was ACCEPTED — the "
@@ -150,7 +163,7 @@ unittest {
     //    declare no gap. Nothing is wrong per-dimension; what is wrong is that
     //    the case now asserts nothing about any disagreement.
     {
-        auto fx = oneCase(spinJson, 0);
+        auto fx = oneCase(joinJson, DIVERGENT);
         auto cs = fx["cases"].array[0];
         cs["reference"] = cs["vibe3d_current"];
         cs["divergence"] = JSONValue(cast(JSONValue[string]) null);
@@ -178,7 +191,7 @@ unittest {
     // 8. delete the OPERATION. If a case still passes with its own command
     //    removed, the command is not what it is measuring.
     {
-        auto fx = oneCase(spinJson, 0);
+        auto fx = oneCase(joinJson, DIVERGENT);
         auto cs = fx["cases"].array[0];
         JSONValue[] kept;
         foreach (st; cs["op"].array)
@@ -194,7 +207,7 @@ unittest {
     // 9. swap the two engines. A case that passes with the sides exchanged is
     //    not describing a direction of disagreement, only the fact of one.
     {
-        auto fx = oneCase(spinJson, 0);
+        auto fx = oneCase(joinJson, DIVERGENT);
         auto cs = fx["cases"].array[0];
         auto r = cs["reference"], v = cs["vibe3d_current"];
         cs["reference"] = v;
@@ -247,9 +260,28 @@ unittest {
             ~ "fixtures back; this assertion exists to record that it is not");
     }
 
+    // 12. the same CLOSED-gap check as arm 10, run on a gap task 1200 closed by
+    //     REMOVING a refusal rather than by porting a formula. It is here
+    //     because "we now do what the reference does" is the easiest empty gap
+    //     to let rot: the four make_polygon_gates cases look, from a distance,
+    //     like a parity test that could not fail. Widen the reference's face
+    //     list by one ring and the full-coverage control has to say so.
+    {
+        enum string mpJson = import("fixtures/make_polygon_gates.json");
+        auto fx = oneCase(mpJson, 3);           // duplicate_over_existing_face
+        runCommandDivergenceSuite(fx.toString); // as authored: passes
+        auto fs = fx["cases"].array[0]["reference"]["faces"].array.dup;
+        fs ~= parseJSON(`[[9.0,9.0,9.0],[9.0,9.0,8.0],[9.0,8.0,8.0]]`);
+        fx["cases"].array[0]["reference"]["faces"] = JSONValue(fs);
+        assert(rejected(fx),
+            "widening a CLOSED gap by one reference face was ACCEPTED on "
+            ~ "make_polygon_gates — the refusals task 1200 removed could be "
+            ~ "put back with that fixture still green");
+    }
+
     // 6. provenance: an unstamped fixture must not be trusted at all.
     {
-        auto fx = oneCase(spinJson, 0);
+        auto fx = oneCase(joinJson, DIVERGENT);
         fx.object.remove("provenance");
         assert(rejected(fx),
             "a fixture with no provenance block was ACCEPTED");
