@@ -13,6 +13,274 @@ import math;
 // free-functions). Method bodies below are verbatim cut/paste from mesh.d
 // (only the extraction boundary is new).
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// VertexPosGrid (task 1331) — positional vertex lookup for the ridge-reselect
+// pass of `extrudeEdgesByMask`.
+//
+// WHAT IT REPLACES. That pass has to re-find, by POSITION, each ridge endpoint
+// it recorded before `finalizeTopologyEdit()` renumbered every vertex. It used
+// to do that with a full linear scan of `vertices` per endpoint, run TWICE per
+// extruded edge, with no guard — and `selEdges == exEdges` exactly, so the scan
+// was on the hot path for EVERY extruded edge. Measured (task 1331, standalone
+// iteration counter): 39,366,368 scan iterations on a 64x64 grid with the whole
+// mesh selected, growing as F^1.9; a two-term fit put ~95% of the command's
+// 27.4 s at n=316 in this one scan.
+//
+// WHY IT IS BYTE-IDENTICAL TO THE SCAN, and not merely "equivalent geometry".
+// Three properties carry the argument; none of them is optional:
+//
+//   1. `findMin` returns the MINIMUM index among all matches, never the first
+//      one a bucket happens to yield. That is what makes bucket iteration order
+//      irrelevant: the scan returned the first array index satisfying the
+//      predicate, which IS the minimum such index.
+//   2. The predicate is re-checked VERBATIM: `(v - p).length < 1e-5f`. The grid
+//      only narrows the candidate set; it never decides a match. See the note
+//      at the predicate itself for why `lengthSq < 1e-10f` is forbidden here.
+//   3. Every vertex within 1e-5 of the query is a candidate. A point inside a
+//      1e-5 EUCLIDEAN ball differs by less than 1e-5 on EACH axis, so with a
+//      cell edge of 2e-5 it lands within one cell on each axis ⇒ the 3x3x3
+//      neighbourhood is exhaustive.
+//
+// WHY A FLAT ARRAY AND NOT AN ASSOCIATIVE ARRAY OF DYNAMIC ARRAYS. Two reasons,
+// both load-bearing:
+//   * `rebuildPreview()` re-runs this kernel on EVERY FRAME of an interactive
+//     drag. An `uint[][cellKey]` costs one GC append per vertex per frame —
+//     hundreds of thousands of allocations per frame on a large mesh. The
+//     counting sort below allocates exactly TWO arrays per build (`starts` and
+//     `buckets`) — the placement pass reuses `starts` as its write cursor.
+//   * The obvious alternative key — three coordinates packed into 21 bits each —
+//     silently OVERFLOWS above roughly ±10 units at a 1e-5 cell. This command's
+//     own fixture set includes an octahedron extruded at width 50, and any model
+//     authored in millimetres clears that bound on the first vertex. Aliasing
+//     there would not crash; it would return a legal, WRONG vertex. Hashing a
+//     full 64-bit cell triple has no such ceiling.
+// ---------------------------------------------------------------------------
+version (unittest) {
+    /// How many candidate vertices `VertexPosGrid.findMin` put through the
+    /// match predicate since a test last zeroed this. Module scope, and
+    /// `version (unittest)` rather than `debug {}` — a `debug` body is not
+    /// compiled into a plain `-unittest` build, so a test over it would pass
+    /// vacuously (same reasoning as `g_hideDeriveRuns` in mesh.d).
+    ///
+    /// It exists because nothing else can tell the grid from the linear scan
+    /// it replaced: both return the identical index, so every value-based test
+    /// stays green if someone "simplifies" this back into an O(V) scan. This
+    /// counter is the only permanent guard on the COST (task 1331).
+    size_t g_vertexPosGridCandidates;
+}
+
+struct VertexPosGrid {
+    // Cell edge = 2e-5, deliberately DOUBLE the 1e-5 match radius. That doubling
+    // is MARGIN, and nothing else — in particular it is NOT a repair for
+    // floating-point error in `cellOf`, because `cellOf` has none to repair.
+    //
+    // `cast(double)x * kInvCell` is EXACT for every finite float: 50000 = 2^4 *
+    // 5^5, and its odd part 15625 needs 12 mantissa bits, so a 24-bit float
+    // significand times it needs 24 + 12 = 36 <= 53 bits and the double product
+    // is the exact real product (checked exhaustively over 200 000 random float
+    // bit patterns, task 1331 review). `cellOf` is therefore an exact real floor
+    // at EVERY magnitude, so the 3x3x3 guarantee — |cell(a) - cell(b)| <= 1
+    // whenever |a - b| < 1e-5 — already holds at a cell edge of 1e-5, with no
+    // rounding caveat anywhere in the argument.
+    //
+    // The doubling is kept for the separation it leaves (scaled separation under
+    // 0.5, i.e. half a cell of slack) against a later edit to the radius or the
+    // scale that would NOT be exact. Do not "restore" the cell to 1e-5 on the
+    // grounds that rounding forced the doubling; and do not distrust the
+    // exactness — it is real. Cost of the doubling is 8x the cell volume, which
+    // is nothing: real meshes do not put vertices 2e-5 apart, so buckets stay at
+    // one or two entries either way.
+    //
+    // At the other end of the range the radius stops being the binding term at
+    // all: above ~128 units one float ulp already exceeds 1e-5, so a match there
+    // needs exact equality on that axis — and equal floats share a cell trivially.
+    private enum double kInvCell = 5.0e4;          // 1 / 2e-5
+
+    // Coordinates a cell index is computed for. Beyond this a vertex is left
+    // OUT of the grid and a query falls back to the linear scan, so no cast
+    // ever sees a value that does not fit a `long` (|x| * kInvCell <= 5e13).
+    private enum double kMaxCoord = 1.0e9;
+    // A query is only answered from the grid when it is at least the match
+    // radius INSIDE that bound. Then a vertex left out for magnitude (|v| >
+    // kMaxCoord) is more than 1.0 away from the query on that axis and could
+    // never have matched anyway — which is what lets the build simply DROP the
+    // out-of-range vertices instead of carrying an overflow list.
+    private enum double kSafeQuery = kMaxCoord - 1.0;
+
+    // The array `build` indexed, kept so `findMin` cannot be handed a DIFFERENT
+    // one. `buckets` holds indices INTO this slice; re-checking the predicate
+    // against any other array would be an out-of-bounds read at `verts[vi]` —
+    // and the `perf` buildType is `releaseMode`, so bounds checks are stripped
+    // exactly where this kernel is measured. Holding the slice makes the
+    // coupling unstateable rather than merely documented (task 1331 review).
+    private const(Vec3)[] verts;
+    private uint[] buckets;    // vertex indices into `verts`, grouped by cell hash
+    private uint[] starts;     // starts.length == tableSize + 1; bucket h = buckets[starts[h] .. starts[h+1]]
+    private uint   tableMask;  // tableSize - 1 (tableSize is a power of two)
+    private bool   ready;      // false ⇒ every query falls back to the linear scan
+
+    /// True when a coordinate triple can be given a cell index.
+    private static bool inGrid(Vec3 v) {
+        import std.math : isFinite, fabs;
+        // The `isFinite` half is belt-and-braces: `fabs(NaN) <= kMaxCoord` is
+        // already false (every comparison with NaN is), and so is the ±inf case.
+        // It stays because the rejection should be stated, not inferred from
+        // IEEE comparison semantics by the next reader.
+        return isFinite(v.x) && isFinite(v.y) && isFinite(v.z)
+            && fabs(cast(double)v.x) <= kMaxCoord
+            && fabs(cast(double)v.y) <= kMaxCoord
+            && fabs(cast(double)v.z) <= kMaxCoord;
+    }
+
+    /// `floor`, not a truncating cast: floor gives uniform cells, so
+    /// |a-b| < cell ⇒ |cell(a)-cell(b)| <= 1 holds on both signs. Truncation
+    /// toward zero makes the cell straddling the origin double width and the
+    /// bound has to be re-argued per sign — not worth the one instruction.
+    private static long cellOf(float x) {
+        import std.math : floor;
+        return cast(long)floor(cast(double)x * kInvCell);
+    }
+
+    /// 64-bit mix of the cell triple. Collisions are HARMLESS by construction:
+    /// a collision only widens the candidate set, and every candidate is put
+    /// through the exact predicate before it can be returned.
+    private static size_t cellHash(long cx, long cy, long cz) {
+        ulong h = cast(ulong)cx * 0x9E3779B97F4A7C15UL;
+        h ^= (cast(ulong)cy + 0x9E3779B97F4A7C15UL + (h << 6) + (h >>> 2));
+        h ^= (cast(ulong)cz + 0xC2B2AE3D27D4EB4FUL + (h << 6) + (h >>> 2));
+        h ^= h >>> 33; h *= 0xFF51AFD7ED558CCDUL;
+        h ^= h >>> 33; h *= 0xC4CEB9FE1A85EC53UL;
+        h ^= h >>> 33;
+        return cast(size_t)h;
+    }
+
+    /// Build over `src`, which the grid then HOLDS: `findMin` takes no array,
+    /// so it cannot be pointed at a shorter or different one. O(V) time, TWO
+    /// allocations, no GC churn per entry.
+    ///
+    /// CALLER INVARIANT: nothing may mutate the CONTENTS of `src` between this
+    /// call and the last `findMin`. (Holding the slice rules out the other half
+    /// — substituting a different array — structurally; and because the slice
+    /// keeps its own length, a later append that reallocates leaves the grid
+    /// reading the array it indexed rather than running off the end of a shorter
+    /// one.) At the one call site (the ridge reselect in `extrudeEdgesByMask`)
+    /// the only calls in that window are `resizeVertexSelection` /
+    /// `resizeFaceSelection` / `clearEdgeSelectionResize`, which touch the
+    /// per-element MARK and ORDER arrays only — never `vertices`.
+    void build(const(Vec3)[] src) {
+        verts = src;
+        buckets = null; starts = null; tableMask = 0; ready = false;
+        if (src.length == 0 || src.length > uint.max) return;
+
+        // Table size: power of two >= 2*V, i.e. load factor <= 0.5.
+        //
+        // WHAT THAT ACTUALLY BUYS, because the obvious reading is wrong: it is
+        // NOT "each of the 27 probes stays short" as a separate fact. The 27
+        // neighbourhood cells hash to 27 INDEPENDENT buckets, so a query's
+        // predicate evaluations are ~27 x load — the load factor is a per-query
+        // multiplier, not a per-bucket one. Measured on a 199 809-vertex grid:
+        // 8.63 candidates per query at load 0.5, against ~1 for a structure
+        // keyed on the exact cell. THAT is the knob: halving the load (table
+        // >= 4*V) takes it to ~5 candidates and costs one more uint per vertex;
+        // making the table smaller multiplies it up again. 8.63 is already three
+        // orders below the O(V) scan this replaced, so the trade is left here.
+        //
+        // Capped so a pathological V cannot ask for a table bigger than the mesh
+        // it indexes.
+        size_t tableSize = 16;
+        while (tableSize < src.length * 2 && tableSize < (1UL << 26)) tableSize <<= 1;
+        tableMask = cast(uint)(tableSize - 1);
+
+        // Pass 1 — count per bucket. Out-of-grid vertices (non-finite, or beyond
+        // kMaxCoord) are dropped: `(v - p).length < 1e-5f` is false for every one
+        // of them against any query the grid answers, so dropping them cannot
+        // change an answer. Non-finite in particular MUST be kept away from the
+        // cast — `cast(long)(float.nan * 1e5f)` is undefined in D, and degenerate
+        // meshes do reach this kernel.
+        starts = new uint[tableSize + 1];
+        foreach (ref v; src)
+            if (inGrid(v))
+                ++starts[(cellHash(cellOf(v.x), cellOf(v.y), cellOf(v.z)) & tableMask) + 1];
+
+        // Prefix sum ⇒ bucket start offsets.
+        foreach (i; 1 .. starts.length) starts[i] += starts[i - 1];
+
+        // Pass 2 — place. Walking `src` in ASCENDING index order leaves every
+        // bucket sorted ascending, which `findMin` relies on to stop at a
+        // bucket's first match instead of scanning the whole bucket.
+        // `starts[h]` doubles as the write cursor — that is why the build needs
+        // no cursor array of its own, and why it is TWO allocations and not
+        // three — so it ends the pass holding the END of bucket h; the shift
+        // below turns it back into the START.
+        buckets = new uint[starts[$ - 1]];
+        foreach (i, ref v; src)
+            if (inGrid(v))
+                buckets[starts[cellHash(cellOf(v.x), cellOf(v.y), cellOf(v.z)) & tableMask]++] = cast(uint)i;
+        foreach_reverse (i; 1 .. starts.length) starts[i] = starts[i - 1];
+        starts[0] = 0;
+        ready = true;
+    }
+
+    /// Index of the LOWEST-numbered vertex of the BUILT array within 1e-5 of
+    /// `p`, or -1. Identical, result for result, to
+    /// `foreach (i, v; verts) if ((v - p).length < 1e-5f) return i;`.
+    /// Takes no array: see `build` for why the coupling is held, not documented.
+    int findMin(Vec3 p) const {
+        import std.math : isFinite, fabs;
+
+        // A non-finite query matches NOTHING, exactly as the linear scan did:
+        // any component of `v - p` is then NaN or ±inf, `.length` is NaN or
+        // +inf, and both compare false against 1e-5f. Return before the cast.
+        if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(p.z)) return -1;
+
+        if (!ready
+            || fabs(cast(double)p.x) > kSafeQuery
+            || fabs(cast(double)p.y) > kSafeQuery
+            || fabs(cast(double)p.z) > kSafeQuery)
+            return linearScan(p, verts);
+
+        immutable long cx = cellOf(p.x), cy = cellOf(p.y), cz = cellOf(p.z);
+        int best = -1;
+        foreach (dz; -1 .. 2) foreach (dy; -1 .. 2) foreach (dx; -1 .. 2) {
+            immutable size_t h = cellHash(cx + dx, cy + dy, cz + dz) & tableMask;
+            foreach (vi; buckets[starts[h] .. starts[h + 1]]) {
+                // Buckets ascend, so the first match in this bucket is this
+                // bucket's minimum — and anything past an index we already beat
+                // cannot improve `best`.
+                if (best >= 0 && vi > cast(uint)best) break;
+                version (unittest) ++g_vertexPosGridCandidates;
+                // THE PREDICATE, VERBATIM. Do NOT rewrite it as
+                // `dot(d, d) < 1e-10f`: that is a strictly LOOSER test, not an
+                // optimisation of this one. `float((1e-5f)^2)` is 9.999999440e-11
+                // and `1e-10f` is 1.000000013e-10, so the squared form accepts a
+                // band this one rejects — a vertex exactly `1e-5f` away matches
+                // there and not here. The whole "byte-identical by construction"
+                // argument rests on this line matching the scan it replaced
+                // character for character; the band is pinned by a unittest,
+                // because no realizable extrude fixture lands a ridge lookup in
+                // it (measured, task 1331).
+                if ((verts[vi] - p).length < 1e-5f) { best = cast(int)vi; break; }
+            }
+        }
+        return best;
+    }
+
+    /// The original scan, kept as the fallback for queries the grid declines.
+    /// Reachable ONLY through the `kSafeQuery` / `!ready` guard above (or an
+    /// empty array) — and it is the path that silently restores the O(V) cost
+    /// this task removed, so it is pinned by value AND by candidate count in
+    /// `tests/unit/mesh_ops/vertex_pos_grid_test.d` ("beyond kSafeQuery").
+    /// Deleting the three `kSafeQuery` comparisons used to leave every block
+    /// green (task 1331 review, mutation M7).
+    private static int linearScan(Vec3 p, const(Vec3)[] verts) {
+        foreach (i, ref v; verts) {
+            version (unittest) ++g_vertexPosGridCandidates;
+            if ((v - p).length < 1e-5f) return cast(int)i;
+        }
+        return -1;
+    }
+}
+
 mixin template MeshExtrudeOps() {
     /// Edge Extrude: shift each selected edge outward along the average normal
     /// of its neighbor polygon(s) by `extrude`, inset the neighbor polygon(s) by
@@ -1860,14 +2128,34 @@ mixin template MeshExtrudeOps() {
         // --- New selection = the ridge edges (so a follow-up move/extrude
         //     chains). Re-find each ridge endpoint by its (post-compaction)
         //     position, then look the edge up via edgeKey on the new indices.
-        int findVertByPos(Vec3 p) {
-            foreach (i, ref v; vertices)
-                if ((v - p).length < 1e-5f) return cast(int)i;
-            return -1;
-        }
+        //
+        // The lookup used to be a full linear scan of `vertices` per endpoint,
+        // run twice per extruded edge — and since `ridgeEdgePos` carries one
+        // entry per extruded edge, that was O(S*V) on the hot path with no
+        // guard, worth ~95% of this command's cost on a 100K-face mesh
+        // (task 1331). `VertexPosGrid` answers the same question in O(1)
+        // expected and returns the same index by construction: same predicate,
+        // and the MINIMUM matching index, which is what "first hit of an
+        // ascending scan" means.
+        //
+        // INVARIANT the grid depends on: nothing between `finalizeTopologyEdit()`
+        // above and the loop below may mutate `vertices`. Today the only calls
+        // in that window are resizeVertexSelection / resizeFaceSelection /
+        // clearEdgeSelectionResize, which resize the per-element MARK and ORDER
+        // arrays and never touch positions. Anything added there that appends,
+        // removes or moves a vertex must rebuild (or invalidate) the grid.
+        // (The other half of that coupling — answering a query against a
+        // DIFFERENT array than the one indexed — is not a matter of discipline:
+        // `build` holds the slice and `findMin` takes none.)
+        // Scoped import: this mixin body resolves names in the INSTANTIATION
+        // scope (struct Mesh, module mesh), so a module-level import here in
+        // mesh_ops.extrude would NOT reach it (task 0717 §3).
+        import mesh_ops.extrude : VertexPosGrid;
+        VertexPosGrid posGrid;
+        if (ridgeEdgePos.length) posGrid.build(vertices);
         foreach (ref pr; ridgeEdgePos) {
-            int a = findVertByPos(pr[0]);
-            int b = findVertByPos(pr[1]);
+            int a = posGrid.findMin(pr[0]);
+            int b = posGrid.findMin(pr[1]);
             if (a < 0 || b < 0) continue;
             ulong rk = edgeKey(cast(uint)a, cast(uint)b);
             if (auto p = rk in edgeIndexMap)
