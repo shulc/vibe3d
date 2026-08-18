@@ -53,7 +53,7 @@ import std.file      : exists, mkdirRecurse;
 import std.format    : format;
 import std.getopt    : getopt, config;
 import std.json      : parseJSON, JSONValue, JSONType;
-import std.math      : sqrt, sin, cos, tan, PI, fabs;
+import std.math      : sqrt, sin, cos, tan, PI, fabs, isNaN, fmin;
 import std.net.curl  : get, post, HTTP, CurlException;
 import std.path      : absolutePath, buildPath, buildNormalizedPath, dirName;
 import std.process   : execute, executeShell, spawnProcess, Config, Pid,
@@ -135,6 +135,34 @@ struct Case {
     string  selection;  // "whole" | "single" | "ring" | "half"
     PipeAttr[] attrs;   // pipe configuration applied on top of a clean reset
     string  note;       // human-readable axis varied
+    // Camera ELEVATION (radians) this case needs, or NaN for "leave the
+    // camera alone" (task 1350). `runCase` posts it after the reset and puts
+    // the previous value back when the case ends — including on the error
+    // paths, because the camera is PROCESS state shared by every later case:
+    // a case that left the camera flipped would silently re-fixture the rest
+    // of the matrix.
+    double  elevation = double.nan;
+    // "This case exists to exercise the snap VISIBILITY mask." Cases that
+    // declare it are held to invariant I7's non-vacuity clause: the mask must
+    // actually be consulted and the query must actually elect something.
+    // Without the flag a case that quietly stopped reaching the occlusion path
+    // would keep passing as a green line measuring nothing.
+    bool    exercisesVisibility = false;
+    // A grid resolution THIS CASE needs, overriding the run's `--n`; 0 = use
+    // the run's. Only one case sets it and it is not a convenience: the snap
+    // visibility mask's occlusion pass is O(V x |front faces|), so on the
+    // matrix mesh (n=316: 100489 verts, 99856 faces) a single query with the
+    // faces actually facing the eye measures ~5.2 SECONDS and the drag blows
+    // through the 10 s play-events timeout — which then wedges the shared
+    // instance and fails every case after it (observed 2026-08-18). Measured
+    // per query, camera below the plane, one-vertex moving set:
+    //   n=32 ~6 ms, n=64 ~21 ms, n=128 ~227 ms, n=200 ~1.28 s, n=316 ~5.2 s.
+    // n=64 is the largest size that leaves the case a couple of seconds
+    // instead of minutes; the quadratic itself is a separate finding and a
+    // separate task, not something this case should hide by not running.
+    // Grid-only — a `--subdivcube` run SKIPs the case rather than
+    // reinterpreting the number as a subdivision LEVEL.
+    int     meshN = 0;
 }
 
 // Build the baseline + one-axis-at-a-time cases for a tool. The radius/size
@@ -226,6 +254,43 @@ Case[] casesForTool(Tool t) {
              PipeAttr("snap", "types", "vertex")],
             "snap=vertex (per-vertex candidate walk)");
 
+        // Snap to vertex with a PARTIAL moving set, and looking at the plane
+        // from BELOW — the only case in this matrix that reaches the snap
+        // visibility mask at all (task 1350).
+        //
+        // Two independent things keep every case above OFF that path, and
+        // both had to be undone here:
+        //
+        //  1. THE MOVING SET. Every other snap case uses `"whole"`, which is
+        //     an EMPTY selection, which makes the moving set the whole mesh.
+        //     `snap.d`'s `kindExcluded` drops a candidate if ANY incident
+        //     vertex is moving, so on a whole-mesh drag every candidate is
+        //     dropped before the mask is ever consulted. Those cases measure
+        //     the candidate GRID and nothing else.
+        //  2. THE CAMERA. `makeGridPlane`'s faces compute a -Y normal, so the
+        //     default above-plane camera leaves every face back-facing;
+        //     `frontFacingLocal` culls all of them, `front[]` comes out empty
+        //     and the mask comes out all-false — every candidate would then be
+        //     rejected as invisible and nothing could ever snap. Looking from
+        //     below (the same -0.4 rad the `lasso-dense` frame scenario uses,
+        //     for the same reason — see `lib.http.setCameraElevation`) makes
+        //     the faces face the eye.
+        //
+        // `single` and not `half`: the gizmo sits at the action centre of the
+        // selection, so with `half` the cursor spends the drag deep inside the
+        // moving half where every near candidate is excluded anyway. With a
+        // one-vertex selection the exclusion set is one vertex and the whole
+        // neighbourhood under the cursor stays consultable.
+        //
+        // The number this case produces is the honest cost of the mask on the
+        // partial-selection path, which is the path task 1350 deliberately did
+        // NOT optimise — it is here to be measured, not to be fast.
+        cs ~= Case(tname ~ "/snap=vertex+partial", t, "single",
+            [PipeAttr("snap", "enabled", "true"),
+             PipeAttr("snap", "types", "vertex")],
+            "snap=vertex, partial moving set, camera below the plane, n=64",
+            -0.4, true, 64);
+
         // Remaining snap types, isolated, to measure each candidate walk.
         // edge/edgeCenter scan all edges; polygon/polyCenter scan all faces;
         // workplane is O(1) arithmetic (like grid). Each is set as the SOLE
@@ -315,6 +380,25 @@ struct CaseResult {
     double     snapQueryMedianUs;      // snap.d:snapCursor cost (informational)
     double     snapQuerySumUs;         // last-repeat snapQuery sum (informational)
     long       snapQueryCount;         // last-repeat snapCursor call count (for I5)
+    // Task 1350/1355 — the snap-visibility counters from the last repeat.
+    long       snapVisBuildCount;      // Mesh.visibleVertices computations
+    long       snapVisConsultCount;    // mask consultations by a candidate
+    long       snapVisRejectCount;     // consultations the mask array answered NO
+    long       snapHitCount;           // snapCursor calls that elected something
+    long       snapHitGeomCount;       // ...where a MASK-GATED candidate won
+    bool       exercisesVisibility;    // carried from Case (for I7)
+    string     selection;              // carried from Case (for I7a)
+    // The grid resolution this case ACTUALLY ran at, and the mesh it got.
+    // Not always the run's `--n`: `Case.meshN` pins a size per case, and a
+    // report that prints one row at 64 under a header that says 316 is
+    // describing a mesh that never existed (review fix, task 1359).
+    int        effectiveN;
+    long       effectiveVertexCount;
+    long       effectiveFaceCount;
+    // Visible BACKGROUND layers at measure time — `snapCursor` runs its walk
+    // once for the primary and once more for each of these, so this is what
+    // turns "one mask build per walk" into a number the harness can check.
+    long       backgroundSources;
     string     dominantStage;
     long       vertsTouched;     // sum from the last repeat
     long       kernelInternalP95Ns;  // /api/perf's own per-sample p95
@@ -382,8 +466,62 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
     res.name = c.name;
     res.note = c.note;
 
+    // 0. per-case mesh size (see `Case.meshN`). Grid only: under
+    // `--subdivcube` the reset parameter means subdivision LEVELS, and
+    // silently building 2^64 of them is not a degradation this should
+    // improvise through.
+    if (c.meshN > 0 && meshType != "grid") {
+        res.status = CaseStatus.SKIP;
+        res.detail = format("case pins grid n=%d; this run is meshType=%s",
+                            c.meshN, meshType);
+        return res;
+    }
+    if (c.meshN > 0) n = c.meshN;
+    res.effectiveN = n;
+
     // 1. fresh mesh
     resetMesh(meshType, n);
+    // What that mesh actually IS, when it is not the run's (review fix, task
+    // 1359). A row measured at n=64 printed under a header that says n=316
+    // describes a mesh that never existed; the numbers below are only
+    // interpretable next to the size they were taken at. Read only for the
+    // pinned cases — for every other case the run header is already the
+    // answer, and this is an extra main-thread round trip per case.
+    if (c.meshN > 0) {
+        auto mi = modelInfo();
+        res.effectiveVertexCount = mi.vertexCount;
+        res.effectiveFaceCount   = mi.faceCount;
+    }
+
+    // 1b. camera, when the case asks for one (task 1350). Restored on EVERY
+    // exit path — the `scope (exit)` is at FUNCTION scope on purpose: written
+    // inside the `if` it would fire at the end of that block and put the
+    // camera back before the drags ever ran.
+    //
+    // ORDER MATTERS, and it was wrong here (review fix, task 1358): the
+    // restore is registered BEFORE the set it undoes, not after. `setCamera
+    // Elevation` returns false on any curl exception — including a READ
+    // timeout, which fires after the request reached the server and the
+    // server already applied the change. On that path a restore registered
+    // after the call is never registered at all: the case returns ERROR, the
+    // camera stays at the case's elevation, and every LATER case in the
+    // matrix silently runs against a re-aimed camera. The next day-over-day
+    // gate then lights up with regressions that are re-fixturing, not code.
+    // Registering first costs one redundant POST on the (already failing)
+    // error path and cannot lose the restore.
+    //
+    // (`/api/reset` does put the camera back too — measured, see the task
+    // file's finding 1 — but a case must be closed on itself rather than
+    // rely on the NEXT case's reset, which `runCase`'s early returns may
+    // never reach.)
+    double prevElevation = double.nan;
+    if (!c.elevation.isNaN) prevElevation = fetchCamera().elevation;
+    scope (exit) if (!prevElevation.isNaN) setCameraElevation(prevElevation);
+    if (!c.elevation.isNaN && !setCameraElevation(c.elevation)) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "camera elevation set failed";
+        return res;
+    }
 
     // 2. selection
     if (!applySelection(c, n)) {
@@ -410,6 +548,11 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
             return res;
         }
     }
+
+    // Visible background layers — the count `snapCursor` walks IN ADDITION to
+    // the primary (see `fetchBackgroundLayerCount`). Read after the reset and
+    // the selection, i.e. in the state the measured drags will run in.
+    res.backgroundSources = fetchBackgroundLayerCount();
 
     auto cam = fetchCamera();
     auto vp  = viewportFromCamera(cam);
@@ -487,6 +630,18 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
     res.snapQuerySumUs       = cast(double)sumNs(last, "snapQuery") / 1000.0;
     res.snapQueryCount       = ("snapQuery" in last)
         ? last["snapQuery"]["count"].integer : 0;
+    // Counters emit {count, sum}; every call site adds 1, so either reads the
+    // same number — `sum` is taken for symmetry with vertsTouched below.
+    long counterSum(string cat) {
+        return (cat in last) ? last[cat]["sum"].integer : 0;
+    }
+    res.snapVisBuildCount    = counterSum("snapVisBuild");
+    res.snapVisConsultCount  = counterSum("snapVisConsult");
+    res.snapVisRejectCount   = counterSum("snapVisReject");
+    res.snapHitCount         = counterSum("snapHit");
+    res.snapHitGeomCount     = counterSum("snapHitGeom");
+    res.exercisesVisibility  = c.exercisesVisibility;
+    res.selection            = c.selection;
     res.dominantStage  = dominantStage(last);
     res.vertsTouched   = ("vertsTouched" in last)
         ? last["vertsTouched"]["sum"].integer : 0;
@@ -574,6 +729,7 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
     res.name = c.name;
     res.isCommand = true;
     res.note = c.mode ~ " " ~ c.selection;
+    res.effectiveN = n;   // command cases never pin their own size
 
     double[] applyUs;
     JSONValue last;
@@ -1132,7 +1288,7 @@ void writeFramesResultsJson(string path, string meshType, int n, long faceCount,
 // Output
 // ---------------------------------------------------------------------------
 
-void printTable(CaseResult[] results) {
+void printTable(CaseResult[] results, int runN) {
     writeln();
     writeln("=== perf results ===");
     writefln("%-28s %12s %12s %12s %10s %-16s %10s",
@@ -1166,6 +1322,19 @@ void printTable(CaseResult[] results) {
     writeln("".replicate(108));
     writefln("Totals: OK=%d  SKIP=%d  ERROR=%d  (of %d cases)",
              ok, skip, err, results.length);
+    // Cases that ran at their OWN mesh size (`Case.meshN`). Named here rather
+    // than left to the run header, which says one number for the whole table
+    // (review fix, task 1359): a row measured on 4225 verts printed under a
+    // header that says 100489 is not a small imprecision, it is a different
+    // benchmark, and the reader has no other way to see it.
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK) continue;
+        if (r.effectiveN == 0 || r.effectiveN == runN) continue;
+        writefln("  note: %s ran at its own pinned size n=%d (%d verts / %d "
+                 ~ "faces), NOT the run's n=%d — see Case.meshN",
+                 r.name, r.effectiveN, r.effectiveVertexCount,
+                 r.effectiveFaceCount, runN);
+    }
 }
 
 // jsonNum/replicate now live in lib.stats.
@@ -1193,6 +1362,15 @@ void writeResultsJson(string path, string meshType, int n, long faceCount,
         a.put(format(`      "note": "%s",` ~ "\n", r.note));
         a.put(format(`      "status": "%s",` ~ "\n", r.status.to!string));
         if (r.status == CaseStatus.OK) {
+            // The size THIS case ran at (task 1359). Emitted for every OK
+            // case, so a consumer never has to decide whether the run
+            // header's `n` applies to this row — it applies only when the
+            // two agree, and `Case.meshN` makes them disagree.
+            a.put(format(`      "n": %d,` ~ "\n", r.effectiveN));
+            if (r.effectiveVertexCount > 0)
+                a.put(format(`      "vertexCount": %d,` ~ "\n" ~
+                             `      "faceCount": %d,` ~ "\n",
+                             r.effectiveVertexCount, r.effectiveFaceCount));
             a.put(format(`      "kernelMedianUs": %s,` ~ "\n", jsonNum(r.kernelMedianUs)));
             a.put(format(`      "kernelP95Us": %s,` ~ "\n", jsonNum(r.kernelP95Us)));
             a.put(format(`      "pipeMedianUs": %s,` ~ "\n", jsonNum(r.pipeMedianUs)));
@@ -1362,6 +1540,119 @@ Invariant[] checkInvariants(CaseResult[] results) {
             ok,
             format("snapQuery count=%d, sum=%.2f µs (median %.2f µs)",
                    r.snapQueryCount, r.snapQuerySumUs, r.snapQueryMedianUs));
+    }
+
+    // I7 — the snap VISIBILITY mask (task 1350; clauses rebuilt after review,
+    // task 1355/1359). THREE clauses, guarding three different failures.
+    //
+    // (a) THE MASK IS NOT REACHED AT ALL on a whole-mesh drag. The mask is
+    //     `Mesh.visibleVertices`: O(V+F) plus ~1.0 MB of fresh arrays on a
+    //     100K mesh. It is consulted only for candidates the grid returned
+    //     and `kindExcluded` kept, and a whole-mesh drag's moving set is
+    //     every vertex, so EVERY candidate is dropped before the mask is
+    //     reached: consultations must be exactly zero, and therefore builds
+    //     too.
+    //
+    //     This clause replaces one that could not fail (review, task 1355).
+    //     The old test was `(consult > 0 || build == 0) && build <= queries`
+    //     — but `snapVisBuild` is incremented INSIDE the accessor that
+    //     increments `snapVisConsult`, so `build > 0 ⇒ consult > 0` holds by
+    //     construction and the first conjunct is a tautology. It went red
+    //     under the eager-mask mutation only because that mutation moved the
+    //     build OUTSIDE the accessor. The refactor that silently restores the
+    //     46-66 ms regression is smaller than that: hoist `visMask()` to the
+    //     top of `walkSource` for readability, and the old clause reads
+    //     builds=21, consultations=21, queries=21 — green on both conjuncts.
+    //     Against THIS clause the same hoist reads consultations=21 on a case
+    //     that must show zero.
+    //
+    // (b) NON-VACUITY, on cases that declare `exercisesVisibility`.
+    //     Consulting the mask and ELECTING something through it are
+    //     independent: with the camera on the wrong side of the plane every
+    //     face is back-facing, the mask comes out all-false, every candidate
+    //     is rejected, and the case measures an empty walk while still
+    //     passing I5 and clause (a).
+    //
+    //     What it counts is `snapHitGeom`, NOT `snapHit` (review fix, task
+    //     1355). `SnapResult.snapped` is also true when the grid/workplane
+    //     tier or a LINE/PLANE constraint supplied the position, and none of
+    //     those consult the mask — so an all-false mask can leave `snapHit`
+    //     non-zero while `snapQuery` gets CHEAPER, which `--vs-last` would
+    //     then report as an improvement. `snapHitGeom` fires only when the
+    //     discrete tier won with a type the mask stood in front of
+    //     (`snap.isMaskGatedType`), which is the literal claim "a mask-gated
+    //     candidate won".
+    //
+    //     What this clause does NOT claim, because it was MEASURED and is not
+    //     true: that the mask CHANGED the outcome. On `snap=vertex+partial`
+    //     the reject count is exactly 0 (2229 consultations, 0 rejections,
+    //     2026-08-19) — the fixture is a single grid sheet seen from below, so
+    //     nothing occludes anything and every candidate near the cursor is
+    //     admitted. The case measures the mask's COST, which is what it exists
+    //     for, and elects THROUGH it; it does not demonstrate discrimination.
+    //     Asserting `rejections > 0` — the shape the review first proposed —
+    //     would therefore be red on the only case that reaches the mask at
+    //     all. The count is printed instead, so a reader can see which of the
+    //     two the case is showing them; a case that wants to pin
+    //     discrimination needs a SELF-OCCLUDING fixture (a closed solid), and
+    //     that is a new case, not a stricter predicate on this one.
+    //
+    // (c) LAZINESS AS A BOUND, on every snap case: at most one build per
+    //     SOURCE WALK. A mask rebuilt per consultation instead of per walk
+    //     would keep every other invariant green (I5 measures only that
+    //     snapCursor was called) while costing multiples of the regression
+    //     this task fixed. The bound is `queries x (1 primary + N background
+    //     sources)`, not `queries` — `snapCursor` runs `walkSource` once for
+    //     the primary and once per visible BACKGROUND layer (snap.d), each
+    //     with its own mask. It held at `queries` only because no perf case
+    //     has a background layer; stated that way it would have false-failed
+    //     the day one was added, which is the wrong direction for a gate to
+    //     be wrong in. `backgroundSources` is MEASURED per case from
+    //     /api/layers, not declared, so it cannot go stale.
+    //
+    // All three are stated as COUNTS, not times, for the same reason I5 is:
+    // grid and workplane snap legitimately do no geometric work at all.
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK) continue;
+        if (!r.name.canFind("snap=")) continue;
+
+        if (r.selection == "whole") {
+            bool untouched = r.snapVisConsultCount == 0
+                          && r.snapVisBuildCount   == 0;
+            inv ~= Invariant("I7a",
+                format("%s whole-mesh drag never reaches the snap mask", r.name),
+                untouched,
+                format("consultations=%d, builds=%d, queries=%d",
+                       r.snapVisConsultCount, r.snapVisBuildCount,
+                       r.snapQueryCount));
+        }
+
+        if (r.exercisesVisibility) {
+            bool liveOk = r.snapVisConsultCount > 0 && r.snapHitGeomCount > 0;
+            inv ~= Invariant("I7b",
+                format("%s exercises the visibility mask (non-vacuous)", r.name),
+                liveOk,
+                format("consultations=%d (per query %.1f, %d rejected), " ~
+                       "mask-gated wins=%d of %d snaps in %d queries",
+                       r.snapVisConsultCount,
+                       r.snapQueryCount > 0
+                           ? cast(double)r.snapVisConsultCount / r.snapQueryCount
+                           : 0.0,
+                       r.snapVisRejectCount,
+                       r.snapHitGeomCount, r.snapHitCount, r.snapQueryCount));
+        }
+
+        {
+            immutable long walks = (1 + r.backgroundSources) * r.snapQueryCount;
+            bool lazyOk = r.snapVisBuildCount <= walks;
+            inv ~= Invariant("I7c",
+                format("%s snap mask built at most once per source walk", r.name),
+                lazyOk,
+                format("builds=%d, walks=%d (%d queries x 1 primary + %d " ~
+                       "background), consultations=%d",
+                       r.snapVisBuildCount, walks, r.snapQueryCount,
+                       r.backgroundSources, r.snapVisConsultCount));
+        }
     }
 
     // I6 — command apply is timed: for every one-shot command case
@@ -1619,7 +1910,7 @@ FramesAbsRegression[] checkFramesAbsolute(FrameScenarioResult[] results) {
 int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort port,
                         string[] requested, bool updateFramesBaseline, bool noAbsolute,
                         bool noBuild, bool ciMode) {
-    killStaleVibe();
+    killStaleVibe(port);
     string logPath = "/tmp/vibe3d_perf_frames.log";
     writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
              port, viewport);
@@ -1843,7 +2134,7 @@ int runFlameSubcommand(string target, string meshType, int meshParam,
                ~ "to the wrong (uninstrumented-noise or debug-noise) frames.");
     }
 
-    killStaleVibe();
+    killStaleVibe(port);
     string logPath = "/tmp/vibe3d_perf_flame.log";
     writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
              port, viewport);
@@ -2018,8 +2309,12 @@ int main(string[] args) {
     bool   trend = false;
     int    trendLast = 20;
     bool   vsLast = false;
-    double vsLastThreshold = 0.20;
-    double vsLastFloorUs   = 200.0;
+    // NaN = "the operator did not say", which is a different state from "the
+    // operator asked for the default value" — the snap threshold below is
+    // resolved from it (task 1358).
+    double vsLastThreshold     = double.nan;
+    double vsLastSnapThreshold = double.nan;
+    double vsLastFloorUs       = 200.0;
     int    flameFreq = 999;
     int    flameCapture = 8;
     bool   ciMode = false;
@@ -2041,6 +2336,7 @@ int main(string[] args) {
         "trend",     "print per-case median drift from tools/perf/history/<host>.jsonl and exit", &trend,
         "vs-last",   "compare the latest history entry against the previous comparable run and exit nonzero on any regression (the day-over-day gate for scheduled runs)", &vsLast,
         "vs-last-threshold", "`--vs-last` regression threshold as a fraction (default 0.20 = +20%)", &vsLastThreshold,
+        "vs-last-snap-threshold", "`--vs-last` threshold for the `#snapQuery` keys, which are measurably noisier (default 0.60 = +60%; lowering --vs-last-threshold below it lowers this too)", &vsLastSnapThreshold,
         "vs-last-floor",     "`--vs-last` ignores cases where both medians sit under this many µs (default 200)", &vsLastFloorUs,
         "last",      "`--trend` window size (default 20 runs)", &trendLast,
         "freq",      "`flame` perf sampling frequency Hz (default 999)", &flameFreq,
@@ -2116,9 +2412,31 @@ int main(string[] args) {
     // right after `ops` so a fresh regression fails the run even while the
     // absolute lane is knowingly red against a stale committed baseline.
     if (vsLast) {
+        // Resolve the two thresholds (task 1358). The `#snapQuery` keys need a
+        // LOOSER default than the rest — their run-to-run step is measured,
+        // not assumed (see `kSnapQueryVsLastThreshold`) — but "looser" must
+        // not mean "a floor the operator cannot get under": someone hunting a
+        // small snap regression with `--vs-last-threshold 0.05` would then
+        // get 5% on every key except the ones they are hunting. So:
+        //   * `--vs-last-snap-threshold` given → exactly that, always;
+        //   * else `--vs-last-threshold` given → min(it, the snap default),
+        //     i.e. tightening the general gate tightens this one too, and
+        //     loosening it leaves the snap keys where the measurement put
+        //     them;
+        //   * else → the measured default.
+        immutable bool thrGiven     = !vsLastThreshold.isNaN;
+        immutable bool snapThrGiven = !vsLastSnapThreshold.isNaN;
+        if (!thrGiven) vsLastThreshold = 0.20;
+        if (!snapThrGiven)
+            vsLastSnapThreshold = thrGiven
+                ? fmin(vsLastThreshold, lib.history.kSnapQueryVsLastThreshold)
+                : lib.history.kSnapQueryVsLastThreshold;
+
         auto path = lib.history.historyPath(g_repoRoot, Socket.hostName);
         auto entries = lib.history.loadHistory(path);
-        int regressions = lib.history.checkVsLast(entries, vsLastThreshold, vsLastFloorUs);
+        int regressions = lib.history.checkVsLast(entries, vsLastThreshold,
+                                                  vsLastSnapThreshold,
+                                                  vsLastFloorUs);
         return regressions > 0 ? 1 : 0;
     }
 
@@ -2170,7 +2488,7 @@ int main(string[] args) {
         return 0;
     }
 
-    killStaleVibe();
+    killStaleVibe(port);
     string logPath = "/tmp/vibe3d_perf.log";
     writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
              port, viewport);
@@ -2211,7 +2529,7 @@ int main(string[] args) {
         results ~= r;
     }
 
-    printTable(results);
+    printTable(results, meshParam);
 
     string outPath = buildPath(g_repoRoot, "tools", "perf", "results.json");
     writeResultsJson(outPath, meshType, meshParam, mi.faceCount,
@@ -2304,9 +2622,52 @@ int main(string[] args) {
     // fail the run.
     try {
         double[string] kernelMedianByCase;
-        foreach (r; results)
-            if (r.status == CaseStatus.OK)
-                kernelMedianByCase[r.name] = r.kernelMedianUs;
+        foreach (r; results) {
+            if (r.status != CaseStatus.OK) continue;
+            kernelMedianByCase[r.name] = r.kernelMedianUs;
+            // Task 1350 — the snap query's own median, under a SECOND key.
+            //
+            // Why it has to be in history at all: snap cases are excluded from
+            // the absolute baseline comparison below (their moving set is not
+            // stable enough for a fixed budget), and I5 only asserts that
+            // snapCursor was CALLED. So between the two of them nothing ever
+            // watched snapQuery's cost, and a 20x regression in it (2026-08-18:
+            // 2.4 ms → 56 ms per drag) rode into the tree behind a fully green
+            // lane. Writing it here puts it under the EXISTING `--vs-last`
+            // day-over-day gate for free: at its +20% threshold a 20x regression
+            // reads as +2000%.
+            //
+            // A separate key rather than a second map: `appendHistory` is
+            // metric-agnostic by design ({name: value}), and `checkVsLast`
+            // compares by key, so `<case>#snapQuery` gates exactly like a case
+            // does with no change to either. The '#' cannot collide with a case
+            // name (they are `tool/axis`).
+            //
+            // KNOWN LIMIT, stated rather than papered over: `checkVsLast`
+            // skips a pair where BOTH sides sit under its 200 µs floor, so a
+            // regression that stays inside that band is not caught here. Which
+            // keys that actually affects, MEASURED rather than assumed (the
+            // first version of this comment claimed the whole-mesh snap cases
+            // "sit far below" the floor "because they build nothing" — review
+            // fix, task 1358; they are 30-55x ABOVE it, and a reader who
+            // believed the claim would have deleted the only gate on the 20x
+            // regression this key exists for):
+            //
+            //   move/snap=vertex#snapQuery       6274 µs  — 31x the floor
+            //   move/snap=edge#snapQuery        11577 µs  — 58x
+            //   move/snap=polygon#snapQuery     10652 µs  — 53x
+            //   move/snap=vertex+partial#…     315660 µs  — 1578x
+            //   move/snap=grid#snapQuery            6 µs  — BELOW, skipped
+            //   move/snap=workplane#snapQuery       6 µs  — BELOW, skipped
+            //
+            // "Builds nothing" is not "costs nothing": laziness removed the
+            // MASK from the whole-mesh cases and left the candidate-grid walk,
+            // which is 6-12 ms per drag on the n=316 mesh and is what these
+            // keys now watch. Only `grid` and `workplane` — which never had a
+            // geometric walk at all — fall in the skipped band.
+            if (r.name.canFind("snap="))
+                kernelMedianByCase[r.name ~ "#snapQuery"] = r.snapQueryMedianUs;
+        }
         lib.history.appendHistory(g_repoRoot, curHeader, kernelMedianByCase, "ops");
     } catch (Exception e) {
         stderr.writeln("warning: history append failed: ", e.msg);

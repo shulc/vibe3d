@@ -76,6 +76,29 @@ hardware. They run ALWAYS (no baseline / mismatched machine included) and are
 what `run_all.d`'s perf lane checks. Thresholds are generous gross-regression
 guards, tuned with margin off observed n=64 ratios.
 
+**Count invariants (I5–I7)** assert control flow, not time, and so are exact
+rather than tuned. I5: `snapCursor` was called at all. I6: a one-shot command
+case recorded a `commandApply`. I7 (task 1350) is the snap VISIBILITY mask, in
+three clauses:
+
+* **I7a**, on every `snap=*` case whose selection is `whole`: the mask is
+  never REACHED. A whole-mesh drag's moving set is the entire mesh, so
+  `kindExcluded` drops every candidate before a consultation can happen —
+  consultations must be exactly 0, and therefore builds too. This is the
+  clause that catches the mask being made eager again (including by the small
+  refactor: hoisting the accessor to the top of `walkSource`).
+* **I7b**, on cases that declare `exercisesVisibility`: the mask really is
+  consulted AND a MASK-GATED candidate really won. The second half counts
+  `snapHitGeom`, not "something snapped" — the grid/workplane tier and the
+  LINE/PLANE constraints all set `snapped` without ever consulting the mask,
+  so an all-false mask would otherwise pass while the query got cheaper. See
+  `move/snap=vertex+partial`, whose camera flip and one-vertex moving set are
+  both load-bearing.
+* **I7c**, on every `snap=*` case: at most one mask build per SOURCE WALK,
+  i.e. `builds ≤ queries × (1 primary + N visible background layers)`. The
+  background count is measured per case from `/api/layers`, so a multi-layer
+  case would not false-fail it.
+
 **Absolute baseline** compares each case's `kernelApply` median against
 `baseline.json` (default tolerance +30%, `--tolerance`). `pipeTotal` is NOT
 compared absolutely (it is pipeAcen-dominated and jitters run-to-run; pipeline
@@ -260,6 +283,14 @@ specific, like `.test_timings.json`): the run header (buildType/compiler/
 host/meshType/n/faceCount/viewport/repeats) + a timestamp + a per-case
 median map (`kernelApplyMedianUs` for `ops`, `p99Ms` for `frames`).
 
+`ops` entries carry a SECOND key for every `snap=*` case,
+`<case>#snapQuery`, holding that case's `snapQuery` median (task 1350). Snap
+cases are excluded from the absolute comparison and I5 only checks that
+`snapCursor` was CALLED, so before this key nothing watched the snap query's
+cost at all and a 20x regression in it (2.4 ms → 56 ms per drag) rode in
+behind a fully green lane. The key needs no new gate: `--vs-last` compares
+by key.
+
 ```bash
 rdmd tools/perf/run.d --trend               # last 20 runs (default)
 rdmd tools/perf/run.d --trend --last 5      # last 5 runs
@@ -284,7 +315,15 @@ rdmd tools/perf/run.d --vs-last --vs-last-threshold 0.3 --vs-last-floor 500
 Compares the latest history entry against the previous COMPARABLE `ops` run
 and exits nonzero when any per-case kernel median grew past the threshold
 (default +20%). Cases where both sides sit under the floor (default 200 µs)
-are skipped — sub-100µs medians jitter multiplicatively. Like `--trend` it
+are skipped — sub-100µs medians jitter multiplicatively. `#snapQuery` keys
+gate at **+60%** instead (`--vs-last-snap-threshold`): measured over ten
+consecutive runs their worst consecutive-run step is +17.7%
+(`move/snap=edge`), so +20% would flake nightly, while +60% is still a factor
+of 33 — about one and a half orders of magnitude — below the regression the
+key exists for (that one was +2000%). Lowering `--vs-last-threshold` below
++60% lowers the snap keys with it, so an operator hunting a small regression
+is not locked out of the keys they are hunting. The derivation, with the
+per-case numbers, is at `kSnapQueryVsLastThreshold` in `lib/history.d`. Like `--trend` it
 is a pure history read. This is the gating signal of the **nightly-perf
 workflow** (`.github/workflows/perf.yaml`): it stays meaningful while the
 absolute lane is knowingly red against a stale committed baseline, because

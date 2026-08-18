@@ -76,6 +76,12 @@ struct Viewport {
 struct CameraState {
     Vec3 eye, focus;
     int width, height, vpX, vpY;
+    // The spherical ELEVATION the app currently holds, in radians. Read-only
+    // here and carried purely so a scenario/case that re-aims the camera
+    // (`lib.http.setCameraElevation`) can put back what it found instead of
+    // guessing the launch default — the camera is process state, and the
+    // matrix fields above cannot be posted back to `/api/camera`.
+    float elevation = 0;
 }
 
 CameraState fetchCamera() {
@@ -91,6 +97,7 @@ CameraState fetchCamera() {
     c.height = cast(int)j["height"].integer;
     c.vpX    = cast(int)j["vpX"].integer;
     c.vpY    = cast(int)j["vpY"].integer;
+    if ("elevation" in j) c.elevation = cast(float)j["elevation"].floating;
     return c;
 }
 

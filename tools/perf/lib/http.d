@@ -184,6 +184,23 @@ ModelInfo modelInfo() {
     return m;
 }
 
+// Visible BACKGROUND layers (`visible && !selected`, the derived third state
+// /api/layers publishes per layer). That set is exactly what app.d installs
+// as `snap`'s background SOURCES, and `snapCursor` runs its candidate walk —
+// and therefore builds at most one visibility mask — once per source: once
+// for the primary plus once per entry here. The perf lane's I7c bound reads
+// this instead of assuming a single-layer document, so the day a multi-layer
+// case is added the bound moves with it rather than false-failing (review
+// fix, task 1359).
+long fetchBackgroundLayerCount() {
+    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/layers"));
+    if ("layers" !in j) return 0;
+    long n = 0;
+    foreach (l; j["layers"].array)
+        if ("background" in l && l["background"].type == JSONType.true_) n++;
+    return n;
+}
+
 // Selected polygon count from /api/selection — used by the `lasso-dense`
 // frame scenario (task 0200, F-I6b: "lasso engaged").
 long fetchSelectedFaceCount() {
@@ -203,6 +220,22 @@ long fetchSelectedFaceCount() {
 // actual winding. This is a scenario camera-setup choice, not a mesh/
 // winding fix — see doc/frame_scenarios_ci_plan.md's provenance note (pure
 // perf tooling; lasso *correctness* stays owned by tests/test_lasso_select.d).
+//
+// SAVE/RESTORE IS NOT LOSSLESS, and a caller that uses this to put a camera
+// BACK (`run.d`'s per-case `Case.elevation`, task 1350) should know exactly
+// what it restores (review note, task 1357). The camera's rotational truth is
+// a 3x3 `Orientation`, not three angles (`source/view.d`); `View.elevation`'s
+// setter reads (azimuth, elevation, roll) out of that matrix and rebuilds it
+// from (azimuth, NEW elevation, roll). So a read-then-write round trip:
+//   * costs float dust (~1e-7) on the two angles it did not mean to touch;
+//   * cannot separate heading from bank at a POLE — the chart is degenerate
+//     there, so a camera parked at elevation ±pi/2 does not come back;
+//   * carries NO information about roll or azimuth of its own. It restores
+//     the pitch and nothing else, which is faithful only because the caller
+//     set nothing else. A case that ever banks or orbits the camera must
+//     save and restore the ORIENTATION, not this scalar.
+// It is used anyway because the perf matrix's cases only ever change pitch,
+// and this is the field `/api/camera` accepts.
 bool setCameraElevation(double elevation) {
     try {
         auto resp = post(g_baseUrl ~ "/api/camera", format(`{"elevation":%f}`, elevation));

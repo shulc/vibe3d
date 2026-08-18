@@ -11,7 +11,7 @@ import std.format  : format;
 import std.path    : buildPath;
 import std.process : execute, executeShell, spawnProcess, Config, Pid,
                      ProcessException;
-import std.stdio   : write, writeln, stdout, stderr, File, stdin;
+import std.stdio   : write, writeln, writefln, stdout, stderr, File, stdin;
 import std.string  : strip, join;
 
 import core.thread : Thread;
@@ -66,14 +66,137 @@ bool dubBuildPerf() {
     return true;
 }
 
-void killStaleVibe() {
-    // pkill -x vibe3d (NOT -f 'vibe3d --test' — that self-kills this shell).
-    executeShell("pkill -x vibe3d 2>/dev/null");
+/// Every vibe3d PID whose command line names THIS port.
+///
+/// Two guards keep the selection honest:
+///   * `pgrep -f` matches command LINES, so it also hits this runner's own
+///     process and any editor/shell that happens to mention the port. Every
+///     candidate is therefore confirmed by its EXECUTABLE (`/proc/PID/exe`
+///     resolving to a file named `vibe3d`). Matching a pattern is not the
+///     same as identifying a process.
+///   * pgrep's regex is unanchored, so `--http-port 845` would match
+///     `--http-port 8450`; the trailing boundary is spelled out as
+///     `[[:space:]]`, NOT `\s` (review fix, task 1357). procps-ng compiles
+///     the pattern with `regcomp(REG_EXTENDED)` and POSIX ERE has no `\s` —
+///     glibc honours it as a GNU extension, musl and BusyBox do not. There
+///     the pattern matches nothing (or `regcomp` errors, into the
+///     `2>/dev/null` right here), this function returns EMPTY, `killStaleVibe`
+///     becomes a no-op, and the run measures whatever stale binary still
+///     holds the port — silently, because "no stale instance" and "the regex
+///     did not compile" look identical from the caller. `[[:space:]]` is
+///     POSIX, needs no shell- or D-level escaping, and selects the same PID
+///     on a glibc host (verified 2026-08-19).
+string[] vibePidsOnPort(ushort port) {
+    import std.algorithm : endsWith;
+    import std.string    : splitLines;
+
+    bool isVibe(string pid) {
+        auto exe = executeShell(format("readlink /proc/%s/exe 2>/dev/null", pid))
+                     .output.strip;
+        // A REBUILD renames the inode out from under a running instance, and
+        // the kernel then reports its exe as `/path/vibe3d (deleted)`. That is
+        // the ordinary case here, not an edge one — `dub build` immediately
+        // precedes the run — and an exact-suffix test without this line
+        // silently declines to kill exactly the stale instance the rebuild
+        // just orphaned, leaving the port held by the PREVIOUS binary for the
+        // harness to measure (verified 2026-08-19).
+        enum string kDeleted = " (deleted)";
+        if (exe.endsWith(kDeleted)) exe = exe[0 .. $ - kDeleted.length];
+        return exe.endsWith("/vibe3d");
+    }
+
+    auto r = executeShell(format(
+        "pgrep -f -- '--http-port %d([[:space:]]|$)' 2>/dev/null", port));
+    string[] pids;
+    foreach (line; r.output.splitLines) {
+        auto pid = line.strip;
+        if (pid.length && isVibe(pid)) pids ~= pid;
+    }
+    return pids;
+}
+
+/// Clear a stale vibe3d off THIS RUN'S PORT — and off no other.
+///
+/// This used to be `pkill -x vibe3d` with a `pgrep -x vibe3d` wait, i.e. it
+/// killed EVERY vibe3d on the host. That is a cross-lane hazard, not a
+/// theoretical one: task worktrees run their own instances on their own ports
+/// concurrently, and a perf run starting in one lane would kill another lane's
+/// instance mid-measurement (observed 2026-08-19). The old wait loop had the
+/// same fault from the other side — it would spin until a SIBLING's instance
+/// happened to exit.
+///
+/// The port is the lane's reservation, so it is the right scope; see
+/// `vibePidsOnPort` for what makes that selection trustworthy, and
+/// `warnForeignVibe` for what the narrowed scope gives up and how that is
+/// reported instead of silently accepted.
+void killStaleVibe(ushort port) {
+    foreach (pid; vibePidsOnPort(port))
+        executeShell(format("kill %s 2>/dev/null", pid));
+    bool gone = false;
     for (int i = 0; i < 30; ++i) {
-        auto r = executeShell("pgrep -x vibe3d >/dev/null");
-        if (r.status != 0) return;
+        if (vibePidsOnPort(port).length == 0) { gone = true; break; }
         Thread.sleep(100.msecs);
     }
+    if (!gone) {
+        // Still there after 3 s: escalate, again only on our own port — and
+        // then WAIT for it (review fix, task 1357). SIGKILL is delivered
+        // asynchronously; returning straight from it lets `launchVibe` race a
+        // process that still holds the port, and the loser of that race is the
+        // NEW instance, whose bind fails while the harness happily measures
+        // the old binary that won it.
+        foreach (pid; vibePidsOnPort(port))
+            executeShell(format("kill -9 %s 2>/dev/null", pid));
+        for (int i = 0; i < 20; ++i) {
+            if (vibePidsOnPort(port).length == 0) { gone = true; break; }
+            Thread.sleep(100.msecs);
+        }
+        if (!gone)
+            stderr.writefln("warning: port %d still held by vibe3d pid(s) %s "
+                            ~ "after SIGKILL — the launch below will probably "
+                            ~ "fail to bind",
+                            port, vibePidsOnPort(port).join(" "));
+    }
+
+    warnForeignVibe(port);
+}
+
+/// Report — never kill — vibe3d instances that are NOT on this run's port.
+///
+/// The counterpart to `killStaleVibe`'s port scope (review fix, task 1357).
+/// The host-wide `pkill` this replaced also swept ORPHANS: an instance left
+/// behind by an interrupted run on another port, or a hand-launched
+/// `./vibe3d --test`. Those now survive — and in `--perf` mode vibe3d's main
+/// loop is UNCAPPED, so one of them burns a whole core straight through this
+/// run's measurement, which is the one resource this lane actually spends.
+///
+/// They are still not killed: from here an orphan and a sibling lane's live
+/// instance are the same observation (a vibe3d on some other port), and
+/// killing the second is exactly the incident the port scope exists to
+/// prevent. So the operator is told, with PIDs and command lines, and decides.
+void warnForeignVibe(ushort port) {
+    import std.algorithm : canFind;
+    import std.string    : splitLines;
+
+    auto ours = vibePidsOnPort(port);
+    auto r = executeShell("pgrep -x vibe3d 2>/dev/null");
+    string[] foreign;
+    foreach (line; r.output.splitLines) {
+        auto pid = line.strip;
+        if (!pid.length || ours.canFind(pid)) continue;
+        // /proc/PID/cmdline is NUL-separated; NUL→space makes it printable,
+        // and it is printed rather than parsed — the operator wants to see
+        // WHICH instance this is (port, worktree) to judge it.
+        auto cmd = executeShell(
+            format("tr '\\0' ' ' < /proc/%s/cmdline 2>/dev/null", pid))
+            .output.strip;
+        foreign ~= format("%s [%s]", pid, cmd);
+    }
+    if (foreign.length)
+        stderr.writefln("note: %d vibe3d instance(s) running OUTSIDE port %d "
+                        ~ "— a --perf instance spins an uncapped main loop and "
+                        ~ "competes for CPU with this run. NOT killed (may be "
+                        ~ "another lane's): %s",
+                        foreign.length, port, foreign.join("; "));
 }
 
 bool launchVibe(ushort port, string viewport, string logPath) {
