@@ -39,6 +39,14 @@ A file here without the `_test` suffix is a **harness** shared by the test
 modules around it (`census_gate.d`, `ui/headless_panel.d`), not a mirror of a
 `source/` module.
 
+One file mirrors nothing in `source/` on purpose: `run_test_scratch_test.d`
+tests **the runner itself** — it runs `run_test.d --print-scratch` from several
+working directories and asserts that two checkouts get two scratch trees and one
+checkout gets the same one twice (task 1282, where every lane on the host shared
+`/tmp/vibe3d-tests-0` and wiped each other's worker directories). It is here
+because this is the only lane that runs without a live `vibe3d`, and it costs
+about a second: `rdmd` compiles the runner once and the rest are cache hits.
+
 ## Driving an ImGui widget (task 0870)
 
 `ui/headless_panel.d` submits a panel body into a real ImGui context with a

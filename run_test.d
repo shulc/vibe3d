@@ -9,6 +9,7 @@
  *   ./run_test.d --no-build          # skip `dub build`
  *   ./run_test.d -j N                # override the worker count (each worker
  *                                      gets its own vibe3d on a private port)
+ *   ./run_test.d --print-scratch     # name this checkout's scratch tree, exit
  *
  * With no -j the worker count auto-scales: clamp(totalCPUs/4, 4, 12), or the
  * VIBE3D_TEST_JOBS env var when set. An explicit -j always wins.
@@ -26,7 +27,7 @@ import std.math      : isNaN;
 // `std.file.write` without colliding with the `write` from std.stdio.
 static import std.file;
 import std.file : exists, isFile, mkdirRecurse, rmdirRecurse,
-                  dirEntries, SpanMode, tempDir, readText;
+                  dirEntries, SpanMode, tempDir, readText, getcwd;
 import std.format    : format;
 import std.getopt    : getopt, config;
 import std.parallelism : parallel, totalCPUs;
@@ -92,16 +93,168 @@ string dim   (string s) { return col("2",  s); }
 string bold  (string s) { return col("1",  s); }
 
 // ---------------------------------------------------------------------------
+// Scratch tree identity
+// ---------------------------------------------------------------------------
+//
+// THE SCRATCH TREE IS KEYED BY THE CHECKOUT IT IS RUN FROM, and that is the
+// whole of the identity. Everything below is why it is not keyed by anything
+// else, because the previous key looked right and was not (task 1282).
+//
+// It used to be `tempDir()/vibe3d-tests-<environment.get("PPID", "0")>`. Bash
+// does not EXPORT `PPID`: it is a shell variable, and `environ` has no entry
+// for it. Measured, not reasoned:
+//
+//     $ bash -c 'echo "in-shell PPID=$PPID"; env | grep -c "^PPID="'
+//     in-shell PPID=5129
+//     0
+//
+// So the lookup missed and took its default in EVERY invocation, from every
+// checkout, on every host: one literal `/tmp/vibe3d-tests-0` shared by every
+// lane on the machine. The cost was not a wrong path, it was a wrong DIAGNOSIS
+// — the failure surfaces as `worker_N: Directory not empty` out of the startup
+// `rmdirRecurse`, before a single test has run, and exits 1 exactly like a red
+// suite. A lane spent an afternoon of task 1280 treating it as a regression in
+// its own diff.
+//
+// WHY THE CHECKOUT AND NOT THE PARENT PID. `getppid()` would have made the
+// original intent work, and it is the wrong intent. A pid is fresh per
+// invocation, so the same lane re-running after a crash gets a NEW tree and can
+// never adopt (or clear) the one its dead predecessor left behind — leftovers
+// accumulate under names nothing will ever look at again. Here one lane IS one
+// worktree pair, so keying on the worktree root gives an identity that is
+// stable across re-runs, distinct between lanes, and distinct for the shared
+// mainline checkout — none of which depends on how the process was started
+// (shell, agent, `run_all.d` child, CI step).
+//
+// The cases that have to be right, and what each gets:
+//   * two lanes at once      → two roots → two trees. Neither can see the other.
+//   * one lane re-running    → same root → same tree, and step one is to clear
+//     after a crash            it. `prepareScratchDir` treats a leftover as its
+//                              own, and cannot be failed by one (below).
+//   * the mainline checkout  → its own root, so an ad-hoc run from ~/Code/vibe3d
+//                              is a third tree, not a squatter in a lane's.
+//   * two runs, one checkout → SAME tree, deliberately: that is one lane running
+//                              itself twice, which the host-wide run lock below
+//                              already serialises. The lock is what keeps that
+//                              case apart; the key is what keeps the OTHER three
+//                              apart, and no amount of locking could (the lock
+//                              cannot help a tree left by a run that is over).
+//
+// The name carries a readable slug of the last two path components so `ls
+// /tmp` names the lane, plus a hash of the full absolute path so two lanes that
+// end in the same two components still differ.
+enum kScratchPrefix = "vibe3d-tests-";
+
+private string slugOf(string s) {
+    import std.ascii : isAlphaNum;
+    auto b = appender!string;
+    foreach (char c; s) {
+        b ~= (isAlphaNum(c) || c == '-' || c == '.') ? c : '_';
+        if (b.data.length >= 24) break;
+    }
+    return b.data;
+}
+
+// Pure: the scratch path this runner uses when run from `root`. Kept free of
+// any process/environment read so it can be reasoned about — and tested — by
+// value. `root` is expected to be absolute (getcwd() already is, and POSIX
+// getcwd resolves symlinks, so two names for one worktree still key alike).
+string scratchDirFor(string root) {
+    import std.digest     : toHexString, LetterCase;
+    import std.digest.md  : md5Of;
+    import std.path       : buildNormalizedPath, absolutePath, pathSplitter;
+
+    const canon = buildNormalizedPath(absolutePath(root));
+    const hash  = toHexString!(LetterCase.lower)(md5Of(canon)).idup[0 .. 10];
+
+    string[] parts;
+    foreach (p; pathSplitter(canon)) if (p.length && p != "/" && p != "\\") parts ~= p;
+    string slug;
+    if (parts.length >= 2)      slug = slugOf(parts[$ - 2]) ~ "_" ~ slugOf(parts[$ - 1]);
+    else if (parts.length == 1) slug = slugOf(parts[0]);
+    else                        slug = "root";
+
+    return buildPath(tempDir(), kScratchPrefix ~ slug ~ "-" ~ hash);
+}
+
+// Best-effort recursive delete. Returns false instead of throwing: a tree with
+// a live writer in it loses the race between rmdirRecurse's readdir and its
+// rmdir (ENOTEMPTY), and that is a thing to work around, not to die on.
+private bool tryRemoveTree(string path) {
+    foreach (attempt; 0 .. 3) {
+        try { rmdirRecurse(path); return true; } catch (Exception) {}
+        if (!exists(path)) return true;
+        Thread.sleep(200.msecs);
+    }
+    return !exists(path);
+}
+
+// Make `path` an empty directory this run owns and return it (only the
+// last-resort branch below returns anything else), and NEVER fail the run.
+//
+// WHAT THIS DOES WITH A DIRECTORY IT DID NOT CREATE. Since the key is the
+// checkout, a leftover tree at `path` was left by an earlier run of THIS lane —
+// one killed before `cleanup()` could fire, which is every hard kill: SIGKILL,
+// an agent timeout, and `onSignal`'s `exit(130)` (core.stdc exit does not unwind
+// main, so `scope(exit) cleanup()` never runs). Such a tree is adopted and
+// wiped. If the wipe cannot win — the same kill orphans that run's `vibe3d
+// --test` workers, which keep appending to `vibe3d.log` inside it — the tree is
+// RENAMED aside rather than fought over: rename is atomic, does not care that
+// the tree is busy (open fds follow the inode), and leaves the orphan writing
+// happily into a path nothing else will touch. Parked trees are swept, best
+// effort, by the next run that gets this far. If even the rename fails, this run
+// takes a pid-suffixed path of its own: the run always gets a tree.
+//
+// Trees belonging to OTHER checkouts are never touched, whatever state they are
+// in. That is the property task 1282 is about.
+string prepareScratchDir(string path) {
+    import std.file : rename;
+
+    if (exists(path) && !tryRemoveTree(path)) {
+        const parked = format("%s.stale-%d", path, getpid());
+        bool moved;
+        try { rename(path, parked); moved = true; } catch (Exception) {}
+        if (moved) {
+            stderr.writefln(yellow("scratch: %s was busy (a killed run's workers "
+                ~ "are still writing there) — parked it as %s"), path, parked);
+        } else {
+            const own = format("%s.pid%d", path, getpid());
+            stderr.writefln(yellow("scratch: %s is busy and could not be moved — "
+                ~ "using %s for this run"), path, own);
+            mkdirRecurse(own);
+            return own;
+        }
+    }
+
+    // Sweep any parked trees of THIS lane that are now quiet. Best effort:
+    // one that is still busy simply survives to the next run.
+    const dir  = tempDir();
+    const stem = baseName(path) ~ ".stale-";
+    try {
+        foreach (e; dirEntries(dir, SpanMode.shallow))
+            if (baseName(e.name).startsWith(stem)) tryRemoveTree(e.name);
+    } catch (Exception) {}
+
+    mkdirRecurse(path);
+    return path;
+}
+
+// ---------------------------------------------------------------------------
 // Cross-process run lock
 // ---------------------------------------------------------------------------
 //
 // Two test runs MUST NOT overlap on one host: the runner boots `vibe3d --test`
-// on ports `port + worker` and uses a shared `vibe3d-tests-<PPID>` scratch dir,
-// and `killStaleVibe` clears stale instances by port — two concurrent runs
-// (e.g. two agents) fight over the same ports + scratch and mutually kill each
-// other's vibe3d, producing "No such file" / "Could not connect" flakes. A
-// host-wide advisory flock serialises runs: the second runner blocks (printing
-// a notice) until the first releases, or times out and bails without stomping.
+// on ports `port + worker` and `killStaleVibe` clears stale instances by port —
+// two concurrent runs (e.g. two agents) fight over the same ports and mutually
+// kill each other's vibe3d, producing "No such file" / "Could not connect"
+// flakes. A host-wide advisory flock serialises runs: the second runner blocks
+// (printing a notice) until the first releases, or times out and bails without
+// stomping.
+//
+// The scratch tree is NOT among the reasons any more — it is keyed per checkout
+// above, and a lock could never have covered it anyway: the tree outlives the
+// run that made it whenever that run is killed, and a lock held by nobody
+// protects nothing.
 //
 // The lock is on a fixed file in tempDir so it is shared across worktrees /
 // checkouts. flock is released automatically when the fd closes (process exit),
@@ -199,9 +352,11 @@ void cleanup() {
         }
         vibePids = null;
     }
-    if (scratchDir.length && exists(scratchDir)) {
-        try { rmdirRecurse(scratchDir); } catch (Exception) {}
-    }
+    // Only ever the tree THIS run made (or adopted at startup and emptied);
+    // never another checkout's, and never a parked one that is still busy.
+    // Best-effort by design: a leftover here is harmless — the next run of this
+    // same lane clears it, and no other lane can see it.
+    if (scratchDir.length && exists(scratchDir)) tryRemoveTree(scratchDir);
     releaseRunLock();
 }
 
@@ -1033,7 +1188,7 @@ void printSummary(TestResult[] results) {
 // ---------------------------------------------------------------------------
 
 int main(string[] args) {
-    bool verbose, noBuild, keep, staleOk, writeStampOnly;
+    bool verbose, noBuild, keep, staleOk, writeStampOnly, printScratch;
     ushort port = 8080;
     // Machine-aware default worker count: scale with the host but stay sane.
     // Each worker boots its OWN vibe3d (a GL app), so we don't go 1:1 with
@@ -1052,6 +1207,8 @@ int main(string[] args) {
                     ~ "match source/ (measures a DIFFERENT build — see the guard)", &staleOk,
         "write-stamp","record ./vibe3d as built from the current source/ and "
                     ~ "exit — for callers that ran `dub build` themselves (CI)", &writeStampOnly,
+        "print-scratch","print the scratch directory this checkout would use "
+                    ~ "and exit, creating nothing",                             &printScratch,
         "p|port",     "HTTP port for vibe3d (default 8080)",                  &port,
         "j|jobs",     "parallel workers — each runs its own vibe3d on a "
                     ~ "private port (default = clamp(cpus/4, 4, 12))",        &j,
@@ -1076,6 +1233,14 @@ int main(string[] args) {
         writeln();
         foreach (o; helpInfo.options)
             writefln("  %-20s %s", o.optShort ~ ", " ~ o.optLong, o.help);
+        return 0;
+    }
+
+    // Answer this BEFORE anything that needs a repository around us: it is the
+    // one query a checkout can be asked from outside itself, and the mutation
+    // test for task 1282 asks it from two different working directories.
+    if (printScratch) {
+        writeln(scratchDirFor(getcwd()));
         return 0;
     }
 
@@ -1162,9 +1327,10 @@ int main(string[] args) {
     // "Could not connect" / "No such file" failures. Wait up to 10 min.
     if (!acquireRunLock(600)) return 1;
 
-    scratchDir = buildPath(tempDir(), "vibe3d-tests-" ~ environment.get("PPID", "0"));
-    if (exists(scratchDir)) rmdirRecurse(scratchDir);
-    mkdirRecurse(scratchDir);
+    // Per-CHECKOUT scratch tree; see scratchDirFor / prepareScratchDir above for
+    // why it is keyed that way and what happens to a leftover one.
+    scratchDir = prepareScratchDir(scratchDirFor(getcwd()));
+    writeln(dim("scratch: " ~ scratchDir));
 
     // Cap workers at # of tests so we don't spin up empty vibe3d instances.
     if (j > cast(int)tests.length) j = cast(int)tests.length;
