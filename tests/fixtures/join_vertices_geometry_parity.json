@@ -1,5 +1,6 @@
 {
  "name": "join_vertices_geometry_parity",
+ "face_ring_start": "compared",
  "description": "Collapsing a vertex set to one point, with and without averaging, with and without keeping the degenerate polygons the collapse leaves. GEOMETRY CHANNEL ONLY.",
  "source": "frozen reference capture (task 1121, nine-tool sweep)",
  "provenance": {
@@ -1553,6 +1554,8 @@
   },
   {
    "name": "join_four_square",
+   "face_ring_start": "ignored",
+   "face_ring_start_note": "Collapsing all four corners of a quad leaves one face whose ring we begin at a different corner from the reference. The ring is the same and wound the same way; the survivor's ring start after a four-way join is not a law anyone has read -- see doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
    "description": "the four interior verts of a 3x3 grid collapse to one point \u2014 the centre face degenerates entirely  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
    "input": [
     {

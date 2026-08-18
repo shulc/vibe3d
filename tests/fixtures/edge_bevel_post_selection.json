@@ -1,5 +1,7 @@
 {
  "name": "edge_bevel_post_selection",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "39 of 57 rings differ in start (measured 2026-08-18): an edge bevel emits a band of new faces and we do not reproduce where the reference begins their rings. This fixture is about the post-command SELECTION, so the ring-set reading is the right one for it; the bevel band's ring-start law is filed in doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "Ledger row 2: after an edge bevel the reference leaves the new band's EDGES and the VERTICES they span selected \u2014 and none of the band's faces. We used to leave 3 POLYGONS selected while still reporting edge mode. Measured on a 3-segment unit cube, where the two engines' bevel GEOMETRY agrees exactly, so the cell isolated the selection; task 1180 ported the law and the cell now pins that it stays ported.",
  "source": "Reference half: the frozen wave-1 probe capture of the post-bevel state (task 1120). vibe3d half: measured live against this tree. Ledger row: 2.",
  "provenance": {

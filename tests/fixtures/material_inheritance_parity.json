@@ -1,5 +1,7 @@
 {
  "name": "material_inheritance_parity",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "The cases that only RETAG faces keep every ring and every ring start, and they declare \"compared\" one by one below. The six that also split, merge or spin a face inherit that command's own ring-start behaviour, which is unported (see doc/tasks/backlog/1311-ring-start-laws-to-capture.md); this fixture is about which faces carry which material, so it takes the rotation-tolerant reading for those rather than freeze a start nobody has read.",
  "description": "Which faces still share a material after the topology under them is rewritten -- merge, split, spin, vertex split and paste. The material VALUES are never compared across the seam (the two engines name surfaces differently); the PARTITION they induce is.",
  "source": "frozen reference capture (task 1121, nine-tool sweep)",
  "provenance": {
@@ -16,6 +18,7 @@
  "cases": [
   {
    "name": "mat_plate_one",
+   "face_ring_start": "compared",
    "description": "one of two faces on an open plate",
    "input": [
     {
@@ -214,6 +217,7 @@
   },
   {
    "name": "mat_fan_alternate",
+   "face_ring_start": "compared",
    "description": "alternating triangles around a POLE",
    "input": [
     {
@@ -528,6 +532,7 @@
   },
   {
    "name": "mat_triquad_tri",
+   "face_ring_start": "compared",
    "description": "the TRIANGLE of a tri+quad pair",
    "input": [
     {
@@ -710,6 +715,7 @@
   },
   {
    "name": "mat_then_copy_paste",
+   "face_ring_start": "compared",
    "description": "tag one face, copy it, paste it \u2014 does the pasted face carry the tag?",
    "input": [
     {
@@ -1813,6 +1819,7 @@
   },
   {
    "name": "mat_then_vsplit",
+   "face_ring_start": "compared",
    "description": "tag one face, then split the shared vertex  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
    "input": [
     {

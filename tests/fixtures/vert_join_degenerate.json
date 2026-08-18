@@ -1,5 +1,7 @@
 {
  "name": "vert_join_degenerate",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "The pole cell's survivor face begins its ring at a different corner from the reference -- join_vertices_geometry_parity's unread law. The other cell declares \"compared\" below. See doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "Ledger row 21: what survives a join that consumes everything. Collapsing an entire plate leaves ONE FREE VERTEX (we used to be left with an empty mesh), and the keep flag keeps the TWO-POINT remnants (our kernel used to discard them, and our own comment said the flag was 'recognized but not yet honored'). CLOSED by task 1210; both cells declare an EMPTY gap.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 21.",
  "provenance": {
@@ -16,6 +18,7 @@
  "cases": [
   {
    "name": "collapse_everything",
+   "face_ring_start": "compared",
    "note": "the join leaves one free vertex where the whole plate was",
    "input": [
     {

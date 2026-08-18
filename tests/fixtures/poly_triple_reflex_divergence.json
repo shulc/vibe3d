@@ -1,5 +1,6 @@
 {
  "name": "poly_triple_reflex_divergence",
+ "face_ring_start": "compared",
  "description": "Which diagonals a triangulation cuts on a ring with a REFLEX corner. Measured by task 1140, CLOSED by task 1190. The vertex sets match completely in both cells -- no vertex is created or moved by either engine -- so the whole subject is which vertices make a triangle, which is why this case carries the face channel at all: a vertex-only check calls it parity either way. As measured, our fan started at ring vertex 0 and on the pentagon (0,0,0) (4,0,0) (4,0,4) (2,0,1) (0,0,4) emitted (0,0,0)-(4,0,0)-(4,0,4), a triangle CONTAINING the reflex corner (2,0,1), so the output overlapped itself; the hexagon did the same with (0,0,0)-(3,0,0)-(3,0,3). Task 1190 replaced the fan with largest-area ear clipping and the two engines now agree on every triangle -- ring rotation AND winding included. The DECLARED GAP IS THEREFORE EMPTY, in both the vertex and the face channel, and the runner recomputes it live: any drift on either side reddens this suite.",
  "source": "Reference side: headless command-port capture of the triangulate command (dirty-geometry sweep, task 1123, cases tri_reflex_mid / tri_reflex_hex), UNTOUCHED since task 1140. vibe3d side: re-read live off this build by task 1190 after the ear-clipping port.",
  "provenance": {

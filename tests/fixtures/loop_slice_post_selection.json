@@ -1,5 +1,7 @@
 {
  "name": "loop_slice_post_selection",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "36 of 63 rings differ in start (measured 2026-08-18): a loop slice cuts every face on the ring and we do not reproduce where the reference begins the halves. The fixture's subject is the post-command selection. See doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "Ledger row 3: after a band loop slice the reference leaves the new loop's EDGES and VERTICES selected ALONGSIDE the sliced polygons; we used to leave the polygons only. Measured on a 3-segment unit cube where the two engines' slice GEOMETRY agrees exactly, so the divergence was isolated to the selection; task 1180 ported the law. On this base the selected POLYGON sets always agreed \u2014 the ledger's 'six of fourteen polygons differ' was seen on the pilot's patch, is NOT reproduced here, and was never this cell's target: it freezes the edge/vertex half and deliberately claims nothing about the other.",
  "source": "Reference half: the frozen wave-1 probe capture of the post-slice state (task 1120). vibe3d half: measured live against this tree. Ledger row: 3.",
  "provenance": {

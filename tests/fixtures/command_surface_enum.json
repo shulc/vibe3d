@@ -1,5 +1,7 @@
 {
  "name": "command_surface_enum",
+ "face_ring_start": "compared",
+ "face_ring_start_note": "This fixture declares \"compared\" and the reading is honest for the cell that HAS frozen reference geometry. The other cell (`lowercase_axis_rejected_here`) has none -- the acceptance it records was measured on a different mesh -- so its face block pins OUR OWN output and nothing crossing the engine seam. The strict reading there is a regression pin on our ring starts, not a parity claim; the runner's summary line counts it separately for the same reason.",
  "description": "Ledger rows 4 + 14, the COMMAND SURFACE rather than the geometry: which argument values each engine accepts. Row 4 \u2014 the reference takes a lower-case axis name, our parser rejects it and demands upper case, so the same script does not run on both. Row 14 \u2014 the reference's set-position accepts exactly x/y/z and treats every other value as a silent no-op that still reports success; for us 'all' is a legal value that writes the whole vector.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 4, 14.",
  "provenance": {

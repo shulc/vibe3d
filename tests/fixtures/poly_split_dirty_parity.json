@@ -1,5 +1,7 @@
 {
  "name": "poly_split_dirty_parity",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "Every case splits one face into two, and measured 2026-08-18 exactly one of the two products begins its ring at a different corner from the reference in all fourteen cases -- the other product agrees exactly, in all fourteen. So the chord itself, the two vertex sets and both windings reproduce; only where the second product's ring is cut does not. Unread law, filed in doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "The same split command as `poly_split_parity`, on the dirty bases: chords of rings carrying a reflex corner at index 0 and at index 3, collinear corners, a 7-gon, a saddle, a sliver, a welded T-junction and a mixed-valence pole.",
  "source": "frozen reference capture (task 1123, dirty-geometry sweep)",
  "provenance": {

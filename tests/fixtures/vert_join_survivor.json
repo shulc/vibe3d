@@ -1,5 +1,6 @@
 {
  "name": "vert_join_survivor",
+ "face_ring_start": "compared",
  "description": "Ledger row 11: with averaging OFF the survivor of a join is the LAST-SELECTED vertex, not the one with the lowest index. The reversed-order cell is what separates 'last selected' from 'highest index' \u2014 there the two rules coincide and the engines agreed even before the port, which is why it is carried. CLOSED by task 1210: all three cells declare an EMPTY gap, including the post-command selection, which the reference also leaves empty.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 11.",
  "provenance": {

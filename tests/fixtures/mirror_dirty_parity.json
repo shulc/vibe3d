@@ -1,5 +1,7 @@
 {
  "name": "mirror_dirty_parity",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "A mirror emits one new face per source face, and measured 2026-08-18 the MIRRORED half disagrees on ring start in every case while the original half agrees in every case -- 63 of 126 rings, exactly the images. Both sides hold the same corners and both reverse the winding, so what is unported is only where the reflected ring is cut. Filed in doc/tasks/backlog/1311-ring-start-laws-to-capture.md; the half-and-half split is itself the evidence that the recorded starts are a stable property of the reference and not capture noise.",
  "description": "Mirroring a whole layer through a world plane, with and without the seam weld, over non-planar / reflex / poled / degenerate / counter-wound bases. No fixture measured this command before.",
  "source": "frozen reference capture (task 1123, dirty-geometry sweep)",
  "provenance": {

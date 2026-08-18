@@ -1,5 +1,7 @@
 {
  "name": "cmd_selection_product",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "The subject is which elements a command leaves SELECTED. The face channel is a control, and four of its eight rings differ in start (measured 2026-08-18) through the spin / merge / make-polygon commands whose ring-start laws are unread -- see doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "Ledger row 12 (43 cases, ONE law): after a command the reference re-points the selection at the command's PRODUCT \u2014 the merged face, the new face, the new diagonal \u2014 and clears the input. We used to leave the input where it was, and for merge and spin to clear it instead. Task 1180 ported the law; this file is now the pin that it STAYS ported. Pinned as the law plus its own control, not as 43 near-duplicates.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 12.",
  "provenance": {

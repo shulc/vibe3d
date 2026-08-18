@@ -1,5 +1,6 @@
 {
  "name": "edge_extend_inset_divergence",
+ "face_ring_start": "compared",
  "description": "Edge extend driven by a LOCAL INSET rather than a world offset: which way the new row of vertices is laid out. With inset 0.1, shift 0, zero world offset and one segment, counts agree exactly on both bases (12 / 19 / 8 and 28 / 48 / 21) and every one of the new vertices sits somewhere else: 6 of 6 differ by up to 7.063e-3 on the folded pair, 12 of 12 by up to 1.703e-2 on the saddle. The wider sweep separates this cleanly from the tool itself -- with the inset at zero, i.e. a pure world offset, the same family agrees in 64 of 71 cells; it is the inset direction, not the extend, that parts.",
  "source": "Reference side: headless command-port capture of the edge-extend tool with inset 0.1 and no world offset (dirty-geometry sweep, task 1123, cases exte_inset_np_pair_e1 / exte_inset_np_saddle). vibe3d side: live drive of this build.",
  "provenance": {

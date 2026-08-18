@@ -1,5 +1,6 @@
 {
  "name": "shared_refusal_parity",
+ "face_ring_start": "compared",
  "description": "THIS FIXTURE ASSERTS A REFUSAL, NOT AN OPERATION. Every case here is a cell in which BOTH engines left the mesh untouched, and the generator verified that by comparing the before and after dumps on coordinates, not on counts. Read it as 'this input is declined and the mesh survives intact' -- it is deliberately NOT counted as parity of a command's behaviour, and it will not redden if the command is deleted. Its mutation is the opposite one: remove the GUARD, and every case here goes red. Task 1220 adds `spin_two_edges_shared_face`, whose guard is the multi-edge spin TRANSACTION: delete the overlap check in commands/mesh/spin_edge.d and that case goes red on its face rings while its counts stay put -- a count-only check could not see it.",
  "source": "frozen reference capture (task 1121, nine-tool sweep)",
  "provenance": {

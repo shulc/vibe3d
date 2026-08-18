@@ -1,5 +1,7 @@
 {
  "name": "subdivide_dirty_parity",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "Subdivision emits one face per corner of every source face, and measured 2026-08-18 the two engines start those rings at different corners on most of them (141 of 234 rings). The five cases where every ring agrees declare \"compared\" one by one below. What a subdivided quad's ring start should be is an unread law -- doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "Faceted, smooth and Catmull-Clark subdivision of dirty bases: saddles, twists, reflex rings, collinear corners, holes, T-junctions, slivers, spirals and a six-point star.",
  "source": "frozen reference capture (task 1123, dirty-geometry sweep)",
  "provenance": {
@@ -2825,6 +2827,7 @@
   },
   {
    "name": "subd_face_zerocorner_first",
+   "face_ring_start": "compared",
    "description": "faceted subdivision of a degenerate base",
    "input": [
     {
@@ -5467,6 +5470,7 @@
   },
   {
    "name": "subd_face_ngon7",
+   "face_ring_start": "compared",
    "description": "faceted subdivision of a mixed base",
    "input": [
     {
@@ -8029,6 +8033,7 @@
   },
   {
    "name": "subd_ccsds_pole_tri5",
+   "face_ring_start": "compared",
    "description": "Catmull-Clark subdivision of a pole base",
    "input": [
     {
@@ -9934,6 +9939,7 @@
   },
   {
    "name": "w4_subd_face_rf_spiral",
+   "face_ring_start": "compared",
    "description": "prediction cell: faceted subdivision, NEW reflex base",
    "input": [
     {
@@ -10357,6 +10363,7 @@
   },
   {
    "name": "w4_subd_face_dg_spike",
+   "face_ring_start": "compared",
    "description": "prediction cell: faceted subdivision, NEW degenerate base",
    "input": [
     {

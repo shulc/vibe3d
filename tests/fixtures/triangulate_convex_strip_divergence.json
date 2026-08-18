@@ -1,5 +1,7 @@
 {
  "name": "triangulate_convex_strip_divergence",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "The `faces` channel here is deliberately the weak one: this fixture carries task 1280's `face_tuples` channel, which IS the start-and-all comparison, on the cells where the tuple gap was measured. Declaring the ring-set channel \"compared\" as well would double-declare one gap in two vocabularies. Read the `face_tuples` blocks for the start claim.",
  "description": "Task 1280. On a CONVEX ring the reference's bare triple command runs a zig-zag STRIP; vibe3d runs the ear CLIP, which is that strip's own fallback and the only one of the reference's triangulators this port implements. These four cells declare that gap so it stops being invisible. The quad is the load-bearing one: at four corners the strip and the clip emit the same two triangles with the same winding and the same diagonal, differing only in where each tuple starts, and EVERY face comparison in this harness matches rings up to rotation -- so the quad reads as parity in all of them and needs the `face_tuples` channel to be visible at all. From five corners up the triangle sets themselves differ and the ordinary channel suffices. When the strip is ported these cells become parity and the declarations come out.",
  "source": "Reference side: frozen headless command capture (task 1281, strip_reg4..reg7, bare invocation). Our side: read off vibe3d and re-asserted live by the runner on every run.",
  "provenance": {

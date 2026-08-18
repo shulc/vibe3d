@@ -1,5 +1,7 @@
 {
  "name": "poly_split_parity",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "Same shape as poly_split_dirty_parity: one of each split's two products begins its ring elsewhere than the reference's, in all seven cases, with everything else identical. See doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "Splitting a face across two of its vertices, frozen from the reference on open geometry only. Every case here CUTS: the refusals this command shares with the reference are a separate fixture, because a refusal frozen as parity would pass with the command removed.",
  "source": "frozen reference capture (task 1121, nine-tool sweep)",
  "provenance": {

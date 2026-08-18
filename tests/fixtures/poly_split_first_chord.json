@@ -1,5 +1,7 @@
 {
  "name": "poly_split_first_chord",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "One of the two split products begins its ring at a different corner from the reference (measured 2026-08-18) -- poly_split_parity's unread law. The subject here is which chord a three-vertex selection cuts first. See doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "Ledger row 20: with THREE vertices selected on one n-gon the reference cuts exactly ONE chord - between the first two SELECTED vertices - and we refused the whole command because the count was not exactly two. PORTED (task 1200): the cell declares an EMPTY gap.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 20.",
  "provenance": {

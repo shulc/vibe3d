@@ -1,5 +1,7 @@
 {
  "name": "spin_gate_narrower",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "The subject is which spins the two engines ACCEPT. Six of the seven rings differ in start (measured 2026-08-18) through spin_quads_geometry_parity's unread rewiring law. See doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "Ledger rows 9 + 16 (ONE gate law) and 17. The reference's spin gate is 'the edge has two faces, each with at least three sides' and it carries no fold-over guard; ours additionally demanded both faces have the SAME valence and that it be 3 or 4, and refused when the new diagonal already belonged to a third face. PORTED (task 1200): all three cells now declare an EMPTY gap. The third one leaves a NON-MANIFOLD mesh - one edge with three incident faces - and that is the reference's answer, deliberately matched.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 9, 16, 17.",
  "provenance": {

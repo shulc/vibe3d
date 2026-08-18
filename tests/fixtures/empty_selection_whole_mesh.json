@@ -1,5 +1,6 @@
 {
  "name": "empty_selection_whole_mesh",
+ "face_ring_start": "compared",
  "description": "Ledger rows 13 + 18, ONE law with two witnesses: an EMPTY selection means THE WHOLE MESH. Set-material paints every face; copy+paste duplicates the entire mesh (2 faces -> 4). Both were no-ops for us until task 1210 routed them through the operand funnel every other whole-mesh fallback already used; both cases now declare an EMPTY gap, asserted per dimension.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 13, 18.",
  "provenance": {

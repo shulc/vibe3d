@@ -1,5 +1,6 @@
 {
  "name": "vertex_split_geometry_parity",
+ "face_ring_start": "compared",
  "description": "Splitting one vertex into one copy per incident face. GEOMETRY CHANNEL ONLY -- the capture found matching geometry and a different post-operation selection in all twelve cells, and that selection difference is a recorded divergence, not something this fixture may claim.",
  "source": "frozen reference capture (task 1121, nine-tool sweep)",
  "provenance": {

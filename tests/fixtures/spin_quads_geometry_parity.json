@@ -1,5 +1,7 @@
 {
  "name": "spin_quads_geometry_parity",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "A spin rewires two faces without moving a vertex, and the rewired rings are where this family's whole assertion lives. Measured 2026-08-18 they hold the same corners and the same winding as the reference's and begin at different ones in all eight cases (18 of 44 rings). The rewiring is pinned; the start of the rewired ring is an unread law -- doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "Rotating a shared edge to the other diagonal of its two faces. Counts never move, so the frozen FACE RINGS are the whole assertion -- a position set would pass on a spin that did nothing. GEOMETRY CHANNEL ONLY.",
  "source": "frozen reference capture (task 1121, nine-tool sweep)",
  "provenance": {

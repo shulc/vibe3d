@@ -1064,6 +1064,14 @@ private bool jApproxEq(JSONValue e, JSONValue a, double tol) {
 ///                         as indices into `expected_faces`. Material VALUES
 ///                         are never compared (the reference names surfaces by
 ///                         string, we by index); which faces share one is.
+/// Task 1310 makes the STRENGTH of `expected_faces` explicit and required:
+///   "face_ring_start"      "compared" | "ignored"   (fixture-level, per-case
+///                          override allowed). "compared" matches rings
+///                          start-and-all; "ignored" keeps the historic
+///                          rotation-tolerant match and MUST carry a
+///                          "face_ring_start_note" saying why. A fixture that
+///                          compares face rings and declares neither fails.
+///
 ///   "expected_selection"  {"vertices":[[x,y,z],...],
 ///                          "polygons":[<centroid>,...],
 ///                          "edges":[[[x,y,z],[x,y,z]],...]}
@@ -1076,6 +1084,8 @@ void runTopologyDiffSuite(string fixtureJson) {
     string suite = ("name" in fx) ? fx["name"].str : "<topo-suite>";
     requireProvenance(fx, suite);
     double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
+    auto tally = RingStartTally(suite);
+    scope (exit) ringStartSummary(tally);
     foreach (cs; fx["cases"].array) {
         string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
         double tol = ("tolerance" in cs) ? asDouble(cs["tolerance"]) : tolD;
@@ -1129,6 +1139,10 @@ void runTopologyDiffSuite(string fixtureJson) {
         // face on the original is a different answer from one that does not).
         ptrdiff_t[] faceMap;   // expected face index -> live face index
         if ("expected_faces" in cs) {
+            // Task 1310: WHICH reading of "the same ring" this case gets is a
+            // declared property of the fixture, not a silent property of the
+            // matcher. See `ringStartDeclOf`.
+            auto rs   = ringStartDeclOf(fx, cs, cn);
             auto live = readFaceRings();
             auto want = cs["expected_faces"].array;
             assert(live.length == want.length,
@@ -1136,12 +1150,14 @@ void runTopologyDiffSuite(string fixtureJson) {
                        cn, live.length, want.length));
             auto used = new bool[](live.length);
             faceMap = new ptrdiff_t[](want.length);
+            double[3][][] wantAll;
             foreach (wi, w; want) {
                 auto wr = new double[3][](w.array.length);
                 foreach (k, c; w.array) wr[k] = jvec3(c);
+                wantAll ~= wr;
                 ptrdiff_t hit = -1;
                 foreach (li, lr; live)
-                    if (!used[li] && ringEq(wr, lr, tol)) { hit = li; break; }
+                    if (!used[li] && ringMatchBy(wr, lr, tol, rs.compared)) { hit = li; break; }
                 if (hit < 0) {
                     string spelled = "[";
                     foreach (k, c; wr) {
@@ -1151,12 +1167,19 @@ void runTopologyDiffSuite(string fixtureJson) {
                     spelled ~= "]";
                     assert(false, format(
                         "%s: frozen face %d %s has no live face with the same "
-                        ~ "ring and the same winding (tol %.1e)",
-                        cn, wi, spelled, tol));
+                        ~ "ring%s and the same winding (tol %.1e)%s",
+                        cn, wi, spelled,
+                        rs.compared ? ", the same START vertex" : "", tol,
+                        rs.compared
+                            ? " -- this fixture declares \"" ~ RING_START_KEY
+                              ~ "\": \"compared\", so a ring that matches only "
+                              ~ "under rotation fails here on purpose"
+                            : ""));
                 }
                 used[hit] = true;
                 faceMap[wi] = hit;
             }
+            ringStartAccrue(tally, rs, wantAll, live, tol);
         }
 
         // ---- material PARTITION (task 1160) -----------------------------
@@ -2044,6 +2067,155 @@ private double[3][][] ringsMissing(const double[3][][] a, const double[3][][] b,
     return outr;
 }
 
+// ---------------------------------------------------------------------------
+// RING-START STRENGTH — every face green must SAY what it covers (task 1310)
+// ---------------------------------------------------------------------------
+//
+// `ringEq` above matches a ring under ANY rotation. That is a deliberate
+// reading, but until this block existed it was also an INVISIBLE one: opening
+// a fixture, or reading a green run, told you nothing about whether "our faces
+// match the reference's" included where each ring begins. It twice did not,
+// and twice the green was quoted as evidence anyway (see
+// `doc/tasks/work/1283-fixture-comparison-ignores-tuple-start.md`).
+//
+// So a fixture that compares face rings must now declare, per fixture and
+// optionally per case:
+//
+//   "face_ring_start": "compared"   rings are matched START-AND-ALL
+//                                   (`ringEqExact`); a green here says our
+//                                   ring begins at the same vertex as the
+//                                   frozen one.
+//   "face_ring_start": "ignored"    rings are matched up to rotation
+//                                   (`ringEq`); a green says NOTHING about
+//                                   where a ring starts, and
+//                                   "face_ring_start_note" must say why that
+//                                   is the right reading here.
+//
+// A case may override the fixture; an `ignored` case under a `compared`
+// fixture must carry its OWN note, because that case is the exception and the
+// exception is what needs explaining.
+//
+// The declaration is REQUIRED — a missing one is a hard failure, not a
+// default. The point is that the next fixture cannot be silent about this
+// either: whoever adds one has to answer the question the first time rather
+// than leave a reader to infer it from a matcher three files away.
+//
+// Each suite additionally prints ONE summary line (see `ringStartSummary`),
+// naming the reading it used and — for `ignored` — how many frozen rings
+// would have failed the strict match. That number is the size of the blind
+// spot, printed rather than argued.
+private enum string RING_START_KEY  = "face_ring_start";
+private enum string RING_START_NOTE = "face_ring_start_note";
+
+private struct RingStartDecl {
+    bool   compared;   // true  => match with ringEqExact, false => ringEq
+    string note;       // required when !compared
+}
+
+// What one suite did with its face channel, accumulated across cases and
+// printed once at the end.
+private struct RingStartTally {
+    string suite;
+    size_t cases;        // cases that actually compared face rings
+    size_t rings;        // frozen rings compared, summed over those cases
+    size_t comparedCases;
+    size_t ignoredCases;
+    size_t wouldDiffer;  // rings that a strict match would REJECT (ignored cases only)
+    string firstNote;
+}
+
+// Read + validate the declaration for one case. `fx` is the fixture root,
+// `cs` the case; `cn` is the case's display name for messages.
+private RingStartDecl ringStartDeclOf(JSONValue fx, JSONValue cs, string cn) {
+    string fVal  = (RING_START_KEY  in fx) ? fx[RING_START_KEY].str  : "";
+    string fNote = (RING_START_NOTE in fx) ? fx[RING_START_NOTE].str : "";
+    string cVal  = (RING_START_KEY  in cs) ? cs[RING_START_KEY].str  : "";
+    string cNote = (RING_START_NOTE in cs) ? cs[RING_START_NOTE].str : "";
+
+    string val = cVal.length ? cVal : fVal;
+    assert(val.length, format(
+        "%s: this case compares FACE RINGS, but neither the case nor the "
+        ~ "fixture declares \"%s\". Face rings are matched up to ROTATION "
+        ~ "unless a fixture says otherwise, so a green here may or may not "
+        ~ "cover where each ring STARTS — and a reader cannot tell which. "
+        ~ "Declare \"%s\": \"compared\" (strict, start included) or "
+        ~ "\"ignored\" (rotation-tolerant) plus a \"%s\" saying why. "
+        ~ "See doc/tasks/work/1283-fixture-comparison-ignores-tuple-start.md",
+        cn, RING_START_KEY, RING_START_KEY, RING_START_NOTE));
+    assert(val == "compared" || val == "ignored", format(
+        "%s: \"%s\" is '%s'; the only readings are \"compared\" (ringEqExact) "
+        ~ "and \"ignored\" (ringEq, rotation-tolerant)", cn, RING_START_KEY, val));
+
+    string note = cNote.length ? cNote : fNote;
+    if (val == "ignored") {
+        assert(note.length, format(
+            "%s: \"%s\" is \"ignored\", so this fixture's face green does not "
+            ~ "cover where a ring starts. Add \"%s\" saying why that is the "
+            ~ "right reading here — an unexplained rotation-tolerant green is "
+            ~ "exactly the blind spot this declaration exists to surface",
+            cn, RING_START_KEY, RING_START_NOTE));
+        // The EXCEPTION carries its own reason: a fixture-wide note written
+        // for a "compared" fixture cannot also explain why one case is not.
+        if (cVal == "ignored" && fVal == "compared")
+            assert(cNote.length, format(
+                "%s: this case downgrades a \"compared\" fixture to "
+                ~ "\"ignored\", so it needs its OWN \"%s\" — the fixture-level "
+                ~ "note describes the cases that DO compare starts",
+                cn, RING_START_NOTE));
+    }
+    return RingStartDecl(val == "compared", note);
+}
+
+// `ringEq` or `ringEqExact`, chosen by the declaration. Spelled once so no
+// call site has to remember which way round the flag reads.
+private bool ringMatchBy(const double[3][] a, const double[3][] b,
+                         double tol, bool exact) {
+    return exact ? ringEqExact(a, b, tol) : ringEq(a, b, tol);
+}
+
+// `ringsMissing` / `tuplesMissing`, chosen by the same flag.
+private double[3][][] ringsMissingBy(const double[3][][] a, const double[3][][] b,
+                                     double tol, bool exact) {
+    return exact ? tuplesMissing(a, b, tol) : ringsMissing(a, b, tol);
+}
+
+// Fold one case's outcome into the suite tally. `frozen` / `live` are the two
+// ring lists the case just compared; for an `ignored` case the strict match is
+// run a second time purely to MEASURE the gap the green is not covering.
+private void ringStartAccrue(ref RingStartTally t, RingStartDecl d,
+                             const double[3][][] frozen, const double[3][][] live,
+                             double tol) {
+    t.cases++;
+    t.rings += frozen.length;
+    if (d.compared) t.comparedCases++;
+    else {
+        t.ignoredCases++;
+        t.wouldDiffer += tuplesMissing(frozen, live, tol).length;
+    }
+    if (!t.firstNote.length) t.firstNote = d.note;
+}
+
+// One line per suite, so a CI log distinguishes a strong face green from a
+// rotation-tolerant one without anyone opening the fixture.
+private void ringStartSummary(RingStartTally t) {
+    if (t.cases == 0) return;
+    import std.stdio : writefln, stdout;
+    string reading;
+    if (t.ignoredCases == 0)      reading = "ring start COMPARED";
+    else if (t.comparedCases == 0) reading = "ring start IGNORED";
+    else reading = format("ring start COMPARED in %d of %d cases",
+                          t.comparedCases, t.cases);
+    string gap = t.ignoredCases
+        ? format("; %d ring(s) in the %d rotation-tolerant case(s) would fail a "
+                 ~ "strict match%s", t.wouldDiffer, t.ignoredCases,
+                 t.wouldDiffer == 0
+                     ? " -- none, so those cases are convertible to \"compared\"" : "")
+        : "";
+    writefln("[face-ring-start] %s: %d case(s), %d frozen ring(s), %s%s",
+             t.suite, t.cases, t.rings, reading, gap);
+    stdout.flush();   // parallel workers interleave otherwise
+}
+
 // Same-set test for two groups of centroids (order-independent, tolerance).
 private bool centroidSetEq(const double[3][] a, const double[3][] b, double tol) {
     if (a.length != b.length) return false;
@@ -2147,11 +2319,21 @@ private double[3][][] jgroups(JSONValue v) {
 ///
 /// Both are opt-in per case: a case that omits `faces` gets exactly the
 /// pre-1140 vertex-only behaviour.
+///
+/// A case that DOES carry `faces` must also declare `face_ring_start`
+/// ("compared" | "ignored" + a note; task 1310). "compared" re-reads the same
+/// `faces` arrays with `ringEqExact` -- the regression pin AND the recomputed
+/// gap -- so it can only be declared where the gap is identical under either
+/// matcher, and needs no new numbers. `face_tuples` above stays the channel
+/// for a gap that exists ONLY at tuple level and therefore needs its own
+/// declared sets.
 void runKnownDivergenceSuite(string fixtureJson) {
     auto fx      = parseJSON(fixtureJson);
     string suite = ("name" in fx) ? fx["name"].str : "<divergence-suite>";
     requireProvenance(fx, suite);
     double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
+    auto tally = RingStartTally(suite);
+    scope (exit) ringStartSummary(tally);
 
     foreach (cs; fx["cases"].array) {
         string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
@@ -2224,12 +2406,19 @@ void runKnownDivergenceSuite(string fixtureJson) {
         // where the two engines agree on every point and disagree only about
         // which points make a face, or which way round it goes.
         if ("faces" in cur) {
+            // Task 1310: rotation-tolerant or start-and-all is a DECLARED
+            // property of the case. Declaring "compared" here re-reads this
+            // same channel with `ringEqExact` -- both the regression pin and
+            // the recomputed gap -- so it can only be declared where the gap
+            // is the same under either matcher, which is what makes it safe
+            // to flip without touching the frozen numbers.
+            auto rs   = ringStartDeclOf(fx, cs, cn);
             auto gotF = readFaceRings();
             double[3][][] mineF;
             foreach (r; cur["faces"].array) mineF ~= jring(r);
 
             // (1) our own faces, verbatim and bidirectional.
-            auto lostMine = ringsMissing(mineF, gotF, tol);
+            auto lostMine = ringsMissingBy(mineF, gotF, tol, rs.compared);
             if (lostMine.length)
                 assert(false,
                     format("%s: vibe3d no longer produces its recorded face %s "
@@ -2237,7 +2426,7 @@ void runKnownDivergenceSuite(string fixtureJson) {
                            ~ "DIVERGENCE; if you changed the behaviour "
                            ~ "deliberately, re-measure and update it",
                            cn, ringStr(lostMine[0]), lostMine.length, mineF.length));
-            auto newMine = ringsMissing(gotF, mineF, tol);
+            auto newMine = ringsMissingBy(gotF, mineF, tol, rs.compared);
             if (newMine.length)
                 assert(false,
                     format("%s: vibe3d produced a face %s that is not in its "
@@ -2247,8 +2436,9 @@ void runKnownDivergenceSuite(string fixtureJson) {
             // (3) the face gap, recomputed from the two frozen sides.
             double[3][][] refF;
             foreach (r; cs["reference"]["faces"].array) refF ~= jring(r);
-            auto extraF   = ringsMissing(gotF, refF, tol);
-            auto missingF = ringsMissing(refF, gotF, tol);
+            auto extraF   = ringsMissingBy(gotF, refF, tol, rs.compared);
+            auto missingF = ringsMissingBy(refF, gotF, tol, rs.compared);
+            ringStartAccrue(tally, rs, refF, gotF, tol);
 
             void sameFaceSet(string what, double[3][][] have, JSONValue declared) {
                 auto want = declared.array;
@@ -2261,7 +2451,7 @@ void runKnownDivergenceSuite(string fixtureJson) {
                 foreach (w; want) {
                     auto wr = jring(w);
                     bool found = false;
-                    foreach (h; have) if (ringEq(h, wr, tol)) { found = true; break; }
+                    foreach (h; have) if (ringMatchBy(h, wr, tol, rs.compared)) { found = true; break; }
                     assert(found,
                         format("%s: %s no longer contains the face %s — the "
                                ~ "divergence CHANGED, re-measure and update "
@@ -2573,11 +2763,19 @@ private bool faceSetsEqual(double[3][][] A, double[3][][] B, bool wound, double 
     return true;
 }
 
-// The three channels, named to match task 1140's runner: `faces` respects
-// winding (rotation only), `faces_any_winding` does not.
+// The channels, named to match task 1140's runner: `faces` respects winding
+// (rotation only), `faces_any_winding` does not, and `face_tuples` (task
+// 1310) respects the ring START as well -- the reading under which "the same
+// two triangles, begun at a different corner" is a DIFFERENT answer. That
+// last one is not a refinement for its own sake: on this fixture it splits
+// classes the other three merge in 13 of 16 cases, and on two of them the two
+// engines' tuple orbits differ where their ring-set orbits agree.
 private bool sameAnswer(OrbitAnswer x, OrbitAnswer y, string channel, double tol) {
     if (!centroidSetEq(x.verts, y.verts, tol)) return false;
     if (channel == "vertices") return true;
+    if (channel == "face_tuples")
+        return x.faces.length == y.faces.length
+            && tuplesMissing(x.faces, y.faces, tol).length == 0;
     return faceSetsEqual(x.faces, y.faces, channel == "faces", tol);
 }
 
@@ -2697,10 +2895,14 @@ private void baseRingsOf(JSONValue input, string cn,
 /// Run an orbit-shaped known-divergence suite. See the block comment above
 /// for what each assertion means. Schema (per case):
 ///   { "name": "...", "ledger_rows": [..], "channel": "vertices|faces|faces_any_winding",
+///     "face_ring_start": "compared" | "ignored",   // task 1310: "compared"
+///     //   adds the `face_tuples` channel below and requires its two patterns;
+///     //   "ignored" keeps the three ring-SET channels and needs a note.
 ///     "kind": "reference_reads_the_ring|we_read_the_ring|both_read_the_ring|
 ///              capability_gap|neither_reads_the_ring",
-///     "orbit": { "vibe3d":    {"vertices":"..","faces":"..","faces_any_winding":".."},
-///                "reference": { ... same three ... } },
+///     "orbit": { "vibe3d":    {"vertices":"..","faces":"..",
+///                              "faces_any_winding":"..","face_tuples":".."},
+///                "reference": { ... same set ... } },
 ///     "sign_predicate": { "reading": "three|two", "classes": "010020",
 ///                         "relation_to_reference": "exact|refines|violated" },
 ///     "rotations": [ { "rot": 0, "input": [...], "op": [...],
@@ -2713,14 +2915,25 @@ void runRingOrbitSuite(string fixtureJson) {
     requireProvenance(fx, suite);
     double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-3;
 
-    static immutable string[] kChannels = ["vertices", "faces", "faces_any_winding"];
+    static immutable string[] kRingSetChannels =
+        ["vertices", "faces", "faces_any_winding"];
+    auto tally = RingStartTally(suite);
+    scope (exit) ringStartSummary(tally);
 
     foreach (cs; fx["cases"].array) {
         string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
         double tol = ("tolerance" in cs) ? asDouble(cs["tolerance"]) : tolD;
         string channel = cs["channel"].str;
+        // Task 1310: an orbit case is ABOUT where a ring starts, so whether
+        // its own comparison can see a ring start is not a detail. Declaring
+        // "compared" adds the `face_tuples` channel to the patterns below;
+        // "ignored" keeps the three ring-SET channels only and must say why.
+        auto rs = ringStartDeclOf(fx, cs, cn);
+        string[] kChannels = kRingSetChannels.dup;
+        if (rs.compared) kChannels ~= "face_tuples";
 
         OrbitAnswer[] ours, refs;
+        double[3][][] frozenMine;  // our own recorded rings for rotation 0
         double[3][][] predRings;   // the selected ring of each rotation
         bool weApplyAll = true, refAppliesAll = true;
 
@@ -2774,6 +2987,7 @@ void runRingOrbitSuite(string fixtureJson) {
                 foreach (v; f.array) ring ~= jvec3(v);
                 wantF ~= ring;
             }
+            if (ri == 0) frozenMine = wantF;
             assert(faceSetsEqual(got.faces, wantF, true, tol),
                 format("%s: vibe3d no longer produces its recorded face rings "
                        ~ "(winding included)", rn));
@@ -2821,11 +3035,21 @@ void runRingOrbitSuite(string fixtureJson) {
             }
         }
 
-        // ---- (3)+(4) the patterns, both sides, all three channels ---------
+        // Accrued on the pair this suite actually PINS: our own frozen
+        // rotation-0 record against the live run. (The cross-engine tuple
+        // question is not a ring count here -- it is the `face_tuples`
+        // ORBIT PATTERN asserted below, on both sides.)
+        if (ours.length && frozenMine.length)
+            ringStartAccrue(tally, rs, frozenMine, ours[0].faces, tol);
+
+        // ---- (3)+(4) the patterns, both sides, every channel --------------
         string[string] oursPat, refPat;
         foreach (ch; kChannels) {
             oursPat[ch] = orbitPattern(ours, ch, tol);
             refPat[ch]  = orbitPattern(refs, ch, tol);
+            assert(ch in cs["orbit"]["vibe3d"] && ch in cs["orbit"]["reference"],
+                format("%s: the '%s' channel is being computed but the case "
+                       ~ "declares no orbit pattern for it on both sides", cn, ch));
             assert(oursPat[ch] == cs["orbit"]["vibe3d"][ch].str,
                 format("%s: our orbit pattern in the '%s' channel is now %s, "
                        ~ "the fixture froze %s. The ring-order behaviour "
@@ -3002,9 +3226,13 @@ private void sameVecSet(string cn, string what, double[3][] got,
 }
 
 private void sameRingSet(string cn, string what, double[3][][] got,
-                         double[3][][] want, double tol, string hint) {
-    auto missing = ringsMissing(want, got, tol);
-    auto extra   = ringsMissing(got, want, tol);
+                         double[3][][] want, double tol, string hint,
+                         bool exact = false) {
+    // `exact` is task 1310's ring-start reading: same matcher, same call
+    // sites, one declared flag deciding whether a ring may match a rotation
+    // of itself. Defaulted so no other caller changes.
+    auto missing = ringsMissingBy(want, got, tol, exact);
+    auto extra   = ringsMissingBy(got, want, tol, exact);
     string show(double[3][][] rs) {
         string o;
         foreach (i, r; rs) { if (i) o ~= ", "; o ~= ringStr(r); }
@@ -3165,7 +3393,10 @@ private CmdObs observeCmd(bool[] applied, long[] preMaterials) {
 ///          "sel_edges_only_in_reference":    [...], "sel_edges_only_in_vibe3d":    [...],
 ///          "sel_polygons_only_in_reference": [...], "sel_polygons_only_in_vibe3d": [...]
 ///       },
-///       "control": false } ] }
+///       "control": false,
+///       "face_ring_start": "compared" | "ignored",
+///       "face_ring_start_note": "..."   // required when "ignored"; task 1310
+///     } ] }
 ///
 /// An `<observation>` carries any of:
 ///   "applied": [bool,...], "counts": {"verts":V,"edges":E,"faces":F},
@@ -3196,6 +3427,8 @@ void runCommandDivergenceSuite(string fixtureJson) {
     string suite = ("name" in fx) ? fx["name"].str : "<command-divergence-suite>";
     requireProvenance(fx, suite);
     double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
+    auto tally = RingStartTally(suite);
+    scope (exit) ringStartSummary(tally);
 
     foreach (cs; fx["cases"].array) {
         string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
@@ -3278,9 +3511,15 @@ void runCommandDivergenceSuite(string fixtureJson) {
             sameVecSet(cn, "our vertex set", live.verts, jVecList(cur["vertices"]), tol, REPIN);
         if ("edges" in cur)
             samePairSet(cn, "our edge set", live.edges, jPairList(cur["edges"]), tol, REPIN);
+        // Task 1310: this case compares face RINGS, so it must declare
+        // whether that comparison covers where each ring starts. The one
+        // declaration governs both the regression pin below and the
+        // recomputed reference gap further down.
+        auto ringStart = ("faces" in cur) ? ringStartDeclOf(fx, cs, cn)
+                                          : RingStartDecl(false, "n/a");
         if ("faces" in cur)
             sameRingSet(cn, "our face rings", live.faceRings,
-                        jRingList(cur["faces"]), tol, REPIN);
+                        jRingList(cur["faces"]), tol, REPIN, ringStart.compared);
         if ("materials_changed" in cur)
             assert(live.materialsChanged == cur["materials_changed"].integer,
                 format("%s: we retagged %d faces, the fixture records %d. %s",
@@ -3330,7 +3569,7 @@ void runCommandDivergenceSuite(string fixtureJson) {
         void wantRings(string dim, string key, double[3][][] have) {
             auto want = (key in dv) ? jRingList(dv[key]) : (double[3][][]).init;
             mark(dim, have.length > 0);
-            sameRingSet(cn, "divergence." ~ key, have, want, tol, MOVED);
+            sameRingSet(cn, "divergence." ~ key, have, want, tol, MOVED, ringStart.compared);
         }
         void wantPairs(string dim, string key, double[3][2][] have) {
             auto want = (key in dv) ? jPairList(dv[key]) : (double[3][2][]).init;
@@ -3402,8 +3641,18 @@ void runCommandDivergenceSuite(string fixtureJson) {
         }
         if ("faces" in refB && "faces" in cur) {
             auto rf = jRingList(refB["faces"]);
-            wantRings("faces", "faces_only_in_reference", ringsMissing(rf, live.faceRings, tol));
-            wantRings("faces", "faces_only_in_vibe3d",    ringsMissing(live.faceRings, rf, tol));
+            wantRings("faces", "faces_only_in_reference",
+                      ringsMissingBy(rf, live.faceRings, tol, ringStart.compared));
+            wantRings("faces", "faces_only_in_vibe3d",
+                      ringsMissingBy(live.faceRings, rf, tol, ringStart.compared));
+            ringStartAccrue(tally, ringStart, rf, live.faceRings, tol);
+        } else if ("faces" in cur) {
+            // No frozen reference geometry for this cell -- the face channel
+            // here is a pin on OUR OWN recorded output and nothing more. It
+            // still declares its ring-start reading, and the tally still says
+            // how many rings it covered, so the log does not read as a
+            // cross-engine claim.
+            ringStartAccrue(tally, ringStart, jRingList(cur["faces"]), live.faceRings, tol);
         }
 
         if ("selection" in refB && "selection" in cur) {

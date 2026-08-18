@@ -1,5 +1,7 @@
 {
  "name": "make_polygon_geometry_parity",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "Seven of these eight cases CREATE a polygon, and for a face that did not exist before the command there is no input ring to inherit a start from: the start is chosen by whatever makes the face. Measured 2026-08-18, ours and the reference's disagree on all seven (the eighth case closes a hole in existing geometry and agrees). That is a real unported law, not noise, and it is filed as a capture in doc/tasks/backlog/1311-ring-start-laws-to-capture.md. Until it is read, this fixture pins WHICH ring the command makes and deliberately not where that ring begins.",
  "description": "Building a polygon over a selected vertex ring: a free ring, the same ring in reverse order, a non-coplanar ring, a non-convex ring, a ring naming one vertex twice, and closing a real hole in an existing surface. GEOMETRY CHANNEL ONLY.",
  "source": "frozen reference capture (task 1121, nine-tool sweep)",
  "provenance": {

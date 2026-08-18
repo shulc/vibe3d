@@ -1,5 +1,6 @@
 {
  "name": "vert_merge_leftover_divergence",
+ "face_ring_start": "compared",
  "description": "Merge-by-distance on a SLIVER, and what is left behind. Base: a unit quad plus a triangle (1,0,0) (1.9,0,0.502) (1.9,0,0.5) whose last two corners are 2e-3 apart; all 6 vertices selected, merge radius 1e-2. Both engines collapse the triangle and both keep the quad, but the reference leaves the merged point standing as a LOOSE vertex at (1.9,0,0.501) -- 5 vertices, 4 edges, 1 face -- and we do not: 4 vertices, 4 edges, 1 face, the merged point gone with the triangle. The single face ring is identical on both sides, so the whole divergence is that one vertex, 1.029 away from anything we keep.",
  "source": "Reference side: headless command-port capture of the merge-by-distance command at fixed range 1e-2 (dirty-geometry sweep, task 1123, case vmerge_d1e2_sliver). vibe3d side: live drive of this build.",
  "provenance": {

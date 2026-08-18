@@ -1,5 +1,6 @@
 {
  "name": "ring_order_orbit_divergence",
+ "face_ring_start": "compared",
  "description": "Task 1150. Ten ORBITS: one geometry each, emitted once per starting index of its vertex ring, with one operation run on every member. What is frozen is the orbit PATTERN -- which rotations produced the same answer -- for our live output and for the reference measurement, in three channels (vertex positions; face rings ignoring winding; face rings respecting it), plus every rotation's own answer. A single rotation cannot carry any of these findings: the divergence IS the difference between the two patterns. Task 1230 converted the eight OFFSET-family cases (inset / outset / poly bevel / smooth shift) from divergences into agreements IN PLACE, by adopting the reference's ring-start rule: their two patterns are now equal, every rotation declares matches_reference, and the case kind reads both_read_the_ring. The cases are kept, not deleted -- the converted pattern IS the assertion, and it reddens the moment either side moves ASK 1240 closed the two CAPABILITY-GAP cases in this file: `vertex_bevel_dart` (ledger row 52) and `loop_slice_pentagon_quad` (row 53). Both now APPLY at every rotation and land on the reference's answer in both channels, so both reclassified `capability_gap` -> `neither_reads_the_ring` -- they were never ring-order laws, and the orbit is what said so. The cases are kept: the orbit still asserts that neither engine reads the ring here, and the per-rotation `matches_reference` flags now assert the parity instead of the gap. What is NOT closed is the pair `loop_slice_annulus_midpoint` / `loop_slice_annulus_offcentre`: the midpoint cut agrees and the off-centre one does not, because the two engines measure `position` from OPPOSITE ends of the seed rail. That is a placement law, not a capability, and the corpus has exactly one shape that can see it -- see the task 1240 card. Task 1280 converted the four TRIANGULATION cases the same way, in the opposite direction from task 1190: the reference's triangulation is a greedy ear clip that scans IN RING ORDER and breaks equal-quality ties by the earlier index, so it is NOT ring-invariant (three decompositions over the eight rotations of a horseshoe), and 1190's ring-invariant law was fitted from three shapes on which the reference happens not to move. All four cases now reproduce the reference at every rotation in every channel, their `channel` moves from `faces_any_winding` to `faces` so the WINDING-sensitive reading is what drives the kind, and all four read `both_read_the_ring`. This closes ledger row 51 (the winding term) and the two orbits 1190 left declared as unbreakable ties.",
  "source": "Reference side: frozen headless command capture of 2026-08-17/18 (702 comparisons over 25 rotation orbits). Our side: read live off vibe3d at generation time via the same HTTP steps the test replays.",
  "provenance": {
@@ -23,12 +24,14 @@
     "vibe3d": {
      "vertices": "0100",
      "faces": "0100",
-     "faces_any_winding": "0100"
+     "faces_any_winding": "0100",
+     "face_tuples": "0123"
     },
     "reference": {
      "vertices": "0100",
      "faces": "0100",
-     "faces_any_winding": "0100"
+     "faces_any_winding": "0100",
+     "face_tuples": "0123"
     }
    },
    "rotations": [
@@ -660,12 +663,14 @@
     "vibe3d": {
      "vertices": "01000",
      "faces": "01000",
-     "faces_any_winding": "01000"
+     "faces_any_winding": "01000",
+     "face_tuples": "01234"
     },
     "reference": {
      "vertices": "01000",
      "faces": "01000",
-     "faces_any_winding": "01000"
+     "faces_any_winding": "01000",
+     "face_tuples": "01234"
     }
    },
    "rotations": [
@@ -1481,12 +1486,14 @@
     "vibe3d": {
      "vertices": "010020",
      "faces": "010020",
-     "faces_any_winding": "010020"
+     "faces_any_winding": "010020",
+     "face_tuples": "012345"
     },
     "reference": {
      "vertices": "010020",
      "faces": "010020",
-     "faces_any_winding": "010020"
+     "faces_any_winding": "010020",
+     "face_tuples": "012345"
     }
    },
    "rotations": [
@@ -2581,12 +2588,14 @@
     "vibe3d": {
      "vertices": "010020",
      "faces": "010020",
-     "faces_any_winding": "010020"
+     "faces_any_winding": "010020",
+     "face_tuples": "012345"
     },
     "reference": {
      "vertices": "010020",
      "faces": "010020",
-     "faces_any_winding": "010020"
+     "faces_any_winding": "010020",
+     "face_tuples": "010230"
     }
    },
    "rotations": [
@@ -3788,12 +3797,14 @@
     "vibe3d": {
      "vertices": "000010",
      "faces": "000010",
-     "faces_any_winding": "000010"
+     "faces_any_winding": "000010",
+     "face_tuples": "012345"
     },
     "reference": {
      "vertices": "000010",
      "faces": "000010",
-     "faces_any_winding": "000010"
+     "faces_any_winding": "000010",
+     "face_tuples": "012345"
     }
    },
    "rotations": [
@@ -4971,12 +4982,14 @@
     "vibe3d": {
      "vertices": "0000",
      "faces": "0100",
-     "faces_any_winding": "0000"
+     "faces_any_winding": "0000",
+     "face_tuples": "0102"
     },
     "reference": {
      "vertices": "0000",
      "faces": "0100",
-     "faces_any_winding": "0000"
+     "faces_any_winding": "0000",
+     "face_tuples": "0102"
     }
    },
    "rotations": [
@@ -5408,12 +5421,14 @@
     "vibe3d": {
      "vertices": "00000",
      "faces": "00010",
-     "faces_any_winding": "00000"
+     "faces_any_winding": "00000",
+     "face_tuples": "01230"
     },
     "reference": {
      "vertices": "00000",
      "faces": "00010",
-     "faces_any_winding": "00000"
+     "faces_any_winding": "00000",
+     "face_tuples": "01230"
     }
    },
    "rotations": [
@@ -6018,12 +6033,14 @@
     "vibe3d": {
      "vertices": "000000",
      "faces": "010010",
-     "faces_any_winding": "000000"
+     "faces_any_winding": "000000",
+     "face_tuples": "010230"
     },
     "reference": {
      "vertices": "000000",
      "faces": "010010",
-     "faces_any_winding": "000000"
+     "faces_any_winding": "000000",
+     "face_tuples": "010230"
     }
    },
    "rotations": [
@@ -6829,12 +6846,14 @@
     "vibe3d": {
      "vertices": "0000",
      "faces": "0000",
-     "faces_any_winding": "0000"
+     "faces_any_winding": "0000",
+     "face_tuples": "0123"
     },
     "reference": {
      "vertices": "0000",
      "faces": "0000",
-     "faces_any_winding": "0000"
+     "faces_any_winding": "0000",
+     "face_tuples": "0123"
     }
    },
    "rotations": [
@@ -7233,12 +7252,14 @@
     "vibe3d": {
      "vertices": "00000",
      "faces": "00000",
-     "faces_any_winding": "00000"
+     "faces_any_winding": "00000",
+     "face_tuples": "01234"
     },
     "reference": {
      "vertices": "00000",
      "faces": "00000",
-     "faces_any_winding": "00000"
+     "faces_any_winding": "00000",
+     "face_tuples": "01234"
     }
    },
    "rotations": [
@@ -7938,12 +7959,14 @@
     "vibe3d": {
      "vertices": "00001100",
      "faces": "00001100",
-     "faces_any_winding": "00001100"
+     "faces_any_winding": "00001100",
+     "face_tuples": "01234567"
     },
     "reference": {
      "vertices": "00001100",
      "faces": "00001100",
-     "faces_any_winding": "00001100"
+     "faces_any_winding": "00001100",
+     "face_tuples": "01234567"
     }
    },
    "rotations": [
@@ -9827,12 +9850,14 @@
     "vibe3d": {
      "vertices": "011000",
      "faces": "011000",
-     "faces_any_winding": "011000"
+     "faces_any_winding": "011000",
+     "face_tuples": "012345"
     },
     "reference": {
      "vertices": "011000",
      "faces": "011000",
-     "faces_any_winding": "011000"
+     "faces_any_winding": "011000",
+     "face_tuples": "012003"
     }
    },
    "rotations": [
@@ -11034,12 +11059,14 @@
     "vibe3d": {
      "vertices": "0100",
      "faces": "0100",
-     "faces_any_winding": "0100"
+     "faces_any_winding": "0100",
+     "face_tuples": "0123"
     },
     "reference": {
      "vertices": "0100",
      "faces": "0100",
-     "faces_any_winding": "0100"
+     "faces_any_winding": "0100",
+     "face_tuples": "0123"
     }
    },
    "rotations": [
@@ -11671,12 +11698,14 @@
     "vibe3d": {
      "vertices": "0000",
      "faces": "0123",
-     "faces_any_winding": "0011"
+     "faces_any_winding": "0011",
+     "face_tuples": "0123"
     },
     "reference": {
      "vertices": "0000",
      "faces": "0123",
-     "faces_any_winding": "0011"
+     "faces_any_winding": "0011",
+     "face_tuples": "0123"
     }
    },
    "rotations": [
@@ -12444,12 +12473,14 @@
     "vibe3d": {
      "vertices": "0000",
      "faces": "0000",
-     "faces_any_winding": "0000"
+     "faces_any_winding": "0000",
+     "face_tuples": "0000"
     },
     "reference": {
      "vertices": "0000",
      "faces": "0000",
-     "faces_any_winding": "0000"
+     "faces_any_winding": "0000",
+     "face_tuples": "0000"
     }
    },
    "rotations": [
@@ -13272,12 +13303,14 @@
     "vibe3d": {
      "vertices": "0000",
      "faces": "0000",
-     "faces_any_winding": "0000"
+     "faces_any_winding": "0000",
+     "face_tuples": "0000"
     },
     "reference": {
      "vertices": "0000",
      "faces": "0000",
-     "faces_any_winding": "0000"
+     "faces_any_winding": "0000",
+     "face_tuples": "0000"
     }
    },
    "rotations": [

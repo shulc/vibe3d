@@ -1,5 +1,7 @@
 {
  "name": "make_polygon_gates",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "Three of the four cells create a polygon, and a created polygon's ring start is make_polygon_geometry_parity's unread law -- ours differs from the reference on all three (measured 2026-08-18). This fixture's subject is which rings the command ACCEPTS. See doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "Ledger row 7: our make-polygon had four refusal gates and the reference has none of them. It builds a zero-area triangle from collinear points, a polygon from two points, a self-intersecting quad from a bow-tie click order, and a DUPLICATE face on top of an existing one. PORTED (task 1200): the gates are off for the mesh.makePolygon command and all four cases now declare an EMPTY gap. The cases are kept, not deleted \u2014 an empty gap is asserted per-dimension, exactly as strictly as a full one, and these four dimensions are where the gap used to live.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: re-measured live against this tree after task 1200 removed the gates. Ledger rows: 7.",
  "provenance": {

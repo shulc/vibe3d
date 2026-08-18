@@ -1,5 +1,6 @@
 {
  "name": "copy_vertex_mode",
+ "face_ring_start": "compared",
  "description": "Ledger row 19: with a VERTEX selection the reference's copy takes the vertices - pasting adds four free vertices - while our copy refused outright, its operand domain being polygons only. PORTED (task 1200): GeometryClip carries a face-less clip, mesh.paste appends the loose points, and the cell declares an EMPTY gap.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 19.",
  "provenance": {

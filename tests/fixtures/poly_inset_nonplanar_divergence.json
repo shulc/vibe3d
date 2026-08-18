@@ -1,5 +1,6 @@
 {
  "name": "poly_inset_nonplanar_divergence",
+ "face_ring_start": "compared",
  "description": "Polygon inset on a NON-PLANAR ring. Measured by task 1140 as ledger row 24, CLOSED by task 1190 as a side effect of porting the corner DIRECTION law (row 48). On a quad whose fourth corner is lifted 0.1 out of the plane of the other three, the reference places each corner of the inset ring on the bent surface -- out-of-plane coordinates 2.1e-5 / 8.443e-3 / 2.1e-5 / 9.1557e-2 -- while ours used to come out as a flat 4.24e-3 / 4.24e-3 / 4.24e-3 / 8.7343e-2, a single approximating plane. Every corner of the inset ring differed, almost entirely along the fold axis, by up to 4.230e-3 at inset 0.12 (3.5% of the inset). Heading along the corner bisector instead of toward the face centroid puts the corner on the bend by construction, and the worst residual is now 2.12e-5 -- two hundred times smaller, at the reference's own six-decimal print precision and inside this fixture's 1e-4 tolerance. The declared gap is therefore EMPTY, and the runner recomputes it live, so a drift on either side reddens it.",
  "source": "Reference side: headless command-port capture of the inset tool at inset 0.12 (dirty-geometry sweep, task 1123, cases inset_np_one / inset_np_pair_e1). vibe3d side: live drive of this build.",
  "provenance": {

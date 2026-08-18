@@ -1,5 +1,7 @@
 {
  "name": "merge_faces_geometry_parity",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "Every case here merges faces, and the merged n-gon's ring start is the reference behaviour this family does not reproduce: measured 2026-08-18, the merged face's ring is identical and identically wound on both sides in all eleven cases and begins at a different corner in all eleven. The fixture's question is which faces the merge leaves and which corners they hold; where the walk that builds that ring begins is a separate, unread law -- doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
  "description": "Merging a selected face set into one polygon: what the boundary walk does with a vertex that becomes strictly interior, with a non-planar pair, and with an L / U shaped region. GEOMETRY CHANNEL ONLY (the capture recorded a differing post-operation selection).",
  "source": "frozen reference capture (task 1121, nine-tool sweep)",
  "provenance": {

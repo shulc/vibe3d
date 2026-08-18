@@ -1,5 +1,7 @@
 {
  "name": "poly_flip_triple_dirty_parity",
+ "face_ring_start": "ignored",
+ "face_ring_start_note": "THIS is the fixture the blind spot was found on. Its eight convex quads have diverged from the reference since the day it was written -- we emit clip tuples, the reference emits strip tuples, the same two triangles with the same winding begun at different corners -- and a rotation-tolerant comparison called that parity. Task 1280 then read the green as evidence that a reference code path 'never ran' and filed a card about a gate that does not exist; a debugger capture refuted it. Measured 2026-08-18: 39 of 61 rings here differ in start only. The two cases that DO agree declare \"compared\" below. The rest stay rotation-tolerant on purpose: the honest record of this family is the tuple-level divergence frozen in tests/fixtures/triangulate_convex_strip_divergence.json, not a start pinned here as if it matched. See doc/tasks/work/1283-fixture-comparison-ignores-tuple-start.md.",
  "description": "Flipping every face's winding, and triangulating. Neither command had a measured fixture. The flip cells are the only place in this delivery where a direction-sensitive face ring is the ENTIRE assertion -- a flip moves no vertex and changes no count.",
  "source": "frozen reference capture (task 1123, dirty-geometry sweep)",
  "provenance": {
@@ -2752,6 +2754,7 @@
   },
   {
    "name": "tri_pole_quad5",
+   "face_ring_start": "compared",
    "description": "triangulate a pole base \u2014 the diagonal chosen on a reflex or non-planar ring is the whole question",
    "input": [
     {
@@ -3204,6 +3207,7 @@
   },
   {
    "name": "tri_pole_quad6",
+   "face_ring_start": "compared",
    "description": "triangulate a pole base \u2014 the diagonal chosen on a reflex or non-planar ring is the whole question",
    "input": [
     {

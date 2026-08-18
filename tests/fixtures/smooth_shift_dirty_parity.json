@@ -1,5 +1,6 @@
 {
  "name": "smooth_shift_dirty_parity",
+ "face_ring_start": "compared",
  "description": "Smooth shift outward, inward, and on a single face of a multi-face base, over non-planar / poled / reflex / degenerate geometry. The existing smooth-shift fixture is a capture on a stock cube; these are the cells a cube cannot express.",
  "source": "frozen reference capture (task 1123, dirty-geometry sweep)",
  "provenance": {

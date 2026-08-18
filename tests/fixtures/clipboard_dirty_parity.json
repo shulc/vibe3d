@@ -1,5 +1,6 @@
 {
  "name": "clipboard_dirty_parity",
+ "face_ring_start": "compared",
  "description": "Copy + paste of a whole dirty base -- including one whose vertices are almost but not exactly coincident, and one whose faces are wound against each other.",
  "source": "frozen reference capture (task 1123, dirty-geometry sweep)",
  "provenance": {

@@ -1,5 +1,6 @@
 {
  "name": "clipboard_parity",
+ "face_ring_start": "compared",
  "description": "Copy / cut / paste on open geometry: whether shared vertices are duplicated once or per-face, whether a cut leaves the vertices its surviving neighbours still need, and what a paste lands on top of itself.",
  "source": "frozen reference capture (task 1121, nine-tool sweep)",
  "provenance": {
@@ -3433,6 +3434,8 @@
   },
   {
    "name": "cp_after_merge",
+   "face_ring_start": "ignored",
+   "face_ring_start_note": "The pasted copy of the n-gon a MERGE left behind is the one face in this family whose ring we begin elsewhere than the reference does. Both rings hold the same six corners wound the same way; only the start differs, and which corner a merge leaves at the head of its ring is the unported law -- see doc/tasks/backlog/1311-ring-start-laws-to-capture.md.",
    "description": "merge first, then copy+paste the resulting hexagon",
    "input": [
     {

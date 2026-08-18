@@ -1,5 +1,6 @@
 {
  "name": "poly_inset_dirty_parity",
+ "face_ring_start": "compared",
  "description": "Polygon inset, positive and negative, on oblique folds, plates with holes and notches, counter-wound faces and a scale step. This family diverges on three quarters of the dirty bases, so these are the cells where the two engines DO meet -- and a regression that moved the meeting point would show here first.",
  "source": "frozen reference capture (task 1123, dirty-geometry sweep)",
  "provenance": {
