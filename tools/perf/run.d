@@ -561,8 +561,11 @@ CmdCase[] commandCases() {
     cs ~= CmdCase("edgeExtend/edges/whole",       "mesh.edge_extend",  "edges",    "whole");
     cs ~= CmdCase("edgeExtrude/edges/whole",      "mesh.edge_extrude", "edges",    "whole");
     cs ~= CmdCase("vertexBevel/vertices/whole",   "mesh.vertexBevel amount:0.02", "vertices", "whole");
-    cs ~= CmdCase("vertexExtrude/vertices/whole",
-                  "mesh.vertexExtrude shift:0.05 width:0.02", "vertices", "whole");
+    // half, not whole: whole-mesh vertexExtrude on the 100K grid measured
+    // 156s of commandApply (2026-08-18) — past even the raised 2-min
+    // command-bridge leash. Half the vertex set exercises the same path.
+    cs ~= CmdCase("vertexExtrude/vertices/half",
+                  "mesh.vertexExtrude shift:0.05 width:0.02", "vertices", "half");
     return cs;
 }
 

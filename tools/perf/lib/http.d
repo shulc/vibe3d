@@ -151,7 +151,19 @@ struct LayerInfo { long vertexCount, faceCount, mutationVersion; }
 
 LayerInfo activeLayerInfo() {
     import std.json : JSONType;
-    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/layers"));
+    // Patient: right after a huge one-shot command the main thread spends
+    // several seconds inside ONE frame digesting the new mesh (caches,
+    // loops, GPU upload), and /api/layers' 5s bridge times out (500) until
+    // that frame ends. Retry for up to ~90s before giving up.
+    string body_;
+    for (int attempt = 0; ; ++attempt) {
+        try { body_ = cast(string)get(g_baseUrl ~ "/api/layers"); break; }
+        catch (Exception e) {
+            if (attempt >= 180) throw e;
+            Thread.sleep(500.msecs);
+        }
+    }
+    auto j = parseJSON(body_);
     LayerInfo li;
     foreach (l; j["layers"].array) {
         if (l["active"].type == JSONType.true_) {

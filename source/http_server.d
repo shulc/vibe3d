@@ -70,6 +70,14 @@ string versionJson() {
 // Same seq-cst atomicOp/atomicLoad/atomicStore as before, same 2500-iter /
 // 2ms sleep timeout. Do not weaken any of this.
 //
+// Command dispatch gets a longer leash than the 2500-iter default: a
+// legitimate one-shot mesh command on a ~100K-face mesh (whole-mesh bevel,
+// edge extrude) runs tens of seconds on the main thread, and a 5s cap
+// turns the perf harness's measurement into a timeout error — and worse,
+// wedges every FOLLOWING request while the main thread finishes the work
+// the client already gave up on. 60000 iters ≈ 2 min.
+enum int kCommandBridgeMaxIters = 60_000;
+
 // Timeout is per-bridge, NOT uniform: submitAndWait() returns a plain bool
 // and never synthesizes a timeout body — each call site keeps its own
 // bespoke timeout response (silent-ok for reset, noop-false for undo/jump,
@@ -2931,7 +2939,7 @@ class HttpServer {
 
                 commandBridge.resp.error   = "";
                 commandBridge.req.interactive = false;   // plain command = discrete
-                if (!commandBridge.submitAndWait())
+                if (!commandBridge.submitAndWait(kCommandBridgeMaxIters))
                     commandBridge.resp.error = "timeout waiting for main thread";
                 if (commandBridge.resp.error.length == 0) {
                     response.statusCode = 200;
@@ -3002,7 +3010,7 @@ class HttpServer {
                     commandBridge.resp.error      = "";
                     commandBridge.req.interactive = interactiveScript;
 
-                    if (!commandBridge.submitAndWait())
+                    if (!commandBridge.submitAndWait(kCommandBridgeMaxIters))
                         commandBridge.resp.error = "timeout waiting for main thread";
 
                     if (commandBridge.resp.error.length == 0) {
@@ -3305,7 +3313,7 @@ class HttpServer {
                     commandBridge.req.id     = parsed.commandId;
                     commandBridge.req.params = parsed.params.toString();
                     commandBridge.resp.error = "";
-                    if (!commandBridge.submitAndWait())
+                    if (!commandBridge.submitAndWait(kCommandBridgeMaxIters))
                         commandBridge.resp.error = "timeout waiting for main thread";
                     if (commandBridge.resp.error.length == 0) {
                         response.statusCode = 200;
