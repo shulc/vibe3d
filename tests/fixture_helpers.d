@@ -224,6 +224,57 @@ private int[] resolveCoords(string mode, JSONValue coordsArr, string ctx) {
     return outIdx;
 }
 
+// Resolve POLYGON centroid-specs to face indices against the current
+// /api/model. `coords` (above) keys a face on its FULL vertex ring, which a
+// fixture can only spell for a face that exists in its own frozen base mesh;
+// a multi-step case selects faces that only come into existence mid-case (the
+// hexagon a merge leaves behind, the halves a split leaves behind), and their
+// rings are not in the fixture. A centroid is spellable for those: it is a
+// single point the case author already knows, and it is resolved against the
+// LIVE mesh at the moment the step runs. Match radius is deliberately looser
+// than COORD_EPS (a centroid is an average of n coordinates, so it carries n
+// times the rounding of one), and an AMBIGUOUS key — two faces whose centroids
+// both match — fails loudly rather than silently taking the first: two
+// coincident faces is exactly what a paste-on-top-of-itself case produces.
+private enum double CENTROID_EPS = 1e-3;
+private int[] resolveCentroids(JSONValue centroidsArr, string ctx) {
+    auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
+    auto V = model["vertices"].array;
+    auto F = model["faces"].array;
+    double[3] centroidOf(size_t fi) {
+        auto fv = F[fi].array;
+        double[3] c = [0, 0, 0];
+        foreach (ij; fv) {
+            auto p = jvec3(V[cast(size_t) ij.integer]);
+            c[0] += p[0]; c[1] += p[1]; c[2] += p[2];
+        }
+        double n = cast(double) fv.length;
+        if (n > 0) { c[0] /= n; c[1] /= n; c[2] /= n; }
+        return c;
+    }
+    int[] outIdx;
+    foreach (spec; centroidsArr.array) {
+        double[3] t = jvec3(spec);
+        int hit = -1;
+        int hits = 0;
+        foreach (fi; 0 .. F.length) {
+            if (dist2(centroidOf(fi), t) <= CENTROID_EPS * CENTROID_EPS) {
+                if (hit < 0) hit = cast(int) fi;
+                ++hits;
+            }
+        }
+        assert(hit >= 0,
+            format("%s: no polygon whose centroid is [%.4f,%.4f,%.4f]",
+                   ctx, t[0], t[1], t[2]));
+        assert(hits == 1,
+            format("%s: centroid [%.4f,%.4f,%.4f] matches %d polygons - "
+                   ~ "ambiguous key, the case must name the face another way",
+                   ctx, t[0], t[1], t[2], hits));
+        outIdx ~= hit;
+    }
+    return outIdx;
+}
+
 // Run one fixture step. Engine-neutral logical steps keep a case authored once:
 //   { "reset": true }
 //   { "select": { "mode": "vertices|edges|polygons", "coords": [ ... ] } }
@@ -251,7 +302,9 @@ void runStep(JSONValue step, string name, string phase, size_t i) {
     } else if ("select" in step) {
         auto sel    = step["select"];
         string mode = sel["mode"].str;
-        int[] idx   = ("coords" in sel) ? resolveCoords(mode, sel["coords"], ctx) : [];
+        int[] idx   = ("coords"    in sel) ? resolveCoords(mode, sel["coords"], ctx)
+                    : ("centroids" in sel) ? resolveCentroids(sel["centroids"], ctx)
+                    : [];
         string idxJson = "[";
         foreach (k, v; idx) { if (k) idxJson ~= ","; idxJson ~= format("%d", v); }
         idxJson ~= "]";
@@ -919,6 +972,78 @@ private void assertCounts(string name, string phase, JSONValue exp, long[3] got)
                name, phase, exp["faces"].integer, got[2]));
 }
 
+// ---------------------------------------------------------------------------
+// Coordinate-keyed STRUCTURE readers (task 1160).
+//
+// MERGE NOTE: `readFaceRings` and `ringEq` below are BYTE-IDENTICAL to the
+// pair task 1140 adds to this same file for the divergence runner (and which
+// task 1150 in turn adopted byte-identically). They arrived independently and
+// from opposite directions -- 1140 needed a channel that could SEE a
+// disagreement a vertex-and-count check calls parity, 1160 needed one that
+// could CONFIRM an agreement the same check cannot. Whichever lands second:
+// delete one of the two identical copies, keep either, and leave every call
+// site alone. Nothing else here collides.
+//
+// The fixture KEY spellings differ on purpose and are not a third dialect:
+// this runner's schema has always prefixed its frozen state `expected_*`
+// (`expected_before`, `expected_after`, `expected_vertices`,
+// `expected_face_degrees`), so the new channels follow ITS convention rather
+// than the divergence runner's bare `faces` / `material_groups`. Same channel,
+// same comparison, same helper -- the noun in front of it belongs to the
+// runner it lives in.
+//
+// A count plus a set of vertex POSITIONS cannot see which vertices form which
+// face, and that is precisely the question several frozen agreements are about
+// ("which of the two faces containing both endpoints got cut", "does a paste
+// share the original's vertices or duplicate them"). These read the face rings
+// as COORDINATES so a fixture never names a vertex index -- index order is not
+// a promise across engines, and a topology-changing op renumbers within one
+// engine anyway.
+// ---------------------------------------------------------------------------
+
+// GET /api/model and return each face as its ring of vertex COORDINATES.
+private double[3][][] readFaceRings() {
+    auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
+    auto V = model["vertices"].array;
+    double[3][][] outf;
+    foreach (f; model["faces"].array) {
+        double[3][] ring;
+        foreach (fi; f.array) ring ~= jvec3(V[cast(size_t) fi.integer]);
+        outf ~= ring;
+    }
+    return outf;
+}
+
+// GET /api/model and return the per-face material id. The two engines name
+// materials differently (a string there, an int here), so these VALUES are
+// never compared across the seam -- only the PARTITION they induce is.
+private long[] readFaceMaterials() {
+    auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
+    long[] outM;
+    if ("faceMaterial" !in model) return outM;
+    foreach (v; model["faceMaterial"].array) outM ~= v.integer;
+    return outM;
+}
+
+// Two rings are the same face iff they have the same length and agree
+// position-by-position under SOME rotation. Rotation only, never reversal:
+// where a ring starts is a storage detail, which way it goes round is not.
+private bool ringEq(const double[3][] a, const double[3][] b, double tol) {
+    if (a.length != b.length) return false;
+    immutable n = a.length;
+    if (n == 0) return true;
+    immutable double t2 = tol * tol;
+    foreach (r; 0 .. n) {
+        bool ok = true;
+        foreach (i; 0 .. n) {
+            double[3] x = a[i], y = b[(i + r) % n];
+            if (dist2(x, y) > t2) { ok = false; break; }
+        }
+        if (ok) return true;
+    }
+    return false;
+}
+
 // True iff some vibe3d vertex sits within `tol` of `p`.
 private bool hasVertexNear(double[3][] verts, double[3] p, double tol) {
     double t2 = tol * tol;
@@ -968,6 +1093,27 @@ private bool jApproxEq(JSONValue e, JSONValue a, double tol) {
 /// 0458 fixtures). Catches a wrong-shaped n-gon rewrite (e.g. accidentally
 /// emitting 2 pentagons instead of 1 quad + 1 hexagon) that a bare vertex/
 /// face COUNT plus a position bijection could miss.
+///
+/// Task 1160 adds three more optional, coordinate-keyed channels so a frozen
+/// reference AGREEMENT can be pinned at the strength it was measured at:
+///   "expected_faces"      [ [[x,y,z], ...], ... ]  every face as its ring of
+///                         POSITIONS, matched rotation-invariantly but
+///                         direction-SENSITIVELY, as a multiset. This is the
+///                         channel that says WHICH vertices form which face --
+///                         `expected_vertices` is only a position set and
+///                         cannot see a re-wired ring, a duplicated face, or a
+///                         flipped winding.
+///   "expected_tag_groups" [ [i, j], [k] ]  the PARTITION of faces by material,
+///                         as indices into `expected_faces`. Material VALUES
+///                         are never compared (the reference names surfaces by
+///                         string, we by index); which faces share one is.
+///   "expected_selection"  {"vertices":[[x,y,z],...],
+///                          "polygons":[<centroid>,...],
+///                          "edges":[[[x,y,z],[x,y,z]],...]}
+///                         the post-op selection, keyed on coordinates. Present
+///                         only where the capture agreed on the selection
+///                         channel as well; a case that agreed on geometry only
+///                         omits it and says so in its own description.
 void runTopologyDiffSuite(string fixtureJson) {
     auto fx      = parseJSON(fixtureJson);
     string suite = ("name" in fx) ? fx["name"].str : "<topo-suite>";
@@ -980,6 +1126,8 @@ void runTopologyDiffSuite(string fixtureJson) {
         foreach (i, step; cs["input"].array) runStep(step, cn, "input", i);
         if ("expected_before" in cs)
             assertCounts(cn, "before", cs["expected_before"], readCounts());
+        // Base material, read BEFORE the op, for `expected_tag_changed` below.
+        auto baseMats = ("expected_tag_changed" in cs) ? readFaceMaterials() : null;
 
         foreach (i, step; cs["op"].array) runStep(step, cn, "op", i);
         if ("expected_after" in cs)
@@ -1015,6 +1163,197 @@ void runTopologyDiffSuite(string fixtureJson) {
                            ~ "set (tol %.1e)", cn, g[0], g[1], g[2], tol));
             }
         }
+        // ---- coordinate-keyed FACE RINGS (task 1160) --------------------
+        // `expected_vertices` above is a position SET: it cannot see which
+        // vertices form which face, cannot see a face duplicated on top of
+        // itself, and cannot see a winding flip. `expected_faces` freezes the
+        // rings themselves, matched rotation-invariantly but direction-
+        // SENSITIVELY, as a MULTISET (so a paste that lands a second copy of a
+        // face on the original is a different answer from one that does not).
+        ptrdiff_t[] faceMap;   // expected face index -> live face index
+        if ("expected_faces" in cs) {
+            auto live = readFaceRings();
+            auto want = cs["expected_faces"].array;
+            assert(live.length == want.length,
+                format("%s: face count %d != frozen face count %d",
+                       cn, live.length, want.length));
+            auto used = new bool[](live.length);
+            faceMap = new ptrdiff_t[](want.length);
+            foreach (wi, w; want) {
+                auto wr = new double[3][](w.array.length);
+                foreach (k, c; w.array) wr[k] = jvec3(c);
+                ptrdiff_t hit = -1;
+                foreach (li, lr; live)
+                    if (!used[li] && ringEq(wr, lr, tol)) { hit = li; break; }
+                if (hit < 0) {
+                    string spelled = "[";
+                    foreach (k, c; wr) {
+                        if (k) spelled ~= " ";
+                        spelled ~= format("(%.4f,%.4f,%.4f)", c[0], c[1], c[2]);
+                    }
+                    spelled ~= "]";
+                    assert(false, format(
+                        "%s: frozen face %d %s has no live face with the same "
+                        ~ "ring and the same winding (tol %.1e)",
+                        cn, wi, spelled, tol));
+                }
+                used[hit] = true;
+                faceMap[wi] = hit;
+            }
+        }
+
+        // ---- material PARTITION (task 1160) -----------------------------
+        // Which faces share a material, never WHICH material: the reference
+        // names surfaces by string and we by index, so the values are not
+        // comparable and are deliberately not compared. Groups are given as
+        // indices into `expected_faces` (which resolves them to coordinates),
+        // and both sides are canonicalised -- each group sorted, the groups
+        // sorted -- so neither engine's face iteration order can enter.
+        if ("expected_tag_groups" in cs) {
+            assert("expected_faces" in cs,
+                format("%s: expected_tag_groups needs expected_faces (its "
+                       ~ "groups are indices into it)", cn));
+            auto mats = readFaceMaterials();
+            assert(mats.length == faceMap.length,
+                format("%s: faceMaterial length %d != face count %d",
+                       cn, mats.length, faceMap.length));
+            // live partition, expressed in EXPECTED-face indices
+            long[][long] byMat;
+            foreach (wi, li; faceMap) byMat[mats[li]] ~= cast(long) wi;
+            // Canonicalised as SORTED TEXT: each group's members sorted, then
+            // the groups themselves sorted as strings. Neither engine's face
+            // iteration order, and no material id, can reach the comparison.
+            string[] gotGroups;
+            foreach (k; byMat.keys) {
+                auto g = byMat[k].dup;
+                g.sort();
+                gotGroups ~= format("%s", g);
+            }
+            string[] wantGroups;
+            foreach (g; cs["expected_tag_groups"].array) {
+                long[] one;
+                foreach (v; g.array) one ~= v.integer;
+                one.sort();
+                wantGroups ~= format("%s", one);
+            }
+            gotGroups.sort();
+            wantGroups.sort();
+            assert(gotGroups == wantGroups,
+                format("%s: material partition (by frozen face index) is %s, "
+                       ~ "frozen partition is %s", cn, gotGroups, wantGroups));
+        }
+
+        // ---- which faces CHANGED their material (task 1160) --------------
+        // A partition alone has a blind spot the sweep's own harness was caught
+        // by: "every face changed to the same tag" and "no face changed at all"
+        // are both ONE group, and the two are not the same answer. This channel
+        // closes it. It compares a BOOLEAN per face -- "does this face's
+        // material differ from the one the whole mesh started with" -- which is
+        // comparable across the seam even though the tag VALUES are not.
+        //
+        // What it deliberately does NOT pin: WHICH of two competing tags a
+        // merged face inherited. The two engines' tag values are private
+        // namespaces, and the faces that carried them are gone by the time the
+        // merge is dumped, so that law is not expressible from frozen data at
+        // all. The capture settled it; this fixture pins the part that crosses.
+        if ("expected_tag_changed" in cs) {
+            assert(baseMats.length > 0,
+                format("%s: expected_tag_changed needs a pre-op faceMaterial "
+                       ~ "read, and the mesh had no faces", cn));
+            immutable long baseTag = baseMats[0];
+            foreach (m; baseMats)
+                assert(m == baseTag, format(
+                    "%s: the base mesh is not uniformly tagged, so 'differs "
+                    ~ "from the base tag' is not defined for it", cn));
+            auto mats2 = readFaceMaterials();
+            long[] gotChanged;
+            foreach (wi, li; faceMap) if (mats2[li] != baseTag) gotChanged ~= cast(long) wi;
+            long[] wantChanged;
+            foreach (v; cs["expected_tag_changed"].array) wantChanged ~= v.integer;
+            gotChanged.sort();
+            wantChanged.sort();
+            assert(gotChanged == wantChanged, format(
+                "%s: faces whose material differs from the base tag are %s, "
+                ~ "frozen set is %s", cn, gotChanged, wantChanged));
+        }
+
+        // ---- post-op SELECTION (task 1160) ------------------------------
+        // Present ONLY on cases whose capture agreed on the selection channel
+        // too. A case that agreed on geometry but not on selection omits this
+        // key and says so in its description -- the selection difference is a
+        // recorded divergence, and folding it into a parity fixture would be
+        // asserting a match that was never measured.
+        if ("expected_selection" in cs) {
+            auto es    = cs["expected_selection"];
+            auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
+            auto sel   = parseJSON(cast(string) get(BASE ~ "/api/selection"));
+            auto V     = model["vertices"].array;
+            auto E     = model["edges"].array;
+            auto F     = model["faces"].array;
+            double[3] vpos(long i) { return jvec3(V[cast(size_t) i]); }
+
+            double[3][] gotV;
+            foreach (ij; sel["selectedVertices"].array) gotV ~= vpos(ij.integer);
+            double[3][] gotP;
+            foreach (ij; sel["selectedFaces"].array) {
+                auto fv = F[cast(size_t) ij.integer].array;
+                double[3] c = [0, 0, 0];
+                foreach (k; fv) { auto q = vpos(k.integer); c[0]+=q[0]; c[1]+=q[1]; c[2]+=q[2]; }
+                double n = cast(double) fv.length;
+                if (n > 0) { c[0]/=n; c[1]/=n; c[2]/=n; }
+                gotP ~= c;
+            }
+            double[3][2][] gotE;
+            foreach (ij; sel["selectedEdges"].array) {
+                auto ee = E[cast(size_t) ij.integer].array;
+                gotE ~= [vpos(ee[0].integer), vpos(ee[1].integer)];
+            }
+
+            void matchPoints(string label, double[3][] got, JSONValue want, double mtol) {
+                assert(got.length == want.array.length, format(
+                    "%s: selected %s count %d, frozen %d",
+                    cn, label, got.length, want.array.length));
+                auto used = new bool[](got.length);
+                foreach (w; want.array) {
+                    double[3] wp = jvec3(w);
+                    bool found = false;
+                    foreach (gi, g; got)
+                        if (!used[gi] && dist2(g, wp) <= mtol * mtol) {
+                            used[gi] = true; found = true; break;
+                        }
+                    assert(found, format(
+                        "%s: frozen selected %s [%.4f,%.4f,%.4f] is not selected "
+                        ~ "in vibe3d (tol %.1e)",
+                        cn, label, wp[0], wp[1], wp[2], mtol));
+                }
+            }
+            if ("vertices" in es) matchPoints("vertex", gotV, es["vertices"], tol);
+            if ("polygons" in es) matchPoints("polygon centroid", gotP, es["polygons"], CENTROID_EPS);
+            if ("edges" in es) {
+                auto want = es["edges"].array;
+                assert(gotE.length == want.length, format(
+                    "%s: selected edge count %d, frozen %d",
+                    cn, gotE.length, want.length));
+                auto used = new bool[](gotE.length);
+                foreach (w; want) {
+                    auto pr = w.array;
+                    double[3] a = jvec3(pr[0]), b = jvec3(pr[1]);
+                    bool found = false;
+                    foreach (gi, g; gotE) {
+                        if (used[gi]) continue;
+                        if ((dist2(g[0], a) <= tol*tol && dist2(g[1], b) <= tol*tol) ||
+                            (dist2(g[0], b) <= tol*tol && dist2(g[1], a) <= tol*tol)) {
+                            used[gi] = true; found = true; break;
+                        }
+                    }
+                    assert(found, format(
+                        "%s: frozen selected edge [%.4f,%.4f,%.4f]-[%.4f,%.4f,%.4f] "
+                        ~ "is not selected in vibe3d", cn,
+                        a[0], a[1], a[2], b[0], b[1], b[2]));
+                }
+            }
+        }
+
         if ("lerp_checks" in cs) {
             foreach (lc; cs["lerp_checks"].array) {
                 double[3] a = jvec3(lc["a"]), b = jvec3(lc["b"]);

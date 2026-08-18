@@ -1,0 +1,1738 @@
+{
+ "name": "poly_split_parity",
+ "description": "Splitting a face across two of its vertices, frozen from the reference on open geometry only. Every case here CUTS: the refusals this command shares with the reference are a separate fixture, because a refusal frozen as parity would pass with the command removed.",
+ "source": "frozen reference capture (task 1121, nine-tool sweep)",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-18",
+  "harness": "tools/local/capture (tasks 1121/1123)",
+  "task": "1160",
+  "notes": "Chord chosen to separate candidate laws, not to be easy: inside and outside a non-convex pentagon, a quad whose neighbours share both endpoints, an n-gon produced by an earlier merge. Geometry AND the post-operation selection agreed in the capture, so both are frozen. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "split_quad_diag",
+   "description": "opposite corners of ONE quad of an open plate \u2014 which of the two faces sharing vertex 1/4 gets cut?",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 6,
+    "edges": 8,
+    "faces": 3
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_concave_valid",
+   "description": "a chord of a NON-CONVEX pentagon that stays inside",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        4.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        4.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        4.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 5,
+    "edges": 5,
+    "faces": 1
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     4.0,
+     0.0,
+     0.0
+    ],
+    [
+     4.0,
+     0.0,
+     4.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     4.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      4.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_concave_outside",
+   "description": "a chord of the same pentagon that passes OUTSIDE it (the reflex vertex is on the far side) \u2014 refused, or a self-overlapping pair?",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        4.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        4.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        4.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        4.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 5,
+    "edges": 5,
+    "faces": 1
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     4.0,
+     0.0,
+     0.0
+    ],
+    [
+     4.0,
+     0.0,
+     4.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     4.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      4.0
+     ]
+    ],
+    [
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      4.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      4.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_triquad_quad",
+   "description": "split the quad half of a tri+quad pair; the triangle must be untouched",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.5
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3
+       ],
+       [
+        1,
+        4,
+        2
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 7,
+    "faces": 3
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.5
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.5
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    3
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_grid_two_quads",
+   "description": "a diagonal of grid face 0 while face 0 has three neighbours \u2014 does the cut leak into them?",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        3.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        2.0
+       ],
+       [
+        1.0,
+        0.0,
+        2.0
+       ],
+       [
+        2.0,
+        0.0,
+        2.0
+       ],
+       [
+        3.0,
+        0.0,
+        2.0
+       ],
+       [
+        0.0,
+        0.0,
+        3.0
+       ],
+       [
+        1.0,
+        0.0,
+        3.0
+       ],
+       [
+        2.0,
+        0.0,
+        3.0
+       ],
+       [
+        3.0,
+        0.0,
+        3.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        5,
+        4
+       ],
+       [
+        1,
+        2,
+        6,
+        5
+       ],
+       [
+        2,
+        3,
+        7,
+        6
+       ],
+       [
+        4,
+        5,
+        9,
+        8
+       ],
+       [
+        5,
+        6,
+        10,
+        9
+       ],
+       [
+        6,
+        7,
+        11,
+        10
+       ],
+       [
+        8,
+        9,
+        13,
+        12
+       ],
+       [
+        9,
+        10,
+        14,
+        13
+       ],
+       [
+        10,
+        11,
+        15,
+        14
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 16,
+    "edges": 24,
+    "faces": 9
+   },
+   "expected_after": {
+    "verts": 16,
+    "edges": 25,
+    "faces": 10
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     3.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     2.0
+    ],
+    [
+     1.0,
+     0.0,
+     2.0
+    ],
+    [
+     2.0,
+     0.0,
+     2.0
+    ],
+    [
+     3.0,
+     0.0,
+     2.0
+    ],
+    [
+     0.0,
+     0.0,
+     3.0
+    ],
+    [
+     1.0,
+     0.0,
+     3.0
+    ],
+    [
+     2.0,
+     0.0,
+     3.0
+    ],
+    [
+     3.0,
+     0.0,
+     3.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      0.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      3.0
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_pent_across",
+   "description": "a chord of one pentagon while its neighbour shares two of its verts",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.5,
+        0.0,
+        1.0
+       ],
+       [
+        0.5,
+        0.0,
+        1.7
+       ],
+       [
+        -0.5,
+        0.0,
+        1.0
+       ],
+       [
+        1.5,
+        0.0,
+        -1.0
+       ],
+       [
+        0.5,
+        0.0,
+        -1.7
+       ],
+       [
+        -0.5,
+        0.0,
+        -1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ],
+       [
+        1,
+        0,
+        7,
+        6,
+        5
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        1.5,
+        0.0,
+        1.0
+       ],
+       [
+        -0.5,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 8,
+    "edges": 9,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 8,
+    "edges": 10,
+    "faces": 3
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.5,
+     0.0,
+     1.0
+    ],
+    [
+     0.5,
+     0.0,
+     1.7
+    ],
+    [
+     -0.5,
+     0.0,
+     1.0
+    ],
+    [
+     1.5,
+     0.0,
+     -1.0
+    ],
+    [
+     0.5,
+     0.0,
+     -1.7
+    ],
+    [
+     -0.5,
+     0.0,
+     -1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -1.0
+     ],
+     [
+      0.5,
+      0.0,
+      -1.7
+     ],
+     [
+      1.5,
+      0.0,
+      -1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.5,
+      0.0,
+      1.0
+     ],
+     [
+      -0.5,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      1.5,
+      0.0,
+      1.0
+     ],
+     [
+      0.5,
+      0.0,
+      1.7
+     ],
+     [
+      -0.5,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    4,
+    5
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      -0.5,
+      0.0,
+      1.0
+     ],
+     [
+      1.5,
+      0.0,
+      1.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_hex_after_merge",
+   "description": "merge the plate into one hexagon, then split THAT across two of its corners \u2014 a split whose input is an n-gon, not a quad",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.5,
+        0.0,
+        0.5
+       ],
+       [
+        1.5,
+        0.0,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    },
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  }
+ ]
+}

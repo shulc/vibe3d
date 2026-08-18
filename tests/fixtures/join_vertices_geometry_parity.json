@@ -1,0 +1,1991 @@
+{
+ "name": "join_vertices_geometry_parity",
+ "description": "Collapsing a vertex set to one point, with and without averaging, with and without keeping the degenerate polygons the collapse leaves. GEOMETRY CHANNEL ONLY.",
+ "source": "frozen reference capture (task 1121, nine-tool sweep)",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-18",
+  "harness": "tools/local/capture (tasks 1121/1123)",
+  "task": "1160",
+  "notes": "The two `reversed` cells are a control pair: the same two vertices joined in the opposite selection order. They agree, which is what says the surviving point is not chosen by selection order. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "join_plate_boundary_pair",
+   "description": "two BOUNDARY verts of an open plate, averaged: survivor position is the whole question  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": true
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4
+   ]
+  },
+  {
+   "name": "join_quad_opposite",
+   "description": "opposite corners of ONE quad \u2014 the quad degenerates to a triangle (or is deleted)  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": true
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 5,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.5,
+     0.0,
+     0.5
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.5,
+      0.0,
+      0.5
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.5,
+      0.0,
+      0.5
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.5,
+      0.0,
+      0.5
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4
+   ]
+  },
+  {
+   "name": "join_average_reversed",
+   "description": "control for the cell above: averaging must be order-independent  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": true
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4
+   ]
+  },
+  {
+   "name": "join_noaverage_reversed",
+   "description": "the SAME pair as join_plate_pair_noaverage, selected in the OPPOSITE order.  Wave 1 showed the two engines keep different survivors; only this cell separates 'keeps the last selected' from 'keeps the highest index'  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": false
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4
+   ]
+  },
+  {
+   "name": "join_keep_flag",
+   "description": "keep 1-vertex polygons ON: does the degenerate remnant survive?  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": true,
+       "keep": true
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 5,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.5,
+     0.0,
+     0.5
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.5,
+      0.0,
+      0.5
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.5,
+      0.0,
+      0.5
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.5,
+      0.0,
+      0.5
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4
+   ]
+  },
+  {
+   "name": "join_islands",
+   "description": "one vertex from each DISJOINT island \u2014 the join bridges two shells  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        3.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        1.0
+       ],
+       [
+        3.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3
+       ],
+       [
+        4,
+        5,
+        6,
+        7
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": true
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 8,
+    "edges": 8,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 7,
+    "edges": 8,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     4.0,
+     0.0,
+     0.0
+    ],
+    [
+     4.0,
+     0.0,
+     1.0
+    ],
+    [
+     3.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4
+   ]
+  },
+  {
+   "name": "join_fan_ring_three",
+   "description": "three ring verts of a POLE fan collapse \u2014 two triangles go degenerate  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -1.0,
+        0.0,
+        0.0
+       ],
+       [
+        -0.5,
+        0.0,
+        -0.866025
+       ],
+       [
+        0.5,
+        0.0,
+        -0.866025
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3
+       ],
+       [
+        0,
+        3,
+        4
+       ],
+       [
+        0,
+        4,
+        5
+       ],
+       [
+        0,
+        5,
+        6
+       ],
+       [
+        0,
+        6,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -0.5,
+        0.0,
+        0.866025
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": true
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 7,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 8,
+    "faces": 4
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.5,
+     0.0,
+     -0.866025
+    ],
+    [
+     0.5,
+     0.0,
+     -0.866025
+    ],
+    [
+     0.333333,
+     0.0,
+     0.57735
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.333333,
+      0.0,
+      0.57735
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      0.333333,
+      0.0,
+      0.57735
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    3,
+    3
+   ]
+  },
+  {
+   "name": "join_pole_and_ring",
+   "description": "the HUB and one spoke tip: two incident triangles collapse to edges  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -1.0,
+        0.0,
+        0.0
+       ],
+       [
+        -0.5,
+        0.0,
+        -0.866025
+       ],
+       [
+        0.5,
+        0.0,
+        -0.866025
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3
+       ],
+       [
+        0,
+        3,
+        4
+       ],
+       [
+        0,
+        4,
+        5
+       ],
+       [
+        0,
+        5,
+        6
+       ],
+       [
+        0,
+        6,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": true
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 7,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_after": {
+    "verts": 6,
+    "edges": 9,
+    "faces": 4
+   },
+   "expected_vertices": [
+    [
+     0.5,
+     0.0,
+     0.866025
+    ],
+    [
+     -0.5,
+     0.0,
+     0.866025
+    ],
+    [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.5,
+     0.0,
+     -0.866025
+    ],
+    [
+     0.5,
+     0.0,
+     -0.866025
+    ],
+    [
+     0.5,
+     0.0,
+     0.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.5,
+      0.0,
+      0.0
+     ],
+     [
+      0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      -0.5,
+      0.0,
+      0.866025
+     ]
+    ],
+    [
+     [
+      0.5,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      0.5,
+      0.0,
+      0.0
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ]
+    ],
+    [
+     [
+      0.5,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    3,
+    3
+   ]
+  },
+  {
+   "name": "join_four_square",
+   "description": "the four interior verts of a 3x3 grid collapse to one point \u2014 the centre face degenerates entirely  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        3.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        2.0
+       ],
+       [
+        1.0,
+        0.0,
+        2.0
+       ],
+       [
+        2.0,
+        0.0,
+        2.0
+       ],
+       [
+        3.0,
+        0.0,
+        2.0
+       ],
+       [
+        0.0,
+        0.0,
+        3.0
+       ],
+       [
+        1.0,
+        0.0,
+        3.0
+       ],
+       [
+        2.0,
+        0.0,
+        3.0
+       ],
+       [
+        3.0,
+        0.0,
+        3.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        5,
+        4
+       ],
+       [
+        1,
+        2,
+        6,
+        5
+       ],
+       [
+        2,
+        3,
+        7,
+        6
+       ],
+       [
+        4,
+        5,
+        9,
+        8
+       ],
+       [
+        5,
+        6,
+        10,
+        9
+       ],
+       [
+        6,
+        7,
+        11,
+        10
+       ],
+       [
+        8,
+        9,
+        13,
+        12
+       ],
+       [
+        9,
+        10,
+        14,
+        13
+       ],
+       [
+        10,
+        11,
+        15,
+        14
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        2.0
+       ],
+       [
+        2.0,
+        0.0,
+        2.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": true
+      }
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 16,
+    "edges": 24,
+    "faces": 9
+   },
+   "expected_after": {
+    "verts": 13,
+    "edges": 20,
+    "faces": 8
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     3.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     2.0
+    ],
+    [
+     3.0,
+     0.0,
+     2.0
+    ],
+    [
+     0.0,
+     0.0,
+     3.0
+    ],
+    [
+     1.0,
+     0.0,
+     3.0
+    ],
+    [
+     2.0,
+     0.0,
+     3.0
+    ],
+    [
+     3.0,
+     0.0,
+     3.0
+    ],
+    [
+     1.5,
+     0.0,
+     1.5
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.5,
+      0.0,
+      1.5
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.5,
+      0.0,
+      1.5
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.5,
+      0.0,
+      1.5
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.5,
+      0.0,
+      1.5
+     ],
+     [
+      0.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.5,
+      0.0,
+      1.5
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.5,
+      0.0,
+      1.5
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      1.5,
+      0.0,
+      1.5
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      1.5,
+      0.0,
+      1.5
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      3.0
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    3,
+    3,
+    4,
+    4,
+    4,
+    4
+   ]
+  }
+ ]
+}

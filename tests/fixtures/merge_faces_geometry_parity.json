@@ -1,0 +1,2900 @@
+{
+ "name": "merge_faces_geometry_parity",
+ "description": "Merging a selected face set into one polygon: what the boundary walk does with a vertex that becomes strictly interior, with a non-planar pair, and with an L / U shaped region. GEOMETRY CHANNEL ONLY (the capture recorded a differing post-operation selection).",
+ "source": "frozen reference capture (task 1121, nine-tool sweep)",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-18",
+  "harness": "tools/local/capture (tasks 1121/1123)",
+  "task": "1160",
+  "notes": "The pole cells are the separation: merging a whole fan makes the hub interior, and whether an interior vertex is kept as a collinear corner or deleted is exactly the question a closed solid cannot ask. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "merge_plate_2quads",
+   "description": "two quads sharing ONE edge on an OPEN plate: the boundary walk has to drop the shared edge and keep six corners  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.5,
+        0.0,
+        0.5
+       ],
+       [
+        1.5,
+        0.0,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 6,
+    "edges": 6,
+    "faces": 1
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    6
+   ]
+  },
+  {
+   "name": "merge_twotri_diag",
+   "description": "two triangles -> one quad; separates a merge that only accepts quads  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.666667,
+        0.0,
+        0.333333
+       ],
+       [
+        0.333333,
+        0.0,
+        0.666667
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 4,
+    "edges": 5,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 4,
+    "edges": 4,
+    "faces": 1
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4
+   ]
+  },
+  {
+   "name": "merge_triquad",
+   "description": "MIXED valence pair (tri + quad) \u2014 accepted or refused?  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.5
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3
+       ],
+       [
+        1,
+        4,
+        2
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.5,
+        0.0,
+        0.5
+       ],
+       [
+        1.333333,
+        0.0,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 5,
+    "faces": 1
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.5
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      2.0,
+      0.0,
+      0.5
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    5
+   ]
+  },
+  {
+   "name": "merge_fold_nonplanar",
+   "description": "90-degree fold: is the merge gated on coplanarity?  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        1.0,
+        1.0
+       ],
+       [
+        1.0,
+        1.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3
+       ],
+       [
+        3,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.5,
+        0.0,
+        0.5
+       ],
+       [
+        0.5,
+        0.5,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 6,
+    "edges": 6,
+    "faces": 1
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     1.0,
+     1.0
+    ],
+    [
+     1.0,
+     1.0,
+     1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      1.0,
+      1.0
+     ],
+     [
+      0.0,
+      1.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    6
+   ]
+  },
+  {
+   "name": "merge_fan_all",
+   "description": "the whole fan: the valence-6 POLE becomes interior \u2014 is it deleted or kept as a corner?  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -1.0,
+        0.0,
+        0.0
+       ],
+       [
+        -0.5,
+        0.0,
+        -0.866025
+       ],
+       [
+        0.5,
+        0.0,
+        -0.866025
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3
+       ],
+       [
+        0,
+        3,
+        4
+       ],
+       [
+        0,
+        4,
+        5
+       ],
+       [
+        0,
+        5,
+        6
+       ],
+       [
+        0,
+        6,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.5,
+        0.0,
+        0.288675
+       ],
+       [
+        0.0,
+        0.0,
+        0.57735
+       ],
+       [
+        -0.5,
+        0.0,
+        0.288675
+       ],
+       [
+        -0.5,
+        0.0,
+        -0.288675
+       ],
+       [
+        0.0,
+        0.0,
+        -0.57735
+       ],
+       [
+        0.5,
+        0.0,
+        -0.288675
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 7,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_after": {
+    "verts": 6,
+    "edges": 6,
+    "faces": 1
+   },
+   "expected_vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.5,
+     0.0,
+     0.866025
+    ],
+    [
+     -0.5,
+     0.0,
+     0.866025
+    ],
+    [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.5,
+     0.0,
+     -0.866025
+    ],
+    [
+     0.5,
+     0.0,
+     -0.866025
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      -0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    6
+   ]
+  },
+  {
+   "name": "merge_fan_two",
+   "description": "two fan triangles -> quad, pole survives with lower valence  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -1.0,
+        0.0,
+        0.0
+       ],
+       [
+        -0.5,
+        0.0,
+        -0.866025
+       ],
+       [
+        0.5,
+        0.0,
+        -0.866025
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3
+       ],
+       [
+        0,
+        3,
+        4
+       ],
+       [
+        0,
+        4,
+        5
+       ],
+       [
+        0,
+        5,
+        6
+       ],
+       [
+        0,
+        6,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.5,
+        0.0,
+        0.288675
+       ],
+       [
+        0.0,
+        0.0,
+        0.57735
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 7,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_after": {
+    "verts": 7,
+    "edges": 11,
+    "faces": 5
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.5,
+     0.0,
+     0.866025
+    ],
+    [
+     -0.5,
+     0.0,
+     0.866025
+    ],
+    [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.5,
+     0.0,
+     -0.866025
+    ],
+    [
+     0.5,
+     0.0,
+     -0.866025
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      -0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    3,
+    3,
+    4
+   ]
+  },
+  {
+   "name": "merge_grid_2x2",
+   "description": "a 2x2 block: the shared corner vertex becomes strictly INTERIOR \u2014 kept as a corner or deleted?  (wave 1 showed the fan hub gets deleted)  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        3.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        2.0
+       ],
+       [
+        1.0,
+        0.0,
+        2.0
+       ],
+       [
+        2.0,
+        0.0,
+        2.0
+       ],
+       [
+        3.0,
+        0.0,
+        2.0
+       ],
+       [
+        0.0,
+        0.0,
+        3.0
+       ],
+       [
+        1.0,
+        0.0,
+        3.0
+       ],
+       [
+        2.0,
+        0.0,
+        3.0
+       ],
+       [
+        3.0,
+        0.0,
+        3.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        5,
+        4
+       ],
+       [
+        1,
+        2,
+        6,
+        5
+       ],
+       [
+        2,
+        3,
+        7,
+        6
+       ],
+       [
+        4,
+        5,
+        9,
+        8
+       ],
+       [
+        5,
+        6,
+        10,
+        9
+       ],
+       [
+        6,
+        7,
+        11,
+        10
+       ],
+       [
+        8,
+        9,
+        13,
+        12
+       ],
+       [
+        9,
+        10,
+        14,
+        13
+       ],
+       [
+        10,
+        11,
+        15,
+        14
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.5,
+        0.0,
+        0.5
+       ],
+       [
+        1.5,
+        0.0,
+        0.5
+       ],
+       [
+        0.5,
+        0.0,
+        1.5
+       ],
+       [
+        1.5,
+        0.0,
+        1.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 16,
+    "edges": 24,
+    "faces": 9
+   },
+   "expected_after": {
+    "verts": 15,
+    "edges": 20,
+    "faces": 6
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     3.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     2.0
+    ],
+    [
+     1.0,
+     0.0,
+     2.0
+    ],
+    [
+     2.0,
+     0.0,
+     2.0
+    ],
+    [
+     3.0,
+     0.0,
+     2.0
+    ],
+    [
+     0.0,
+     0.0,
+     3.0
+    ],
+    [
+     1.0,
+     0.0,
+     3.0
+    ],
+    [
+     2.0,
+     0.0,
+     3.0
+    ],
+    [
+     3.0,
+     0.0,
+     3.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      0.0,
+      0.0,
+      2.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      3.0
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4,
+    4,
+    4,
+    4,
+    8
+   ]
+  },
+  {
+   "name": "merge_grid_L",
+   "description": "L-shaped selection: the merged boundary has a REFLEX corner  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        3.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        2.0
+       ],
+       [
+        1.0,
+        0.0,
+        2.0
+       ],
+       [
+        2.0,
+        0.0,
+        2.0
+       ],
+       [
+        3.0,
+        0.0,
+        2.0
+       ],
+       [
+        0.0,
+        0.0,
+        3.0
+       ],
+       [
+        1.0,
+        0.0,
+        3.0
+       ],
+       [
+        2.0,
+        0.0,
+        3.0
+       ],
+       [
+        3.0,
+        0.0,
+        3.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        5,
+        4
+       ],
+       [
+        1,
+        2,
+        6,
+        5
+       ],
+       [
+        2,
+        3,
+        7,
+        6
+       ],
+       [
+        4,
+        5,
+        9,
+        8
+       ],
+       [
+        5,
+        6,
+        10,
+        9
+       ],
+       [
+        6,
+        7,
+        11,
+        10
+       ],
+       [
+        8,
+        9,
+        13,
+        12
+       ],
+       [
+        9,
+        10,
+        14,
+        13
+       ],
+       [
+        10,
+        11,
+        15,
+        14
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.5,
+        0.0,
+        0.5
+       ],
+       [
+        1.5,
+        0.0,
+        0.5
+       ],
+       [
+        0.5,
+        0.0,
+        1.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 16,
+    "edges": 24,
+    "faces": 9
+   },
+   "expected_after": {
+    "verts": 16,
+    "edges": 22,
+    "faces": 7
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     3.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     2.0
+    ],
+    [
+     1.0,
+     0.0,
+     2.0
+    ],
+    [
+     2.0,
+     0.0,
+     2.0
+    ],
+    [
+     3.0,
+     0.0,
+     2.0
+    ],
+    [
+     0.0,
+     0.0,
+     3.0
+    ],
+    [
+     1.0,
+     0.0,
+     3.0
+    ],
+    [
+     2.0,
+     0.0,
+     3.0
+    ],
+    [
+     3.0,
+     0.0,
+     3.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      0.0,
+      0.0,
+      2.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      3.0
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    8
+   ]
+  },
+  {
+   "name": "merge_grid_U",
+   "description": "an L/U region: simply connected but with TWO reflex corners  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        3.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        2.0
+       ],
+       [
+        1.0,
+        0.0,
+        2.0
+       ],
+       [
+        2.0,
+        0.0,
+        2.0
+       ],
+       [
+        3.0,
+        0.0,
+        2.0
+       ],
+       [
+        0.0,
+        0.0,
+        3.0
+       ],
+       [
+        1.0,
+        0.0,
+        3.0
+       ],
+       [
+        2.0,
+        0.0,
+        3.0
+       ],
+       [
+        3.0,
+        0.0,
+        3.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        5,
+        4
+       ],
+       [
+        1,
+        2,
+        6,
+        5
+       ],
+       [
+        2,
+        3,
+        7,
+        6
+       ],
+       [
+        4,
+        5,
+        9,
+        8
+       ],
+       [
+        5,
+        6,
+        10,
+        9
+       ],
+       [
+        6,
+        7,
+        11,
+        10
+       ],
+       [
+        8,
+        9,
+        13,
+        12
+       ],
+       [
+        9,
+        10,
+        14,
+        13
+       ],
+       [
+        10,
+        11,
+        15,
+        14
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.5,
+        0.0,
+        0.5
+       ],
+       [
+        0.5,
+        0.0,
+        1.5
+       ],
+       [
+        0.5,
+        0.0,
+        2.5
+       ],
+       [
+        1.5,
+        0.0,
+        2.5
+       ],
+       [
+        2.5,
+        0.0,
+        2.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 16,
+    "edges": 24,
+    "faces": 9
+   },
+   "expected_after": {
+    "verts": 16,
+    "edges": 20,
+    "faces": 5
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     3.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     2.0
+    ],
+    [
+     1.0,
+     0.0,
+     2.0
+    ],
+    [
+     2.0,
+     0.0,
+     2.0
+    ],
+    [
+     3.0,
+     0.0,
+     2.0
+    ],
+    [
+     0.0,
+     0.0,
+     3.0
+    ],
+    [
+     1.0,
+     0.0,
+     3.0
+    ],
+    [
+     2.0,
+     0.0,
+     3.0
+    ],
+    [
+     3.0,
+     0.0,
+     3.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      3.0
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      2.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4,
+    4,
+    4,
+    12
+   ]
+  },
+  {
+   "name": "merge_pent_pair",
+   "description": "two PENTAGONS -> one octagon  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.5,
+        0.0,
+        1.0
+       ],
+       [
+        0.5,
+        0.0,
+        1.7
+       ],
+       [
+        -0.5,
+        0.0,
+        1.0
+       ],
+       [
+        1.5,
+        0.0,
+        -1.0
+       ],
+       [
+        0.5,
+        0.0,
+        -1.7
+       ],
+       [
+        -0.5,
+        0.0,
+        -1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ],
+       [
+        1,
+        0,
+        7,
+        6,
+        5
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.5,
+        0.0,
+        0.74
+       ],
+       [
+        0.5,
+        0.0,
+        -0.74
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 8,
+    "edges": 9,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 8,
+    "edges": 8,
+    "faces": 1
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.5,
+     0.0,
+     1.0
+    ],
+    [
+     0.5,
+     0.0,
+     1.7
+    ],
+    [
+     -0.5,
+     0.0,
+     1.0
+    ],
+    [
+     1.5,
+     0.0,
+     -1.0
+    ],
+    [
+     0.5,
+     0.0,
+     -1.7
+    ],
+    [
+     -0.5,
+     0.0,
+     -1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.5,
+      0.0,
+      -1.7
+     ],
+     [
+      1.5,
+      0.0,
+      -1.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.5,
+      0.0,
+      1.0
+     ],
+     [
+      0.5,
+      0.0,
+      1.7
+     ],
+     [
+      -0.5,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    8
+   ]
+  },
+  {
+   "name": "merge_fan8_all",
+   "description": "a valence-8 pole becomes interior  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.707107,
+        0.0,
+        0.707107
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        -0.707107,
+        0.0,
+        0.707107
+       ],
+       [
+        -1.0,
+        0.0,
+        0.0
+       ],
+       [
+        -0.707107,
+        0.0,
+        -0.707107
+       ],
+       [
+        0.0,
+        0.0,
+        -1.0
+       ],
+       [
+        0.707107,
+        0.0,
+        -0.707107
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3
+       ],
+       [
+        0,
+        3,
+        4
+       ],
+       [
+        0,
+        4,
+        5
+       ],
+       [
+        0,
+        5,
+        6
+       ],
+       [
+        0,
+        6,
+        7
+       ],
+       [
+        0,
+        7,
+        8
+       ],
+       [
+        0,
+        8,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "centroids": [
+       [
+        0.569036,
+        0.0,
+        0.235702
+       ],
+       [
+        0.235702,
+        0.0,
+        0.569036
+       ],
+       [
+        -0.235702,
+        0.0,
+        0.569036
+       ],
+       [
+        -0.569036,
+        0.0,
+        0.235702
+       ],
+       [
+        -0.569036,
+        0.0,
+        -0.235702
+       ],
+       [
+        -0.235702,
+        0.0,
+        -0.569036
+       ],
+       [
+        0.235702,
+        0.0,
+        -0.569036
+       ],
+       [
+        0.569036,
+        0.0,
+        -0.235702
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mergeFaces",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 9,
+    "edges": 16,
+    "faces": 8
+   },
+   "expected_after": {
+    "verts": 8,
+    "edges": 8,
+    "faces": 1
+   },
+   "expected_vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.707107,
+     0.0,
+     0.707107
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     -0.707107,
+     0.0,
+     0.707107
+    ],
+    [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.707107,
+     0.0,
+     -0.707107
+    ],
+    [
+     0.0,
+     0.0,
+     -1.0
+    ],
+    [
+     0.707107,
+     0.0,
+     -0.707107
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.707107,
+      0.0,
+      -0.707107
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.707107,
+      0.0,
+      0.707107
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      -0.707107,
+      0.0,
+      0.707107
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.707107,
+      0.0,
+      -0.707107
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    8
+   ]
+  }
+ ]
+}

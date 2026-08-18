@@ -1,0 +1,3257 @@
+{
+ "name": "poly_split_dirty_parity",
+ "description": "The same split command as `poly_split_parity`, on the dirty bases: chords of rings carrying a reflex corner at index 0 and at index 3, collinear corners, a 7-gon, a saddle, a sliver, a welded T-junction and a mixed-valence pole.",
+ "source": "frozen reference capture (task 1123, dirty-geometry sweep)",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-18",
+  "harness": "tools/local/capture (task 1123, dirty-geometry sweep)",
+  "task": "1160",
+  "notes": "The reflex_first / reflex_mid pair is the same pentagon differing only in which vertex starts its ring -- the control pair that separated ring-start-dependent laws from ring-start-independent ones elsewhere in the sweep. Split is independent of it in both engines, and that is what these two cells freeze. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "split_reflex_first_0_2",
+   "description": "chord 0-2 of a reflex ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        4.0
+       ],
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        4.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 5,
+    "edges": 5,
+    "faces": 1
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     4.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     4.0,
+     0.0,
+     0.0
+    ],
+    [
+     4.0,
+     0.0,
+     4.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      4.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_reflex_first_1_4",
+   "description": "chord 1-4 of a reflex ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        4.0
+       ],
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        4.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        4.0
+       ],
+       [
+        4.0,
+        0.0,
+        4.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 5,
+    "edges": 5,
+    "faces": 1
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     4.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     4.0,
+     0.0,
+     0.0
+    ],
+    [
+     4.0,
+     0.0,
+     4.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      4.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      4.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      4.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_reflex_mid_0_2",
+   "description": "chord 0-2 of a reflex ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        4.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        4.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        4.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 5,
+    "edges": 5,
+    "faces": 1
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     4.0,
+     0.0,
+     0.0
+    ],
+    [
+     4.0,
+     0.0,
+     4.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     4.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      4.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_reflex_L_0_3",
+   "description": "chord 0-3 of a reflex ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        2.0
+       ],
+       [
+        1.0,
+        0.0,
+        2.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 6,
+    "faces": 1
+   },
+   "expected_after": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     2.0
+    ],
+    [
+     1.0,
+     0.0,
+     2.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_reflex_hex_1_4",
+   "description": "chord 1-4 of a reflex ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        3.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.5,
+        0.0,
+        3.0
+       ],
+       [
+        0.0,
+        0.0,
+        3.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        3.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.5,
+        0.0,
+        3.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 6,
+    "faces": 1
+   },
+   "expected_after": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     3.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.5,
+     0.0,
+     3.0
+    ],
+    [
+     0.0,
+     0.0,
+     3.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.5,
+      0.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      3.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.5,
+      0.0,
+      3.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      1.5,
+      0.0,
+      3.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_ngon7_0_3",
+   "description": "chord 0-3 of a mixed ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.4,
+        0.0,
+        2.4
+       ],
+       [
+        1.0,
+        0.0,
+        3.0
+       ],
+       [
+        -0.4,
+        0.0,
+        2.2
+       ],
+       [
+        -0.6,
+        0.0,
+        0.9
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.4,
+        0.0,
+        2.4
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 7,
+    "edges": 7,
+    "faces": 1
+   },
+   "expected_after": {
+    "verts": 7,
+    "edges": 8,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.4,
+     0.0,
+     2.4
+    ],
+    [
+     1.0,
+     0.0,
+     3.0
+    ],
+    [
+     -0.4,
+     0.0,
+     2.2
+    ],
+    [
+     -0.6,
+     0.0,
+     0.9
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.4,
+      0.0,
+      2.4
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ],
+     [
+      -0.4,
+      0.0,
+      2.2
+     ],
+     [
+      -0.6,
+      0.0,
+      0.9
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.4,
+      0.0,
+      2.4
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    5
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.4,
+      0.0,
+      2.4
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_ngon7_1_5",
+   "description": "chord 1-5 of a mixed ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.4,
+        0.0,
+        2.4
+       ],
+       [
+        1.0,
+        0.0,
+        3.0
+       ],
+       [
+        -0.4,
+        0.0,
+        2.2
+       ],
+       [
+        -0.6,
+        0.0,
+        0.9
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        -0.4,
+        0.0,
+        2.2
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 7,
+    "edges": 7,
+    "faces": 1
+   },
+   "expected_after": {
+    "verts": 7,
+    "edges": 8,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.4,
+     0.0,
+     2.4
+    ],
+    [
+     1.0,
+     0.0,
+     3.0
+    ],
+    [
+     -0.4,
+     0.0,
+     2.2
+    ],
+    [
+     -0.6,
+     0.0,
+     0.9
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.4,
+      0.0,
+      2.2
+     ],
+     [
+      -0.6,
+      0.0,
+      0.9
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.4,
+      0.0,
+      2.4
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ],
+     [
+      -0.4,
+      0.0,
+      2.2
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    5
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      -0.4,
+      0.0,
+      2.2
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_zerocorner_first_0_2",
+   "description": "chord 0-2 of a degenerate ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        0.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 5,
+    "edges": 5,
+    "faces": 1
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     0.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_zerocorner_mid_0_2",
+   "description": "chord 0-2 of a degenerate ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 5,
+    "edges": 5,
+    "faces": 1
+   },
+   "expected_after": {
+    "verts": 5,
+    "edges": 6,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_np_saddle_0_5",
+   "description": "chord 0-5 of a nonplanar ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.5625,
+        0.0
+       ],
+       [
+        1.0,
+        0.1875,
+        0.0
+       ],
+       [
+        2.0,
+        -0.1875,
+        0.0
+       ],
+       [
+        3.0,
+        -0.5625,
+        0.0
+       ],
+       [
+        0.0,
+        0.1875,
+        1.0
+       ],
+       [
+        1.0,
+        0.0625,
+        1.0
+       ],
+       [
+        2.0,
+        -0.0625,
+        1.0
+       ],
+       [
+        3.0,
+        -0.1875,
+        1.0
+       ],
+       [
+        0.0,
+        -0.1875,
+        2.0
+       ],
+       [
+        1.0,
+        -0.0625,
+        2.0
+       ],
+       [
+        2.0,
+        0.0625,
+        2.0
+       ],
+       [
+        3.0,
+        0.1875,
+        2.0
+       ],
+       [
+        0.0,
+        -0.5625,
+        3.0
+       ],
+       [
+        1.0,
+        -0.1875,
+        3.0
+       ],
+       [
+        2.0,
+        0.1875,
+        3.0
+       ],
+       [
+        3.0,
+        0.5625,
+        3.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        5,
+        4
+       ],
+       [
+        1,
+        2,
+        6,
+        5
+       ],
+       [
+        2,
+        3,
+        7,
+        6
+       ],
+       [
+        4,
+        5,
+        9,
+        8
+       ],
+       [
+        5,
+        6,
+        10,
+        9
+       ],
+       [
+        6,
+        7,
+        11,
+        10
+       ],
+       [
+        8,
+        9,
+        13,
+        12
+       ],
+       [
+        9,
+        10,
+        14,
+        13
+       ],
+       [
+        10,
+        11,
+        15,
+        14
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.5625,
+        0.0
+       ],
+       [
+        1.0,
+        0.0625,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 16,
+    "edges": 24,
+    "faces": 9
+   },
+   "expected_after": {
+    "verts": 16,
+    "edges": 25,
+    "faces": 10
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.5625,
+     0.0
+    ],
+    [
+     1.0,
+     0.1875,
+     0.0
+    ],
+    [
+     2.0,
+     -0.1875,
+     0.0
+    ],
+    [
+     3.0,
+     -0.5625,
+     0.0
+    ],
+    [
+     0.0,
+     0.1875,
+     1.0
+    ],
+    [
+     1.0,
+     0.0625,
+     1.0
+    ],
+    [
+     2.0,
+     -0.0625,
+     1.0
+    ],
+    [
+     3.0,
+     -0.1875,
+     1.0
+    ],
+    [
+     0.0,
+     -0.1875,
+     2.0
+    ],
+    [
+     1.0,
+     -0.0625,
+     2.0
+    ],
+    [
+     2.0,
+     0.0625,
+     2.0
+    ],
+    [
+     3.0,
+     0.1875,
+     2.0
+    ],
+    [
+     0.0,
+     -0.5625,
+     3.0
+    ],
+    [
+     1.0,
+     -0.1875,
+     3.0
+    ],
+    [
+     2.0,
+     0.1875,
+     3.0
+    ],
+    [
+     3.0,
+     0.5625,
+     3.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      0.1875,
+      0.0
+     ],
+     [
+      2.0,
+      -0.1875,
+      0.0
+     ],
+     [
+      2.0,
+      -0.0625,
+      1.0
+     ],
+     [
+      1.0,
+      0.0625,
+      1.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      -0.1875,
+      0.0
+     ],
+     [
+      3.0,
+      -0.5625,
+      0.0
+     ],
+     [
+      3.0,
+      -0.1875,
+      1.0
+     ],
+     [
+      2.0,
+      -0.0625,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.1875,
+      1.0
+     ],
+     [
+      1.0,
+      0.0625,
+      1.0
+     ],
+     [
+      1.0,
+      -0.0625,
+      2.0
+     ],
+     [
+      0.0,
+      -0.1875,
+      2.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0625,
+      1.0
+     ],
+     [
+      2.0,
+      -0.0625,
+      1.0
+     ],
+     [
+      2.0,
+      0.0625,
+      2.0
+     ],
+     [
+      1.0,
+      -0.0625,
+      2.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      -0.0625,
+      1.0
+     ],
+     [
+      3.0,
+      -0.1875,
+      1.0
+     ],
+     [
+      3.0,
+      0.1875,
+      2.0
+     ],
+     [
+      2.0,
+      0.0625,
+      2.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      -0.1875,
+      2.0
+     ],
+     [
+      1.0,
+      -0.0625,
+      2.0
+     ],
+     [
+      1.0,
+      -0.1875,
+      3.0
+     ],
+     [
+      0.0,
+      -0.5625,
+      3.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      -0.0625,
+      2.0
+     ],
+     [
+      2.0,
+      0.0625,
+      2.0
+     ],
+     [
+      2.0,
+      0.1875,
+      3.0
+     ],
+     [
+      1.0,
+      -0.1875,
+      3.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0625,
+      2.0
+     ],
+     [
+      3.0,
+      0.1875,
+      2.0
+     ],
+     [
+      3.0,
+      0.5625,
+      3.0
+     ],
+     [
+      2.0,
+      0.1875,
+      3.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.5625,
+      0.0
+     ],
+     [
+      1.0,
+      0.0625,
+      1.0
+     ],
+     [
+      0.0,
+      0.1875,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.5625,
+      0.0
+     ],
+     [
+      1.0,
+      0.1875,
+      0.0
+     ],
+     [
+      1.0,
+      0.0625,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.5625,
+      0.0
+     ],
+     [
+      1.0,
+      0.0625,
+      1.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_np_twist_0_3",
+   "description": "chord 0-3 of a nonplanar ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        -0.12,
+        0.0
+       ],
+       [
+        1.0,
+        0.12,
+        1.0
+       ],
+       [
+        2.0,
+        -0.24,
+        0.0
+       ],
+       [
+        2.0,
+        0.24,
+        1.0
+       ],
+       [
+        3.0,
+        -0.36,
+        0.0
+       ],
+       [
+        3.0,
+        0.36,
+        1.0
+       ],
+       [
+        4.0,
+        -0.48,
+        0.0
+       ],
+       [
+        4.0,
+        0.48,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        2,
+        3,
+        1
+       ],
+       [
+        2,
+        4,
+        5,
+        3
+       ],
+       [
+        4,
+        6,
+        7,
+        5
+       ],
+       [
+        6,
+        8,
+        9,
+        7
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.12,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 10,
+    "edges": 13,
+    "faces": 4
+   },
+   "expected_after": {
+    "verts": 10,
+    "edges": 14,
+    "faces": 5
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     -0.12,
+     0.0
+    ],
+    [
+     1.0,
+     0.12,
+     1.0
+    ],
+    [
+     2.0,
+     -0.24,
+     0.0
+    ],
+    [
+     2.0,
+     0.24,
+     1.0
+    ],
+    [
+     3.0,
+     -0.36,
+     0.0
+    ],
+    [
+     3.0,
+     0.36,
+     1.0
+    ],
+    [
+     4.0,
+     -0.48,
+     0.0
+    ],
+    [
+     4.0,
+     0.48,
+     1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      1.0,
+      -0.12,
+      0.0
+     ],
+     [
+      2.0,
+      -0.24,
+      0.0
+     ],
+     [
+      2.0,
+      0.24,
+      1.0
+     ],
+     [
+      1.0,
+      0.12,
+      1.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      -0.24,
+      0.0
+     ],
+     [
+      3.0,
+      -0.36,
+      0.0
+     ],
+     [
+      3.0,
+      0.36,
+      1.0
+     ],
+     [
+      2.0,
+      0.24,
+      1.0
+     ]
+    ],
+    [
+     [
+      3.0,
+      -0.36,
+      0.0
+     ],
+     [
+      4.0,
+      -0.48,
+      0.0
+     ],
+     [
+      4.0,
+      0.48,
+      1.0
+     ],
+     [
+      3.0,
+      0.36,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.12,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      -0.12,
+      0.0
+     ],
+     [
+      1.0,
+      0.12,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    4,
+    4,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.12,
+      1.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_sliver_quad_0_2",
+   "description": "chord 0-2 of a degenerate ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0008
+       ],
+       [
+        0.0,
+        0.0,
+        0.0008
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3
+       ],
+       [
+        3,
+        2,
+        4,
+        5
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0008
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 6,
+    "edges": 8,
+    "faces": 3
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0008
+    ],
+    [
+     0.0,
+     0.0,
+     0.0008
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0008
+     ],
+     [
+      1.0,
+      0.0,
+      0.0008
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0008
+     ],
+     [
+      0.0,
+      0.0,
+      0.0008
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0008
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0008
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_pole_mixed_5_7",
+   "description": "chord 5-7 of a pole ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.7,
+        0.0,
+        0.7
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        -0.7,
+        0.0,
+        0.7
+       ],
+       [
+        -1.0,
+        0.0,
+        0.0
+       ],
+       [
+        -0.4,
+        0.0,
+        -0.9
+       ],
+       [
+        0.6,
+        0.0,
+        -0.8
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3,
+        4
+       ],
+       [
+        0,
+        4,
+        5
+       ],
+       [
+        0,
+        5,
+        6,
+        7,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        -1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.6,
+        0.0,
+        -0.8
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 8,
+    "edges": 11,
+    "faces": 4
+   },
+   "expected_after": {
+    "verts": 8,
+    "edges": 12,
+    "faces": 5
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.7,
+     0.0,
+     0.7
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     -0.7,
+     0.0,
+     0.7
+    ],
+    [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.4,
+     0.0,
+     -0.9
+    ],
+    [
+     0.6,
+     0.0,
+     -0.8
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.7,
+      0.0,
+      0.7
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.7,
+      0.0,
+      0.7
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      -0.7,
+      0.0,
+      0.7
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.7,
+      0.0,
+      0.7
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.6,
+      0.0,
+      -0.8
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.4,
+      0.0,
+      -0.9
+     ],
+     [
+      0.6,
+      0.0,
+      -0.8
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    3,
+    4,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.6,
+      0.0,
+      -0.8
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  },
+  {
+   "name": "split_tjunc_welded_0_3",
+   "description": "chord 0-3 of a boundary ring",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        -1.0
+       ],
+       [
+        1.0,
+        0.0,
+        -1.0
+       ],
+       [
+        2.0,
+        0.0,
+        -1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ],
+       [
+        5,
+        6,
+        1,
+        0
+       ],
+       [
+        6,
+        7,
+        2,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 8,
+    "edges": 10,
+    "faces": 3
+   },
+   "expected_after": {
+    "verts": 8,
+    "edges": 11,
+    "faces": 4
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     -1.0
+    ],
+    [
+     1.0,
+     0.0,
+     -1.0
+    ],
+    [
+     2.0,
+     0.0,
+     -1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      -1.0
+     ],
+     [
+      1.0,
+      0.0,
+      -1.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      -1.0
+     ],
+     [
+      2.0,
+      0.0,
+      -1.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    4,
+    4,
+    4
+   ],
+   "expected_selection": {
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "polygons": [],
+    "edges": []
+   }
+  }
+ ]
+}

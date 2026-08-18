@@ -1,0 +1,2426 @@
+{
+ "name": "spin_quads_geometry_parity",
+ "description": "Rotating a shared edge to the other diagonal of its two faces. Counts never move, so the frozen FACE RINGS are the whole assertion -- a position set would pass on a spin that did nothing. GEOMETRY CHANNEL ONLY.",
+ "source": "frozen reference capture (task 1121, nine-tool sweep)",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-18",
+  "harness": "tools/local/capture (tasks 1121/1123)",
+  "task": "1160",
+  "notes": "Includes the two spokes of a valence-6 and a valence-8 pole, two disjoint edges spun in one command, and the same edge spun twice with a re-selection between -- the cell that showed the operation is repeatable at all. CHANNELS: the sweep's comparison was never vertex-only -- it compared the vertex multiset, the edge multiset, faces BOTH as ordered rings (winding shows) and as unordered position sets, the material partition, the per-face 'did this face's own tag change', and the post-command selection. Re-checked independently over all 215 frozen cases: ZERO agree on vertices while differing on ordered face rings, so nothing frozen here is a vertex-channel-only agreement. PRECISION: the sweep compared at 1e-4 and this fixture's tolerance matches it. The actual reproduction is far tighter -- 208 of the 215 cases are bit-identical at the dumps' 6 decimals and the remaining 7 agree to 3e-6 or better, that being the worst deviation anywhere in the set. The tolerance is the MEASUREMENT's bound, not the data's."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "spin_plate_shared",
+   "description": "the shared edge of two QUADS on an open plate  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "edges",
+      "coords": [
+       [
+        [
+         1.0,
+         0.0,
+         0.0
+        ],
+        [
+         1.0,
+         0.0,
+         1.0
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.spinEdge",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4
+   ]
+  },
+  {
+   "name": "spin_twotri_diag",
+   "description": "the shared diagonal of TWO TRIANGLES.  Our command spins it; the reference's own name says QUAD pairs \u2014 this is the discriminator  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "edges",
+      "coords": [
+       [
+        [
+         0.0,
+         0.0,
+         0.0
+        ],
+        [
+         1.0,
+         0.0,
+         1.0
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.spinEdge",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 4,
+    "edges": 5,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 4,
+    "edges": 5,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3
+   ]
+  },
+  {
+   "name": "spin_grid_interior",
+   "description": "an interior edge of a 3x3 grid, all four corners valence>=3  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        3.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        2.0
+       ],
+       [
+        1.0,
+        0.0,
+        2.0
+       ],
+       [
+        2.0,
+        0.0,
+        2.0
+       ],
+       [
+        3.0,
+        0.0,
+        2.0
+       ],
+       [
+        0.0,
+        0.0,
+        3.0
+       ],
+       [
+        1.0,
+        0.0,
+        3.0
+       ],
+       [
+        2.0,
+        0.0,
+        3.0
+       ],
+       [
+        3.0,
+        0.0,
+        3.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        5,
+        4
+       ],
+       [
+        1,
+        2,
+        6,
+        5
+       ],
+       [
+        2,
+        3,
+        7,
+        6
+       ],
+       [
+        4,
+        5,
+        9,
+        8
+       ],
+       [
+        5,
+        6,
+        10,
+        9
+       ],
+       [
+        6,
+        7,
+        11,
+        10
+       ],
+       [
+        8,
+        9,
+        13,
+        12
+       ],
+       [
+        9,
+        10,
+        14,
+        13
+       ],
+       [
+        10,
+        11,
+        15,
+        14
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "edges",
+      "coords": [
+       [
+        [
+         1.0,
+         0.0,
+         1.0
+        ],
+        [
+         2.0,
+         0.0,
+         1.0
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.spinEdge",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 16,
+    "edges": 24,
+    "faces": 9
+   },
+   "expected_after": {
+    "verts": 16,
+    "edges": 24,
+    "faces": 9
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     3.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     2.0
+    ],
+    [
+     1.0,
+     0.0,
+     2.0
+    ],
+    [
+     2.0,
+     0.0,
+     2.0
+    ],
+    [
+     3.0,
+     0.0,
+     2.0
+    ],
+    [
+     0.0,
+     0.0,
+     3.0
+    ],
+    [
+     1.0,
+     0.0,
+     3.0
+    ],
+    [
+     2.0,
+     0.0,
+     3.0
+    ],
+    [
+     3.0,
+     0.0,
+     3.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      0.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      3.0
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4
+   ]
+  },
+  {
+   "name": "spin_fan_spoke",
+   "description": "a spoke of a valence-6 POLE: spinning it drops the pole to valence 5  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -1.0,
+        0.0,
+        0.0
+       ],
+       [
+        -0.5,
+        0.0,
+        -0.866025
+       ],
+       [
+        0.5,
+        0.0,
+        -0.866025
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3
+       ],
+       [
+        0,
+        3,
+        4
+       ],
+       [
+        0,
+        4,
+        5
+       ],
+       [
+        0,
+        5,
+        6
+       ],
+       [
+        0,
+        6,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "edges",
+      "coords": [
+       [
+        [
+         0.0,
+         0.0,
+         0.0
+        ],
+        [
+         1.0,
+         0.0,
+         0.0
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.spinEdge",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 7,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_after": {
+    "verts": 7,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.5,
+     0.0,
+     0.866025
+    ],
+    [
+     -0.5,
+     0.0,
+     0.866025
+    ],
+    [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.5,
+     0.0,
+     -0.866025
+    ],
+    [
+     0.5,
+     0.0,
+     -0.866025
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      0.5,
+      0.0,
+      0.866025
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      -0.5,
+      0.0,
+      0.866025
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ]
+    ],
+    [
+     [
+      0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ]
+  },
+  {
+   "name": "spin_fan8_spoke",
+   "description": "a spoke of a valence-8 pole  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.707107,
+        0.0,
+        0.707107
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        -0.707107,
+        0.0,
+        0.707107
+       ],
+       [
+        -1.0,
+        0.0,
+        0.0
+       ],
+       [
+        -0.707107,
+        0.0,
+        -0.707107
+       ],
+       [
+        0.0,
+        0.0,
+        -1.0
+       ],
+       [
+        0.707107,
+        0.0,
+        -0.707107
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3
+       ],
+       [
+        0,
+        3,
+        4
+       ],
+       [
+        0,
+        4,
+        5
+       ],
+       [
+        0,
+        5,
+        6
+       ],
+       [
+        0,
+        6,
+        7
+       ],
+       [
+        0,
+        7,
+        8
+       ],
+       [
+        0,
+        8,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "edges",
+      "coords": [
+       [
+        [
+         0.0,
+         0.0,
+         0.0
+        ],
+        [
+         1.0,
+         0.0,
+         0.0
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.spinEdge",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 9,
+    "edges": 16,
+    "faces": 8
+   },
+   "expected_after": {
+    "verts": 9,
+    "edges": 16,
+    "faces": 8
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.707107,
+     0.0,
+     0.707107
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     -0.707107,
+     0.0,
+     0.707107
+    ],
+    [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.707107,
+     0.0,
+     -0.707107
+    ],
+    [
+     0.0,
+     0.0,
+     -1.0
+    ],
+    [
+     0.707107,
+     0.0,
+     -0.707107
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.707107,
+      0.0,
+      -0.707107
+     ],
+     [
+      0.707107,
+      0.0,
+      0.707107
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.707107,
+      0.0,
+      0.707107
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      -0.707107,
+      0.0,
+      0.707107
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.707107,
+      0.0,
+      0.707107
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.707107,
+      0.0,
+      -0.707107
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.707107,
+      0.0,
+      -0.707107
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      -1.0
+     ],
+     [
+      0.707107,
+      0.0,
+      -0.707107
+     ]
+    ],
+    [
+     [
+      0.707107,
+      0.0,
+      0.707107
+     ],
+     [
+      0.707107,
+      0.0,
+      -0.707107
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ]
+  },
+  {
+   "name": "spin_fan_two_spokes",
+   "description": "two opposite spokes of a POLE: disjoint face pairs on a fan  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -0.5,
+        0.0,
+        0.866025
+       ],
+       [
+        -1.0,
+        0.0,
+        0.0
+       ],
+       [
+        -0.5,
+        0.0,
+        -0.866025
+       ],
+       [
+        0.5,
+        0.0,
+        -0.866025
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3
+       ],
+       [
+        0,
+        3,
+        4
+       ],
+       [
+        0,
+        4,
+        5
+       ],
+       [
+        0,
+        5,
+        6
+       ],
+       [
+        0,
+        6,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "edges",
+      "coords": [
+       [
+        [
+         0.0,
+         0.0,
+         0.0
+        ],
+        [
+         1.0,
+         0.0,
+         0.0
+        ]
+       ],
+       [
+        [
+         0.0,
+         0.0,
+         0.0
+        ],
+        [
+         -1.0,
+         0.0,
+         0.0
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.spinEdge",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 7,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_after": {
+    "verts": 7,
+    "edges": 12,
+    "faces": 6
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.5,
+     0.0,
+     0.866025
+    ],
+    [
+     -0.5,
+     0.0,
+     0.866025
+    ],
+    [
+     -1.0,
+     0.0,
+     0.0
+    ],
+    [
+     -0.5,
+     0.0,
+     -0.866025
+    ],
+    [
+     0.5,
+     0.0,
+     -0.866025
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      0.5,
+      0.0,
+      0.866025
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      -0.5,
+      0.0,
+      0.866025
+     ]
+    ],
+    [
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      -0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ]
+    ],
+    [
+     [
+      0.5,
+      0.0,
+      0.866025
+     ],
+     [
+      0.5,
+      0.0,
+      -0.866025
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    3,
+    3,
+    3,
+    3,
+    3,
+    3
+   ]
+  },
+  {
+   "name": "spin_two_disjoint",
+   "description": "two interior edges whose face pairs are DISJOINT ({0,1} and {7,8}).  Wave 1's two-edge case shared a face and the reference aborted the whole command; this separates 'aborts on any interaction' from 'refuses more than one edge'  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        3.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        2.0
+       ],
+       [
+        1.0,
+        0.0,
+        2.0
+       ],
+       [
+        2.0,
+        0.0,
+        2.0
+       ],
+       [
+        3.0,
+        0.0,
+        2.0
+       ],
+       [
+        0.0,
+        0.0,
+        3.0
+       ],
+       [
+        1.0,
+        0.0,
+        3.0
+       ],
+       [
+        2.0,
+        0.0,
+        3.0
+       ],
+       [
+        3.0,
+        0.0,
+        3.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        5,
+        4
+       ],
+       [
+        1,
+        2,
+        6,
+        5
+       ],
+       [
+        2,
+        3,
+        7,
+        6
+       ],
+       [
+        4,
+        5,
+        9,
+        8
+       ],
+       [
+        5,
+        6,
+        10,
+        9
+       ],
+       [
+        6,
+        7,
+        11,
+        10
+       ],
+       [
+        8,
+        9,
+        13,
+        12
+       ],
+       [
+        9,
+        10,
+        14,
+        13
+       ],
+       [
+        10,
+        11,
+        15,
+        14
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "edges",
+      "coords": [
+       [
+        [
+         1.0,
+         0.0,
+         0.0
+        ],
+        [
+         1.0,
+         0.0,
+         1.0
+        ]
+       ],
+       [
+        [
+         2.0,
+         0.0,
+         2.0
+        ],
+        [
+         2.0,
+         0.0,
+         3.0
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.spinEdge",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 16,
+    "edges": 24,
+    "faces": 9
+   },
+   "expected_after": {
+    "verts": 16,
+    "edges": 24,
+    "faces": 9
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     3.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ],
+    [
+     3.0,
+     0.0,
+     1.0
+    ],
+    [
+     0.0,
+     0.0,
+     2.0
+    ],
+    [
+     1.0,
+     0.0,
+     2.0
+    ],
+    [
+     2.0,
+     0.0,
+     2.0
+    ],
+    [
+     3.0,
+     0.0,
+     2.0
+    ],
+    [
+     0.0,
+     0.0,
+     3.0
+    ],
+    [
+     1.0,
+     0.0,
+     3.0
+    ],
+    [
+     2.0,
+     0.0,
+     3.0
+    ],
+    [
+     3.0,
+     0.0,
+     3.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      0.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      1.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      2.0
+     ],
+     [
+      2.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      1.0,
+      0.0,
+      3.0
+     ]
+    ],
+    [
+     [
+      1.0,
+      0.0,
+      3.0
+     ],
+     [
+      3.0,
+      0.0,
+      2.0
+     ],
+     [
+      3.0,
+      0.0,
+      3.0
+     ],
+     [
+      2.0,
+      0.0,
+      3.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4,
+    4
+   ]
+  },
+  {
+   "name": "spin_then_spin_reselect",
+   "description": "spin, then RE-SELECT the new diagonal by coordinate and spin again \u2014 removes the post-command selection difference from the picture, so a surviving divergence is about the spin itself  GEOMETRY CHANNEL ONLY: the capture recorded matching geometry and a DIFFERENT post-operation selection, so no selection is frozen here.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "edges",
+      "coords": [
+       [
+        [
+         1.0,
+         0.0,
+         0.0
+        ],
+        [
+         1.0,
+         0.0,
+         1.0
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.spinEdge",
+      "params": {}
+     }
+    },
+    {
+     "select": {
+      "mode": "edges",
+      "coords": [
+       [
+        [
+         0.0,
+         0.0,
+         1.0
+        ],
+        [
+         2.0,
+         0.0,
+         0.0
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.spinEdge",
+      "params": {}
+     }
+    }
+   ],
+   "expected_before": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_after": {
+    "verts": 6,
+    "edges": 7,
+    "faces": 2
+   },
+   "expected_vertices": [
+    [
+     0.0,
+     0.0,
+     0.0
+    ],
+    [
+     1.0,
+     0.0,
+     0.0
+    ],
+    [
+     2.0,
+     0.0,
+     0.0
+    ],
+    [
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     1.0,
+     0.0,
+     1.0
+    ],
+    [
+     2.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "expected_faces": [
+    [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    [
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ]
+   ],
+   "expected_face_degrees": [
+    4,
+    4
+   ]
+  }
+ ]
+}
