@@ -162,6 +162,29 @@ class Command {
             // `refusedForNoEditTarget()` / `needsEditTarget()` so the BUTTON can
             // ask it before the press. Same test, same reason, one copy.
             if (refusedForNoEditTarget()) return false;
+            // TASK 1330 — one hide-derive per COMMAND, not per appended
+            // element. `Mesh.commitChange` refreshes the derived hidden
+            // planes on every geometry commit, and the per-element mutators
+            // commit per element (`addEdge` per edge, `addFace` per face), so
+            // a bulk kernel paid one full-mesh pass per element: measured
+            // exponent ~2.0 on a 100K grid (per-face bevel 74 s, poly_inset
+            // 72 s, edge_extrude 66 s), and 40-60x worse again with a single
+            // face hidden, when the word-OR early-out stops firing.
+            //
+            // This branch is the right place precisely BECAUSE of the refusal
+            // above it: it is the one gate every mesh-mutating Operator
+            // command reaches its kernel through. A command is also exactly
+            // the granularity the derive needs — nothing reads the derived
+            // planes between two appends of one command, and the batch runs
+            // the (unchanged, still-fresh-reading) refresh once at the end.
+            //
+            // The pointer is captured so the exit hook cannot close a
+            // DIFFERENT mesh than the one it opened.
+            Mesh* hideBatchMesh = mesh;
+            if (hideBatchMesh !is null) {
+                hideBatchMesh.beginHideDeriveBatch();
+            }
+            scope(exit) if (hideBatchMesh !is null) hideBatchMesh.endHideDeriveBatch();
             VectorStack vts;
             SubjectPacket subj;
             subj.mesh     = mesh;

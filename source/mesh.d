@@ -499,6 +499,40 @@ struct EdgeSharpness {
     uint  faceB    = uint.max;
 }
 
+// ---- Hide-derive batch state (task 1330) ----------------------------------
+// Thread-local by D's default for module-scope data. Deliberately NOT fields
+// of `Mesh`: kernels that replace the whole struct (`*mesh = subdivide(...)`)
+// would reset an in-struct counter mid-batch. See beginHideDeriveBatch.
+private int     g_hideDeriveDepth;
+private bool    g_hideDeriveDeferSafe;
+private Mesh*[] g_hideDerivePendingMeshes;
+
+version (unittest) {
+    // How many times the derive actually ran. Module scope (not a `Mesh`
+    // field) so a `*mesh = …` kernel cannot silently zero the count a test is
+    // reading. `version (unittest)`, deliberately not `debug {}` — a `debug`
+    // body is not compiled into a plain `-unittest` build, so a test over it
+    // would pass vacuously.
+    size_t g_hideDeriveRuns;
+}
+
+private void noteHideDerivePending(Mesh* m) {
+    if (m is null) return;
+    foreach (p; g_hideDerivePendingMeshes) if (p is m) return;
+    g_hideDerivePendingMeshes ~= m;
+}
+
+// Runs the derive once per mesh touched by the batch, then clears the set.
+// Unconditional: it also covers a mesh whose CONTENT was replaced wholesale
+// mid-batch (subdivide/remesh), where the pre-batch "nothing hidden" answer
+// no longer describes the mesh that is there now.
+private void flushHideDerivePending() {
+    auto pending = g_hideDerivePendingMeshes;
+    g_hideDerivePendingMeshes = null;
+    g_hideDeriveDeferSafe = false;
+    foreach (m; pending) if (m !is null) m.refreshHiddenDerived();
+}
+
 struct Mesh {
     Vec3[]    vertices;
     uint[2][] edges;
@@ -1025,6 +1059,16 @@ struct Mesh {
         ++mutationVersion;
         if (flags & MeshEditScope.Geometry) {
             ++topologyVersion;
+            // Task 1330: inside a batch the derive is deferred to the batch's
+            // end — see beginHideDeriveBatch. The refresh still reads FRESH
+            // arrays when it runs; only its FREQUENCY changes.
+            // Skip ONLY when the call would write nothing anyway — see
+            // beginHideDeriveBatch's rule. `noteHideDerivePending` makes the
+            // batch close derive this mesh once.
+            if (g_hideDeriveDepth > 0 && g_hideDeriveDeferSafe) {
+                noteHideDerivePending(&this);
+                return;
+            }
             // Hide (task 0613, §1.2): the derived vertex/edge planes ride
             // EVERY geometry-mutating commit through this one funnel, so a
             // topology edit can never leave them stale. refreshHiddenDerived
@@ -6620,6 +6664,9 @@ struct Mesh {
     // finalize so a delta apply/revert produces the same canonical edge order
     // the kernels do.
     void rebuildEdges() {
+        // One hide-derive for the whole re-derive, not one per edge (1330).
+        beginHideDeriveBatch();
+        scope(exit) endHideDeriveBatch();
         edges.length = 0;
         edgeIndexMap.clear();
         foreach (ref f; faces)
@@ -8845,12 +8892,177 @@ struct Mesh {
     private bool[] hiddenDerivedHasFaceScratch_;
     private bool[] hiddenDerivedAllHiddenScratch_;
 
+    // ---- Hide-derive batching (task 1330) ---------------------------------
+    // `refreshHiddenDerived()` runs from every geometry-mutating commit — and
+    // the per-ELEMENT mutators commit per element (`addEdge` once per edge,
+    // `addFace` once per face). A bulk op therefore paid one full-mesh pass
+    // per appended element. Measured on a 100K-face grid: seven commands at
+    // scaling exponent ~2.0 (per-face bevel 74 s, poly_inset 72 s,
+    // edge_extrude 66 s).
+    //
+    // THE RULE THAT MAKES DEFERRAL SAFE, and the reason no audit of the
+    // derived planes' READERS is needed: the derive is skipped only while
+    // NOTHING IS HIDDEN ANYWHERE — and in that state `refreshHiddenDerived`
+    // returns at its own three-plane word-OR early-out WITHOUT WRITING A
+    // SINGLE BIT. Skipping a call that provably writes nothing is invisible
+    // to every reader, including the ones that DO read the derived planes
+    // mid-operation: `selectVertex`/`selectEdge` (which refuse a hidden
+    // element), `applySelectedFrom_`, `selectedVertexIndices*`,
+    // `visibleVertexMask`/`visibleEdgeMask`, `maskMinusHiddenVertices/Edges`.
+    // Those readers are why the first cut of this fix was WRONG: it deferred
+    // unconditionally, so a vertex un-hidden by newly appended geometry was
+    // still marked Hide when the kernel selected its output, and the select
+    // was silently refused.
+    //
+    // The moment anything IS hidden, deferral is cancelled for the rest of
+    // the batch (`refreshHiddenDerived` clears the flag when its scan finds a
+    // Hide bit) and every commit derives eagerly, exactly as before this
+    // change — correct, and still quadratic in that state (task 1333).
+    //
+    // The state lives at MODULE scope, not in `Mesh`: three Operator commands
+    // (`mesh.subdivide`, `mesh.subdivide_faceted`, `mesh.remesh`) replace the
+    // whole struct with `*mesh = …` inside their kernel, which would reset an
+    // in-struct depth counter and leave the close unbalanced — an assert
+    // death in assert-live builds and a silent, STICKY underflow (the
+    // optimization permanently off, with no symptom) under `-release`.
+    // Module scope is thread-local in D, which is what we want: a worker
+    // mutating its own Mesh gets its own counter.
+    void beginHideDeriveBatch() {
+        if (g_hideDeriveDepth == 0)
+            g_hideDeriveDeferSafe = !anyHideBitSet();
+        ++g_hideDeriveDepth;
+        noteHideDerivePending(&this);
+    }
+
+    void endHideDeriveBatch() {
+        // Clamped, not asserted: an imbalance must not be a process death in
+        // one build kind and a silent permanent de-optimization in the other.
+        if (g_hideDeriveDepth <= 0) {
+            g_hideDeriveDepth = 0;
+            flushHideDerivePending();
+            return;
+        }
+        if (--g_hideDeriveDepth == 0)
+            flushHideDerivePending();
+    }
+
+    // The three-plane word-OR on its own — the question `refreshHiddenDerived`
+    // asks before deciding it has nothing to do.
+    private bool anyHideBitSet() const {
+        uint any = 0;
+        foreach (w; faceMarks)   any |= w;
+        foreach (w; vertexMarks) any |= w;
+        foreach (w; edgeMarks)   any |= w;
+        return (any & Marks.Hide) != 0;
+    }
+
+    unittest { // task 1330 — deferral fires when, and ONLY when, it writes nothing
+        // REGIME 1: nothing hidden. The derive would take its word-OR
+        // early-out and write nothing, so the batch may skip it entirely.
+        auto m = makeCube();
+        m.syncSelection();
+
+        g_hideDeriveRuns = 0;
+        m.beginHideDeriveBatch();
+        const uint base = cast(uint)m.vertices.length;
+        m.vertices ~= Vec3(2, 0, 0);
+        m.vertices ~= Vec3(2, 1, 0);
+        m.vertices ~= Vec3(3, 1, 0);
+        m.syncSelection();
+        m.addFace([0, base, base + 1]);      // each append commits on its own
+        m.addFace([base, base + 1, base + 2]);
+        m.addEdge(base, base + 2);
+        const size_t duringBatch = g_hideDeriveRuns;
+        m.endHideDeriveBatch();
+
+        // Without the deferral the fix is silently a no-op: the planes would
+        // still be right and every command would still be quadratic. So the
+        // COUNT is asserted, not only the result.
+        assert(duringBatch == 0,
+               "hide-derive ran INSIDE the batch — the deferral is gone");
+        assert(g_hideDeriveRuns == 1,
+               "the batch close must derive exactly once");
+
+        // Settled: what the batch left behind is what a fresh derive computes.
+        auto vBefore = m.vertexMarks.dup;
+        auto eBefore = m.edgeMarks.dup;
+        m.refreshHiddenDerived();
+        assert(m.vertexMarks == vBefore, "vertex hide plane was stale after the batch");
+        assert(m.edgeMarks   == eBefore, "edge hide plane was stale after the batch");
+    }
+
+    unittest { // task 1330 — a kernel that REPLACES the whole struct mid-batch
+        // `mesh.subdivide` / `mesh.subdivide_faceted` / `mesh.remesh` do
+        // `*mesh = <new mesh>` inside their kernel. With the batch counter
+        // stored as a FIELD of Mesh that assignment reset it, and the close
+        // then went unbalanced: an assert death in assert-live builds, and a
+        // STICKY underflow under -release that left the optimization off
+        // forever with no symptom. Both regressions are pinned here.
+        auto m = makeCube();
+        m.syncSelection();
+
+        m.beginHideDeriveBatch();
+        m = makeCube();              // the wholesale replace
+        m.syncSelection();
+        m.endHideDeriveBatch();      // must not assert, must not underflow
+
+        // The counter must be usable again — this is the -release symptom the
+        // assert could never catch, because there the assert is not compiled.
+        g_hideDeriveRuns = 0;
+        m.beginHideDeriveBatch();
+        const uint base = cast(uint)m.vertices.length;
+        m.vertices ~= Vec3(2, 0, 0);
+        m.vertices ~= Vec3(2, 1, 0);
+        m.syncSelection();
+        m.addFace([0, base, base + 1]);
+        assert(g_hideDeriveRuns == 0,
+               "deferral is dead after a wholesale struct replace (sticky underflow)");
+        m.endHideDeriveBatch();
+        assert(g_hideDeriveRuns == 1, "the batch close must still derive once");
+    }
+
+    unittest { // task 1330 — with something hidden, the batch must NOT defer
+        // REGIME 2, and the bug the first cut of this fix shipped: here the
+        // derive DOES write, so skipping it is observable. The observer is
+        // `selectVertex`, which refuses a vertex whose derived Hide bit is
+        // set — so a kernel that appends geometry and then selects its output
+        // silently loses the selection if the derive was deferred.
+        auto m = makeCube();
+        m.syncSelection();
+        // Hide every face incident to vertex 0 ⇒ v0 derives hidden.
+        foreach (fi, f; m.faces)
+            foreach (vi; f)
+                if (vi == 0) { m.setFaceHidden(fi, true); break; }
+        assert(m.isVertexHidden(0), "fixture: v0 must derive hidden first");
+
+        const uint base = cast(uint)m.vertices.length;
+        m.vertices ~= Vec3(2, 0, 0);
+        m.vertices ~= Vec3(2, 1, 0);
+        m.syncSelection();
+
+        m.beginHideDeriveBatch();
+        m.addFace([0, base, base + 1]);   // v0 gains a VISIBLE face ⇒ un-hidden
+        m.selectVertex(0);                // what a kernel does with its output
+        m.endHideDeriveBatch();
+
+        assert(!m.isVertexHidden(0),
+               "v0 gained a visible face and must no longer be hidden");
+        assert(m.isVertexSelected(0),
+               "the select was refused — the derive was deferred while it had "
+               ~ "writes to make (task 1330 BLOCKER 2)");
+    }
+
     void refreshHiddenDerived() {
+        version (unittest) ++g_hideDeriveRuns;
         uint anyHide = 0;
         foreach (w; faceMarks)   anyHide |= w;
         foreach (w; vertexMarks) anyHide |= w;
         foreach (w; edgeMarks)   anyHide |= w;
         if (!(anyHide & Marks.Hide)) return;   // nothing hidden anywhere ⇒ nothing to derive
+        // Something IS hidden: from here on the derive WRITES, so deferring it
+        // would be observable (task 1330). Cancel deferral for the rest of the
+        // batch — every later commit in it derives eagerly, as before.
+        g_hideDeriveDeferSafe = false;
 
         if (hiddenDerivedHasFaceScratch_.length < vertexMarks.length)
             hiddenDerivedHasFaceScratch_.length = vertexMarks.length;
