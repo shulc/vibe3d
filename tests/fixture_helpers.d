@@ -1585,6 +1585,160 @@ void runSelectionSuite(string fixtureJson) {
     }
 }
 
+// --------------------------------------------------------------------------
+// Face-ring and material-partition comparison (task 1140).
+//
+// Both live here rather than in the divergence runner because both are
+// COORDINATE-keyed set comparisons: element indices are not a promise across
+// engines (nor across two of our own builds after a topology change), so a
+// face is identified by the coordinates of its ring and a material group by
+// the centroids of the faces that carry the tag. No tag VALUE is ever
+// compared — the reference's tag names and our material ids are two private
+// namespaces, and only the partition they induce is a shared fact.
+// --------------------------------------------------------------------------
+
+// GET /api/model and return each face as its ring of vertex COORDINATES.
+private double[3][][] readFaceRings() {
+    auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
+    auto V = model["vertices"].array;
+    double[3][][] outf;
+    foreach (f; model["faces"].array) {
+        double[3][] ring;
+        foreach (fi; f.array) ring ~= jvec3(V[cast(size_t) fi.integer]);
+        outf ~= ring;
+    }
+    return outf;
+}
+
+// GET /api/model and return the face partition induced by `faceMaterial`, as
+// groups of face centroids. Group ORDER is not meaningful (it follows whatever
+// order the tag values happen to sort in); comparison is by set, below.
+private double[3][][] readMaterialGroups() {
+    auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
+    auto V = model["vertices"].array;
+    auto faces = model["faces"].array;
+    long[] mat;
+    if ("faceMaterial" in model)
+        foreach (m; model["faceMaterial"].array) mat ~= m.integer;
+    double[3][][long] byTag;
+    foreach (i, f; faces) {
+        double[3] c = [0, 0, 0];
+        auto fv = f.array;
+        foreach (fi; fv) {
+            auto p = jvec3(V[cast(size_t) fi.integer]);
+            c[0] += p[0]; c[1] += p[1]; c[2] += p[2];
+        }
+        double n = cast(double) fv.length;
+        if (n > 0) { c[0] /= n; c[1] /= n; c[2] /= n; }
+        long tag = (i < mat.length) ? mat[i] : 0;
+        byTag[tag] ~= c;
+    }
+    double[3][][] outg;
+    foreach (k; byTag.keys.dup.sort()) outg ~= byTag[k];
+    return outg;
+}
+
+private double[3][] jring(JSONValue v) {
+    double[3][] r;
+    foreach (p; v.array) r ~= jvec3(p);
+    return r;
+}
+
+private string ringStr(const double[3][] r) {
+    string s = "[";
+    foreach (i, p; r) {
+        if (i) s ~= " ";
+        s ~= format("(%.4f,%.4f,%.4f)", p[0], p[1], p[2]);
+    }
+    return s ~ "]";
+}
+
+// Two rings are the same face iff they have the same length and agree
+// position-by-position under SOME rotation. Rotation only, never reversal:
+// where a ring starts is a storage detail, which way it goes round is not.
+private bool ringEq(const double[3][] a, const double[3][] b, double tol) {
+    if (a.length != b.length) return false;
+    immutable n = a.length;
+    if (n == 0) return true;
+    immutable double t2 = tol * tol;
+    foreach (r; 0 .. n) {
+        bool ok = true;
+        foreach (i; 0 .. n) {
+            double[3] x = a[i], y = b[(i + r) % n];
+            if (dist2(x, y) > t2) { ok = false; break; }
+        }
+        if (ok) return true;
+    }
+    return false;
+}
+
+// The rings of `a` that `b` cannot match, matching each `b` ring at most once
+// (so a duplicated face is a difference, not a free pass).
+private double[3][][] ringsMissing(const double[3][][] a, const double[3][][] b,
+                                   double tol) {
+    auto used = new bool[](b.length);
+    double[3][][] outr;
+    foreach (ra; a) {
+        bool hit = false;
+        foreach (j, rb; b) {
+            if (used[j]) continue;
+            if (ringEq(ra, rb, tol)) { used[j] = true; hit = true; break; }
+        }
+        if (!hit) outr ~= ra.dup;
+    }
+    return outr;
+}
+
+// Same-set test for two groups of centroids (order-independent, tolerance).
+private bool centroidSetEq(const double[3][] a, const double[3][] b, double tol) {
+    if (a.length != b.length) return false;
+    auto used = new bool[](b.length);
+    immutable double t2 = tol * tol;
+    foreach (pa; a) {
+        bool hit = false;
+        foreach (j, pb; b) {
+            if (used[j]) continue;
+            double[3] x = pa, y = pb;
+            if (dist2(x, y) <= t2) { used[j] = true; hit = true; break; }
+        }
+        if (!hit) return false;
+    }
+    return true;
+}
+
+// Two partitions are equal iff their groups pair up one-for-one. Group order
+// carries no meaning, so this is a bijection test, not a list comparison.
+private bool partitionEq(const double[3][][] a, const double[3][][] b, double tol) {
+    if (a.length != b.length) return false;
+    auto used = new bool[](b.length);
+    foreach (ga; a) {
+        bool hit = false;
+        foreach (j, gb; b) {
+            if (used[j]) continue;
+            if (centroidSetEq(ga, gb, tol)) { used[j] = true; hit = true; break; }
+        }
+        if (!hit) return false;
+    }
+    return true;
+}
+
+private long[] groupSizes(const double[3][][] g) {
+    long[] s;
+    foreach (grp; g) s ~= cast(long) grp.length;
+    s.sort();
+    return s;
+}
+
+private double[3][][] jgroups(JSONValue v) {
+    double[3][][] g;
+    foreach (grp; v.array) {
+        double[3][] c;
+        foreach (p; grp.array) c ~= jvec3(p);
+        g ~= c;
+    }
+    return g;
+}
+
 /// runKnownDivergenceSuite — freeze a MEASURED disagreement with the
 /// reference, so it can neither rot nor be mistaken for parity.
 ///
@@ -1614,6 +1768,27 @@ void runSelectionSuite(string fixtureJson) {
 ///                  "divergence": {
 ///                     "extra_in_vibe3d":   [ [x,y,z], ... ],
 ///                     "missing_in_vibe3d": [ [x,y,z], ... ] } } ] }
+///
+/// TWO OPTIONAL CHANNELS beyond the vertex one, because a divergence does not
+/// have to live in the vertex set — and a suite that only knows how to look
+/// there reports PARITY on the cases where it does not (task 1140):
+///
+///   `faces` — each face as its RING OF COORDINATES, compared up to ROTATION
+///     only, so a ring stored from a different start index still matches but a
+///     ring wound the other way does NOT. Winding is a real mesh property and
+///     the whole divergence in some cells; a winding-blind comparison would
+///     silently call those parity. Gap declared as
+///     `extra_faces_in_vibe3d` / `missing_faces_in_vibe3d`.
+///
+///   `material_groups` — the PARTITION of faces by material tag, written as
+///     groups of face CENTROIDS. Tag VALUES are engine-private and are never
+///     compared; only which faces share a tag with which. Gap declared as
+///     `divergence.material_partition.{reference,vibe3d}_group_sizes`, and the
+///     runner additionally requires the two partitions to still DIFFER — a
+///     material carry that started working reddens here.
+///
+/// Both are opt-in per case: a case that omits `faces` gets exactly the
+/// pre-1140 vertex-only behaviour.
 void runKnownDivergenceSuite(string fixtureJson) {
     auto fx      = parseJSON(fixtureJson);
     string suite = ("name" in fx) ? fx["name"].str : "<divergence-suite>";
@@ -1685,5 +1860,105 @@ void runKnownDivergenceSuite(string fixtureJson) {
                 ("extra_in_vibe3d" in dv) ? dv["extra_in_vibe3d"] : JSONValue(cast(JSONValue[])[]));
         sameSet("missing_in_vibe3d", missing,
                 ("missing_in_vibe3d" in dv) ? dv["missing_in_vibe3d"] : JSONValue(cast(JSONValue[])[]));
+
+        // ---- optional FACE channel --------------------------------------
+        // Present on the cases whose divergence is NOT in the vertex set —
+        // where the two engines agree on every point and disagree only about
+        // which points make a face, or which way round it goes.
+        if ("faces" in cur) {
+            auto gotF = readFaceRings();
+            double[3][][] mineF;
+            foreach (r; cur["faces"].array) mineF ~= jring(r);
+
+            // (1) our own faces, verbatim and bidirectional.
+            auto lostMine = ringsMissing(mineF, gotF, tol);
+            if (lostMine.length)
+                assert(false,
+                    format("%s: vibe3d no longer produces its recorded face %s "
+                           ~ "(%d of %d gone) — this fixture records a KNOWN "
+                           ~ "DIVERGENCE; if you changed the behaviour "
+                           ~ "deliberately, re-measure and update it",
+                           cn, ringStr(lostMine[0]), lostMine.length, mineF.length));
+            auto newMine = ringsMissing(gotF, mineF, tol);
+            if (newMine.length)
+                assert(false,
+                    format("%s: vibe3d produced a face %s that is not in its "
+                           ~ "recorded output (%d such)", cn,
+                           ringStr(newMine[0]), newMine.length));
+
+            // (3) the face gap, recomputed from the two frozen sides.
+            double[3][][] refF;
+            foreach (r; cs["reference"]["faces"].array) refF ~= jring(r);
+            auto extraF   = ringsMissing(gotF, refF, tol);
+            auto missingF = ringsMissing(refF, gotF, tol);
+
+            void sameFaceSet(string what, double[3][][] have, JSONValue declared) {
+                auto want = declared.array;
+                assert(have.length == want.length,
+                    format("%s: %s is now %d faces, the fixture declares %d. "
+                           ~ "The divergence CHANGED — re-measure against the "
+                           ~ "reference and update this fixture; if it closed "
+                           ~ "entirely, replace this case with a parity one.",
+                           cn, what, have.length, want.length));
+                foreach (w; want) {
+                    auto wr = jring(w);
+                    bool found = false;
+                    foreach (h; have) if (ringEq(h, wr, tol)) { found = true; break; }
+                    assert(found,
+                        format("%s: %s no longer contains the face %s — the "
+                               ~ "divergence CHANGED, re-measure and update "
+                               ~ "this fixture", cn, what, ringStr(wr)));
+                }
+            }
+            sameFaceSet("extra_faces_in_vibe3d", extraF,
+                ("extra_faces_in_vibe3d" in dv) ? dv["extra_faces_in_vibe3d"]
+                                                : JSONValue(cast(JSONValue[])[]));
+            sameFaceSet("missing_faces_in_vibe3d", missingF,
+                ("missing_faces_in_vibe3d" in dv) ? dv["missing_faces_in_vibe3d"]
+                                                  : JSONValue(cast(JSONValue[])[]));
+        }
+
+        // ---- optional MATERIAL-PARTITION channel ------------------------
+        // For the cells where the geometry is identical in both engines and
+        // the disagreement is entirely about which faces inherit a tag.
+        if ("material_groups" in cur) {
+            auto gotG = readMaterialGroups();
+            auto mineG = jgroups(cur["material_groups"]);
+            auto refG  = jgroups(cs["reference"]["material_groups"]);
+
+            // (1) our own partition, verbatim.
+            assert(partitionEq(gotG, mineG, tol),
+                format("%s: vibe3d's material partition is now %s, its "
+                       ~ "recorded one is %s — this fixture records a KNOWN "
+                       ~ "DIVERGENCE; if you changed the behaviour "
+                       ~ "deliberately, re-measure and update it",
+                       cn, groupSizes(gotG), groupSizes(mineG)));
+
+            // (3) the gap: the declared sizes on both sides, AND that the two
+            // partitions still differ at all. Sizes alone would go on passing
+            // after a fix that reshuffled which faces carry which tag, and a
+            // closed divergence must redden, not sit quietly green.
+            if ("material_partition" in dv) {
+                auto mp = dv["material_partition"];
+                void sameSizes(string side, long[] have, JSONValue declared) {
+                    long[] want;
+                    foreach (w; declared.array) want ~= w.integer;
+                    want.sort();
+                    assert(have == want,
+                        format("%s: %s material-group sizes are now %s, the "
+                               ~ "fixture declares %s. The divergence CHANGED "
+                               ~ "— re-measure and update this fixture.",
+                               cn, side, have, want));
+                }
+                if ("reference_group_sizes" in mp)
+                    sameSizes("reference", groupSizes(refG), mp["reference_group_sizes"]);
+                if ("vibe3d_group_sizes" in mp)
+                    sameSizes("vibe3d", groupSizes(gotG), mp["vibe3d_group_sizes"]);
+            }
+            assert(!partitionEq(gotG, refG, tol),
+                format("%s: vibe3d's material partition now MATCHES the "
+                       ~ "reference's. The divergence has CLOSED — delete this "
+                       ~ "case and add a parity one in its place.", cn));
+        }
     }
 }

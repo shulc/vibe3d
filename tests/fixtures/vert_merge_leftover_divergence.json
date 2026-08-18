@@ -1,0 +1,252 @@
+{
+ "name": "vert_merge_leftover_divergence",
+ "description": "Merge-by-distance on a SLIVER, and what is left behind. Base: a unit quad plus a triangle (1,0,0) (1.9,0,0.502) (1.9,0,0.5) whose last two corners are 2e-3 apart; all 6 vertices selected, merge radius 1e-2. Both engines collapse the triangle and both keep the quad, but the reference leaves the merged point standing as a LOOSE vertex at (1.9,0,0.501) -- 5 vertices, 4 edges, 1 face -- and we do not: 4 vertices, 4 edges, 1 face, the merged point gone with the triangle. The single face ring is identical on both sides, so the whole divergence is that one vertex, 1.029 away from anything we keep.",
+ "source": "Reference side: headless command-port capture of the merge-by-distance command at fixed range 1e-2 (dirty-geometry sweep, task 1123, case vmerge_d1e2_sliver). vibe3d side: live drive of this build.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-17",
+  "harness": "tools/local/capture/dirty (dirty-geometry x tool sweep, task 1123)",
+  "task": "1140",
+  "notes": "INSTRUMENT: the reference side is a BEHAVIOURAL CAPTURE driven through the reference editor's own headless command port -- no display, no pointer, no debugger and no static read of its binary; every number in `reference` is a coordinate the reference itself printed after running the operation on the mesh in `input`. The vibe3d side is a LIVE DRIVE of this build over the HTTP test API through the very steps this fixture stores, read back from /api/model. Both engines are given the SAME base mesh (the reference's own dump, injected verbatim) and the selection travels by COORDINATE, so no element index is assumed to mean the same thing on both sides. Nothing here is an inference about the reference's internals; where a MECHANISM is guessed at, the case note says so in that word."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "sliver_collapses_to_a_loose_vertex",
+   "note": "Reference: 5 vertices, 4 edges, 1 face -- the quad plus a loose (1.9,0,0.501). Ours: 4 vertices, the quad alone. Face rings identical.",
+   "capture_case": "vmerge_d1e2_sliver",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.9,
+        0.0,
+        0.502
+       ],
+       [
+        1.9,
+        0.0,
+        0.5
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3
+       ],
+       [
+        1,
+        4,
+        5
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.9,
+        0.0,
+        0.502
+       ],
+       [
+        1.9,
+        0.0,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.merge",
+      "params": {
+       "range": "fixed",
+       "dist": 0.01,
+       "keep": false
+      }
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 5,
+     "edges": 4,
+     "faces": 1
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.9,
+      0.0,
+      0.501
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 4,
+     "edges": 4,
+     "faces": 1
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ]
+   },
+   "divergence": {
+    "extra_in_vibe3d": [],
+    "missing_in_vibe3d": [
+     [
+      1.9,
+      0.0,
+      0.501
+     ]
+    ],
+    "extra_faces_in_vibe3d": [],
+    "missing_faces_in_vibe3d": []
+   }
+  }
+ ]
+}

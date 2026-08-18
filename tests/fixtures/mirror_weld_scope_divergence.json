@@ -1,0 +1,424 @@
+{
+ "name": "mirror_weld_scope_divergence",
+ "description": "Which pairs a mirror's weld is allowed to join. Base: a quad plus a triangle whose corner (1.0005, 0, 0.0005) sits 7.071e-4 from the quad's corner (1,0,0). Mirrored through x = 0 with weld distance 1e-3, the reference returns 10 vertices, keeping BOTH images (-1,0,0) and (-1.0005,0,0.0005); we return 9, having welded that pair into one. The surviving face rings follow: our mirrored triangle is (-1,0,1)-(-2,0,1)-(-1,0,0) where the reference's is (-1.0005,0,0.0005)-(-1,0,1)-(-2,0,1). NOTE, and it corrects the ledger row that prompted this fixture: the pair in question is 7.071e-4 apart, which is INSIDE 1e-3 under either a strict or a non-strict comparison, so this cell does not measure a threshold comparison at all. What it measures is SCOPE -- our weld considers the freshly created images against each other, the reference's does not join two images of two distinct source vertices. That reading is an INFERENCE from this one cell; the frozen numbers are the measurement.",
+ "source": "Reference side: headless command-port capture of the mirror command with axis x, centre 0, merge on, fixed range, distance 1e-3 (dirty-geometry sweep, task 1123, case mirr_x_neardup). vibe3d side: live drive of this build.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-17",
+  "harness": "tools/local/capture/dirty (dirty-geometry x tool sweep, task 1123)",
+  "task": "1140",
+  "notes": "INSTRUMENT: the reference side is a BEHAVIOURAL CAPTURE driven through the reference editor's own headless command port -- no display, no pointer, no debugger and no static read of its binary; every number in `reference` is a coordinate the reference itself printed after running the operation on the mesh in `input`. The vibe3d side is a LIVE DRIVE of this build over the HTTP test API through the very steps this fixture stores, read back from /api/model. Both engines are given the SAME base mesh (the reference's own dump, injected verbatim) and the selection travels by COORDINATE, so no element index is assumed to mean the same thing on both sides. Nothing here is an inference about the reference's internals; where a MECHANISM is guessed at, the case note says so in that word."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "two_images_of_a_near_duplicate_pair",
+   "note": "Reference: 10 vertices, 13 edges, 4 faces -- both (-1,0,0) and (-1.0005,0,0.0005) survive. Ours: 9 vertices, 12 edges, 4 faces -- (-1.0005,0,0.0005) is welded away. The source pair (1,0,0)/(1.0005,0,0.0005), 7.071e-4 apart, survives intact on both sides; only their images differ.",
+   "capture_case": "mirr_x_neardup",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0005,
+        0.0,
+        0.0005
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3
+       ],
+       [
+        4,
+        5,
+        2
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": []
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mirror",
+      "params": {
+       "axis": "X",
+       "center": [
+        0,
+        0,
+        0
+       ],
+       "weld": 0.001,
+       "flip_normals": true
+      }
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 10,
+     "edges": 13,
+     "faces": 4
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0005,
+      0.0,
+      0.0005
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -1.0,
+      0.0,
+      1.0
+     ],
+     [
+      -1.0005,
+      0.0,
+      0.0005
+     ],
+     [
+      -2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0005,
+       0.0,
+       0.0005
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       -1.0,
+       0.0,
+       1.0
+      ],
+      [
+       -1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       -1.0005,
+       0.0,
+       0.0005
+      ],
+      [
+       -1.0,
+       0.0,
+       1.0
+      ],
+      [
+       -2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 9,
+     "edges": 12,
+     "faces": 4
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0005,
+      0.0,
+      0.0005
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -1.0,
+      0.0,
+      1.0
+     ],
+     [
+      -2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0005,
+       0.0,
+       0.0005
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       -1.0,
+       0.0,
+       1.0
+      ],
+      [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       -1.0,
+       0.0,
+       1.0
+      ],
+      [
+       -2.0,
+       0.0,
+       1.0
+      ],
+      [
+       -1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ]
+   },
+   "divergence": {
+    "extra_in_vibe3d": [],
+    "missing_in_vibe3d": [
+     [
+      -1.0005,
+      0.0,
+      0.0005
+     ]
+    ],
+    "extra_faces_in_vibe3d": [
+     [
+      [
+       -1.0,
+       0.0,
+       1.0
+      ],
+      [
+       -2.0,
+       0.0,
+       1.0
+      ],
+      [
+       -1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "missing_faces_in_vibe3d": [
+     [
+      [
+       -1.0005,
+       0.0,
+       0.0005
+      ],
+      [
+       -1.0,
+       0.0,
+       1.0
+      ],
+      [
+       -2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

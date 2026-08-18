@@ -1,0 +1,763 @@
+{
+ "name": "poly_triple_reflex_divergence",
+ "description": "Which diagonals a triangulation cuts on a ring with a REFLEX corner. The vertex sets match completely in both cells -- no vertex is created or moved by either engine -- and the entire divergence is in which vertices make a triangle. On the pentagon (0,0,0) (4,0,0) (4,0,4) (2,0,1) (0,0,4), whose reflex corner is (2,0,1), the reference's fan leaves every triangle inside the ring, while ours emits (0,0,0)-(4,0,0)-(4,0,4), a triangle that CONTAINS the reflex corner: the output overlaps itself. The hexagon case is the same shape of result on a 6-gon whose reflex corner is (2,0,1) -- our first triangle (0,0,0)-(3,0,0)-(3,0,3) contains it too. 2 of 3 and 2 of 4 face rings differ respectively.",
+ "source": "Reference side: headless command-port capture of the triangulate command (dirty-geometry sweep, task 1123, cases tri_reflex_mid / tri_reflex_hex). vibe3d side: live drive of this build.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-17",
+  "harness": "tools/local/capture/dirty (dirty-geometry x tool sweep, task 1123)",
+  "task": "1140",
+  "notes": "INSTRUMENT: the reference side is a BEHAVIOURAL CAPTURE driven through the reference editor's own headless command port -- no display, no pointer, no debugger and no static read of its binary; every number in `reference` is a coordinate the reference itself printed after running the operation on the mesh in `input`. The vibe3d side is a LIVE DRIVE of this build over the HTTP test API through the very steps this fixture stores, read back from /api/model. Both engines are given the SAME base mesh (the reference's own dump, injected verbatim) and the selection travels by COORDINATE, so no element index is assumed to mean the same thing on both sides. Nothing here is an inference about the reference's internals; where a MECHANISM is guessed at, the case note says so in that word."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "reflex_pentagon",
+   "note": "5 vertices, 7 edges, 3 triangles on both sides; 2 of the 3 face rings differ. Ours includes (0,0,0)-(4,0,0)-(4,0,4), which contains the reflex corner (2,0,1).",
+   "capture_case": "tri_reflex_mid",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        4.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        4.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         0.0,
+         0.0,
+         0.0
+        ],
+        [
+         4.0,
+         0.0,
+         0.0
+        ],
+        [
+         4.0,
+         0.0,
+         4.0
+        ],
+        [
+         2.0,
+         0.0,
+         1.0
+        ],
+        [
+         0.0,
+         0.0,
+         4.0
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.triple",
+      "params": {}
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 5,
+     "edges": 7,
+     "faces": 3
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      4.0
+     ]
+    ],
+    "faces": [
+     [
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       4.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 5,
+     "edges": 7,
+     "faces": 3
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      4.0
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       4.0
+      ]
+     ]
+    ]
+   },
+   "divergence": {
+    "extra_in_vibe3d": [],
+    "missing_in_vibe3d": [],
+    "extra_faces_in_vibe3d": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "missing_faces_in_vibe3d": [
+     [
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "name": "reflex_hexagon",
+   "note": "6 vertices, 9 edges, 4 triangles on both sides; 2 of the 4 face rings differ. Ours includes (0,0,0)-(3,0,0)-(3,0,3), which contains the reflex corner (2,0,1).",
+   "capture_case": "tri_reflex_hex",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        0.0
+       ],
+       [
+        3.0,
+        0.0,
+        3.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.5,
+        0.0,
+        3.0
+       ],
+       [
+        0.0,
+        0.0,
+        3.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "polygons",
+      "coords": [
+       [
+        [
+         0.0,
+         0.0,
+         0.0
+        ],
+        [
+         3.0,
+         0.0,
+         0.0
+        ],
+        [
+         3.0,
+         0.0,
+         3.0
+        ],
+        [
+         2.0,
+         0.0,
+         1.0
+        ],
+        [
+         1.5,
+         0.0,
+         3.0
+        ],
+        [
+         0.0,
+         0.0,
+         3.0
+        ]
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.triple",
+      "params": {}
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 6,
+     "edges": 9,
+     "faces": 4
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      3.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.5,
+      0.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      3.0
+     ]
+    ],
+    "faces": [
+     [
+      [
+       1.5,
+       0.0,
+       3.0
+      ],
+      [
+       0.0,
+       0.0,
+       3.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.5,
+       0.0,
+       3.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.0,
+       0.0,
+       3.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 6,
+     "edges": 9,
+     "faces": 4
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      0.0
+     ],
+     [
+      3.0,
+      0.0,
+      3.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.5,
+      0.0,
+      3.0
+     ],
+     [
+      0.0,
+      0.0,
+      3.0
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.0,
+       0.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.0,
+       0.0,
+       3.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.5,
+       0.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.5,
+       0.0,
+       3.0
+      ],
+      [
+       0.0,
+       0.0,
+       3.0
+      ]
+     ]
+    ]
+   },
+   "divergence": {
+    "extra_in_vibe3d": [],
+    "missing_in_vibe3d": [],
+    "extra_faces_in_vibe3d": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.0,
+       0.0,
+       3.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.0,
+       0.0,
+       3.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "missing_faces_in_vibe3d": [
+     [
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       3.0,
+       0.0,
+       0.0
+      ],
+      [
+       3.0,
+       0.0,
+       3.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}
