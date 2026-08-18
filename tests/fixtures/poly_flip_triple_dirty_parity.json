@@ -1,7 +1,7 @@
 {
  "name": "poly_flip_triple_dirty_parity",
  "face_ring_start": "ignored",
- "face_ring_start_note": "THIS is the fixture the blind spot was found on. Its eight convex quads have diverged from the reference since the day it was written -- we emit clip tuples, the reference emits strip tuples, the same two triangles with the same winding begun at different corners -- and a rotation-tolerant comparison called that parity. Task 1280 then read the green as evidence that a reference code path 'never ran' and filed a card about a gate that does not exist; a debugger capture refuted it. Measured 2026-08-18: 39 of 61 rings here differ in start only. The two cases that DO agree declare \"compared\" below. The rest stay rotation-tolerant on purpose: the honest record of this family is the tuple-level divergence frozen in tests/fixtures/triangulate_convex_strip_divergence.json, not a start pinned here as if it matched. See doc/tasks/work/1283-fixture-comparison-ignores-tuple-start.md.",
+ "face_ring_start_note": "THIS is the fixture the blind spot was found on. Its eight convex quads had diverged from the reference since the day it was written -- we emitted clip tuples, the reference emits strip tuples, the same two triangles with the same winding begun at different corners -- and a rotation-tolerant comparison called that parity. Task 1280 then read the green as evidence that a reference code path 'never ran' and filed a card about a gate that does not exist; a debugger capture refuted it. Measured 2026-08-18 (task 1310): 39 of 61 rings here differed in start only. PART OF THAT IS NOW CLOSED. Task 1320 ported the strip, and the count measured the same way is 23 -- the 16 triangles of the three convex-quad TRIPLE cases (tri_np_one 2, tri_pole_quad3 6, tri_np_twist 8) now match start-and-all, so those three declare \"compared\" below alongside the two that always did. The 23 that remain are all in the mesh.flip cases, which task 1320 did not touch and which stay rotation-tolerant on purpose; their honest record is the divergence they are frozen against, not a start pinned here as if it matched. See doc/tasks/work/1283-fixture-comparison-ignores-tuple-start.md and doc/tasks/work/1320-port-strip.md.",
  "description": "Flipping every face's winding, and triangulating. Neither command had a measured fixture. The flip cells are the only place in this delivery where a direction-sensitive face ring is the ENTIRE assertion -- a flip moves no vertex and changes no count.",
  "source": "frozen reference capture (task 1123, dirty-geometry sweep)",
  "provenance": {
@@ -2067,7 +2067,8 @@
      ]
     ],
     "edges": []
-   }
+   },
+   "face_ring_start": "compared"
   },
   {
    "name": "tri_np_twist",
@@ -2452,7 +2453,8 @@
      ]
     ],
     "edges": []
-   }
+   },
+   "face_ring_start": "compared"
   },
   {
    "name": "tri_pole_quad3",
@@ -2750,7 +2752,8 @@
      ]
     ],
     "edges": []
-   }
+   },
+   "face_ring_start": "compared"
   },
   {
    "name": "tri_pole_quad5",

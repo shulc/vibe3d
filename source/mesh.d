@@ -4613,7 +4613,9 @@ struct Mesh {
     // Triangulation family: Triple / Quadruple / Detriangulate
     // -----------------------------------------------------------------------
 
-    // Above this ring size `earClipRingCorners` stops clipping and fans.
+    // Above this ring size `tripleRingCorners` stops clipping and fans — and
+    // the strip never runs above it either, because it needs the same corner
+    // chooser and so inherits the same bound.
     // Clipping is O(n^3) worst case (n clips x n corners x n containment
     // probes), so one pathological n-gon could otherwise stall an edit; 256
     // corners caps a single face at ~1.7e7 probes. The fallback fans from a
@@ -4650,7 +4652,7 @@ struct Mesh {
     // — "the horseshoe's ears clear 0.5 in several places" — is wrong, and the
     // correction matters because it names the wrong knob: the horseshoe's best
     // ear is 0.4, so this threshold never fires there. The tie-break is what
-    // moves that decomposition. See `earClipRingCorners`' header.
+    // moves that decomposition. See `tripleRingCorners`' header.
     private enum double kTripleQualityEarlyOut = 0.5;
 
     // The reference compares two qualities through a RELATIVE band: equal when
@@ -4663,6 +4665,179 @@ struct Mesh {
     // same 19/19. Only an absurdly wide band (1e3) breaks a cell. Read, not
     // fitted.
     private enum double kTripleCompareDivisor = 3360000.0;
+
+    // ---- the STRIP's two constants (task 1320) -----------------------------
+
+    // The strip refuses a ring on which any triangle of its DEGENERACY WALK has
+    // an area under this. Read off the gate's own instructions and then read
+    // again at run time (task 1282): the comparison goes through the same
+    // relative comparator as `kTripleCompareDivisor`, but against a literal
+    // zero its relative term is inert — `A < A/3360000` is impossible for
+    // `A > 0` — so the whole gate collapses to this ABSOLUTE floor.
+    //
+    // IT IS ABSOLUTE ON PURPOSE, AND THAT IS NOT THE SCALE BUG IT LOOKS LIKE.
+    // Every other degeneracy test in this file is deliberately RELATIVE to its
+    // own operands, because an absolute floor on an area misclassifies a small
+    // polygon (task 1230 shipped one and `poly.inset` refused a 0.002-unit
+    // face). This one is absolute because the behaviour being matched is
+    // absolute: the reference refuses a valid convex ring purely for being
+    // small, and 14 measured cells say so. Making it relative would be a
+    // correctness improvement and a parity regression, so it stays, loudly.
+    //
+    // WHAT BEHAVIOUR PINS, over the 62 measured cells, and it pins this one
+    // TIGHTLY — unlike `kTripleQualityEarlyOut`, which the capture could only
+    // bound from below. A ladder of exact powers of two (`strip_scale14..19`,
+    // mantissas bit-identical, only the exponent moving) plus a 1 % ladder
+    // (`strip_fine0..7`) bracket it from BOTH sides:
+    //   * at 9e-11 or below, `strip_fine2` and `strip_fine3` break;
+    //   * at 1.1e-10 or above, `strip_fine4` breaks;
+    //   * `area == 0` — the reading before task 1282 — breaks SIX:
+    //     `strip_scale18`, `strip_scale19`, `strip_fine0`..`strip_fine3`.
+    // So behaviour alone puts it inside (9.9e-11, 1.01e-10], and the constant
+    // read out of the reference sits in that interval.
+    //
+    // THE SCALE IS PART OF THE ASSERTION. At coordinates of order 1 this floor
+    // and `area == 0` are the same test — float32 spacing at 1 is ~6e-8, so a
+    // triangle either has area 0 exactly or has area far above 1e-10. The two
+    // only part company around 1e-5-sized geometry, which is why every cell
+    // that separates them had to be built at that scale, and why a fixture at
+    // unit scale cannot tell this constant from a wrong one.
+    private enum double kStripDegenerateArea = 1e-10;
+
+    // The strip refuses a ring on which any triangle of its EMISSION WALK
+    // scores under this on the same metric the corner chooser uses,
+    // `2*Area / (longest side)^2`.
+    //
+    // WHAT BEHAVIOUR PINS: only a wide band, and this is READ, not fitted. The
+    // measured cells bound it from below at 0.002 (`strip_sliver_quad`, a
+    // 10 x 0.02 convex quad whose two strip triangles score 0.00199999 — at any
+    // floor at or under that, the strip takes a ring the reference declined)
+    // and from above at 0.207 (`oct_default` / `oct_strip`, whose worst strip
+    // triangle scores 0.207107). Anything in (0.002, 0.207) reproduces all 62
+    // cells alike, so 0.01 is inside a band two orders wide and its exact value
+    // rests on the read, not on the corpus. Same shape as
+    // `kTripleQualityEarlyOut` one block up — say which half is measured.
+    private enum double kStripQualityFloor = 0.01;
+
+    /// Which of the reference's two triangulators to run on a ring.
+    ///
+    /// The reference's command takes this as an argument and DEFAULTS to the
+    /// strip: a bare invocation is bit-for-bit the strip path, which is how
+    /// every fixture in this repo was captured. `Strip` is therefore our
+    /// default too, and no caller has to ask for it.
+    ///
+    /// `EarClip` names the OTHER path — the quality ear clip ported in task
+    /// 1280, which is also the strip's own fallback whenever one of its three
+    /// gates declines. It is reachable on its own because the clip is a law we
+    /// pin separately: 21 of the 62 measured cells were driven down it, and one
+    /// of them (`oct_quality`, a convex octagon) is a ring the strip would
+    /// otherwise take, so without this switch that cell could not be asserted
+    /// at all. No production path asks for it — `mesh.triple` is a bare call,
+    /// exactly as the reference's is.
+    enum TriangulateMode : ubyte {
+        Strip,     /// the default: convex-only zig-zag, falling back to EarClip
+        EarClip,   /// the quality ear clip alone (task 1280)
+    }
+
+    /// The zig-zag walk itself — `n - 2` triangles of RING POSITIONS, starting
+    /// from position `start` and closing over the ring (task 1320).
+    ///
+    /// Two cursors: `lo` climbing from `start`, `hi` descending from `start-1`,
+    /// alternating, `lo` first. They stop when two corners are left, which is
+    /// why the count is exactly `n - 2`.
+    ///
+    ///     n=8, start=0:  [0,1,7] [6,7,1] [1,2,6] [5,6,2] [2,3,5] [4,5,3]
+    ///
+    /// THE START IS A PARAMETER BECAUSE THE REFERENCE WALKS THIS TWICE FROM
+    /// TWO DIFFERENT PLACES, and that is the whole reason its degeneracy gate
+    /// could be isolated at all (task 1282):
+    ///
+    ///     degeneracy gate   walks from RING POSITION 0
+    ///     everything else   walks from the corner the chooser picks
+    ///
+    /// so whenever the picked corner is not 0 the two walks inspect DIFFERENT
+    /// triangles, and a ring can carry a degenerate triangle that only the gate
+    /// ever sees. `strip_collinear5` is exactly that ring, and running both
+    /// walks from one index silently admits it. Do not collapse the two call
+    /// sites into one.
+    ///
+    /// The reference's degeneracy loop has no modulo in it — `lo` counts up
+    /// from 0 and `hi` down from `n-1` and neither wraps. Ours is the same
+    /// walk with `start == 0`, which produces the identical sequence because
+    /// the two cursors meet before either can wrap; the unittest below asserts
+    /// that equivalence directly rather than leaving it as a claim.
+    private static uint[3][] stripWalkCorners(size_t n, size_t start) pure nothrow {
+        uint[3][] w;
+        if (n < 3) return w;
+        size_t lo = start % n;
+        size_t hi = (start + n - 1) % n;
+        size_t left = n;
+        bool fromLo = true;
+        while (left > 2) {
+            if (fromLo) {
+                immutable size_t nx = (lo + 1) % n;
+                w ~= cast(uint[3])[cast(uint)lo, cast(uint)nx, cast(uint)hi];
+                lo = nx;
+            } else {
+                immutable size_t pv = (hi + n - 1) % n;
+                w ~= cast(uint[3])[cast(uint)pv, cast(uint)hi, cast(uint)lo];
+                hi = pv;
+            }
+            fromLo = !fromLo;
+            --left;
+        }
+        return w;
+    }
+
+    unittest { // stripWalkCorners: the walk from ring position 0 never wraps, so it
+               // IS the reference's modulo-free degeneracy loop — task 1320.
+        //
+        // The reference runs this walk twice from two different origins. The
+        // emission walk closes over the ring and needs the modulo; the degeneracy
+        // walk counts `lo` up from 0 and `hi` down from n-1 with no modulo at all.
+        // We use one function for both and pass the origin, which is only legitimate
+        // if the two forms agree at origin 0. They do, because the cursors meet
+        // before either can wrap — asserted here rather than argued, over every
+        // ring size the clip will accept.
+        import std.conv : to;
+        foreach (n; 3 .. kMaxEarClipRing + 1) {
+            auto w = stripWalkCorners(n, 0);
+            assert(w.length == n - 2, "n=" ~ n.to!string ~ ": expected "
+                ~ (n - 2).to!string ~ " triangles, got " ~ w.length.to!string);
+            // The modulo-free form, written out independently.
+            uint[3][] want;
+            {
+                size_t lo = 0, hi = n - 1, left = n;
+                bool fromLo = true;
+                while (left > 2) {
+                    if (fromLo) { want ~= cast(uint[3])[cast(uint)lo, cast(uint)(lo+1), cast(uint)hi]; ++lo; }
+                    else        { want ~= cast(uint[3])[cast(uint)(hi-1), cast(uint)hi, cast(uint)lo]; --hi; }
+                    fromLo = !fromLo;
+                    --left;
+                }
+            }
+            assert(w == want, "n=" ~ n.to!string ~ ": the mod-n walk from 0 is "
+                ~ w.to!string ~ " but the modulo-free loop gives " ~ want.to!string
+                ~ " — they must agree at origin 0 or the degeneracy gate is walking"
+                ~ " a different set of triangles from the reference's");
+            // Every corner is covered and none is named out of range.
+            foreach (t; w) foreach (k; 0 .. 3)
+                assert(t[k] < n, "n=" ~ n.to!string ~ ": walk names corner "
+                    ~ t[k].to!string);
+        }
+
+        // …and away from 0 it DOES wrap — otherwise the parameter would be inert
+        // and the two gates would be walking the same triangles after all.
+        {
+            auto w0 = stripWalkCorners(5, 0);
+            auto w1 = stripWalkCorners(5, 1);
+            assert(w0 == [cast(uint[3])[0,1,4], cast(uint[3])[3,4,1], cast(uint[3])[1,2,3]],
+                "n=5 from 0: " ~ w0.to!string);
+            assert(w1 == [cast(uint[3])[1,2,0], cast(uint[3])[4,0,2], cast(uint[3])[2,3,4]],
+                "n=5 from 1: " ~ w1.to!string ~ " — this is the pentagon whose"
+                ~ " degenerate triple only the walk from 0 contains");
+        }
+    }
 
     private static bool posLess(const double[3] a, const double[3] b) pure nothrow @nogc {
         if (a[0] != b[0]) return a[0] < b[0];
@@ -4737,28 +4912,48 @@ struct Mesh {
     /// robust and is deliberately not what decides this — same split as task
     /// 0832's facing predicate.
     ///
-    /// WHICH OF THE REFERENCE'S FOUR TRIANGULATORS THIS IS, and what that costs.
-    /// The command has a mode argument whose DEFAULT is a convex-only zig-zag
-    /// STRIP; this is the other mode, and the strip's own fallback. We
-    /// implement the clip ONLY, so on any CONVEX ring the bare command and we
-    /// part company — measured, and declared in
-    /// `tests/fixtures/triangulate_convex_strip_divergence.json`:
+    /// WHICH OF THE REFERENCE'S FOUR TRIANGULATORS THE CLIP IS, and what runs
+    /// ahead of it. The command has a mode argument whose DEFAULT is a
+    /// convex-only zig-zag STRIP; the clip is the other mode AND the strip's
+    /// own fallback. Task 1280 shipped the clip alone, so on every CONVEX ring
+    /// we answered with the fallback rather than the default; task 1320 ported
+    /// the strip and closed that gap. `mode` chooses, and it defaults to the
+    /// strip because a bare invocation of the reference's command is the strip.
     ///
-    ///   * n == 4 — the strip walks from the corner the chooser picks, which on
-    ///     a quad fixes the same diagonal the clip's first ear does. Same two
-    ///     triangles, same winding, same diagonal; only the tuple START differs.
-    ///     Every face comparison in the fixture harness matches rings up to
-    ///     rotation, so this is invisible to all of them and needed a new
-    ///     ordered channel to assert at all.
-    ///   * n >= 5 — the triangle SETS diverge outright.
+    /// THE STRIP AND ITS THREE DECLINE GATES (task 1320; measured 1281+1282,
+    /// each gate separated by a cell that fails ONLY it):
     ///
-    /// On a CONCAVE ring the strip declines and both engines end up here, which
-    /// is why every other triangulation fixture agrees. Porting the strip is
-    /// task 1281's, not this one's.
+    ///     G1 convexity  every corner's edge-pair cross, dotted with the ring's
+    ///                   cached corner normal, >= 0.       `strip_hex_concave`
+    ///     G2 degeneracy every triangle of the walk from RING POSITION 0 has
+    ///                   area >= 1e-10, absolute.          `strip_collinear5`
+    ///     G3 quality    every triangle of the walk from the PICKED corner
+    ///                   scores >= 0.01 on 2A/longest^2.   `strip_sliver_quad`
+    ///
+    /// All three pass -> emit the walk from the picked corner, verbatim. Any one
+    /// declines -> fall through to the clip below, on the same ring. That is why
+    /// every concave fixture in this repo was already in agreement: a concave
+    /// ring fails G1, so both engines were always ending up in the clip.
+    ///
+    /// THE CORNER THE STRIP WALKS FROM IS THE CLIP'S OWN FIRST EAR — the same
+    /// `pickCorner` below, called once. Measured, not assumed: the first tuple
+    /// under each mode names the same corner on all ten rings that were driven
+    /// both ways. On a QUAD that makes the two paths agree as triangle SETS by
+    /// construction (a quad has two diagonals and one corner choice picks
+    /// between them), so they differ there only in where each tuple STARTS —
+    /// which is invisible to every rotation-tolerant face comparison in the
+    /// fixture harness and needed an ordered channel to see at all.
+    ///
+    /// THE STRIP HAS NO `rev` TERM. The reference stores its walk verbatim, and
+    /// that is also consistent: `rev` fires when the corner at ring position 0
+    /// disagrees with the ring's own orientation, which is precisely what G1
+    /// forbids — over the 62 measured cells `rev` is false on all 25 rings the
+    /// strip admitted. So the clip's winding term has nothing to do here.
     ///
     /// Always returns exactly ring.length - 2 triangles (the caller asserts it).
-    private static uint[3][] earClipRingCorners(const Vec3[] ring,
-                                                const(uint)[] vids = null) {
+    private static uint[3][] tripleRingCorners(const Vec3[] ring,
+                                               const(uint)[] vids = null,
+                                               TriangulateMode mode = TriangulateMode.Strip) {
         immutable size_t n = ring.length;
         uint[3][] tris;
         if (n < 3) return tris;
@@ -4924,6 +5119,97 @@ struct Mesh {
             return besti;   // nothing qualified: clip corner 0, as the reference does
         }
 
+        // ------------------------------------------------------------------
+        // THE DEFAULT PATH: the zig-zag strip (task 1320). Runs first, and
+        // falls through to the clip below whenever one of its three gates
+        // declines. Above `kMaxEarClipRing` we never get here — that ceiling
+        // returned the fan already — so the strip inherits the same DoS bound.
+        // ------------------------------------------------------------------
+
+        // The unsigned area of one triangle, as the degeneracy gate computes
+        // it: from the Gram determinant rather than a cross product, and
+        // carrying the factor 1/2 (so it is the area, not twice it — the read
+        // was checked against the gate's own register values, 2.75 not 5.5).
+        // A radicand at or below zero returns exactly 0.0.
+        static double stripTriArea(const double[3] a, const double[3] b,
+                                   const double[3] c) pure nothrow @nogc {
+            immutable double ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+            immutable double vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
+            immutable double uu = ux*ux + uy*uy + uz*uz;
+            immutable double vv = vx*vx + vy*vy + vz*vz;
+            immutable double uv = ux*vx + uy*vy + uz*vz;
+            immutable double rad = uu*vv - uv*uv;
+            return rad <= 0.0 ? 0.0 : 0.5 * sqrt(rad);
+        }
+
+        // Runs the three gates and, if all pass, the walk. `null` means
+        // declined — never an empty array, since a ring of 4 or more corners
+        // always yields at least two triangles.
+        uint[3][] stripDecomposition() {
+            // ---- G1: CONVEXITY, against the ring's CACHED CORNER NORMAL.
+            // Not a Newell normal: the reference decides this against the same
+            // corner-triangle normal the projection frame is taken from,
+            // `cross(v1-v0, v[n-1]-v0)` at the ring's FIRST vertex. On a planar
+            // ring the two agree and the 62 cells do not separate them (checked
+            // offline, both give 62/62); on a NON-PLANAR ring they can differ,
+            // and the corner normal is the one that was read. Same split as the
+            // facing predicate of task 0832 — `Mesh.faceNormal` is strictly
+            // more robust and is deliberately not what decides this.
+            const double[3] a0 = P[idx[0]], b0 = P[idx[1]], c0 = P[idx[$ - 1]];
+            immutable double nux = b0[0]-a0[0], nuy = b0[1]-a0[1], nuz = b0[2]-a0[2];
+            immutable double nwx = c0[0]-a0[0], nwy = c0[1]-a0[1], nwz = c0[2]-a0[2];
+            immutable double[3] N = [nuy*nwz - nuz*nwy,
+                                     nuz*nwx - nux*nwz,
+                                     nux*nwy - nuy*nwx];
+            foreach (i; 0 .. n) {
+                const p = P[idx[(i + n - 1) % n]];
+                const c = P[idx[i]];
+                const x = P[idx[(i + 1) % n]];
+                immutable double ex = c[0]-p[0], ey = c[1]-p[1], ez = c[2]-p[2];
+                immutable double fx = x[0]-c[0], fy = x[1]-c[1], fz = x[2]-c[2];
+                immutable double cx = ey*fz - ez*fy;
+                immutable double cy = ez*fx - ex*fz;
+                immutable double cz = ex*fy - ey*fx;
+                // ZERO PASSES. A collinear corner has an exactly zero cross and
+                // a zero dot, and the gate declines only on a strictly negative
+                // one — which is what makes a convex ring with a collinear
+                // corner reach G2 at all, and `strip_collinear5` exists because
+                // of it. The reference normalises this cross first; that cannot
+                // change the sign, and the corpus does not separate the two.
+                if (cx*N[0] + cy*N[1] + cz*N[2] < 0.0) return null;
+            }
+
+            // ---- G2: DEGENERACY, on the walk from RING POSITION 0.
+            // The origin is the point: this walk starts at 0 with no reference
+            // to the picked corner, so when the picked corner is not 0 it looks
+            // at DIFFERENT triangles from G3's walk. Running it from `s`
+            // instead admits `strip_collinear5`, whose degenerate triple the
+            // quality walk never contains (its three scores are 0.862/0.419/
+            // 0.533 against a 0.01 floor). See `stripWalkCorners`.
+            foreach (t; stripWalkCorners(n, 0))
+                if (stripTriArea(P[idx[t[0]]], P[idx[t[1]]], P[idx[t[2]]])
+                        < kStripDegenerateArea)
+                    return null;
+
+            // ---- G3: QUALITY, on the walk from the PICKED corner.
+            immutable size_t s = pickCorner(idx);
+            auto walk = stripWalkCorners(n, s);
+            foreach (t; walk)
+                if (earQuality(P[idx[t[0]]], P[idx[t[1]]], P[idx[t[2]]])
+                        < kStripQualityFloor)
+                    return null;
+
+            uint[3][] outT;
+            foreach (t; walk)
+                outT ~= cast(uint[3])[idx[t[0]], idx[t[1]], idx[t[2]]];
+            return outT;
+        }
+
+        if (mode == TriangulateMode.Strip && n >= 4) {
+            auto st = stripDecomposition();
+            if (st !is null) return st;
+        }
+
         // `rev` is fixed ONCE, from the ring as it arrived.
         size_t u0, v0;
         frameOf(idx, u0, v0);
@@ -4946,9 +5232,14 @@ struct Mesh {
     }
 
     /// Split each masked face (n-gon, n > 3) into (n−2) triangles, choosing the
-    /// diagonals GEOMETRICALLY — see `earClipRingCorners` for the law and for
+    /// diagonals GEOMETRICALLY — see `tripleRingCorners` for the law and for
     /// what pins it. Already-triangles (length ≤ 3) pass through untouched
     /// regardless of the mask. Returns the number of faces changed.
+    ///
+    /// `mode` picks between the reference's two triangulators and defaults to
+    /// the one its own command defaults to (task 1320). No production caller
+    /// passes it; it exists so the ear clip — a separately measured law of ours
+    /// — stays directly assertable on a ring the strip would otherwise take.
     ///
     /// `faceOriginOut` (optional): receives a mapping new_fi → original_fi,
     /// useful for re-selecting children of previously-selected parents after
@@ -4958,7 +5249,8 @@ struct Mesh {
     /// Task 1190 retired the v1 fan from `f[0]`: it inverted triangles on a
     /// concave ring and made the whole result follow the ring's starting
     /// corner (divergence-ledger rows 25, 43, 50).
-    size_t triangulateFacesByMask(in bool[] maskIn, uint[]* faceOriginOut = null) {
+    size_t triangulateFacesByMask(in bool[] maskIn, uint[]* faceOriginOut = null,
+                                  TriangulateMode mode = TriangulateMode.Strip) {
         const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
 
@@ -5008,7 +5300,7 @@ struct Mesh {
                                                              cast(uint)fi,
                                                              cast(uint)c);
             } else {
-                // Diagonals chosen by geometry (earClipRingCorners), never by
+                // Diagonals chosen by geometry (tripleRingCorners), never by
                 // ring position. Every triangle inherits the source face's
                 // WHOLE marks word (Subpatch + Hide), the same "each piece
                 // keeps the parent's word" rule as every other 1-to-many split
@@ -5016,9 +5308,9 @@ struct Mesh {
                 ++changed;
                 auto ringPos = new Vec3[](f.length);
                 foreach (c; 0 .. f.length) ringPos[c] = vertices[f[c]];
-                const tri = earClipRingCorners(ringPos, f);
+                const tri = tripleRingCorners(ringPos, f, mode);
                 assert(tri.length == f.length - 2,
-                    "earClipRingCorners must return exactly n-2 triangles");
+                    "tripleRingCorners must return exactly n-2 triangles");
                 foreach (t; tri) {
                     newFaces    ~= [f[t[0]], f[t[1]], f[t[2]]];
                     newWord     ~= word;

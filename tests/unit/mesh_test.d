@@ -5342,8 +5342,18 @@ unittest { // earClipRingCorners: the PORTED choice law, frozen against every
     //     the bound is exactly 0.5 — under it, two of those cells break. Above
     //     it behaviour says nothing, so the constructed ring two blocks down is
     //     what pins `kTripleQualityEarlyOut` from the other side.
+    //   * ONE cell needs the mode switch, and which one is the point. Task 1320
+    //     ported the strip, so a bare call on a CONVEX ring no longer reaches
+    //     the clip at all. Eighteen of these nineteen rings are concave, fail
+    //     the strip's convexity gate and land here exactly as before — which is
+    //     itself an assertion worth having, since it is what kept every
+    //     concave fixture in agreement while only the clip was ported. The
+    //     nineteenth, `oct_quality`, is a convex octagon that the strip would
+    //     now take, and it was measured down the clip: it is driven with
+    //     `TriangulateMode.EarClip` and is the reason that switch exists.
     import std.conv : to;
-    static struct C { string name; Vec3[] verts; uint[] ring; uint[3][] want; }
+    static struct C { string name; Vec3[] verts; uint[] ring; uint[3][] want;
+                      Mesh.TriangulateMode mode = Mesh.TriangulateMode.Strip; }
     auto cells = [
         C("horse_rot0", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u], [[2u,3u,4u], [5u,6u,7u], [1u,2u,4u], [0u,1u,4u], [5u,7u,0u], [0u,4u,5u]]),
         C("horse_rot1", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [1u, 2u, 3u, 4u, 5u, 6u, 7u, 0u], [[2u,3u,4u], [5u,6u,7u], [1u,2u,4u], [0u,1u,4u], [5u,7u,0u], [4u,5u,0u]]),
@@ -5356,7 +5366,7 @@ unittest { // earClipRingCorners: the PORTED choice law, frozen against every
         C("keyhole18", [Vec3(0.0f, 0.0f, 0.0f), Vec3(3.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 3.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(3.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 3.0f), Vec3(1.5f, 0.0f, 1.5f), Vec3(3.0f, 0.0f, 1.5f), Vec3(4.5f, 0.0f, 1.5f), Vec3(4.5f, 0.0f, 3.0f), Vec3(4.5f, 0.0f, 4.5f), Vec3(3.0f, 0.0f, 4.5f), Vec3(1.5f, 0.0f, 4.5f), Vec3(1.5f, 0.0f, 3.0f)], [0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 0u, 8u, 15u, 14u, 13u, 12u, 11u, 10u, 9u, 8u], [[8u,0u,1u], [7u,0u,8u], [7u,8u,15u], [7u,15u,14u], [6u,7u,14u], [5u,6u,14u], [5u,14u,13u], [5u,13u,12u], [4u,5u,12u], [3u,4u,12u], [3u,12u,11u], [3u,11u,10u], [2u,3u,10u], [1u,2u,10u], [1u,10u,9u], [1u,9u,8u]]),
         C("mode_quality", [Vec3(0.0f, 0.0f, 0.0f), Vec3(2.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 4.0f), Vec3(2.0f, 0.0f, 1.4f), Vec3(0.0f, 0.0f, 4.0f)], [0u, 1u, 2u, 3u, 4u, 5u], [[2u,3u,4u], [4u,5u,0u], [4u,0u,1u], [1u,2u,4u]]),
         C("mode_strip", [Vec3(0.0f, 0.0f, 0.0f), Vec3(2.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 4.0f), Vec3(2.0f, 0.0f, 1.4f), Vec3(0.0f, 0.0f, 4.0f)], [0u, 1u, 2u, 3u, 4u, 5u], [[2u,3u,4u], [4u,5u,0u], [4u,0u,1u], [1u,2u,4u]]),
-        C("oct_quality", [Vec3(3.0f, 0.0f, 0.0f), Vec3(2.12132f, 0.0f, 2.12132f), Vec3(0.0f, 0.0f, 3.0f), Vec3(-2.12132f, 0.0f, 2.12132f), Vec3(-3.0f, 0.0f, 0.0f), Vec3(-2.12132f, 0.0f, -2.12132f), Vec3(-0.0f, 0.0f, -3.0f), Vec3(2.12132f, 0.0f, -2.12132f)], [0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u], [[7u,0u,1u], [7u,1u,2u], [7u,2u,3u], [7u,3u,4u], [6u,7u,4u], [4u,5u,6u]]),
+        C("oct_quality", [Vec3(3.0f, 0.0f, 0.0f), Vec3(2.12132f, 0.0f, 2.12132f), Vec3(0.0f, 0.0f, 3.0f), Vec3(-2.12132f, 0.0f, 2.12132f), Vec3(-3.0f, 0.0f, 0.0f), Vec3(-2.12132f, 0.0f, -2.12132f), Vec3(-0.0f, 0.0f, -3.0f), Vec3(2.12132f, 0.0f, -2.12132f)], [0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u], [[7u,0u,1u], [7u,1u,2u], [7u,2u,3u], [7u,3u,4u], [6u,7u,4u], [4u,5u,6u]], Mesh.TriangulateMode.EarClip),
         C("paths_dart", [Vec3(0.0f, 0.0f, 0.0f), Vec3(2.0f, 0.0f, 1.2f), Vec3(4.0f, 0.0f, 0.0f), Vec3(2.0f, 0.0f, 3.0f)], [0u, 1u, 2u, 3u], [[3u,0u,1u], [1u,2u,3u]]),
         C("paths_hex", [Vec3(0.0f, 0.0f, 0.0f), Vec3(2.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 4.0f), Vec3(2.0f, 0.0f, 1.4f), Vec3(0.0f, 0.0f, 4.0f)], [0u, 1u, 2u, 3u, 4u, 5u], [[2u,3u,4u], [4u,5u,0u], [4u,0u,1u], [1u,2u,4u]]),
         C("paths_horse", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u], [[2u,3u,4u], [5u,6u,7u], [1u,2u,4u], [0u,1u,4u], [5u,7u,0u], [0u,4u,5u]]),
@@ -5374,7 +5384,7 @@ unittest { // earClipRingCorners: the PORTED choice law, frozen against every
         m.resetSelection();
         auto mask = new bool[](m.faces.length);
         mask[] = true;
-        m.triangulateFacesByMask(mask);
+        m.triangulateFacesByMask(mask, null, c.mode);
 
         assert(m.faces.length == c.want.length,
             c.name ~ ": expected " ~ c.want.length.to!string ~ " triangles, got "
@@ -5391,67 +5401,237 @@ unittest { // earClipRingCorners: the PORTED choice law, frozen against every
     }
 }
 
-unittest { // The convex octagon: the one cell that shows the reference has a
-           // SECOND triangulator, and a DECLARED GAP that we do not implement
-           // it — task 1280.
+unittest { // The convex octagon: BOTH of the reference's triangulators on one
+           // ring, and the switch between them — tasks 1280 (the clip) and
+           // 1320 (the strip, which is the default).
     //
-    // The command carries a mode argument. Its default is a convex-only zig-zag
-    // strip; the clip we ported is the other mode, and the strip's fallback on
-    // any ring the strip refuses. On this octagon the two disagree outright,
-    // which is why the cell is here: it is the only shape measured on both
-    // paths, and its absence from our fixtures is what let the difference go
-    // unnoticed until task 1270 read the code.
+    // This octagon is the only shape measured down both paths, and they
+    // disagree outright on it. Task 1280 ported the clip alone and this cell
+    // recorded the resulting gap; task 1320 ported the strip, so the gap is
+    // closed and the cell now pins three things at once:
     //
-    // WE MATCH THE CLIP, ON PURPOSE, AND IT COSTS US THIS CELL. The strip is not
-    // declined here: branch-hit counters recorded strip=1 earclip=0 on every
-    // convex ring measured, quads included, so the bare command strips wherever
-    // it can and falls back to the clip only on a concave one. We port the clip
-    // alone, so on any convex ring our answer is the fallback's and not the
-    // default's — a deliberate, declared divergence, frozen in
-    // tests/fixtures/triangulate_convex_strip_divergence.json.
+    //   * a BARE call gives the strip's decomposition — that is what the
+    //     reference's own default gives, so this is the parity assertion;
+    //   * asking for the clip gives the clip's, unchanged from 1280 — so the
+    //     older law is still pinned and did not quietly rot behind the new one;
+    //   * the two are DIFFERENT, asserted rather than assumed. Without that
+    //     third check a kernel that ignored the mode and ran one path for both
+    //     would satisfy the first two only if they happened to agree, and on a
+    //     QUAD they do agree as triangle sets — so a cell with eight corners,
+    //     where the sets themselves diverge, is the one that can carry it.
     //
-    // An earlier reading of this had a fourth gate declining the strip at four
-    // corners. That was wrong, and the way it was wrong is worth keeping: on a
-    // QUAD the two paths emit the same two triangles across the same diagonal
-    // and differ only in tuple start, so a strip model whose walk was pinned to
-    // ring index 0 — fitted to this very octagon, where all ears tie and the
-    // chooser returns 0 — predicted the wrong tuples and looked like a refusal.
-    // The assertions below are unaffected; they compare against measured output
-    // either way.
+    // The earlier reading of this cell had a fourth gate declining the strip at
+    // four corners. That was wrong, and the way it was wrong is worth keeping:
+    // on a QUAD the two paths emit the same two triangles across the same
+    // diagonal and differ only in tuple start, so a strip model whose walk was
+    // pinned to ring index 0 — fitted to this very octagon, where all ears tie
+    // and the chooser returns 0 — predicted the wrong tuples and looked like a
+    // refusal. Both lists below are measured output, so neither is affected.
     import std.conv : to;
     Vec3[] verts = [Vec3(3.0f, 0.0f, 0.0f), Vec3(2.12132f, 0.0f, 2.12132f), Vec3(0.0f, 0.0f, 3.0f), Vec3(-2.12132f, 0.0f, 2.12132f), Vec3(-3.0f, 0.0f, 0.0f), Vec3(-2.12132f, 0.0f, -2.12132f), Vec3(-0.0f, 0.0f, -3.0f), Vec3(2.12132f, 0.0f, -2.12132f)];
     uint[]  ring = [0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u];
-    uint[3][] clipWants  = [[7u,0u,1u], [7u,1u,2u], [7u,2u,3u], [7u,3u,4u], [6u,7u,4u], [4u,5u,6u]];
     uint[3][] stripWants = [[0u,1u,7u], [6u,7u,1u], [1u,2u,6u], [5u,6u,2u], [2u,3u,5u], [4u,5u,3u]];
+    uint[3][] clipWants  = [[7u,0u,1u], [7u,1u,2u], [7u,2u,3u], [7u,3u,4u], [6u,7u,4u], [4u,5u,6u]];
 
-    Mesh m;
-    m.vertices = verts.dup;
-    m.addFace(ring.dup);
-    m.buildLoops();
-    m.resetSelection();
-    auto mask = new bool[](m.faces.length);
-    mask[] = true;
-    m.triangulateFacesByMask(mask);
+    uint[3][] run(Mesh.TriangulateMode mode) {
+        Mesh m;
+        m.vertices = verts.dup;
+        m.addFace(ring.dup);
+        m.buildLoops();
+        m.resetSelection();
+        auto mask = new bool[](m.faces.length);
+        mask[] = true;
+        m.triangulateFacesByMask(mask, null, mode);
+        uint[3][] got;
+        foreach (f; m.faces) got ~= cast(uint[3])[f[0], f[1], f[2]];
+        return got;
+    }
 
-    assert(m.faces.length == clipWants.length, "octagon: expected "
-        ~ clipWants.length.to!string ~ " triangles, got " ~ m.faces.length.to!string);
-    foreach (i; 0 .. clipWants.length)
-        assert(m.faces[i][0] == clipWants[i][0] && m.faces[i][1] == clipWants[i][1]
-            && m.faces[i][2] == clipWants[i][2],
-            "octagon triangle " ~ i.to!string ~ " is " ~ m.faces[i].to!string
-            ~ ", the clip emits " ~ clipWants[i].to!string);
+    static void expect(string who, uint[3][] got, uint[3][] want, string what) {
+        assert(got.length == want.length, who ~ ": expected "
+            ~ want.length.to!string ~ " triangles, got " ~ got.length.to!string);
+        foreach (i; 0 .. want.length)
+            assert(got[i] == want[i], who ~ " triangle " ~ i.to!string ~ " is "
+                ~ got[i].to!string ~ ", " ~ what ~ " emits " ~ want[i].to!string);
+    }
 
-    // …and it is NOT the strip's answer. Named, so the gap is a fact in the
-    // test rather than a sentence in a card.
-    bool sameAsStrip = true;
-    foreach (i; 0 .. stripWants.length)
-        if (m.faces[i][0] != stripWants[i][0] || m.faces[i][1] != stripWants[i][1]
-         || m.faces[i][2] != stripWants[i][2]) { sameAsStrip = false; break; }
-    assert(!sameAsStrip,
-        "our octagon now matches the STRIP path. That may be an improvement, but "
-        ~ "it is a different law from the one task 1280 ported and the gate that "
-        ~ "chooses between them is still unmeasured at 5..7 corners — re-open the "
-        ~ "measurement before making this green");
+    auto bare = run(Mesh.TriangulateMode.Strip);
+    auto clip = run(Mesh.TriangulateMode.EarClip);
+    expect("octagon, bare call", bare, stripWants, "the reference's default (the strip)");
+    expect("octagon, clip asked for", clip, clipWants, "the ear clip");
+
+    bool differ = false;
+    foreach (i; 0 .. bare.length) if (bare[i] != clip[i]) { differ = true; break; }
+    assert(differ,
+        "the two triangulators gave the SAME answer on the convex octagon. They "
+        ~ "are measured to disagree on it, so this means the mode argument is "
+        ~ "being ignored and one path is answering for both — which every other "
+        ~ "assertion here would still accept wherever the two happen to agree");
+}
+
+unittest { // tripleRingCorners: THE DEFAULT PATH — the zig-zag strip, its three
+           // decline gates, and the fallback into the clip — task 1320.
+    //
+    // Twenty-eight rings, each with the reference's own output in EMISSION
+    // ORDER and with the winding it stored, driven through the BARE call — the
+    // mode our command uses and the reference's own default. Together with the
+    // nineteen clip cells above this is the whole of what the strip was ported
+    // from, so it is the whole of what a change to it has to keep.
+    //
+    // THE LAW, in one line each:
+    //   walk    two cursors from the PICKED corner, `lo` up and `hi` down,
+    //           alternating: [s,s+1,s-1] [s-2,s-1,s+1] … , n-2 triangles.
+    //   G1      every corner's edge-pair cross dotted with the ring's cached
+    //           CORNER normal >= 0 — zero passes, so a collinear corner is
+    //           admitted and that is what makes G2 reachable at all.
+    //   G2      every triangle of the walk from RING POSITION 0 has area
+    //           >= 1e-10 — absolute, in double, on the true area.
+    //   G3      every triangle of the walk from the PICKED corner scores
+    //           >= 0.01 on 2*Area/(longest side)^2.
+    //   any gate declines -> the clip below runs on the same ring.
+    //
+    // WHAT SEPARATES WHAT. Each mutation was applied to the kernel, built, and
+    // run against all 62 measured cells; these are the cells that actually
+    // reddened, not "something broke":
+    //
+    //   the degeneracy floor read as `area == 0` (the reading before it was
+    //   bracketed at run time) ......... strip_scale18, strip_scale19,
+    //                                    strip_fine0..strip_fine3   — 6 cells
+    //   the floor moved to 1e-9 ........ strip_scale16, strip_scale17,
+    //                                    strip_fine4..strip_fine7   — 6 cells
+    //   the degeneracy walk started at
+    //   the picked corner instead of 0 . strip_collinear5, strip_scale18,
+    //                                    strip_fine1..strip_fine3   — 5 cells
+    //   the walk always started at 0 ... strip_pole_quad3, strip_np_one,
+    //                                    strip_np_twist, collinear5_off/_eps,
+    //                                    strip_scale14/16/17, fine4..7 — 12
+    //   the convexity gate deleted ..... every concave ring in the corpus — 16
+    //   the quality floor at 0.001 ..... strip_sliver_quad             — 1 cell
+    //
+    // TWO THINGS THE CORPUS DOES NOT SEPARATE, said out loud so nobody reads
+    // this as pinning them. Computing the gate's area as |cross|/2 instead of
+    // from the Gram determinant, and deciding G1 against the ring's NEWELL
+    // normal instead of its cached corner normal, each reproduce all 62 cells.
+    // Both are implemented as READ rather than as fitted, and a future lane
+    // that changes either will not be caught here.
+    //
+    // WHY THE SMALL CELLS EXIST, and why they cannot be moved to unit scale.
+    // `strip_scale*` and `strip_fine*` are 1e-5-sized on purpose: at
+    // coordinates of order 1 the float32 spacing is ~6e-8, so a triangle's area
+    // is either exactly 0 or far above 1e-10 and the floor is indistinguishable
+    // from an exact-zero test. Rescaling these rings to something readable
+    // would make six of them vacuous. The scale IS the assertion.
+    //
+    // The multi-face cells (`strip_pole_quad3`, `strip_np_twist`) are listed in
+    // OUR face order. Each block is verbatim measured output; only the order of
+    // the BLOCKS is ours, because the reference emitted its faces in an order
+    // that differs between its own two modes on the same cell and so is not a
+    // property of either triangulator.
+    import std.conv : to;
+    static struct S { string name; Vec3[] verts; uint[][] rings; uint[3][] want; }
+    auto cells = [
+        // a plain square: the cell that showed the strip does NOT decline at four corners
+        S("strip_reg4", [Vec3(3f, 0f, 0f), Vec3(0f, 0f, 3f), Vec3(-3f, 0f, 0f), Vec3(-0f, 0f, -3f)], [[0u, 1u, 2u, 3u]],
+           [[0u,1u,3u], [2u,3u,1u]]),
+        // regular pentagon — the tie band where float32 and double pick DIFFERENT corners
+        S("strip_reg5", [Vec3(3f, 0f, 0f), Vec3(0.927051008f, 0f, 2.85316992f), Vec3(-2.42705107f, 0f, 1.76335597f), Vec3(-2.42705107f, 0f, -1.76335597f), Vec3(0.927051008f, 0f, -2.85316992f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[0u,1u,4u], [3u,4u,1u], [1u,2u,3u]]),
+        S("strip_reg6", [Vec3(3f, 0f, 0f), Vec3(1.5f, 0f, 2.59807611f), Vec3(-1.5f, 0f, 2.59807611f), Vec3(-3f, 0f, 0f), Vec3(-1.5f, 0f, -2.59807611f), Vec3(1.5f, 0f, -2.59807611f)], [[0u, 1u, 2u, 3u, 4u, 5u]],
+           [[0u,1u,5u], [4u,5u,1u], [1u,2u,4u], [3u,4u,2u]]),
+        S("strip_reg7", [Vec3(3f, 0f, 0f), Vec3(1.87046897f, 0f, 2.34549403f), Vec3(-0.667563021f, 0f, 2.92478395f), Vec3(-2.70290709f, 0f, 1.301651f), Vec3(-2.70290709f, 0f, -1.301651f), Vec3(-0.667563021f, 0f, -2.92478395f), Vec3(1.87046897f, 0f, -2.34549403f)], [[0u, 1u, 2u, 3u, 4u, 5u, 6u]],
+           [[0u,1u,6u], [5u,6u,1u], [1u,2u,5u], [4u,5u,2u], [2u,3u,4u]]),
+        // from five corners up the two paths differ as triangle SETS, not just tuple starts
+        S("strip_reg8", [Vec3(3f, 0f, 0f), Vec3(2.12132001f, 0f, 2.12132001f), Vec3(0f, 0f, 3f), Vec3(-2.12132001f, 0f, 2.12132001f), Vec3(-3f, 0f, 0f), Vec3(-2.12132001f, 0f, -2.12132001f), Vec3(-0f, 0f, -3f), Vec3(2.12132001f, 0f, -2.12132001f)], [[0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u]],
+           [[0u,1u,7u], [6u,7u,1u], [1u,2u,6u], [5u,6u,2u], [2u,3u,5u], [4u,5u,3u]]),
+        // the bare call on the convex octagon: the reference's own default
+        S("oct_default", [Vec3(3f, 0f, 0f), Vec3(2.12132001f, 0f, 2.12132001f), Vec3(0f, 0f, 3f), Vec3(-2.12132001f, 0f, 2.12132001f), Vec3(-3f, 0f, 0f), Vec3(-2.12132001f, 0f, -2.12132001f), Vec3(-0f, 0f, -3f), Vec3(2.12132001f, 0f, -2.12132001f)], [[0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u]],
+           [[0u,1u,7u], [6u,7u,1u], [1u,2u,6u], [5u,6u,2u], [2u,3u,5u], [4u,5u,3u]]),
+        // three convex quads round a shared pole
+        S("strip_pole_quad3", [Vec3(0f, 0f, 0f), Vec3(1f, 0f, 0f), Vec3(0.310000002f, 0f, 0.536935985f), Vec3(-0.5f, 0f, 0.866024971f), Vec3(-0.620000005f, 0f, 0f), Vec3(-0.5f, 0f, -0.866024971f), Vec3(0.310000002f, 0f, -0.536935985f)], [[0u, 1u, 2u, 3u], [0u, 3u, 4u, 5u], [0u, 5u, 6u, 1u]],
+           [[1u,2u,0u], [3u,0u,2u], [3u,4u,0u], [5u,0u,4u], [5u,6u,0u], [1u,0u,6u]]),
+        // a NON-PLANAR quad — where the cached corner normal could part company with Newell
+        S("strip_np_one", [Vec3(0f, 0f, 0f), Vec3(1f, 0f, 0f), Vec3(1f, 0f, 1f), Vec3(0f, 0.100000001f, 1f)], [[0u, 1u, 2u, 3u]],
+           [[3u,0u,2u], [1u,2u,0u]]),
+        // four non-planar quads, increasingly twisted
+        S("strip_np_twist", [Vec3(0f, 0f, 0f), Vec3(0f, 0f, 1f), Vec3(1f, -0.119999997f, 0f), Vec3(1f, 0.119999997f, 1f), Vec3(2f, -0.239999995f, 0f), Vec3(2f, 0.239999995f, 1f), Vec3(3f, -0.360000014f, 0f), Vec3(3f, 0.360000014f, 1f), Vec3(4f, -0.479999989f, 0f), Vec3(4f, 0.479999989f, 1f)], [[0u, 2u, 3u, 1u], [2u, 4u, 5u, 3u], [4u, 6u, 7u, 5u], [6u, 8u, 9u, 7u]],
+           [[2u,3u,0u], [1u,0u,3u], [4u,5u,2u], [3u,2u,5u], [6u,7u,4u], [5u,4u,7u], [8u,9u,6u], [7u,6u,9u]]),
+        // G1's isolating cell: fails convexity ALONE (quality min 0.14, no degeneracy)
+        S("strip_hex_concave", [Vec3(0f, 0f, 0f), Vec3(2f, 0f, 0f), Vec3(4f, 0f, 0f), Vec3(4f, 0f, 4f), Vec3(2f, 0f, 1.39999998f), Vec3(0f, 0f, 4f)], [[0u, 1u, 2u, 3u, 4u, 5u]],
+           [[2u,3u,4u], [4u,5u,0u], [4u,0u,1u], [1u,2u,4u]]),
+        // G3's isolating cell: 10 x 0.02, convex and non-degenerate, quality 0.002
+        S("strip_sliver_quad", [Vec3(0f, 0f, 0f), Vec3(10f, 0f, 0f), Vec3(10f, 0f, 0.0199999996f), Vec3(0f, 0f, 0.0199999996f)], [[0u, 1u, 2u, 3u]],
+           [[3u,0u,1u], [1u,2u,3u]]),
+        // G2's isolating cell: convex, clears quality by 40x, one EXACTLY zero-area triangle that only the walk-from-0 sees
+        S("strip_collinear5", [Vec3(2f, 0f, 3.5f), Vec3(0f, 0f, 0f), Vec3(4f, 0f, 0f), Vec3(8f, 0f, 0f), Vec3(5f, 0f, 6f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[0u,1u,2u], [2u,3u,4u], [0u,2u,4u]]),
+        // G2's DISCRIMINATOR: the same five points, ring rotated by one — same corner count, same convexity, same collinear corner, same three quality scores. Only which triangles the degeneracy walk sees changes, and it PASSES
+        S("strip_collinear5_rot", [Vec3(2f, 0f, 3.5f), Vec3(0f, 0f, 0f), Vec3(4f, 0f, 0f), Vec3(8f, 0f, 0f), Vec3(5f, 0f, 6f)], [[1u, 2u, 3u, 4u, 0u]],
+           [[1u,2u,0u], [4u,0u,2u], [2u,3u,4u]]),
+        // corner 2 pushed off the line by 1.0
+        S("strip_collinear5_off", [Vec3(2f, 0f, 3.5f), Vec3(0f, 0f, 0f), Vec3(4f, 0f, -1f), Vec3(8f, 0f, 0f), Vec3(5f, 0f, 6f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[1u,2u,0u], [4u,0u,2u], [2u,3u,4u]]),
+        // pushed by 1/32 — the shape barely moves and it still passes
+        S("strip_collinear5_eps", [Vec3(2f, 0f, 3.5f), Vec3(0f, 0f, 0f), Vec3(4f, 0f, -0.03125f), Vec3(8f, 0f, 0f), Vec3(5f, 0f, 6f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[1u,2u,0u], [4u,0u,2u], [2u,3u,4u]]),
+        // powers-of-two ladder: mantissas bit-identical, only the exponent moves, so ONLY the absolute area changes
+        S("strip_scale14", [Vec3(0.000122070312f, 0f, 0.000213623047f), Vec3(0f, 0f, 0f), Vec3(0.000244140625f, 0f, -6.10351562e-05f), Vec3(0.00048828125f, 0f, 0f), Vec3(0.000305175781f, 0f, 0.000366210938f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[1u,2u,0u], [4u,0u,2u], [2u,3u,4u]]),
+        S("strip_scale16", [Vec3(3.05175781e-05f, 0f, 5.34057617e-05f), Vec3(0f, 0f, 0f), Vec3(6.10351562e-05f, 0f, -1.52587891e-05f), Vec3(0.000122070312f, 0f, 0f), Vec3(7.62939453e-05f, 0f, 9.15527344e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[1u,2u,0u], [4u,0u,2u], [2u,3u,4u]]),
+        S("strip_scale17", [Vec3(1.52587891e-05f, 0f, 2.67028809e-05f), Vec3(0f, 0f, 0f), Vec3(3.05175781e-05f, 0f, -7.62939453e-06f), Vec3(6.10351562e-05f, 0f, 0f), Vec3(3.81469727e-05f, 0f, 4.57763672e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[1u,2u,0u], [4u,0u,2u], [2u,3u,4u]]),
+        // first rung under the floor
+        S("strip_scale18", [Vec3(7.62939453e-06f, 0f, 1.33514404e-05f), Vec3(0f, 0f, 0f), Vec3(1.52587891e-05f, 0f, -3.81469727e-06f), Vec3(3.05175781e-05f, 0f, 0f), Vec3(1.90734863e-05f, 0f, 2.28881836e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[0u,1u,2u], [2u,3u,4u], [0u,2u,4u]]),
+        S("strip_scale19", [Vec3(3.81469727e-06f, 0f, 6.67572021e-06f), Vec3(0f, 0f, 0f), Vec3(7.62939453e-06f, 0f, -1.90734863e-06f), Vec3(1.52587891e-05f, 0f, 0f), Vec3(9.53674316e-06f, 0f, 1.14440918e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[0u,1u,2u], [2u,3u,4u], [0u,2u,4u]]),
+        // the 1% ladder: 3.0e-11, under
+        S("strip_fine0", [Vec3(6.6057828e-06f, 0f, 1.15601197e-05f), Vec3(0f, 0f, 0f), Vec3(1.32115656e-05f, 0f, -3.3028914e-06f), Vec3(2.64231312e-05f, 0f, 0f), Vec3(1.65144556e-05f, 0f, 1.98173475e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[0u,1u,2u], [2u,3u,4u], [0u,2u,4u]]),
+        S("strip_fine1", [Vec3(9.34198761e-06f, 0f, 1.63484783e-05f), Vec3(0f, 0f, 0f), Vec3(1.86839752e-05f, 0f, -4.6709938e-06f), Vec3(3.73679504e-05f, 0f, 0f), Vec3(2.3354969e-05f, 0f, 2.80259628e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[0u,1u,2u], [2u,3u,4u], [0u,2u,4u]]),
+        S("strip_fine2", [Vec3(1.14415507e-05f, 0f, 2.0022715e-05f), Vec3(0f, 0f, 0f), Vec3(2.28831013e-05f, 0f, -5.72077533e-06f), Vec3(4.57662027e-05f, 0f, 0f), Vec3(2.86038776e-05f, 0f, 3.43246538e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[0u,1u,2u], [2u,3u,4u], [0u,2u,4u]]),
+        // 9.9e-11, the last rung under the floor
+        S("strip_fine3", [Vec3(1.20000004e-05f, 0f, 2.09999998e-05f), Vec3(0f, 0f, 0f), Vec3(2.40000008e-05f, 0f, -6.00000021e-06f), Vec3(4.80000017e-05f, 0f, 0f), Vec3(2.99999992e-05f, 0f, 3.60000013e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[0u,1u,2u], [2u,3u,4u], [0u,2u,4u]]),
+        // 1.01e-10, the first rung over it
+        S("strip_fine4", [Vec3(1.21206058e-05f, 0f, 2.12110608e-05f), Vec3(0f, 0f, 0f), Vec3(2.42412116e-05f, 0f, -6.06030289e-06f), Vec3(4.84824232e-05f, 0f, 0f), Vec3(3.03015149e-05f, 0f, 3.63618165e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[1u,2u,0u], [4u,0u,2u], [2u,3u,4u]]),
+        S("strip_fine5", [Vec3(1.26491104e-05f, 0f, 2.21359442e-05f), Vec3(0f, 0f, 0f), Vec3(2.52982209e-05f, 0f, -6.32455522e-06f), Vec3(5.05964417e-05f, 0f, 0f), Vec3(3.16227779e-05f, 0f, 3.79473313e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[1u,2u,0u], [4u,0u,2u], [2u,3u,4u]]),
+        S("strip_fine6", [Vec3(1.4270121e-05f, 0f, 2.49727127e-05f), Vec3(0f, 0f, 0f), Vec3(2.85402421e-05f, 0f, -7.13506051e-06f), Vec3(5.70804841e-05f, 0f, 0f), Vec3(3.56753044e-05f, 0f, 4.28103631e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[1u,2u,0u], [4u,0u,2u], [2u,3u,4u]]),
+        // 2.0e-10, comfortably over
+        S("strip_fine7", [Vec3(1.70560579e-05f, 0f, 2.98481009e-05f), Vec3(0f, 0f, 0f), Vec3(3.41121158e-05f, 0f, -8.52802896e-06f), Vec3(6.82242317e-05f, 0f, 0f), Vec3(4.26401421e-05f, 0f, 5.11681719e-05f)], [[0u, 1u, 2u, 3u, 4u]],
+           [[1u,2u,0u], [4u,0u,2u], [2u,3u,4u]]),
+    ];
+
+    foreach (c; cells) {
+        Mesh m;
+        m.vertices = c.verts.dup;
+        foreach (r; c.rings) m.addFace(r.dup);
+        m.buildLoops();
+        m.resetSelection();
+        auto mask = new bool[](m.faces.length);
+        mask[] = true;
+        // No mode argument: this is the BARE call, which is the point.
+        m.triangulateFacesByMask(mask);
+
+        assert(m.faces.length == c.want.length,
+            c.name ~ ": expected " ~ c.want.length.to!string ~ " triangles, got "
+            ~ m.faces.length.to!string);
+        foreach (i; 0 .. c.want.length) {
+            assert(m.faces[i].length == 3,
+                c.name ~ ": face " ~ i.to!string ~ " is not a triangle");
+            assert(m.faces[i][0] == c.want[i][0] && m.faces[i][1] == c.want[i][1]
+                && m.faces[i][2] == c.want[i][2],
+                c.name ~ ": triangle " ~ i.to!string ~ " is " ~ m.faces[i].to!string
+                ~ ", the reference emitted " ~ c.want[i].to!string
+                ~ " — this is the ported default path, its emission ORDER and its"
+                ~ " winding, all three at once");
+        }
+    }
 }
 
 unittest { // earClipRingCorners: a ring on which the quality EARLY-OUT actually

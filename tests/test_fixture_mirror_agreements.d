@@ -27,13 +27,17 @@
 // the more useful thing to know about them. The command's default is a
 // convex-only zig-zag strip with the ear clip as its fallback, and eight of the
 // faces in these cells are CONVEX quads — where the strip does run
-// (branch-hit counters: strip=1, earclip=0). We emit the clip's answer there.
-// The cells stay green anyway, because on four corners the two paths produce
-// the same two triangles across the same diagonal and differ only in where each
-// tuple starts, and this file's comparison — like every face comparison in
-// `fixture_helpers.d` — matches rings up to ROTATION. The difference is real
-// and is declared in `tests/fixtures/triangulate_convex_strip_divergence.json`,
-// whose quad case exists precisely because it is invisible here.
+// (branch-hit counters: strip=1, earclip=0). Since task 1320 we emit the
+// strip's answer there; before it we emitted the clip's — and these cells were
+// green either way, because on four corners the two paths produce the same two
+// triangles across the same diagonal and differ only in where each tuple
+// starts, and this file's comparison — like every face comparison in
+// `fixture_helpers.d` — matches rings up to ROTATION. So this file cannot
+// witness which path ran, in either direction. The one place in the suite that
+// can is the quad case of
+// `tests/fixtures/triangulate_convex_strip_divergence.json`, which asserts on
+// the ordered `face_tuples` channel and exists precisely because the difference
+// is invisible here.
 
 import fixture_helpers;
 
