@@ -23,6 +23,15 @@ import geometry_clipboard : geometryClipboard, GeometryClip;
 /// decision: the reference was never driven with an edge selection here. When
 /// it is, this is the branch to extend — an edge clip would presumably carry
 /// its endpoints, but "presumably" is not a fixture.
+///
+/// AND an EMPTY selection means THE WHOLE MESH in Polygons mode (task 1210,
+/// ledger rows 13 + 18, frozen in `tests/fixtures/empty_selection_whole_mesh.json`):
+/// with nothing selected the reference copies everything and the following
+/// paste duplicates the mesh. Set-material is the second, independent witness
+/// of the same law. The operand comes from `Mesh.operandFaceMask()`, so
+/// "everything" means every VISIBLE face, consistent with the ~40 commands
+/// already on that funnel. That law is NOT extended to vertex mode: the
+/// reference was never driven with an empty selection there.
 class MeshCopy : Command, Operator {
     mixin OperatorActrCommon;
 
@@ -44,14 +53,21 @@ class MeshCopy : Command, Operator {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
+        // Empty selection => the whole visible mesh, in POLYGONS mode
+        // (task 1210, ledger rows 13+18). Vertex mode keeps its explicit
+        // guard: the reference was measured copying a vertex SELECTION
+        // (row 19, task 1200), never an empty one, so the whole-mesh law is
+        // unmeasured there and is deliberately not extended.
         if (editMode == EditMode.Polygons) {
-            if (!mesh.hasAnySelectedFaces()) return false;
-            geometryClipboard = GeometryClip.fromSelectedFaces(*mesh);
+            // No syncSelection() here on purpose: this command is read-only,
+            // and operandFaceMask is const and bounds-safe against a marks
+            // array that has not caught up with faces.
+            geometryClipboard = GeometryClip.fromFaceMask(*mesh, mesh.operandFaceMask());
         } else if (editMode == EditMode.Vertices) {
             if (!mesh.hasAnySelectedVertices()) return false;
             geometryClipboard = GeometryClip.fromSelectedVertices(*mesh);
         } else {
-            return false;   // Edges — unmeasured, see the class doc
+            return false;   // Edges -- unmeasured, see the class doc
         }
         return !geometryClipboard.empty;
     }

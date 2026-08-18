@@ -444,3 +444,63 @@ unittest { // reset-cleared clipboard: copy then reset then paste → rejected
         "paste after reset must not add faces; got "
         ~ m["faceCount"].integer.to!string);
 }
+
+// ---------------------------------------------------------------------------
+// Empty selection = THE WHOLE MESH (task 1210, ledger rows 13 + 18)
+//
+// The two "empty-selection" cases above reach their refusal through the MODE
+// gate — /api/reset leaves us in Vertices mode — so neither of them says
+// anything about what an empty POLYGON selection means. These do.
+// ---------------------------------------------------------------------------
+
+void toPolygonMode() {
+    auto resp = post("http://localhost:8080/api/command", "select.typeFrom polygon");
+    assert(parseJSON(resp)["status"].str == "ok",
+        "select.typeFrom polygon failed: " ~ resp);
+}
+
+unittest { // copy with NOTHING selected takes everything; paste duplicates it
+    resetCube();
+    toPolygonMode();
+
+    postCommand(`{"id":"mesh.copy"}`);
+    postCommand(`{"id":"mesh.paste"}`);
+
+    auto m = getModel();
+    assert(m["vertexCount"].integer == 16,
+        "empty-selection copy+paste must duplicate all 8 verts; got "
+        ~ m["vertexCount"].integer.to!string);
+    assert(m["faceCount"].integer == 12,
+        "empty-selection copy+paste must duplicate all 6 faces; got "
+        ~ m["faceCount"].integer.to!string);
+
+    // The pasted faces are what is left selected — the 6 new ones, not 12.
+    auto s = getSelection();
+    assert(s["selectedFaces"].array.length == 6,
+        "paste must leave exactly the 6 pasted faces selected; got "
+        ~ s["selectedFaces"].array.length.to!string);
+
+    // ONE undo entry covers the whole-mesh paste.
+    postUndo();
+    auto m2 = getModel();
+    assert(m2["vertexCount"].integer == 8 && m2["faceCount"].integer == 6,
+        "a single undo must take the whole-mesh paste back off");
+}
+
+unittest { // mesh.cut is DELIBERATELY not on the law — it still refuses
+    // Not an oversight and not a symmetry bug: the frozen capture drives cut
+    // with every face SELECTED (and is left with an empty mesh), never with
+    // none, so what the reference's cut does with an empty selection has not
+    // been measured. Applying the law here would delete the user's whole mesh
+    // on a stray keypress on the strength of a guess. Pinned so that a later
+    // change to it is a deliberate one with a measurement behind it.
+    resetCube();
+    toPolygonMode();
+
+    auto resp = postCommandRaw(`{"id":"mesh.cut"}`);
+    auto m = getModel();
+    assert(resp["status"].str != "ok",
+        "empty-selection cut in Polygons mode must still refuse");
+    assert(m["vertexCount"].integer == 8 && m["faceCount"].integer == 6,
+        "empty-selection cut must not touch the mesh");
+}

@@ -70,48 +70,27 @@ class MeshMakePolygon : Command, Operator {
 
     bool evaluate(ref VectorStack vts) {
         import toolpipe.packets : SubjectPacket;
-        import std.algorithm : sort;
-
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
         // Vertex-command convention: fire regardless of EditMode (same as vert.join:53).
         if (!mesh.hasAnySelectedVertices()) return false;
 
-        // --- Collect selected vertices paired with their click order ---
-        // order == 0 means "selected via a bulk path that did not assign a
-        // click order" (e.g. select.all, box, lasso). Those verts are appended
-        // AFTER click-ordered ones, sorted by ascending vertex index, so the
-        // result is always deterministic.
-        struct VOrderPair {
-            uint vi;
-            int  order; // 1-based click counter; 0 = unordered
-        }
-        VOrderPair[] pairs;
-        const sv = mesh.selectedVertices;      // materialised bool[] snapshot
-        const so = mesh.vertexSelectionOrder;  // public int[] field
-        foreach (vi; 0 .. sv.length) {
-            if (!sv[vi]) continue;
-            int ord = (vi < so.length) ? so[vi] : 0;
-            pairs ~= VOrderPair(cast(uint)vi, ord);
-        }
+        // --- Collect selected vertices in CLICK ORDER ---
+        // `Mesh.selectedVerticesBySelectionOrder` is the one home for that
+        // read (task 1210): click-ordered first by ascending stamp, then the
+        // ones whose stamp is 0 — "selected via a bulk path that assigned no
+        // click order" — by ascending vertex index, so the result is always
+        // deterministic. It is shared with `vert.join`, which takes the LAST
+        // entry of the same list as the vertex that survives its weld; the two
+        // commands read opposite ends of one ordering and must not drift.
+        uint[] ordered = mesh.selectedVerticesBySelectionOrder();
 
-        // Pre-check: fewer than 2 distinct verts → no-op, no snapshot.
-        // TWO, not three — see the class doc: the reference builds a two-point
-        // polygon and we now do too.
-        if (pairs.length < 2) return false;
-
-        // Sort: click-ordered first (ascending order value), then unordered
-        // (order==0) appended in ascending vertex-index order.
-        sort!((a, b) {
-            int oa = (a.order > 0) ? a.order : int.max;
-            int ob = (b.order > 0) ? b.order : int.max;
-            if (oa != ob) return oa < ob;
-            return a.vi < b.vi;
-        })(pairs);
-
-        uint[] ordered;
-        ordered.length = pairs.length;
-        foreach (i, p; pairs) ordered[i] = p.vi;
+        // Pre-check: fewer than 2 distinct verts -> no-op, no snapshot.
+        // TWO, not three -- see the class doc: the reference builds a
+        // two-point polygon (ledger row 7) and we now do too. The order
+        // itself comes from the shared selection-order accessor above,
+        // so this command and vert.join read one ordering (task 1210).
+        if (ordered.length < 2) return false;
 
         // Snapshot before mutation (mirrors vert_join.d / split_edge.d pattern).
         snap = MeshSnapshot.capture(*mesh);

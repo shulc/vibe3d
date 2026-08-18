@@ -145,24 +145,60 @@ unittest { // vert.join average:true collapses 4 face verts to centroid
     assert(foundCenter, "expected a vert at centroid (0,0,0.5)");
 }
 
-unittest { // vert.join average:false uses first selected vert's position
+unittest { // vert.join average:false keeps the LAST selected vert
+    // This block used to say "first selected", and it was wrong — ledger row
+    // 11, ported in task 1210 and frozen in
+    // tests/fixtures/vert_join_survivor.json, whose reversed-order control
+    // rules out both "first selected" and "highest index".
     resetCube();
     // Select v4, v5, v6, v7 (front face). With average=false the target is
-    // the first selected = v4 = (-0.5, -0.5, 0.5).
+    // the LAST selected = v7 = (-0.5, +0.5, 0.5).
     postSelect("vertices", [4, 5, 6, 7]);
     postCommand(`{"id":"vert.join","params":{"average":false}}`);
     auto m = getModel();
-    bool foundCorner = false;
+    bool foundCorner = false, foundOldFirst = false;
+    foreach (v; m["vertices"].array) {
+        auto a = v.array;
+        if (approxEqual(a[0].floating, -0.5)
+         && approxEqual(a[1].floating,  0.5)
+         && approxEqual(a[2].floating,  0.5))
+            foundCorner = true;
+        if (approxEqual(a[0].floating, -0.5)
+         && approxEqual(a[1].floating, -0.5)
+         && approxEqual(a[2].floating,  0.5))
+            foundOldFirst = true;
+    }
+    assert(foundCorner, "expected a vert at the LAST-selected v7 corner (-0.5,0.5,0.5)");
+    // …and the first-selected corner is GONE. Without this half the block
+    // passes on a cube that still carries v4 somewhere, which is what the
+    // pre-1210 kernel produced.
+    assert(!foundOldFirst,
+        "the first-selected v4 corner (-0.5,-0.5,0.5) must not survive the join");
+}
+
+unittest { // …and the same four verts in the OPPOSITE order keep v4 instead
+    // The discriminator, in our own suite this time: "last selected" and
+    // "lowest index" name different vertices in the block above and the SAME
+    // vertex here, so a kernel that quietly went back to lowest-index passes
+    // this one and fails that one.
+    resetCube();
+    postSelect("vertices", [7, 6, 5, 4]);
+    postCommand(`{"id":"vert.join","params":{"average":false}}`);
+    auto m = getModel();
+    bool foundV4 = false, foundV7 = false;
     foreach (v; m["vertices"].array) {
         auto a = v.array;
         if (approxEqual(a[0].floating, -0.5)
          && approxEqual(a[1].floating, -0.5)
-         && approxEqual(a[2].floating,  0.5)) {
-            foundCorner = true;
-            break;
-        }
+         && approxEqual(a[2].floating,  0.5))
+            foundV4 = true;
+        if (approxEqual(a[0].floating, -0.5)
+         && approxEqual(a[1].floating,  0.5)
+         && approxEqual(a[2].floating,  0.5))
+            foundV7 = true;
     }
-    assert(foundCorner, "expected a vert at v4 corner (-0.5,-0.5,0.5)");
+    assert(foundV4, "reversed order: the LAST-selected v4 corner must survive");
+    assert(!foundV7, "reversed order: v7 must not survive");
 }
 
 unittest { // vert.join with single vert is a no-op error

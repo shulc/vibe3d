@@ -8,9 +8,24 @@ import editmode;
 import change_bus : MeshEditScope;
 import params : Param;
 
-/// Assigns a per-face material index (surface slot) to every selected face.
-/// Only active in Polygons edit mode; empty selection is a no-op (no history
-/// entry). The faceMaterial array is grown to faces.length before writing so
+/// Assigns a per-face material index (surface slot) to every face in the
+/// OPERAND set. Only active in Polygons edit mode.
+///
+/// AN EMPTY SELECTION MEANS THE WHOLE MESH (task 1210, dogfood ledger rows 13
+/// + 18, frozen in `tests/fixtures/empty_selection_whole_mesh.json`). This
+/// command used to no-op on an empty selection and `tests/test_set_material.d`
+/// pinned that no-op as correct; the reference paints every face of a two-face
+/// plate instead, and the same capture shows copy+paste duplicating the whole
+/// mesh from the same empty selection — two independent witnesses of one law,
+/// which is why it is a law and not a quirk of one command.
+///
+/// The operand set comes from `Mesh.operandFaceMask()`, the funnel this
+/// convention already lives in for ~40 other commands (delete, remove, bevel,
+/// extrude, mirror, smooth, jitter …), so "the whole mesh" here means the
+/// whole VISIBLE mesh — hidden faces stay unpainted, exactly as they stay
+/// unbevelled. The only remaining no-op is a mesh with no visible faces at all.
+///
+/// The faceMaterial array is grown to faces.length before writing so
 /// index-out-of-range is impossible. Out-of-range materialId values are
 /// accepted — render sites defend with a 0 fallback (mesh.d:11133).
 ///
@@ -54,7 +69,11 @@ class MeshSetMaterial : Command, Operator {
             throw new Exception("mesh.setMaterial: materialId must be >= 0");
 
         mesh.syncSelection();
-        if (!mesh.hasAnySelectedFaces()) return false; // no-op: empty selection
+        // Empty selection ⇒ the whole visible mesh (see the class doc).
+        auto operand = mesh.operandFaceMask();
+        bool anyOperand = false;
+        foreach (b; operand) if (b) { anyOperand = true; break; }
+        if (!anyOperand) return false;   // no visible faces at all
 
         // Snapshot only faceMaterial[] — the sole field we mutate.
         // Grow to faces.length first so origMaterial is the full post-grow
@@ -64,10 +83,8 @@ class MeshSetMaterial : Command, Operator {
         origMaterial = mesh.faceMaterial.dup;
         captured     = true;
 
-        // Materialize selectedFaces once (each access allocates).
-        auto selView = mesh.selectedFaces;
         foreach (fi; 0 .. mesh.faces.length) {
-            if (fi < selView.length && selView[fi])
+            if (fi < operand.length && operand[fi])
                 mesh.faceMaterial[fi] = cast(uint) materialId_;
         }
 

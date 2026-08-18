@@ -1,9 +1,18 @@
-// Tests for mesh.setMaterial — assigns a per-face material index to selected
-// faces via /api/command. Verifies assignment, undo, empty-selection no-op,
-// and wrong-mode rejection.
+// Tests for mesh.setMaterial — assigns a per-face material index to the
+// OPERAND faces via /api/command. Verifies assignment, undo, the
+// empty-selection = WHOLE MESH law, and wrong-mode rejection.
+//
+// The empty-selection block below used to assert the opposite. It pinned "no
+// selection ⇒ no-op" as correct, and it was wrong: the reference paints every
+// face, and a second, unrelated command (copy+paste, which duplicates the
+// whole mesh from the same empty selection) says the same thing. Ledger rows
+// 13 + 18, frozen in tests/fixtures/empty_selection_whole_mesh.json, ported in
+// task 1210. Left as a comment because a test that changed its mind is worth
+// more with the reason attached than without.
 
 import std.net.curl;
 import std.json;
+import std.json : JSONType;
 import std.conv : to;
 import std.format : format;
 
@@ -38,6 +47,15 @@ void setSelection(string mode, int[] indices) {
         `{"mode":"` ~ mode ~ `","indices":` ~ idxJson ~ `}`);
     assert(parseJSON(resp)["status"].str == "ok",
         "/api/select failed: " ~ resp);
+}
+
+string[] undoLabels() {
+    auto h = parseJSON(get("http://localhost:8080/api/history"));
+    string[] r;
+    foreach (e; h["undo"].array)
+        r ~= (e.type == JSONType.object && "label" in e) ? e["label"].str
+                                                         : e.toString;
+    return r;
 }
 
 void postUndo() {
@@ -85,19 +103,56 @@ unittest { // undo restores all faceMaterial entries to 0
             format("after undo face %d should be 0, got %d", i, v));
 }
 
-unittest { // empty selection is a no-op: status != ok, faceMaterial unchanged
+unittest { // empty selection means THE WHOLE MESH: every face is painted
     resetCube();
-    // No setSelection — cube starts with empty face selection after reset.
+    // No setSelection — the cube starts with an empty face selection after
+    // reset, and that is exactly the operand this asserts.
     auto resp = postCommandRaw(
         `{"id":"mesh.setMaterial","params":{"materialId":3}}`);
     auto j = parseJSON(resp);
-    assert(j["status"].str != "ok",
-        "expected error/noop status on empty selection, got: " ~ resp);
+    assert(j["status"].str == "ok",
+        "empty selection must paint the whole mesh, not no-op: " ~ resp);
 
+    auto fm = faceMaterials();
+    assert(fm.length == 6,
+        format("expected 6 faceMaterial entries, got %d", fm.length));
+    foreach (i, v; fm)
+        assert(v == 3,
+            format("face %d should be material 3 (empty selection = whole "
+                   ~ "mesh), got %d", i, v));
+}
+
+unittest { // ... and it is ONE undo entry, not six
+    // Depth is the wrong instrument here: the undo stack saturates, so
+    // "before + 1" reads as unchanged on a full stack. The stack's LABELS say
+    // it directly — exactly one "Set Material" on top, and something else
+    // underneath it.
+    resetCube();
+    postCommand(`{"id":"mesh.setMaterial","params":{"materialId":7}}`);
+    auto labels = undoLabels();
+    assert(labels.length >= 2, "expected a non-trivial undo stack");
+    assert(labels[$ - 1] == "Set Material",
+        "the whole-mesh paint must be on top of the undo stack, got: "
+        ~ labels[$ - 1]);
+    assert(labels[$ - 2] != "Set Material",
+        "…and it must be ONE entry, not one per face — the entry below it is "
+        ~ "also a Set Material: " ~ labels[$ - 2]);
+
+    postUndo();
     auto fm = faceMaterials();
     foreach (i, v; fm)
         assert(v == 0,
-            format("face %d should be unchanged (0) after no-op, got %d", i, v));
+            format("one undo must restore every face; face %d is %d", i, v));
+}
+
+unittest { // a NON-empty selection is still exactly that selection
+    resetCube();
+    setSelection("polygons", [1]);
+    postCommand(`{"id":"mesh.setMaterial","params":{"materialId":4}}`);
+    auto fm = faceMaterials();
+    foreach (i, v; fm)
+        assert(v == (i == 1 ? 4 : 0),
+            format("face %d should be %d, got %d", i, i == 1 ? 4 : 0, v));
 }
 
 unittest { // wrong edit mode (Vertices) is rejected with status error

@@ -1559,6 +1559,12 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         // map's length check and drop those too. A document whose only face was
         // the two-point one failed to load at all ("no polygons"). Silent
         // corruption of a document the editor itself had just written.
+        //
+        // Reached independently from a SECOND route and measured there too
+        // (task 1210): `vert.join keep:1` leaves two-point polygons behind, and
+        // an 8-face fan came back from save->load with 6. Two probes converging
+        // on one line is why this is a real defect and not an artefact of either
+        // new shape.
         if (face.length >= 2)
             polys ~= face;
     }
@@ -1567,10 +1573,13 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
         v3dReject("no vertices");
         return false;
     }
-    if (polys.length == 0) {
-        v3dReject("no polygons");
-        return false;
-    }
+    // NO POLYGON REQUIREMENT (task 1210). A points-only mesh is a state the
+    // editor can now REACH: `vert.join` over every vertex of a plate leaves
+    // one free vertex and no faces, matching the reference. The writer emitted
+    // that document happily and this reader refused to read it back — the
+    // document saved, and opening it failed with "no polygons". The vertex
+    // requirement above stays: a mesh with neither vertices nor polygons is
+    // still nothing at all.
 
     // Out-of-range vertex index check before committing anything.
     const uint nv = cast(uint) verts.length;

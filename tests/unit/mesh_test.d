@@ -4987,3 +4987,163 @@ unittest {
                m.selectedFaceIndicesInSelectionOrder()));
 }
 
+
+// --------------------------------------------------------------------------
+// Task 1210 — the three weld policy bits `vert.join` needs, at kernel level.
+// Each block is written so that reverting the ONE production line it exercises
+// turns it red, and the default-policy block is what says the other five weld
+// producers were not moved.
+// --------------------------------------------------------------------------
+
+private Mesh makePlate2x1() {
+    // 6 verts, 2 quads — the base the reference was driven on.
+    Mesh m;
+    foreach (v; [Vec3(0,0,0), Vec3(1,0,0), Vec3(2,0,0),
+                 Vec3(0,0,1), Vec3(1,0,1), Vec3(2,0,1)])
+        m.addVertex(v);
+    m.addFace([0u, 1u, 4u, 3u]);
+    m.addFace([1u, 2u, 5u, 4u]);
+    m.buildLoops();
+    m.syncSelection();
+    return m;
+}
+
+unittest { // selectedVerticesBySelectionOrder: stamped first, unstamped last
+    Mesh m = makePlate2x1();
+    m.resetSelection();
+    // Click 4, then 1, then 0 — the stamps are 1,2,3 in THAT order.
+    m.selectVertex(4); m.selectVertex(1); m.selectVertex(0);
+    assert(m.selectedVerticesBySelectionOrder() == [4u, 1u, 0u],
+        format("click order must survive verbatim, got %s",
+               m.selectedVerticesBySelectionOrder()));
+
+    // A vertex committed through the RESTORE setter carries stamp 0 and must
+    // sort LAST, not first — the convention makePolygon established.
+    bool[] want = new bool[](m.vertices.length);
+    want[4] = want[1] = want[0] = true;
+    want[5] = true;                       // the unstamped one
+    m.setVerticesSelectedFrom(want);
+    assert(m.selectedVerticesBySelectionOrder() == [4u, 1u, 0u, 5u],
+        format("an unstamped vertex must sort behind every clicked one, got %s",
+               m.selectedVerticesBySelectionOrder()));
+}
+
+unittest { // JoinWeldPolicy.survivor decides WHICH vertex a cluster keeps
+    // The two welded corners end up at the SAME position, so a position or a
+    // count assert cannot see which one survived — that shape of test would be
+    // green either way. Identity is read off a per-vertex ATTRIBUTE instead:
+    // vertex 0 is Selected and vertex 2 is not, and `compactUnreferenced`
+    // carries `vertexMarks` through its permutation, so the merged vertex is
+    // selected exactly when 0 was the survivor.
+    foreach (prefer; [-1, 2]) {
+        Mesh m = makePlate2x1();
+        m.resetSelection();
+        m.selectVertex(0);              // the distinguishing mark
+
+        bool[] mask = new bool[](m.vertices.length);
+        mask[0] = mask[2] = true;
+        m.collapseVerticesByMask(mask, Vec3(2, 0, 0));
+
+        JoinWeldPolicy pol;
+        pol.survivor = prefer;
+        const welded = m.weldVerticesByMask(mask, 1e-12, false, pol);
+        assert(welded == 1, "exactly one of the pair must weld away");
+        assert(m.vertices.length == 5,
+            format("expected 5 verts after the weld, got %d", m.vertices.length));
+
+        // Find the merged vertex by position and ask whether it carries 0's mark.
+        int merged = -1;
+        foreach (i; 0 .. m.vertices.length)
+            if (m.vertices[i].x == 2.0f && m.vertices[i].z == 0.0f) merged = cast(int)i;
+        assert(merged >= 0, "the merged vertex must sit at the weld target");
+
+        const bool zeroSurvived = m.isVertexSelected(merged);
+        assert(zeroSurvived == (prefer != 2),
+            format("survivor=%d: expected vertex %s to be the one kept, but the "
+                   ~ "merged vertex %s carry vertex 0's mark",
+                   prefer, prefer == 2 ? "2" : "0",
+                   zeroSurvived ? "does" : "does not"));
+    }
+}
+
+unittest { // survivor + keepOrphanSurvivor: collapsing EVERYTHING leaves it
+    Mesh m = makePlate2x1();
+    bool[] all = new bool[](m.vertices.length);
+    all[] = true;
+    m.collapseVerticesByMask(all, Vec3(1, 0, 0.5f));
+
+    JoinWeldPolicy pol;
+    pol.survivor           = 5;      // the last-selected, in vert.join's terms
+    pol.keepOrphanSurvivor = true;
+    m.weldVerticesByMask(all, 1e-12, false, pol);
+
+    assert(m.faces.length == 0, "every face collapses below the arity floor");
+    assert(m.vertices.length == 1,
+        format("the joined vertex must survive its own orphaning, got %d verts",
+               m.vertices.length));
+    assert(m.vertices[0].x == 1.0f && m.vertices[0].z == 0.5f,
+        format("the survivor must sit at the join point, got %s", m.vertices[0]));
+
+    // The pin is opt-in: the SAME weld without it empties the mesh, which is
+    // what every other weld producer still does.
+    Mesh m2 = makePlate2x1();
+    bool[] all2 = new bool[](m2.vertices.length);
+    all2[] = true;
+    m2.collapseVerticesByMask(all2, Vec3(1, 0, 0.5f));
+    m2.weldVerticesByMask(all2, 1e-12);
+    assert(m2.vertices.length == 0,
+        format("without the pin the compaction must still empty the mesh, "
+               ~ "got %d verts", m2.vertices.length));
+}
+
+unittest { // keepTwoPointFaces lowers the arity floor from 3 to 2
+    // A fan hub joined to one spoke leaves two of the eight triangles with
+    // exactly two distinct corners.
+    Mesh makeFan8() {
+        Mesh f;
+        f.addVertex(Vec3(0, 0, 0));
+        immutable float s = 0.70710678f;
+        foreach (v; [Vec3(1,0,0), Vec3(s,0,s), Vec3(0,0,1), Vec3(-s,0,s),
+                     Vec3(-1,0,0), Vec3(-s,0,-s), Vec3(0,0,-1), Vec3(s,0,-s)])
+            f.addVertex(v);
+        foreach (k; 0 .. 8)
+            f.addFace([0u, cast(uint)(k + 1), cast(uint)(k == 7 ? 1 : k + 2)]);
+        f.buildLoops();
+        f.syncSelection();
+        return f;
+    }
+
+    foreach (keep; [false, true]) {
+        Mesh m = makeFan8();
+        bool[] mask = new bool[](m.vertices.length);
+        mask[0] = mask[1] = true;
+        m.collapseVerticesByMask(mask, Vec3(0.5f, 0, 0));
+
+        JoinWeldPolicy pol;
+        pol.survivor          = 1;
+        pol.keepTwoPointFaces = keep;
+        m.weldVerticesByMask(mask, 1e-12, false, pol);
+
+        assert(m.faces.length == (keep ? 8 : 6),
+            format("keep=%s must leave %d faces, got %d",
+                   keep, keep ? 8 : 6, m.faces.length));
+        if (keep) {
+            size_t twoPoint = 0;
+            foreach (ref f; m.faces) if (f.length == 2) ++twoPoint;
+            assert(twoPoint == 2,
+                format("expected exactly two TWO-POINT polygons, got %d",
+                       twoPoint));
+        }
+        // A 2-corner ring visits (a,b) AND (b,a); the dedup must fold them
+        // into one entry, or every such polygon would double an edge.
+        bool[ulong] seen;
+        foreach (e; m.edges) {
+            const k = edgeKey(e[0], e[1]);
+            assert((k in seen) is null,
+                format("rebuildEdges emitted a duplicate edge %s", e));
+            seen[k] = true;
+        }
+        assert(m.edges.length == 13,
+            format("expected 13 edges either way here, got %d", m.edges.length));
+    }
+}

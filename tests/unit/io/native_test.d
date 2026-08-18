@@ -373,3 +373,83 @@ unittest {
         "a ONE-corner face is still dropped — the reader's floor tracks the "
         ~ "kernel's, and neither engine was ever seen to build one");
 }
+
+// Task 1210 — the .v3d READER can hold the degenerate remnants a `vert.join`
+// now leaves behind, because those remnants are real document state.
+//
+// Both losses were ONE-SIDED: the writer emitted both shapes correctly all
+// along, and only the reader threw them away, so nothing went red until a
+// document actually contained one. The writer half is asserted here too — a
+// fix that silently moved the drop into the writer would pass a
+// reader-only test.
+// ---------------------------------------------------------------------------
+unittest { // a TWO-POINT polygon survives the round trip
+    import std.file   : tempDir, remove, exists;
+    import std.path   : buildPath;
+    import std.random : uniform;
+
+    auto path = buildPath(tempDir(),
+        format("vibe3d_native_twopoint_%d.v3d", uniform(0, int.max)));
+    scope(exit) if (exists(path)) remove(path);
+
+    Mesh m;
+    m.vertices = [Vec3(0, 0, 0), Vec3(1, 0, 0), Vec3(1, 0, 1), Vec3(0, 0, 1)];
+    m.addFace([0u, 1u, 2u, 3u]);
+    m.faces ~= [0u, 1u];                 // the remnant, appended raw
+    m.rebuildEdges();
+    m.buildLoops();
+    m.syncSelection();
+
+    auto doc = Document.bootstrap(m);
+    assert(writeV3d(doc, path), "write must succeed");
+
+    // The WRITER's half, read straight out of the JSON.
+    auto j = parseJSON(readText(path));
+    auto wf = j["layers"].array[0]["mesh"]["faces"].array;
+    assert(wf.length == 2,
+        format("the writer must emit BOTH faces, got %d", wf.length));
+    assert(wf[1].array.length == 2,
+        format("…and the second one with its two corners, got %d",
+               wf[1].array.length));
+
+    Document loaded;
+    assert(readV3d(path, loaded), "round-trip load must succeed");
+    auto lm = loaded.layers[0].meshRef();
+    assert(lm.faces.length == 2,
+        format("a reader with an arity floor of 3 eats the two-point polygon: "
+               ~ "expected 2 faces, got %d", lm.faces.length));
+    size_t twoPoint = 0;
+    foreach (ref f; lm.faces) if (f.length == 2) ++twoPoint;
+    assert(twoPoint == 1,
+        format("expected exactly one TWO-POINT polygon back, got %d", twoPoint));
+}
+
+unittest { // a POINTS-ONLY mesh opens at all
+    import std.file   : tempDir, remove, exists;
+    import std.path   : buildPath;
+    import std.random : uniform;
+
+    auto path = buildPath(tempDir(),
+        format("vibe3d_native_pointsonly_%d.v3d", uniform(0, int.max)));
+    scope(exit) if (exists(path)) remove(path);
+
+    Mesh m;
+    m.vertices = [Vec3(1, 0, 0.5f)];     // exactly what a full-plate join leaves
+    m.rebuildEdges();
+    m.buildLoops();
+    m.syncSelection();
+
+    auto doc = Document.bootstrap(m);
+    assert(writeV3d(doc, path), "write must succeed — it always did");
+
+    Document loaded;
+    assert(readV3d(path, loaded),
+        "a reader that requires at least one polygon refuses this document "
+        ~ "outright: it saves and will not open");
+    auto lm = loaded.layers[0].meshRef();
+    assert(lm.vertices.length == 1 && lm.faces.length == 0,
+        format("expected 1 free vertex and no faces, got %d/%d",
+               lm.vertices.length, lm.faces.length));
+    assert(lm.vertices[0].x == 1.0f && lm.vertices[0].z == 0.5f,
+        "…at the join point it was left at");
+}

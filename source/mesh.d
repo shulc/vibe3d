@@ -66,6 +66,41 @@ struct FaceList {
     inout(uint[][]) range() inout return { return _store; }
 }
 
+/// The three ways `vert.join` welds differently from every other weld, and the
+/// ONLY caller that sets any of them (task 1210; dogfood ledger rows 11 + 21,
+/// frozen in `tests/fixtures/vert_join_survivor.json` and
+/// `tests/fixtures/vert_join_degenerate.json`).
+///
+/// A default-constructed value reproduces the behaviour `weldVerticesByMask`
+/// and `applyVertexRemapAndRebuild` had before this struct existed, so no
+/// other weld producer — vert.merge, collapse, decimate, drag-weld, the mirror
+/// seam pass — changes by a coordinate.
+///
+/// Each field is a MEASURED law, not a knob:
+///   * `survivor`            — the reference keeps the LAST-SELECTED vertex of
+///                             a join, where the plain weld keeps the lowest
+///                             index. Discriminated by running the same pair in
+///                             the opposite order: there the two rules name the
+///                             same vertex and the two engines agree, which is
+///                             what rules out "highest index".
+///   * `keepOrphanSurvivor`  — joining EVERY vertex of a plate leaves the
+///                             reference one free vertex; without the pin the
+///                             tail compaction takes the mesh to empty.
+///   * `keepTwoPointFaces`   — `keep:1` on a hub-and-spoke fan leaves the
+///                             reference two TWO-POINT polygons (8 faces, not
+///                             6). Our kernel used to drop them, and said so:
+///                             "keep is recognized but not yet honored".
+struct JoinWeldPolicy {
+    /// Prefer this vertex as its weld cluster's survivor. -1 = no preference
+    /// (lowest index wins, the plain weld rule). Ignored when the vertex is
+    /// outside the weld mask.
+    int  survivor = -1;
+    /// Keep `survivor` even when the rewrite left no face referencing it.
+    bool keepOrphanSurvivor;
+    /// Lower the face-arity floor from 3 to 2 for this rewrite.
+    bool keepTwoPointFaces;
+}
+
 /// A face index that is known to have been read out of a LIVE `faces` array —
 /// task 0831, the type that replaces the rule task 0703 could only write in a
 /// comment.
@@ -1593,7 +1628,12 @@ struct Mesh {
     /// survivor stays at the lowest-index member's position. Only `vert.merge`
     /// opts in; collapse / vert.join / decimate / drag-weld rely on the
     /// merge-to-first placement and pass the default.
-    size_t weldVerticesByMask(in bool[] maskIn, double epsSq, bool average = false) {
+    ///
+    /// `join` (task 1210) carries the three policy bits `vert.join` needs and
+    /// nobody else does; a default-constructed `JoinWeldPolicy` is exactly the
+    /// behaviour every caller had before it existed. See the struct.
+    size_t weldVerticesByMask(in bool[] maskIn, double epsSq, bool average = false,
+                              JoinWeldPolicy join = JoinWeldPolicy.init) {
         const mask = maskMinusHiddenVertices(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (vertices.length < 2) return 0;
         if (mask.length != vertices.length) return 0;
@@ -1615,6 +1655,25 @@ struct Mesh {
         foreach (i; 0 .. vertices.length)
             if (remap[i] != cast(int)i) ++welded;
         if (welded == 0) return 0;
+
+        // WHO SURVIVES (task 1210, ledger row 11). The scan above makes the
+        // LOWEST-indexed member of each cluster its survivor. `join.survivor`
+        // overrides that for the one cluster it belongs to, by re-pointing the
+        // cluster's old head — and everything that pointed at it — at the
+        // requested vertex. Depth stays 1: every member pointed at `head`, and
+        // now points at `join.survivor` instead.
+        //
+        // Only the requested vertex's OWN cluster moves; a call that welds
+        // several clusters at once leaves the others on the lowest-index rule.
+        if (join.survivor >= 0 && join.survivor < cast(int) vertices.length
+            && join.survivor < cast(int) mask.length && mask[join.survivor]) {
+            const int head = remap[join.survivor];
+            if (head != join.survivor) {
+                foreach (i; 0 .. vertices.length)
+                    if (remap[i] == head) remap[i] = join.survivor;
+                remap[join.survivor] = join.survivor;
+            }
+        }
 
         // Opt-in: relocate each surviving vertex to its cluster's centroid.
         // remap is at most one level deep (a member points straight at its
@@ -1639,7 +1698,7 @@ struct Mesh {
             }
         }
 
-        applyVertexRemapAndRebuild(remap);
+        applyVertexRemapAndRebuild(remap, join);
         return welded;
     }
 
@@ -1660,8 +1719,13 @@ struct Mesh {
     ///
     /// Consecutive duplicates that arise post-remap are dropped (so a quad
     /// whose two adjacent corners merged becomes a triangle); faces left with
-    /// fewer than 3 distinct corners are removed entirely.
-    private void applyVertexRemapAndRebuild(in int[] remap) {
+    /// fewer than 3 distinct corners are removed entirely — UNLESS
+    /// `join.keepTwoPointFaces`, which lowers the floor to 2 (task 1210,
+    /// ledger row 21b). `join.keepOrphanSurvivor` additionally pins
+    /// `join.survivor` through the tail `compactUnreferenced`, so a weld that
+    /// consumed every face still leaves the joined vertex behind.
+    private void applyVertexRemapAndRebuild(in int[] remap,
+                                            JoinWeldPolicy join = JoinWeldPolicy.init) {
         uint[][] newFaces;
         uint[]   newWord;   // whole faceMarks word per survivor (task 0613 §4.2)
         int[]    newOrder;
@@ -1677,7 +1741,15 @@ struct Mesh {
                 if (f.length == 0 || f[$ - 1] != mapped) f ~= mapped;
             }
             if (f.length > 1 && f[$ - 1] == f[0]) f = f[0 .. $ - 1];
-            if (f.length >= 3) {
+            // Arity floor. 3 everywhere except a `vert.join keep:1`, which
+            // honestly keeps the TWO-POINT remnants the reference keeps — a
+            // fan hub joined to one of its ring vertices leaves the two
+            // triangles that touched both as 2-corner polygons, and the
+            // reference reports 8 faces where dropping them reports 6.
+            // The floor stops at 2: nothing measured says a ONE-corner
+            // remnant survives there, and inventing that is not this port's
+            // to invent.
+            if (f.length >= (join.keepTwoPointFaces ? 2 : 3)) {
                 newFaces    ~= f;
                 newWord     ~= faceAttrOr(faceMarks, fi);
                 newOrder    ~= faceAttrOr(faceSelectionOrder, fi);
@@ -1709,7 +1781,17 @@ struct Mesh {
 
         rebuildEdges();
         clearEdgeSelectionResize();
-        compactUnreferenced();
+        // The pin (task 1210, ledger row 21a). Collapsing a whole plate leaves
+        // the reference ONE FREE VERTEX at the join point; unpinned, every face
+        // has just been dropped, so the survivor is unreferenced and this call
+        // would take the mesh to zero. The pin is `vert.join`'s alone and is
+        // NOT a general "welds keep their orphans" rule — the same capture has
+        // a CUT of every face leaving 0 verts, so loose remnants are not
+        // something the reference keeps by default.
+        const(uint)[] pinned = (join.keepOrphanSurvivor && join.survivor >= 0
+                                && join.survivor < cast(int) vertices.length)
+                             ? [cast(uint) join.survivor] : null;
+        compactUnreferenced(pinned);
         // Stated loss (task 0830). The remap rewrote every winding from a VERTEX
         // map and kept no record of which old corner each survivor was — the
         // machinery gap task 0690 named, not a law gap. Declared rather than
@@ -8709,6 +8791,45 @@ struct Mesh {
         setFacesSelectedFrom(src);      // also grows faceSelectionOrder
         foreach (i, a; added)
             if (a && isFaceSelected(i)) faceSelectionOrder[i] = ++faceSelectionOrderCounter;
+    }
+
+    /// The selected vertices IN SELECTION ORDER — the canonical reading of
+    /// `vertexSelectionOrder`, so the two commands that care about "which one
+    /// was picked last" cannot drift apart on the tie-breaks.
+    ///
+    /// The order is: click-ordered vertices first, by ascending stamp; then
+    /// the ones whose stamp is 0, by ascending index. A 0 means "selected by a
+    /// path that assigned no click order" — and today that is only a RESTORE
+    /// path (`SelectionSnapshot.restore` and friends), because every path a
+    /// user can reach goes through `selectVertex` / `selectVerticesFrom`,
+    /// including the RMB lasso and every `select.*` command (surveyed task
+    /// 1210). Sorting them last rather than first is the convention
+    /// `mesh.makePolygon` already established for winding.
+    ///
+    /// Two consumers, and they read opposite ends of the same list:
+    /// `mesh.makePolygon` walks it forwards for the ring winding, `vert.join`
+    /// takes its LAST entry as the vertex that survives the weld (task 1210,
+    /// ledger row 11).
+    uint[] selectedVerticesBySelectionOrder() const {
+        import std.algorithm : sort;
+        struct VOrder { uint vi; int order; }
+        VOrder[] pairs;
+        foreach (vi; 0 .. vertices.length) {
+            if (!isVertexSelected(vi)) continue;
+            const int ord = (vi < vertexSelectionOrder.length)
+                          ? vertexSelectionOrder[vi] : 0;
+            pairs ~= VOrder(cast(uint) vi, ord);
+        }
+        sort!((a, b) {
+            const int oa = (a.order > 0) ? a.order : int.max;
+            const int ob = (b.order > 0) ? b.order : int.max;
+            if (oa != ob) return oa < ob;
+            return a.vi < b.vi;
+        })(pairs);
+        uint[] outIdx;
+        outIdx.length = pairs.length;
+        foreach (i, p; pairs) outIdx[i] = p.vi;
+        return outIdx;
     }
 
     // selectVertex / selectEdge / selectFace: the direct scalar writers.

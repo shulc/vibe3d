@@ -40,23 +40,44 @@ struct GeometryClip {
     }
 
     /// Build a clip from the currently selected faces of `m`.
-    /// Verts shared by multiple selected faces are deduplicated: only one
+    /// Returns an empty clip when nothing is selected.
+    ///
+    /// This is the SELECTION-ONLY entry point and it stays that way: `mesh.cut`
+    /// is its only caller, and cut's empty-selection behaviour has not been
+    /// measured against the reference (task 1210 — the capture drives cut with
+    /// every face selected, never with none). `mesh.copy` goes through
+    /// `fromFaceMask` with the operand funnel instead.
+    static GeometryClip fromSelectedFaces(const ref Mesh m) {
+        if (!m.hasAnySelectedFaces()) return GeometryClip.init;
+        auto mask = new bool[](m.faces.length);
+        foreach (fi; 0 .. m.faces.length) mask[fi] = m.isFaceSelected(fi);
+        return fromFaceMask(m, mask);
+    }
+
+    /// Build a clip from the faces `mask` names — the general body, so a caller
+    /// that resolves its own operand set (`Mesh.operandFaceMask()`, whose empty
+    /// -selection fallback is the whole visible mesh) does not have to
+    /// re-derive the vertex dedup.
+    ///
+    /// Verts shared by multiple included faces are deduplicated: only one
     /// entry in `verts` is created per unique original vertex index.
     /// Uses `m.isFaceSubpatch(fi)` — the non-allocating scalar accessor —
     /// NOT `m.isSubpatch[fi]` (which allocates a full bool[] on each call,
     /// making a per-face loop O(F²)).
-    /// Returns an empty clip when nothing is selected.
-    static GeometryClip fromSelectedFaces(const ref Mesh m) {
-        if (!m.hasAnySelectedFaces()) return GeometryClip.init;
-
+    /// Returns an empty clip when the mask names no face.
+    static GeometryClip fromFaceMask(const ref Mesh m, scope const bool[] mask) {
         GeometryClip clip;
 
+        bool included(size_t fi) {
+            return fi < mask.length && mask[fi];
+        }
+
         // Map original vertex index → clip-local 0-based index.
-        // Built lazily as we iterate selected faces; shared verts across
-        // two selected faces are cloned once.
+        // Built lazily as we iterate included faces; shared verts across
+        // two included faces are cloned once.
         uint[uint] vertMap;
         foreach (fi, ref f; m.faces) {
-            if (!m.isFaceSelected(fi)) continue;
+            if (!included(fi)) continue;
             foreach (vid; f) {
                 if (vid !in vertMap) {
                     vertMap[vid] = cast(uint)clip.verts.length;
@@ -68,7 +89,7 @@ struct GeometryClip {
 
         // Build 0-based face index lists and per-face metadata.
         foreach (fi, ref f; m.faces) {
-            if (!m.isFaceSelected(fi)) continue;
+            if (!included(fi)) continue;
             uint[] remapped;
             remapped.length = f.length;
             foreach (k, vid; f) remapped[k] = vertMap[vid];

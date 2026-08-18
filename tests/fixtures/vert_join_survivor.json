@@ -1,6 +1,6 @@
 {
  "name": "vert_join_survivor",
- "description": "Ledger row 11: with averaging OFF the reference keeps the LAST-SELECTED vertex; we keep the one with the LOWEST INDEX. The reversed-order cell is what separates 'last selected' from 'highest index' \u2014 there the two rules coincide and the engines agree, so it is carried as a control.",
+ "description": "Ledger row 11: with averaging OFF the survivor of a join is the LAST-SELECTED vertex, not the one with the lowest index. The reversed-order cell is what separates 'last selected' from 'highest index' \u2014 there the two rules coincide and the engines agreed even before the port, which is why it is carried. CLOSED by task 1210: all three cells declare an EMPTY gap, including the post-command selection, which the reference also leaves empty.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 11.",
  "provenance": {
   "schema": 1,
@@ -10,13 +10,13 @@
   "captured_utc": "2026-08-17",
   "harness": "tools/local/fixture_gen/cmd_divergence (task 1130), over the task-1121 headless command capture",
   "task": "1130",
-  "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. Selection ORDER is the independent variable; the fixture therefore keys the selection on an ORDERED coordinate list and the pair of cells differs only in that order."
+  "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. Selection ORDER is the independent variable; the fixture therefore keys the selection on an ORDERED coordinate list and the pair of cells differs only in that order. The cell names are kept: 'diverges' and 'is_the_control' describe what the CELLS are for, not our current state."
  },
  "tolerance": 0.0001,
  "cases": [
   {
    "name": "forward_order_diverges",
-   "note": "select the low corner then the high one: different survivors",
+   "note": "select the low corner then the high one: the survivor is the second \u2014 the cell that discriminates the rule, CLOSED by task 1210",
    "input": [
     {
      "reset": true,
@@ -273,12 +273,12 @@
     },
     "vertices": [
      [
-      0.0,
+      1.0,
       0.0,
       0.0
      ],
      [
-      1.0,
+      2.0,
       0.0,
       0.0
      ],
@@ -301,12 +301,12 @@
     "edges": [
      [
       [
-       0.0,
+       1.0,
        0.0,
        0.0
       ],
       [
-       1.0,
+       2.0,
        0.0,
        0.0
       ]
@@ -339,17 +339,17 @@
       [
        0.0,
        0.0,
-       0.0
+       1.0
       ],
       [
+       2.0,
        0.0,
-       0.0,
-       1.0
+       0.0
       ]
      ],
      [
       [
-       0.0,
+       2.0,
        0.0,
        0.0
       ],
@@ -375,7 +375,7 @@
     "faces": [
      [
       [
-       0.0,
+       2.0,
        0.0,
        0.0
       ],
@@ -402,7 +402,7 @@
        0.0
       ],
       [
-       0.0,
+       2.0,
        0.0,
        0.0
       ],
@@ -420,455 +420,6 @@
     ],
     "selection": {
      "mode": "vertices",
-     "vertices": [
-      [
-       0.0,
-       0.0,
-       0.0
-      ]
-     ],
-     "edges": [],
-     "polygons": []
-    },
-    "applied": [
-     true,
-     true
-    ]
-   },
-   "divergence": {
-    "vertices_only_in_reference": [
-     [
-      2.0,
-      0.0,
-      0.0
-     ]
-    ],
-    "vertices_only_in_vibe3d": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ]
-    ],
-    "edges_only_in_reference": [
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "edges_only_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "faces_only_in_reference": [
-     [
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "faces_only_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "sel_vertices_only_in_vibe3d": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ]
-    ]
-   }
-  },
-  {
-   "name": "reversed_order_is_the_control",
-   "note": "the CONTROL: the SAME pair in the opposite order, where 'last selected' and 'lowest index' pick the same vertex \u2014 so the survivor agrees and only the post-command selection still differs",
-   "input": [
-    {
-     "reset": true,
-     "empty": true
-    },
-    {
-     "endpoint": "load-mesh",
-     "body": {
-      "vertices": [
-       [
-        0.0,
-        0.0,
-        0.0
-       ],
-       [
-        1.0,
-        0.0,
-        0.0
-       ],
-       [
-        2.0,
-        0.0,
-        0.0
-       ],
-       [
-        0.0,
-        0.0,
-        1.0
-       ],
-       [
-        1.0,
-        0.0,
-        1.0
-       ],
-       [
-        2.0,
-        0.0,
-        1.0
-       ]
-      ],
-      "faces": [
-       [
-        0,
-        1,
-        4,
-        3
-       ],
-       [
-        1,
-        2,
-        5,
-        4
-       ]
-      ]
-     }
-    }
-   ],
-   "op": [
-    {
-     "select": {
-      "mode": "vertices",
-      "coords": [
-       [
-        2.0,
-        0.0,
-        0.0
-       ],
-       [
-        0.0,
-        0.0,
-        0.0
-       ]
-      ]
-     }
-    },
-    {
-     "endpoint": "command",
-     "body": {
-      "id": "vert.join",
-      "params": {
-       "average": false
-      }
-     }
-    }
-   ],
-   "reference": {
-    "counts": {
-     "verts": 5,
-     "edges": 6,
-     "faces": 2
-    },
-    "vertices": [
-     [
-      1.0,
-      0.0,
-      0.0
-     ],
-     [
-      0.0,
-      0.0,
-      1.0
-     ],
-     [
-      1.0,
-      0.0,
-      1.0
-     ],
-     [
-      2.0,
-      0.0,
-      1.0
-     ],
-     [
-      0.0,
-      0.0,
-      0.0
-     ]
-    ],
-    "edges": [
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "faces": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "selection": {
      "vertices": [],
      "edges": [],
      "polygons": []
@@ -878,196 +429,448 @@
      true
     ]
    },
-   "vibe3d_current": {
-    "counts": {
-     "verts": 5,
-     "edges": 6,
-     "faces": 2
-    },
-    "vertices": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ],
-     [
-      1.0,
-      0.0,
-      0.0
-     ],
-     [
-      0.0,
-      0.0,
-      1.0
-     ],
-     [
-      1.0,
-      0.0,
-      1.0
-     ],
-     [
-      2.0,
-      0.0,
-      1.0
-     ]
-    ],
-    "edges": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "faces": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "selection": {
-     "mode": "vertices",
-     "vertices": [
-      [
-       0.0,
-       0.0,
-       0.0
-      ]
-     ],
-     "edges": [],
-     "polygons": []
-    },
-    "applied": [
-     true,
-     true
-    ]
-   },
-   "divergence": {
-    "sel_vertices_only_in_vibe3d": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ]
-    ]
-   },
+   "divergence": {},
    "control": [
     "applied",
     "counts",
     "vertices",
     "edges",
-    "faces"
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
+  },
+  {
+   "name": "reversed_order_is_the_control",
+   "note": "the CONTROL: the SAME pair in the opposite order, where 'last selected' and 'lowest index' pick the same vertex \u2014 the geometry agreed here before the port, which is what rules out 'highest index'",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": false
+      }
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 5,
+     "edges": 6,
+     "faces": 2
+    },
+    "vertices": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "selection": {
+     "vertices": [],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 5,
+     "edges": 6,
+     "faces": 2
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "selection": {
+     "mode": "vertices",
+     "vertices": [],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
    ]
   },
   {
    "name": "three_vertices_confirm",
-   "note": "three vertices on a valence-6 pole, same disagreement",
+   "note": "three vertices on a valence-6 pole, same rule, CLOSED by task 1210",
    "input": [
     {
      "reset": true,
@@ -1405,9 +1208,9 @@
       0.0
      ],
      [
-      1.0,
+      -0.5,
       0.0,
-      0.0
+      0.866025
      ],
      [
       -1.0,
@@ -1428,12 +1231,12 @@
     "edges": [
      [
       [
+       -0.5,
        0.0,
-       0.0,
-       0.0
+       0.866025
       ],
       [
-       1.0,
+       0.0,
        0.0,
        0.0
       ]
@@ -1445,9 +1248,9 @@
        0.0
       ],
       [
-       1.0,
+       -0.5,
        0.0,
-       0.0
+       0.866025
       ]
      ],
      [
@@ -1512,14 +1315,14 @@
      ],
      [
       [
+       -0.5,
+       0.0,
+       0.866025
+      ],
+      [
        0.5,
        0.0,
        -0.866025
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
       ]
      ]
     ],
@@ -1531,9 +1334,9 @@
        0.0
       ],
       [
-       1.0,
+       -0.5,
        0.0,
-       0.0
+       0.866025
       ],
       [
        -1.0,
@@ -1587,21 +1390,15 @@
        -0.866025
       ],
       [
-       1.0,
+       -0.5,
        0.0,
-       0.0
+       0.866025
       ]
      ]
     ],
     "selection": {
      "mode": "vertices",
-     "vertices": [
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ],
+     "vertices": [],
      "edges": [],
      "polygons": []
     },
@@ -1610,177 +1407,17 @@
      true
     ]
    },
-   "divergence": {
-    "vertices_only_in_reference": [
-     [
-      -0.5,
-      0.0,
-      0.866025
-     ]
-    ],
-    "vertices_only_in_vibe3d": [
-     [
-      1.0,
-      0.0,
-      0.0
-     ]
-    ],
-    "edges_only_in_reference": [
-     [
-      [
-       -0.5,
-       0.0,
-       0.866025
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       -1.0,
-       0.0,
-       0.0
-      ],
-      [
-       -0.5,
-       0.0,
-       0.866025
-      ]
-     ],
-     [
-      [
-       -0.5,
-       0.0,
-       0.866025
-      ],
-      [
-       0.5,
-       0.0,
-       -0.866025
-      ]
-     ]
-    ],
-    "edges_only_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       -1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       0.5,
-       0.0,
-       -0.866025
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "faces_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       -0.5,
-       0.0,
-       0.866025
-      ],
-      [
-       -1.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.5,
-       0.0,
-       -0.866025
-      ],
-      [
-       -0.5,
-       0.0,
-       0.866025
-      ]
-     ]
-    ],
-    "faces_only_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       -1.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       0.5,
-       0.0,
-       -0.866025
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "sel_vertices_only_in_vibe3d": [
-     [
-      1.0,
-      0.0,
-      0.0
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   }
  ]
 }

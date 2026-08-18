@@ -1,6 +1,6 @@
 {
  "name": "vert_join_degenerate",
- "description": "Ledger row 21: what survives a join that consumes everything. Collapsing an entire plate leaves the reference one FREE VERTEX and leaves us an empty mesh; with the keep flag on, the reference honours it and keeps the two-point remnants, while our kernel discards them (our own code says the flag is recognised but not yet honoured \u2014 this measures it).",
+ "description": "Ledger row 21: what survives a join that consumes everything. Collapsing an entire plate leaves ONE FREE VERTEX (we used to be left with an empty mesh), and the keep flag keeps the TWO-POINT remnants (our kernel used to discard them, and our own comment said the flag was 'recognized but not yet honored'). CLOSED by task 1210; both cells declare an EMPTY gap.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 21.",
  "provenance": {
   "schema": 1,
@@ -10,13 +10,13 @@
   "captured_utc": "2026-08-17",
   "harness": "tools/local/fixture_gen/cmd_divergence (task 1130), over the task-1121 headless command capture",
   "task": "1130",
-  "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. Both cells are open meshes; the degenerate remnant is the object of study, so the face/edge counts carry the finding and are asserted on both sides."
+  "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. Both cells are open meshes; the degenerate remnant is the object of study, so the face/edge counts carry the finding and are asserted on both sides. The remnants are real document state now, not a transient: they survive .v3d save/load, undo/redo and the GPU upload \u2014 two one-sided drops in the .v3d READER had to be removed for that (an arity floor of 3, and a flat refusal to open a mesh with no polygons at all)."
  },
  "tolerance": 0.0001,
  "cases": [
   {
    "name": "collapse_everything",
-   "note": "the reference keeps one free vertex where we keep nothing",
+   "note": "the join leaves one free vertex where the whole plate was",
    "input": [
     {
      "reset": true,
@@ -149,11 +149,17 @@
    },
    "vibe3d_current": {
     "counts": {
-     "verts": 0,
+     "verts": 1,
      "edges": 0,
      "faces": 0
     },
-    "vertices": [],
+    "vertices": [
+     [
+      1.0,
+      0.0,
+      0.5
+     ]
+    ],
     "edges": [],
     "faces": [],
     "selection": {
@@ -167,24 +173,21 @@
      true
     ]
    },
-   "divergence": {
-    "counts_delta": {
-     "verts": 1,
-     "edges": 0,
-     "faces": 0
-    },
-    "vertices_only_in_reference": [
-     [
-      1.0,
-      0.0,
-      0.5
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   },
   {
    "name": "keep_flag_on_a_pole",
-   "note": "the keep flag preserves two-point polygons there, not here",
+   "note": "the keep flag preserves the two two-point polygons",
    "input": [
     {
      "reset": true,
@@ -662,7 +665,7 @@
     "counts": {
      "verts": 8,
      "edges": 13,
-     "faces": 6
+     "faces": 8
     },
     "vertices": [
      [
@@ -875,6 +878,18 @@
        0.707107,
        0.0,
        0.707107
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       0.707107,
+       0.0,
+       0.707107
       ],
       [
        0.0,
@@ -960,6 +975,18 @@
        -0.0,
        0.0,
        -1.0
+      ],
+      [
+       0.707107,
+       0.0,
+       -0.707107
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
       ],
       [
        0.707107,
@@ -970,13 +997,7 @@
     ],
     "selection": {
      "mode": "vertices",
-     "vertices": [
-      [
-       0.5,
-       0.0,
-       0.0
-      ]
-     ],
+     "vertices": [],
      "edges": [],
      "polygons": []
     },
@@ -985,46 +1006,17 @@
      true
     ]
    },
-   "divergence": {
-    "counts_delta": {
-     "verts": 0,
-     "edges": 0,
-     "faces": 2
-    },
-    "faces_only_in_reference": [
-     [
-      [
-       0.5,
-       0.0,
-       0.0
-      ],
-      [
-       0.707107,
-       0.0,
-       0.707107
-      ]
-     ],
-     [
-      [
-       0.707107,
-       0.0,
-       -0.707107
-      ],
-      [
-       0.5,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "sel_vertices_only_in_vibe3d": [
-     [
-      0.5,
-      0.0,
-      0.0
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   }
  ]
 }
