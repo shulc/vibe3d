@@ -1,0 +1,1531 @@
+{
+ "name": "make_polygon_gates",
+ "description": "Ledger row 7: our make-polygon has four refusal gates and the reference has none of them. It builds a zero-area triangle from collinear points, a polygon from two points, a self-intersecting quad from a bow-tie click order, and a DUPLICATE face on top of an existing one.",
+ "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 7.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-17",
+  "harness": "tools/local/fixture_gen/cmd_divergence (task 1130), over the task-1121 headless command capture",
+  "task": "1130",
+  "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. The click ORDER is load-bearing in the bow-tie cell and is preserved by the coordinate list, which is why the ring is written out vertex by vertex rather than as a set."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "three_collinear_points",
+   "note": "zero area \u2014 the reference builds the triangle anyway",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ]
+      ],
+      "faces": []
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.makePolygon",
+      "params": {}
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 3,
+     "edges": 3,
+     "faces": 1
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       2.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "selection": {
+     "vertices": [],
+     "edges": [],
+     "polygons": [
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 3,
+     "edges": 0,
+     "faces": 0
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "edges": [],
+    "faces": [],
+    "selection": {
+     "mode": "vertices",
+     "vertices": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ]
+     ],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     false
+    ]
+   },
+   "divergence": {
+    "applied": {
+     "reference": [
+      true,
+      true
+     ],
+     "vibe3d": [
+      true,
+      false
+     ]
+    },
+    "counts_delta": {
+     "verts": 0,
+     "edges": 3,
+     "faces": 1
+    },
+    "edges_only_in_reference": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "faces_only_in_reference": [
+     [
+      [
+       2.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "sel_vertices_only_in_vibe3d": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "sel_polygons_only_in_reference": [
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ]
+   }
+  },
+  {
+   "name": "two_points_only",
+   "note": "below any sane minimum \u2014 the reference builds a 2-point polygon",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": []
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.makePolygon",
+      "params": {}
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 4,
+     "edges": 1,
+     "faces": 1
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "selection": {
+     "vertices": [],
+     "edges": [],
+     "polygons": [
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ]
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 4,
+     "edges": 0,
+     "faces": 0
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "edges": [],
+    "faces": [],
+    "selection": {
+     "mode": "vertices",
+     "vertices": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     false
+    ]
+   },
+   "divergence": {
+    "applied": {
+     "reference": [
+      true,
+      true
+     ],
+     "vibe3d": [
+      true,
+      false
+     ]
+    },
+    "counts_delta": {
+     "verts": 0,
+     "edges": 1,
+     "faces": 1
+    },
+    "edges_only_in_reference": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "faces_only_in_reference": [
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "sel_vertices_only_in_vibe3d": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "sel_polygons_only_in_reference": [
+     [
+      0.5,
+      0.0,
+      0.0
+     ]
+    ]
+   }
+  },
+  {
+   "name": "bowtie_click_order",
+   "note": "a self-intersecting ring, built as given",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": []
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.makePolygon",
+      "params": {}
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 4,
+     "edges": 4,
+     "faces": 1
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "selection": {
+     "vertices": [],
+     "edges": [],
+     "polygons": [
+      [
+       0.5,
+       0.0,
+       0.5
+      ]
+     ]
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 4,
+     "edges": 0,
+     "faces": 0
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "edges": [],
+    "faces": [],
+    "selection": {
+     "mode": "vertices",
+     "vertices": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     false
+    ]
+   },
+   "divergence": {
+    "applied": {
+     "reference": [
+      true,
+      true
+     ],
+     "vibe3d": [
+      true,
+      false
+     ]
+    },
+    "counts_delta": {
+     "verts": 0,
+     "edges": 4,
+     "faces": 1
+    },
+    "edges_only_in_reference": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "faces_only_in_reference": [
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "sel_vertices_only_in_vibe3d": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "sel_polygons_only_in_reference": [
+     [
+      0.5,
+      0.0,
+      0.5
+     ]
+    ]
+   }
+  },
+  {
+   "name": "duplicate_over_existing_face",
+   "note": "the ring of an EXISTING face: a duplicate appears, edges do not grow",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.makePolygon",
+      "params": {}
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 6,
+     "edges": 7,
+     "faces": 3
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "selection": {
+     "vertices": [],
+     "edges": [],
+     "polygons": [
+      [
+       0.5,
+       0.0,
+       0.5
+      ]
+     ]
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 6,
+     "edges": 7,
+     "faces": 2
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "selection": {
+     "mode": "vertices",
+     "vertices": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     false
+    ]
+   },
+   "divergence": {
+    "applied": {
+     "reference": [
+      true,
+      true
+     ],
+     "vibe3d": [
+      true,
+      false
+     ]
+    },
+    "counts_delta": {
+     "verts": 0,
+     "edges": 0,
+     "faces": 1
+    },
+    "faces_only_in_reference": [
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "sel_vertices_only_in_vibe3d": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "sel_polygons_only_in_reference": [
+     [
+      0.5,
+      0.0,
+      0.5
+     ]
+    ]
+   }
+  }
+ ]
+}

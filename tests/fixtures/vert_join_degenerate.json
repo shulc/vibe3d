@@ -1,0 +1,1030 @@
+{
+ "name": "vert_join_degenerate",
+ "description": "Ledger row 21: what survives a join that consumes everything. Collapsing an entire plate leaves the reference one FREE VERTEX and leaves us an empty mesh; with the keep flag on, the reference honours it and keeps the two-point remnants, while our kernel discards them (our own code says the flag is recognised but not yet honoured \u2014 this measures it).",
+ "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 21.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-17",
+  "harness": "tools/local/fixture_gen/cmd_divergence (task 1130), over the task-1121 headless command capture",
+  "task": "1130",
+  "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. Both cells are open meshes; the degenerate remnant is the object of study, so the face/edge counts carry the finding and are asserted on both sides."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "collapse_everything",
+   "note": "the reference keeps one free vertex where we keep nothing",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": true
+      }
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 1,
+     "edges": 0,
+     "faces": 0
+    },
+    "vertices": [
+     [
+      1.0,
+      0.0,
+      0.5
+     ]
+    ],
+    "edges": [],
+    "faces": [],
+    "selection": {
+     "vertices": [],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 0,
+     "edges": 0,
+     "faces": 0
+    },
+    "vertices": [],
+    "edges": [],
+    "faces": [],
+    "selection": {
+     "mode": "vertices",
+     "vertices": [],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "divergence": {
+    "counts_delta": {
+     "verts": 1,
+     "edges": 0,
+     "faces": 0
+    },
+    "vertices_only_in_reference": [
+     [
+      1.0,
+      0.0,
+      0.5
+     ]
+    ]
+   }
+  },
+  {
+   "name": "keep_flag_on_a_pole",
+   "note": "the keep flag preserves two-point polygons there, not here",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        0.707107,
+        0.0,
+        0.707107
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        -0.707107,
+        0.0,
+        0.707107
+       ],
+       [
+        -1.0,
+        0.0,
+        0.0
+       ],
+       [
+        -0.707107,
+        0.0,
+        -0.707107
+       ],
+       [
+        -0.0,
+        0.0,
+        -1.0
+       ],
+       [
+        0.707107,
+        0.0,
+        -0.707107
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2
+       ],
+       [
+        0,
+        2,
+        3
+       ],
+       [
+        0,
+        3,
+        4
+       ],
+       [
+        0,
+        4,
+        5
+       ],
+       [
+        0,
+        5,
+        6
+       ],
+       [
+        0,
+        6,
+        7
+       ],
+       [
+        0,
+        7,
+        8
+       ],
+       [
+        0,
+        8,
+        1
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "vert.join",
+      "params": {
+       "average": true,
+       "keep": true
+      }
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 8,
+     "edges": 13,
+     "faces": 8
+    },
+    "vertices": [
+     [
+      0.707107,
+      0.0,
+      0.707107
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      -0.707107,
+      0.0,
+      0.707107
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.707107,
+      0.0,
+      -0.707107
+     ],
+     [
+      -0.0,
+      0.0,
+      -1.0
+     ],
+     [
+      0.707107,
+      0.0,
+      -0.707107
+     ],
+     [
+      0.5,
+      0.0,
+      0.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.707107,
+       0.0,
+       0.707107
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       0.707107,
+       0.0,
+       0.707107
+      ]
+     ],
+     [
+      [
+       -0.707107,
+       0.0,
+       0.707107
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       0.707107
+      ]
+     ],
+     [
+      [
+       -0.707107,
+       0.0,
+       0.707107
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       -0.707107
+      ]
+     ],
+     [
+      [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       -0.707107,
+       0.0,
+       -0.707107
+      ],
+      [
+       -0.0,
+       0.0,
+       -1.0
+      ]
+     ],
+     [
+      [
+       -0.707107,
+       0.0,
+       -0.707107
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       -0.0,
+       0.0,
+       -1.0
+      ],
+      [
+       0.707107,
+       0.0,
+       -0.707107
+      ]
+     ],
+     [
+      [
+       -0.0,
+       0.0,
+       -1.0
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       0.707107,
+       0.0,
+       -0.707107
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       0.707107,
+       0.0,
+       0.707107
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       0.707107,
+       0.0,
+       0.707107
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       0.707107
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       0.707107
+      ],
+      [
+       -1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       -0.707107
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       -0.707107
+      ],
+      [
+       -0.0,
+       0.0,
+       -1.0
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       -0.0,
+       0.0,
+       -1.0
+      ],
+      [
+       0.707107,
+       0.0,
+       -0.707107
+      ]
+     ],
+     [
+      [
+       0.707107,
+       0.0,
+       -0.707107
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "selection": {
+     "vertices": [],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 8,
+     "edges": 13,
+     "faces": 6
+    },
+    "vertices": [
+     [
+      0.5,
+      0.0,
+      0.0
+     ],
+     [
+      0.707107,
+      0.0,
+      0.707107
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      -0.707107,
+      0.0,
+      0.707107
+     ],
+     [
+      -1.0,
+      0.0,
+      0.0
+     ],
+     [
+      -0.707107,
+      0.0,
+      -0.707107
+     ],
+     [
+      -0.0,
+      0.0,
+      -1.0
+     ],
+     [
+      0.707107,
+      0.0,
+      -0.707107
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       0.707107,
+       0.0,
+       0.707107
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.707107,
+       0.0,
+       0.707107
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       -0.707107,
+       0.0,
+       0.707107
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       -0.707107,
+       0.0,
+       0.707107
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       0.707107
+      ]
+     ],
+     [
+      [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       -0.707107
+      ]
+     ],
+     [
+      [
+       -0.707107,
+       0.0,
+       -0.707107
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       -0.707107,
+       0.0,
+       -0.707107
+      ],
+      [
+       -0.0,
+       0.0,
+       -1.0
+      ]
+     ],
+     [
+      [
+       -0.0,
+       0.0,
+       -1.0
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       -0.0,
+       0.0,
+       -1.0
+      ],
+      [
+       0.707107,
+       0.0,
+       -0.707107
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       0.707107,
+       0.0,
+       -0.707107
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       0.707107,
+       0.0,
+       0.707107
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       0.707107
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       0.707107
+      ],
+      [
+       -1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       -1.0,
+       0.0,
+       0.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       -0.707107
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       -0.707107,
+       0.0,
+       -0.707107
+      ],
+      [
+       -0.0,
+       0.0,
+       -1.0
+      ]
+     ],
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       -0.0,
+       0.0,
+       -1.0
+      ],
+      [
+       0.707107,
+       0.0,
+       -0.707107
+      ]
+     ]
+    ],
+    "selection": {
+     "mode": "vertices",
+     "vertices": [
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "divergence": {
+    "counts_delta": {
+     "verts": 0,
+     "edges": 0,
+     "faces": 2
+    },
+    "faces_only_in_reference": [
+     [
+      [
+       0.5,
+       0.0,
+       0.0
+      ],
+      [
+       0.707107,
+       0.0,
+       0.707107
+      ]
+     ],
+     [
+      [
+       0.707107,
+       0.0,
+       -0.707107
+      ],
+      [
+       0.5,
+       0.0,
+       0.0
+      ]
+     ]
+    ],
+    "sel_vertices_only_in_vibe3d": [
+     [
+      0.5,
+      0.0,
+      0.0
+     ]
+    ]
+   }
+  }
+ ]
+}

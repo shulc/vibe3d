@@ -2491,3 +2491,576 @@ void runRingOrbitSuite(string fixtureJson) {
         }
     }
 }
+
+// ===========================================================================
+// COMMAND-LEVEL divergences (task 1130)
+// ===========================================================================
+
+/// One engine-neutral observation of "what a command did".  Every field is
+/// keyed on COORDINATES or counts, never on indices — vertex/edge/face order
+/// is not a promise across engines, and half of these cases exist precisely
+/// because one engine renumbers where the other refuses.
+private struct CmdObs {
+    bool[]        applied;            // one entry per `op` step, in order
+    long[3]       counts;             // verts, edges, faces
+    double[3][]   verts;
+    double[3][2][] edges;             // endpoint pairs, canonical order
+    // Faces as RINGS OF COORDINATES, compared up to rotation but never
+    // reflection — task 1140's channel, reused verbatim rather than
+    // re-implemented. A centroid multiset (what this field used to hold) is
+    // blind to winding AND to ring ORDER, and ring order is the entire content
+    // of at least one case below (a bow-tie click order builds the same four
+    // points into a different polygon).
+    double[3][][]  faceRings;
+    string        selMode;
+    double[3][]   selVerts;
+    double[3][2][] selEdges;
+    double[3][]   selPolys;           // face centroids of the selection
+    long          materialsChanged;   // faces whose material differs from pre-op
+}
+
+private bool vecLess(double[3] a, double[3] b) {
+    foreach (k; 0 .. 3) {
+        if (a[k] < b[k] - COORD_EPS) return true;
+        if (a[k] > b[k] + COORD_EPS) return false;
+    }
+    return false;
+}
+
+// Endpoint pairs are undirected: canonicalise so (a,b) and (b,a) compare equal.
+private double[3][2] canonPair(double[3] a, double[3] b) {
+    return vecLess(b, a) ? [b, a] : [a, b];
+}
+
+private bool pairNear(double[3][2] p, double[3][2] q, double tol) {
+    return dist2(p[0], q[0]) <= tol*tol && dist2(p[1], q[1]) <= tol*tol;
+}
+
+// Multiset difference: the members of `a` that find no UNUSED partner in `b`.
+// Greedy consumption matters — several of these cases legitimately produce
+// COINCIDENT vertices (a set-position that lands two corners on one point), and a
+// plain "is there any match" test would silently forgive a lost duplicate.
+private double[3][] vecOnlyIn(double[3][] a, double[3][] b, double tol) {
+    auto used = new bool[](b.length);
+    double[3][] outv;
+    foreach (x; a) {
+        bool hit = false;
+        foreach (i, y; b)
+            if (!used[i] && dist2(x, y) <= tol*tol) { used[i] = true; hit = true; break; }
+        if (!hit) outv ~= x;
+    }
+    return outv;
+}
+
+private double[3][2][] pairOnlyIn(double[3][2][] a, double[3][2][] b, double tol) {
+    auto used = new bool[](b.length);
+    double[3][2][] outv;
+    foreach (x; a) {
+        bool hit = false;
+        foreach (i, y; b)
+            if (!used[i] && pairNear(x, y, tol)) { used[i] = true; hit = true; break; }
+        if (!hit) outv ~= x;
+    }
+    return outv;
+}
+
+private double[3][] jVecList(JSONValue v) {
+    double[3][] outv;
+    foreach (e; v.array) outv ~= jvec3(e);
+    return outv;
+}
+
+// A fixture's `faces` block is a LIST of rings; `jring` (task 1140) reads one.
+private double[3][][] jRingList(JSONValue v) {
+    double[3][][] outv;
+    foreach (e; v.array) outv ~= jring(e);
+    return outv;
+}
+
+private double[3][2][] jPairList(JSONValue v) {
+    double[3][2][] outv;
+    foreach (e; v.array) {
+        auto pr = e.array;
+        outv ~= canonPair(jvec3(pr[0]), jvec3(pr[1]));
+    }
+    return outv;
+}
+
+// Assert two coordinate multisets are equal, both directions, with a message
+// that names which side lost what.
+private void sameVecSet(string cn, string what, double[3][] got,
+                        double[3][] want, double tol, string hint) {
+    auto missing = vecOnlyIn(want, got, tol);
+    auto extra   = vecOnlyIn(got, want, tol);
+    assert(missing.length == 0 && extra.length == 0,
+        format("%s: %s differs from the frozen record — missing %s, extra %s. %s",
+               cn, what, missing, extra, hint));
+}
+
+private void sameRingSet(string cn, string what, double[3][][] got,
+                         double[3][][] want, double tol, string hint) {
+    auto missing = ringsMissing(want, got, tol);
+    auto extra   = ringsMissing(got, want, tol);
+    string show(double[3][][] rs) {
+        string o;
+        foreach (i, r; rs) { if (i) o ~= ", "; o ~= ringStr(r); }
+        return "[" ~ o ~ "]";
+    }
+    assert(missing.length == 0 && extra.length == 0,
+        format("%s: %s differs from the frozen record — missing %s, extra %s. %s",
+               cn, what, show(missing), show(extra), hint));
+}
+
+private void samePairSet(string cn, string what, double[3][2][] got,
+                         double[3][2][] want, double tol, string hint) {
+    auto missing = pairOnlyIn(want, got, tol);
+    auto extra   = pairOnlyIn(got, want, tol);
+    assert(missing.length == 0 && extra.length == 0,
+        format("%s: %s differs from the frozen record — missing %s, extra %s. %s",
+               cn, what, missing, extra, hint));
+}
+
+// Read the live faceMaterial array (absent => empty, which simply makes the
+// materials dimension inert for that case rather than failing it).
+private long[] readFaceMaterials() {
+    auto m = parseJSON(cast(string) get(BASE ~ "/api/model"));
+    long[] outv;
+    if ("faceMaterial" in m)
+        foreach (e; m["faceMaterial"].array) outv ~= e.integer;
+    return outv;
+}
+
+// Observe the live engine after the op: geometry, selection, materials.
+private CmdObs observeCmd(bool[] applied, long[] preMaterials) {
+    CmdObs o;
+    o.applied = applied;
+
+    auto model = parseJSON(cast(string) get(BASE ~ "/api/model"));
+    auto V = model["vertices"].array;
+    double[3] vpos(long i) { return jvec3(V[cast(size_t) i]); }
+
+    o.counts = [model["vertexCount"].integer,
+                ("edgeCount" in model) ? model["edgeCount"].integer : -1,
+                model["faceCount"].integer];
+    foreach (v; V) o.verts ~= jvec3(v);
+    foreach (e; model["edges"].array) {
+        auto ee = e.array;
+        o.edges ~= canonPair(vpos(ee[0].integer), vpos(ee[1].integer));
+    }
+    double[3] centroid(JSONValue f) {
+        auto fv = f.array;
+        double[3] c = [0, 0, 0];
+        foreach (fi; fv) {
+            auto p = vpos(fi.integer);
+            c[0] += p[0]; c[1] += p[1]; c[2] += p[2];
+        }
+        double n = cast(double) fv.length;
+        if (n > 0) { c[0] /= n; c[1] /= n; c[2] /= n; }
+        return c;
+    }
+    o.faceRings = readFaceRings();
+
+    auto sel = parseJSON(cast(string) get(BASE ~ "/api/selection"));
+    o.selMode = ("mode" in sel) ? sel["mode"].str : "";
+    foreach (si; sel["selectedVertices"].array) o.selVerts ~= vpos(si.integer);
+    foreach (si; sel["selectedEdges"].array) {
+        auto ee = model["edges"].array[cast(size_t) si.integer].array;
+        o.selEdges ~= canonPair(vpos(ee[0].integer), vpos(ee[1].integer));
+    }
+    foreach (si; sel["selectedFaces"].array)
+        o.selPolys ~= centroid(model["faces"].array[cast(size_t) si.integer]);
+
+    // Materials are compared as a COUNT OF CHANGED FACES, not by id: material
+    // identity is not shared across engines (one names them, we number them),
+    // but "this command retagged N faces" is the same fact on both sides.
+    auto postMats = readFaceMaterials();
+    long changed = 0;
+    foreach (i, m2; postMats)
+        if (i >= preMaterials.length || preMaterials[i] != m2) ++changed;
+    o.materialsChanged = changed;
+    return o;
+}
+
+/// runCommandDivergenceSuite — the COMMAND-level counterpart of
+/// runKnownDivergenceSuite (above), and it exists because the divergences it
+/// freezes do not live in the vertex positions that runner compares.
+///
+/// A command-level disagreement shows up as: the reference APPLIES where we
+/// refuse (or the reverse); the two engines leave a DIFFERENT SELECTION behind;
+/// the topology moves while every vertex stays exactly put (an edge spin is the
+/// pure case — same six coordinates, one different diagonal); or the command
+/// surface itself disagrees about which argument values are legal. Feed any of
+/// those to a vertex-set comparison and you get an empty difference, i.e. a
+/// green test that has measured nothing.
+///
+/// Same three-part discipline as runKnownDivergenceSuite, over the dimensions a
+/// command divergence actually inhabits:
+///   1. our live output still equals `vibe3d_current`  — a regression pin;
+///   2. `reference` is the frozen measurement, untouched;
+///   3. the gap RECOMPUTED between (1) and (2) is EXACTLY the declared
+///      `divergence` — the load-bearing one. Narrow the gap and this reddens,
+///      which is the prompt to re-measure, and to retire the case into a parity
+///      fixture once it closes completely.
+/// Plus a fourth that only a multi-dimensional gap needs:
+///   4. a non-control case must declare a NON-EMPTY gap. A divergence fixture
+///      whose every dimension agrees is a parity test wearing the wrong hat,
+///      and it would pass forever without asserting anything about the
+///      disagreement it claims to record.
+///
+/// A case may also declare a CONTROL — a cell that is in the fixture because
+/// what AGREES there is what makes the neighbouring divergence readable. Spin
+/// the same edge twice versus re-select the product and spin again: the second
+/// converges GEOMETRICALLY, which is how we know the first is about SELECTION
+/// and not about the spin arithmetic. So a control is per-DIMENSION, not
+/// per-case — that pair converges in the geometry and still disagrees in the
+/// selection, and a whole-case control could not say so:
+///   "control": true                      — every dimension must agree
+///   "control": ["counts","vertices","edges","faces","applied"]
+///                                        — THESE must agree; the case is still
+///                                          a divergence somewhere else, and
+///                                          must still declare one
+/// Dimension names: applied, counts, materials, vertices, edges, faces,
+/// selection_mode, sel_vertices, sel_edges, sel_polygons. A control dimension
+/// that acquires a gap reddens with its own message: that is a finding, because
+/// the control is load-bearing for reading the divergence beside it. A control
+/// dimension that is never MEASURED (absent from either block) reddens too, and
+/// for a different reason — an unmeasured control is green forever and is the
+/// exact shape of an assertion that has quietly gone inert.
+///
+/// `op` steps are run WITHOUT the usual abort-on-error: a refusal is the
+/// measurement here, not a broken fixture. Their outcomes land in `applied`,
+/// one bool per step, in order.
+///
+/// Schema:
+///   { "name": "...", "provenance": {...}, "tolerance": 1e-4,
+///     "cases": [ {
+///       "name": "...",
+///       "input": [ ...step vocabulary: reset / load-mesh / select... ],
+///       "op":    [ {"endpoint":"command","body":{...}}, ... ],
+///       "reference":      <observation>,
+///       "vibe3d_current": <observation>,
+///       "divergence": {
+///          "applied":            {"reference":[true,true], "vibe3d":[true,false]},
+///          "counts_delta":       {"verts":0,"edges":1,"faces":0},   // ref - ours
+///          "materials_changed_delta": 2,   // see the note on this channel below
+///          "selection_mode":     {"reference":"edges","vibe3d":"vertices"},
+///          "vertices_only_in_reference": [[x,y,z],...],
+///          "vertices_only_in_vibe3d":    [...],
+///          "edges_only_in_reference":    [[[x,y,z],[x,y,z]],...],
+///          "edges_only_in_vibe3d":       [...],
+///          "faces_only_in_reference":    [ [[x,y,z],...], ... ],  // rings
+///          "faces_only_in_vibe3d":       [...],
+///          "sel_vertices_only_in_reference": [...], "sel_vertices_only_in_vibe3d": [...],
+///          "sel_edges_only_in_reference":    [...], "sel_edges_only_in_vibe3d":    [...],
+///          "sel_polygons_only_in_reference": [...], "sel_polygons_only_in_vibe3d": [...]
+///       },
+///       "control": false } ] }
+///
+/// An `<observation>` carries any of:
+///   "applied": [bool,...], "counts": {"verts":V,"edges":E,"faces":F},
+///   "vertices": [[x,y,z],...], "edges": [[[x,y,z],[x,y,z]],...],
+///   "faces": [ [[x,y,z],...], ... ]                 (rings, task 1140's
+///                                                    rotation-not-reflection
+///                                                    comparison),
+///   "selection": {"mode":"edges","vertices":[...],"edges":[...],"polygons":[...]},
+///   "materials_changed": N
+/// A dimension absent from EITHER block is not diffed — "we did not measure
+/// that here" is a real state and must not be confused with "they agreed".
+///
+/// On `materials_changed` vs task 1140's `material_groups`: they are NOT two
+/// implementations of one comparison and must not be folded together. 1140 asks
+/// "do the two engines put the same faces in the same GROUP" — the partition,
+/// the only material fact the two namespaces share. This channel asks "did the
+/// command RETAG anything at all", and it exists because there is a case where
+/// the partition is identical on both sides and the divergence is total: fire
+/// set-material with an empty selection and the reference paints both faces of
+/// a two-face plate while we do nothing. One group of two, either way. The
+/// partition sees parity; the retag count sees 2 against 0.
+/// `vibe3d_current` may additionally carry "error_contains": [null, "..."] —
+/// a per-op-step substring assertion on OUR OWN error text (a parse rejection
+/// and a kernel refusal are both "did not apply" to a count, and for the
+/// command-surface cases the difference between them IS the finding).
+void runCommandDivergenceSuite(string fixtureJson) {
+    auto fx      = parseJSON(fixtureJson);
+    string suite = ("name" in fx) ? fx["name"].str : "<command-divergence-suite>";
+    requireProvenance(fx, suite);
+    double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-4;
+
+    foreach (cs; fx["cases"].array) {
+        string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
+        double tol = ("tolerance" in cs) ? asDouble(cs["tolerance"]) : tolD;
+        // `control` is either `true` (every dimension must agree) or the LIST of
+        // dimensions that must. See the schema note above for why per-dimension.
+        bool   controlAll = ("control" in cs) && cs["control"].type == JSONType.true_;
+        bool[string] controlDim;
+        if ("control" in cs && cs["control"].type == JSONType.array)
+            foreach (d; cs["control"].array) controlDim[d.str] = true;
+
+        foreach (i, step; cs["input"].array) runStep(step, cn, "input", i);
+
+        auto preMaterials = readFaceMaterials();
+
+        // ---- op: run it, RECORD the outcome, never abort on a refusal ----
+        bool[]   applied;
+        string[] messages;
+        foreach (i, step; cs["op"].array) {
+            if ("endpoint" in step && step["endpoint"].str == "command") {
+                string reqBody = ("argstring" in step) ? step["argstring"].str
+                                                       : step["body"].toString;
+                auto resp = cast(string) post(BASE ~ "/api/command", reqBody);
+                bool ok = false;
+                string msg = resp;
+                if (resp.length && resp[0] == '{') {
+                    auto j = parseJSON(resp);
+                    ok = ("status" in j) && j["status"].str == "ok";
+                    if ("message" in j) msg = j["message"].str;
+                    else if ("error" in j) msg = j["error"].str;
+                    else if (ok) msg = "";
+                }
+                applied  ~= ok;
+                messages ~= msg;
+            } else {
+                runStep(step, cn, "op", i);
+                applied  ~= true;
+                messages ~= "";
+            }
+        }
+
+        auto live = observeCmd(applied, preMaterials);
+        auto cur  = cs["vibe3d_current"];
+        auto refB = cs["reference"];
+
+        enum string REPIN =
+            "This fixture records a KNOWN COMMAND DIVERGENCE; if you changed "
+            ~ "the behaviour deliberately, re-measure BOTH sides and update it "
+            ~ "— and if the gap closed entirely, delete the case and add a "
+            ~ "parity one.";
+
+        // -------- (1) our own output, verbatim ---------------------------
+        if ("applied" in cur) {
+            auto wantA = cur["applied"].array;
+            assert(wantA.length == live.applied.length,
+                format("%s: recorded %d op outcomes, ran %d",
+                       cn, wantA.length, live.applied.length));
+            foreach (i, w; wantA) {
+                bool wb = w.type == JSONType.true_;
+                assert(wb == live.applied[i],
+                    format("%s: op step %d applied=%s, the fixture records %s "
+                           ~ "(engine said: %s). %s",
+                           cn, i, live.applied[i], wb, messages[i], REPIN));
+            }
+        }
+        if ("error_contains" in cur) {
+            foreach (i, w; cur["error_contains"].array) {
+                if (w.type == JSONType.null_) continue;
+                assert(i < messages.length,
+                    format("%s: error_contains has %d entries, ran %d op steps",
+                           cn, cur["error_contains"].array.length, messages.length));
+                import std.algorithm : canFind;
+                assert(messages[i].canFind(w.str),
+                    format("%s: op step %d message %s does not contain '%s'. %s",
+                           cn, i, messages[i], w.str, REPIN));
+            }
+        }
+        if ("counts" in cur) assertCounts(cn, "vibe3d_current", cur["counts"], live.counts);
+        if ("vertices" in cur)
+            sameVecSet(cn, "our vertex set", live.verts, jVecList(cur["vertices"]), tol, REPIN);
+        if ("edges" in cur)
+            samePairSet(cn, "our edge set", live.edges, jPairList(cur["edges"]), tol, REPIN);
+        if ("faces" in cur)
+            sameRingSet(cn, "our face rings", live.faceRings,
+                        jRingList(cur["faces"]), tol, REPIN);
+        if ("materials_changed" in cur)
+            assert(live.materialsChanged == cur["materials_changed"].integer,
+                format("%s: we retagged %d faces, the fixture records %d. %s",
+                       cn, live.materialsChanged, cur["materials_changed"].integer, REPIN));
+        if ("selection" in cur) {
+            auto s = cur["selection"];
+            if ("mode" in s)
+                assert(live.selMode == s["mode"].str,
+                    format("%s: our selection mode is '%s', the fixture records '%s'. %s",
+                           cn, live.selMode, s["mode"].str, REPIN));
+            if ("vertices" in s)
+                sameVecSet(cn, "our selected vertices", live.selVerts,
+                           jVecList(s["vertices"]), tol, REPIN);
+            if ("edges" in s)
+                samePairSet(cn, "our selected edges", live.selEdges,
+                            jPairList(s["edges"]), tol, REPIN);
+            if ("polygons" in s)
+                sameVecSet(cn, "our selected polygons", live.selPolys,
+                           jVecList(s["polygons"]), tol, REPIN);
+        }
+
+        // -------- (3) the gap, RECOMPUTED from live vs the frozen ref -----
+        auto dv = ("divergence" in cs) ? cs["divergence"] : JSONValue(cast(JSONValue[string]) null);
+        bool anyGap = false;
+        bool[string] gapIn;
+        // A dimension is MEASURED only when both blocks carry it. Recording that
+        // separately from "it has a gap" is what stops a control from passing
+        // because nobody looked: `control: ["counts"]` on a case whose reference
+        // block has no counts would otherwise be silently, permanently green.
+        bool[string] measuredDim;
+        void mark(string dim, bool gap) {
+            measuredDim[dim] = true;
+            if (!gap) return;
+            anyGap = true;
+            gapIn[dim] = true;
+        }
+
+        enum string MOVED =
+            "The DIVERGENCE MOVED. Re-measure the reference and update this "
+            ~ "fixture; if it closed completely, replace the case with a parity one.";
+
+        void wantVecs(string dim, string key, double[3][] have) {
+            auto want = (key in dv) ? jVecList(dv[key]) : (double[3][]).init;
+            mark(dim, have.length > 0);
+            sameVecSet(cn, "divergence." ~ key, have, want, tol, MOVED);
+        }
+        void wantRings(string dim, string key, double[3][][] have) {
+            auto want = (key in dv) ? jRingList(dv[key]) : (double[3][][]).init;
+            mark(dim, have.length > 0);
+            sameRingSet(cn, "divergence." ~ key, have, want, tol, MOVED);
+        }
+        void wantPairs(string dim, string key, double[3][2][] have) {
+            auto want = (key in dv) ? jPairList(dv[key]) : (double[3][2][]).init;
+            mark(dim, have.length > 0);
+            samePairSet(cn, "divergence." ~ key, have, want, tol, MOVED);
+        }
+
+        if ("applied" in refB && "applied" in cur) {
+            auto refA = refB["applied"].array;
+            bool differs = refA.length != live.applied.length;
+            if (!differs)
+                foreach (i, w; refA)
+                    if ((w.type == JSONType.true_) != live.applied[i]) differs = true;
+            mark("applied", differs);
+            assert(("applied" in dv) !is null || !differs,
+                format("%s: the two engines disagree about WHETHER the command "
+                       ~ "applied, but the fixture declares no divergence.applied. %s",
+                       cn, MOVED));
+            if ("applied" in dv) {
+                auto da = dv["applied"];
+                foreach (i, w; da["reference"].array)
+                    assert((w.type == JSONType.true_) == (refA[i].type == JSONType.true_),
+                        format("%s: divergence.applied.reference[%d] contradicts "
+                               ~ "the frozen reference block", cn, i));
+                foreach (i, w; da["vibe3d"].array)
+                    assert((w.type == JSONType.true_) == live.applied[i],
+                        format("%s: divergence.applied.vibe3d[%d] says %s, we did %s. %s",
+                               cn, i, w.type == JSONType.true_, live.applied[i], MOVED));
+            }
+        }
+
+        if ("counts" in refB && "counts" in cur) {
+            auto rc = refB["counts"];
+            string[3] keys = ["verts", "edges", "faces"];
+            foreach (k, key; keys) {
+                if ((key in rc) is null) continue;
+                if (live.counts[k] < 0) continue;
+                long delta = rc[key].integer - live.counts[k];
+                mark("counts", delta != 0);
+                long declared = 0;
+                if ("counts_delta" in dv && (key in dv["counts_delta"]))
+                    declared = dv["counts_delta"][key].integer;
+                assert(delta == declared,
+                    format("%s: %s delta is now %d (reference %d, ours %d), the "
+                           ~ "fixture declares %d. %s",
+                           cn, key, delta, rc[key].integer, live.counts[k], declared, MOVED));
+            }
+        }
+
+        if ("materials_changed" in refB && "materials_changed" in cur) {
+            long delta = refB["materials_changed"].integer - live.materialsChanged;
+            mark("materials", delta != 0);
+            long declared = ("materials_changed_delta" in dv)
+                          ? dv["materials_changed_delta"].integer : 0;
+            assert(delta == declared,
+                format("%s: materials-changed delta is now %d, the fixture "
+                       ~ "declares %d. %s", cn, delta, declared, MOVED));
+        }
+
+        if ("vertices" in refB && "vertices" in cur) {
+            auto rv = jVecList(refB["vertices"]);
+            wantVecs("vertices", "vertices_only_in_reference", vecOnlyIn(rv, live.verts, tol));
+            wantVecs("vertices", "vertices_only_in_vibe3d",    vecOnlyIn(live.verts, rv, tol));
+        }
+        if ("edges" in refB && "edges" in cur) {
+            auto re = jPairList(refB["edges"]);
+            wantPairs("edges", "edges_only_in_reference", pairOnlyIn(re, live.edges, tol));
+            wantPairs("edges", "edges_only_in_vibe3d",    pairOnlyIn(live.edges, re, tol));
+        }
+        if ("faces" in refB && "faces" in cur) {
+            auto rf = jRingList(refB["faces"]);
+            wantRings("faces", "faces_only_in_reference", ringsMissing(rf, live.faceRings, tol));
+            wantRings("faces", "faces_only_in_vibe3d",    ringsMissing(live.faceRings, rf, tol));
+        }
+
+        if ("selection" in refB && "selection" in cur) {
+            auto rs = refB["selection"], vs = cur["selection"];
+            if ("mode" in rs && "mode" in vs) {
+                bool differs = rs["mode"].str != live.selMode;
+                mark("selection_mode", differs);
+                if ("selection_mode" in dv) {
+                    assert(dv["selection_mode"]["reference"].str == rs["mode"].str,
+                        format("%s: divergence.selection_mode.reference contradicts "
+                               ~ "the frozen reference block", cn));
+                    assert(dv["selection_mode"]["vibe3d"].str == live.selMode,
+                        format("%s: divergence.selection_mode.vibe3d says '%s', "
+                               ~ "ours is '%s'. %s",
+                               cn, dv["selection_mode"]["vibe3d"].str, live.selMode, MOVED));
+                } else assert(!differs,
+                    format("%s: selection modes disagree ('%s' vs '%s') but the "
+                           ~ "fixture declares no divergence.selection_mode. %s",
+                           cn, rs["mode"].str, live.selMode, MOVED));
+            }
+            if ("vertices" in rs && "vertices" in vs) {
+                auto r = jVecList(rs["vertices"]);
+                wantVecs("sel_vertices", "sel_vertices_only_in_reference", vecOnlyIn(r, live.selVerts, tol));
+                wantVecs("sel_vertices", "sel_vertices_only_in_vibe3d",    vecOnlyIn(live.selVerts, r, tol));
+            }
+            if ("edges" in rs && "edges" in vs) {
+                auto r = jPairList(rs["edges"]);
+                wantPairs("sel_edges", "sel_edges_only_in_reference", pairOnlyIn(r, live.selEdges, tol));
+                wantPairs("sel_edges", "sel_edges_only_in_vibe3d",    pairOnlyIn(live.selEdges, r, tol));
+            }
+            if ("polygons" in rs && "polygons" in vs) {
+                auto r = jVecList(rs["polygons"]);
+                wantVecs("sel_polygons", "sel_polygons_only_in_reference", vecOnlyIn(r, live.selPolys, tol));
+                wantVecs("sel_polygons", "sel_polygons_only_in_vibe3d",    vecOnlyIn(live.selPolys, r, tol));
+            }
+        }
+
+        // -------- (4) anti-vacuity / control ------------------------------
+        enum string CTRL =
+            "That is a finding, not a fixture chore: the control is what makes "
+            ~ "the divergence beside it readable — this pair says the two "
+            ~ "engines agree HERE, so the disagreement is somewhere else. "
+            ~ "Measure what moved before touching this fixture.";
+        if (controlAll)
+            assert(!anyGap,
+                format("%s: declared a whole-case CONTROL — a cell where the two "
+                       ~ "engines agree in every dimension — but a divergence "
+                       ~ "has appeared in it. %s", cn, CTRL));
+        foreach (d, _; controlDim) {
+            // Order matters: "never measured" is a different (and worse) fault
+            // than "measured and now disagrees", so say which one it is.
+            assert((d in measuredDim) !is null,
+                format("%s: dimension '%s' is declared a CONTROL but is never "
+                       ~ "MEASURED here — one of the two blocks does not carry "
+                       ~ "it, so the control asserts nothing and would stay "
+                       ~ "green through any change. Add the dimension to both "
+                       ~ "`reference` and `vibe3d_current`, or drop the claim.",
+                       cn, d));
+            assert((d in gapIn) is null,
+                format("%s: dimension '%s' is declared a CONTROL and has "
+                       ~ "acquired a divergence. %s", cn, d, CTRL));
+        }
+        if (!controlAll)
+            assert(anyGap,
+                format("%s: every measured dimension AGREES, so this case "
+                       ~ "asserts nothing about the divergence it claims to "
+                       ~ "record. Either the gap closed (retire the case into a "
+                       ~ "parity fixture) or the case never measured the "
+                       ~ "dimension the gap lives in.", cn));
+    }
+}

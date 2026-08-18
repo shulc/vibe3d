@@ -1,0 +1,526 @@
+{
+ "name": "poly_split_first_chord",
+ "description": "Ledger row 20: with THREE vertices selected on one n-gon the reference cuts exactly ONE chord \u2014 between the first two SELECTED vertices \u2014 and we refuse the whole command.",
+ "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 20.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-17",
+  "harness": "tools/local/fixture_gen/cmd_divergence (task 1130), over the task-1121 headless command capture",
+  "task": "1130",
+  "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. The base is a NON-CONVEX pentagon so that 'the first two selected' is distinguishable from 'the two that give a valid convex cut'."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "three_vertices_cut_one_chord",
+   "note": "the reference splits into a triangle and a quad; we do nothing",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        4.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        4.0
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        4.0,
+        0.0,
+        4.0
+       ],
+       [
+        0.0,
+        0.0,
+        4.0
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.splitFace",
+      "params": {}
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 5,
+     "edges": 6,
+     "faces": 2
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      4.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       4.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       4.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       4.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ]
+     ]
+    ],
+    "selection": {
+     "vertices": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       4.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ]
+     ],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 5,
+     "edges": 5,
+     "faces": 1
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      0.0
+     ],
+     [
+      4.0,
+      0.0,
+      4.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      4.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       4.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       4.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       4.0
+      ]
+     ]
+    ],
+    "selection": {
+     "mode": "vertices",
+     "vertices": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ],
+      [
+       0.0,
+       0.0,
+       4.0
+      ]
+     ],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     false
+    ]
+   },
+   "divergence": {
+    "applied": {
+     "reference": [
+      true,
+      true
+     ],
+     "vibe3d": [
+      true,
+      false
+     ]
+    },
+    "counts_delta": {
+     "verts": 0,
+     "edges": 1,
+     "faces": 1
+    },
+    "edges_only_in_reference": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ]
+     ]
+    ],
+    "faces_only_in_reference": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       4.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ]
+     ]
+    ],
+    "faces_only_in_vibe3d": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       0.0
+      ],
+      [
+       4.0,
+       0.0,
+       4.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       4.0
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

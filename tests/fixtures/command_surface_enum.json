@@ -1,0 +1,816 @@
+{
+ "name": "command_surface_enum",
+ "description": "Ledger rows 4 + 14, the COMMAND SURFACE rather than the geometry: which argument values each engine accepts. Row 4 \u2014 the reference takes a lower-case axis name, our parser rejects it and demands upper case, so the same script does not run on both. Row 14 \u2014 the reference's set-position accepts exactly x/y/z and treats every other value as a silent no-op that still reports success; for us 'all' is a legal value that writes the whole vector.",
+ "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 4, 14.",
+ "provenance": {
+  "schema": 1,
+  "source": "live-capture",
+  "reference": "ref-editor@11.2v3",
+  "method": "command",
+  "captured_utc": "2026-08-17",
+  "harness": "tools/local/fixture_gen/cmd_divergence (task 1130), over the task-1121 headless command capture",
+  "task": "1130",
+  "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. The axis-case cell has NO frozen reference geometry: the acceptance was measured on a different mesh, so inventing a golden for this base would be a fabrication. Only the dimension that WAS measured \u2014 whether the command is accepted \u2014 is frozen, and the case pins our own rejection text so that a parse refusal stays distinguishable from a kernel refusal."
+ },
+ "tolerance": 0.0001,
+ "cases": [
+  {
+   "name": "lowercase_axis_rejected_here",
+   "note": "row 4: our parser rejects the lower-case axis name and accepts the upper-case one; the reference accepts the lower-case name. No reference geometry is frozen \u2014 see the suite notes.",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0,
+        0,
+        0
+       ],
+       [
+        1,
+        0,
+        0
+       ],
+       [
+        2,
+        0,
+        0
+       ],
+       [
+        0,
+        0,
+        1
+       ],
+       [
+        1,
+        0,
+        1
+       ],
+       [
+        2,
+        0,
+        1
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        4,
+        3
+       ],
+       [
+        1,
+        2,
+        5,
+        4
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.mirror",
+      "params": {
+       "axis": "x"
+      }
+     }
+    }
+   ],
+   "reference": {
+    "applied": [
+     true
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 6,
+     "edges": 7,
+     "faces": 2
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      1.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       2.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "selection": {
+     "mode": "vertices",
+     "vertices": [],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     false
+    ],
+    "error_contains": [
+     "unknown enum value"
+    ]
+   },
+   "divergence": {
+    "applied": {
+     "reference": [
+      true
+     ],
+     "vibe3d": [
+      false
+     ]
+    }
+   }
+  },
+  {
+   "name": "axis_all_is_a_silent_noop_there",
+   "note": "row 14: both engines report success; only ours moves the vertex",
+   "input": [
+    {
+     "reset": true,
+     "empty": true
+    },
+    {
+     "endpoint": "load-mesh",
+     "body": {
+      "vertices": [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        0.0
+       ],
+       [
+        1.0,
+        0.0,
+        1.0
+       ],
+       [
+        0.0,
+        0.0,
+        1.0
+       ],
+       [
+        2.0,
+        0.0,
+        0.5
+       ]
+      ],
+      "faces": [
+       [
+        0,
+        1,
+        2,
+        3
+       ],
+       [
+        1,
+        4,
+        2
+       ]
+      ]
+     }
+    }
+   ],
+   "op": [
+    {
+     "select": {
+      "mode": "vertices",
+      "coords": [
+       [
+        2.0,
+        0.0,
+        0.5
+       ]
+      ]
+     }
+    },
+    {
+     "endpoint": "command",
+     "body": {
+      "id": "mesh.setPosition",
+      "params": {
+       "axis": "all",
+       "value": 0.0
+      }
+     }
+    }
+   ],
+   "reference": {
+    "counts": {
+     "verts": 5,
+     "edges": 6,
+     "faces": 2
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      2.0,
+      0.0,
+      0.5
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.5
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.5
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.5
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "selection": {
+     "vertices": [
+      [
+       2.0,
+       0.0,
+       0.5
+      ]
+     ],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "vibe3d_current": {
+    "counts": {
+     "verts": 5,
+     "edges": 6,
+     "faces": 2
+    },
+    "vertices": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      0.0
+     ],
+     [
+      1.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      1.0
+     ],
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "edges": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       1.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "faces": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       0.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "selection": {
+     "mode": "vertices",
+     "vertices": [
+      [
+       0.0,
+       0.0,
+       0.0
+      ]
+     ],
+     "edges": [],
+     "polygons": []
+    },
+    "applied": [
+     true,
+     true
+    ]
+   },
+   "divergence": {
+    "vertices_only_in_reference": [
+     [
+      2.0,
+      0.0,
+      0.5
+     ]
+    ],
+    "vertices_only_in_vibe3d": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ],
+    "edges_only_in_reference": [
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.5
+      ]
+     ],
+     [
+      [
+       1.0,
+       0.0,
+       1.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.5
+      ]
+     ]
+    ],
+    "edges_only_in_vibe3d": [
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       0.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "faces_only_in_reference": [
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       2.0,
+       0.0,
+       0.5
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "faces_only_in_vibe3d": [
+     [
+      [
+       1.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       0.0,
+       1.0
+      ]
+     ]
+    ],
+    "sel_vertices_only_in_reference": [
+     [
+      2.0,
+      0.0,
+      0.5
+     ]
+    ],
+    "sel_vertices_only_in_vibe3d": [
+     [
+      0.0,
+      0.0,
+      0.0
+     ]
+    ]
+   }
+  }
+ ]
+}
