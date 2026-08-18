@@ -37,7 +37,7 @@ module fixture_helpers;
 import std.json;
 import std.net.curl : get, post;
 import std.conv : to;
-import std.math : fabs, PI;
+import std.math : fabs, PI, sqrt, acos;
 import std.format : format;
 import std.algorithm : sort;
 
@@ -101,6 +101,31 @@ private void postStep(JSONValue step, string name, string phase, size_t i) {
         if (!allowError && "status" in j && j["status"].str == "error")
             assert(false, format("%s: %s step %d (%s) failed: %s",
                                  name, phase, i, ep, resp));
+        // Optional `expectStatus` (task 1150): assert the exact answer, not
+        // merely "not an error". A fixture whose whole content is that our
+        // command REFUSES has nothing to fail on otherwise — deleting the op
+        // outright leaves the same mesh a refused op leaves, so without this
+        // the case cannot tell the two apart.
+        if ("expectStatus" in step) {
+            string want = step["expectStatus"].str;
+            string got  = ("status" in j) ? j["status"].str : "<none>";
+            assert(got == want,
+                format("%s: %s step %d (%s) answered %s, the fixture expects "
+                       ~ "%s: %s", name, phase, i, ep, got, want, resp));
+        }
+        // Optional `expectMessageContains`: a refusal answers `error`, and so
+        // does an unknown command id — but they are not the same event, and on
+        // a fixture whose whole content is "our command RUNS and declines" the
+        // difference is the content. Pinning the substring makes the case
+        // reject a swapped-in command that merely also fails.
+        if ("expectMessageContains" in step) {
+            string need = step["expectMessageContains"].str;
+            string msg  = ("message" in j) ? j["message"].str : "";
+            import std.algorithm : canFind;
+            assert(msg.canFind(need),
+                format("%s: %s step %d (%s) answered %s, which does not "
+                       ~ "contain %s", name, phase, i, ep, resp, need));
+        }
     }
 }
 
@@ -1959,6 +1984,510 @@ void runKnownDivergenceSuite(string fixtureJson) {
                 format("%s: vibe3d's material partition now MATCHES the "
                        ~ "reference's. The divergence has CLOSED — delete this "
                        ~ "case and add a parity one in its place.", cn));
+        }
+        // ---- optional: the DISPLACEMENT law behind the vertex gap ---------
+        // Some divergences are not "these vertices differ" but "both engines
+        // move the same point by the same distance in different directions".
+        // A set diff records the first and loses the second, so a case may
+        // carry an `offset_law` block: per base corner, the vertex each engine
+        // CREATED nearest to it, and therefore each engine's displacement.
+        // Both offsets are re-derived here — the reference's from the frozen
+        // golden, ours from the LIVE output — so the recorded magnitudes and
+        // per-corner angles are checked, not merely stored.
+        if ("offset_law" in cs) {
+            auto ol = cs["offset_law"];
+            double magTol = ("magnitudes_agree_within" in ol)
+                          ? asDouble(ol["magnitudes_agree_within"]) : 1e-4;
+            double angTol = ("angle_tolerance_deg" in ol)
+                          ? asDouble(ol["angle_tolerance_deg"]) : 0.5;
+
+            // The base corners are the vertices the input LOADED: a created
+            // vertex is one that is not one of them.
+            double[3][] basePts;
+            foreach (step; cs["input"].array)
+                if ("endpoint" in step && step["endpoint"].str == "load-mesh")
+                    foreach (v; step["body"]["vertices"].array) basePts ~= jvec3(v);
+            assert(basePts.length,
+                format("%s: offset_law needs a load-mesh step to know which "
+                       ~ "vertices are base corners", cn));
+
+            double[3][] createdIn(double[3][] all) {
+                double[3][] outv;
+                foreach (v; all) {
+                    bool isBase = false;
+                    foreach (b; basePts) if (dist2(v, b) <= 1e-12) { isBase = true; break; }
+                    if (!isBase) outv ~= v;
+                }
+                return outv;
+            }
+            double[3][] refCreated, ourCreated;
+            foreach (r; refv) refCreated ~= jvec3(r);
+            refCreated = createdIn(refCreated);
+            ourCreated = createdIn(got);
+
+            double[3] nearestTo(double[3][] pool, double[3] p, string what) {
+                assert(pool.length, format("%s: %s created no vertices", cn, what));
+                size_t best = 0; double bd = double.max;
+                foreach (i, q; pool) { auto d = dist2(q, p); if (d < bd) { bd = d; best = i; } }
+                return pool[best];
+            }
+            double vlen(double[3] v) { return sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]); }
+            double angleDeg(double[3] a, double[3] b) {
+                double la = vlen(a), lb = vlen(b);
+                if (la < 1e-12 || lb < 1e-12) return 0;
+                double d = (a[0]*b[0] + a[1]*b[1] + a[2]*b[2]) / (la * lb);
+                if (d > 1) d = 1; else if (d < -1) d = -1;
+                return acos(d) * (180.0 / PI);
+            }
+
+            foreach (pr; ol["pairs"].array) {
+                double[3] corner = jvec3(pr["corner"]);
+                auto rv = nearestTo(refCreated, corner, "the reference");
+                auto ov = nearestTo(ourCreated, corner, "vibe3d");
+                double[3] ro = [rv[0]-corner[0], rv[1]-corner[1], rv[2]-corner[2]];
+                double[3] oo = [ov[0]-corner[0], ov[1]-corner[1], ov[2]-corner[2]];
+                double[3] wr = jvec3(pr["reference_offset"]);
+                double[3] wo = jvec3(pr["vibe3d_offset"]);
+                assert(dist2(ro, wr) <= tol*tol,
+                    format("%s: at corner %s the reference golden's offset is "
+                           ~ "[%.6f,%.6f,%.6f], the fixture declares %s",
+                           cn, pr["corner"].toString, ro[0], ro[1], ro[2],
+                           pr["reference_offset"].toString));
+                assert(dist2(oo, wo) <= tol*tol,
+                    format("%s: at corner %s vibe3d's offset is now "
+                           ~ "[%.6f,%.6f,%.6f], the fixture froze %s",
+                           cn, pr["corner"].toString, oo[0], oo[1], oo[2],
+                           pr["vibe3d_offset"].toString));
+                assert(fabs(vlen(ro) - vlen(oo)) <= magTol,
+                    format("%s: at corner %s the two engines no longer move by "
+                           ~ "the SAME distance (%.6f vs %.6f, tol %.1e) — that "
+                           ~ "equality is the measured finding, so this is a "
+                           ~ "different divergence and needs re-measuring",
+                           cn, pr["corner"].toString, vlen(ro), vlen(oo), magTol));
+                double ang = angleDeg(ro, oo);
+                double wantAng = asDouble(pr["angle_deg"]);
+                assert(fabs(ang - wantAng) <= angTol,
+                    format("%s: at corner %s the directions now differ by "
+                           ~ "%.3f deg, the fixture froze %.3f (tol %.2f)",
+                           cn, pr["corner"].toString, ang, wantAng, angTol));
+            }
+        }
+    }
+}
+
+// ===========================================================================
+// runRingOrbitSuite — task 1150: freeze a RING-ORDER finding, whose unit of
+// evidence is an ORBIT and not a single mesh.
+// ===========================================================================
+//
+// Everything in this family was found by emitting ONE geometry once per
+// starting index of its vertex ring and running the same op on every member.
+// The vertex array is byte-identical across an orbit; only the ring order
+// moves. A fixture that pinned a single rotation would lose the finding
+// outright — in the run these came from, sixteen apparent parities were
+// caught precisely because the FIRST member of an orbit agreed while a later
+// one did not.
+//
+// So one case here is n runs, and what it freezes is the orbit's PATTERN:
+// first-appearance class labels over the rotations, e.g. `0000` = "the answer
+// does not depend on where the ring starts at all", `0101` = "period two",
+// `010020` = "three different answers, and which one you get is decided by
+// what kind of corner the ring happens to start at".
+//
+// THREE CHANNELS, because two of the findings live in only one of them, and
+// named to match task 1140's divergence runner so one word does not mean two
+// things in one file:
+//   vertices          — the multiset of vertex positions;
+//   faces             — the multiset of face rings, compared up to ROTATION
+//                       only, so winding is visible;
+//   faces_any_winding — the same, also accepting the reversed ring.
+// A triangulation that returns the same triangles wound the other way is
+// invariant in `faces_any_winding` and dependent in `faces`; a fixture with
+// one channel could not say that, and the difference is a measured finding
+// (the reference's triangle SET does not follow the ring start, its WINDING
+// does).
+//
+// What is asserted, and what each failure means:
+//   1. every rotation's own output, verbatim (counts, vertex multiset, face
+//      rings with winding) — a plain regression pin;
+//   2. whether our op APPLIED at all, re-derived from the data (output ==
+//      the mesh the input loaded ⇒ no-op) rather than taken on trust;
+//   3. our orbit patterns, recomputed live in all three channels;
+//   4. the reference's orbit patterns, recomputed from the frozen reference
+//      blocks — so a hand-edited pattern that no longer describes its own
+//      data fails here rather than lying;
+//   5. the case's `kind` (who reads the ring), re-derived from 3+4+2;
+//   6. where present, the SIGN PREDICATE — `sign(cross(r1-r0, r[n-1]-r0) ·
+//      Newell(ring))`, "is the corner at ring index 0 convex with respect to
+//      the ring's own normal" — recomputed in this runner from the fixture's
+//      own base rings, and its declared relation to the reference's pattern
+//      (exact / refines / violated).
+//
+// A green run means the divergence is still exactly the shape it was measured
+// to be. It reddens when the gap moves in EITHER direction, including when
+// someone closes it — which is the prompt to convert the case to parity.
+
+// One rotation's answer, in the form every comparator below reads.
+private struct OrbitAnswer {
+    double[3][]   verts;
+    double[3][][] faces;
+}
+
+// `readFaceRings`, `ringEq` (rotation only, never reversal) and
+// `centroidSetEq` (an order-free point-set match) are task 1140's, defined
+// with the divergence runner above; they are exactly what an orbit needs and
+// are reused rather than re-implemented. The ONE thing this suite needs that
+// they do not provide is the reflection-tolerant reading, below.
+
+// Two rings are the same face IGNORING which way round they go. `ringEq` is
+// the winding-RESPECTING reading; this is its complement, and keeping the two
+// apart is a measured requirement, not tidiness: the reference's
+// triangulation returns the same triangles wound the other way when the ring
+// start moves, so it is invariant in this channel and dependent in that one.
+private bool ringEqAnyWinding(const double[3][] a, const double[3][] b, double tol) {
+    if (ringEq(a, b, tol)) return true;
+    double[3][] rb;
+    foreach_reverse (v; b) rb ~= v;
+    return ringEq(a, rb, tol);
+}
+
+private bool faceSetsEqual(double[3][][] A, double[3][][] B, bool wound, double tol) {
+    if (A.length != B.length) return false;
+    // The winding-respecting reading IS task 1140's `ringsMissing` matcher —
+    // called, not re-spelled. Only the reflection-tolerant reading needs its
+    // own loop, because no lane has that comparison yet.
+    if (wound) return ringsMissing(A, B, tol).length == 0;
+    auto used = new bool[](B.length);
+    foreach (fa; A) {
+        bool hit = false;
+        foreach (i, fb; B) {
+            if (used[i]) continue;
+            if (ringEqAnyWinding(fa, fb, tol)) { used[i] = true; hit = true; break; }
+        }
+        if (!hit) return false;
+    }
+    return true;
+}
+
+// The three channels, named to match task 1140's runner: `faces` respects
+// winding (rotation only), `faces_any_winding` does not.
+private bool sameAnswer(OrbitAnswer x, OrbitAnswer y, string channel, double tol) {
+    if (!centroidSetEq(x.verts, y.verts, tol)) return false;
+    if (channel == "vertices") return true;
+    return faceSetsEqual(x.faces, y.faces, channel == "faces", tol);
+}
+
+// First-appearance class labels over the orbit: "0101" says rotations 0 and 2
+// agreed and rotations 1 and 3 agreed with each other but not with them.
+private string orbitPattern(OrbitAnswer[] answers, string channel, double tol) {
+    OrbitAnswer[] reps;
+    string outp;
+    foreach (a; answers) {
+        long hit = -1;
+        foreach (i, r; reps) if (sameAnswer(a, r, channel, tol)) { hit = cast(long) i; break; }
+        if (hit < 0) { reps ~= a; hit = cast(long) reps.length - 1; }
+        outp ~= format("%d", hit);
+    }
+    return outp;
+}
+
+private double[3] newellNormal(double[3][] ring) {
+    double[3] n = [0.0, 0.0, 0.0];
+    immutable m = ring.length;
+    foreach (i; 0 .. m) {
+        auto p = ring[i], q = ring[(i + 1) % m];
+        n[0] += (p[1] - q[1]) * (p[2] + q[2]);
+        n[1] += (p[2] - q[2]) * (p[0] + q[0]);
+        n[2] += (p[0] - q[0]) * (p[1] + q[1]);
+    }
+    return n;
+}
+
+// `sign( cross(r1-r0, r[n-1]-r0) · Newell(ring) )` — "is the corner AT RING
+// INDEX 0 convex with respect to the ring's OWN normal". The zero is a real
+// third class (a corner whose triangle has zero area), and keeping it apart
+// from +1 is what separates three answer families on a ring that carries both
+// a collinear and a reflex corner. `mergeZero` folds it into +1 — the coarser
+// reading a second measured family answers to.
+private int corner0Sign(double[3][] ring, bool mergeZero) {
+    immutable n = ring.length;
+    if (n < 3) return 0;
+    auto r0 = ring[0], r1 = ring[1 % n], rl = ring[n - 1];
+    double[3] a = [r1[0]-r0[0], r1[1]-r0[1], r1[2]-r0[2]];
+    double[3] b = [rl[0]-r0[0], rl[1]-r0[1], rl[2]-r0[2]];
+    double[3] c = [a[1]*b[2] - a[2]*b[1],
+                   a[2]*b[0] - a[0]*b[2],
+                   a[0]*b[1] - a[1]*b[0]];
+    auto nn = newellNormal(ring);
+    double d = c[0]*nn[0] + c[1]*nn[1] + c[2]*nn[2];
+    int s = (fabs(d) <= 1e-9) ? 0 : (d > 0 ? 1 : -1);
+    if (mergeZero && s == 0) s = 1;
+    return s;
+}
+
+// True iff every pair the FINE partition calls equal is also called equal by
+// the COARSE one — i.e. the predicate's "these rotations MUST agree" claim
+// survives the measurement.
+private bool partitionRefines(string fine, string coarse) {
+    if (fine.length != coarse.length) return false;
+    foreach (i; 0 .. fine.length)
+        foreach (j; i + 1 .. fine.length)
+            if (fine[i] == fine[j] && coarse[i] != coarse[j]) return false;
+    return true;
+}
+
+private size_t classCount(string pattern) {
+    bool[char] seen;
+    foreach (c; pattern) seen[c] = true;
+    return seen.length;
+}
+
+// The base mesh a rotation's `input` loads, plus the rings of the faces its
+// `select` step names. The ring ORDER is read from the load-mesh body — it is
+// the whole subject here, so it must not come from a live query that has
+// already normalised it away.
+private void baseRingsOf(JSONValue input, string cn,
+                         out double[3][] baseVerts, out double[3][][] baseFaces,
+                         out double[3][][] selRings) {
+    foreach (step; input.array) {
+        if ("endpoint" in step && step["endpoint"].str == "load-mesh") {
+            auto b = step["body"];
+            foreach (v; b["vertices"].array) baseVerts ~= jvec3(v);
+            foreach (f; b["faces"].array) {
+                double[3][] ring;
+                foreach (fi; f.array) ring ~= baseVerts[cast(size_t) fi.integer];
+                baseFaces ~= ring;
+            }
+        }
+    }
+    assert(baseVerts.length, format("%s: rotation has no load-mesh step", cn));
+    foreach (step; input.array) {
+        if ("select" !in step) continue;
+        auto sel = step["select"];
+        if (sel["mode"].str != "polygons" || "coords" !in sel) continue;
+        foreach (spec; sel["coords"].array) {
+            double[3][] want;
+            foreach (w; spec.array) want ~= jvec3(w);
+            long hit = -1;
+            foreach (i, ring; baseFaces) {
+                if (ring.length != want.length) continue;
+                auto used = new bool[](ring.length);
+                bool ok = true;
+                foreach (w; want) {
+                    bool found = false;
+                    foreach (k, p; ring)
+                        if (!used[k] && dist2(p, w) <= COORD_EPS*COORD_EPS) {
+                            used[k] = true; found = true; break;
+                        }
+                    if (!found) { ok = false; break; }
+                }
+                if (ok) { hit = cast(long) i; break; }
+            }
+            assert(hit >= 0, format("%s: selected polygon is not a face of the "
+                                    ~ "loaded base mesh", cn));
+            selRings ~= baseFaces[cast(size_t) hit];
+        }
+    }
+}
+
+/// Run an orbit-shaped known-divergence suite. See the block comment above
+/// for what each assertion means. Schema (per case):
+///   { "name": "...", "ledger_rows": [..], "channel": "vertices|faces|faces_any_winding",
+///     "kind": "reference_reads_the_ring|we_read_the_ring|both_read_the_ring|
+///              capability_gap|neither_reads_the_ring",
+///     "orbit": { "vibe3d":    {"vertices":"..","faces":"..","faces_any_winding":".."},
+///                "reference": { ... same three ... } },
+///     "sign_predicate": { "reading": "three|two", "classes": "010020",
+///                         "relation_to_reference": "exact|refines|violated" },
+///     "rotations": [ { "rot": 0, "input": [...], "op": [...],
+///                      "vibe3d":    {"applied":bool,"counts":{..},
+///                                    "vertices":[..],"faces":[[..],..]},
+///                      "reference": { ... same shape ... } }, ... ] }
+void runRingOrbitSuite(string fixtureJson) {
+    auto fx      = parseJSON(fixtureJson);
+    string suite = ("name" in fx) ? fx["name"].str : "<orbit-suite>";
+    requireProvenance(fx, suite);
+    double tolD  = ("tolerance" in fx) ? asDouble(fx["tolerance"]) : 1e-3;
+
+    static immutable string[] kChannels = ["vertices", "faces", "faces_any_winding"];
+
+    foreach (cs; fx["cases"].array) {
+        string cn  = suite ~ "/" ~ (("name" in cs) ? cs["name"].str : "<case>");
+        double tol = ("tolerance" in cs) ? asDouble(cs["tolerance"]) : tolD;
+        string channel = cs["channel"].str;
+
+        OrbitAnswer[] ours, refs;
+        double[3][][] predRings;   // the selected ring of each rotation
+        bool weApplyAll = true, refAppliesAll = true;
+
+        foreach (ri, rot; cs["rotations"].array) {
+            string rn = format("%s r%d", cn,
+                               ("rot" in rot) ? rot["rot"].integer : cast(long) ri);
+
+            double[3][] baseVerts; double[3][][] baseFaces, selRings;
+            baseRingsOf(rot["input"], rn, baseVerts, baseFaces, selRings);
+            if (selRings.length) predRings ~= selRings[0];
+
+            foreach (i, step; rot["input"].array) runStep(step, rn, "input", i);
+            // A case must actually RUN something. Two of these cases record
+            // that our op refuses, and for those an empty `op` list would
+            // leave exactly the mesh a refusal leaves — so the emptiness is
+            // checked here, and each op step additionally pins the status it
+            // must come back with (see postStep's `expectStatus`).
+            assert(rot["op"].array.length > 0,
+                format("%s: rotation has no op steps — a case with nothing to "
+                       ~ "run measures nothing", rn));
+            foreach (i, step; rot["op"].array)    runStep(step, rn, "op", i);
+
+            auto got = OrbitAnswer(readVertices(), readFaceRings());
+
+            // ---- (1) this rotation's own output, verbatim -----------------
+            auto mine = rot["vibe3d"];
+            if ("counts" in mine) {
+                auto c = readCounts();
+                auto ec = mine["counts"];
+                assert(ec["verts"].integer == c[0],
+                    format("%s: vertex count expected %d, got %d",
+                           rn, ec["verts"].integer, c[0]));
+                assert(ec["polys"].integer == c[2],
+                    format("%s: face count expected %d, got %d",
+                           rn, ec["polys"].integer, c[2]));
+                if (c[1] >= 0)
+                    assert(ec["edges"].integer == c[1],
+                        format("%s: edge count expected %d, got %d",
+                               rn, ec["edges"].integer, c[1]));
+            }
+            double[3][] wantV;
+            foreach (v; mine["vertices"].array) wantV ~= jvec3(v);
+            assert(centroidSetEq(got.verts, wantV, tol),
+                format("%s: vibe3d no longer produces its recorded vertex set "
+                       ~ "— this fixture records a KNOWN DIVERGENCE; if the "
+                       ~ "behaviour changed deliberately, re-measure and "
+                       ~ "update it", rn));
+            double[3][][] wantF;
+            foreach (f; mine["faces"].array) {
+                double[3][] ring;
+                foreach (v; f.array) ring ~= jvec3(v);
+                wantF ~= ring;
+            }
+            assert(faceSetsEqual(got.faces, wantF, true, tol),
+                format("%s: vibe3d no longer produces its recorded face rings "
+                       ~ "(winding included)", rn));
+
+            // ---- (2) did our op apply at all — re-derived, not trusted ----
+            bool applied = !(centroidSetEq(got.verts, baseVerts, tol)
+                             && faceSetsEqual(got.faces, baseFaces, true, tol));
+            assert(applied == (mine["applied"].type == JSONType.true_),
+                format("%s: fixture says our op %s here, but the mesh %s the "
+                       ~ "one the input loaded", rn,
+                       mine["applied"].type == JSONType.true_ ? "APPLIES" : "does NOT apply",
+                       applied ? "differs from" : "is identical to"));
+            if (!applied) weApplyAll = false;
+            if (rot["reference"]["applied"].type != JSONType.true_) refAppliesAll = false;
+
+            ours ~= got;
+            OrbitAnswer rf;
+            foreach (v; rot["reference"]["vertices"].array) rf.verts ~= jvec3(v);
+            foreach (f; rot["reference"]["faces"].array) {
+                double[3][] ring;
+                foreach (v; f.array) ring ~= jvec3(v);
+                rf.faces ~= ring;
+            }
+            refs ~= rf;
+
+            // ---- the CROSS-ENGINE claim, per rotation --------------------
+            // Without this a case whose two orbit patterns happen to agree
+            // asserts nothing about the reference at all — and two of these
+            // cases are exactly that shape (both sides ring-invariant, the
+            // question being whether they land in the same place).
+            if ("matches_reference" in mine) {
+                auto mr = mine["matches_reference"];
+                bool vEq = centroidSetEq(got.verts, rf.verts, tol);
+                bool fEq = faceSetsEqual(got.faces, rf.faces, false, tol);
+                assert(vEq == (mr["vertices"].type == JSONType.true_),
+                    format("%s: our vertices %s the reference's, the fixture "
+                           ~ "says they %s", rn,
+                           vEq ? "now MATCH" : "no longer match",
+                           mr["vertices"].type == JSONType.true_ ? "match" : "differ"));
+                assert(fEq == (mr["faces"].type == JSONType.true_),
+                    format("%s: our face rings %s the reference's, the fixture "
+                           ~ "says they %s", rn,
+                           fEq ? "now MATCH" : "no longer match",
+                           mr["faces"].type == JSONType.true_ ? "match" : "differ"));
+            }
+        }
+
+        // ---- (3)+(4) the patterns, both sides, all three channels ---------
+        string[string] oursPat, refPat;
+        foreach (ch; kChannels) {
+            oursPat[ch] = orbitPattern(ours, ch, tol);
+            refPat[ch]  = orbitPattern(refs, ch, tol);
+            assert(oursPat[ch] == cs["orbit"]["vibe3d"][ch].str,
+                format("%s: our orbit pattern in the '%s' channel is now %s, "
+                       ~ "the fixture froze %s. The ring-order behaviour "
+                       ~ "CHANGED — re-measure and update the fixture; if we "
+                       ~ "now match the reference, replace this case with a "
+                       ~ "parity one.", cn, ch, oursPat[ch],
+                       cs["orbit"]["vibe3d"][ch].str));
+            assert(refPat[ch] == cs["orbit"]["reference"][ch].str,
+                format("%s: the frozen reference blocks give pattern %s in the "
+                       ~ "'%s' channel, but the fixture declares %s — the "
+                       ~ "record no longer describes its own data",
+                       cn, refPat[ch], ch, cs["orbit"]["reference"][ch].str));
+        }
+
+        // ---- (5) who reads the ring, re-derived --------------------------
+        immutable on = classCount(oursPat[channel]);
+        immutable rnn = classCount(refPat[channel]);
+        string kind;
+        if (!weApplyAll && refAppliesAll && on == 1 && rnn == 1) kind = "capability_gap";
+        else if (on > 1 && rnn > 1)                              kind = "both_read_the_ring";
+        else if (rnn > 1)                                        kind = "reference_reads_the_ring";
+        else if (on > 1)                                         kind = "we_read_the_ring";
+        else                                                     kind = "neither_reads_the_ring";
+        assert(kind == cs["kind"].str,
+            format("%s: the data now classifies as '%s', the fixture says "
+                   ~ "'%s' (ours %s / reference %s in the '%s' channel; we "
+                   ~ "apply everywhere: %s)", cn, kind, cs["kind"].str,
+                   oursPat[channel], refPat[channel], channel, weApplyAll));
+
+        // A capability gap is NOT a ring-order law and must not be filed as
+        // one: both sides are invariant, and what differs is that our op does
+        // not run at all.
+        if (kind == "capability_gap")
+            assert(!weApplyAll && refAppliesAll,
+                format("%s: declared a capability gap, but the applied flags "
+                       ~ "do not say so", cn));
+
+        // ---- (6) the sign predicate, recomputed from the base rings ------
+        if ("sign_predicate" in cs) {
+            auto sp = cs["sign_predicate"];
+            bool mergeZero = sp["reading"].str == "two";
+            assert(predRings.length == cs["rotations"].array.length,
+                format("%s: sign predicate needs one selected polygon ring per "
+                       ~ "rotation, got %d of %d", cn, predRings.length,
+                       cs["rotations"].array.length));
+            int[] keys;
+            foreach (ring; predRings) keys ~= corner0Sign(ring, mergeZero);
+            int[] seen; string pp;
+            foreach (k; keys) {
+                long hit = -1;
+                foreach (i, s; seen) if (s == k) { hit = cast(long) i; break; }
+                if (hit < 0) { seen ~= k; hit = cast(long) seen.length - 1; }
+                pp ~= format("%d", hit);
+            }
+            assert(pp == sp["classes"].str,
+                format("%s: the sign predicate over this orbit's OWN base "
+                       ~ "rings gives %s, the fixture declares %s",
+                       cn, pp, sp["classes"].str));
+            string rel = (pp == refPat["faces"]) ? "exact"
+                       : (partitionRefines(pp, refPat["faces"]) ? "refines"
+                                                                      : "violated");
+            assert(rel == sp["relation_to_reference"].str,
+                format("%s: the predicate now '%s' the reference's pattern %s "
+                       ~ "(predicate %s), the fixture declares '%s'",
+                       cn, rel, refPat["faces"], pp,
+                       sp["relation_to_reference"].str));
         }
     }
 }
