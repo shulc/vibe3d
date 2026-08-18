@@ -529,7 +529,31 @@ private void noteHideDerivePending(Mesh* m) {
 private void flushHideDerivePending() {
     auto pending = g_hideDerivePendingMeshes;
     g_hideDerivePendingMeshes = null;
-    g_hideDeriveDeferSafe = false;
+    // Task 1333: this used to clear `g_hideDeriveDeferSafe` here as well. That
+    // was inert — the flush only ever fires at depth 0, where the batch is
+    // over and the flag is dead until the next `beginHideDeriveBatch` re-reads
+    // `anyHideBitSet()` anyway — but it was a latent de-optimization: any
+    // future flush from INSIDE an open batch would have turned deferral off
+    // for the rest of that batch and silently given back exactly what 1330
+    // bought in the clean case, with no symptom to notice.
+    //
+    // The flag is written by exactly two places, and between them the answer
+    // is already right: `beginHideDeriveBatch` arms it at depth 0 from
+    // `anyHideBitSet()`, and `refreshHiddenDerived` disarms it — but only when
+    // its scan actually finds a Hide bit, i.e. only when the derive is about
+    // to WRITE and deferring it would therefore be observable. The flush has
+    // no business overriding that answer.
+    //
+    // What makes that disarm SUFFICIENT, and not merely correct for one mesh:
+    // `refreshHiddenDerived` disarms only for the mesh it is called on, and a
+    // flush derives only the meshes in the pending set — so on its own the
+    // pair leaves a hole where a batch's own mesh is never scanned and the
+    // flag keeps a stale "safe" answer. What closes it is that
+    // `beginHideDeriveBatch` unconditionally puts the batch's own mesh into
+    // that set, so the batch's mesh is always among the ones a flush derives.
+    // That is the invariant any future MID-BATCH flush depends on — keep it if
+    // the pending set ever grows a removal path, or if a batch is ever opened
+    // without naming its mesh.
     foreach (m; pending) if (m !is null) m.refreshHiddenDerived();
 }
 
@@ -6651,8 +6675,9 @@ struct Mesh {
         }
     }
     /// Re-derive the deduplicated edge list AND `edgeIndexMap` from the
-    /// current `faces` via `addEdge` (which also bumps the version
-    /// counters). Mutating ops that rewrite `faces` call this to keep
+    /// current `faces` via `insertEdgeDedup`, followed by ONE version bump +
+    /// commit for the whole re-derive (task 1333; it was one per edge, through
+    /// `addEdge`). Mutating ops that rewrite `faces` call this to keep
     /// edges + the lookup map consistent. Iteration order over faces/loop
     /// corners is fixed, so the resulting edge indices are deterministic —
     /// callers rely on this when resizing the edge-selection arrays
@@ -6664,14 +6689,104 @@ struct Mesh {
     // finalize so a delta apply/revert produces the same canonical edge order
     // the kernels do.
     void rebuildEdges() {
-        // One hide-derive for the whole re-derive, not one per edge (1330).
-        beginHideDeriveBatch();
-        scope(exit) endHideDeriveBatch();
         edges.length = 0;
         edgeIndexMap.clear();
+        // TASK 1333 — the commits are REMOVED here, not deferred.
+        //
+        // This loop used to call `addEdge` per face corner, and `addEdge` is
+        // `insertEdgeDedup` + the version stamps + `commitChange`. So a
+        // re-derive of E edges paid E geometry commits, and every one of them
+        // ran a full-mesh `refreshHiddenDerived` whenever anything was hidden
+        // (1330's deferral is allowed only in the state where that derive
+        // provably writes nothing). `insertEdgeDedup` is already the private
+        // NON-committing primitive, factored out for exactly this — its own
+        // doc comment reserves the "commit only on a real insert" gate for
+        // callers like this one.
+        //
+        // WHY COLLAPSING E COMMITS INTO ONE IS INVISIBLE — and why, unlike a
+        // deferral, this works WHILE SOMETHING IS HIDDEN:
+        //   * inside this function `edges` is APPEND-ONLY, and `faces` /
+        //     `faceMarks` are untouched;
+        //   * `refreshHiddenDerived` derives the VERTEX plane from `faces` +
+        //     `faceMarks` alone, so every per-edge call recomputed the same
+        //     vertex plane — the first one settled it and the rest were no-ops;
+        //   * it derives edge `ei` from `edges[ei]`'s two endpoint vertices, so
+        //     an edge's hidden answer is FIXED from the moment it is appended
+        //     and is never revisited;
+        //   * each mid-loop derive therefore covered a PREFIX of the edge array
+        //     (it skips `ei >= edges.length`), and the one closing derive
+        //     covers the whole of it, recomputing every prefix answer
+        //     identically — the tail beyond `edges.length` is left alone by
+        //     both.
+        // The sequence of per-edge derives thus converges on exactly what one
+        // closing derive computes, INCLUDING the Select-clear set: the derive
+        // is the only writer of Select in this region, and nothing re-selects
+        // in between (the loop body calls nothing but `insertEdgeDedup`).
+        //
+        // Because this is a removal and not a postponement there is no window
+        // in which a reader could observe a stale plane: the single commit
+        // still happens before `rebuildEdges` returns, so the renumbering
+        // hazard this function is famous for (`edgeMarks` is NOT re-indexed;
+        // a stale SET Hide bit makes `selectEdge` refuse silently and
+        // permanently — see tests/test_hide_bevel_selection_product.d) is
+        // cleared exactly as eagerly as before. No read barrier is needed and
+        // nothing can go stale. 1330's `beginHideDeriveBatch`/
+        // `endHideDeriveBatch` pair is gone from here for the same reason:
+        // with one commit there is nothing left to batch, and the pair's
+        // `anyHideBitSet()` scan was pure cost.
+        bool inserted = false;
         foreach (ref f; faces)
             foreach (k; 0 .. f.length)
-                addEdge(f[k], f[(k + 1) % f.length]);
+                if (insertEdgeDedup(edgeIndexMap, f[k], f[(k + 1) % f.length]))
+                    inserted = true;
+        if (inserted) {
+            // The same three stamps + commit `addEdge` does, ONCE instead of
+            // once per edge. Gated on a real insert for the same reason
+            // `addEdge` gates on one: "nothing appended ⇒ nothing bumped" is
+            // preserved bit for bit.
+            //
+            // The condition that reaches the zero-insert path is precisely
+            // "the loop above visited no CORNER" — an empty `faces`, OR a
+            // non-empty `faces` whose every entry is zero-length. (It is NOT
+            // "no face": that is only the first of the two.) In either case
+            // the derive would also write nothing, and for the same underlying
+            // reason: `hasFace[vi]` is set only from a corner, so with no
+            // corner no vertex passes the derive's `hasFace` gate, and `edges`
+            // is left empty so no edge index is in range.
+            //
+            // Note what the zero-insert path deliberately does NOT do: it
+            // leaves `edgeMapStamp` / `edgeMapState_` untouched, so after the
+            // `edgeIndexMap.clear()` at the top `edgeMapUsable()` can read
+            // true over an EMPTY map. That is byte-identical to the old
+            // behaviour — `addEdge` never fired on that path either, so the
+            // stamps were never touched there — and it is preserved
+            // deliberately. The collapse only makes it a locally visible
+            // decision where it used to be emergent from `addEdge`'s own gate.
+            //
+            // What DOES change is the bump COUNT: E bumps become 1. Audited
+            // repo-wide — every reader of `structVersion` / `mutationVersion`
+            // / `topologyVersion` treats them as monotonic stamps, never as
+            // counts: `loopsValid()` is `loopsStamp == structVersion`,
+            // `edgeMapUsable()` is `edgeMapStamp == structVersion`, and the
+            // tests compare `> before` (changed) or `== before` (untouched).
+            // One bump invalidates a stamp exactly as well as E do — for a
+            // MONOTONE counter, which is what these are at every site but two:
+            // `source/subpatch_osd.d:505` and `:1311` hard-RESET
+            // `mutationVersion = 1` on a freshly built mesh, and the first of
+            // those reaches the DOCUMENT mesh through `*mesh = subdivide(…)`.
+            // Against a reset like that a slower-growing counter shrinks the
+            // distance back to the reset value, i.e. narrows the window in
+            // which a post-reset version cannot collide with a pre-reset one
+            // still held in a cache. That hazard is pre-existing (the reset is
+            // what creates it; the growth rate only sizes the window) and is
+            // covered by the per-mesh-address term every version-keyed cache
+            // carries. So: a qualification of the sentence above, not a new
+            // hazard opened here.
+            ++structVersion;
+            edgeMapStamp  = structVersion;
+            edgeMapState_ = DerivedState.Valid;
+            commitChange(MeshEditScope.Polygons);
+        }
     }
     void addFace(uint[] idx) {
         // Task 0831: read the append base BEFORE the append. The tracker hook
@@ -9050,6 +9165,273 @@ struct Mesh {
         assert(m.isVertexSelected(0),
                "the select was refused — the derive was deferred while it had "
                ~ "writes to make (task 1330 BLOCKER 2)");
+    }
+
+    unittest { // task 1333 — rebuildEdges commits ONCE, WHILE something is hidden
+        import std.conv : to;
+
+        // 1330 made bulk commands linear only in the state where NOTHING is
+        // hidden — there the derive provably writes no bit, so skipping it is
+        // invisible. With a Hide bit anywhere, deferral is cancelled and every
+        // commit derives the whole mesh again; `rebuildEdges`' one-commit-per-
+        // corner loop was the bulk of those commits.
+        //
+        // 1333 REMOVES those commits instead of deferring them, which is why
+        // it holds in the hidden state. The COUNT is what pins it: without the
+        // collapse the planes are still perfectly correct and the entire
+        // change is silently a no-op, so a result-only assertion is vacuous.
+        // NOT a cube: every cube edge is shared by two faces, so dropping a
+        // face shrinks nothing and the shrink half of this test would be
+        // vacuous. A 2-quad strip has three edges private to the second quad.
+        //   0---1---2      f0 = [0,1,4,3]   f1 = [1,2,5,4]
+        //   |f0 |f1 |      7 edges; dropping f1 leaves 4.
+        //   3---4---5
+        Mesh m;
+        m.addVertex(Vec3(0, 0, 0)); m.addVertex(Vec3(1, 0, 0)); m.addVertex(Vec3(2, 0, 0));
+        m.addVertex(Vec3(0, 0, 1)); m.addVertex(Vec3(1, 0, 1)); m.addVertex(Vec3(2, 0, 1));
+        m.addFace([0u, 1u, 4u, 3u]);
+        m.addFace([1u, 2u, 5u, 4u]);
+        m.buildLoops();
+        m.syncSelection();
+
+        // Hide f0 ⇒ v0 and v3 (whose only incident face it is) derive hidden,
+        // and the three edges through them with them. This is REGIME 2 of the
+        // test above — the one where 1330 deliberately does not defer.
+        m.setFaceHidden(0, true);
+        assert(m.isVertexHidden(0), "fixture: v0 must derive hidden first");
+        assert(m.anyHideBitSet(),
+               "fixture: with nothing hidden 1330's deferral would already "
+               ~ "cover this and the measurement would mean nothing");
+
+        // A selection made while the edge is still visible. Its ONLY role is
+        // to give the convergence compare at the bottom a non-zero
+        // `edgeSelectionOrder` stamp to disagree about: the derive is the only
+        // writer of that stamp, so with nothing selected the order arrays are
+        // all zeros and comparing them would prove nothing.
+        m.selectEdge(m.edgeIndex(2, 5));
+        assert(m.isEdgeSelected(m.edgeIndex(2, 5)), "fixture: the select must land");
+        const size_t edgesBefore = m.edges.length;
+
+        // Drop a face so the re-derive SHRINKS the edge array. Be precise
+        // about what that buys HERE: this test asserts the derive COUNT and
+        // the CONVERGENCE of the planes, NOT the renumbering CONSEQUENCE.
+        // Dropping the LAST face leaves every surviving edge on exactly the
+        // index it already held (the re-derive walks the same faces in the
+        // same order), so no stale SET Hide bit can land on a visible edge in
+        // this shape. The consequence — a stale SET bit that makes `selectEdge`
+        // refuse silently and permanently, which is 1330 BLOCKER 2 — needs a
+        // face array whose REMOVAL sits before the hidden face, and it has its
+        // own fixture: see the "renumbering CONSEQUENCE" test immediately
+        // below.
+        m.faces.length = m.faces.length - 1;
+
+        g_hideDeriveRuns = 0;
+        m.rebuildEdges();
+        assert(g_hideDeriveRuns == 1,
+               "rebuildEdges derived " ~ g_hideDeriveRuns.to!string ~ " times: "
+               ~ "it must commit ONCE for the whole re-derive, not once per "
+               ~ "corner (task 1333)");
+        assert(m.edges.length < edgesBefore,
+               "fixture: dropping a face must actually shrink the edge array");
+
+        // Convergence — the claim the collapse rests on: what the single
+        // closing derive left behind is exactly what a fresh full derive
+        // computes, planes AND selection-order stamps.
+        //
+        // This block is a SECOND, INDEPENDENT discriminator for the same
+        // mutation, not decoration. Dropping f1 leaves v1 and v4 with only the
+        // HIDDEN f0 incident, so both of them — and edge (1,4) through them —
+        // must flip to hidden right here. Put the per-corner commits back (or
+        // take the single one away) and they do not flip, so the mutation
+        // reddens this compare as well as the count above: the collapse is
+        // held by two assertions, not one.
+        auto vAfter  = m.vertexMarks.dup;
+        auto eAfter  = m.edgeMarks.dup;
+        auto vOrder  = m.vertexSelectionOrder.dup;
+        auto eOrder  = m.edgeSelectionOrder.dup;
+        m.refreshHiddenDerived();
+        assert(m.vertexMarks == vAfter, "vertex hide plane was stale after rebuildEdges");
+        assert(m.edgeMarks   == eAfter, "edge hide plane was stale after rebuildEdges");
+        assert(m.vertexSelectionOrder == vOrder && m.edgeSelectionOrder == eOrder,
+               "a selection-order stamp was left behind by the collapsed commit");
+    }
+
+    unittest { // task 1333 — the renumbering CONSEQUENCE: a stale SET Hide bit must not outlive rebuildEdges
+        import std.algorithm : canFind;
+        import std.conv : to;
+
+        // The hazard `rebuildEdges` is famous for, and the one its single
+        // commit exists to close: the function hands `edges` a NEW index
+        // space and does NOT re-index `edgeMarks`. A stale CLEARED bit is
+        // harmless — the next derive sets it. A stale SET bit is not: it now
+        // sits on an index holding a VISIBLE edge, and `selectEdge` refuses a
+        // Hide-marked index with a bare `return` — silently, and permanently,
+        // because nothing ever retries a refused select. That is 1330
+        // BLOCKER 2, and until this fixture existed nothing in the tree pinned
+        // it: the count test above measures the collapse, not its consequence,
+        // and the frozen HTTP oracle (tests/test_hide_bevel_selection_product.d)
+        // is protected from the same mutation by `deferSafe` rather than by
+        // this commit, so it stays green under it.
+        //
+        // Reproducing the consequence needs the REMOVAL to sit before the
+        // HIDDEN face in the FACE ARRAY, not merely somewhere in the mesh. A
+        // shrink only ever moves edge indices DOWN, so a stale SET index gets
+        // re-occupied by a visible edge exactly when the hidden face's edges
+        // sat ABOVE the removed face's. Dropping the LAST face — the shape the
+        // count test uses — renumbers nothing at all.
+        //
+        //   6---0---1---2      f0 = [0,1,4,3]  visible, REMOVED below
+        //   |f2 |f0 |f1 |      f1 = [1,2,5,4]  HIDDEN (v2/v5 are private to it)
+        //   7---3---4---5      f2 = [6,0,3,7]  visible, the survivor
+        //
+        // Face-array order is f0, f1, f2, so the 10 edges come out
+        //   0=(0,1) 1=(1,4) 2=(4,3) 3=(3,0) | 4=(1,2) 5=(2,5) 6=(5,4) | 7=(6,0) 8=(3,7) 9=(7,6)
+        // and f1's three private edges — the hidden ones — are 4,5,6. Remove
+        // f0 and f2's edges slide down onto exactly those indices.
+        Mesh m;
+        m.addVertex(Vec3( 0, 0, 0));   // 0
+        m.addVertex(Vec3( 1, 0, 0));   // 1
+        m.addVertex(Vec3( 2, 0, 0));   // 2
+        m.addVertex(Vec3( 0, 0, 1));   // 3
+        m.addVertex(Vec3( 1, 0, 1));   // 4
+        m.addVertex(Vec3( 2, 0, 1));   // 5
+        m.addVertex(Vec3(-1, 0, 0));   // 6
+        m.addVertex(Vec3(-1, 0, 1));   // 7
+        m.addFace([0u, 1u, 4u, 3u]);   // f0
+        m.addFace([1u, 2u, 5u, 4u]);   // f1
+        m.addFace([6u, 0u, 3u, 7u]);   // f2
+        m.buildLoops();
+        m.syncSelection();
+
+        m.setFaceHidden(1, true);
+        assert(m.isVertexHidden(2) && m.isVertexHidden(5),
+               "fixture: hiding f1 must hide the two vertices private to it");
+
+        size_t[] setBefore;
+        foreach (ei; 0 .. m.edgeMarks.length)
+            if (m.edgeMarks[ei] & Marks.Hide) setBefore ~= ei;
+        assert(setBefore.length == 3,
+               "fixture: exactly f1's three private edges must carry a SET Hide "
+               ~ "bit, got " ~ setBefore.length.to!string);
+
+        // Remove f0 — the FIRST face — the way a face-removing kernel does it:
+        // compact `faces` and `faceMarks` in lock-step, so the hidden face
+        // keeps its Hide bit as it slides from index 1 to index 0. The dead
+        // tail entry is zeroed because `anyHideBitSet()` scans the WHOLE marks
+        // array, not just `0 .. faces.length`. `edgeMarks` is deliberately NOT
+        // touched — that is the whole point, and it is also what every real
+        // caller does (`rebuildEdges` "does NOT touch selection arrays; the
+        // caller owns those").
+        foreach (i; 0 .. m.faces.length - 1) {
+            m.faces[i]     = m.faces[i + 1];
+            m.faceMarks[i] = m.faceMarks[i + 1];
+        }
+        m.faces.length     = m.faces.length - 1;
+        m.faceMarks[$ - 1] = 0;
+        assert(m.isFaceHidden(0),
+               "fixture: f1 must still be hidden after the compaction");
+
+        m.rebuildEdges();
+
+        // The probe: an edge of the still-VISIBLE f2 that the re-derive placed
+        // on an index which carried a stale SET Hide bit. Looked up by its
+        // endpoints rather than hardcoded, and its membership in `setBefore`
+        // is ASSERTED — if the edge ordering ever moves, this fixture says so
+        // instead of going quietly vacuous.
+        const uint probe = m.edgeIndex(6, 0);
+        assert(probe != ~0u, "fixture: edge (6,0) must exist after the re-derive");
+        assert(setBefore.canFind(cast(size_t)probe),
+               "fixture is not exercising the hazard: the visible survivor edge "
+               ~ "landed on index " ~ probe.to!string ~ ", which carried no stale "
+               ~ "SET Hide bit");
+
+        assert(!m.isEdgeHidden(probe),
+               "index " ~ probe.to!string ~ " kept the Hide bit of the edge that "
+               ~ "USED to live there — rebuildEdges renumbered `edges` without "
+               ~ "re-deriving, and `edgeMarks` is not re-indexed (task 1333)");
+        m.selectEdge(cast(int)probe);
+        assert(m.isEdgeSelected(probe),
+               "selectEdge refused a VISIBLE edge: the stale SET Hide bit the "
+               ~ "renumbering left on its index outlived rebuildEdges. Silent "
+               ~ "and permanent — exactly the 1330 BLOCKER-2 symptom the single "
+               ~ "commit inside rebuildEdges exists to prevent (task 1333)");
+
+        // Control — same mesh, same gesture, an index that never carried the
+        // bit. It must select whether or not the derive ran, so a red above
+        // cannot be read as "selectEdge is simply broken here".
+        const uint control = m.edgeIndex(7, 6);
+        assert(control != ~0u && !setBefore.canFind(cast(size_t)control),
+               "fixture: the control edge must sit on an index with no stale bit");
+        m.selectEdge(cast(int)control);
+        assert(m.isEdgeSelected(control),
+               "control: a visible edge on a clean index must select regardless");
+    }
+
+    unittest { // task 1333 — removing the batch pair must not cost 1330's clean case
+        // `rebuildEdges` no longer opens a hide-derive batch of its own. Inside
+        // an OUTER batch with nothing hidden its single commit must still be
+        // deferred to the batch close, i.e. derive zero times in the loop —
+        // otherwise this task would have paid for the hidden case by giving
+        // back the clean one.
+        auto c = makeCube();
+        c.syncSelection();
+
+        // Everything measured inside the batch is STASHED and asserted after
+        // the close. An assert that fires mid-batch skips
+        // `endHideDeriveBatch`, which leaks `g_hideDeriveDepth` at 1 and — the
+        // part that actually bites — leaves `g_hideDerivePendingMeshes`, a
+        // GC-scanned module global, holding a `Mesh*` into this function's
+        // unwound stack frame. Same shape the 1330 batch test above uses.
+        c.beginHideDeriveBatch();
+        g_hideDeriveRuns = 0;
+        c.rebuildEdges();
+        const size_t duringBatch = g_hideDeriveRuns;
+        c.endHideDeriveBatch();
+
+        assert(duringBatch == 0,
+               "rebuildEdges must defer its one commit inside a clean batch");
+        assert(g_hideDeriveRuns == 1, "the batch close must derive exactly once");
+    }
+
+    unittest { // task 1333 — a FLUSH must not disarm deferral behind the batch's back
+        // `flushHideDerivePending` used to clear `g_hideDeriveDeferSafe`
+        // unconditionally. Today every flush fires at depth 0, where the flag
+        // is dead anyway, so the line was inert — which is exactly why it
+        // needed a test rather than a reading: the first mid-batch flush
+        // anyone adds would silently hand back 1330's clean case for the rest
+        // of that batch, with no symptom. The flag has one owner
+        // (`refreshHiddenDerived`, which disarms it only when its scan finds a
+        // Hide bit, i.e. only when the derive is about to WRITE).
+        auto m = makeCube();
+        m.syncSelection();
+
+        // Stash-then-assert, for the reason spelled out in the test above: a
+        // mid-batch assert skips `endHideDeriveBatch` and strands a `Mesh*`
+        // into this unwound frame inside `g_hideDerivePendingMeshes`.
+        m.beginHideDeriveBatch();
+        const bool armedAtOpen = g_hideDeriveDeferSafe;
+
+        flushHideDerivePending();          // the mid-batch flush of the future
+        const bool armedAfterFlush = g_hideDeriveDeferSafe;
+
+        // ...and the batch must demonstrably still defer afterwards.
+        g_hideDeriveRuns = 0;
+        const uint base = cast(uint)m.vertices.length;
+        m.vertices ~= Vec3(2, 0, 0);
+        m.vertices ~= Vec3(2, 1, 0);
+        m.syncSelection();
+        m.addFace([0, base, base + 1]);
+        const size_t duringBatch = g_hideDeriveRuns;
+        m.endHideDeriveBatch();
+
+        assert(armedAtOpen,
+               "fixture: nothing is hidden, so deferral must be armed");
+        assert(armedAfterFlush,
+               "the flush disarmed deferral while the batch is still open — "
+               ~ "every remaining commit in it derives the whole mesh again");
+        assert(duringBatch == 0,
+               "a commit after the flush derived eagerly — the deferral is gone");
+        assert(g_hideDeriveRuns == 1, "the batch close must still derive once");
     }
 
     void refreshHiddenDerived() {
