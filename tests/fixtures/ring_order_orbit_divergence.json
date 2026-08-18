@@ -1,6 +1,6 @@
 {
  "name": "ring_order_orbit_divergence",
- "description": "Task 1150. Ten ORBITS: one geometry each, emitted once per starting index of its vertex ring, with one operation run on every member. What is frozen is the orbit PATTERN -- which rotations produced the same answer -- for our live output and for the reference measurement, in three channels (vertex positions; face rings ignoring winding; face rings respecting it), plus every rotation's own answer. A single rotation cannot carry any of these findings: the divergence IS the difference between the two patterns. Task 1230 converted the eight OFFSET-family cases (inset / outset / poly bevel / smooth shift) from divergences into agreements IN PLACE, by adopting the reference's ring-start rule: their two patterns are now equal, every rotation declares matches_reference, and the case kind reads both_read_the_ring. The cases are kept, not deleted -- the converted pattern IS the assertion, and it reddens the moment either side moves ASK 1240 closed the two CAPABILITY-GAP cases in this file: `vertex_bevel_dart` (ledger row 52) and `loop_slice_pentagon_quad` (row 53). Both now APPLY at every rotation and land on the reference's answer in both channels, so both reclassified `capability_gap` -> `neither_reads_the_ring` -- they were never ring-order laws, and the orbit is what said so. The cases are kept: the orbit still asserts that neither engine reads the ring here, and the per-rotation `matches_reference` flags now assert the parity instead of the gap. What is NOT closed is the pair `loop_slice_annulus_midpoint` / `loop_slice_annulus_offcentre`: the midpoint cut agrees and the off-centre one does not, because the two engines measure `position` from OPPOSITE ends of the seed rail. That is a placement law, not a capability, and the corpus has exactly one shape that can see it -- see the task 1240 card.",
+ "description": "Task 1150. Ten ORBITS: one geometry each, emitted once per starting index of its vertex ring, with one operation run on every member. What is frozen is the orbit PATTERN -- which rotations produced the same answer -- for our live output and for the reference measurement, in three channels (vertex positions; face rings ignoring winding; face rings respecting it), plus every rotation's own answer. A single rotation cannot carry any of these findings: the divergence IS the difference between the two patterns. Task 1230 converted the eight OFFSET-family cases (inset / outset / poly bevel / smooth shift) from divergences into agreements IN PLACE, by adopting the reference's ring-start rule: their two patterns are now equal, every rotation declares matches_reference, and the case kind reads both_read_the_ring. The cases are kept, not deleted -- the converted pattern IS the assertion, and it reddens the moment either side moves ASK 1240 closed the two CAPABILITY-GAP cases in this file: `vertex_bevel_dart` (ledger row 52) and `loop_slice_pentagon_quad` (row 53). Both now APPLY at every rotation and land on the reference's answer in both channels, so both reclassified `capability_gap` -> `neither_reads_the_ring` -- they were never ring-order laws, and the orbit is what said so. The cases are kept: the orbit still asserts that neither engine reads the ring here, and the per-rotation `matches_reference` flags now assert the parity instead of the gap. What is NOT closed is the pair `loop_slice_annulus_midpoint` / `loop_slice_annulus_offcentre`: the midpoint cut agrees and the off-centre one does not, because the two engines measure `position` from OPPOSITE ends of the seed rail. That is a placement law, not a capability, and the corpus has exactly one shape that can see it -- see the task 1240 card. Task 1280 converted the four TRIANGULATION cases the same way, in the opposite direction from task 1190: the reference's triangulation is a greedy ear clip that scans IN RING ORDER and breaks equal-quality ties by the earlier index, so it is NOT ring-invariant (three decompositions over the eight rotations of a horseshoe), and 1190's ring-invariant law was fitted from three shapes on which the reference happens not to move. All four cases now reproduce the reference at every rotation in every channel, their `channel` moves from `faces_any_winding` to `faces` so the WINDING-sensitive reading is what drives the kind, and all four read `both_read_the_ring`. This closes ledger row 51 (the winding term) and the two orbits 1190 left declared as unbreakable ties.",
  "source": "Reference side: frozen headless command capture of 2026-08-17/18 (702 comparisons over 25 rotation orbits). Our side: read live off vibe3d at generation time via the same HTTP steps the test replays.",
  "provenance": {
   "schema": 1,
@@ -4965,12 +4965,12 @@
   {
    "name": "triangulate_dart",
    "ledger_rows": [43, 50, 51],
-   "channel": "faces_any_winding",
-   "kind": "neither_reads_the_ring",
+   "channel": "faces",
+   "kind": "both_read_the_ring",
    "orbit": {
     "vibe3d": {
      "vertices": "0000",
-     "faces": "0000",
+     "faces": "0100",
      "faces_any_winding": "0000"
     },
     "reference": {
@@ -5045,14 +5045,14 @@
       ],
       "faces": [
        [
-        [2.0, 0.0, 1.2],
-        [4.0, 0.0, 0.0],
-        [2.0, 0.0, 3.0]
-       ],
-       [
         [2.0, 0.0, 3.0],
         [0.0, 0.0, 0.0],
         [2.0, 0.0, 1.2]
+       ],
+       [
+        [2.0, 0.0, 1.2],
+        [4.0, 0.0, 0.0],
+        [2.0, 0.0, 3.0]
        ]
       ]
      },
@@ -5149,13 +5149,13 @@
       "faces": [
        [
         [2.0, 0.0, 1.2],
-        [4.0, 0.0, 0.0],
-        [2.0, 0.0, 3.0]
+        [2.0, 0.0, 3.0],
+        [4.0, 0.0, 0.0]
        ],
        [
-        [2.0, 0.0, 3.0],
+        [2.0, 0.0, 1.2],
         [0.0, 0.0, 0.0],
-        [2.0, 0.0, 1.2]
+        [2.0, 0.0, 3.0]
        ]
       ]
      },
@@ -5251,14 +5251,14 @@
       ],
       "faces": [
        [
-        [2.0, 0.0, 3.0],
-        [0.0, 0.0, 0.0],
-        [2.0, 0.0, 1.2]
-       ],
-       [
         [2.0, 0.0, 1.2],
         [4.0, 0.0, 0.0],
         [2.0, 0.0, 3.0]
+       ],
+       [
+        [2.0, 0.0, 3.0],
+        [0.0, 0.0, 0.0],
+        [2.0, 0.0, 1.2]
        ]
       ]
      },
@@ -5359,9 +5359,9 @@
         [2.0, 0.0, 1.2]
        ],
        [
+        [2.0, 0.0, 3.0],
         [2.0, 0.0, 1.2],
-        [4.0, 0.0, 0.0],
-        [2.0, 0.0, 3.0]
+        [4.0, 0.0, 0.0]
        ]
       ]
      },
@@ -5402,12 +5402,12 @@
   {
    "name": "triangulate_reflex_pentagon",
    "ledger_rows": [43, 50, 51],
-   "channel": "faces_any_winding",
-   "kind": "neither_reads_the_ring",
+   "channel": "faces",
+   "kind": "both_read_the_ring",
    "orbit": {
     "vibe3d": {
      "vertices": "00000",
-     "faces": "00000",
+     "faces": "00010",
      "faces_any_winding": "00000"
     },
     "reference": {
@@ -5485,14 +5485,14 @@
       ],
       "faces": [
        [
-        [1.5, 0.0, 1.1],
-        [0.0, 0.0, 3.0],
-        [0.0, 0.0, 0.0]
-       ],
-       [
         [3.0, 0.0, 0.0],
         [3.0, 0.0, 3.0],
         [1.5, 0.0, 1.1]
+       ],
+       [
+        [1.5, 0.0, 1.1],
+        [0.0, 0.0, 3.0],
+        [0.0, 0.0, 0.0]
        ],
        [
         [0.0, 0.0, 0.0],
@@ -5602,14 +5602,14 @@
       ],
       "faces": [
        [
-        [1.5, 0.0, 1.1],
-        [0.0, 0.0, 3.0],
-        [0.0, 0.0, 0.0]
-       ],
-       [
         [3.0, 0.0, 0.0],
         [3.0, 0.0, 3.0],
         [1.5, 0.0, 1.1]
+       ],
+       [
+        [1.5, 0.0, 1.1],
+        [0.0, 0.0, 3.0],
+        [0.0, 0.0, 0.0]
        ],
        [
         [3.0, 0.0, 0.0],
@@ -5719,14 +5719,14 @@
       ],
       "faces": [
        [
-        [1.5, 0.0, 1.1],
-        [0.0, 0.0, 3.0],
-        [0.0, 0.0, 0.0]
-       ],
-       [
         [3.0, 0.0, 0.0],
         [3.0, 0.0, 3.0],
         [1.5, 0.0, 1.1]
+       ],
+       [
+        [1.5, 0.0, 1.1],
+        [0.0, 0.0, 3.0],
+        [0.0, 0.0, 0.0]
        ],
        [
         [1.5, 0.0, 1.1],
@@ -5837,18 +5837,18 @@
       "faces": [
        [
         [1.5, 0.0, 1.1],
-        [0.0, 0.0, 3.0],
-        [0.0, 0.0, 0.0]
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 3.0]
        ],
        [
         [3.0, 0.0, 0.0],
-        [3.0, 0.0, 3.0],
-        [1.5, 0.0, 1.1]
+        [1.5, 0.0, 1.1],
+        [3.0, 0.0, 3.0]
        ],
        [
         [1.5, 0.0, 1.1],
-        [0.0, 0.0, 0.0],
-        [3.0, 0.0, 0.0]
+        [3.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0]
        ]
       ]
      },
@@ -6012,12 +6012,12 @@
   {
    "name": "triangulate_reflex_and_flat_hex",
    "ledger_rows": [43, 50],
-   "channel": "faces_any_winding",
-   "kind": "neither_reads_the_ring",
+   "channel": "faces",
+   "kind": "both_read_the_ring",
    "orbit": {
     "vibe3d": {
      "vertices": "000000",
-     "faces": "000000",
+     "faces": "010010",
      "faces_any_winding": "000000"
     },
     "reference": {
@@ -6081,7 +6081,7 @@
       "applied": true,
       "matches_reference": {
        "vertices": true,
-       "faces": false
+       "faces": true
       },
       "counts": {
        "verts": 6,
@@ -6098,23 +6098,23 @@
       ],
       "faces": [
        [
+        [4.0, 0.0, 0.0],
+        [4.0, 0.0, 4.0],
+        [2.0, 0.0, 1.4]
+       ],
+       [
+        [2.0, 0.0, 1.4],
         [0.0, 0.0, 4.0],
+        [0.0, 0.0, 0.0]
+       ],
+       [
+        [2.0, 0.0, 1.4],
         [0.0, 0.0, 0.0],
         [2.0, 0.0, 0.0]
        ],
        [
         [2.0, 0.0, 0.0],
         [4.0, 0.0, 0.0],
-        [4.0, 0.0, 4.0]
-       ],
-       [
-        [2.0, 0.0, 1.4],
-        [0.0, 0.0, 4.0],
-        [2.0, 0.0, 0.0]
-       ],
-       [
-        [2.0, 0.0, 0.0],
-        [4.0, 0.0, 4.0],
         [2.0, 0.0, 1.4]
        ]
       ]
@@ -6212,7 +6212,7 @@
       "applied": true,
       "matches_reference": {
        "vertices": true,
-       "faces": false
+       "faces": true
       },
       "counts": {
        "verts": 6,
@@ -6229,23 +6229,23 @@
       ],
       "faces": [
        [
-        [0.0, 0.0, 4.0],
-        [0.0, 0.0, 0.0],
-        [2.0, 0.0, 0.0]
-       ],
-       [
-        [2.0, 0.0, 0.0],
         [4.0, 0.0, 0.0],
+        [2.0, 0.0, 1.4],
         [4.0, 0.0, 4.0]
        ],
        [
         [2.0, 0.0, 1.4],
-        [0.0, 0.0, 4.0],
-        [2.0, 0.0, 0.0]
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 4.0]
        ],
        [
         [2.0, 0.0, 0.0],
-        [4.0, 0.0, 4.0],
+        [2.0, 0.0, 1.4],
+        [4.0, 0.0, 0.0]
+       ],
+       [
+        [2.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
         [2.0, 0.0, 1.4]
        ]
       ]
@@ -6343,7 +6343,7 @@
       "applied": true,
       "matches_reference": {
        "vertices": true,
-       "faces": false
+       "faces": true
       },
       "counts": {
        "verts": 6,
@@ -6360,23 +6360,23 @@
       ],
       "faces": [
        [
+        [4.0, 0.0, 0.0],
+        [4.0, 0.0, 4.0],
+        [2.0, 0.0, 1.4]
+       ],
+       [
+        [2.0, 0.0, 1.4],
         [0.0, 0.0, 4.0],
-        [0.0, 0.0, 0.0],
-        [2.0, 0.0, 0.0]
+        [0.0, 0.0, 0.0]
        ],
        [
         [2.0, 0.0, 0.0],
         [4.0, 0.0, 0.0],
-        [4.0, 0.0, 4.0]
+        [2.0, 0.0, 1.4]
        ],
        [
         [2.0, 0.0, 1.4],
-        [0.0, 0.0, 4.0],
-        [2.0, 0.0, 0.0]
-       ],
-       [
-        [4.0, 0.0, 4.0],
-        [2.0, 0.0, 1.4],
+        [0.0, 0.0, 0.0],
         [2.0, 0.0, 0.0]
        ]
       ]
@@ -6474,7 +6474,7 @@
       "applied": true,
       "matches_reference": {
        "vertices": true,
-       "faces": false
+       "faces": true
       },
       "counts": {
        "verts": 6,
@@ -6491,24 +6491,24 @@
       ],
       "faces": [
        [
+        [4.0, 0.0, 0.0],
+        [4.0, 0.0, 4.0],
+        [2.0, 0.0, 1.4]
+       ],
+       [
+        [2.0, 0.0, 1.4],
         [0.0, 0.0, 4.0],
+        [0.0, 0.0, 0.0]
+       ],
+       [
+        [2.0, 0.0, 1.4],
         [0.0, 0.0, 0.0],
         [2.0, 0.0, 0.0]
        ],
        [
+        [2.0, 0.0, 1.4],
         [2.0, 0.0, 0.0],
-        [4.0, 0.0, 0.0],
-        [4.0, 0.0, 4.0]
-       ],
-       [
-        [2.0, 0.0, 1.4],
-        [0.0, 0.0, 4.0],
-        [2.0, 0.0, 0.0]
-       ],
-       [
-        [4.0, 0.0, 4.0],
-        [2.0, 0.0, 1.4],
-        [2.0, 0.0, 0.0]
+        [4.0, 0.0, 0.0]
        ]
       ]
      },
@@ -6605,7 +6605,7 @@
       "applied": true,
       "matches_reference": {
        "vertices": true,
-       "faces": false
+       "faces": true
       },
       "counts": {
        "verts": 6,
@@ -6622,24 +6622,24 @@
       ],
       "faces": [
        [
-        [0.0, 0.0, 4.0],
+        [2.0, 0.0, 1.4],
         [0.0, 0.0, 0.0],
-        [2.0, 0.0, 0.0]
+        [0.0, 0.0, 4.0]
        ],
        [
-        [2.0, 0.0, 0.0],
         [4.0, 0.0, 0.0],
-        [4.0, 0.0, 4.0]
-       ],
-       [
         [2.0, 0.0, 1.4],
-        [0.0, 0.0, 4.0],
-        [2.0, 0.0, 0.0]
+        [4.0, 0.0, 4.0]
        ],
        [
         [2.0, 0.0, 1.4],
         [2.0, 0.0, 0.0],
-        [4.0, 0.0, 4.0]
+        [0.0, 0.0, 0.0]
+       ],
+       [
+        [2.0, 0.0, 1.4],
+        [4.0, 0.0, 0.0],
+        [2.0, 0.0, 0.0]
        ]
       ]
      },
@@ -6736,7 +6736,7 @@
       "applied": true,
       "matches_reference": {
        "vertices": true,
-       "faces": false
+       "faces": true
       },
       "counts": {
        "verts": 6,
@@ -6753,23 +6753,23 @@
       ],
       "faces": [
        [
+        [2.0, 0.0, 1.4],
         [0.0, 0.0, 4.0],
+        [0.0, 0.0, 0.0]
+       ],
+       [
+        [4.0, 0.0, 0.0],
+        [4.0, 0.0, 4.0],
+        [2.0, 0.0, 1.4]
+       ],
+       [
+        [2.0, 0.0, 1.4],
         [0.0, 0.0, 0.0],
         [2.0, 0.0, 0.0]
        ],
        [
         [2.0, 0.0, 0.0],
         [4.0, 0.0, 0.0],
-        [4.0, 0.0, 4.0]
-       ],
-       [
-        [2.0, 0.0, 1.4],
-        [0.0, 0.0, 4.0],
-        [2.0, 0.0, 0.0]
-       ],
-       [
-        [2.0, 0.0, 0.0],
-        [4.0, 0.0, 4.0],
         [2.0, 0.0, 1.4]
        ]
       ]
@@ -11665,13 +11665,13 @@
   {
    "name": "triangulate_five_point_star",
    "ledger_rows": [43, 50],
-   "channel": "faces_any_winding",
-   "kind": "reference_reads_the_ring",
+   "channel": "faces",
+   "kind": "both_read_the_ring",
    "orbit": {
     "vibe3d": {
      "vertices": "0000",
-     "faces": "0000",
-     "faces_any_winding": "0000"
+     "faces": "0123",
+     "faces_any_winding": "0011"
     },
     "reference": {
      "vertices": "0000",
@@ -11742,7 +11742,7 @@
       "applied": true,
       "matches_reference": {
        "vertices": true,
-       "faces": false
+       "faces": true
       },
       "counts": {
        "verts": 10,
@@ -11763,9 +11763,9 @@
       ],
       "faces": [
        [
-        [-0.589655, 0.0, 0.191591],
-        [-1.616796, 0.0, -0.525329],
-        [-0.364427, 0.0, -0.501591]
+        [-0.364427, 0.0, -0.501591],
+        [0.0, 0.0, -1.7],
+        [0.364427, 0.0, -0.501591]
        ],
        [
         [0.364427, 0.0, -0.501591],
@@ -11773,9 +11773,9 @@
         [0.589655, 0.0, 0.191591]
        ],
        [
-        [-0.364427, 0.0, -0.501591],
-        [0.0, 0.0, -1.7],
-        [0.364427, 0.0, -0.501591]
+        [0.589655, 0.0, 0.191591],
+        [0.999235, 0.0, 1.375329],
+        [0.0, 0.0, 0.62]
        ],
        [
         [0.0, 0.0, 0.62],
@@ -11783,24 +11783,24 @@
         [-0.589655, 0.0, 0.191591]
        ],
        [
-        [0.589655, 0.0, 0.191591],
-        [0.999235, 0.0, 1.375329],
-        [0.0, 0.0, 0.62]
+        [-0.589655, 0.0, 0.191591],
+        [-1.616796, 0.0, -0.525329],
+        [-0.364427, 0.0, -0.501591]
        ],
        [
-        [-0.589655, 0.0, 0.191591],
         [-0.364427, 0.0, -0.501591],
-        [0.364427, 0.0, -0.501591]
-       ],
-       [
-        [-0.589655, 0.0, 0.191591],
         [0.364427, 0.0, -0.501591],
         [0.589655, 0.0, 0.191591]
        ],
        [
+        [-0.364427, 0.0, -0.501591],
         [0.589655, 0.0, 0.191591],
+        [0.0, 0.0, 0.62]
+       ],
+       [
         [0.0, 0.0, 0.62],
-        [-0.589655, 0.0, 0.191591]
+        [-0.589655, 0.0, 0.191591],
+        [-0.364427, 0.0, -0.501591]
        ]
       ]
      },
@@ -11929,7 +11929,7 @@
       "applied": true,
       "matches_reference": {
        "vertices": true,
-       "faces": false
+       "faces": true
       },
       "counts": {
        "verts": 10,
@@ -11950,43 +11950,43 @@
       ],
       "faces": [
        [
-        [-0.589655, 0.0, 0.191591],
-        [-1.616796, 0.0, -0.525329],
-        [-0.364427, 0.0, -0.501591]
-       ],
-       [
         [0.364427, 0.0, -0.501591],
-        [1.616796, 0.0, -0.525329],
-        [0.589655, 0.0, 0.191591]
-       ],
-       [
-        [-0.364427, 0.0, -0.501591],
-        [0.0, 0.0, -1.7],
-        [0.364427, 0.0, -0.501591]
-       ],
-       [
-        [0.0, 0.0, 0.62],
-        [-0.999235, 0.0, 1.375329],
-        [-0.589655, 0.0, 0.191591]
-       ],
-       [
         [0.589655, 0.0, 0.191591],
-        [0.999235, 0.0, 1.375329],
-        [0.0, 0.0, 0.62]
-       ],
-       [
-        [-0.589655, 0.0, 0.191591],
-        [-0.364427, 0.0, -0.501591],
-        [0.364427, 0.0, -0.501591]
-       ],
-       [
-        [-0.589655, 0.0, 0.191591],
-        [0.364427, 0.0, -0.501591],
-        [0.589655, 0.0, 0.191591]
+        [1.616796, 0.0, -0.525329]
        ],
        [
         [0.589655, 0.0, 0.191591],
         [0.0, 0.0, 0.62],
+        [0.999235, 0.0, 1.375329]
+       ],
+       [
+        [0.0, 0.0, 0.62],
+        [-0.589655, 0.0, 0.191591],
+        [-0.999235, 0.0, 1.375329]
+       ],
+       [
+        [-0.589655, 0.0, 0.191591],
+        [-0.364427, 0.0, -0.501591],
+        [-1.616796, 0.0, -0.525329]
+       ],
+       [
+        [-0.364427, 0.0, -0.501591],
+        [0.364427, 0.0, -0.501591],
+        [0.0, 0.0, -1.7]
+       ],
+       [
+        [-0.364427, 0.0, -0.501591],
+        [0.589655, 0.0, 0.191591],
+        [0.364427, 0.0, -0.501591]
+       ],
+       [
+        [-0.364427, 0.0, -0.501591],
+        [0.0, 0.0, 0.62],
+        [0.589655, 0.0, 0.191591]
+       ],
+       [
+        [0.0, 0.0, 0.62],
+        [-0.364427, 0.0, -0.501591],
         [-0.589655, 0.0, 0.191591]
        ]
       ]
@@ -12116,7 +12116,7 @@
       "applied": true,
       "matches_reference": {
        "vertices": true,
-       "faces": false
+       "faces": true
       },
       "counts": {
        "verts": 10,
@@ -12137,24 +12137,9 @@
       ],
       "faces": [
        [
-        [-0.589655, 0.0, 0.191591],
-        [-1.616796, 0.0, -0.525329],
-        [-0.364427, 0.0, -0.501591]
-       ],
-       [
         [0.364427, 0.0, -0.501591],
         [1.616796, 0.0, -0.525329],
         [0.589655, 0.0, 0.191591]
-       ],
-       [
-        [-0.364427, 0.0, -0.501591],
-        [0.0, 0.0, -1.7],
-        [0.364427, 0.0, -0.501591]
-       ],
-       [
-        [0.0, 0.0, 0.62],
-        [-0.999235, 0.0, 1.375329],
-        [-0.589655, 0.0, 0.191591]
        ],
        [
         [0.589655, 0.0, 0.191591],
@@ -12162,19 +12147,34 @@
         [0.0, 0.0, 0.62]
        ],
        [
+        [0.0, 0.0, 0.62],
+        [-0.999235, 0.0, 1.375329],
+        [-0.589655, 0.0, 0.191591]
+       ],
+       [
+        [-0.589655, 0.0, 0.191591],
+        [-1.616796, 0.0, -0.525329],
+        [-0.364427, 0.0, -0.501591]
+       ],
+       [
+        [-0.364427, 0.0, -0.501591],
+        [0.0, 0.0, -1.7],
+        [0.364427, 0.0, -0.501591]
+       ],
+       [
         [-0.589655, 0.0, 0.191591],
         [-0.364427, 0.0, -0.501591],
         [0.364427, 0.0, -0.501591]
        ],
        [
+        [0.0, 0.0, 0.62],
         [-0.589655, 0.0, 0.191591],
-        [0.364427, 0.0, -0.501591],
-        [0.589655, 0.0, 0.191591]
+        [0.364427, 0.0, -0.501591]
        ],
        [
         [0.589655, 0.0, 0.191591],
         [0.0, 0.0, 0.62],
-        [-0.589655, 0.0, 0.191591]
+        [0.364427, 0.0, -0.501591]
        ]
       ]
      },
@@ -12303,7 +12303,7 @@
       "applied": true,
       "matches_reference": {
        "vertices": true,
-       "faces": false
+       "faces": true
       },
       "counts": {
        "verts": 10,
@@ -12324,44 +12324,44 @@
       ],
       "faces": [
        [
+        [0.589655, 0.0, 0.191591],
+        [0.0, 0.0, 0.62],
+        [0.999235, 0.0, 1.375329]
+       ],
+       [
+        [0.0, 0.0, 0.62],
         [-0.589655, 0.0, 0.191591],
-        [-1.616796, 0.0, -0.525329],
+        [-0.999235, 0.0, 1.375329]
+       ],
+       [
+        [-0.589655, 0.0, 0.191591],
+        [-0.364427, 0.0, -0.501591],
+        [-1.616796, 0.0, -0.525329]
+       ],
+       [
+        [-0.364427, 0.0, -0.501591],
+        [0.364427, 0.0, -0.501591],
+        [0.0, 0.0, -1.7]
+       ],
+       [
+        [0.364427, 0.0, -0.501591],
+        [0.589655, 0.0, 0.191591],
+        [1.616796, 0.0, -0.525329]
+       ],
+       [
+        [-0.589655, 0.0, 0.191591],
+        [0.364427, 0.0, -0.501591],
         [-0.364427, 0.0, -0.501591]
        ],
        [
-        [0.364427, 0.0, -0.501591],
-        [1.616796, 0.0, -0.525329],
-        [0.589655, 0.0, 0.191591]
-       ],
-       [
-        [-0.364427, 0.0, -0.501591],
-        [0.0, 0.0, -1.7],
-        [0.364427, 0.0, -0.501591]
-       ],
-       [
         [0.0, 0.0, 0.62],
-        [-0.999235, 0.0, 1.375329],
+        [0.364427, 0.0, -0.501591],
         [-0.589655, 0.0, 0.191591]
        ],
        [
         [0.589655, 0.0, 0.191591],
-        [0.999235, 0.0, 1.375329],
+        [0.364427, 0.0, -0.501591],
         [0.0, 0.0, 0.62]
-       ],
-       [
-        [-0.589655, 0.0, 0.191591],
-        [-0.364427, 0.0, -0.501591],
-        [0.364427, 0.0, -0.501591]
-       ],
-       [
-        [-0.589655, 0.0, 0.191591],
-        [0.364427, 0.0, -0.501591],
-        [0.589655, 0.0, 0.191591]
-       ],
-       [
-        [0.589655, 0.0, 0.191591],
-        [0.0, 0.0, 0.62],
-        [-0.589655, 0.0, 0.191591]
        ]
       ]
      },

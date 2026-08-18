@@ -1638,29 +1638,57 @@ unittest { // triangulateFacesByMask: faceOrigin maps children → parent
             ~ ", expected " ~ (fi / 2).to!string);
 }
 
-unittest { // triangulateFacesByMask: SOUNDNESS + ring-order invariance over
-           // adversarial rings, every rotation — task 1190.
+unittest { // triangulateFacesByMask: SOUNDNESS over adversarial rings at every
+           // rotation, and the ORBIT the ported law actually produces —
+           // tasks 1190 (soundness) and 1280 (the law it now guards).
     //
-    // A geometric fan anchor makes the orbit invariant but says nothing about
-    // whether the triangles are any good, and the reverse is also true. This
-    // asserts both, on the ring families that separate them, at EVERY rotation
-    // of each:
+    // WHAT 1190 BUILT THIS FOR, and what still holds. A geometric fan anchor
+    // makes the orbit invariant but says nothing about whether the triangles
+    // are any good, and the reverse is also true. Measured against the old fan
+    // from `ring[0]` on a 306-cell corpus of these same families: 126 cells
+    // failed the area sum, 259 triangles fell outside the ring, 330 were
+    // zero-area, and all 36 orbits were ring-order dependent.
     //
-    //   1. exactly n-2 triangles;
-    //   2. every triangle wound the same way as the ring and non-degenerate
-    //      (signed area strictly positive against the ring's own normal) — so
-    //      no inverted and no zero-area triangle;
-    //   3. the triangle areas SUM to the ring's area. This is the one that
-    //      catches an overlap or a gap: a triangle that strays outside the
-    //      polygon, or two that cover the same ground, break the sum while
-    //      leaving the count and the winding intact;
-    //   4. rotating the ring gives the SAME set of triangles.
+    // WHAT TASK 1280 CHANGED HERE, AND WHY IT IS NOT A WEAKENING. Two of the
+    // four original checks were assertions about a law that has since been
+    // replaced by the reference's, so they now assert the wrong thing:
     //
-    // Measured against the old fan from `ring[0]` on a 306-cell corpus of the
-    // same four families: 126 cells failed (3), 259 triangles fell outside the
-    // ring, 330 were zero-area, and all 36 orbits were ring-order dependent.
-    // The families are chosen for that reason — a convex ring cannot fail any
-    // of these and would make the test vacuous.
+    //   * "rotating the ring gives the same triangle set" was 1190's DECISION,
+    //     taken because the reference looked ring-invariant on the three shapes
+    //     measured then. It is not: on a horseshoe it gives three
+    //     decompositions over eight rotations. The check is replaced by the
+    //     ORBIT PATTERN each family actually produces — which is a strictly
+    //     tighter assertion than "all equal", because it reddens if any
+    //     rotation moves in either direction, including toward invariance.
+    //   * "every triangle wound the same way as the ring" ignored the `rev`
+    //     term: a ring whose first corner is reflex has EVERY triangle wound
+    //     the other way (divergence-ledger row 51). The check is replaced by
+    //     recomputing `rev` from its own predicate and asserting the sign the
+    //     predicate demands — so the winding law is pinned rather than assumed.
+    //
+    // The two checks that carry the soundness — the count, and the |area| the
+    // triangles cover — are UNCHANGED and still hard zeros, and they are where
+    // a fan dies: re-anchoring the clip to a merely geometric fan reddens the
+    // coverage check on 29 of these 36 cells, with a worst error of 133%.
+    //
+    // EXACTLY ONE OF THE THREE COUNTERS IS NONZERO, AND IT IS STRUCTURAL. Read
+    // this as a property of the law, not as a soundness check we failed to
+    // hold. Of the three the old fan broke, the ported law scores:
+    //
+    //   triangles outside their own polygon .......... 0 of 36 cells
+    //   cells whose triangles do not cover the ring ... 0 of 36 cells
+    //   ZERO-AREA triangles .......................... 7, all on `comb`
+    //
+    // The seven are one triangle each on seven of the comb's eleven rotations,
+    // and they are not a choice the pick rule makes. The comb has five
+    // collinear base points; once the spikes are clipped the remainder is a
+    // quad with three collinear corners, and BOTH of that quad's two possible
+    // clips leave a degenerate triangle — by then it is decided, and the last
+    // emit is unconditional. Coverage stays exact because a zero-area triangle
+    // covers nothing, so the decomposition is still sound in the sense the two
+    // hard counters measure; what is lost is only the guarantee that no face
+    // comes out degenerate. Frozen below as an exact census: if it appears
+    // anywhere else, or stops appearing here, this reddens.
     import std.conv : to;
     import std.math : fabs, cos, sin, PI;
 
@@ -1676,6 +1704,23 @@ unittest { // triangulateFacesByMask: SOUNDNESS + ring-order invariance over
         return (cast(double)b.x - a.x) * (cast(double)c.z - a.z)
              - (cast(double)c.x - a.x) * (cast(double)b.z - a.z);
     }
+    // The kernel's own frame for a planar-XZ ring is (u,v) = (z,x) — its
+    // dominant axis is Y, and AXIS0/AXIS1 send that to (2,0). `rev` is computed
+    // in THAT frame, so the test has to be too; doing it in (x,z) flips both
+    // terms and silently agrees anyway, which would make this vacuous.
+    static double detZX(Vec3 a, Vec3 b, Vec3 c) {
+        return (cast(double)b.z - a.z) * (cast(double)c.x - a.x)
+             - (cast(double)c.z - a.z) * (cast(double)b.x - a.x);
+    }
+    static int orientZX(Vec3 a, Vec3 b, Vec3 c) { return detZX(a, b, c) >= 0 ? 1 : 0; }
+    static int shoelaceSignZX(const Vec3[] r) {
+        double s = 0;
+        foreach (i; 0 .. r.length) {
+            const a = r[i], b = r[(i + 1) % r.length];
+            s += cast(double)a.z * b.x - cast(double)b.z * a.x;
+        }
+        return s >= 0 ? 1 : 0;
+    }
     // A triangle named by its three positions, order-free, so two rotations
     // can be compared without assuming anything about vertex numbering.
     static string triKeyOf(Vec3 a, Vec3 b, Vec3 c) {
@@ -1689,8 +1734,17 @@ unittest { // triangulateFacesByMask: SOUNDNESS + ring-order invariance over
 
     Vec3[][] corpus;
     string[] names;
+    // The orbit each family produces under the ported law, one digit per
+    // rotation: equal digits mean the same triangle SET (winding ignored).
+    // These are PREDICTIONS — derived from the law offline before the kernel
+    // was written, and reproduced by it — not a recording of whatever the
+    // kernel happened to do.
+    string[] wantOrbit;
+    // Rotations that carry a zero-area triangle, and how many.
+    size_t[][] wantDegenerate;
+
     // eight-pointed star: four reflex corners, four congruent tips (an exact
-    // tie the area metric cannot break)
+    // tie, which is what makes its orbit split at all)
     {
         Vec3[] r;
         foreach (i; 0 .. 8) {
@@ -1699,6 +1753,7 @@ unittest { // triangulateFacesByMask: SOUNDNESS + ring-order invariance over
             r ~= Vec3(cast(float)(cos(a) * rad), 0, cast(float)(sin(a) * rad));
         }
         corpus ~= r; names ~= "star8";
+        wantOrbit ~= "00110011"; wantDegenerate ~= new size_t[](8);
     }
     // a square with three EXTRA collinear points on one edge — the family the
     // old fan turned into zero-area triangles
@@ -1706,6 +1761,7 @@ unittest { // triangulateFacesByMask: SOUNDNESS + ring-order invariance over
         Vec3[] r = [Vec3(0,0,0), Vec3(0.75f,0,0), Vec3(1.5f,0,0), Vec3(2.25f,0,0),
                     Vec3(3,0,0), Vec3(3,0,3), Vec3(0,0,3)];
         corpus ~= r; names ~= "collinear_run";
+        wantOrbit ~= "0000001"; wantDegenerate ~= new size_t[](7);
     }
     // deep notches: thin ears and many reflex corners
     {
@@ -1716,28 +1772,40 @@ unittest { // triangulateFacesByMask: SOUNDNESS + ring-order invariance over
         }
         r ~= Vec3(4, 0, 0); r ~= Vec3(4, 0, -1); r ~= Vec3(0, 0, -1);
         corpus ~= r; names ~= "comb";
+        wantOrbit ~= "00011111112";
+        wantDegenerate ~= [0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0];
     }
     // the dart — the smallest ring the old fan got wrong
     {
         corpus ~= [Vec3(0,0,0), Vec3(2,0,1.2f), Vec3(4,0,0), Vec3(2,0,3)];
         names ~= "dart";
+        wantOrbit ~= "0000"; wantDegenerate ~= new size_t[](4);
     }
     // one reflex AND one exactly-collinear corner on the same ring
     {
         corpus ~= [Vec3(0,0,0), Vec3(2,0,0), Vec3(4,0,0),
                    Vec3(4,0,4), Vec3(2,0,1.4f), Vec3(0,0,4)];
         names ~= "reflex_and_flat_hex";
+        wantOrbit ~= "000000"; wantDegenerate ~= new size_t[](6);
     }
 
     foreach (ci, base; corpus) {
         immutable size_t n = base.length;
         immutable double want = fabs(ringArea2(base));
         immutable double tol  = 1e-4 * (want > 1.0 ? want : 1.0);
-        string[] firstKeys;
+        string[] orbitKeys;
+        size_t[] orbitOf;
         foreach (rot; 0 .. n) {
             Vec3[] r;
             foreach (k; 0 .. n) r ~= base[(rot + k) % n];
             immutable double sgn = ringArea2(r) > 0 ? 1.0 : -1.0;
+
+            // `rev`, recomputed from its own predicate rather than taken on
+            // trust: the corner at ring index 0 disagreeing with the ring's
+            // own orientation is what turns every emitted triangle over.
+            immutable bool rev =
+                orientZX(r[n - 1], r[0], r[1]) != shoelaceSignZX(r);
+            immutable double wantSign = rev ? -sgn : sgn;
 
             Mesh m;
             m.vertices = r.dup;
@@ -1756,6 +1824,7 @@ unittest { // triangulateFacesByMask: SOUNDNESS + ring-order invariance over
                 ~ m.faces.length.to!string);
 
             double sum = 0;
+            size_t degenerate = 0;
             string[] keys;
             foreach (fi; 0 .. m.faces.length) {
                 assert(m.faces[fi].length == 3, who ~ ": face " ~ fi.to!string
@@ -1763,30 +1832,53 @@ unittest { // triangulateFacesByMask: SOUNDNESS + ring-order invariance over
                 const a = m.vertices[m.faces[fi][0]];
                 const b = m.vertices[m.faces[fi][1]];
                 const c = m.vertices[m.faces[fi][2]];
-                immutable double s = tri2(a, b, c) * sgn;
-                assert(s > tol * 1e-3,
-                    who ~ ": triangle " ~ fi.to!string ~ " has signed area "
-                    ~ s.to!string ~ " against the ring's own winding — it is "
-                    ~ "inverted or degenerate, which is what a fan from a fixed "
-                    ~ "ring index produced on this shape");
-                sum += s;
+                immutable double s = tri2(a, b, c);
+                if (fabs(s) <= tol * 1e-3) {
+                    ++degenerate;
+                } else {
+                    assert(s * wantSign > 0,
+                        who ~ ": triangle " ~ fi.to!string ~ " has signed area "
+                        ~ s.to!string ~ " but the ring's own winding and the `rev`"
+                        ~ " predicate (rev=" ~ rev.to!string ~ ") demand sign "
+                        ~ wantSign.to!string ~ " — a fan from a fixed ring index"
+                        ~ " produced inverted triangles on this shape, and so"
+                        ~ " does a clip that drops the rev term");
+                }
+                sum += fabs(s);
                 keys ~= triKeyOf(a, b, c);
             }
             assert(fabs(sum - want) <= tol,
                 who ~ ": the triangles cover " ~ sum.to!string
                 ~ " but the ring encloses " ~ want.to!string
-                ~ " — they overlap or leave a gap");
+                ~ " — they overlap, leave a gap, or one of them strayed outside"
+                ~ " the polygon. THIS is the check a geometric fan anchor fails:"
+                ~ " it is invariant and still wrong, on 29 of these 36 cells");
+
+            assert(degenerate == wantDegenerate[ci][rot],
+                who ~ ": " ~ degenerate.to!string ~ " zero-area triangle(s),"
+                ~ " the frozen census says " ~ wantDegenerate[ci][rot].to!string
+                ~ ". The comb's seven are the collinear remainder the ported law"
+                ~ " cannot avoid; anywhere else this is a new defect");
 
             foreach (i; 0 .. keys.length)
                 foreach (j; i + 1 .. keys.length)
                     if (keys[j] < keys[i]) { auto t = keys[i]; keys[i] = keys[j]; keys[j] = t; }
-            if (rot == 0) firstKeys = keys;
-            else assert(keys == firstKeys,
-                who ~ ": rotating the ring changed the triangle SET — "
-                ~ "triangulation must not depend on where the ring starts "
-                ~ "(rot0 gave " ~ firstKeys.to!string ~ ", this gave "
-                ~ keys.to!string ~ ")");
+            string joined;
+            foreach (k; keys) joined ~= k ~ ";";
+            size_t slot = size_t.max;
+            foreach (oi, ok; orbitKeys) if (ok == joined) { slot = oi; break; }
+            if (slot == size_t.max) { slot = orbitKeys.length; orbitKeys ~= joined; }
+            orbitOf ~= slot;
         }
+
+        string got;
+        foreach (o; orbitOf) got ~= cast(char)('0' + o);
+        assert(got == wantOrbit[ci],
+            names[ci] ~ ": orbit is " ~ got ~ ", the ported law gives "
+            ~ wantOrbit[ci] ~ ". Since task 1280 our triangulation DOES follow"
+            ~ " where the ring starts, on purpose — a run that comes back all"
+            ~ " zeroes here has reverted to the ring-invariant law, and one that"
+            ~ " splits further has drifted off the ported one");
     }
 }
 
@@ -5226,4 +5318,188 @@ unittest { // keepTwoPointFaces lowers the arity floor from 3 to 2
         assert(m.edges.length == 13,
             format("expected 13 edges either way here, got %d", m.edges.length));
     }
+}
+
+unittest { // earClipRingCorners: the PORTED choice law, frozen against every
+           // cell the reference was measured on — task 1280.
+    //
+    // Nineteen rings, each with the reference's own output in EMISSION ORDER
+    // and with the winding it stored. This is the whole of what the law was
+    // ported from, so it is the whole of what a change to the law has to keep:
+    // the metric (2*Area / longest side squared), the ring-order scan, the
+    // early-out, the tie-break to the earlier ring index, the `rev` winding
+    // term, and the containment-by-vertex-identity that makes `keyhole18` — an
+    // 18-entry ring over 16 vertices, walking a bridge edge twice — come out
+    // right with no repeated-vertex branch anywhere.
+    //
+    // WHAT SEPARATES WHAT, measured offline over these same cells before any of
+    // it was written (see the task 1280 card):
+    //   * the METRIC is separated hard — largest-AREA scores 4/19 here and 0/8
+    //     on the horseshoe rotations; first-valid-ear scores 2/19.
+    //   * the TIE-BREAK is separated — it is the entire reason the horseshoe
+    //     gives three decompositions over its eight rotations.
+    //   * the EARLY-OUT is bounded from BELOW by the wider 39-cell capture, and
+    //     the bound is exactly 0.5 — under it, two of those cells break. Above
+    //     it behaviour says nothing, so the constructed ring two blocks down is
+    //     what pins `kTripleQualityEarlyOut` from the other side.
+    import std.conv : to;
+    static struct C { string name; Vec3[] verts; uint[] ring; uint[3][] want; }
+    auto cells = [
+        C("horse_rot0", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u], [[2u,3u,4u], [5u,6u,7u], [1u,2u,4u], [0u,1u,4u], [5u,7u,0u], [0u,4u,5u]]),
+        C("horse_rot1", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [1u, 2u, 3u, 4u, 5u, 6u, 7u, 0u], [[2u,3u,4u], [5u,6u,7u], [1u,2u,4u], [0u,1u,4u], [5u,7u,0u], [4u,5u,0u]]),
+        C("horse_rot2", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [2u, 3u, 4u, 5u, 6u, 7u, 0u, 1u], [[2u,3u,4u], [5u,6u,7u], [1u,2u,4u], [5u,7u,0u], [5u,0u,1u], [4u,5u,1u]]),
+        C("horse_rot3", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [3u, 4u, 5u, 6u, 7u, 0u, 1u, 2u], [[2u,3u,4u], [5u,6u,7u], [5u,7u,0u], [5u,0u,1u], [1u,2u,4u], [4u,5u,1u]]),
+        C("horse_rot4", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [4u, 5u, 6u, 7u, 0u, 1u, 2u, 3u], [[5u,7u,6u], [2u,4u,3u], [5u,0u,7u], [5u,1u,0u], [1u,4u,2u], [4u,1u,5u]]),
+        C("horse_rot5", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [5u, 6u, 7u, 0u, 1u, 2u, 3u, 4u], [[5u,7u,6u], [2u,4u,3u], [5u,0u,7u], [5u,1u,0u], [1u,4u,2u], [5u,4u,1u]]),
+        C("horse_rot6", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [6u, 7u, 0u, 1u, 2u, 3u, 4u, 5u], [[5u,6u,7u], [2u,3u,4u], [5u,7u,0u], [5u,0u,1u], [1u,2u,4u], [1u,4u,5u]]),
+        C("horse_rot7", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [7u, 0u, 1u, 2u, 3u, 4u, 5u, 6u], [[2u,3u,4u], [5u,6u,7u], [5u,7u,0u], [5u,0u,1u], [1u,2u,4u], [1u,4u,5u]]),
+        C("keyhole18", [Vec3(0.0f, 0.0f, 0.0f), Vec3(3.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 3.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(3.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 3.0f), Vec3(1.5f, 0.0f, 1.5f), Vec3(3.0f, 0.0f, 1.5f), Vec3(4.5f, 0.0f, 1.5f), Vec3(4.5f, 0.0f, 3.0f), Vec3(4.5f, 0.0f, 4.5f), Vec3(3.0f, 0.0f, 4.5f), Vec3(1.5f, 0.0f, 4.5f), Vec3(1.5f, 0.0f, 3.0f)], [0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 0u, 8u, 15u, 14u, 13u, 12u, 11u, 10u, 9u, 8u], [[8u,0u,1u], [7u,0u,8u], [7u,8u,15u], [7u,15u,14u], [6u,7u,14u], [5u,6u,14u], [5u,14u,13u], [5u,13u,12u], [4u,5u,12u], [3u,4u,12u], [3u,12u,11u], [3u,11u,10u], [2u,3u,10u], [1u,2u,10u], [1u,10u,9u], [1u,9u,8u]]),
+        C("mode_quality", [Vec3(0.0f, 0.0f, 0.0f), Vec3(2.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 4.0f), Vec3(2.0f, 0.0f, 1.4f), Vec3(0.0f, 0.0f, 4.0f)], [0u, 1u, 2u, 3u, 4u, 5u], [[2u,3u,4u], [4u,5u,0u], [4u,0u,1u], [1u,2u,4u]]),
+        C("mode_strip", [Vec3(0.0f, 0.0f, 0.0f), Vec3(2.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 4.0f), Vec3(2.0f, 0.0f, 1.4f), Vec3(0.0f, 0.0f, 4.0f)], [0u, 1u, 2u, 3u, 4u, 5u], [[2u,3u,4u], [4u,5u,0u], [4u,0u,1u], [1u,2u,4u]]),
+        C("oct_quality", [Vec3(3.0f, 0.0f, 0.0f), Vec3(2.12132f, 0.0f, 2.12132f), Vec3(0.0f, 0.0f, 3.0f), Vec3(-2.12132f, 0.0f, 2.12132f), Vec3(-3.0f, 0.0f, 0.0f), Vec3(-2.12132f, 0.0f, -2.12132f), Vec3(-0.0f, 0.0f, -3.0f), Vec3(2.12132f, 0.0f, -2.12132f)], [0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u], [[7u,0u,1u], [7u,1u,2u], [7u,2u,3u], [7u,3u,4u], [6u,7u,4u], [4u,5u,6u]]),
+        C("paths_dart", [Vec3(0.0f, 0.0f, 0.0f), Vec3(2.0f, 0.0f, 1.2f), Vec3(4.0f, 0.0f, 0.0f), Vec3(2.0f, 0.0f, 3.0f)], [0u, 1u, 2u, 3u], [[3u,0u,1u], [1u,2u,3u]]),
+        C("paths_hex", [Vec3(0.0f, 0.0f, 0.0f), Vec3(2.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 4.0f), Vec3(2.0f, 0.0f, 1.4f), Vec3(0.0f, 0.0f, 4.0f)], [0u, 1u, 2u, 3u, 4u, 5u], [[2u,3u,4u], [4u,5u,0u], [4u,0u,1u], [1u,2u,4u]]),
+        C("paths_horse", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u], [[2u,3u,4u], [5u,6u,7u], [1u,2u,4u], [0u,1u,4u], [5u,7u,0u], [0u,4u,5u]]),
+        C("paths_pent", [Vec3(0.0f, 0.0f, 0.0f), Vec3(3.0f, 0.0f, 0.0f), Vec3(3.0f, 0.0f, 3.0f), Vec3(1.5f, 0.0f, 1.1f), Vec3(0.0f, 0.0f, 3.0f)], [0u, 1u, 2u, 3u, 4u], [[1u,2u,3u], [3u,4u,0u], [0u,1u,3u]]),
+        C("rev_hex", [Vec3(0.0f, 0.0f, 0.0f), Vec3(2.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 0.0f), Vec3(4.0f, 0.0f, 4.0f), Vec3(2.0f, 0.0f, 1.4f), Vec3(0.0f, 0.0f, 4.0f)], [5u, 4u, 3u, 2u, 1u, 0u], [[0u,5u,4u], [4u,3u,2u], [4u,2u,1u], [4u,1u,0u]]),
+        C("rev_horse", [Vec3(0.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 0.0f), Vec3(6.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 6.0f), Vec3(4.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 2.0f), Vec3(2.0f, 0.0f, 6.0f), Vec3(0.0f, 0.0f, 6.0f)], [7u, 6u, 5u, 4u, 3u, 2u, 1u, 0u], [[7u,6u,5u], [4u,3u,2u], [0u,7u,5u], [4u,2u,1u], [4u,1u,0u], [5u,4u,0u]]),
+        C("rev_pent", [Vec3(0.0f, 0.0f, 0.0f), Vec3(3.0f, 0.0f, 0.0f), Vec3(3.0f, 0.0f, 3.0f), Vec3(1.5f, 0.0f, 1.1f), Vec3(0.0f, 0.0f, 3.0f)], [4u, 3u, 2u, 1u, 0u], [[0u,4u,3u], [3u,2u,1u], [3u,1u,0u]]),
+    ];
+
+    foreach (c; cells) {
+        Mesh m;
+        m.vertices = c.verts.dup;
+        m.addFace(c.ring.dup);
+        m.buildLoops();
+        m.resetSelection();
+        auto mask = new bool[](m.faces.length);
+        mask[] = true;
+        m.triangulateFacesByMask(mask);
+
+        assert(m.faces.length == c.want.length,
+            c.name ~ ": expected " ~ c.want.length.to!string ~ " triangles, got "
+            ~ m.faces.length.to!string);
+        foreach (i; 0 .. c.want.length) {
+            assert(m.faces[i].length == 3, c.name ~ ": face " ~ i.to!string ~ " is not a triangle");
+            assert(m.faces[i][0] == c.want[i][0] && m.faces[i][1] == c.want[i][1]
+                && m.faces[i][2] == c.want[i][2],
+                c.name ~ ": triangle " ~ i.to!string ~ " is " ~ m.faces[i].to!string
+                ~ ", the reference emitted " ~ c.want[i].to!string
+                ~ " — this is the ported choice law, its emission ORDER and its "
+                ~ "winding, all three at once");
+        }
+    }
+}
+
+unittest { // The convex octagon: the one cell that shows the reference has a
+           // SECOND triangulator, and a DECLARED GAP that we do not implement
+           // it — task 1280.
+    //
+    // The command carries a mode argument. Its default is a convex-only zig-zag
+    // strip; the clip we ported is the other mode, and the strip's fallback on
+    // any ring the strip refuses. On this octagon the two disagree outright,
+    // which is why the cell is here: it is the only shape measured on both
+    // paths, and its absence from our fixtures is what let the difference go
+    // unnoticed until task 1270 read the code.
+    //
+    // WE MATCH THE CLIP, ON PURPOSE, AND IT COSTS US THIS CELL. The strip is not
+    // declined here: branch-hit counters recorded strip=1 earclip=0 on every
+    // convex ring measured, quads included, so the bare command strips wherever
+    // it can and falls back to the clip only on a concave one. We port the clip
+    // alone, so on any convex ring our answer is the fallback's and not the
+    // default's — a deliberate, declared divergence, frozen in
+    // tests/fixtures/triangulate_convex_strip_divergence.json.
+    //
+    // An earlier reading of this had a fourth gate declining the strip at four
+    // corners. That was wrong, and the way it was wrong is worth keeping: on a
+    // QUAD the two paths emit the same two triangles across the same diagonal
+    // and differ only in tuple start, so a strip model whose walk was pinned to
+    // ring index 0 — fitted to this very octagon, where all ears tie and the
+    // chooser returns 0 — predicted the wrong tuples and looked like a refusal.
+    // The assertions below are unaffected; they compare against measured output
+    // either way.
+    import std.conv : to;
+    Vec3[] verts = [Vec3(3.0f, 0.0f, 0.0f), Vec3(2.12132f, 0.0f, 2.12132f), Vec3(0.0f, 0.0f, 3.0f), Vec3(-2.12132f, 0.0f, 2.12132f), Vec3(-3.0f, 0.0f, 0.0f), Vec3(-2.12132f, 0.0f, -2.12132f), Vec3(-0.0f, 0.0f, -3.0f), Vec3(2.12132f, 0.0f, -2.12132f)];
+    uint[]  ring = [0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u];
+    uint[3][] clipWants  = [[7u,0u,1u], [7u,1u,2u], [7u,2u,3u], [7u,3u,4u], [6u,7u,4u], [4u,5u,6u]];
+    uint[3][] stripWants = [[0u,1u,7u], [6u,7u,1u], [1u,2u,6u], [5u,6u,2u], [2u,3u,5u], [4u,5u,3u]];
+
+    Mesh m;
+    m.vertices = verts.dup;
+    m.addFace(ring.dup);
+    m.buildLoops();
+    m.resetSelection();
+    auto mask = new bool[](m.faces.length);
+    mask[] = true;
+    m.triangulateFacesByMask(mask);
+
+    assert(m.faces.length == clipWants.length, "octagon: expected "
+        ~ clipWants.length.to!string ~ " triangles, got " ~ m.faces.length.to!string);
+    foreach (i; 0 .. clipWants.length)
+        assert(m.faces[i][0] == clipWants[i][0] && m.faces[i][1] == clipWants[i][1]
+            && m.faces[i][2] == clipWants[i][2],
+            "octagon triangle " ~ i.to!string ~ " is " ~ m.faces[i].to!string
+            ~ ", the clip emits " ~ clipWants[i].to!string);
+
+    // …and it is NOT the strip's answer. Named, so the gap is a fact in the
+    // test rather than a sentence in a card.
+    bool sameAsStrip = true;
+    foreach (i; 0 .. stripWants.length)
+        if (m.faces[i][0] != stripWants[i][0] || m.faces[i][1] != stripWants[i][1]
+         || m.faces[i][2] != stripWants[i][2]) { sameAsStrip = false; break; }
+    assert(!sameAsStrip,
+        "our octagon now matches the STRIP path. That may be an improvement, but "
+        ~ "it is a different law from the one task 1280 ported and the gate that "
+        ~ "chooses between them is still unmeasured at 5..7 corners — re-open the "
+        ~ "measurement before making this green");
+}
+
+unittest { // earClipRingCorners: a ring on which the quality EARLY-OUT actually
+           // fires, so `kTripleQualityEarlyOut` is pinned in both directions —
+           // task 1280.
+    //
+    // WHY THIS RING HAD TO BE CONSTRUCTED. The early-out was read under a
+    // debugger, but it fires on none of the reference's measured cells: their
+    // highest ear quality is exactly 0.5 and the comparison is strict. So the
+    // capture bounds the constant from BELOW only — at 0.4698 or under, three
+    // measured cells break — and says nothing above it. Without a ring where it
+    // fires, raising 0.5 to 0.9, or deleting the early-out outright, would be
+    // invisible to every test we have.
+    //
+    // WHAT THIS RING IS AND IS NOT. It is a hexagon whose first ear over 0.5
+    // (q = 0.798851, at ring index 3) is NOT its best (q = 0.843750, at index
+    // 4), so scanning in ring order and stopping early lands somewhere the
+    // maximum does not. It was found by search over rings on a 0.1 grid, and it
+    // has never been through the reference — this is NOT a parity assertion. It
+    // pins our own constant against drift: the answer below is what the ported
+    // law gives for any threshold in (0.16, 0.79], and it changes outside that
+    // band. Together with the measured cells' lower bound the constant is
+    // bracketed to (0.4698, 0.79], and 0.5 sits inside.
+    import std.conv : to;
+    Vec3[] verts = [Vec3(1.4f, 0, -1.5f), Vec3(1.0f, 0, 1.2f), Vec3(0.3f, 0, 1.1f),
+                    Vec3(-1.0f, 0, -0.5f), Vec3(1.2f, 0, -1.0f), Vec3(0.6f, 0, 1.1f)];
+    uint[3][] want = [[2u,3u,4u], [5u,0u,1u], [2u,4u,5u], [1u,2u,5u]];
+
+    Mesh m;
+    m.vertices = verts.dup;
+    m.addFace([0u, 1u, 2u, 3u, 4u, 5u]);
+    m.buildLoops();
+    m.resetSelection();
+    auto mask = new bool[](m.faces.length);
+    mask[] = true;
+    m.triangulateFacesByMask(mask);
+
+    assert(m.faces.length == want.length,
+        "early-out ring: expected " ~ want.length.to!string ~ " triangles, got "
+        ~ m.faces.length.to!string);
+    foreach (i; 0 .. want.length)
+        assert(m.faces[i][0] == want[i][0] && m.faces[i][1] == want[i][1]
+            && m.faces[i][2] == want[i][2],
+            "early-out ring: triangle " ~ i.to!string ~ " is " ~ m.faces[i].to!string
+            ~ ", expected " ~ want[i].to!string
+            ~ " — the corner chooser stopped at the first ear over "
+            ~ "kTripleQualityEarlyOut. A run that answers "
+            ~ "[[3,4,5],[5,0,1],[2,3,5],[1,2,5]] instead has the threshold at 0.8 "
+            ~ "or higher, or no early-out at all; one that answers "
+            ~ "[[0,2,1],[5,2,0],[2,4,3],[2,5,4]] has it at 0.16 or below");
 }

@@ -1993,6 +1993,40 @@ private bool ringEq(const double[3][] a, const double[3][] b, double tol) {
     return false;
 }
 
+// Two rings equal as SEQUENCES: same length, same order, and the SAME START.
+// This is the reading `ringEq` deliberately does NOT provide, and the gap
+// between the two is a measured blind spot (task 1280): on a convex QUAD the
+// reference's two triangulators emit the same two triangles with the same
+// winding and the same diagonal, differing only in where each tuple begins.
+// Every face comparison in this file matches rings up to rotation, so that
+// difference is invisible to all of them -- which is why a case that wants to
+// assert it has to say `face_tuples` and get this instead.
+private bool ringEqExact(const double[3][] a, const double[3][] b, double tol) {
+    if (a.length != b.length) return false;
+    immutable double t2 = tol * tol;
+    foreach (i; 0 .. a.length) {
+        double[3] x = a[i], y = b[i];
+        if (dist2(x, y) > t2) return false;
+    }
+    return true;
+}
+
+// `ringsMissing`'s exact-start twin, same at-most-once matching.
+private double[3][][] tuplesMissing(const double[3][][] a, const double[3][][] b,
+                                    double tol) {
+    auto used = new bool[](b.length);
+    double[3][][] outr;
+    foreach (ra; a) {
+        bool hit = false;
+        foreach (i, rb; b) {
+            if (used[i]) continue;
+            if (ringEqExact(ra, rb, tol)) { used[i] = true; hit = true; break; }
+        }
+        if (!hit) outr ~= ra.dup;
+    }
+    return outr;
+}
+
 // The rings of `a` that `b` cannot match, matching each `b` ring at most once
 // (so a duplicated face is a difference, not a free pass).
 private double[3][][] ringsMissing(const double[3][][] a, const double[3][][] b,
@@ -2240,6 +2274,61 @@ void runKnownDivergenceSuite(string fixtureJson) {
             sameFaceSet("missing_faces_in_vibe3d", missingF,
                 ("missing_faces_in_vibe3d" in dv) ? dv["missing_faces_in_vibe3d"]
                                                   : JSONValue(cast(JSONValue[])[]));
+        }
+
+        // ---- optional ORDERED FACE-TUPLE channel (task 1280) ------------
+        // For the cells where both engines emit the SAME triangles, wound the
+        // same way, and disagree only about where each tuple STARTS. Every
+        // other face channel here matches rings up to rotation, so such a case
+        // declares an empty gap in all of them and reads as parity; this one
+        // compares the rings as sequences and can therefore carry it.
+        if ("face_tuples" in cur) {
+            auto gotT = readFaceRings();
+            double[3][][] mineT;
+            foreach (r; cur["face_tuples"].array) mineT ~= jring(r);
+
+            auto lostT = tuplesMissing(mineT, gotT, tol);
+            assert(lostT.length == 0,
+                format("%s: vibe3d no longer emits its recorded face TUPLE %s "
+                       ~ "(%d of %d gone). The triangles may still be the same "
+                       ~ "set -- what moved is where a tuple starts, which is "
+                       ~ "what this channel exists to see",
+                       cn, lostT.length ? ringStr(lostT[0]) : "", lostT.length,
+                       mineT.length));
+            auto newT = tuplesMissing(gotT, mineT, tol);
+            assert(newT.length == 0,
+                format("%s: vibe3d emitted the face tuple %s, which is not in "
+                       ~ "its recorded output (%d such)", cn,
+                       newT.length ? ringStr(newT[0]) : "", newT.length));
+
+            double[3][][] refT;
+            foreach (r; cs["reference"]["face_tuples"].array) refT ~= jring(r);
+            auto extraT   = tuplesMissing(gotT, refT, tol);
+            auto missingT = tuplesMissing(refT, gotT, tol);
+
+            void sameTupleSet(string what, double[3][][] have, JSONValue declared) {
+                auto want = declared.array;
+                assert(have.length == want.length,
+                    format("%s: %s is now %d tuples, the fixture declares %d. "
+                           ~ "The tuple-start divergence CHANGED -- re-measure; "
+                           ~ "if it closed, this case becomes a parity one and "
+                           ~ "the declaration comes out.",
+                           cn, what, have.length, want.length));
+                foreach (w; want) {
+                    auto wr = jring(w);
+                    bool found = false;
+                    foreach (h; have) if (ringEqExact(h, wr, tol)) { found = true; break; }
+                    assert(found,
+                        format("%s: %s no longer contains the tuple %s",
+                               cn, what, ringStr(wr)));
+                }
+            }
+            sameTupleSet("extra_face_tuples_in_vibe3d", extraT,
+                ("extra_face_tuples_in_vibe3d" in dv)
+                    ? dv["extra_face_tuples_in_vibe3d"] : JSONValue(cast(JSONValue[])[]));
+            sameTupleSet("missing_face_tuples_in_vibe3d", missingT,
+                ("missing_face_tuples_in_vibe3d" in dv)
+                    ? dv["missing_face_tuples_in_vibe3d"] : JSONValue(cast(JSONValue[])[]));
         }
 
         // ---- optional MATERIAL-PARTITION channel ------------------------

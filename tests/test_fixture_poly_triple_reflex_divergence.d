@@ -13,16 +13,24 @@
 // emitted (0,0,0)-(4,0,0)-(4,0,4) — a triangle CONTAINING the reflex corner
 // (2,0,1) — and on the hexagon (0,0,0)-(3,0,0)-(3,0,3), containing it too.
 // The triangulation overlapped itself. `mesh.triangulateFacesByMask` now
-// chooses its diagonals geometrically (largest-area ear clipping for n >= 5;
-// see `earClipRingCorners`), and the two engines agree on every triangle in
-// both cells — ring rotation and winding included.
+// chooses its diagonals geometrically — see `earClipRingCorners` — and the two
+// engines agree on every triangle in both cells, ring rotation and winding
+// included.
 //
-// WHY THIS CASE IS WORTH KEEPING NOW THAT IT IS GREEN-BY-PARITY. It is the
-// only cell that pins the n-gon rule to LARGEST AREA. On the hexagon the
-// reference cuts E-A before D-F, so it is not fanning from the reflex corner
-// and it is not minimising total diagonal length (the fan from (2,0,1) is
-// 6.478 against 7.004 and is not what either engine emits). Swap the largest-
-// area ear for either of those readings and this suite reddens.
+// WHY THIS CASE IS WORTH KEEPING NOW THAT IT IS GREEN-BY-PARITY, and what it
+// pins AFTER TASK 1280. 1190 read this cell as pinning the n-gon rule to
+// LARGEST AREA. That was a fit, and 1270 read the actual procedure: the corner
+// chooser scores each candidate ear by 2*Area / (longest side)^2 and takes the
+// best. Area and quality agree on THIS hexagon, which is why the fit looked
+// sound; over the 19 cells the reference was later measured on, largest-area
+// scores 4 and the quality metric scores 19.
+//
+// What the cell still separates is real and was re-measured, not assumed:
+// swapping the quality metric for largest-AREA reddens this suite (measured by
+// mutation, task 1280). On the hexagon the reference cuts E-A before D-F, so
+// it is not fanning from the reflex corner and it is not minimising total
+// diagonal length (the fan from (2,0,1) is 6.478 against 7.004 and is not what
+// either engine emits) — those two readings are still excluded here.
 //
 // An EMPTY divergence is the strict reading of this schema, not the weak one:
 // the runner recomputes `extra_*` / `missing_*` from the live output against

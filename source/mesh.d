@@ -4617,9 +4617,52 @@ struct Mesh {
     // Clipping is O(n^3) worst case (n clips x n corners x n containment
     // probes), so one pathological n-gon could otherwise stall an edit; 256
     // corners caps a single face at ~1.7e7 probes. The fallback fans from a
-    // GEOMETRICALLY chosen anchor, so "our answer does not depend on where the
-    // ring starts" holds at every size, not only below the ceiling.
+    // GEOMETRICALLY chosen anchor — it is a DoS ceiling, not a law, and no
+    // measured cell reaches it (the largest is the 18-entry keyhole ring).
     private enum size_t kMaxEarClipRing = 256;
+
+    // The corner chooser's early-out threshold: the first ear whose quality
+    // EXCEEDS this is taken without scoring the rest. Read under a debugger at
+    // the site that consumes it (task 1270) — start-up writes the global holding
+    // it DIRECTLY, with the bit pattern 0x3fe0000000000000 = 0.5, bypassing the
+    // public setter that would clamp the value into [0, 0.01]. A static read of
+    // that setter therefore says "at most 0.01", under which the law degenerates
+    // to *first valid ear*; only a live read gets the shipped number.
+    //
+    // WHAT BEHAVIOUR PINS, over the 39 measured cells. The threshold is bounded
+    // from BELOW and the bound is EXACTLY this value: at 0.49999 or under, two
+    // cells break (`strip_np_one_quality`, `strip_np_twist_quality` — near-square
+    // quads whose ears sit at exactly 0.5, which a threshold a hair under 0.5
+    // lets the early-out take). Above it, behaviour says nothing at all: 0.5,
+    // 0.6 and "no early-out whatsoever" reproduce every measured cell alike.
+    // So the capture fixes the floor and the debugger fixes the value sitting
+    // on it, and `qualityEarlyOutFires` in tests/unit/mesh_test.d is a
+    // CONSTRUCTED ring — not a parity assertion — that pins it from above at
+    // 0.79 so a drift in either direction is visible.
+    //
+    // It DOES fire on measured geometry: four cells reach an ear above 0.5
+    // (max 0.587785, on a regular pentagon). On each of them the first ear over
+    // the threshold also happens to be the maximum, which is why removing the
+    // early-out changes no measured output while the constant still cannot be
+    // lowered.
+    //
+    // The capture note's own explanation of WHY the reference is ring-dependent
+    // — "the horseshoe's ears clear 0.5 in several places" — is wrong, and the
+    // correction matters because it names the wrong knob: the horseshoe's best
+    // ear is 0.4, so this threshold never fires there. The tie-break is what
+    // moves that decomposition. See `earClipRingCorners`' header.
+    private enum double kTripleQualityEarlyOut = 0.5;
+
+    // The reference compares two qualities through a RELATIVE band: equal when
+    // |a-b| < max(|a|,|b|)/3360000. The replacement is guarded by a conditional
+    // move on that comparison, so a tie KEEPS THE EARLIER RING INDEX — which is
+    // the whole of the ring-order dependence on shapes whose ears tie.
+    //
+    // Also not separated: every tie in the 21 measured cells is bit-identical
+    // in double, and on the orbit fixture any divisor from 1e5 to 1e9 gives the
+    // same 19/19. Only an absurdly wide band (1e3) breaks a cell. Read, not
+    // fitted.
+    private enum double kTripleCompareDivisor = 3360000.0;
 
     private static bool posLess(const double[3] a, const double[3] b) pure nothrow @nogc {
         if (a[0] != b[0]) return a[0] < b[0];
@@ -4627,104 +4670,95 @@ struct Mesh {
         return a[2] < b[2];
     }
 
-    private static bool keyLess(size_t N)(const double[N] a, const double[N] b) pure nothrow @nogc {
-        foreach (i; 0 .. N) if (a[i] != b[i]) return a[i] < b[i];
-        return false;
-    }
-
-    // The canonical geometric NAME of a candidate: its corner positions,
-    // sorted. Independent of winding, of which corner is the apex, and — the
-    // whole point — of where the ring started. Used ONLY to break exact ties.
-    private static double[9] triKey(const double[3] a, const double[3] b,
-                                    const double[3] c) pure nothrow @nogc {
-        double[3][3] p = [a, b, c];
-        if (posLess(p[1], p[0])) { auto t = p[0]; p[0] = p[1]; p[1] = t; }
-        if (posLess(p[2], p[1])) { auto t = p[1]; p[1] = p[2]; p[2] = t; }
-        if (posLess(p[1], p[0])) { auto t = p[0]; p[0] = p[1]; p[1] = t; }
-        double[9] k;
-        foreach (i; 0 .. 3) foreach (j; 0 .. 3) k[3*i + j] = p[i][j];
-        return k;
-    }
-
-    private static double[6] diagKey(const double[3] a, const double[3] b) pure nothrow @nogc {
-        double[3][2] p = [a, b];
-        if (posLess(p[1], p[0])) { auto t = p[0]; p[0] = p[1]; p[1] = t; }
-        double[6] k;
-        foreach (i; 0 .. 2) foreach (j; 0 .. 3) k[3*i + j] = p[i][j];
-        return k;
-    }
-
     /// Triangulate ONE face ring, returning the triangles as triples of RING
     /// CORNER indices (0 .. ring.length-1) — corner indices and not vertex ids
     /// because the caller has to carry per-corner maps (UVs, weights) through
     /// the split and therefore needs to know which OLD corner each new one
-    /// came from.
+    /// came from. `vids` names the VERTEX each corner refers to; it matters
+    /// only for a ring that visits one vertex twice (the keyhole of task 1220),
+    /// where containment is decided by vertex identity — see below.
     ///
-    /// WHY NOT A FAN FROM ring[0] (divergence-ledger rows 25, 43, 50; task
-    /// 1190). The old body fanned from the ring's first corner, which is wrong
-    /// twice over:
+    /// THE LAW IS THE REFERENCE'S, READ AT ITS COMPUTE SITE (task 1270, ported
+    /// 1280). It is one procedure, not a family of fitted rules:
     ///
-    ///   * CORRECTNESS. On the dart (0,0,0)(2,0,1.2)(4,0,0)(2,0,3) the fan
-    ///     emitted (0,0,0)-(2,0,1.2)-(4,0,0) — a triangle lying OUTSIDE the
-    ///     polygon — and on the reflex pentagon (0,0,0)(4,0,0)(4,0,4)(2,0,1)
-    ///     (0,0,4) it emitted (0,0,0)-(4,0,0)-(4,0,4), which CONTAINS the
-    ///     reflex corner. Either way the triangulation overlapped itself.
-    ///   * RING ORDER. The same face re-emitted with its ring rotated
-    ///     triangulated differently — measured period 2 on a quad, n on an
-    ///     n-gon. The reference is invariant on 13 of 25 measured geometries;
-    ///     we were invariant on none of them.
+    ///     rev = orient2(ring[n-1], ring[0], ring[1]) != orientation(ring)
+    ///     while n > 3:  k = pick(ring); emit(ring[k-1], ring[k], ring[k+1]); drop k
+    ///     emit the last three                    (last two swapped when rev)
     ///
-    /// THE TWO LAWS, and why they are two. The measurement does not support a
-    /// single rule, and forcing one would have to break a cell that is
-    /// currently green:
+    ///     pick: scan corners IN RING ORDER; skip reflex ones and any whose ear
+    ///           contains-or-touches another ring vertex; score the rest by
+    ///           quality = 2*Area / (longest side)^2 — 0.866 equilateral, 0.5
+    ///           right-isoceles, -> 0 for a sliver; return the FIRST ear over
+    ///           `kTripleQualityEarlyOut`, else keep the maximum, ties to the
+    ///           EARLIER ring index.
     ///
-    ///   * n == 4 — the SHORTER of the two diagonals, among the splits that do
-    ///     not fold (a reflex corner leaves only one). Pinned by two cells of
-    ///     `tests/fixtures/poly_flip_triple_dirty_parity.json` where both
-    ///     engines already agree: `tri_pole_quad3` (0.62 against 1.732 —
-    ///     largest-area would take the LONGER one and lose the agreement) and
-    ///     `tri_np_one` (1.41421 against 1.41774, which is also the LESS even
-    ///     area split, so it separates "shorter" from "more balanced").
-    ///   * n >= 5 — greedy ear clipping, taking the ear with the LARGEST
-    ///     projected area. Pinned by `tests/fixtures/poly_triple_reflex_divergence.json`'s
-    ///     hexagon, where the areas separate the candidates outright (2.25
-    ///     against 1.5 twice) and the resulting four triangles match the
-    ///     reference's exactly — winding, ring rotation, AND the greedy
-    ///     emission order.
+    /// WHAT IT REPLACED, AND WHY THAT WAS TWO RULES. Task 1190 fitted outputs
+    /// and could not reconcile them, so it shipped a quad rule (shorter
+    /// non-folding diagonal) beside an n-gon rule (largest-area ear). Both are
+    /// shadows of this one metric: a quad's longest side is usually its
+    /// diagonal, so "shorter diagonal" ~ "higher quality", and area agrees with
+    /// quality on the two cells 1190 had. They part company as soon as one ear
+    /// is fat-but-small. Scored over the 19 quality-path cells of the 1270
+    /// capture, largest-AREA gets 4 and this metric gets 19; over the eight
+    /// horseshoe rotations, largest-AREA gets 0 and this gets 8.
     ///
-    /// The two are not reconcilable: the hexagon demands the LARGEST ear, the
-    /// pole quad demands the SMALLEST-area split. Any rule monotone in area or
-    /// in chord length must lose one of them, so the kernel keeps them apart
-    /// and says why here rather than picking a loser silently.
+    /// IT RE-INTRODUCES A RING-ORDER DEPENDENCE ON PURPOSE. 1190 made our
+    /// answer invariant because the reference looked invariant on the three
+    /// shapes measured then. It is not: on a horseshoe it gives THREE
+    /// decompositions over eight rotations (orbit `00112211`). Say it plainly —
+    /// this is a decision to follow the reference, the same direction as task
+    /// 1230's offset family and the opposite of what 1190 did here.
     ///
-    /// TIES ARE A CONVENTION, NOT A LAW. Congruent candidates (any square; the
-    /// four equal ears of a reflex-and-flat hexagon; the five tips of a regular
-    /// star) leave both metrics with nothing to say. Ties go to the smaller
-    /// `triKey`/`diagKey`. That direction is arbitrary — it is chosen because
-    /// it keeps `tri_np_twist` (four quads whose two diagonals are EXACTLY
-    /// equal) agreeing with the reference, and for no deeper reason. The
-    /// reference's own tie-break is not geometric at all: on the regular star
-    /// its answer changes with the ring start (measured pattern `0011` over
-    /// four rotations), so no ring-invariant rule can follow it through a tie.
-    /// Two tied cells therefore stay declared divergences rather than being
-    /// fitted: `triangulate_reflex_and_flat_hex` and `triangulate_five_point_star`.
+    /// WHERE THE DEPENDENCE ACTUALLY COMES FROM, which is not where the capture
+    /// note guessed. It is the TIE-BREAK, not the early-out: no ear on the
+    /// horseshoe reaches 0.5 (its maximum is 0.4), so the early-out never fires
+    /// there at all. Equal-quality ears are common on axis-aligned geometry,
+    /// and "the earlier ring index wins" moves with the rotation. The winding
+    /// channel has its own term, `rev`, which flips EVERY triangle of a ring
+    /// whose first corner is reflex (divergence-ledger row 51).
     ///
-    /// INVARIANCE. Every decision is a function of the remaining ring's
-    /// GEOMETRY — area, containment, length, a positional key — with no index
-    /// term anywhere. Rotating the input ring rotates the working ring
-    /// identically, so each step picks the same corner and the triangle SET
-    /// comes out identical. The one hole is a ring carrying two corners at the
-    /// SAME position, where the positional key cannot separate them; such a
-    /// ring is degenerate for triangulation anyway.
+    /// TWO ASYMMETRIES THAT LOOK LIKE BUGS AND ARE THE LAW:
+    ///   * `orient2` counts a ZERO determinant as 1. So a collinear corner is
+    ///     an ear when `wind == 1` and reflex when `wind == 0`, and a vertex
+    ///     lying exactly on a chord vetoes the ear in one winding and not the
+    ///     other. Both signs are exercised by the measured cells (`rev_hex`,
+    ///     `rev_pent`, `rev_horse` are the `wind == 1` side).
+    ///   * containment skips candidates by VERTEX IDENTITY, not by ring
+    ///     position. That is what makes the keyhole work with no special case:
+    ///     when one occurrence of a repeated vertex is a corner of the ear, the
+    ///     other occurrence is skipped too, so "vertex inside its own ear"
+    ///     never fires and the bridge edge stitches.
     ///
-    /// WINDING. Each triangle is emitted (prev, apex, next) in the ring's own
-    /// order, inheriting the face's winding — so ours does not follow the ring
-    /// start in the winding channel either. The reference's DOES (ledger row
-    /// 51: same triangles, wound the other way, on a rotated ring), and that
-    /// stays a declared divergence; it is their behaviour, not our defect.
+    /// THE PROJECTION FRAME IS RECOMPUTED EVERY ROUND, from the CORNER normal
+    /// at ring index 0 (not Newell over the ring): `N = cross(v1-v0, v[n-1]-v0)`,
+    /// dominant axis of |N|, and the 2-D work happens in the other two. On a
+    /// ring whose corner normal is exactly zero it falls back to the axis of
+    /// LEAST bounding-box extent. `Mesh.faceNormal` (Newell) is strictly more
+    /// robust and is deliberately not what decides this — same split as task
+    /// 0832's facing predicate.
+    ///
+    /// WHICH OF THE REFERENCE'S FOUR TRIANGULATORS THIS IS, and what that costs.
+    /// The command has a mode argument whose DEFAULT is a convex-only zig-zag
+    /// STRIP; this is the other mode, and the strip's own fallback. We
+    /// implement the clip ONLY, so on any CONVEX ring the bare command and we
+    /// part company — measured, and declared in
+    /// `tests/fixtures/triangulate_convex_strip_divergence.json`:
+    ///
+    ///   * n == 4 — the strip walks from the corner the chooser picks, which on
+    ///     a quad fixes the same diagonal the clip's first ear does. Same two
+    ///     triangles, same winding, same diagonal; only the tuple START differs.
+    ///     Every face comparison in the fixture harness matches rings up to
+    ///     rotation, so this is invisible to all of them and needed a new
+    ///     ordered channel to assert at all.
+    ///   * n >= 5 — the triangle SETS diverge outright.
+    ///
+    /// On a CONCAVE ring the strip declines and both engines end up here, which
+    /// is why every other triangulation fixture agrees. Porting the strip is
+    /// task 1281's, not this one's.
     ///
     /// Always returns exactly ring.length - 2 triangles (the caller asserts it).
-    private static uint[3][] earClipRingCorners(const Vec3[] ring) {
+    private static uint[3][] earClipRingCorners(const Vec3[] ring,
+                                                const(uint)[] vids = null) {
         immutable size_t n = ring.length;
         uint[3][] tris;
         if (n < 3) return tris;
@@ -4734,26 +4768,17 @@ struct Mesh {
         foreach (i; 0 .. n)
             P[i] = [cast(double)ring[i].x, cast(double)ring[i].y, cast(double)ring[i].z];
 
-        // Newell over the WHOLE ring: the one normal that does not move when
-        // the ring start does (the same reason `faceNormal` uses it).
-        double[3] nrm = [0.0, 0.0, 0.0];
-        foreach (i; 0 .. n) {
-            const a = P[i], b = P[(i + 1) % n];
-            nrm[0] += (a[1] - b[1]) * (a[2] + b[2]);
-            nrm[1] += (a[2] - b[2]) * (a[0] + b[0]);
-            nrm[2] += (a[0] - b[0]) * (a[1] + b[1]);
-        }
-        // |Newell| is TWICE the ring's area — the natural scale for the
-        // epsilons below, so neither of them is tied to world units.
-        immutable double ringArea2 = sqrt(nrm[0]*nrm[0] + nrm[1]*nrm[1] + nrm[2]*nrm[2]);
-        if (ringArea2 > 1e-30) { nrm[0] /= ringArea2; nrm[1] /= ringArea2; nrm[2] /= ringArea2; }
+        // The identity a containment probe compares. A ring that names the same
+        // vertex twice must treat both occurrences as ONE point; without `vids`
+        // every corner is its own identity, which is the ordinary case.
+        auto vid = new uint[](n);
+        foreach (i; 0 .. n) vid[i] = (vids.length == n) ? vids[i] : cast(uint)i;
 
         auto idx = new uint[](n);
         foreach (i; 0 .. n) idx[i] = cast(uint)i;
 
-        // The geometric stand-in for a clip that cannot run: fan from the
-        // lexicographically smallest live corner. Still no index term, so a
-        // rotated ring still lands on the same corner.
+        // The geometric stand-in for a clip that cannot run (the DoS ceiling
+        // only): fan from the lexicographically smallest live corner.
         uint[3][] fanFallback(const uint[] live) {
             uint[3][] outT;
             if (live.length < 3) return outT;
@@ -4766,111 +4791,157 @@ struct Mesh {
                                       live[(anchor + t + 1) % live.length]];
             return outT;
         }
+        if (n > kMaxEarClipRing) return fanFallback(idx);
 
-        if (ringArea2 <= 1e-30 || n > kMaxEarClipRing) return fanFallback(idx);
-
-        immutable double scale = ringArea2 > 1.0 ? ringArea2 : 1.0;
-        immutable double eps    = 1e-12 * scale;   // convex / containment slack
-        immutable double tieTol = 1e-9  * scale;   // "the same area" band
-
-        // twice the signed area of (a,b,c) measured on the ring's own plane
-        double area2(const double[3] a, const double[3] b, const double[3] c) {
-            const double[3] u = [b[0]-a[0], b[1]-a[1], b[2]-a[2]];
-            const double[3] v = [c[0]-a[0], c[1]-a[1], c[2]-a[2]];
-            return (u[1]*v[2] - u[2]*v[1]) * nrm[0]
-                 + (u[2]*v[0] - u[0]*v[2]) * nrm[1]
-                 + (u[0]*v[1] - u[1]*v[0]) * nrm[2];
+        // Dominant axis of a vector, and least-spread axis of a box, with the
+        // tie directions the reference's own comparison chain has: X wins only
+        // strictly, while Y wins ties against X.
+        static size_t axisMaxExtent(const double[3] V) pure nothrow @nogc {
+            immutable double x = V[0] < 0 ? -V[0] : V[0];
+            immutable double y = V[1] < 0 ? -V[1] : V[1];
+            immutable double z = V[2] < 0 ? -V[2] : V[2];
+            if (x > y  && x > z) return 0;
+            if (y >= x && y > z) return 1;
+            return 2;
+        }
+        static size_t axisMinExtent(const double[3] V) pure nothrow @nogc {
+            immutable double x = V[0] < 0 ? -V[0] : V[0];
+            immutable double y = V[1] < 0 ? -V[1] : V[1];
+            immutable double z = V[2] < 0 ? -V[2] : V[2];
+            if (x < y  && x < z) return 0;
+            if (y <= x && y < z) return 1;
+            return 2;
         }
 
-        if (n == 4) {
-            static double distOf(const double[3] a, const double[3] b) {
-                immutable double dx = a[0]-b[0], dy = a[1]-b[1], dz = a[2]-b[2];
-                return sqrt(dx*dx + dy*dy + dz*dz);
+        // The 2-D frame the corner test and the shoelace both run in, taken
+        // from the CORNER at ring index 0 of the ring as it stands NOW.
+        void frameOf(const uint[] live, out size_t u, out size_t v) {
+            const a = P[live[0]], b = P[live[1]], c = P[live[$ - 1]];
+            immutable double ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+            immutable double wx = c[0]-a[0], wy = c[1]-a[1], wz = c[2]-a[2];
+            double[3] N = [uy*wz - uz*wy, uz*wx - ux*wz, ux*wy - uy*wx];
+            size_t k;
+            if (N[0] != 0.0 || N[1] != 0.0 || N[2] != 0.0) {
+                k = axisMaxExtent(N);
+            } else {
+                double[3] lo = P[live[0]], hi = P[live[0]];
+                foreach (j; live) foreach (d; 0 .. 3) {
+                    if (P[j][d] < lo[d]) lo[d] = P[j][d];
+                    if (P[j][d] > hi[d]) hi[d] = P[j][d];
+                }
+                double[3] ext = [hi[0]-lo[0], hi[1]-lo[1], hi[2]-lo[2]];
+                k = axisMinExtent(ext);
             }
-            bool[2]      live;
-            double[2]    len;
-            double[6][2] key;
-            foreach (d; 0 .. 2) {
-                const p = P[d], q = P[d + 1], r = P[d + 2], s = P[(d + 3) % 4];
-                // A split whose either half is reflex or degenerate folds the
-                // quad over itself — exactly the old fan's bug on the dart.
-                live[d] = area2(p, q, r) > eps && area2(r, s, p) > eps;
-                len[d]  = distOf(p, r);
-                key[d]  = diagKey(p, r);
+            static immutable size_t[3] kAxis0 = [1, 2, 0];
+            static immutable size_t[3] kAxis1 = [2, 0, 1];
+            u = kAxis0[k];
+            v = kAxis1[k];
+        }
+
+        static double det2(const double[3] a, const double[3] b, const double[3] c,
+                           size_t u, size_t v) pure nothrow @nogc {
+            return (b[u]-a[u]) * (c[v]-a[v]) - (c[u]-a[u]) * (b[v]-a[v]);
+        }
+        // ZERO COUNTS AS 1 — see the header. Not a defensive epsilon; the
+        // asymmetry it creates is exercised by the measured cells.
+        static int orient2(const double[3] a, const double[3] b, const double[3] c,
+                           size_t u, size_t v) pure nothrow @nogc {
+            return det2(a, b, c, u, v) >= 0 ? 1 : 0;
+        }
+
+        double shoelace(const uint[] live, size_t u, size_t v) {
+            double s = 0.0;
+            foreach (i; 0 .. live.length) {
+                const p = P[live[i]], q = P[live[(i + 1) % live.length]];
+                s += p[u]*q[v] - q[u]*p[v];
             }
-            size_t take = size_t.max;
-            if (live[0] && live[1]) {
-                immutable double lscale = len[0] > len[1] ? len[0] : len[1];
-                immutable double lTie   = 1e-9 * (lscale > 1.0 ? lscale : 1.0);
-                if      (len[0] < len[1] - lTie) take = 0;
-                else if (len[1] < len[0] - lTie) take = 1;
-                else                             take = keyLess(key[0], key[1]) ? 0 : 1;
-            } else if (live[0]) take = 0;
-            else if (live[1])   take = 1;
-            if (take == size_t.max) return fanFallback(idx);   // both halves fold
-            immutable uint d0 = cast(uint)take;
-            tris ~= cast(uint[3])[d0, cast(uint)(d0 + 1), cast(uint)(d0 + 2)];
-            tris ~= cast(uint[3])[cast(uint)(d0 + 2), cast(uint)((d0 + 3) % 4), d0];
-            return tris;
+            return s;
         }
 
-        // A corner ON a candidate ear's closing chord must VETO that ear, or
-        // the clip emits a triangle the ring immediately re-enters — hence
-        // inside-OR-ON, not strictly inside. Measured: this is what the
-        // reference does too (the collinear corner of the reflex-and-flat
-        // hexagon vetoes exactly this way).
-        bool encloses(const double[3] p, const double[3] a,
-                      const double[3] b, const double[3] c) {
-            return area2(a, b, p) >= -eps
-                && area2(b, c, p) >= -eps
-                && area2(c, a, p) >= -eps;
+        // 2*Area / (longest side)^2, on the UNSIGNED 3-D area — so the metric
+        // is scale-free and independent of the projection frame.
+        static double earQuality(const double[3] a, const double[3] b,
+                                 const double[3] c) pure nothrow @nogc {
+            static double d2(const double[3] p, const double[3] q) pure nothrow @nogc {
+                immutable double dx = p[0]-q[0], dy = p[1]-q[1], dz = p[2]-q[2];
+                return dx*dx + dy*dy + dz*dz;
+            }
+            immutable double ab = d2(a, b), bc = d2(b, c), ca = d2(c, a);
+            if (ab == 0.0 || bc == 0.0 || ca == 0.0) return -1.0;
+            double m = ab;
+            if (bc > m) m = bc;
+            if (ca > m) m = ca;
+            immutable double ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+            immutable double wx = c[0]-a[0], wy = c[1]-a[1], wz = c[2]-a[2];
+            immutable double cx = uy*wz - uz*wy;
+            immutable double cy = uz*wx - ux*wz;
+            immutable double cz = ux*wy - uy*wx;
+            return sqrt(cx*cx + cy*cy + cz*cz) / m;
         }
 
-        static struct Ear { size_t k; uint ip, iv, inx; double a2; }
-        Ear[] ears;
+        // The reference's relative comparison. `0` means "the same number", and
+        // the replacement being guarded by it is what sends a tie to the
+        // earlier ring index.
+        static int dcompare(double a, double b) pure nothrow @nogc {
+            immutable double fa = a < 0 ? -a : a;
+            immutable double fb = b < 0 ? -b : b;
+            immutable double mag = fa > fb ? fa : fb;
+            double t = mag / kTripleCompareDivisor;
+            if (!(t > 1e-10)) t = 1e-10;
+            immutable double d = a - b;
+            return (-t < d ? 1 : 0) - (d < t ? 1 : 0);
+        }
+
+        size_t pickCorner(const uint[] live) {
+            immutable size_t m = live.length;
+            size_t u, v;
+            frameOf(live, u, v);
+            immutable int wind = shoelace(live, u, v) >= 0 ? 1 : 0;
+            double best = -1.0;
+            size_t besti = 0;
+            foreach (i; 0 .. m) {
+                immutable uint ip  = live[(i + m - 1) % m];
+                immutable uint iv  = live[i];
+                immutable uint inx = live[(i + 1) % m];
+                const pr = P[ip], cu = P[iv], nx = P[inx];
+                if (orient2(pr, cu, nx, u, v) != wind) continue;   // reflex
+                bool blocked = false;
+                foreach (j; live) {
+                    if (vid[j] == vid[ip] || vid[j] == vid[iv] || vid[j] == vid[inx])
+                        continue;                                   // BY IDENTITY
+                    const p = P[j];
+                    if (orient2(cu, pr, p, u, v) == wind) continue;
+                    if (orient2(pr, nx, p, u, v) == wind) continue;
+                    if (orient2(nx, cu, p, u, v) == wind) continue;
+                    blocked = true;
+                    break;
+                }
+                if (blocked) continue;
+                immutable double q = earQuality(pr, cu, nx);
+                if (q > kTripleQualityEarlyOut) return i;
+                if (q > best && dcompare(q, best) != 0) { best = q; besti = i; }
+            }
+            return besti;   // nothing qualified: clip corner 0, as the reference does
+        }
+
+        // `rev` is fixed ONCE, from the ring as it arrived.
+        size_t u0, v0;
+        frameOf(idx, u0, v0);
+        immutable int po = shoelace(idx, u0, v0) >= 0 ? 1 : 0;
+        immutable bool rev =
+            orient2(P[idx[$ - 1]], P[idx[0]], P[idx[1]], u0, v0) != po;
 
         while (idx.length > 3) {
             immutable size_t m = idx.length;
-            ears.length = 0;
-            ears.assumeSafeAppend();
-            foreach (k; 0 .. m) {
-                immutable uint ip  = idx[(k + m - 1) % m];
-                immutable uint iv  = idx[k];
-                immutable uint inx = idx[(k + 1) % m];
-                immutable double a2 = area2(P[ip], P[iv], P[inx]);
-                if (a2 <= eps) continue;               // reflex, or a zero-area corner
-                bool clear = true;
-                foreach (j; idx) {
-                    if (j == ip || j == iv || j == inx) continue;
-                    if (encloses(P[j], P[ip], P[iv], P[inx])) { clear = false; break; }
-                }
-                if (clear) ears ~= Ear(k, ip, iv, inx, a2);
-            }
-            if (ears.length == 0) {
-                // No ear at all — a self-intersecting or numerically hopeless
-                // remainder. Fan what is left rather than dropping corners.
-                foreach (t; fanFallback(idx)) tris ~= t;
-                return tris;
-            }
-
-            // TWO passes on purpose. A single greedy pass carrying a tolerance
-            // is not a function of the candidate SET ("within tieTol" is not
-            // transitive), and an order-dependent pick is precisely the ring
-            // dependence being removed here.
-            double best = -double.infinity;
-            foreach (e; ears) if (e.a2 > best) best = e.a2;
-            size_t pick = size_t.max;
-            double[9] bestKey;
-            foreach (ei, e; ears) {
-                if (e.a2 < best - tieTol) continue;
-                auto k = triKey(P[e.ip], P[e.iv], P[e.inx]);
-                if (pick == size_t.max || keyLess(k, bestKey)) { pick = ei; bestKey = k; }
-            }
-            const chosen = ears[pick];
-            tris ~= cast(uint[3])[chosen.ip, chosen.iv, chosen.inx];
-            idx = idx[0 .. chosen.k] ~ idx[chosen.k + 1 .. $];
+            immutable size_t k = pickCorner(idx);
+            immutable uint a = idx[(k + m - 1) % m];
+            immutable uint b = idx[k];
+            immutable uint c = idx[(k + 1) % m];
+            tris ~= rev ? cast(uint[3])[a, c, b] : cast(uint[3])[a, b, c];
+            idx = idx[0 .. k] ~ idx[k + 1 .. $];
         }
-        tris ~= cast(uint[3])[idx[0], idx[1], idx[2]];
+        tris ~= rev ? cast(uint[3])[idx[0], idx[2], idx[1]]
+                    : cast(uint[3])[idx[0], idx[1], idx[2]];
         return tris;
     }
 
@@ -4945,7 +5016,7 @@ struct Mesh {
                 ++changed;
                 auto ringPos = new Vec3[](f.length);
                 foreach (c; 0 .. f.length) ringPos[c] = vertices[f[c]];
-                const tri = earClipRingCorners(ringPos);
+                const tri = earClipRingCorners(ringPos, f);
                 assert(tri.length == f.length - 2,
                     "earClipRingCorners must return exactly n-2 triangles");
                 foreach (t; tri) {
