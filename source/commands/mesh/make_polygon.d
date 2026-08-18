@@ -7,6 +7,7 @@ import view;
 import editmode;
 import snapshot : MeshSnapshot;
 import params : Param;
+import selection_product : repointToFaces;
 
 /// `mesh.makePolygon` — build one face from the current (ordered) vertex
 /// selection. Winding follows the vertex SELECTION ORDER (the order in which
@@ -28,8 +29,21 @@ class MeshMakePolygon : Command, Operator {
 
     private bool flip_ = false;
 
+    // Task 1180: the app's geometry-type funnel (`promoteGeometryType`), taken
+    // exactly as `select.convert` takes it. Re-pointing at the new FACE is a
+    // geometry selection that changes the element TYPE, and `editMode` is never
+    // written independently of the SelType recent-ordering (see seltype.d).
+    // Null in unit tests / any host without an ordering — the selection is
+    // re-pointed either way, only the type promotion is skipped.
+    private void delegate(EditMode) promoteType;
+
     this(Mesh* mesh, ref View view, EditMode editMode) {
         super(mesh, view, editMode);
+    }
+
+    MeshMakePolygon setPromoteHook(void delegate(EditMode) h) {
+        promoteType = h;
+        return this;
     }
 
     override string name()  const { return "mesh.makePolygon"; }
@@ -96,9 +110,17 @@ class MeshMakePolygon : Command, Operator {
             return false;
         }
 
-        // Post-success: leave vertex selection intact (selecting a face while
-        // EditMode == Vertices would be incoherent; no test or UI depends on it
-        // here). The new face fi is already addressable via /api/model.
+        // Post-success (task 1180): re-point at the PRODUCT — the new face —
+        // and drop the vertices it consumed. This is the one command in the
+        // family whose product sits a dimension ABOVE its input, so it is also
+        // the one that promotes the selection TYPE: selecting a face while the
+        // type stayed Vertex is exactly the incoherence the previous comment
+        // here named as its reason for leaving the vertices alone. The funnel
+        // (not a direct `editMode` write) is what keeps EditMode in lockstep
+        // with the SelType ordering, and it promotes WITHOUT dropping the
+        // active tool — a selection is not a mode switch.
+        repointToFaces(mesh, [cast(uint) fi]);
+        if (promoteType !is null) promoteType(EditMode.Polygons);
         return true;
     }
 

@@ -1353,6 +1353,22 @@ struct Mesh {
     /// edge-mode delete/remove commands to scope `dissolveDegree2Verts`.
     Vec3[] edgeDeleteRegion() const { return lastEdgeDeleteRegion_.dup; }
 
+    // INDICES of the merged boundary polygons the most recent
+    // removeEdgesByMask produced — the dissolve's PRODUCT, which
+    // `commands/mesh/merge.d` re-points the selection at (task 1180,
+    // `selection_product.d`). Same lifetime discipline as
+    // `lastEdgeDeleteRegion_` above: overwritten on every removeEdgesByMask
+    // call (including one that dissolves nothing, which leaves it empty), and
+    // valid only until the NEXT mesh mutation. Indices are safe to hand back
+    // even though the kernel reindexes verts, because the merged polys are the
+    // tail of the face array and the tail `compactUnreferenced` moves vertices,
+    // never faces.
+    private uint[] lastDissolveProduct_;
+
+    /// The merged polygons produced by the most recent `removeEdgesByMask`
+    /// (see `lastDissolveProduct_`). Empty when nothing merged.
+    uint[] dissolveProductFaces() const { return lastDissolveProduct_.dup; }
+
     // Open an edit batch: install the recorder so the mutation hooks start
     // logging. `declared` is the advisory change scope. The pointer must
     // out-live the batch (callers stack-allocate a MeshEditTracker and pass its
@@ -3735,6 +3751,7 @@ struct Mesh {
         // corners, straight-through midpoints far from the edit) are left alone.
         // Positions (not indices) survive removeEdgesByMask's vert reindexing.
         lastEdgeDeleteRegion_ = null;
+        lastDissolveProduct_  = null;   // the merge product, filled at the tail append
 
         // Snapshot selected edges as undirected keys; edge-array indices
         // are unstable across compactUnreferenced.
@@ -4051,6 +4068,11 @@ struct Mesh {
         }
         // Tail range start = number of kept (non-dropped) faces.
         const size_t firstMerged = keptFaces.length;
+        // The dissolve's PRODUCT, in the FINAL face-index space: the tail range
+        // is stable through everything below (rebuildEdges + the vertex-only
+        // compactUnreferenced move no faces). Read by mesh.mergeFaces.
+        foreach (i; 0 .. newPolyList.length)
+            lastDissolveProduct_ ~= cast(uint)(firstMerged + i);
         foreach (i; 0 .. newPolyList.length) {
             keptFaces    ~= newPolyList[i];
             keptWord     ~= newPolyWord[i];
@@ -9397,6 +9419,19 @@ struct Mesh {
     /// Vertex count never changes; only face vertex lists and the derived
     /// edge + half-edge structure are rewritten.
     bool spinEdge(uint ei) {
+        uint[2] discard;
+        return spinEdge(ei, discard);
+    }
+
+    /// Same, reporting the PRODUCT: `newDiagonal` receives the two endpoints of
+    /// the diagonal this spin created — the element the reference re-points the
+    /// selection at (task 1180, `selection_product.d`).
+    ///
+    /// `newDiagonal` is meaningful ONLY when the return is `true`. It is an
+    /// `out` parameter, so D zero-initialises it on entry regardless of which
+    /// guard below refuses: on a refusal the caller reads `[0, 0]`, which is a
+    /// legal-looking vertex pair. Gate on the bool; never on the value.
+    bool spinEdge(uint ei, out uint[2] newDiagonal) {
         if (ei >= edges.length) return false;
 
         // Collect at most 2 incident faces (EdgeFaceRange cap).
@@ -9463,6 +9498,7 @@ struct Mesh {
             faces[f1i] = [c, d, a, e];
             faces[f2i] = [e, f_, b, c];
         }
+        newDiagonal = [c, e];   // the product, for the post-op selection
 
         rebuildEdges();
         buildLoops();

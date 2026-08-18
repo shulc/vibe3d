@@ -1911,8 +1911,14 @@ private void registerMeshCommands(EditorApp app) {
         new MeshVertexSplit(&mesh(), cameraView, editMode);
     reg.commandFactories["mesh.reduce"] = () => cast(Command)
         new MeshReduce(&mesh(), cameraView, editMode);
-    reg.commandFactories["mesh.makePolygon"] = () => cast(Command)
-        new MeshMakePolygon(&mesh(), cameraView, editMode);
+    reg.commandFactories["mesh.makePolygon"] = () {
+        auto c = new MeshMakePolygon(&mesh(), cameraView, editMode);
+        // Task 1180: the new face is the command's PRODUCT and re-pointing at
+        // it changes the element type — route that through the geometry-type
+        // funnel (promote, no tool-drop), same hook mesh.select takes.
+        c.setPromoteHook((EditMode m) => promoteGeometryType(m));
+        return cast(Command) c;
+    };
     reg.commandFactories["mesh.select"] = () {
         auto c = new MeshSelect(&mesh(), cameraView, editMode, &editMode());
         c.setPromoteHook((EditMode m) => promoteGeometryType(m));

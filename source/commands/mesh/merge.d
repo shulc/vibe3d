@@ -7,6 +7,7 @@ import view;
 import editmode;
 import snapshot : MeshSnapshot;
 import change_bus : MeshEditScope;
+import selection_product : repointToFaces;
 
 /// Merge selected adjacent faces into one polygon per connected group by
 /// dissolving EVERY interior edge shared by two selected faces, regardless
@@ -15,7 +16,8 @@ import change_bus : MeshEditScope;
 /// Differs from `mesh.detriangulate` in three ways:
 ///   - No coplanarity criterion: non-coplanar adjacent faces are merged.
 ///   - No whole-mesh fallback: an empty selection is a no-op (returns false).
-///   - Selection is cleared only after a successful merge, never on a no-op.
+///   - Selection is re-pointed at the merged polygon only after a successful
+///     merge, never on a no-op (task 1180 — it used to be cleared outright).
 ///
 /// Requires Polygons edit mode with at least one selected face. Non-adjacent
 /// or empty selections return false without mutating the mesh or clearing
@@ -74,8 +76,14 @@ class MeshMergeFaces : Command, Operator {
         // Step 6: topology changed — drop active tool.
         if (onTopologyChange !is null) onTopologyChange();
 
-        // Step 7: clear selection (origin map unavailable after union-find merge).
+        // Step 7: re-point the selection at the PRODUCT — the merged face(s)
+        // (task 1180). `resetSelection` is kept for its RESIZE half (the face
+        // arrays shrank under us) and for the clear; the kernel then names the
+        // merged polygons it appended, which is what the reference leaves
+        // selected. Before 1180 this step ended at the clear, and the merged
+        // polygon — the whole result of the command — was selected by nothing.
         mesh.resetSelection();
+        repointToFaces(mesh, mesh.dissolveProductFaces());
 
         // Steps 8-9: notify bus + refresh GPU/caches.
         mesh.noteChange(MeshEditScope.Geometry);

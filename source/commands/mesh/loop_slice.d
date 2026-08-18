@@ -8,10 +8,12 @@ import editmode;
 import shader;
 import params : Param;
 import snapshot : MeshSnapshot;
+import selection_product : addNewLoopEdges;
 
 // ---------------------------------------------------------------------------
-// selectNewLoopEdges — reference-editor (v11) post-slice selection parity
-//   (task 0476). After a loop slice the reference leaves the ACTIVE selection
+// addNewLoopEdges (selection_product.d) — reference-editor (v11) post-slice
+//   selection parity (task 0476). After a loop slice the reference leaves the
+//   ACTIVE selection
 //   on the freshly-inserted loop: every edge BOTH of whose endpoints is a
 //   newly-created loop vertex (index >= `firstNewVert`, the vertex count
 //   captured just before the cut). For a single loop this is the 4 transverse
@@ -23,11 +25,15 @@ import snapshot : MeshSnapshot;
 //   `resetSelection()` has already cleared the seed selection, so we only ADD
 //   the loop edges here, in the caller's current (Edges) mode. The command's
 //   snapshot restores the pre-cut selection on undo.
-private void selectNewLoopEdges(Mesh* mesh, uint firstNewVert) {
-    foreach (ei, e; mesh.edges)
-        if (e[0] >= firstNewVert && e[1] >= firstNewVert)
-            mesh.selectEdge(cast(int)ei);
-}
+//   TASK 1180 — the body moved to `selection_product.addNewLoopEdges` so this
+//   command and the interactive Loop Slice TOOL stop carrying separate ideas of
+//   what a slice leaves selected. The TOOL calls the sibling that ALSO selects
+//   the loop's vertices, because the row-3 capture
+//   (`tests/fixtures/loop_slice_post_selection.json`) measured all three
+//   selection layers and found them held; THIS path keeps 0476's edges-only
+//   law, because 0476's own capture asserts `selectedVertices == 0` here in so
+//   many words. The two claims are in conflict and the conflict is written up
+//   at `addNewLoopEdges` rather than settled by guesswork.
 
 // ---------------------------------------------------------------------------
 // MeshAddLoop — insert one edge loop at a parametric position on the ring
@@ -80,7 +86,7 @@ class MeshAddLoop : Command, Operator {
         if (!ok) { snap = MeshSnapshot.init; return false; }
 
         // Reference parity (task 0476): select the newly-inserted loop.
-        selectNewLoopEdges(mesh, firstNewVert);
+        addNewLoopEdges(mesh, firstNewVert);
         return true;
     }
 
@@ -148,7 +154,7 @@ class MeshLoopSlice : Command, Operator {
         if (!ok) { snap = MeshSnapshot.init; return false; }
 
         // Reference parity (task 0476): select every newly-inserted loop.
-        selectNewLoopEdges(mesh, firstNewVert);
+        addNewLoopEdges(mesh, firstNewVert);
         return true;
     }
 

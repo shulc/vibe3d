@@ -1,6 +1,6 @@
 {
  "name": "cmd_selection_product",
- "description": "Ledger row 12 (43 cases, ONE law): after a command the reference re-points the selection at the command's PRODUCT \u2014 the merged face, the new face, the new diagonal \u2014 and clears the input; we leave the input where it was, and for merge and spin we clear it instead. Pinned here as the law plus its own control, not as 43 near-duplicates.",
+ "description": "Ledger row 12 (43 cases, ONE law): after a command the reference re-points the selection at the command's PRODUCT \u2014 the merged face, the new face, the new diagonal \u2014 and clears the input. We used to leave the input where it was, and for merge and spin to clear it instead. Task 1180 ported the law; this file is now the pin that it STAYS ported. Pinned as the law plus its own control, not as 43 near-duplicates.",
  "source": "Reference half: the frozen wave-2 command capture (task 1121), read out of the capture record and never re-run at test time. vibe3d half: measured live against this tree. Ledger rows: 12.",
  "provenance": {
   "schema": 1,
@@ -10,13 +10,13 @@
   "captured_utc": "2026-08-17",
   "harness": "tools/local/fixture_gen/cmd_divergence (task 1130), over the task-1121 headless command capture",
   "task": "1130",
-  "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. The `spin_twice` / `spin_reselect` pair is the law's smallest reproduction: with the product re-selected by coordinate the second spin converges, which is how we know the divergence is the SELECTION and not the spin arithmetic."
+  "notes": "The reference half is a HEADLESS COMMAND capture \u2014 no display, no pointer injection, no gesture \u2014 so it carries none of the drag-transport caveats. The vibe3d half is measured live from this tree at generation time, so `vibe3d_current` is a regression pin on our own behaviour, not a transcription. The `spin_twice` / `spin_reselect` pair is the law's smallest reproduction: with the product re-selected by coordinate the second spin converges, which is how we know the divergence is the SELECTION and not the spin arithmetic. TASK 1180 PORTED THE LAW. The reference half above is untouched \u2014 the same frozen measurement it always was. The vibe3d half was RE-MEASURED live against the ported tree, and the gap it used to declare is now empty in every dimension, so each case declares every measured dimension a CONTROL: an empty gap asserted exactly as strictly as a full one. Narrow it, widen it, or drop a dimension out of either block, and this reddens."
  },
  "tolerance": 0.0001,
  "cases": [
   {
-   "name": "spin_twice_second_refused",
-   "note": "the CONSEQUENCE: our cleared selection makes the second spin a no-op",
+   "name": "spin_twice_second_applies",
+   "note": "THE LAW'S BITE, and the reason it was worth porting rather than registering: spin one edge, then spin it again. Before the port the second spin REFUSED \u2014 the first had cleared the selection and left nothing to spin \u2014 and the case recorded `applied: [true, true, false]`. It now converges on the reference's mesh AND on its selection, the new diagonal.",
    "input": [
     {
      "reset": true,
@@ -349,18 +349,6 @@
        0.0
       ],
       [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
        1.0,
        0.0,
        0.0
@@ -380,19 +368,19 @@
      ],
      [
       [
+       2.0,
        0.0,
-       0.0,
-       1.0
+       0.0
       ],
       [
        2.0,
        0.0,
-       0.0
+       1.0
       ]
      ],
      [
       [
-       2.0,
+       0.0,
        0.0,
        0.0
       ],
@@ -422,6 +410,18 @@
       ],
       [
        1.0,
+       0.0,
+       1.0
+      ]
+     ],
+     [
+      [
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       0.0,
        0.0,
        1.0
       ]
@@ -432,11 +432,6 @@
       [
        0.0,
        0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
        0.0
       ],
       [
@@ -448,17 +443,17 @@
        2.0,
        0.0,
        0.0
+      ],
+      [
+       2.0,
+       0.0,
+       1.0
       ]
      ],
      [
       [
        2.0,
        0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
        1.0
       ],
       [
@@ -470,173 +465,54 @@
        0.0,
        0.0,
        1.0
+      ],
+      [
+       0.0,
+       0.0,
+       0.0
       ]
      ]
     ],
     "selection": {
      "mode": "edges",
      "vertices": [],
-     "edges": [],
+     "edges": [
+      [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ]
+     ],
      "polygons": []
     },
     "applied": [
      true,
      true,
-     false
+     true
     ]
    },
-   "divergence": {
-    "applied": {
-     "reference": [
-      true,
-      true,
-      true
-     ],
-     "vibe3d": [
-      true,
-      true,
-      false
-     ]
-    },
-    "edges_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "edges_only_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ]
-     ]
-    ],
-    "faces_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ]
-     ],
-     [
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "faces_only_in_vibe3d": [
-     [
-      [
-       0.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       0.0
-      ]
-     ],
-     [
-      [
-       2.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ],
-    "sel_edges_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   },
   {
    "name": "spin_reselect_is_the_control",
-   "note": "the CONTROL for the geometry: re-select the product by coordinate and the spin arithmetic agrees exactly \u2014 what still differs is only what the command leaves selected, which IS the law this fixture pins",
+   "note": "the pair-mate that localised the fault BEFORE the port: re-select the product by coordinate between the two spins and the spin arithmetic already agreed exactly, so what diverged was only what the command left selected. Kept because it still carries a claim \u2014 the automatic re-point must land on the same edge a hand coordinate re-select lands on, i.e. this case and the one above must now be identical, and they are.",
    "input": [
     {
      "reset": true,
@@ -1116,7 +992,20 @@
     "selection": {
      "mode": "edges",
      "vertices": [],
-     "edges": [],
+     "edges": [
+      [
+       [
+        0.0,
+        0.0,
+        0.0
+       ],
+       [
+        2.0,
+        0.0,
+        1.0
+       ]
+      ]
+     ],
      "polygons": []
     },
     "applied": [
@@ -1126,33 +1015,21 @@
      true
     ]
    },
-   "divergence": {
-    "sel_edges_only_in_reference": [
-     [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       2.0,
-       0.0,
-       1.0
-      ]
-     ]
-    ]
-   },
+   "divergence": {},
    "control": [
     "applied",
     "counts",
     "vertices",
     "edges",
-    "faces"
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
    ]
   },
   {
    "name": "merge_leaves_product_selected",
-   "note": "same geometry, different survivor selection: the merged face",
+   "note": "the merged face is the product: both engines leave it, and only it, selected. Our kernel names it by the tail range it appends (`Mesh.dissolveProductFaces`).",
    "input": [
     {
      "reset": true,
@@ -1582,26 +1459,34 @@
      "mode": "polygons",
      "vertices": [],
      "edges": [],
-     "polygons": []
+     "polygons": [
+      [
+       1.0,
+       0.0,
+       0.5
+      ]
+     ]
     },
     "applied": [
      true,
      true
     ]
    },
-   "divergence": {
-    "sel_polygons_only_in_reference": [
-     [
-      1.0,
-      0.0,
-      0.5
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   },
   {
    "name": "make_leaves_new_face_selected",
-   "note": "the product of make-polygon is the new FACE",
+   "note": "the product of make-polygon is the new FACE \u2014 a dimension ABOVE its VERTEX input. It is the one command in the family that therefore also promotes the selection TYPE, through the app's geometry-type funnel (no tool-drop).",
    "input": [
     {
      "reset": true,
@@ -1893,72 +1778,37 @@
      ]
     ],
     "selection": {
-     "mode": "vertices",
-     "vertices": [
-      [
-       0.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       0.0
-      ],
-      [
-       1.0,
-       0.0,
-       1.0
-      ],
-      [
-       0.0,
-       0.0,
-       1.0
-      ]
-     ],
+     "mode": "polygons",
+     "vertices": [],
      "edges": [],
-     "polygons": []
+     "polygons": [
+      [
+       0.5,
+       0.0,
+       0.5
+      ]
+     ]
     },
     "applied": [
      true,
      true
     ]
    },
-   "divergence": {
-    "sel_vertices_only_in_vibe3d": [
-     [
-      0.0,
-      0.0,
-      0.0
-     ],
-     [
-      1.0,
-      0.0,
-      0.0
-     ],
-     [
-      1.0,
-      0.0,
-      1.0
-     ],
-     [
-      0.0,
-      0.0,
-      1.0
-     ]
-    ],
-    "sel_polygons_only_in_reference": [
-     [
-      0.5,
-      0.0,
-      0.5
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   },
   {
-   "name": "vertex_split_leaves_product_selected",
-   "note": "a fourth command, same law: the product of a vertex split",
+   "name": "vertex_split_clears_the_consumed_input",
+   "note": "the fourth command, and the one where the product is NOT addressable: a split leaves two coincident copies and the reference selects neither. So here the law reduces to its second half alone \u2014 the consumed input is gone from the selection. Previously we left the input vertex's index selected, naming one arbitrary copy of a vertex the user no longer has.",
    "input": [
     {
      "reset": true,
@@ -2423,13 +2273,7 @@
     ],
     "selection": {
      "mode": "vertices",
-     "vertices": [
-      [
-       1.0,
-       0.0,
-       0.0
-      ]
-     ],
+     "vertices": [],
      "edges": [],
      "polygons": []
     },
@@ -2438,15 +2282,17 @@
      true
     ]
    },
-   "divergence": {
-    "sel_vertices_only_in_vibe3d": [
-     [
-      1.0,
-      0.0,
-      0.0
-     ]
-    ]
-   }
+   "divergence": {},
+   "control": [
+    "applied",
+    "counts",
+    "vertices",
+    "edges",
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
+   ]
   }
  ]
 }

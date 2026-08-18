@@ -7,6 +7,7 @@ import view;
 import editmode;
 import shader;
 import snapshot : MeshSnapshot;
+import selection_product : repointToEdgeKeys;
 
 /// Spin (rotate) the shared edge of two adjacent triangle or quad faces to the
 /// other diagonal of the combined boundary polygon.
@@ -63,13 +64,21 @@ class MeshSpinEdge : Command, Operator {
                 snap = MeshSnapshot.init;
                 return false;
             }
+            ulong[] productKeys;
             foreach (k; selKeys) {
                 uint ei = mesh.edgeIndexByKey(k);
                 if (ei == ~0u) continue;   // earlier spin consumed this edge
-                if (mesh.spinEdge(ei)) ++affected;
+                uint[2] diag;
+                if (mesh.spinEdge(ei, diag)) {
+                    ++affected;
+                    productKeys ~= edgeKey(diag[0], diag[1]);
+                }
             }
-            // Post-op: the old edge no longer exists; clear stale edge selection.
-            if (affected > 0) mesh.clearEdgeSelection();
+            // Post-op (task 1180): the old edge no longer exists — re-point the
+            // selection at the PRODUCT, the new diagonal. Clearing instead (what
+            // this line used to do) is what made two spins of one edge in a row
+            // a no-op on the second: `cmd_selection_product/spin_twice`.
+            if (affected > 0) repointToEdgeKeys(mesh, productKeys);
 
         } else {  // EditMode.Polygons
             if (!mesh.hasAnySelectedFaces()) {

@@ -46,6 +46,35 @@ JSONValue postRedo() { return parseJSON(post("http://localhost:8080/api/redo", "
 JSONValue getModel() { return parseJSON(get("http://localhost:8080/api/model")); }
 JSONValue getSelection() { return parseJSON(get("http://localhost:8080/api/selection")); }
 
+// Task 1180: an edge bevel no longer leaves its band's FACES selected — the
+// reference leaves the band's EDGES and the VERTICES they span, and that law is
+// now ported (ledger row 2, tests/fixtures/edge_bevel_post_selection.json).
+// Several cases below used the face selection purely as a HANDLE on the chamfer
+// quad, never as a claim about it, so the handle moves to the vertex selection:
+// on a single-edge bevel the chamfer is the unique quad whose four corners are
+// exactly the four selected band vertices.
+JSONValue chamferQuadFromSelection(JSONValue m, JSONValue sel) {
+    bool[int] want;
+    foreach (v; sel["selectedVertices"].array) want[cast(int)v.integer] = true;
+    assert(want.length == 4,
+        "chamfer handle: expected 4 selected band vertices, got " ~ want.length.to!string);
+    assert(sel["selectedFaces"].array.length == 0,
+        "chamfer handle: the bevel must leave no face selected, got "
+        ~ sel["selectedFaces"].array.length.to!string);
+    int found = -1;
+    foreach (fi, f; m["faces"].array) {
+        if (f.array.length != 4) continue;
+        bool all4 = true;
+        foreach (c; f.array)
+            if ((cast(int)c.integer in want) is null) { all4 = false; break; }
+        if (!all4) continue;
+        assert(found < 0, "chamfer handle: more than one quad on the band vertices");
+        found = cast(int)fi;
+    }
+    assert(found >= 0, "chamfer handle: no quad on the band vertices");
+    return m["faces"].array[found];
+}
+
 // --- geometry helpers --------------------------------------------------------
 
 struct V3 { double x, y, z; }
@@ -194,15 +223,53 @@ unittest {
     assert(fv.get(4,0) == 5 && fv.get(5,0) == 2,
         "A: expected fv-dist {4:5,5:2}, got " ~ fv.to!string);
 
-    // Chamfer face should be selected.
+    // Post-op selection: the BAND, one dimension down (task 1180, ledger row 2).
+    // This assertion used to read "expected 1 selected (chamfer) face" — our own
+    // pre-port behaviour, and the very thing the row measured us diverging on.
+    // The reference leaves the band's EDGES and the VERTICES they span selected
+    // and NONE of its faces; a single-edge bevel's band is one quad, so that is
+    // 4 edges and 4 verts. Frozen against the reference in
+    // tests/fixtures/edge_bevel_post_selection.json (3 edges, 10/8); pinned here
+    // on the 1-edge cell the rest of this test already builds.
     auto sel = getSelection();
-    assert(sel["selectedFaces"].array.length == 1,
-        "A: expected 1 selected (chamfer) face, got " ~ sel["selectedFaces"].array.length.to!string);
-    int chamferFi = cast(int)sel["selectedFaces"].array[0].integer;
-    auto chamferFace = m["faces"].array[chamferFi];
-    assert(chamferFace.array.length == 4, "A: chamfer should be a quad");
+    assert(sel["selectedFaces"].array.length == 0,
+        "A: the bevel must leave NO face selected, got "
+        ~ sel["selectedFaces"].array.length.to!string);
+    assert(sel["selectedEdges"].array.length == 4,
+        "A: expected the band's 4 edges selected, got "
+        ~ sel["selectedEdges"].array.length.to!string);
+    assert(sel["selectedVertices"].array.length == 4,
+        "A: expected the band's 4 vertices selected, got "
+        ~ sel["selectedVertices"].array.length.to!string);
 
-    // Chamfer centroid near (0, 0.45, 0.45).
+    // The chamfer face is no longer named by the selection, so find it by the
+    // property the rest of this case is about: the only quad at (0,0.45,0.45).
+    int chamferFi = -1;
+    foreach (fi, f; m["faces"].array) {
+        if (f.array.length != 4) continue;
+        auto c = faceCentroid(m, f);
+        if (abs(c.x) < 1e-3 && abs(c.y - 0.45) < 1e-3 && abs(c.z - 0.45) < 1e-3) {
+            assert(chamferFi < 0, "A: more than one quad at the chamfer centroid");
+            chamferFi = cast(int)fi;
+        }
+    }
+    assert(chamferFi >= 0, "A: no chamfer quad at (0,0.45,0.45)");
+    auto chamferFace = m["faces"].array[chamferFi];
+
+    // Every selected edge must be one of the chamfer quad's own edges — i.e.
+    // the selection really is the BAND and not some other four edges.
+    {
+        bool[int] ring;
+        foreach (vi; chamferFace.array) ring[cast(int)vi.integer] = true;
+        foreach (si; sel["selectedEdges"].array) {
+            auto e = m["edges"].array[cast(size_t)si.integer].array;
+            assert(cast(int)e[0].integer in ring && cast(int)e[1].integer in ring,
+                "A: a selected edge is not an edge of the chamfer band");
+        }
+    }
+
+    // Chamfer centroid near (0, 0.45, 0.45) — restated as an assertion so the
+    // search above cannot silently pick a face that only nearly matches.
     auto cen = faceCentroid(m, chamferFace);
     assert(abs(cen.x) < 1e-3 && abs(cen.y - 0.45) < 1e-3 && abs(cen.z - 0.45) < 1e-3,
         "A: chamfer centroid expected (0,0.45,0.45), got (" ~
@@ -420,8 +487,7 @@ unittest {
     // endpoint — the perpendicular-width dihedral factor at a 90° crease.
     immutable double expected = w * sqrt(2.0);
     auto selw = getSelection();
-    assert(selw["selectedFaces"].array.length == 1, "F: expected 1 selected chamfer face");
-    auto chamferW = mw["faces"].array[cast(int)selw["selectedFaces"].array[0].integer];
+    auto chamferW = chamferQuadFromSelection(mw, selw);
     assert(chamferW.array.length == 4, "F: chamfer should be a quad");
     foreach (c; chamferW.array) {
         auto p = vert(mw, cast(size_t)c.integer);
@@ -449,7 +515,7 @@ unittest {
     postCommand(`{"id":"mesh.bevel","params":{"width":0.1,"widthMode":false}}`);
     auto mi = getModel();
     auto seli = getSelection();
-    auto chamferI = mi["faces"].array[cast(int)seli["selectedFaces"].array[0].integer];
+    auto chamferI = chamferQuadFromSelection(mi, seli);
     // Inset slide == raw w; centroid back at (0,0.45,0.45) (matches Test A).
     foreach (c; chamferI.array) {
         auto p = vert(mi, cast(size_t)c.integer);

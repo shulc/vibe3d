@@ -3014,7 +3014,14 @@ private CmdObs observeCmd(bool[] applied, long[] preMaterials) {
 ///   "control": ["counts","vertices","edges","faces","applied"]
 ///                                        — THESE must agree; the case is still
 ///                                          a divergence somewhere else, and
-///                                          must still declare one
+///                                          must still declare one — UNLESS the
+///                                          list names every measured dimension,
+///                                          which is how a case whose gap has
+///                                          been CLOSED (a ported law) declares
+///                                          an EMPTY gap and keeps asserting it
+///                                          per-dimension. Prefer that over
+///                                          `control: true`, which cannot tell
+///                                          "they agreed" from "nobody looked".
 /// Dimension names: applied, counts, materials, vertices, edges, faces,
 /// selection_mode, sel_vertices, sel_edges, sel_polygons. A control dimension
 /// that acquires a gap reddens with its own message: that is a finding, because
@@ -3351,12 +3358,35 @@ void runCommandDivergenceSuite(string fixtureJson) {
                 format("%s: dimension '%s' is declared a CONTROL and has "
                        ~ "acquired a divergence. %s", cn, d, CTRL));
         }
-        if (!controlAll)
-            assert(anyGap,
-                format("%s: every measured dimension AGREES, so this case "
-                       ~ "asserts nothing about the divergence it claims to "
-                       ~ "record. Either the gap closed (retire the case into a "
-                       ~ "parity fixture) or the case never measured the "
-                       ~ "dimension the gap lives in.", cn));
+        if (!controlAll) {
+            // A per-dimension control list that names EVERY measured dimension
+            // makes the same claim `control: true` makes — this cell agrees
+            // everywhere — in the form that ALSO pins each dimension as
+            // MEASURED, and is therefore strictly stronger. That is where a
+            // PORTED law lands (task 1180): the gap closed in the selection
+            // dimensions, and what has to stay asserted from then on is that it
+            // stayed closed in each dimension it was ever open in — including
+            // against someone quietly dropping `selection` from a block, which
+            // `control: true` would sail straight through.
+            //
+            // Anything SHORT of full coverage is still a divergence fixture and
+            // must still declare a gap: a partial control list is the "these
+            // agree, the disagreement is elsewhere" shape, and "elsewhere" has
+            // to exist. A case that measures nothing at all is not excused
+            // either — `measuredDim.length > 0` keeps it on the old path.
+            bool coversEveryMeasured = measuredDim.length > 0;
+            foreach (d, _; measuredDim)
+                if ((d in controlDim) is null) coversEveryMeasured = false;
+            if (!coversEveryMeasured)
+                assert(anyGap,
+                    format("%s: every measured dimension AGREES, so this case "
+                           ~ "asserts nothing about the divergence it claims to "
+                           ~ "record. Either the gap closed — in which case say "
+                           ~ "so by declaring EVERY measured dimension a control "
+                           ~ "(an empty gap asserted as strictly as a full one), "
+                           ~ "or retire the case into a parity fixture — or the "
+                           ~ "case never measured the dimension the gap lives "
+                           ~ "in.", cn));
+        }
     }
 }

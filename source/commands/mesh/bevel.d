@@ -7,6 +7,7 @@ import view;
 import editmode;
 import params : Param;
 import snapshot : MeshSnapshot;
+import selection_product : repointToFaceBorder;
 
 /// One-shot Bevel command: dispatches by edit mode.
 ///   Polygons → bevelFacesByMask(mask, inset, shift, group, segments)
@@ -95,6 +96,18 @@ class MeshBevel : Command, Operator {
         } else if (editMode == EditMode.Edges) {
             auto mask = mesh.operandEdgeMask();
             n = mesh.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
+            // Task 1180: the kernel leaves the new band's FACES selected —
+            // that IS the product, and it is how the band is named without a
+            // second pass. The reference selects the band ONE DIMENSION DOWN:
+            // its edges and the vertices they span, and none of its faces. So
+            // convert here, at the command layer, leaving the kernel (and the
+            // other callers that read its face selection) untouched.
+            if (n > 0) {
+                uint[] band;
+                foreach (fi, sel; mesh.selectedFaces)
+                    if (sel) band ~= cast(uint) fi;
+                repointToFaceBorder(mesh, band);
+            }
         }
 
         if (n == 0) {

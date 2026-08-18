@@ -8,6 +8,7 @@ import editmode;
 import shader;
 import snapshot : MeshSnapshot;
 import params : Param;
+import selection_product : dropConsumedFaces;
 
 /// `mesh.splitFace` — split a polygon into two faces along a chord connecting
 /// two of its existing, non-adjacent winding vertices.
@@ -101,6 +102,26 @@ class MeshSplitFace : Command, Operator {
             snap = MeshSnapshot.init;
             return false;
         }
+
+        // Task 1180: the split face's own selection does not survive it. The
+        // kernel (`rebuildFacesWithChordSplits`) copies the Select bit onto
+        // BOTH halves, and the reference selects neither — so the two children,
+        // and only they, are dropped. `rebuildFacesWithChordSplits` emits faces
+        // in index order and splits exactly one face here, so the halves are
+        // `faceIdx` and `faceIdx + 1`; everything before keeps its index and
+        // everything after shifts by one, carrying its own selection with it.
+        //
+        // Until 1180 this never showed: nothing upstream left a polygon
+        // selected, so the split's target was never selected in the first
+        // place. `mesh.mergeFaces` now re-points at the merged face, and a
+        // merge-then-split carried that face's selection into both halves.
+        //
+        // The narrowness is measured, not cautious — `dropConsumedFaces` names
+        // the two frozen cases that kill the two wider rules (carry the bit
+        // down; clear the whole polygon layer). The second of them also says
+        // the reference does NOT clear the polygon layer on a vertex-mode
+        // select, which is why this lives here and not in the select path.
+        dropConsumedFaces(mesh, [faceIdx, faceIdx + 1]);
 
         return true;
     }

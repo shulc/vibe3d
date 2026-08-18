@@ -6,6 +6,7 @@ import mesh;
 import view;
 import editmode;
 import snapshot : MeshSnapshot;
+import selection_product : repointToNothing;
 
 /// `mesh.vertexSplit` — unweld each selected vertex: keep it in its
 /// lowest-indexed incident face and give every later incident face its
@@ -45,6 +46,12 @@ class MeshVertexSplit : Command, Operator {
             snap = MeshSnapshot.init;
             return false;
         }
+        // Task 1180: the input vertex is GONE — it was unwelded into two or
+        // more coincident copies — and the reference selects neither copy, so
+        // the post-op selection is empty. Leaving the input's index selected
+        // (what this did before) names one arbitrary copy of a vertex the user
+        // no longer has.
+        repointToNothing(mesh);
         return true;
     }
 

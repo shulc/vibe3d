@@ -23,6 +23,7 @@ import shader : Shader, LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
+import selection_product : addNewLoopEdgesAndVerts;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import document : primaryModelSpace;
@@ -998,14 +999,19 @@ public:
         uint[] newFaceIndices;
         float[] pos, heights;
         kernelFeed(pos, heights);
+        // Captured BEFORE the cut: every vertex the cut appends lands at or
+        // after this index, which is how the new loop is named (task 1180).
+        immutable uint firstNewVert = cast(uint)mesh.vertices.length;
         bool ok = mesh.insertEdgeLoopsMulti(seeds, pos, newFaceIndices,
                                             restrictFor(selectedFaceIndices()), keepQuads_,
                                             sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
                                             curvature_, curveTension_,
                                             heights, effectiveDepth(seedEdgeSpan(seeds)));
         if (!ok) return false;
-        if (selectNew_)
+        if (selectNew_) {
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
+            addNewLoopEdgesAndVerts(mesh, firstNewVert);   // + the loop itself
+        }
         gpu.upload(*mesh);
         return true;
     }
@@ -1532,14 +1538,20 @@ private:
         uint[] newFaceIndices;
         float[] pos, heights;
         kernelFeed(pos, heights);
+        // AFTER the restore, not before it — the baseline the cut runs against
+        // is the restored mesh, so that is the vertex count the new loop is
+        // measured from (task 1180).
+        immutable uint firstNewVert = cast(uint)mesh.vertices.length;
         bool ok = mesh.insertEdgeLoopsMulti(seeds_, pos, newFaceIndices,
                                             restrictFor(armedSelFaces_), keepQuads_,
                                             sliceNgon_, sliceSplit_, sliceCaps_, null, gap_,
                                             curvature_, curveTension_,
                                             heights, effectiveDepth(seedEdgeSpan(seeds_)));
         built_ = ok;
-        if (ok && selectNew_)
+        if (ok && selectNew_) {
             foreach (fi; newFaceIndices) mesh.selectFace(cast(int)fi);
+            addNewLoopEdgesAndVerts(mesh, firstNewVert);   // + the loop itself
+        }
         // Re-stamp regardless of `ok` — after this line the mesh is in a
         // KNOWN state WE produced (either the successful cut, or just the
         // restored baseline if insertEdgeLoopsMulti failed).

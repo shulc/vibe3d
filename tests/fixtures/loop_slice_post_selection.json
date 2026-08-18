@@ -1,6 +1,6 @@
 {
  "name": "loop_slice_post_selection",
- "description": "Ledger row 3: after a band loop slice the reference additionally leaves the new loop's EDGES and VERTICES selected; we leave the sliced polygons only. Measured on a 3-segment unit cube where the two engines' slice GEOMETRY agrees exactly, so the divergence is isolated to the selection. On this base the selected POLYGON sets also agree exactly \u2014 the ledger's 'six of fourteen polygons differ' was seen on the pilot's patch and is NOT reproduced here, so this cell freezes the edge/vertex half of the row and deliberately claims nothing about the polygon half.",
+ "description": "Ledger row 3: after a band loop slice the reference leaves the new loop's EDGES and VERTICES selected ALONGSIDE the sliced polygons; we used to leave the polygons only. Measured on a 3-segment unit cube where the two engines' slice GEOMETRY agrees exactly, so the divergence was isolated to the selection; task 1180 ported the law. On this base the selected POLYGON sets always agreed \u2014 the ledger's 'six of fourteen polygons differ' was seen on the pilot's patch, is NOT reproduced here, and was never this cell's target: it freezes the edge/vertex half and deliberately claims nothing about the other.",
  "source": "Reference half: the frozen wave-1 probe capture of the post-slice state (task 1120). vibe3d half: measured live against this tree. Ledger row: 3.",
  "provenance": {
   "schema": 1,
@@ -10,13 +10,13 @@
   "captured_utc": "2026-08-17",
   "harness": "tools/local/fixture_gen/cmd_divergence (task 1130), over the task-1120 headless probe capture",
   "task": "1130",
-  "notes": "Headless COMMAND capture \u2014 no display, no pointer injection, no gesture. Re-measured on a base both engines build from one command, because the pilot patch the ledger row was found on was never dumped. The reference's selection MODE did not read back in that capture and is therefore absent, not assumed."
+  "notes": "Headless COMMAND capture \u2014 no display, no pointer injection, no gesture. Re-measured on a base both engines build from one command, because the pilot patch the ledger row was found on was never dumped. The reference's selection MODE did not read back in that capture and is therefore absent, not assumed. TASK 1180 PORTED THE LAW. The reference half above is untouched \u2014 the same frozen measurement it always was. The vibe3d half was RE-MEASURED live against the ported tree, and the gap it used to declare is now empty in every dimension, so each case declares every measured dimension a CONTROL: an empty gap asserted exactly as strictly as a full one. Narrow it, widen it, or drop a dimension out of either block, and this reddens."
  },
  "tolerance": 0.0001,
  "cases": [
   {
-   "name": "loop_edges_and_verts_there_polygons_only_here",
-   "note": "nine top faces of a 3-segment cube sliced at 0.65 with Slice Selected on: 66 verts / 127 edges / 63 faces on BOTH sides, and the reference additionally holds the new loop",
+   "name": "loop_edges_and_verts_on_both_sides",
+   "note": "nine top faces of a 3-segment cube sliced at 0.65 with Slice Selected on: 66 verts / 127 edges / 63 faces on BOTH sides, and now the same selection \u2014 18 sliced polygons PLUS the new loop's 9 edges and 10 vertices. Additive on purpose: the slice's product spans two dimensions at once and the reference holds both.",
    "input": [
     {
      "reset": true,
@@ -7025,161 +7025,12 @@
     ],
     "selection": {
      "mode": "polygons",
-     "vertices": [],
-     "edges": [],
-     "polygons": [
+     "vertices": [
       [
-       -0.391667,
+       -0.283333,
        0.5,
-       -0.333334
+       -0.166667
       ],
-      [
-       -0.225,
-       0.5,
-       -0.333334
-      ],
-      [
-       -0.391667,
-       0.5,
-       0.0
-      ],
-      [
-       -0.225,
-       0.5,
-       0.0
-      ],
-      [
-       -0.323333,
-       0.5,
-       0.323333
-      ],
-      [
-       -0.205556,
-       0.5,
-       0.205556
-      ],
-      [
-       0.094445,
-       0.5,
-       -0.238889
-      ],
-      [
-       -0.01,
-       0.5,
-       -0.343333
-      ],
-      [
-       0.058334,
-       0.5,
-       0.0
-      ],
-      [
-       -0.108333,
-       0.5,
-       0.0
-      ],
-      [
-       -0.01,
-       0.5,
-       0.323333
-      ],
-      [
-       -0.127778,
-       0.5,
-       0.205556
-      ],
-      [
-       0.238889,
-       0.5,
-       -0.238889
-      ],
-      [
-       0.343333,
-       0.5,
-       -0.343333
-      ],
-      [
-       0.275,
-       0.5,
-       0.0
-      ],
-      [
-       0.441666,
-       0.5,
-       0.0
-      ],
-      [
-       0.275,
-       0.5,
-       0.333334
-      ],
-      [
-       0.441666,
-       0.5,
-       0.333334
-      ]
-     ]
-    },
-    "applied": [
-     true,
-     true
-    ]
-   },
-   "divergence": {
-    "sel_vertices_only_in_reference": [
-     [
-      -0.283333,
-      0.5,
-      -0.5
-     ],
-     [
-      -0.283333,
-      0.5,
-      -0.166667
-     ],
-     [
-      -0.283333,
-      0.5,
-      0.166667
-     ],
-     [
-      -0.166667,
-      0.5,
-      0.283333
-     ],
-     [
-      -0.05,
-      0.5,
-      -0.166667
-     ],
-     [
-      -0.05,
-      0.5,
-      0.166667
-     ],
-     [
-      0.166667,
-      0.5,
-      -0.383333
-     ],
-     [
-      0.383333,
-      0.5,
-      -0.166667
-     ],
-     [
-      0.383333,
-      0.5,
-      0.166667
-     ],
-     [
-      0.383333,
-      0.5,
-      0.5
-     ]
-    ],
-    "sel_edges_only_in_reference": [
-     [
       [
        -0.283333,
        0.5,
@@ -7188,58 +7039,18 @@
       [
        -0.283333,
        0.5,
-       -0.166667
-      ]
-     ],
-     [
-      [
-       -0.283333,
-       0.5,
-       -0.166667
-      ],
-      [
-       -0.283333,
-       0.5,
-       0.166667
-      ]
-     ],
-     [
-      [
-       -0.283333,
-       0.5,
        0.166667
       ],
       [
        -0.166667,
        0.5,
        0.283333
-      ]
-     ],
-     [
-      [
-       -0.166667,
-       0.5,
-       0.283333
       ],
       [
        -0.05,
        0.5,
        0.166667
-      ]
-     ],
-     [
-      [
-       -0.05,
-       0.5,
-       -0.166667
       ],
-      [
-       -0.05,
-       0.5,
-       0.166667
-      ]
-     ],
-     [
       [
        -0.05,
        0.5,
@@ -7249,33 +7060,12 @@
        0.166667,
        0.5,
        -0.383333
-      ]
-     ],
-     [
-      [
-       0.166667,
-       0.5,
-       -0.383333
       ],
       [
        0.383333,
        0.5,
        -0.166667
-      ]
-     ],
-     [
-      [
-       0.383333,
-       0.5,
-       -0.166667
       ],
-      [
-       0.383333,
-       0.5,
-       0.166667
-      ]
-     ],
-     [
       [
        0.383333,
        0.5,
@@ -7286,14 +7076,224 @@
        0.5,
        0.5
       ]
+     ],
+     "edges": [
+      [
+       [
+        -0.283333,
+        0.5,
+        -0.5
+       ],
+       [
+        -0.283333,
+        0.5,
+        -0.166667
+       ]
+      ],
+      [
+       [
+        -0.283333,
+        0.5,
+        -0.166667
+       ],
+       [
+        -0.283333,
+        0.5,
+        0.166667
+       ]
+      ],
+      [
+       [
+        -0.283333,
+        0.5,
+        0.166667
+       ],
+       [
+        -0.166667,
+        0.5,
+        0.283333
+       ]
+      ],
+      [
+       [
+        -0.05,
+        0.5,
+        -0.166667
+       ],
+       [
+        0.166667,
+        0.5,
+        -0.383333
+       ]
+      ],
+      [
+       [
+        -0.05,
+        0.5,
+        -0.166667
+       ],
+       [
+        -0.05,
+        0.5,
+        0.166667
+       ]
+      ],
+      [
+       [
+        -0.166667,
+        0.5,
+        0.283333
+       ],
+       [
+        -0.05,
+        0.5,
+        0.166667
+       ]
+      ],
+      [
+       [
+        0.166667,
+        0.5,
+        -0.383333
+       ],
+       [
+        0.383333,
+        0.5,
+        -0.166667
+       ]
+      ],
+      [
+       [
+        0.383333,
+        0.5,
+        -0.166667
+       ],
+       [
+        0.383333,
+        0.5,
+        0.166667
+       ]
+      ],
+      [
+       [
+        0.383333,
+        0.5,
+        0.166667
+       ],
+       [
+        0.383333,
+        0.5,
+        0.5
+       ]
+      ]
+     ],
+     "polygons": [
+      [
+       -0.39166650000000003,
+       0.5,
+       -0.3333335
+      ],
+      [
+       -0.225,
+       0.5,
+       -0.3333335
+      ],
+      [
+       -0.39166650000000003,
+       0.5,
+       0.0
+      ],
+      [
+       -0.225,
+       0.5,
+       0.0
+      ],
+      [
+       -0.3233334,
+       0.5,
+       0.3233334
+      ],
+      [
+       -0.2055556666666667,
+       0.5,
+       0.2055556666666667
+      ],
+      [
+       0.09444466666666668,
+       0.5,
+       -0.238889
+      ],
+      [
+       -0.01,
+       0.5,
+       -0.3433334
+      ],
+      [
+       0.0583335,
+       0.5,
+       0.0
+      ],
+      [
+       -0.1083335,
+       0.5,
+       0.0
+      ],
+      [
+       -0.01,
+       0.5,
+       0.3233334
+      ],
+      [
+       -0.127778,
+       0.5,
+       0.2055556666666667
+      ],
+      [
+       0.238889,
+       0.5,
+       -0.238889
+      ],
+      [
+       0.3433334,
+       0.5,
+       -0.3433334
+      ],
+      [
+       0.275,
+       0.5,
+       0.0
+      ],
+      [
+       0.44166649999999996,
+       0.5,
+       0.0
+      ],
+      [
+       0.275,
+       0.5,
+       0.3333335
+      ],
+      [
+       0.44166649999999996,
+       0.5,
+       0.3333335
+      ]
      ]
+    },
+    "applied": [
+     true,
+     true
     ]
    },
+   "divergence": {},
    "control": [
     "counts",
     "vertices",
     "edges",
-    "faces"
+    "faces",
+    "sel_vertices",
+    "sel_edges",
+    "sel_polygons"
    ]
   }
  ]

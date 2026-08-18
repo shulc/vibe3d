@@ -7,23 +7,35 @@
 // created by the slice become the selection; with it OFF no new polygons
 // are selected. vibe3d's kernel (`Mesh.insertEdgeLoopsMulti`) clears ALL
 // selection at the end of a cut (`resetSelection()`), and the tool then
-// re-selects exactly the new sub-quads iff `selectNew_` — so the resulting
-// selection is either the new FACES (default) or NOTHING, never the loop
-// edges or the new vertices. These tests assert that exactly, analytically.
+// re-selects the product iff `selectNew_`.
+//
+// TASK 1180 CHANGED WHAT "THE PRODUCT" IS HERE, on evidence this file did not
+// have. The paragraph above used to end "...so the resulting selection is
+// either the new FACES (default) or NOTHING, never the loop edges or the new
+// vertices" — a description of OUR implementation, not a measurement; the only
+// reference claim 0247 made was about the `selectNew` toggle itself. Dogfood
+// ledger row 3 then measured the reference's post-slice selection with a
+// THREE-LAYER readback and found the new loop's EDGES and VERTICES held
+// ALONGSIDE the sliced faces (tests/fixtures/loop_slice_post_selection.json:
+// 18 faces + 9 edges + 10 verts). So with `selectNew` on the selection is now
+// the new faces PLUS the loop; with it off it is still nothing.
 //
 //   P1 — selectNew=true (default): after a count=1 cut on the cube's ring
 //        crossed by seed edge 0-1, exactly the 8 new band faces are
-//        selected (and ONLY faces — no edges, no vertices). Exact
-//        membership is pinned by geometry: the 2 UNSELECTED faces are the
-//        two uncut caps (all 4 corners original), every SELECTED face holds
-//        a new midpoint vertex.
+//        selected, PLUS the loop itself — its 4 new midpoint vertices and
+//        the 4 edges spanning them. Exact membership is pinned by geometry:
+//        the 2 UNSELECTED faces are the two uncut caps (all 4 corners
+//        original), every SELECTED face holds a new midpoint vertex, and the
+//        selected edges are precisely those with BOTH endpoints new.
 //   P2 — selectNew=false: the same cut leaves NOTHING selected (no faces,
-//        no edges, no vertices) — the toggle's only job is whether the new
-//        polygons get selected.
+//        no edges, no vertices) — the toggle's only job is whether the
+//        product becomes the selection. This is the arm that says the new
+//        edge/vertex leg rides the SAME toggle and is not unconditional.
 //   P3 — Polygons-mode activation (task 0245): seeding from two adjacent
 //        selected polygons keeps the selection TYPE at Polygon and leaves
-//        the 8 new band faces selected — the fully consistent
-//        selType=polygon + new-faces case.
+//        the 8 new band faces (plus the loop) selected — the fully
+//        consistent selType=polygon case. The type does NOT flip to edge or
+//        vertex merely because those layers now carry a selection.
 
 import std.net.curl;
 import std.json;
@@ -73,6 +85,35 @@ int edgeIndex(JSONValue m, int a, int b) {
         if ((x == a && y == b) || (x == b && y == a)) return cast(int)i;
     }
     return -1;
+}
+
+// Task 1180: with `selectNew` on, the cut also leaves the LOOP selected — the
+// new midpoint vertices and the edges spanning them. Pinned analytically, in
+// this file's index-free style: "new" is "not an original cube corner", so the
+// claim never mentions an index, and it is an IFF in both directions — an
+// original corner that became selected fails just as loudly as a loop vertex
+// that did not.
+void assertLoopSelected(JSONValue m, JSONValue sel, string tag) {
+    bool[int] selV;
+    foreach (v; sel["selectedVertices"].array) selV[cast(int)v.integer] = true;
+    foreach (vi; 0 .. m["vertices"].array.length) {
+        immutable bool isNew = !isCornerVert(m, vi);
+        immutable bool isSel = (cast(int)vi in selV) !is null;
+        assert(isNew == isSel, tag ~ ": vertex " ~ vi.to!string
+            ~ (isNew ? " is a new loop vertex and must be selected"
+                     : " is an original corner and must NOT be selected"));
+    }
+    bool[int] selE;
+    foreach (e; sel["selectedEdges"].array) selE[cast(int)e.integer] = true;
+    foreach (ei; 0 .. m["edges"].array.length) {
+        auto e = m["edges"].array[ei].array;
+        immutable bool bothNew = !isCornerVert(m, cast(size_t)e[0].integer)
+                              && !isCornerVert(m, cast(size_t)e[1].integer);
+        immutable bool isSel   = (cast(int)ei in selE) !is null;
+        assert(bothNew == isSel, tag ~ ": edge " ~ ei.to!string
+            ~ (bothNew ? " lies inside the new loop and must be selected"
+                       : " is not a loop edge and must NOT be selected"));
+    }
 }
 
 int vertAt(JSONValue m, V3 p) {
@@ -145,12 +186,8 @@ unittest {
     assert(after["faceCount"].integer == 10, "expected 10 faces after one loop");
 
     auto sel = getSelection();
-    // The remaining selection is FACES only — never the loop edges or the
-    // new vertices.
-    assert(sel["selectedEdges"].array.length == 0,
-        "post-cut: no edges must be selected");
-    assert(sel["selectedVertices"].array.length == 0,
-        "post-cut: no vertices must be selected");
+    // The remaining selection is the new faces AND the loop (task 1180, row 3).
+    assertLoopSelected(after, sel, "post-cut");
 
     auto selFaces = sel["selectedFaces"].array;
     assert(selFaces.length == 8,
@@ -241,8 +278,5 @@ unittest {
     assert(sel["selectedFaces"].array.length == 8,
         "polygons-mode seed: expected 8 selected faces, got "
         ~ sel["selectedFaces"].array.length.to!string);
-    assert(sel["selectedEdges"].array.length == 0,
-        "polygons-mode seed: no edges must be selected");
-    assert(sel["selectedVertices"].array.length == 0,
-        "polygons-mode seed: no vertices must be selected");
+    assertLoopSelected(after, sel, "polygons-mode seed");
 }

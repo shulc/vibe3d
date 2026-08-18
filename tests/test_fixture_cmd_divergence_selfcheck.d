@@ -21,6 +21,13 @@
 //   9. swap the two engines' recorded halves -> a case that passes with the
 //                                               sides exchanged measures
 //                                               nothing either
+//  10. widen a CLOSED gap by one element     -> a ported law's EMPTY gap must
+//                                               be asserted as strictly as a
+//                                               full one
+//  11. drop a whole block's `selection`      -> a full-coverage control list
+//                                               must catch the dimension going
+//                                               UNMEASURED, which is exactly
+//                                               what `control: true` cannot
 //
 // If any mutation ever passes, the corresponding guard has gone inert and the
 // fixtures that lean on it are no longer evidence -- which is precisely the
@@ -55,6 +62,7 @@ private JSONValue oneCase(string json, size_t idx) {
 unittest {
     enum string spinJson = import("fixtures/spin_gate_narrower.json");
     enum string selJson  = import("fixtures/cmd_selection_product.json");
+    enum string joinJson = import("fixtures/vert_join_survivor.json");
 
     // The unmutated case must PASS -- otherwise every "rejected" below could
     // be an artefact of the extraction rather than of the mutation.
@@ -115,16 +123,24 @@ unittest {
             ~ "control guard is inert");
     }
 
-    // 4b. the SCOPED control, on the real control case: name a dimension that
-    //     genuinely disagrees there (the selection) and it must be rejected,
+    // 4b. the SCOPED control, on a case that still has a PARTIAL one: name a
+    //     dimension that genuinely disagrees there and it must be rejected,
     //     while its declared geometry control keeps passing.
+    //
+    //     TASK 1180 re-pointed this arm. It used to run on
+    //     cmd_selection_product's control case, whose selection genuinely
+    //     disagreed; that law has since been PORTED, so nothing disagrees
+    //     there any more and the arm would have gone quietly inert — passing
+    //     on the anti-vacuity guard while claiming to prove the control one.
+    //     vert_join_survivor case 1 is the same shape and still diverges: a
+    //     geometry control beside a live `sel_vertices` gap.
     {
-        auto fx = oneCase(selJson, 1);          // spin_reselect_is_the_control
+        auto fx = oneCase(joinJson, 1);         // reversed_order_is_the_control
         assert("control" in fx["cases"].array[0],
-            "case 1 of cmd_selection_product is expected to be the control");
+            "case 1 of vert_join_survivor is expected to be the control");
         runCommandDivergenceSuite(fx.toString); // as authored: passes
         fx["cases"].array[0]["control"] =
-            JSONValue([JSONValue("sel_edges"), JSONValue("counts")]);
+            JSONValue([JSONValue("sel_vertices"), JSONValue("counts")]);
         assert(rejected(fx),
             "declaring the SELECTION a control on the geometry-control case "
             ~ "was ACCEPTED — scoped controls are inert");
@@ -147,7 +163,10 @@ unittest {
 
     // 7. a control over a dimension NOBODY MEASURES. Nothing disagrees --
     //    nothing is looked at either, and a control that cannot fail is worse
-    //    than no control, because it reads like evidence.
+    //    than no control, because it reads like evidence. (Unlike 4b this arm
+    //    survives task 1180 untouched: it needs an unmeasured dimension, not a
+    //    divergent one, and `materials` is unmeasured whether the case's gap is
+    //    open or closed.)
     {
         auto fx = oneCase(selJson, 1);
         fx["cases"].array[0]["control"] = JSONValue([JSONValue("materials")]);
@@ -184,6 +203,48 @@ unittest {
         assert(rejected(fx),
             "a case passed with the two engines' recorded halves SWAPPED — it "
             ~ "does not pin which side does what");
+    }
+
+    // 10. a CLOSED gap must be asserted as strictly as an open one. Task 1180
+    //     ported the selection-product law, so every case of
+    //     cmd_selection_product now declares an EMPTY gap by naming every
+    //     measured dimension a control. Widen one by a single element on the
+    //     reference side and the control it lives in has to say so -- otherwise
+    //     "we ported it" decays into "nobody is checking any more".
+    {
+        auto fx = oneCase(selJson, 0);          // spin_twice, the ported case
+        runCommandDivergenceSuite(fx.toString); // as authored: passes
+        auto rs = fx["cases"].array[0]["reference"]["selection"];
+        auto es = rs["edges"].array.dup;
+        es ~= parseJSON(`[[9.0,9.0,9.0],[9.0,9.0,8.0]]`);
+        rs["edges"] = JSONValue(es);
+        fx["cases"].array[0]["reference"]["selection"] = rs;
+        assert(rejected(fx),
+            "widening a CLOSED gap by one selected edge was ACCEPTED — a "
+            ~ "ported law's empty gap is not being asserted, and the port "
+            ~ "could regress with this file still green");
+    }
+
+    // 11. ...and the reason those cases use a full-coverage control LIST rather
+    //     than `control: true`: only the list can tell "the two engines agreed"
+    //     from "nobody looked". Drop the whole `selection` block out of our
+    //     half and the selection dimensions stop being measured at all; the
+    //     list rejects that, and `control: true` -- asserted here, by value --
+    //     does not.
+    {
+        auto fx = oneCase(selJson, 0);
+        fx["cases"].array[0]["vibe3d_current"].object.remove("selection");
+        assert(rejected(fx),
+            "dropping `selection` out of `vibe3d_current` was ACCEPTED — a "
+            ~ "control over a dimension nobody measures is green forever");
+
+        auto weak = oneCase(selJson, 0);
+        weak["cases"].array[0]["vibe3d_current"].object.remove("selection");
+        weak["cases"].array[0]["control"] = JSONValue(true);
+        assert(!rejected(weak),
+            "`control: true` REJECTED an unmeasured selection — if it has "
+            ~ "become as strict as the list form, say so and simplify the "
+            ~ "fixtures back; this assertion exists to record that it is not");
     }
 
     // 6. provenance: an unstamped fixture must not be trusted at all.
