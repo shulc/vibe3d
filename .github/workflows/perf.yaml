@@ -39,6 +39,22 @@ jobs:
     timeout-minutes: 90
     steps:
     - uses: actions/checkout@v4
+      with:
+        # No `git clean -ffdx`: the workspace's untracked build state is the
+        # point on this runner — the nfde path-dep's C lib
+        # (third_party/nfde/nativefiledialog-extended/out/src/libnfd.a, see
+        # ci.yaml's cache-drop comment), the perf binary the frames step
+        # reuses via --no-build, and .dub's incremental objects that keep
+        # the nightly ldc build to seconds. Run 32168774072 failed exactly
+        # on the clean: it wiped libnfd.a while dub cache-hit the frozen
+        # nfde D-target and skipped the CMake preBuild → link error.
+        clean: false
+
+    # Belt to the clean:false braces: if the workspace ever IS cleaned
+    # (manual wipe, fresh runner), dropping the cached nfde dub target
+    # forces its preBuildCommands to regenerate the C lib. Cheap.
+    - name: 'Drop cached nfde dep (force preBuild)'
+      run: rm -rf ~/.dub/packages/nfde ~/.dub/cache/nfde || true
 
     - name: 'D toolchain on PATH'
       # The runner is a systemd user service with the user-manager's minimal
