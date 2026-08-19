@@ -405,6 +405,22 @@ struct CaseResult {
     JSONValue  lastBreakdown;    // full /api/perf from the last repeat
     bool       isCommand;        // true for delete/remove command cases
     long       commandApplyCount;// commandApply.count from last repeat (for I6)
+    // --- `tools` subcommand: one interactive-tool preview rebuild (task 1370)
+    bool       isToolPreview;    // true for ToolCase rows
+    long       toolPreviewCount;      // rebuildPreview() calls in the window
+    long       previewRestoreCount;   // MeshSnapshot.restore calls in the window
+    long       previewRefreshCount;   // refreshDisplay calls in the window
+    double     toolPreviewSumUs;      // whole-wrapper cost across R repeats
+    double     previewRestoreSumUs;   // the restore half
+    double     previewRefreshSumUs;   // the upload+cache-resize half
+    double     previewKernelUs;       // wrapper - restore - refresh
+    double     kernelShare;           // previewKernelUs / toolPreviewSumUs
+    bool       geometryChanged;       // I8b: BOTH driven values really moved the mesh
+    // V/F counts + vertex-0 position: the pristine mesh, and the mesh after
+    // each of the two pre-window writes. Two "after" probes because the
+    // measured window ALTERNATES v0/v1 and one probe can only witness one of
+    // them (review fix, task 1370 — see runToolCase step 4).
+    string     geomBefore, geomAfterV0, geomAfterV1;
 }
 
 // Apply the selection (or clear it for "whole").
@@ -798,6 +814,343 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
     res.dominantStage     = "commandApply";
     res.commandApplyCount = lastCount;
     res.lastBreakdown     = last;
+    return res;
+}
+
+
+// ---------------------------------------------------------------------------
+// `tools` subcommand — the cost of ONE interactive-tool preview rebuild.
+//
+// SIXTEEN tools (not the 21 the task statement counted — see the exclusion
+// table in tools/perf/README.md) rebuild a standing preview on every drag
+// frame and on every interactive attribute scrub. Every one of them has the
+// same shape:
+//
+//     before.restore(*mesh);   // MeshSnapshot.restore  → Cat.previewRestore
+//     <the tool's own kernel>  // ← what a per-tool case would exist to watch
+//     refreshCaches();         // display_sync.refreshDisplay → Cat.previewRefresh
+//
+// and the whole method is wrapped in Cat.toolPreview.
+//
+// This lane deliberately ships ONE case, not sixteen, because the number
+// that decides whether sixteen are worth writing is the KERNEL SHARE:
+//
+//     kernel = toolPreview - previewRestore - previewRefresh
+//     share  = kernel / toolPreview
+//
+// If the share is small — i.e. the shared wrapper dominates — then a 2x
+// regression in a tool's own kernel moves `toolPreview` by only `+share`.
+// Write the rebuild as `k + w` (kernel + wrapper) so `share = k/(k+w)`;
+// doubling the kernel takes it to `2k + w`, a ratio of
+// `(2k+w)/(k+w) = 1 + share`. At share=0.1 that is +10%: under the harness's
+// +30% absolute tolerance and inside the session-to-session drift already
+// recorded on this bench. Per-tool cases would then be STRUCTURALLY
+// incapable of going red on the thing they exist for, and the deliverable
+// is a fix to the wrapper, not fifteen more rows. The share is printed as
+// its own column for exactly that decision.
+//
+// NOT `toolPreview - cacheInvalidate - gpuUpload`: those two categories are
+// opened in app.d's MAIN FRAME LOOP, not inside the preview call. Their
+// samples come from frames that happened to render near the window, so that
+// subtraction mixes two clocks and its SIGN depends on the frame rate.
+//
+// The metric is "one `rebuildPreview`", NOT "one preview frame". A real drag
+// additionally pays the frame loop's own cache invalidation, GPU upload and
+// draw; this driver never triggers those between calls, so the number here
+// is a strict LOWER bound on a drag frame.
+// ---------------------------------------------------------------------------
+
+struct ToolCase {
+    string name;       // "polyInset/half"
+    string toolId;     // "mesh.polyInsetTool"
+    string mode;       // "vertices" | "edges" | "polygons" | "" (no selection)
+    string selection;  // "whole" | "half" | "single" | "ring"
+    string attr;       // "inset"
+    double v0, v1;     // ALTERNATED across repeats — see runToolCase step 6
+    int    meshN;      // pinned grid size; 0 = the run's --n
+    string note;
+}
+
+// Selection indices for a tool case, by mode. Mirrors cmdIndices above.
+int[] toolIndices(ref ToolCase c, int n) {
+    if (c.selection == "whole")  return [];
+    if (c.mode == "vertices")    return c.selection == "half" ? selHalf(n)
+                                      : c.selection == "ring" ? selRing(n)
+                                      : selSingle(n);
+    if (c.mode == "polygons")    return faceHalf(n);
+    return [];
+}
+
+// The case table. ONE row on purpose (task 1370): see the header comment.
+//
+// CLAMP RULE for anyone adding a row — the bench is its own DoS. Integer
+// attributes that scale an allocation (`array_tool`'s numX, clamped at 64;
+// `radial_array_tool`'s count, clamped at 256) must be kept at the LOW end:
+// numX=64 on a 4k-face grid is 262k faces produced inside ONE preview
+// rebuild. Keep such attrs at 2→3, and pin `meshN` rather than inheriting
+// the run's --n.
+ToolCase[] toolCases() {
+    ToolCase[] cs;
+    // polyInset on half the grid's faces. Pinned at TOOLCASE_NMAX — the
+    // frozen size from Phase 0b, NOT the run's --n and NOT recomputed per
+    // night (recomputing would make the number incomparable night to night).
+    cs ~= ToolCase("polyInset/half", "mesh.polyInsetTool", "polygons", "half",
+                   "inset", 0.02, 0.04, TOOLCASE_NMAX,
+                   "one rebuildPreview (NOT one preview frame)");
+    return cs;
+}
+
+// Frozen by Phase 0b under `dub build --build=perf` (task 1370, 2026-08-19).
+// Debug-build numbers set the SHAPE of the curve; the perf build set the
+// threshold. Measured, `mesh.polyInsetTool` on faceHalf, median of one
+// rebuildPreview, with the kernel share beside it:
+//
+//     n=64   4096 faces     30.8 ms   share 93.5%
+//     n=96   9216 faces    126.1 ms   share 96.9%   <- TOOLCASE_NMAX
+//     n=128 16384 faces    404.8 ms   share 98.1%
+//     n=200 40000 faces   2668   ms   share 99.4%
+//     n=316 99856 faces  16546   ms   share 99.7%
+//
+// The ceiling is 200 ms per rebuild, so n=96 is the largest step that fits;
+// n=128 is twice past it. NOT recomputed per run — a size chosen fresh each
+// night makes the number incomparable night to night, which is the whole
+// reason it is a literal here rather than a search.
+//
+// Read the curve before enlarging it: 4x the faces costs 13x, and 2.4x more
+// costs 41x again. That is not the wrapper (whose restore+refresh is 15 ms
+// of the 126 at n=96 and 235 ms of the 16546 at n=316) — it is the tool's
+// own kernel, super-quadratic in the operand. Raising this literal buys
+// timeout risk, not resolution.
+enum int TOOLCASE_NMAX = 96;
+
+CaseResult runToolCase(ref ToolCase c, int runN, string meshType, int repeats) {
+    CaseResult res;
+    res.name        = c.name;
+    res.note        = c.note;
+    res.isToolPreview = true;
+
+    // 0. Per-case mesh size. A pinned size is grid-only: under --subdivcube
+    // the reset parameter means subdivision LEVELS, so the pin is
+    // meaningless and the case SKIPs rather than silently measuring a
+    // different mesh (same rule as Case.meshN in runCase).
+    int n = runN;
+    if (c.meshN > 0) {
+        if (meshType != "grid") {
+            res.status = CaseStatus.SKIP;
+            res.detail = format("pinned n=%d is grid-only (run is %s)",
+                                c.meshN, meshType);
+            return res;
+        }
+        n = c.meshN;
+    }
+    res.effectiveN = n;
+
+    resetMesh(meshType, n);
+    {
+        auto mi = activeLayerInfo();
+        res.effectiveVertexCount = mi.vertexCount;
+        res.effectiveFaceCount   = mi.faceCount;
+    }
+
+    // 1. Operand. Every one of these tools measures a REFUSAL if its operand
+    // is wrong (task 1370 Phase 0.2 found `edge.extrude`'s handle moving an
+    // attribute while the kernel no-opped), which is why I8b below checks
+    // geometry rather than the attribute.
+    if (c.mode.length) {
+        if (!selectMode(c.mode, toolIndices(c, n))) {
+            res.status = CaseStatus.ERROR;
+            res.detail = "selection failed";
+            return res;
+        }
+    }
+
+    // 2. Arm the tool. `tool.set ... off` at the end is OUTSIDE the measured
+    // window and COMMITS the edit into history (deactivate() → commitEdit),
+    // which is why every case starts from its own resetMesh above rather
+    // than inheriting the previous case's mesh.
+    if (!script(format("tool.set %s on", c.toolId))) {
+        res.status = CaseStatus.ERROR;
+        res.detail = format("tool.set %s on failed", c.toolId);
+        return res;
+    }
+    scope(exit) script(format("tool.set %s off", c.toolId));
+
+    // Probe helpers. `/api/model` is the heaviest request this file makes and
+    // lib/drag.d's `vertexPos` has neither a retry nor a size guard (its own
+    // comment warns the endpoint times out past ~500k faces); an exception
+    // out of it would escape `runToolCase` UNCAUGHT and abort the whole lane
+    // instead of producing the ERROR row L1 counts. Caught here rather than
+    // in drag.d, whose ops call sites have their own handling (review fix,
+    // task 1370). First failure latches and the rest short-circuit, so one
+    // stalled endpoint costs one timeout, not four.
+    string probeErr;
+    Vec3 probePos(int idx) {
+        if (probeErr.length) return Vec3(0, 0, 0);
+        try   { return vertexPos(idx); }
+        catch (Exception e) { probeErr = "vertexPos: " ~ e.msg; return Vec3(0, 0, 0); }
+    }
+    LayerInfo probeInfo() {
+        if (probeErr.length) return LayerInfo.init;
+        try   { return activeLayerInfo(); }
+        catch (Exception e) { probeErr = "activeLayerInfo: " ~ e.msg; return LayerInfo.init; }
+    }
+
+    auto before = probeInfo();
+    Vec3 posBefore = probePos(0);
+
+    // 3. WARM-UP — one interactive attr write, discarded. It has to be
+    // separate: the first write is what sets `built` and populates the
+    // tool's `before` baseline, so the steady-state rebuild only starts with
+    // the second.
+    if (!scriptInteractive(format("tool.attr %s %s %s", c.toolId, c.attr, c.v0))) {
+        res.status = CaseStatus.ERROR;
+        res.detail = format("warmup tool.attr %s %s failed", c.attr, c.v0);
+        return res;
+    }
+    auto afterV0 = probeInfo();
+    Vec3 posAfterV0 = probePos(0);
+
+    // 3b. A SECOND pre-window write, at `v1` — because the measured window
+    // ALTERNATES the two values and one probe can only witness one of them.
+    // Without this, `v1` runs on 3 of 5 repeats completely unwitnessed, and
+    // a row whose `v1` lands on a tool's refusal branch (`edge_bevel.d`'s
+    // `if (width_ == 0.0f) { restore; refresh; return; }`, and the same
+    // `x_ == 0` shape in poly_bevel / poly_extrude / edge_extrude /
+    // vertex_bevel / vertex_extrude) keeps every count at `repeats` — I8a,
+    // I8b and I8c all green — while 3 of 5 samples are pure wrapper. Since
+    // the reported median RANKS those samples, the published median and the
+    // published kernel share would then be blends of a real kernel and a
+    // refusal (review fix, task 1370; mutation M8).
+    if (!scriptInteractive(format("tool.attr %s %s %s", c.toolId, c.attr, c.v1))) {
+        res.status = CaseStatus.ERROR;
+        res.detail = format("probe tool.attr %s %s failed", c.attr, c.v1);
+        return res;
+    }
+    auto afterV1 = probeInfo();
+    Vec3 posAfterV1 = probePos(0);
+
+    if (probeErr.length) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "geometry probe failed: " ~ probeErr;
+        return res;
+    }
+
+    // 4. I8b's evidence, collected BEFORE the measured window so the probes'
+    // own HTTP round trips cannot land samples in it.
+    //
+    // WHAT IS NOT EVIDENCE HERE, and why it is spelled out: `mutationVersion`.
+    // The command lane's sanity check (runCommandCase) uses it to cover pure
+    // deforms, and copying that here produced an invariant that COULD NOT
+    // FAIL — verified by mutation, task 1370: driving `edge.extrude`'s
+    // `extrude` attr (whose kernel no-ops below `width < 1e-6`) left
+    // 9409/9216 verts/faces untouched and still bumped the version 27841 →
+    // 27842, and I8b passed. The bump is `MeshSnapshot.restore`'s own
+    // `commitChange(MeshChangeAll)`, which every rebuildPreview performs
+    // BEFORE the kernel runs. So the version moves once per rebuild whether
+    // or not the tool did anything, and reading it here is reading the
+    // wrapper, not the tool.
+    //
+    // What is left is COUNTS plus one vertex POSITION. Its limit, stated so
+    // nobody re-adds the version term to "cover" it: a preview that changes
+    // no count AND leaves vertex 0 where it was is invisible to this clause.
+    // No case in the table is of that shape (every attr-reachable family-1
+    // tool changes counts), and a future one must extend this probe rather
+    // than reach for a version number that always moves.
+    //
+    // BOTH driven values are checked, and BOTH against the PRISTINE mesh —
+    // never against each other. A refusing rebuild still runs the wrapper's
+    // `before.restore(*mesh)` first, so it leaves the mesh exactly pristine;
+    // comparing `v1`'s result against `v0`'s would read that restore as
+    // movement and pass on the refusal it exists to catch.
+    static string fmtGeom(LayerInfo li, Vec3 p) {
+        return format("%d/%d @(%.4f,%.4f,%.4f)", li.vertexCount, li.faceCount,
+                      p.x, p.y, p.z);
+    }
+    bool movedFromPristine(LayerInfo a, Vec3 p) {
+        auto d = p - posBefore;
+        immutable double posDelta = sqrt(cast(double)dot(d, d));
+        return before.faceCount > 0 &&
+            (a.faceCount != before.faceCount
+             || a.vertexCount != before.vertexCount
+             || posDelta > 1e-5);
+    }
+    res.geomBefore  = fmtGeom(before,  posBefore);
+    res.geomAfterV0 = fmtGeom(afterV0, posAfterV0);
+    res.geomAfterV1 = fmtGeom(afterV1, posAfterV1);
+    res.geometryChanged = movedFromPristine(afterV0, posAfterV0)
+                       && movedFromPristine(afterV1, posAfterV1);
+
+    // 5. perfReset HERE — after BOTH pre-window writes, before the repeats.
+    // Earlier and a pre-window rebuild lands in the window (count ==
+    // repeats + 1 per write that leaks in); later and the first repeat is
+    // lost (count == repeats - 1). Either way I8a's exact-equality check is
+    // what catches the slip, which is why it is stated as `== repeats` and
+    // not `> 0`.
+    perfReset();
+
+    // 6. R repeats, ALTERNATING v0/v1. Repeating the same value would be a
+    // no-op for any tool whose evaluate()/onParamChanged checks dirtiness,
+    // and the case would measure zero while counting correctly. The window
+    // therefore OPENS on v0 — the last pre-window write was v1 (step 3b), so
+    // starting on v1 would make the first repeat the very same-value write
+    // this alternation exists to avoid.
+    foreach (r; 0 .. repeats) {
+        double v = (r % 2 == 0) ? c.v0 : c.v1;
+        if (!scriptInteractive(format("tool.attr %s %s %s", c.toolId, c.attr, v))) {
+            res.status = CaseStatus.ERROR;
+            res.detail = format("repeat %d tool.attr %s %s failed", r, c.attr, v);
+            return res;
+        }
+    }
+    auto perf = perfRead();
+
+    long cnt(string cat)  { return (cat in perf) ? perf[cat]["count"].integer : 0; }
+    double us(string cat) { return cast(double)sumNs(perf, cat) / 1000.0; }
+
+    res.toolPreviewCount    = cnt("toolPreview");
+    res.previewRestoreCount = cnt("previewRestore");
+    res.previewRefreshCount = cnt("previewRefresh");
+    res.toolPreviewSumUs    = us("toolPreview");
+    res.previewRestoreSumUs = us("previewRestore");
+    res.previewRefreshSumUs = us("previewRefresh");
+    res.previewKernelUs     = res.toolPreviewSumUs
+                            - res.previewRestoreSumUs - res.previewRefreshSumUs;
+    res.kernelShare = res.toolPreviewSumUs > 0
+        ? res.previewKernelUs / res.toolPreviewSumUs : 0.0;
+
+    // FAIL-FAST on an uninstrumented binary — inherited verbatim from
+    // runCase: the attr calls demonstrably changed geometry, yet no timer
+    // fired, so ./vibe3d was not built with --build=perf and every number
+    // below would be a meaningless zero.
+    if (res.geometryChanged && res.toolPreviewCount == 0
+        && sumNs(perf, "previewRestore") == 0)
+        throw new Exception(
+            "./vibe3d lacks PerfProbe instrumentation (toolPreview stayed 0 "
+            ~ "through a real preview rebuild) — it was not built with "
+            ~ "--build=perf. Re-run without --no-build so the runner builds "
+            ~ "the perf binary, or build it yourself: dub build --build=perf "
+            ~ "--compiler=" ~ LDC2);
+
+    // Carried in the shared fields so the existing table/results plumbing
+    // works: the headline cost of ONE rebuild is the probe's own median
+    // across the R samples (not a harness-side median of per-repeat sums —
+    // one perfReset covers all R repeats, so the ring holds the samples).
+    //
+    // NAMING, stated because it misleads on sight: `kernelMedianUs` /
+    // `kernelP95Us` / `dominantStage` are the OPS lane's field names and in
+    // this lane they carry the WHOLE rebuild (`toolPreview` = wrapper +
+    // kernel), NOT `previewKernelUs`. Everything that leaves this struct
+    // renames them for the reader — the results JSON writes
+    // `toolPreviewMedianUs`, the table column says `rebuild`, and the history
+    // key is `<case>#previewRebuild` — precisely so no consumer reads a
+    // wrapper number under the word "kernel" (review fix, task 1370).
+    res.kernelMedianUs = ("toolPreview" in perf)
+        ? cast(double)perf["toolPreview"]["median_ns"].integer / 1000.0 : 0.0;
+    res.kernelP95Us    = ("toolPreview" in perf)
+        ? cast(double)perf["toolPreview"]["p95_ns"].integer / 1000.0 : 0.0;
+    res.dominantStage  = "toolPreview";
+    res.lastBreakdown  = perf;
+    res.status = CaseStatus.OK;
     return res;
 }
 
@@ -1939,9 +2292,13 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
         foreach (req; requested) if (sc.name.canFind(req)) keepIt = true;
         if (keepIt) scenarios ~= sc;
     }
+    // Same rule as the ops and tools lanes: a filter that matched nothing is
+    // a failure, not a quiet zero. This lane is also invoked by name from the
+    // nightly workflow (review fix, task 1370).
     if (scenarios.length == 0) {
-        writeln("no frame scenarios matched");
-        return 0;
+        stderr.writefln("no frame scenarios matched %s — nothing was measured",
+                        requested);
+        return 1;
     }
 
     FrameScenarioResult[] results;
@@ -2044,6 +2401,368 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
             if (r.status == CaseStatus.OK)
                 p99ByScenario[r.name] = msFromNs(r.stats.p99Ns);
         lib.history.appendHistory(g_repoRoot, curHeader, p99ByScenario, "frames");
+    } catch (Exception e) {
+        stderr.writeln("warning: history append failed: ", e.msg);
+    }
+
+    if (!noBuild)
+        writeln("\nNOTE: ./vibe3d is now the perf buildType binary — run "
+                ~ "`dub build` to restore the modeling debug binary before "
+                ~ "reusing it with --no-build test runs.");
+
+    return failures == 0 ? 0 : failures;
+}
+
+
+// ---------------------------------------------------------------------------
+// `tools` subcommand — invariants, table, entry point (task 1370).
+//
+// The lane exists to produce ONE number: the kernel share of a preview
+// rebuild. Everything below is in service of that number being either
+// TRUSTWORTHY or LOUDLY ABSENT — never quietly wrong.
+// ---------------------------------------------------------------------------
+
+Invariant[] checkToolInvariants(CaseResult[] results, size_t requestedCases) {
+    Invariant[] inv;
+
+    // L1 — LANE-LEVEL: this lane produced the cases it was asked for.
+    //
+    // Why a lane-level clause exists at all, when every per-case clause below
+    // already skips non-OK rows: an ERROR row contributes NOTHING to the exit
+    // code in the `ops` path (`if (r.status != CaseStatus.OK) continue;` in
+    // every invariant loop, and `failures` counts only invariant failures), so
+    // a case whose selection or `tool.set` failed prints ERROR and the run
+    // still exits 0. `checkToolInvariants` inherits that loop shape, so it
+    // would inherit the hole too. L1 closes it from outside: N requested
+    // cases must produce N OK rows and zero ERROR rows.
+    //
+    // This is task 1332's defect in a new dress — a lane that measures
+    // nothing must not be green — and the mutation that proves L1 is live is
+    // renaming a toolId to garbage: `tool.set` then fails, the row goes
+    // ERROR, and the lane must go RED rather than merely print it.
+    {
+        size_t ok = 0, err = 0, skip = 0;
+        foreach (r; results) final switch (r.status) {
+            case CaseStatus.OK:    ok++;   break;
+            case CaseStatus.SKIP:  skip++; break;
+            case CaseStatus.ERROR: err++;  break;
+        }
+        // SKIP is legitimate (a grid-pinned case under --subdivcube) and is
+        // therefore not an error — but it is subtracted from the expected OK
+        // count rather than ignored, so a run that skips everything still has
+        // to say so out loud instead of passing on an empty table.
+        //
+        // `ok > 0` is the conjunct that MAKES it say so, and it is separate
+        // from `requestedCases > 0` on purpose: subtracting `skip` re-opened,
+        // in the arm nobody had mutated, the exact hole the clause was
+        // written to close. `rdmd run.d tools --subdivcube 4` SKIPs the one
+        // row (its pinned n=96 is grid-only) and leaves ok=0, skip=1, err=0,
+        // expectOk=0, requested=1 — every OTHER conjunct true. The per-case
+        // loop below skips non-OK rows, so I8a/I8b/I8c emit nothing, and the
+        // lane printed `SKIP=1` and exited 0 on zero measured rebuilds.
+        // Witnessed by mutation M7 (task 1370).
+        immutable size_t expectOk = requestedCases - skip;
+        bool pass = err == 0 && ok == expectOk && ok > 0 && requestedCases > 0;
+        inv ~= Invariant("L1", "tools lane produced every case it was asked for",
+            pass,
+            format("requested=%d, OK=%d (expected %d), SKIP=%d, ERROR=%d%s",
+                   requestedCases, ok, expectOk, skip, err,
+                   ok == 0 ? " — NOTHING was measured" : ""));
+    }
+
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK || !r.isToolPreview) continue;
+
+        // I8a — the timer fired EXACTLY once per driven rebuild. Not `> 0`:
+        // `> 0` passes when the tool rebuilt its preview once on activation
+        // and then sat silent through every measured repeat, which is the
+        // shape of a driver that stopped working. Exact equality is also what
+        // catches a misplaced perfReset (one early ⇒ repeats+1; one late ⇒
+        // repeats-1).
+        inv ~= Invariant("I8a",
+            format("%s toolPreview fired once per repeat", r.name),
+            r.toolPreviewCount == g_toolRepeats,
+            format("count=%d, expected %d (median %.1f µs)",
+                   r.toolPreviewCount, g_toolRepeats, r.kernelMedianUs));
+
+        // I8b — the mesh actually MOVED. The attribute changing is not
+        // evidence: `edge.extrude`'s `extrude` attr climbs to 0.9 while its
+        // kernel no-ops below `width < 1e-6` (task 1370 Phase 0.2), so a case
+        // asserting "the attribute changed" would be green and measuring a
+        // refusal. Counts + one vertex position, NOT mutationVersion — see
+        // runToolCase step 4 for the mutation that killed the version term.
+        //
+        // BOTH driven values, each against the pristine mesh: the window
+        // alternates them, so a `v1` that lands on a tool's refusal branch
+        // would otherwise be 3 of 5 unwitnessed samples inside the published
+        // median (runToolCase step 3b).
+        inv ~= Invariant("I8b",
+            format("%s preview really moved the mesh (both driven values)", r.name),
+            r.geometryChanged,
+            format("V/F@v0 pristine %s → v0 %s → v1 %s",
+                   r.geomBefore, r.geomAfterV0, r.geomAfterV1));
+
+        // I8c — THE DECOMPOSITION IS CLEAN, and this is the clause the whole
+        // lane's headline number rests on.
+        //
+        // `previewRestore` and `previewRefresh` are opened in the two SHARED
+        // callees, not at the tool site. That is only a valid decomposition
+        // while nothing ELSE restores a snapshot or refreshes the display
+        // inside the perfReset-bounded window — an assumption, not a fact, so
+        // it is CHECKED rather than asserted in a comment: one restore and
+        // one refresh per rebuild, exactly.
+        //
+        // If it fails, the kernel share printed beside it is subtracting more
+        // wrapper than the rebuilds actually paid, i.e. UNDER-reporting the
+        // kernel — the direction that would wrongly retire the remaining
+        // per-tool cases. Hence gating, not informational.
+        bool clean = r.previewRestoreCount == r.toolPreviewCount
+                  && r.previewRefreshCount == r.toolPreviewCount;
+        inv ~= Invariant("I8c",
+            format("%s wrapper decomposition is clean", r.name),
+            clean,
+            format("toolPreview=%d, previewRestore=%d, previewRefresh=%d",
+                   r.toolPreviewCount, r.previewRestoreCount,
+                   r.previewRefreshCount));
+    }
+
+    return inv;
+}
+
+// `repeats` for the tools lane, read by I8a. A module-level global rather
+// than a parameter threaded through `Invariant[]` construction, matching how
+// the ops lane's thresholds are reached.
+int g_toolRepeats = 5;
+
+void printToolsTable(CaseResult[] results, int runN) {
+    writeln();
+    writeln("=== tool preview results (cost of ONE rebuildPreview) ===");
+    // `rebuild` is `toolPreview`'s own median — the WHOLE call. `total` is
+    // that same whole call summed over the R repeats; it was labelled
+    // `wrapper`, which named the thing it is NOT (wrapper = restore +
+    // refresh, the two columns after it). Review fix, task 1370.
+    writefln("%-22s %10s %10s %11s %11s %11s %8s %6s",
+             "case", "rebuild", "p95", "total", "restore", "refresh",
+             "kernel", "share");
+    writefln("%-22s %10s %10s %11s %11s %11s %8s %6s",
+             "", "med (us)", "(us)", "sum (us)", "sum (us)", "sum (us)",
+             "sum (us)", "");
+    writeln("-".replicate(100));
+    foreach (r; results) {
+        final switch (r.status) {
+            case CaseStatus.OK:
+                writefln("%-22s %10.1f %10.1f %11.1f %11.1f %11.1f %8.1f %5.1f%%",
+                         r.name, r.kernelMedianUs, r.kernelP95Us,
+                         r.toolPreviewSumUs, r.previewRestoreSumUs,
+                         r.previewRefreshSumUs, r.previewKernelUs,
+                         r.kernelShare * 100.0);
+                break;
+            case CaseStatus.SKIP:
+                writefln("%-22s  SKIP  %s", r.name, r.detail);
+                break;
+            case CaseStatus.ERROR:
+                writefln("%-22s  ERROR %s", r.name, r.detail);
+                break;
+        }
+    }
+    writeln("-".replicate(100));
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK) continue;
+        writefln("  %s: n=%d (%d verts / %d faces), %d rebuilds, "
+                 ~ "geometry pristine %s → v0 %s → v1 %s",
+                 r.name, r.effectiveN, r.effectiveVertexCount,
+                 r.effectiveFaceCount, r.toolPreviewCount,
+                 r.geomBefore, r.geomAfterV0, r.geomAfterV1);
+    }
+    // Same debt runCase closed in task 1359: a row measured at its own pinned
+    // size printed under a header that says another number is a different
+    // benchmark, and the reader has no other way to see it.
+    foreach (r; results) {
+        if (r.status != CaseStatus.OK) continue;
+        if (r.effectiveN == 0 || r.effectiveN == runN) continue;
+        writefln("  note: %s ran at its own pinned size n=%d, NOT the run's "
+                 ~ "n=%d — see ToolCase.meshN / TOOLCASE_NMAX",
+                 r.name, r.effectiveN, runN);
+    }
+    writeln();
+    writeln("  'med' is ONE rebuildPreview, NOT one preview frame: a real drag");
+    writeln("  additionally pays the frame loop's cache invalidation, GPU upload");
+    writeln("  and draw, which this driver never triggers between calls.");
+}
+
+void writeToolsResultsJson(string path, string meshType, int n, string viewport,
+                           int repeats, CaseResult[] results) {
+    auto a = appender!string();
+    a.put("{\n");
+    a.put(format(`  "buildType": "perf",` ~ "\n"));
+    a.put(format(`  "compiler": "ldc2 1.42.0",` ~ "\n"));
+    a.put(format(`  "host": "%s",` ~ "\n", Socket.hostName));
+    a.put(format(`  "meshType": "%s",` ~ "\n", meshType));
+    a.put(format(`  "n": %d,` ~ "\n", n));
+    a.put(format(`  "viewport": "%s",` ~ "\n", viewport));
+    a.put(format(`  "repeats": %d,` ~ "\n", repeats));
+    a.put(`  "cases": [` ~ "\n");
+    foreach (i, r; results) {
+        a.put("    {\n");
+        a.put(format(`      "name": "%s",` ~ "\n", r.name));
+        a.put(format(`      "status": "%s",` ~ "\n", r.status.to!string));
+        if (r.status == CaseStatus.OK) {
+            a.put(format(`      "n": %d,` ~ "\n", r.effectiveN));
+            a.put(format(`      "vertexCount": %d,` ~ "\n", r.effectiveVertexCount));
+            a.put(format(`      "faceCount": %d,` ~ "\n", r.effectiveFaceCount));
+            a.put(format(`      "toolPreviewMedianUs": %s,` ~ "\n", jsonNum(r.kernelMedianUs)));
+            a.put(format(`      "toolPreviewP95Us": %s,` ~ "\n", jsonNum(r.kernelP95Us)));
+            a.put(format(`      "toolPreviewCount": %d,` ~ "\n", r.toolPreviewCount));
+            a.put(format(`      "toolPreviewSumUs": %s,` ~ "\n", jsonNum(r.toolPreviewSumUs)));
+            a.put(format(`      "previewRestoreSumUs": %s,` ~ "\n", jsonNum(r.previewRestoreSumUs)));
+            a.put(format(`      "previewRefreshSumUs": %s,` ~ "\n", jsonNum(r.previewRefreshSumUs)));
+            a.put(format(`      "previewKernelUs": %s,` ~ "\n", jsonNum(r.previewKernelUs)));
+            a.put(format(`      "kernelShare": %s,` ~ "\n", jsonNum(r.kernelShare)));
+            a.put(format(`      "geometryChanged": %s,` ~ "\n",
+                         r.geometryChanged ? "true" : "false"));
+            a.put(`      "breakdown": ` ~ r.lastBreakdown.toString() ~ "\n");
+        } else {
+            a.put(format(`      "detail": "%s"` ~ "\n", r.detail.replaceQuotes));
+        }
+        a.put(i + 1 < results.length ? "    },\n" : "    }\n");
+    }
+    a.put("  ]\n}\n");
+    std.file.write(path, a.data);
+}
+
+int runToolsSubcommand(string meshType, int meshParam, string viewport,
+                       ushort port, string[] requested, int repeats,
+                       bool noBuild) {
+    g_toolRepeats = repeats;
+
+    ToolCase[] cases;
+    foreach (tc; toolCases()) {
+        bool keepIt = requested.length == 0;
+        foreach (req; requested) if (tc.name.canFind(req)) keepIt = true;
+        if (keepIt) cases ~= tc;
+    }
+    // "no cases matched" is a FAILURE here, not a quiet zero: this lane is
+    // wired into a scheduled workflow by NAME, so a typo in the filter would
+    // otherwise buy a green nightly step with zero coverage — precisely the
+    // "lane that measures nothing" defect the L1 invariant exists for,
+    // arriving one step earlier.
+    //
+    // It does NOT cover a typo in the SUBCOMMAND, and cannot: an
+    // unrecognised leading token never reaches this lane at all — the
+    // dispatch in main() accepts exactly `ops|frames|flame|tools` and leaves
+    // anything else as `ops` plus a case-name substring, so `run.d tolls`
+    // lands in the ops lane's own no-match guard. That guard is therefore
+    // now a failure too (review fix, task 1370).
+    if (cases.length == 0) {
+        stderr.writefln("no tool cases matched %s — nothing was measured",
+                        requested);
+        return 1;
+    }
+
+    killStaleVibe(port);
+    string logPath = "/tmp/vibe3d_perf_tools.log";
+    writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
+             port, viewport);
+    if (!launchVibe(port, viewport, logPath)) return 1;
+    writeln("  vibe3d is up");
+
+    CaseResult[] results;
+    foreach (tc; cases) {
+        write("  running ", tc.name, " ... ");
+        stdout.flush();
+        auto r = runToolCase(tc, meshParam, meshType, repeats);
+        final switch (r.status) {
+            case CaseStatus.OK:    writeln("OK");                     break;
+            case CaseStatus.SKIP:  writeln("SKIP (", r.detail, ")");  break;
+            case CaseStatus.ERROR: writeln("ERROR (", r.detail, ")"); break;
+        }
+        results ~= r;
+    }
+
+    printToolsTable(results, meshParam);
+
+    string outPath = buildPath(g_repoRoot, "tools", "perf", "tools_results.json");
+    writeToolsResultsJson(outPath, meshType, meshParam, viewport, repeats, results);
+    writeln("\nWrote ", outPath);
+
+    int failures = 0;
+    writeln();
+    writeln("=== tool preview invariants ===");
+    auto invs = checkToolInvariants(results, cases.length);
+    int invFail = 0;
+    foreach (iv; invs) {
+        writefln("  [%s] %-4s %-52s  %s",
+                 iv.pass ? "PASS" : "FAIL", iv.id, iv.desc, iv.detail);
+        if (!iv.pass) { invFail++; failures++; }
+    }
+
+    writeln();
+    writeln("=== verdict ===");
+    writefln("  invariants: %d/%d passed", invs.length - invFail, invs.length);
+    writeln(failures == 0 ? "  OVERALL: PASS" : "  OVERALL: FAIL");
+
+    // History under its OWN kind. `--trend` and `--vs-last` filter by kind,
+    // so a `tools` row must never be compared against an `ops` row: the two
+    // carry different metrics under different key spaces (kernelApply median
+    // vs one preview rebuild), and mixing them would produce a day-over-day
+    // "regression" that is a change of subject.
+    try {
+        // The header describes the mesh that was MEASURED, not the one the
+        // run was invoked with. Every ToolCase pins its own `meshN`
+        // (TOOLCASE_NMAX), so filing rows under the run's `--n` made a
+        // `tools` run without `--n 96` incomparable with the nightly's —
+        // `comparableEntries` keys on `header.n` — even though both measured
+        // n=96, and the only thing holding the two together was a comment in
+        // perf.yaml telling the operator to pass the right flag. Derived
+        // here instead (review fix, task 1370). `faceCount` likewise: it was
+        // hardcoded 0 while the case knows its real count.
+        //
+        // Mixed pinned sizes have no single header that describes them, so
+        // that case falls back to the run's own parameter rather than filing
+        // every row under one row's n. One case ships today; the fallback is
+        // for the fifteen that follow.
+        int  histN     = meshParam;
+        long histFaces = 0;
+        {
+            bool first = true, agree = true;
+            foreach (r; results) {
+                if (r.status != CaseStatus.OK) continue;
+                if (first) {
+                    histN = r.effectiveN;
+                    histFaces = r.effectiveFaceCount;
+                    first = false;
+                } else if (r.effectiveN != histN) {
+                    agree = false;
+                }
+            }
+            if (!agree) { histN = meshParam; histFaces = 0; }
+        }
+        auto curHeader = currentHeader(meshType, histN, histFaces, viewport, repeats);
+        double[string] byCase;
+        foreach (r; results) {
+            if (r.status != CaseStatus.OK) continue;
+            // BOTH keys carry the '#'-suffix the ops lane uses for
+            // `#snapQuery`. The median goes in as `#previewRebuild` and NOT
+            // under the bare case name: bare is the ops lane's key space for
+            // a kernelApply median, and a row landing there beside
+            // `#kernelShare` reads as this tool's kernel when it is in fact
+            // the whole rebuild, wrapper included (review fix, task 1370;
+            // the results JSON already named it `toolPreviewMedianUs`).
+            byCase[r.name ~ "#previewRebuild"] = r.kernelMedianUs;
+            // The share under its own key. It is the number this lane exists
+            // to produce, so it belongs in the record.
+            //
+            // RECORDED, NOT GATED, and the difference is worth stating
+            // because the '#snapQuery' precedent gates: `checkVsLast` returns
+            // early unless the LATEST history entry is an `ops` run
+            // (lib/history.d), so no `tools` row is ever compared day over
+            // day. It shows up in `--trend` (which filters by kind and so
+            // keeps this table separate from ops' µs table) and nowhere else.
+            // Gating it would mean teaching checkVsLast a second kind — a
+            // deliberate follow-up, not something to imply here.
+            byCase[r.name ~ "#kernelShare"] = r.kernelShare;
+        }
+        lib.history.appendHistory(g_repoRoot, curHeader, byCase, "tools");
     } catch (Exception e) {
         stderr.writeln("warning: history append failed: ", e.msg);
     }
@@ -2347,6 +3066,7 @@ int main(string[] args) {
     if (helpInfo.helpWanted) {
         writeln("usage: ./run.d [ops] [options] [case-name-substring...]");
         writeln("       ./run.d frames [options] [scenario-name-substring...]");
+        writeln("       ./run.d tools  [options] [tool-case-name-substring...]");
         writeln("       ./run.d flame <case-or-scenario-name> [options]");
         writeln("       ./run.d --trend [--last N]");
         writeln("  bare invocation == `ops` (the per-tool matrix).");
@@ -2375,7 +3095,8 @@ int main(string[] args) {
     // exactly as before.
     string subcommand = "ops";
     if (requested.length > 0 &&
-        (requested[0] == "ops" || requested[0] == "frames" || requested[0] == "flame")) {
+        (requested[0] == "ops" || requested[0] == "frames"
+         || requested[0] == "flame" || requested[0] == "tools")) {
         subcommand = requested[0];
         requested = requested[1 .. $];
     }
@@ -2460,6 +3181,10 @@ int main(string[] args) {
         return runFramesSubcommand(meshType, meshParam, viewport, port, requested,
                                    updateFramesBaseline, noAbsolute, noBuild, ciMode);
 
+    if (subcommand == "tools")
+        return runToolsSubcommand(meshType, meshParam, viewport, port, requested,
+                                  repeats, noBuild);
+
     // Build the matrix.
     Case[] allCases;
     foreach (t; [Tool.move, Tool.rotate, Tool.scale])
@@ -2483,9 +3208,17 @@ int main(string[] args) {
         if (keepIt) cmdCases ~= cc;
     }
 
+    // A filter that matched NOTHING is a failure, not a quiet zero — and
+    // this guard is where an unrecognised SUBCOMMAND lands, because the
+    // dispatch in main() accepts exactly `ops|frames|flame|tools` and turns
+    // every other leading token into an ops case-name substring. `run.d
+    // tolls --no-build --n 96` used to print one line and exit 0, so a typo
+    // in a workflow step that names its lane by hand bought a green run with
+    // zero coverage (review fix, task 1370). Bare `run.d` never reaches
+    // here: with no filter both tables are non-empty.
     if (cases.length == 0 && cmdCases.length == 0) {
-        writeln("no cases matched");
-        return 0;
+        stderr.writefln("no cases matched %s — nothing was measured", requested);
+        return 1;
     }
 
     killStaleVibe(port);

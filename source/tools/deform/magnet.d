@@ -21,6 +21,7 @@ import change_bus : MeshEditScope;
 import document : primaryModelSpace;
 
 import std.math : sqrt;
+import perf_probe : g_perf, Cat;
 
 alias MeshVertexEditFactory = MeshVertexEdit delegate();
 
@@ -259,6 +260,10 @@ public:
 private:
     void rebuildPreview() {
         if (!active || pickedVi < 0) return;
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
 
         if (strength_ <= 0.0f) {

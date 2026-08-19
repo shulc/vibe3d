@@ -3,6 +3,7 @@ module display_sync;
 import mesh : Mesh, GpuMesh;
 import mesh_edit_delta : MeshEditScope;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
+import perf_probe : g_perf, Cat;
 
 /// Change classes that require a DISPLAY refresh (GPU upload + pick-cache
 /// resize/invalidate) of the active mesh — the mask the bus-driven refresh
@@ -101,6 +102,20 @@ void refreshDisplay(Mesh* target, GpuMesh* gpu,
     // those paths behave exactly as before this seam landed.
     if (activeMeshResolver !is null && target !is activeMeshResolver())
         return; // recorded layer not on screen — display refresh is a no-op
+
+    // Perf (task 1370): the REFRESH half of every interactive-tool preview
+    // rebuild — a full `gpu.upload` plus three cache resize/invalidate pairs.
+    // Timed here, once, rather than at each caller — see Cat.previewRefresh.
+    //
+    // Opened AFTER the background-mesh gate above, deliberately: a no-op
+    // return must not land a ~0 ns sample, or `count` would report refusals
+    // as work (the same rule the tool-side `Cat.toolPreview` timers follow,
+    // and task 1370's M1 mutation shows what ignoring it buys).
+    //
+    // This is the shared primitive, so app.d's pull guard and the other
+    // interactive tools reach it too; that the perf lane's window contains
+    // ONLY its driven rebuilds is checked by invariant I8c, not assumed.
+    auto zRefresh = g_perf.scope_(Cat.previewRefresh);
 
     gpu.upload(*target);
     vc.resize(target.vertices.length);                          vc.invalidate();

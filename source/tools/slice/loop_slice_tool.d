@@ -27,6 +27,7 @@ import selection_product : addNewLoopEdgesAndVerts;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import document : primaryModelSpace;
+import perf_probe : g_perf, Cat;
 
 alias LoopSliceEditFactory = MeshSessionEdit delegate();
 
@@ -1516,6 +1517,10 @@ private:
     void rebuildCut() {
         if (!before_.filled || seeds_.length == 0) return;
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
         // Reference-captured semantics (task 0429): every write of the
         // standing preview into the real mesh — arm, re-arm, scrub,
         // HUD/panel/param regrade, ALL of which funnel through this method —

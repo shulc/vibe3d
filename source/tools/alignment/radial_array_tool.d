@@ -23,6 +23,7 @@ import tools.create.create_common : screenToConstructionPlane;
 
 import std.math : sin, cos, atan2, PI;
 import std.json : JSONValue;
+import perf_probe : g_perf, Cat;
 
 /// The interactive tool reuses the dedicated MeshSessionEdit record
 /// command (a before/after MeshSnapshot pair) — mirroring PolyExtrudeTool's
@@ -528,6 +529,10 @@ private:
 
     void rebuildPreview() {
         if (!active || mesh is null || !before.filled) return;
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
         if (count_ <= 1) {
             built = false;

@@ -30,10 +30,16 @@ string historyPath(string repoRoot, string host) {
 
 // Appends one line: the RunHeader fields + a unix timestamp + a per-case (or
 // per-scenario) median map. `medians` is {caseName: kernelApplyMedianUs} for
-// `ops`, {scenarioName: p99Ms} for `frames` — the caller picks the metric,
-// this module is metric-agnostic. `kind` ("ops" / "frames") tags the entry so
-// readers can keep the two metric spaces apart; entries written before the
-// tag existed are classified by entryKind()'s name-shape fallback.
+// `ops`, {scenarioName: p99Ms} for `frames`, {caseName: one-rebuildPreview
+// median µs} for `tools` — the caller picks the metric, this module is
+// metric-agnostic. `kind` ("ops" / "frames" / "tools") tags the entry so
+// readers can keep the metric spaces apart; entries written before the tag
+// existed are classified by entryKind()'s name-shape fallback.
+//
+// `tools` MUST carry its explicit tag: its case names carry a '/' exactly
+// like ops case names do, so the fallback would file them as `ops` and
+// `--trend` would put one preview rebuild next to a kernelApply median in
+// one drift table (task 1370).
 void appendHistory(string repoRoot, RunHeader h, double[string] medians,
                    string kind = "") {
     string dir = historyDir(repoRoot);
@@ -63,14 +69,16 @@ void appendHistory(string repoRoot, RunHeader h, double[string] medians,
 
 struct HistoryEntry {
     long   ts;
-    string kind;          // "ops" / "frames"; "" on pre-tag entries
+    string kind;          // "ops" / "frames" / "tools"; "" on pre-tag entries
     RunHeader header;
     double[string] medians;
 }
 
 // The entry's metric space. Pre-tag entries are classified by name shape:
 // every ops case name carries a '/' (tool/axis or verb/type/extent); no
-// frames scenario name does.
+// frames scenario name does. The fallback CANNOT see `tools` entries — their
+// names carry a '/' too — which is why every `tools` append passes the tag
+// explicitly (task 1370). Only pre-tag entries reach the fallback at all.
 string entryKind(const ref HistoryEntry e) {
     if (e.kind.length) return e.kind;
     import std.algorithm : canFind, all;

@@ -17,6 +17,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
+import perf_probe : g_perf, Cat;
 
 // Reuses the generic before/after-snapshot record command (MeshSessionEdit),
 // same as tools/poly_inset_tool.d / tools/mirror.d / tools/tack.d — see
@@ -258,6 +259,10 @@ private:
     // never incrementally mutate the already-welded mesh.
     void rebuildPreview() {
         if (!active) return;
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
         if (!mesh.hasAnySelectedVertices()) {
             built = false;

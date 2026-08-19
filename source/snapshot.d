@@ -6,6 +6,7 @@ import std.array : array;
 import mesh;
 import math;
 import change_bus : MeshChangeAll;
+import perf_probe : g_perf, Cat;
 
 // ---------------------------------------------------------------------------
 // MeshSnapshot — full pre-apply mesh + selection + subpatch state, used by
@@ -97,6 +98,23 @@ struct MeshSnapshot {
     }
 
     void restore(ref Mesh mesh) const {
+        // Perf (task 1370): the RESTORE half of every interactive-tool
+        // preview rebuild — ~16 array dups, `faces.map!dup`, plus
+        // `buildLoops()` + `resizeAllMeshMaps()` below. Timed HERE, once,
+        // instead of sixteen times at the `rebuildPreview` sites, so two
+        // edits decompose the preview wrapper for every tool that shares it.
+        //
+        // The category is named for the use that motivated it, but the timer
+        // is on the PRIMITIVE: undo/redo restore through here too. That is
+        // only sound because the perf lane's window is bounded by
+        // `perfReset` and contains nothing but the driven rebuilds — and
+        // that is CHECKED, not assumed: invariant I8c in tools/perf/run.d
+        // requires previewRestore.count == toolPreview.count exactly, so an
+        // unexpected restore inside the window turns the lane red instead of
+        // quietly inflating the wrapper's share.
+        //
+        // No-op in the default build (PerfProbe version gate).
+        auto zRestore = g_perf.scope_(Cat.previewRestore);
         mesh.vertices                    = vertices.dup;
         mesh.edges                       = edges.dup;
         mesh.faces                       = faces.map!(f => f.dup).array;

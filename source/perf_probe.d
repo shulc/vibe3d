@@ -25,8 +25,28 @@ module perf_probe;
 import core.time : MonoTime, Duration;
 
 /// Measurement categories. The first block are timers (recorded via
-/// `scope_`); the last two are counters (recorded via `count`). Ordering
-/// is stable so `toJson` emits a predictable key order.
+/// `scope_`); the trailing block are counters (recorded via `count`).
+///
+/// ORDINALS ARE NOT A CONTRACT — names are (task 1370). The only ordinal
+/// law is the PARTITION: every timer must sit below `firstCounter` and
+/// every counter at or above it, because that is what `recordNs`/`count`
+/// branch on and what sizes `timers_`/`counters_`. A new TIMER therefore
+/// goes at the end of the timer block — i.e. immediately BEFORE
+/// `falloffEvalCount` — which shifts every counter's ordinal by one, and
+/// that is fine: `counters_` is indexed relative (`c - firstCounter`),
+/// both array lengths are computed from the enum at compile time,
+/// `toJson` keys by member NAME, and neither `tools/perf/baseline.json`
+/// nor `tools/perf/history/*.jsonl` stores an ordinal. The one place that
+/// casts — `toolpipe/pipeline.d:perfCatFor` — round-trips
+/// `cast(int)Cat.pipeX` back through `cast(Cat)`, so it moves with the
+/// enum. Verified by grep for `cast(Cat)` / `cast(int)Cat` / `Cat.max` /
+/// `Cat.min` / `to!Cat` before the 1370 insertion.
+///
+/// An earlier version of this comment said ordering "is stable so `toJson`
+/// emits a predictable key order". It read as a contract and it was not
+/// one: `toJson` emits a JSON OBJECT, whose key order no consumer may rely
+/// on, and every consumer in-tree looks keys up by name. Key order does
+/// change when a category is inserted mid-enum; nothing depends on it.
 enum Cat {
     // --- timers ---
     pipeSymmetry,
@@ -57,6 +77,38 @@ enum Cat {
     viewcacheRebuild,  // screen-space pick-cache invalidate (camera/mesh change)
     hoverPick,         // per-frame hover pick (GPU ID-FBO + BVH face raycast)
     subpatchPreview,   // OSD subpatch preview rebuild
+    // --- interactive-tool preview rebuild (task 1370) ---
+    //
+    // THREE timers, and the third minus the other two is the point. Sixteen
+    // tools rebuild their standing preview on every drag frame / every
+    // interactive attribute scrub, and every one of them has the same shape:
+    //
+    //     before.restore(*mesh);   // <- previewRestore
+    //     <the tool's own kernel>  // <- what we actually want to watch
+    //     refreshCaches();         // <- previewRefresh (upload + cache resize)
+    //
+    // `toolPreview` wraps the whole method; `previewRestore` and
+    // `previewRefresh` are opened ONCE EACH in the two shared callees
+    // (`snapshot.d:MeshSnapshot.restore`, `display_sync.d:refreshDisplay`)
+    // rather than sixteen times at the tool sites. Inside a `perfReset`-
+    // bounded single-attribute window there is no OTHER restore or refresh
+    // running, so those two decompose the wrapper for every one of the
+    // sixteen tools at the cost of two edits.
+    //
+    // The kernel is `toolPreview - previewRestore - previewRefresh`.
+    // It is deliberately NOT `toolPreview - cacheInvalidate - gpuUpload`:
+    // those two are opened in app.d's MAIN FRAME LOOP (`app.d:gpuUpload`,
+    // `app.d:cacheInvalidate`), not inside the preview call, so subtracting
+    // them mixes frame-loop samples into a command-path window and the sign
+    // of the result depends on how many frames happened to render.
+    //
+    // Nesting is deliberate and the JSON keys are distinct, so there is no
+    // within-category double count — only a naive cross-category SUM would
+    // count the restore/refresh twice (same caveat as `viewcacheRebuild`
+    // nesting inside `cacheInvalidate`; see app.d).
+    toolPreview,       // one whole rebuildPreview()/rebuildCut() call
+    previewRestore,    // MeshSnapshot.restore — the ~16 array dups + buildLoops
+    previewRefresh,    // display_sync.refreshDisplay — gpu.upload + cache resize
     // --- counters ---
     falloffEvalCount,
     vertsTouched,

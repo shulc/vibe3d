@@ -25,6 +25,7 @@ import tools.transform.rotate : RotateTool;
 import tools.transform.scale : ScaleTool;
 
 import std.json : JSONValue;
+import perf_probe : g_perf, Cat;
 
 /// The interactive tool reuses the dedicated MeshSessionEdit record command
 /// (a before/after MeshSnapshot pair OR an operation-log MeshEditDelta) — the
@@ -593,6 +594,10 @@ private:
     // RE-RUN, never vertex-transform the post-extend ridge.
     void rebuildPreview() {
         if (!active) return;
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
         auto mask = currentMask();
         size_t n = mesh.extendEdgesByMask(mask, inset_, shift_,

@@ -36,6 +36,28 @@ bool script(string cmd) {
     }
 }
 
+// `script()`, but on /api/script?interactive=true — which raises the app's
+// `formsInteractiveLatch` for the dispatch, so a `tool.attr` line reaches
+// `Tool.notifyInteractiveParamChanged` instead of the plain
+// `onParamChanged` (http_server.d's route_apiScript; commands/tool/attr.d).
+//
+// That distinction IS the tool-preview driver (task 1370): the sixteen
+// family-1 tools guard their `rebuildPreview()` behind
+// `if (interactiveParamEdit)`, and their `evaluate()` is an empty body — so
+// a `tool.attr` posted through plain /api/command or /api/script is inert
+// (measured: vertex/edge/face counts identical before and after), while the
+// same line posted here produces EXACTLY ONE `rebuildPreview()`. One call,
+// one preview rebuild, no drag synthesis and no dividing by a frame count.
+bool scriptInteractive(string cmd) {
+    try {
+        auto resp = post(g_baseUrl ~ "/api/script?interactive=true", cmd);
+        auto j = parseJSON(cast(string)resp);
+        return ("status" in j) && j["status"].str == "ok";
+    } catch (Exception e) {
+        return false;
+    }
+}
+
 void resetMesh(string type, int n) {
     string key = (type == "subdivcube") ? "levels" : "n";
     postUrl(format("/api/reset?type=%s&%s=%d", type, key, n));

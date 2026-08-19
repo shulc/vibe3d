@@ -10,7 +10,7 @@ name: nightly-perf
 # workstation, and a daytime build would both slow the desktop and pollute
 # any concurrently-running measurement.
 #
-# Three signals, two of them gating:
+# Four signals, three of them gating:
 #   1. ops absolute vs committed baseline — RECORDED ONLY for now
 #      (continue-on-error): the Jun-07 baseline is knowingly stale and red
 #      (see doc/tasks/backlog/0680 + the 2026-08-18 audit); re-baselining
@@ -20,7 +20,11 @@ name: nightly-perf
 #      +20% over the previous comparable nightly fails the run. This is the
 #      "new regression since yesterday" detector that stays meaningful even
 #      while (1) is red with known debt.
-#   3. frames --ci counter invariants — GATING (machine-stable counters
+#   3. tools preview invariants — GATING. The cost of ONE rebuildPreview for
+#      the sixteen tools that rebuild a standing preview every drag frame,
+#      plus the counts that make that number trustworthy (task 1370). No
+#      absolute baseline, so nothing here can be stale-red.
+#   4. frames --ci counter invariants — GATING (machine-stable counters
 #      only; p99/hitch budgets are recorded in the log, not gated — see
 #      doc/frame_scenarios_ci_plan.md for why F-I4/GC is host-flaky).
 
@@ -92,8 +96,45 @@ jobs:
       if: always()
       run: rdmd tools/perf/run.d --trend --last 14 > trend.log 2>&1 || true
 
+    - name: 'Tool preview cost (tools)'
+      id: tools
+      # `always()` for the same reason the trend step carries it: a red step
+      # earlier in the job must not DELETE this lane's diagnosis. The final
+      # gate still aggregates every outcome, so this changes what the log
+      # contains, never what the job decides (review fix, task 1370).
+      if: always()
+      # AFTER the trend step, deliberately. `--vs-last` and `--trend` both key
+      # on the LATEST history entry, which must still be the ops run above:
+      # this step appends an entry of its own (kind "tools"), and running it
+      # earlier would make vs-last decline to gate ("latest entry is not an
+      # `ops` run") and flip trend's comparable-with-latest filter to this
+      # lane's one-row table. Same ordering constraint the trend step's own
+      # comment states about frames' append.
+      #
+      # GATING from day one, unlike the ops step: this lane has no absolute
+      # baseline to be stale against. Every clause it checks is a machine-
+      # stable COUNT — the timer fired once per driven rebuild (I8a), the
+      # preview really moved the mesh (I8b), the restore/refresh decomposition
+      # is one-to-one (I8c), and the lane produced the cases it was asked for
+      # with zero errors (L1). Nothing here is a hardware-bound budget.
+      #
+      # `--n 96` is now cosmetic, not load-bearing: the history header is
+      # derived from the size the case ACTUALLY ran at (`ToolCase.meshN` /
+      # TOOLCASE_NMAX) rather than from this flag, so a run that forgets it
+      # still files rows comparable with this one. It is kept only so the
+      # printed table's "ran at its own pinned size" note stays quiet.
+      # `--no-build` reuses the perf binary the ops step built (its own
+      # fail-fast aborts if that binary lacks PerfProbe).
+      run: |
+        set -o pipefail
+        env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 DISPLAY=:0 \
+          rdmd tools/perf/run.d tools --no-build --n 96 2>&1 | tee tools.log
+
     - name: 'Frame scenario counter invariants (frames --ci)'
       id: frames
+      # See the tools step: a red lane above must not skip this one and hide
+      # what it would have said. The final gate still requires success.
+      if: always()
       run: |
         set -o pipefail
         env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 DISPLAY=:0 \
@@ -109,11 +150,16 @@ jobs:
           echo "|---|---|"
           echo "| ops absolute vs baseline (recorded) | ${{ steps.ops.outcome }} |"
           echo "| day-over-day --vs-last (gating) | ${{ steps.vslast.outcome }} |"
+          echo "| tools preview invariants (gating) | ${{ steps.tools.outcome }} |"
           echo "| frames --ci counters (gating) | ${{ steps.frames.outcome }} |"
           echo ""
           echo "#### vs-last"
           echo '```'
           cat vslast.log 2>/dev/null || echo "(no output)"
+          echo '```'
+          echo "#### tool preview cost"
+          echo '```'
+          grep -A6 "=== tool preview results" tools.log 2>/dev/null || echo "(no output)"
           echo '```'
           echo "#### ops verdict"
           echo '```'
@@ -132,8 +178,10 @@ jobs:
         path: |
           tools/perf/results.json
           tools/perf/frames_results.json
+          tools/perf/tools_results.json
           ops.log
           vslast.log
+          tools.log
           frames.log
           trend.log
         retention-days: 90
@@ -144,6 +192,7 @@ jobs:
       # aggregated until the baseline is regenerated post-0680/snap fixes.
       if: always()
       run: |
-        echo "ops=${{ steps.ops.outcome }} vslast=${{ steps.vslast.outcome }} frames=${{ steps.frames.outcome }}"
+        echo "ops=${{ steps.ops.outcome }} vslast=${{ steps.vslast.outcome }} tools=${{ steps.tools.outcome }} frames=${{ steps.frames.outcome }}"
         [ "${{ steps.vslast.outcome }}" = "success" ] && \
+        [ "${{ steps.tools.outcome }}" = "success" ] && \
         [ "${{ steps.frames.outcome }}" = "success" ]

@@ -231,6 +231,125 @@ it never collides with the ops baseline. On a header mismatch (different
 host/build/mesh/viewport), the absolute lane is skipped and only the
 counter invariants gate.
 
+## `tools` — the cost of ONE preview rebuild (task 1370)
+
+```bash
+rdmd tools/perf/run.d tools --n 96          # the lane
+rdmd tools/perf/run.d tools --no-build      # reuse an existing perf binary
+```
+
+Sixteen tools rebuild a **standing preview on every drag frame** and on every
+interactive attribute scrub. This lane measures one such rebuild.
+
+**The driver is not a drag.** `POST /api/script?interactive=true` with a
+`tool.attr` line raises the app's interactive latch, which is the gate these
+tools' `onParamChanged` sits behind (`evaluate()` is an empty body in every
+one of them), so one HTTP call produces **exactly one** `rebuildPreview()`.
+A synthesized drag would produce ~20 and require dividing by a frame count.
+Posting the same `tool.attr` through plain `/api/command` is **inert** — the
+latch never rises and the tool never rebuilds.
+
+**What the number is.** `med` is one `rebuildPreview`, **not one preview
+frame**: a real drag additionally pays the frame loop's cache invalidation,
+GPU upload and draw, which this driver never triggers between calls. Treat it
+as a strict lower bound on a drag frame.
+
+**The decomposition.** Three timers, and the third column is the point:
+
+| timer | opened in | what it is |
+|---|---|---|
+| `toolPreview` | each tool's `rebuildPreview()` / `rebuildCut()` | the whole call |
+| `previewRestore` | `snapshot.d:MeshSnapshot.restore` | ~16 array dups + `buildLoops` |
+| `previewRefresh` | `display_sync.d:refreshDisplay` | `gpu.upload` + 3 cache resizes |
+
+```
+kernel = toolPreview - previewRestore - previewRefresh
+share  = kernel / toolPreview
+```
+
+Two edits in the shared callees decompose the wrapper for all sixteen tools.
+It is **not** `toolPreview - cacheInvalidate - gpuUpload`: those two are
+opened in app.d's MAIN FRAME LOOP, so that subtraction mixes frame-loop
+samples into a command-path window and its sign depends on the frame rate.
+
+**Measured shares** (n=96 grid, perf build, 2026-08-19) — `vert.merge` 65%,
+`poly.bevel` 89%, `edge.extend` 91%, `poly.extrude`/`smoothShift` 91%,
+`mesh.vertexBevel` 92%, `edge.bevel` 96%, `polyInset` 97%. The shared wrapper
+is 2–35% of a rebuild, so a per-tool case CAN go red on its own kernel: a 2x
+kernel regression takes `k + w` to `2k + w`, a ratio of `1 + share`, i.e.
++65% at the worst share measured — well past the +30% tolerance.
+
+Only the `polyInset` figure comes from this lane. **The other seven were
+measured once by a throwaway script**, off the same three timers but outside
+`run.d`, to answer the one question that decided the scope cut; they are
+recorded here as evidence, not as a standing measurement, and nothing
+re-checks them. That is also why the exclusion table below counts SIXTEEN
+instrumented tools while the lane ships **one case**: the instrumentation is
+lane-wide, the coverage is not.
+
+**Invariants.** `L1` — the lane produced every case it was asked for: N OK,
+0 ERROR, **and `OK > 0`**. A case whose `tool.set`/selection fails prints
+ERROR and would otherwise contribute nothing to the exit code; and a run
+where every row SKIPs (a grid-pinned case under `--subdivcube`) satisfies
+`OK == requested - SKIP` with an empty table, which is why the positive
+count is its own conjunct. `I8a` — `toolPreview.count == repeats` exactly
+(not `> 0`, which passes when the tool rebuilt once on activation and slept
+through every repeat). `I8b` — the mesh really moved, checked for **both**
+driven values and each against the **pristine** mesh, by **counts + one
+vertex position and deliberately NOT `mutationVersion`** (the restore bumps
+the version itself, so that term cannot fail). Both values, because the
+measured window alternates them: several of these tools carry an
+`if (width == 0) { restore; refresh; return; }` branch, and a row whose `v1`
+lands on it keeps every count at `repeats` while feeding pure-wrapper
+samples into the ranked median. Against the pristine mesh, because a
+refusing rebuild restores first — so comparing `v1`'s result against `v0`'s
+would read that restore as movement. `I8c` — one restore and one refresh per
+rebuild, i.e. the decomposition is clean.
+
+`no cases matched` is a FAILURE, not a quiet zero, in this lane and (since
+task 1370's review) in `ops` and `frames` too: all three are invoked by name
+from a scheduled workflow. It is the ops guard that catches a mistyped
+SUBCOMMAND — the dispatch accepts exactly `ops|frames|flame|tools` and
+leaves any other leading token as an ops case-name substring, so `run.d
+tolls` is an ops run with a filter that matches nothing.
+
+**What lands in history.** Under `kind: "tools"` (explicit, because the
+name-shape fallback would file these as `ops`), two keys per case:
+`<case>#previewRebuild` — the median of ONE rebuild, wrapper included — and
+`<case>#kernelShare`. Neither is gated: `checkVsLast` returns early unless
+the latest entry is an `ops` run, so no `tools` row is ever compared day over
+day; they show up in `--trend` and nowhere else. The header records the size
+the case ACTUALLY ran at (`ToolCase.meshN`), not the run's `--n`, so a run
+that forgets `--n 96` still files rows comparable with the nightly's.
+
+**Mesh size is frozen, not searched.** `TOOLCASE_NMAX = 96` in `run.d`,
+chosen once under the perf build against a 200 ms/rebuild ceiling. Recomputing
+it per run would make the number incomparable night to night. The curve is
+steep — 4x the faces costs 13x, and 2.4x more costs 41x again — so raising it
+buys timeout risk, not resolution.
+
+**Coverage: 16 of the 21 tools the task statement counted.** The five that
+are not family-1, with reasons:
+
+| tool | why not |
+|---|---|
+| `mesh.clone` | `rebuildPreview(Vec3 delta)` is called only from `onMouseMotion`, and the tool has no `params()` — neither the attr driver nor a handle drag reaches it |
+| `prim.cube` / `sphere` / `torus` | `primitive_create_tool` is Idle until a viewport gesture, and its preview restores a private `previewMesh` into a separate `previewGpu` |
+| `mesh.mirrorTool` | `rebuildPreviewMesh` — private `previewMesh` + `previewGpu`, never touches the document mesh or the caches |
+| `mesh.bridgeTool` | same private-preview architecture |
+
+**A note for whoever writes the missing-instrumentation sentinel**: scanning
+for `void rebuildPreview(` gets it wrong in BOTH directions. It is blind to
+`rebuildPreviewMesh` by construction and blind to `LoopSliceTool.rebuildCut()`
+— which IS family-1 and IS instrumented — by name, so it cannot see the two
+tools most likely to be forgotten. It also matches
+`create/primitive_create_tool.d:458` (`void rebuildPreview()`) and
+`alignment/clone_tool.d:200` (`void rebuildPreview(Vec3 delta)`), both
+deliberately uninstrumented per the table above — so it reports two FALSE
+POSITIVES as well. Four wrong answers out of a one-line grep; the guard has
+to key on the family (restores a snapshot into the DOCUMENT mesh, then
+`refreshDisplay`), not on the method name.
+
 ## `flame` — attach `perf record` to one case or scenario (task 0197)
 
 `rdmd tools/perf/run.d flame <name>` profiles ONE ops case (drag or one-shot

@@ -26,6 +26,7 @@ import handler : BoxHandler, ToolHandles, gizmoSize, getGizmoPixels, drawWorldSe
 import viewport_scheme : schemeColor, SchemeColor;
 import document : primaryModelSpace;
 import overlay_space : OverlaySpace;
+import perf_probe : g_perf, Cat;
 
 // The interactive commit reuses the generic before/after snapshot edit command
 // (the same MeshSessionEdit the mirror / tack / Slice tools reuse for their
@@ -1047,6 +1048,10 @@ private:
     void rebuildPreview() {
         if (!chainBefore_.filled || latchedPoints_.length == 0) return;
         if (!armedKey_.matches(*mesh)) { dropArmedPreview(); return; }
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
 
         // Task 0429: a standing-preview write into the real mesh (append-
         // latch bake, scrub, pointT/param regrade, peel re-bake — every path

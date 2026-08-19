@@ -16,6 +16,7 @@ import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 
 import std.math : lround;
+import perf_probe : g_perf, Cat;
 
 alias MeshReduceEditFactory = MeshSessionEdit delegate();
 
@@ -168,6 +169,10 @@ private:
     // viewport shows a live preview. Never accumulates: always restore-first.
     void rebuildPreview() {
         if (!active) return;
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
 
         if (mesh.faces.length == 0) {

@@ -16,6 +16,7 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
+import perf_probe : g_perf, Cat;
 
 alias ArrayEditFactory = MeshSessionEdit delegate();
 
@@ -361,6 +362,10 @@ private:
     // WRITE params + RE-RUN from source, never transform the built grid.
     void rebuildPreview() {
         if (!active) return;
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
         auto mask = currentMask();
         size_t n = mesh.arrayFacesGrid(mask, numX_, numY_, numZ_,

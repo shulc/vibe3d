@@ -25,6 +25,7 @@ import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope,
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
+import perf_probe : g_perf, Cat;
 
 /// The interactive tool reuses the dedicated MeshSessionEdit record
 /// command (a before/after MeshSnapshot pair) — analogous to how BoxTool
@@ -533,6 +534,10 @@ private:
     // current extrude/width. Identity params leave the mesh restored (no-op).
     void rebuildPreview() {
         if (!active) return;
+        // Perf (task 1370) — AFTER the guard(s) above, never on the first
+        // line: an early-out must record no sample, or `count` tallies
+        // refusals as work. See Cat.toolPreview for the decomposition.
+        auto zPreview = g_perf.scope_(Cat.toolPreview);
         before.restore(*mesh);
         if (extrude_ == 0.0f && width_ == 0.0f) {
             built = false;
