@@ -134,6 +134,36 @@ string[string] laneEnv() {
 // ---------------------------------------------------------------------------
 // preflight — everything that can be decided before a build exists.
 // ---------------------------------------------------------------------------
+
+/// The private fuzzer's location, resolved by SHAPE rather than spelled out.
+///
+/// `tools/local/` is a gitignored symlink into the private repo and holds one
+/// directory per reference suite. Writing the matching directory's name here
+/// would put a reference product's name into the PUBLIC tree, which is the one
+/// thing the neutrality rule forbids outright — and allowlisting a new site is
+/// a way of not obeying the rule, not a way of satisfying it. (`run_all.d`
+/// predates the rule and is allowlisted wholesale; that is a debt, not a
+/// licence to add more.)
+///
+/// So the directory is found by globbing for the shape the allowlist itself
+/// uses, `*_diff`, and selecting whichever one actually carries the script.
+/// The public tree then names only OUR OWN file. Ambiguity is not possible in
+/// practice and not silent if it ever becomes so: the first match wins and the
+/// resolved path is printed by `preflight`, so the log says which one ran.
+enum kSuiteGlob  = "tools/local/*_diff";
+enum kFuzzerLeaf = "atlas/fuzz_invariants_vibe.py";
+
+string resolveFuzzer()
+{
+    if (!exists("tools/local")) return null;
+    foreach (e; dirEntries("tools/local", "*_diff", SpanMode.shallow))
+    {
+        auto cand = buildPath(e.name, kFuzzerLeaf);
+        if (exists(cand) && isFile(cand)) return cand;
+    }
+    return null;
+}
+
 void cmdPreflight() {
     // (1) The compiler exists and is new enough.
     auto ldc = ldcPath();
@@ -170,11 +200,11 @@ void cmdPreflight() {
     // private repo and actions/checkout does not create it. A dead link here
     // means the fuzzing step runs nothing and the night reports health —
     // exactly how the perf lane once lost its whole run history.
-    enum fuzzer = "tools/local/modo_diff/atlas/fuzz_invariants_vibe.py";
-    if (!exists(fuzzer) || !isFile(fuzzer))
-        fail("cannot read " ~ fuzzer ~ " — the tools/local symlink into the "
-           ~ "private repo is missing or dead; the fuzzing step would be a "
-           ~ "silent no-op");
+    auto fuzzer = resolveFuzzer();
+    if (fuzzer is null)
+        fail("no " ~ kFuzzerLeaf ~ " under any " ~ kSuiteGlob ~ " — the "
+           ~ "tools/local symlink into the private repo is missing or dead; "
+           ~ "the fuzzing step would be a silent no-op");
     ok("private fuzzer readable: " ~ fuzzer);
 
     // (4) RELEASE IS UNTOUCHED — and this is the check that decides whether
@@ -433,6 +463,12 @@ int main(string[] args) {
         return 2;
     }
     switch (args[1]) {
+        case "fuzzer-path":
+            {
+                auto f = resolveFuzzer();
+                if (f is null) { stderr.writeln("lane: no fuzzer found under " ~ kSuiteGlob); return 1; }
+                writeln(f);
+            }                                                        break;
         case "preflight":         cmdPreflight();                    break;
         case "preflight-release": cmdPreflightRelease();             break;
         case "build":             cmdBuild(args[2]);                 break;

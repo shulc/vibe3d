@@ -180,9 +180,16 @@ jobs:
       # own task (1411) with a nine-site list, deliberately not bundled.
       run: |
         set -o pipefail
+        # Resolve BEFORE the pipeline, and refuse an empty answer. Inlining the
+        # substitution would hand `python3 ""` to a step that carries
+        # continue-on-error, i.e. it would restore the silent no-op the
+        # preflight exists to prevent -- with the preflight already green,
+        # because the symlink can die between the two steps.
+        FUZZER="$(rdmd tools/sanitizer/lane.d fuzzer-path)"
+        test -n "$FUZZER" || { echo "::error::fuzzer path did not resolve"; exit 1; }
         env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 \
           ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0:abort_on_error=1:log_path=$PWD/asan-fuzz \
-          xvfb-run -a python3 tools/local/modo_diff/atlas/fuzz_invariants_vibe.py \
+          xvfb-run -a python3 "$FUZZER" \
             --minutes 60 --out "$PWD/fuzz-out" 2>&1 | tee fuzz.log
 
     - name: 'Collect sanitizer reports'
