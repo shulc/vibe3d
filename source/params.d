@@ -676,6 +676,32 @@ string paramSchemaJson(const ref Param p)
     else if (p.hints.hasMinI) v.put(format(`,"min":%d`, p.hints.minI));
     if (p.hints.hasMaxF)      v.put(format(`,"max":%s`, p.hints.maxF));
     else if (p.hints.hasMaxI) v.put(format(`,"max":%d`, p.hints.maxI));
+    // Task 1412 — the ACCEPTED wire tags of an Enum / IntEnum, additive and
+    // empty for every other Kind.
+    //
+    // The `value` field above already carries ONE valid tag (paramToJson
+    // returns the live `*sptr` for Enum and the matching `e.wireTag` for
+    // IntEnum), so this is not "the only way to name a valid tag" — it is the
+    // only way to name the OTHERS. Blind enumeration is not an option on the
+    // caller's side: `injectParamsInto` THROWS on an unknown tag (see the Enum
+    // and IntEnum arms below), so a caller without this list can only ever
+    // replay the one tag it was handed, and every alternative mode of every
+    // enum parameter stays unreachable from outside the UI.
+    //
+    // Costs nothing per request: the whole schema is serialised ONCE at
+    // startup by `Registry.cacheSupportedModes()` and the HTTP thread only
+    // emits the cached text.
+    {
+        auto ch = choicesOf(p);
+        if (ch.length > 0) {
+            v.put(`,"choices":[`);
+            foreach (i, ref c; ch) {
+                if (i > 0) v.put(",");
+                v.put(format(`"%s"`, c[0]));
+            }
+            v.put(`]`);
+        }
+    }
     v.put(`}`);
     return v.data;
 }

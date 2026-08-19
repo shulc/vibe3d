@@ -51,6 +51,13 @@ env:
   # undefined-druntime-symbol errors in third-party packages. lane.d FAILS if
   # this is unset rather than quietly using the shared cache.
   VIBE3D_SAN_DUB_HOME: ${{ github.workspace }}/.dub-sanitizer
+  # Task 1412 — the day --gate=record started being the answer for the coverage
+  # gate. A LITERAL, on purpose: coverage_gate.py reddens once this is more than
+  # RECORD_MAX_DAYS (14) old, so "record" cannot quietly become "forever" by
+  # nobody remembering. It is not the only thing standing between record and
+  # forever any more (the infrastructure clauses redden from day one either
+  # way) — it is the cheap insurance on top.
+  COVERAGE_GATE_SINCE: '2026-08-19'
   # MEASURED, not guessed — the plan wrote `-j 8` while its own trap list said
   # the number had to be measured. Under ASan, on software GL, one instance
   # peaks at 453 MB VmHWM (uninstrumented: 128 MB, so ~3.6x). At -j 6 that is
@@ -237,8 +244,59 @@ jobs:
         # because the symlink can die between the two steps.
         FUZZER="$(rdmd tools/sanitizer/lane.d fuzzer-path)"
         test -n "$FUZZER" || { echo "::error::fuzzer path did not resolve"; exit 1; }
+        echo "$VIBE3D_FUZZ_PID" > "$PWD/fuzz-instance.pid"
+        # --minutes became --search-minutes (task 1412): the sweep and the
+        # random search now carry SEPARATE budgets, because with one shared
+        # budget `sweep_complete` is a function of the clock and a timeout is
+        # indistinguishable from a real coverage hole.
+        #
+        # --instance-pid is what turns an instance death from a silent skip
+        # into a classified finding. Measured: a wedged main thread takes the
+        # whole HTTP surface down, so the socket alone cannot tell a wedge from
+        # a crash — only the pid can.
         VIBE3D_BASE="http://127.0.0.1:${VIBE3D_FUZZ_PORT}" \
-          python3 "$FUZZER" --minutes 60 --out "$PWD/fuzz-out" 2>&1 | tee fuzz.log
+          python3 "$FUZZER" --search-minutes 60 --out "$PWD/fuzz-out" \
+            --instance-pid "$VIBE3D_FUZZ_PID" \
+            --instance-log "$PWD/fuzz-instance.log" 2>&1 | tee fuzz.log
+
+    - name: 'Coverage as a NUMBER (task 1412)'
+      id: fuzz_coverage
+      continue-on-error: true
+      # WHY --width=recipes AND NOT THE WHOLE REGISTRY, TODAY.
+      #
+      # The registry-wide sweep works and was measured end to end on the lane:
+      # 329 subjects, 131.66 s wall, reach 315/315. But that number is off the
+      # MODELING build, and this lane runs `--build=sanitize`. The plan's own
+      # precondition for putting the wide sweep in the night is a full sweep
+      # timed on the INSTRUMENTED binary, and that has not been measured. So the
+      # night gets the narrow width, whose wall time HAS been measured here
+      # (14 subjects, 14.32 s), and the wide one waits for its own number.
+      #
+      # --gate=record for the FINDING (holes) only. The infrastructure clauses
+      # -- floor tripped, partial sweep, reach 0, stale policy, main-thread
+      # timeout, an excluded subject that accepts -- redden in BOTH modes from
+      # the first night. A gate that cannot fail for a fortnight is the defect
+      # this campaign keeps finding, and it is not reintroduced here.
+      run: |
+        set -o pipefail
+        # Resolved ONCE and refused when empty, for the reason the fuzz step
+        # above spells out: the symlink can die between two resolutions, and
+        # this step carries continue-on-error, so an empty path would restore
+        # the silent no-op with a green preflight behind it.
+        FUZZER="$(rdmd tools/sanitizer/lane.d fuzzer-path)"
+        test -n "$FUZZER" || { echo "::error::fuzzer path did not resolve"; exit 1; }
+        ATLAS="$(dirname "$FUZZER")"
+        BASE="http://127.0.0.1:${VIBE3D_FUZZ_PORT}"
+        python3 "$ATLAS/registry_space.py" --base "$BASE" \
+          --out "$PWD/fuzz-out/space.json" --width recipes 2>&1 | tee -a fuzz.log
+        VIBE3D_BASE="$BASE" python3 "$FUZZER" \
+          --out "$PWD/fuzz-out" --width recipes --space "$PWD/fuzz-out/space.json" \
+          --sweep --no-search --sweep-minutes 0 \
+          --instance-pid "$VIBE3D_FUZZ_PID" 2>&1 | tee -a fuzz.log
+        python3 "$ATLAS/coverage_gate.py" \
+          --space "$PWD/fuzz-out/space.json" \
+          --coverage "$PWD/fuzz-out/coverage.json" \
+          --gate record --record-since "$COVERAGE_GATE_SINCE" 2>&1 | tee -a fuzz.log
 
     - name: 'Did the fuzz instance survive (RECORDED: a crash here is a finding)'
       id: fuzz_alive

@@ -203,6 +203,41 @@ struct Registry {
         }
         buf.put(`]`);
 
+        // Task 1412 — the edit modes each id DECLARED it supports.
+        //
+        // `commandModes` / `toolModes` have been cached at startup since the
+        // button-greying work, but nothing published them, so an outside
+        // caller wanting to drive a command in a mode it accepts had to guess
+        // the mode and read the refusal. `/api/buttons/availability` is not a
+        // substitute: that answer is frame-dependent (it folds in the CURRENT
+        // mode and selection), whereas this is the static declaration.
+        //
+        // Emitted exactly the way `commandsNeedingTarget` above is: a pure
+        // read of a post-startup-immutable cache, no factory call. A missing
+        // key means "no restriction", and is emitted as the full list so the
+        // reader never has to know that convention.
+        void putModes(string label, const string[] ids,
+                      const EditMode[][string] cache) {
+            buf.put(format(`,"%s":{`, label));
+            bool firstMode = true;
+            foreach (k; ids) {
+                if (!firstMode) buf.put(",");
+                firstMode = false;
+                const(EditMode)[] ms;
+                if (auto m = k in cache) ms = *m;
+                else ms = [EditMode.Vertices, EditMode.Edges, EditMode.Polygons];
+                buf.put(format(`"%s":[`, k));
+                foreach (i, m; ms) {
+                    if (i > 0) buf.put(",");
+                    buf.put(format(`"%s"`, m));
+                }
+                buf.put(`]`);
+            }
+            buf.put(`}`);
+        }
+        putModes("commandSupportedModes", cmds, commandModes);
+        putModes("toolSupportedModes",    tools, toolModes);
+
         if (includeParams) {
             buf.put(`,"commandParams":{`);
             bool firstCmd = true;
