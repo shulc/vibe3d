@@ -91,6 +91,20 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
+        # fetch-depth: 0 is REQUIRED, not tidiness. `tests/unit/census_gate.d`
+        # guards against silently losing test coverage by walking the history
+        # behind the branch point — and on a SHALLOW clone that walk is cut off
+        # at a graft and returns a NUMBER instead of an error. It measured one
+        # commit for a 21-commit lane. The gate refuses to run rather than
+        # report a figure it cannot stand behind, which is why the sanitizer
+        # lane's first complete night failed here (1 of 237 modules) rather
+        # than passing with a meaningless census.
+        #
+        # Fetching only the branch point is NOT a substitute — the gate's own
+        # message says so, because the graft is what breaks the walk, not the
+        # absence of one ref. With `clean: false` the workspace persists, so
+        # the full history is fetched once and refreshed incrementally after.
+        fetch-depth: 0
         # Same reasoning as perf.yaml: the workspace's untracked build state is
         # the point on this runner (the nfde path-dep's C lib, .dub's
         # incremental objects). A clean would wipe libnfd.a and the build would
