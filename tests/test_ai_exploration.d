@@ -29,42 +29,54 @@ import ai.training_dataset;
 // Pull in command_history so its Phase-0 unittests run too.
 import command_history;
 
-void main() { runHttpTests(); }
+// Task 1111: this file carries its OWN unittest blocks, so druntime runs them
+// and never calls main() — which means the `void main() { runHttpTests(); }`
+// that used to stand here had NEVER executed a single HTTP check. The body
+// belongs in a unittest block, which druntime does run.
+void main() {}
+
+unittest { runHttpTests(); }
 
 // ---------------------------------------------------------------------------
 // Helper: HTTP GET/POST against the test server.
 // ---------------------------------------------------------------------------
-private string url(string port, string path) {
-    return "http://localhost:" ~ port ~ path;
+private string url(string base, string path) {
+    return base ~ path;
 }
 
-private JSONValue getJson(string port, string path) {
+private JSONValue getJson(string base, string path) {
     import std.net.curl : get;
-    return parseJSON(cast(string)get(url(port, path)));
+    return parseJSON(cast(string)get(url(base, path)));
 }
 
-private JSONValue postJson(string port, string path, string body_ = "{}") {
+private JSONValue postJson(string base, string path, string body_ = "{}") {
     import std.net.curl : HTTP;
     auto http = HTTP();
     string response;
     http.onReceive = (ubyte[] data) { response ~= cast(string)data; return data.length; };
     http.method = HTTP.Method.post;
-    http.url = url(port, path);
+    http.url = url(base, path);
     http.setPostData(body_, "application/json");
     http.perform();
     return parseJSON(response.length ? response : `{}`);
 }
 
-private void reset(string port) {
-    postJson(port, "/api/reset");
+private void reset(string base) {
+    postJson(base, "/api/reset");
 }
 
 // ---------------------------------------------------------------------------
 // runHttpTests: verifies inertness of the exploration path under --test.
 // ---------------------------------------------------------------------------
 void runHttpTests() {
-    import std.process : environment;
-    string port = environment.get("VIBE3D_TEST_PORT", "8080");
+    // NOTE: keep the literal "localhost:8080" — run_test.d isolates parallel
+    // workers by textually rewriting it to that worker's port in a scratch copy
+    // of the source. What stood here instead was
+    // `environment.get("VIBE3D_TEST_PORT", "8080")`, and the runner has never
+    // set that variable, so the moment this code started executing under -j N
+    // it would have driven worker 0's instance — including POST /api/reset on
+    // somebody else's scene.
+    string base = "http://localhost:8080";
 
     // --- Inertness check 1: ε forced 0 under g_testMode -----------------------
     // We cannot directly observe whether the explore hook is set, but we CAN
@@ -82,14 +94,40 @@ void runHttpTests() {
     // (exercises the undoEpoch accessor without regression).
 
     {
-        reset(port);
-        auto j = getJson(port, "/api/undo/status");
+        reset(base);
+        auto j = getJson(base, "/api/undo/status");
         assert(j.type == JSONType.object, "/api/undo/status must return an object");
-        // The undo status must have a canUndo field (standard API).
         assert("canUndo" in j, "/api/undo/status must have canUndo field");
-        assert(j["canUndo"].type == JSONType.false_,
-               "fresh scene canUndo must be false");
-        writeln("PASS: /api/undo/status returns sane structure after reset");
+
+        // A reset does NOT leave an empty undo stack: it leaves a session
+        // BOUNDARY entry, and the counts and the predicates report on that
+        // entry differently, on purpose:
+        //
+        //   * `undoDepthCounts` (source/command_history.d:1049) stops at the
+        //     first UndoBoundary (`:1054`), so modelDepth/uiDepth are 0 by
+        //     construction — the boundary is not reachable by the T-SEP cursor.
+        //   * `canUndoModel` (`:1070`) deliberately looks PAST that: with no
+        //     reachable Model entry it asks whether the TAIL is itself
+        //     Model-class-and-Undoable, which a boundary is. Its comment at
+        //     `:1063-1069` states the intent — report "Model undo available"
+        //     rather than the misleading "UI undo available".
+        //   * `canUndo()` (`:989`) is just `undoStack.length > 0`.
+        //
+        // So the documented answer after a reset is the TRIPLE below. This
+        // assertion previously read `canUndo must be false`, which encoded the
+        // belief that a reset empties the stack. It does not — and the belief
+        // survived only because this whole function never executed (task 1111:
+        // druntime skipped `main`). Assert the triple, so the test now pins the
+        // boundary semantics instead of merely passing.
+        assert(j["canUndo"].type == JSONType.true_,
+               "after reset the stack holds a boundary entry, so canUndo is true");
+        assert(j["canUndoModel"].type == JSONType.true_,
+               "the boundary entry is Model-class, so canUndoModel is true "
+               ~ "(command_history.d:1070)");
+        assert(j["modelDepth"].integer == 0,
+               "counts stop AT the boundary, so modelDepth is 0 "
+               ~ "(command_history.d:1049)");
+        writeln("PASS: post-reset undo status reports the documented boundary triple");
     }
 
     // --- Inertness check 2: undo epoch increases after an undo ----------------
@@ -98,19 +136,47 @@ void runHttpTests() {
     // today, but we can confirm canUndo flips correctly, proving the epoch
     // counter logic did not break the undo path.
     {
-        reset(port);
-        postJson(port, "/api/command", `{"command":"prim.cube"}`);
-        auto before = getJson(port, "/api/undo/status");
-        assert(before["canUndo"].type == JSONType.true_,
-               "canUndo should be true after prim.cube");
+        size_t vertexCount() {
+            return getJson(base, "/api/model")["vertices"].array.length;
+        }
 
-        postJson(port, "/api/command", `{"command":"history.undo"}`);
-        auto after = getJson(port, "/api/undo/status");
-        assert(after["canUndo"].type == JSONType.false_,
-               "canUndo should be false after undo of prim.cube");
-        assert(after["canRedo"].type == JSONType.true_,
-               "canRedo should be true after undo");
-        writeln("PASS: undo epoch path does not regress undo/redo canUndo/canRedo");
+        reset(base);
+        const vertsAtReset = vertexCount();
+        auto atReset = getJson(base, "/api/undo/status");
+        assert(atReset["modelDepth"].integer == 0, "reset leaves modelDepth 0");
+
+        // The payload key is `id`. This block used to send `{"command": ...}`,
+        // which /api/command answers with
+        // `{"status":"error","message":"missing 'id' string field"}` — so both
+        // POSTs below did NOTHING. Check the status of each, or a future
+        // contract change goes silent again instead of red.
+        auto mk = postJson(base, "/api/command", `{"id":"prim.cube"}`);
+        assert(mk["status"].str == "ok", "prim.cube must be accepted: " ~ mk.toString);
+        const vertsAfterCube = vertexCount();
+        assert(vertsAfterCube > vertsAtReset,
+               "prim.cube must actually add geometry, or the undo below undoes nothing");
+        auto before = getJson(base, "/api/undo/status");
+        assert(before["modelDepth"].integer == 1,
+               "one Model entry above the boundary after prim.cube");
+        assert(before["canRedo"].type == JSONType.false_,
+               "a fresh action clears the redo timeline");
+
+        auto un = postJson(base, "/api/command", `{"id":"history.undo"}`);
+        assert(un["status"].str == "ok", "history.undo must be accepted: " ~ un.toString);
+        auto after = getJson(base, "/api/undo/status");
+        assert(after["modelDepth"].integer == 0, "the Model entry is gone after undo");
+        assert(after["canRedo"].type == JSONType.true_, "undo makes redo available");
+        assert(vertexCount() == vertsAtReset, "undo must restore the pre-cube geometry");
+
+        // canUndo is NOT the signal here, and saying so is the point: the
+        // boundary entry keeps it true in all three states, which is exactly
+        // why the old `canUndo should be false after undo` was wrong.
+        assert(atReset["canUndo"].type == JSONType.true_
+            && before["canUndo"].type  == JSONType.true_
+            && after["canUndo"].type   == JSONType.true_,
+               "the boundary entry keeps canUndo true throughout — modelDepth "
+               ~ "and canRedo are what move");
+        writeln("PASS: undo path steps modelDepth 0->1->0 and arms redo, geometry restored");
     }
 
     // --- Inertness check 3: existing 0027 capture test not broken --------------
@@ -119,8 +185,8 @@ void runHttpTests() {
     // suite check.  Here we verify the sink is still registered (by checking
     // that a reset + query cycle returns valid JSON, confirming no crash).
     {
-        reset(port);
-        auto sel = getJson(port, "/api/selection");
+        reset(base);
+        auto sel = getJson(base, "/api/selection");
         assert(sel.type == JSONType.object, "/api/selection must not crash");
         writeln("PASS: post-reset /api/selection returns valid JSON (sink not broken)");
     }
