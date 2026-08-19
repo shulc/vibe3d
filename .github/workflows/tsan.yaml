@@ -100,6 +100,23 @@ env:
   # 8599 belongs to the sanitizer lane. Read by lane.d's spawnInstance, which
   # is the single place any instance is started.
   VIBE3D_TSAN_PORT: 8630
+  # DISPLAY is CLEARED for every step, and that is what makes the preflight's
+  # ":0 is forbidden" check meaningful rather than self-defeating.
+  #
+  # This runner is a user service inside the owner's graphical session, so it
+  # INHERITS DISPLAY=:0. The lane's contract is that every step runs under
+  # `xvfb-run -a`, which allocates its own display -- but `lane.d preflight`
+  # runs before any of them and saw the inherited :0, so it refused the job it
+  # was written to protect. Measured on the first forced run, 2026-08-19:
+  # "FAIL: DISPLAY=:0 -- this lane must run every step under ... xvfb-run".
+  #
+  # Clearing it here is not loosening the check. With DISPLAY empty, `xvfb-run
+  # -a` still allocates and exports its own, so every step that boots the
+  # editor is on software GL as intended; and the preflight now fails only if
+  # something RE-INTRODUCES :0, which is the condition it exists to catch. A
+  # hardware-GL boot costs ~12.5 GiB of RSS against ~1.12 GiB, and this lane's
+  # instrumented builds would OOM the owner's workstation on the first one.
+  DISPLAY: ''
 
 jobs:
   tsan:
