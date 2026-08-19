@@ -109,6 +109,27 @@ enum Cat {
     toolPreview,       // one whole rebuildPreview()/rebuildCut() call
     previewRestore,    // MeshSnapshot.restore — the ~16 array dups + buildLoops
     previewRefresh,    // display_sync.refreshDisplay — gpu.upload + cache resize
+    // ONE `Mesh.visibilityProbe` construction — passes 0 and 1 of the snap
+    // visibility mask (task 1351). A TIMER, at REQUEST granularity: one
+    // open/close per built probe, never one per candidate, so the
+    // instrumentation rule above ("counters, not timers" for per-element work)
+    // is respected.
+    //
+    // WHAT IT DOES NOT COVER, said here because the obvious reading is wrong
+    // and cost a gate: pass 2 — the occluder walk — is LAZY. It runs inside
+    // `Mesh.VisibilityProbe.visible`, which snap's gates call, i.e. OUTSIDE
+    // this scope. Measured (task 1351): disabling the occluder buckets
+    // multiplies pairs tested by 806x and `snapQuery` by 19x while this
+    // timer's median does not move. So it bounds the O(V)+O(F) FLOOR and
+    // nothing else — that is invariant I7e's job; the walk is watched by I7d,
+    // which is a ratio of counters and not a time at all.
+    //
+    // PLACEMENT: immediately before `falloffEvalCount`, because that member IS
+    // `firstCounter`. A timer appended after it is silently routed into
+    // `counters_`, `recordNs` returns early, and `scope_` becomes a no-op that
+    // still compiles and still reports `{"count":0,"sum":0}`. See the trap note
+    // on `firstCounter` below.
+    snapVisMask,
     // --- counters ---
     falloffEvalCount,
     vertsTouched,
@@ -198,6 +219,40 @@ enum Cat {
     subpatchTopoMiss,
     subpatchTopoHit,
     subpatchLevelChosen,
+    // --- snap visibility mask, part 2 (task 1351) ---
+    //
+    //   snapVisVertexProbe — one per DISTINCT vertex the mask actually
+    //                        evaluated, i.e. per memo MISS inside
+    //                        `Mesh.VisibilityProbe.visible`. This is the `k`
+    //                        of the cost model: the mask's occlusion pass is
+    //                        O(k x |front faces|), and before laziness `k` was
+    //                        V whether anyone asked or not. It is NOT the same
+    //                        quantity as `snapVisConsult` — see that counter.
+    //   snapVisPairsTested — one per (candidate, occluder) bbox test. The
+    //                        quantity the broad phase exists to reduce, and
+    //                        the only one that can tell "the buckets ran" from
+    //                        "the buckets ran and returned everything": the
+    //                        MASK is identical either way, by the superset
+    //                        contract.
+    //   snapVisGridBail    — one per probe build whose bucket grid was over
+    //                        `MAX_OCCL_BUCKET_INTS` and was not built.
+    //   snapVisPixelOutside— one per vertex probe whose pixel fell outside the
+    //                        bucketed domain and took the linear walk. The
+    //                        linear arm is LIVE, not a backstop: `edgeVisible`
+    //                        asks about BOTH endpoints of an edge the cursor's
+    //                        neighbourhood gathered, and Edge is an EXTENT
+    //                        kind, so a LONG edge's far endpoint can be
+    //                        hundreds of pixels away. It is not, however,
+    //                        "non-zero on any Edge case" — measured 0 on the
+    //                        perf grid plane at n=316, whose edges project to
+    //                        ~2 px so both ends are always inside the domain.
+    //                        It takes long edges, which that fixture has none
+    //                        of; `tests/unit/snap_visibility_corpus_test.d`'s
+    //                        `longedge` fixture is where the arm is exercised.
+    snapVisVertexProbe,
+    snapVisPairsTested,
+    snapVisGridBail,
+    snapVisPixelOutside,
 }
 
 /// First counter category. Categories with ordinal < this are timers.
@@ -211,6 +266,19 @@ enum Cat {
 /// COUNTERS at the very end (as task 1374's three above); insert TIMERS before
 /// `falloffEvalCount`.
 private enum Cat firstCounter = Cat.falloffEvalCount;
+
+// The trap above, made a compile error for the categories added since it was
+// written. `count`/`recordNs` branch on this partition at RUNTIME and each
+// silently returns on the wrong side, so a misplaced member reports
+// `{"count":0,...}` forever and no test can tell it from a call site that
+// never fired. These two lines cost nothing and fail the build instead.
+static assert(Cat.snapVisMask < firstCounter,
+    "Cat.snapVisMask is a TIMER and must sit before firstCounter");
+static assert(Cat.snapVisVertexProbe  >= firstCounter
+           && Cat.snapVisPairsTested  >= firstCounter
+           && Cat.snapVisGridBail     >= firstCounter
+           && Cat.snapVisPixelOutside >= firstCounter,
+    "the task-1351 snap-visibility counters must sit at or after firstCounter");
 
 // ---------------------------------------------------------------------------
 // FrameProbe — per-frame ring buffer for whole-main-loop timing (task 0195,

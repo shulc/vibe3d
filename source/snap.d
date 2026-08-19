@@ -732,14 +732,40 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         // construction rather than by discipline.
         //
         // `visStore` therefore has EXACTLY ONE WRITER — this accessor — and
-        // no reader outside it. Do not add a second one; take the slice the
-        // accessor returns.
-        bool[] visStore;      // do NOT read directly — call `visMask()`
-        bool   visReady;      // "`visStore` is the answer", NOT "it is non-empty"
-        const(bool)[] visMask() {
+        // no reader outside it. Do not add a second one; take the reference the
+        // accessor returns. (It is a `ref` and not a copy on purpose: the probe
+        // MEMOISES, so a copy would answer the same questions again and again
+        // and quietly turn the laziness back into the old eager cost.)
+        //
+        // WHAT CHANGED IN TASK 1351, and it is the same three states in a
+        // different container: the store is now a `VisibilityProbe` — passes 0
+        // and 1 of the mask, with the per-vertex answer left unevaluated —
+        // instead of the finished `bool[]`. Laziness therefore goes one level
+        // deeper: the walk used to pay O(V x |front|) on the FIRST
+        // consultation and this walk consults ~100 vertices out of 100 000.
+        //
+        // The empty-array sentinel is now `probe.admitsAll`, and it is the
+        // struct's DEFAULT, so the `!needVis` path — where no probe is built at
+        // all — admits everything without a second flag, exactly as
+        // `vis.length == 0` used to.
+        Mesh.VisibilityProbe visStore;   // do NOT read directly — call `visMask()`
+        bool   visReady;      // "`visStore` is the answer", NOT "it is default"
+        ref Mesh.VisibilityProbe visMask() {
             if (!visReady) {
                 if (needVis) {
-                    visStore = m.visibleVertices(vp.eye, vp, ms);
+                    // The one TIMER on this path, at REQUEST granularity: what
+                    // it measures is passes 0+1, the O(V)+O(F) floor a walk
+                    // pays once — NOT the occluder walk, which is lazy and runs
+                    // inside the gates below, outside this scope. Invariant I7e
+                    // bounds its median; I7d is the one that watches the walk.
+                    auto zMask = g_perf.scope_(Cat.snapVisMask);
+                    // `2 * outerRangePx` is the query-pixel HINT, not a limit:
+                    // `edgeVisible` asks about both endpoints of an edge the
+                    // cursor's own neighbourhood gathered, so the pixel asked
+                    // about can sit outside the viewport. See
+                    // `Mesh.visibilityProbe`.
+                    visStore = m.visibilityProbe(vp.eye, vp, ms,
+                                                 2.0f * cfg.outerRangePx);
                     g_perf.count(Cat.snapVisBuild, 1);
                 }
                 // SET AFTER the assignment it guards, not before (review fix,
@@ -752,6 +778,15 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
                 // facts before trusting it.
                 visReady = true;
             }
+            // ONE PER GATE CALL — never one per vertex probe, and this is a
+            // contract rather than an accident of where the line sits. The
+            // number `k` that the cost model and the perf gate are calibrated
+            // on is "candidates offered per snap query", measured at 106.1 on
+            // `move/snap=vertex+partial`; counting inside
+            // `VisibilityProbe.visible` instead would rescale it by 2x on the
+            // edge leg (two endpoints) and by n on the polygon leg (n corners)
+            // and silently invalidate both the calibration and what I7b prints.
+            // The per-vertex quantity has its own counter, `snapVisVertexProbe`.
             g_perf.count(Cat.snapVisConsult, 1);
             return visStore;
         }
@@ -777,13 +812,13 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
         }
 
         bool vertVisible(uint vi) {
-            const vis = visMask();
-            return visAdmit(vis.length == 0 || (vi < vis.length && vis[vi]));
+            return visAdmit(visMask().visible(vi));
         }
         bool edgeVisible(uint a, uint b) {
-            const vis = visMask();
-            return visAdmit(vis.length == 0
-                || (a < vis.length && b < vis.length && vis[a] && vis[b]));
+            auto vis = &visMask();
+            // Short-circuits on the first endpoint, as the `vis[a] && vis[b]`
+            // it replaces did.
+            return visAdmit(vis.visible(a) && vis.visible(b));
         }
         bool faceVisible(size_t fi, const(uint)[] face) {
             // Hide (task 0613 S4). By INDEX, because the `vis[]` mask cannot
@@ -809,8 +844,8 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             // Placed inside the named gate rather than at its one call site so
             // a second caller inherits it.
             if (m.isFaceHidden(fi)) return false;
-            const vis = visMask();
-            if (vis.length == 0) return true;
+            auto vis = &visMask();
+            if (vis.admitsAll) return true;
             // FACING — task 0832. This line used to be a THIRD spelling of the
             // predicate (the first triangle's cross, in float, culled at
             // `>= 0`) which disagreed with the other two on a split face. It
@@ -823,7 +858,7 @@ SnapResult snapCursor(Vec3 cursorWorld, int sx, int sy,
             // this way here. See `frontFacingLocal`'s comment.
             if (!frontFacingLocal(m.vertices, face, vpLocal.eye)) return false;
             foreach (v; face)
-                if (v >= vis.length || !vis[v]) return visAdmit(false);
+                if (!vis.visible(v)) return visAdmit(false);
             return true;
         }
         // Local -> world, only where the fine-phase math below needs a real

@@ -149,19 +149,29 @@ struct Case {
     // would keep passing as a green line measuring nothing.
     bool    exercisesVisibility = false;
     // A grid resolution THIS CASE needs, overriding the run's `--n`; 0 = use
-    // the run's. Only one case sets it and it is not a convenience: the snap
-    // visibility mask's occlusion pass is O(V x |front faces|), so on the
-    // matrix mesh (n=316: 100489 verts, 99856 faces) a single query with the
-    // faces actually facing the eye measures ~5.2 SECONDS and the drag blows
-    // through the 10 s play-events timeout — which then wedges the shared
-    // instance and fails every case after it (observed 2026-08-18). Measured
-    // per query, camera below the plane, one-vertex moving set:
-    //   n=32 ~6 ms, n=64 ~21 ms, n=128 ~227 ms, n=200 ~1.28 s, n=316 ~5.2 s.
-    // n=64 is the largest size that leaves the case a couple of seconds
-    // instead of minutes; the quadratic itself is a separate finding and a
-    // separate task, not something this case should hide by not running.
-    // Grid-only — a `--subdivcube` run SKIPs the case rather than
-    // reinterpreting the number as a subdivision LEVEL.
+    // the run's.
+    //
+    // NO CASE SETS IT ANY MORE, and the history is the reason to keep the
+    // field. `move/snap=vertex+partial` pinned n=64 because the snap
+    // visibility mask's occlusion pass was O(V x |front faces|): on the matrix
+    // mesh (n=316: 100 489 verts, 99 856 faces) one query with the faces
+    // actually facing the eye measured SECONDS, the drag blew through the 10 s
+    // play-events timeout, the main thread then serviced no HTTP, and every
+    // later case in the run failed with "selection failed" (observed
+    // 2026-08-18). One hung case poisoned the whole run.
+    //
+    // Task 1351 removed the quadratic — a screen-space broad phase over the
+    // occluders, plus a mask that evaluates only the vertices someone asks
+    // about — so the pin is gone and the case runs at the matrix size. Two
+    // consequences to keep in view:
+    //   * under `--subdivcube` the case no longer SKIPs (the skip below is
+    //     conditioned on this field), so it now also runs on a CLOSED body,
+    //     where the mask really does reject candidates. On the flat sheet it
+    //     rejects none (`snapVisReject == 0`, see I7's clause (b)), so the
+    //     subdivcube run is the first fixture where the mask discriminates;
+    //   * I7d's absolute budget is therefore declared grid-only.
+    // Grid-only — a `--subdivcube` run SKIPs a case that DOES set this rather
+    // than reinterpreting the number as a subdivision LEVEL.
     int     meshN = 0;
 }
 
@@ -283,13 +293,16 @@ Case[] casesForTool(Tool t) {
         // neighbourhood under the cursor stays consultable.
         //
         // The number this case produces is the honest cost of the mask on the
-        // partial-selection path, which is the path task 1350 deliberately did
-        // NOT optimise — it is here to be measured, not to be fast.
+        // partial-selection path. Task 1350 deliberately did NOT optimise it
+        // (it removed the mask where nobody consults it); task 1351 did — the
+        // per-vertex laziness and the occluder broad phase — which is why the
+        // case no longer has to pin its own mesh size. I7d watches the mask's
+        // build time here.
         cs ~= Case(tname ~ "/snap=vertex+partial", t, "single",
             [PipeAttr("snap", "enabled", "true"),
              PipeAttr("snap", "types", "vertex")],
-            "snap=vertex, partial moving set, camera below the plane, n=64",
-            -0.4, true, 64);
+            "snap=vertex, partial moving set, camera below the plane",
+            -0.4, true, 0);
 
         // Remaining snap types, isolated, to measure each candidate walk.
         // edge/edgeCenter scan all edges; polygon/polyCenter scan all faces;
@@ -384,10 +397,23 @@ struct CaseResult {
     long       snapVisBuildCount;      // Mesh.visibleVertices computations
     long       snapVisConsultCount;    // mask consultations by a candidate
     long       snapVisRejectCount;     // consultations the mask array answered NO
+    // Task 1351 — the broad-phase counters plus the mask TIMER.
+    long       snapVisVertexProbeCount;  // DISTINCT vertices the mask evaluated
+    long       snapVisPairsTestedCount;  // (candidate x occluder) bbox tests
+    long       snapVisGridBailCount;     // probe builds with no bucket grid
+    long       snapVisPixelOutsideCount; // probes that took the linear arm
+    double     snapVisMaskMedianUs;      // median cost of ONE mask build
+    long       snapVisMaskCount;         // mask builds in the last repeat
     long       snapHitCount;           // snapCursor calls that elected something
     long       snapHitGeomCount;       // ...where a MASK-GATED candidate won
     bool       exercisesVisibility;    // carried from Case (for I7)
     string     selection;              // carried from Case (for I7a)
+    // The mesh FAMILY this case ran on. I7d is an ABSOLUTE time budget, so it
+    // is only meaningful against a known fixture — carried per case rather
+    // than read from a global, because `checkInvariants` takes results and
+    // nothing else, and a global would go stale the moment a second family
+    // appeared in one run.
+    string     meshKind;
     // The grid resolution this case ACTUALLY ran at, and the mesh it got.
     // Not always the run's `--n`: `Case.meshN` pins a size per case, and a
     // report that prints one row at 64 under a header that says 316 is
@@ -620,6 +646,7 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
     double[] pipeTot;     // total pipeTotal ns per drag
     double[] pipeSymTot;  // total pipeSymmetry ns per drag
     double[] snapQTot;    // total snapQuery ns per drag (for I5)
+    double[] snapMaskTot; // per-BUILD median snapVisMask ns per drag (I7e)
     JSONValue last;
     foreach (r; 0 .. repeats) {
         JSONValue perf;
@@ -634,6 +661,12 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
         pipeTot    ~= cast(double)sumNs(perf, "pipeTotal")    / 1000.0;
         pipeSymTot ~= cast(double)sumNs(perf, "pipeSymmetry") / 1000.0;
         snapQTot   ~= cast(double)sumNs(perf, "snapQuery")    / 1000.0;
+        // The MEDIAN sample, not the sum: one sample is ONE mask build, and
+        // "what does a mask cost" is the quantity the card's criterion and
+        // I7d are about. The sum over a drag is 21 of them and would make the
+        // budget a statement about how many mouse events the harness replays.
+        snapMaskTot ~= ("snapVisMask" in perf)
+            ? cast(double)perf["snapVisMask"]["median_ns"].integer / 1000.0 : 0.0;
         last = perf;
     }
 
@@ -643,6 +676,7 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
     res.pipeMedianUs         = medianOf(pipeTot);
     res.pipeSymmetryMedianUs = medianOf(pipeSymTot);
     res.snapQueryMedianUs    = medianOf(snapQTot);
+    res.snapVisMaskMedianUs  = medianOf(snapMaskTot);
     res.snapQuerySumUs       = cast(double)sumNs(last, "snapQuery") / 1000.0;
     res.snapQueryCount       = ("snapQuery" in last)
         ? last["snapQuery"]["count"].integer : 0;
@@ -654,10 +688,17 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
     res.snapVisBuildCount    = counterSum("snapVisBuild");
     res.snapVisConsultCount  = counterSum("snapVisConsult");
     res.snapVisRejectCount   = counterSum("snapVisReject");
+    res.snapVisVertexProbeCount  = counterSum("snapVisVertexProbe");
+    res.snapVisPairsTestedCount  = counterSum("snapVisPairsTested");
+    res.snapVisGridBailCount     = counterSum("snapVisGridBail");
+    res.snapVisPixelOutsideCount = counterSum("snapVisPixelOutside");
+    res.snapVisMaskCount = ("snapVisMask" in last)
+        ? last["snapVisMask"]["count"].integer : 0;
     res.snapHitCount         = counterSum("snapHit");
     res.snapHitGeomCount     = counterSum("snapHitGeom");
     res.exercisesVisibility  = c.exercisesVisibility;
     res.selection            = c.selection;
+    res.meshKind             = meshType;
     res.dominantStage  = dominantStage(last);
     res.vertsTouched   = ("vertsTouched" in last)
         ? last["vertsTouched"]["sum"].integer : 0;
@@ -2326,6 +2367,78 @@ Invariant[] checkInvariants(CaseResult[] results) {
                        r.snapVisBuildCount, walks, r.snapQueryCount,
                        r.backgroundSources, r.snapVisConsultCount));
         }
+
+        // (d) THE BROAD PHASE IS DOING ITS JOB — as a RATIO, not a time.
+        //
+        //     I7a/b/c are counting invariants about laziness; none of them
+        //     says what the mask COSTS, and cost is the whole reason task 1351
+        //     exists. The obvious gate — put a time budget on the mask timer —
+        //     WAS WRITTEN FIRST AND MEASURED INERT, which is worth recording
+        //     rather than quietly replacing:
+        //
+        //       `Cat.snapVisMask` brackets the probe CONSTRUCTION (passes 0
+        //       and 1). Pass 2 is lazy by design: it runs inside
+        //       `VisibilityProbe.visible`, called from the snap gates, i.e.
+        //       OUTSIDE that scope. Measured on `move/snap=vertex+partial` at
+        //       n=316 with the occluder buckets disabled (their ceiling set to
+        //       0, so every probe walks the whole front list):
+        //
+        //         pairs tested   12 901 121  ->  10 405 205 461   (806x)
+        //         snapQuery/drag    404 664 us ->     7 630 029 us  (19x)
+        //         snapVisMask median 17 707 us ->        13 006 us  (UNCHANGED)
+        //
+        //       A time budget on that timer is green through a 19x regression
+        //       in the thing it is named after.
+        //
+        //     So the clause that gates the broad phase is the RATIO
+        //     pairs / vertexProbes: "how many occluders did an average
+        //     candidate have to look at". It is scale-free (no mesh size, no
+        //     host speed, no repeat count in it), and the same measurement
+        //     moves it from 124 to 99 854 — which IS |front|, i.e. the whole
+        //     list, which is what having no broad phase means.
+        if (r.exercisesVisibility && r.snapVisVertexProbeCount > 0) {
+            enum double MAX_PAIRS_PER_PROBE = 2000.0;
+            immutable double ratio = cast(double)r.snapVisPairsTestedCount
+                                   / r.snapVisVertexProbeCount;
+            inv ~= Invariant("I7d",
+                format("%s snap mask broad phase narrows the occluder walk", r.name),
+                ratio <= MAX_PAIRS_PER_PROBE,
+                format("%.1f occluders per candidate (limit %.0f) — %d pairs / " ~
+                       "%d probes, gridBail=%d, pixelOutside=%d, n=%d",
+                       ratio, MAX_PAIRS_PER_PROBE, r.snapVisPairsTestedCount,
+                       r.snapVisVertexProbeCount, r.snapVisGridBailCount,
+                       r.snapVisPixelOutsideCount, r.effectiveN));
+        }
+
+        // (e) THE MASK BUILD'S OWN FLOOR, absolute, and named for what it
+        //     actually bounds: passes 0 and 1 — projecting every vertex and
+        //     facing-testing every face — which no broad phase touches.
+        //
+        //     THE CARD'S CRITERION IS NOT MET AND CANNOT BE BY THIS TASK, and
+        //     the number here says so rather than hiding it. The card asked
+        //     for "single-digit milliseconds per mask at n=316". With every
+        //     per-face allocation removed, this floor alone measures 12-13 ms
+        //     (standalone probe, ldc -O3 -release) and 11-18 ms in the running
+        //     editor. Going below it needs a mask CACHE across mouse events,
+        //     which is out of scope for a reason the plan states: the key has
+        //     to separate a position change from a topology one, because a
+        //     dragged face is an OCCLUDER of geometry that did not move.
+        //
+        //     Grid-only: under `--subdivcube` the fixture is a different mesh
+        //     with a different vertex count, so the same absolute number would
+        //     be describing something else.
+        if (r.exercisesVisibility && r.meshKind == "grid" && r.snapVisMaskCount > 0) {
+            enum double MASK_BUILD_BUDGET_US = 40_000.0;
+            inv ~= Invariant("I7e",
+                format("%s snap mask BUILD (passes 0+1) stays inside its budget",
+                       r.name),
+                r.snapVisMaskMedianUs <= MASK_BUILD_BUDGET_US,
+                format("build median=%.0f us over %d builds (budget %.0f us); " ~
+                       "this bounds the O(V)+O(F) floor ONLY — the occluder " ~
+                       "walk is lazy and lands outside this timer, see I7d",
+                       r.snapVisMaskMedianUs, r.snapVisMaskCount,
+                       MASK_BUILD_BUDGET_US));
+        }
     }
 
     // I6 — command apply is timed: for every one-shot command case
@@ -3894,8 +4007,25 @@ int main(string[] args) {
             // which is 6-12 ms per drag on the n=316 mesh and is what these
             // keys now watch. Only `grid` and `workplane` — which never had a
             // geometric walk at all — fall in the skipped band.
-            if (r.name.canFind("snap="))
+            if (r.name.canFind("snap=")) {
                 kernelMedianByCase[r.name ~ "#snapQuery"] = r.snapQueryMedianUs;
+                // Task 1351. `#snapQuery` times the WHOLE walk — candidate
+                // grid, election, mask and all — so a mask build that doubles
+                // while the walk gets cheaper elsewhere reads as no change.
+                // This key is the mask's own O(V)+O(F) BUILD, and it goes in
+                // for the same reason and by the same mechanism:
+                // `appendHistory` is metric-agnostic, so it gates under
+                // `--vs-last` for free.
+                //
+                // It does NOT watch the occluder walk, which is lazy and lands
+                // outside the timer — that is I7d's ratio, and a ratio has no
+                // business in a map of microsecond medians whose gate carries a
+                // 200 us floor. Two different questions, two different
+                // instruments.
+                if (r.snapVisMaskCount > 0)
+                    kernelMedianByCase[r.name ~ "#snapVisMask"] =
+                        r.snapVisMaskMedianUs;
+            }
         }
         lib.history.appendHistory(g_repoRoot, curHeader, kernelMedianByCase, "ops");
     } catch (Exception e) {
