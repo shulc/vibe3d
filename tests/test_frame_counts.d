@@ -349,3 +349,410 @@ unittest { // reset actually zeroes the published records
            format("frames == %d right after reset — the counter did not restart",
                   after));
 }
+
+// ==========================================================================
+// SELECTION-MASK WIRING (task 0585)
+// ==========================================================================
+//
+// The draw path stopped materializing a `bool[]` snapshot of the selection on
+// every frame and now hands `GpuMesh` a borrowed `MarkView` over the mesh's
+// own marks array. These blocks are the OUTPUT tier of the proof that the
+// change drew the same thing.
+//
+// WHAT THIS TIER PINS: that the mask is WIRED to the draw path at all, and the
+// CARDINALITY and RUN STRUCTURE of what it produces — one point submission per
+// selected vertex, one overlay submission per contiguous run of selected
+// faces, the exact edge-pass call count for a given selected-edge mask.
+//
+// WHAT IT CANNOT PIN: IDENTITY. `drawVertices` gives `calls = 1 + #selected`,
+// so a mask of {0,2,4} and one of {1,3,5} are indistinguishable here; the face
+// overlay submits once per contiguous run, so {0,1,2} and {5,6,7} both give 1.
+// Any error that preserves cardinality — most plausibly an index shift in the
+// `uint[]` change-detector conversion — passes this tier clean. Identity is
+// pinned element-by-element by `tests/unit/mark_view_test.d` against the
+// materialized accessors as oracle. Neither tier substitutes for the other,
+// and the third block below is the one place this file can see position at
+// all: it uses faces of DIFFERENT DEGREE so `faceOverlay.verts` stops being
+// `6 x #selected` and starts depending on WHICH faces are in the mask.
+//
+// A note on what the counters do NOT see: while a `BackdropScope` is open
+// (`viewport_render.d`, the background-layer pass) face and edge submissions
+// are re-attributed to `bgFaces`/`bgEdges`. Every block here runs on a
+// single-layer scene straight out of `/api/reset`, so nothing is redirected —
+// a stray background layer would silently zero the positive controls below.
+
+/// Number of maximal contiguous runs of `want` in `m` — the batcher's own
+/// rule, re-derived here from the mask rather than read off the counter.
+long runsOf(const bool[] m, bool want) {
+    long n = 0;
+    bool inRun = false;
+    foreach (v; m) {
+        if (v == want) { if (!inRun) { n++; inRun = true; } }
+        else inRun = false;
+    }
+    return n;
+}
+
+/// `pass.edges.calls` that `GpuMesh.drawEdges` MUST report for a cage-indexed
+/// selected-edge mask, on a mesh whose VBO segments are 1:1 with cage edges,
+/// with no hovered edge and the base wireframe overlay on.
+///
+/// Re-derived from drawEdges' three passes, not copied from a measurement:
+///   base pass  — one submission per contiguous run of UNSELECTED segments,
+///                except the whole-mesh fast path (mask length 0) and the
+///                all-selected shortcut (skipped entirely);
+///   highlight  — one submission for the whole mesh when everything is
+///                selected, else one per contiguous run of SELECTED segments;
+///   hover pass — none, `hoveredEdge < 0` and no loop mask.
+long expectedEdgeCalls(const bool[] sel) {
+    immutable bool haveMask = sel.length > 0;
+    bool allSel = haveMask;
+    foreach (s; sel) if (!s) { allSel = false; break; }
+
+    long calls = 0;
+    if (!haveMask)      calls += 1;              // gray fast path, whole mesh
+    else if (!allSel)   calls += runsOf(sel, false);
+    if (allSel)         calls += 1;              // orange, whole mesh
+    else if (haveMask)  calls += runsOf(sel, true);
+    return calls;
+}
+
+/// Cage-edge mask implied by a face selection: an edge is in it iff it is a
+/// boundary of at least one selected face. Derived from /api/model's own face
+/// and edge arrays — independent of the app-side cache it is checking.
+bool[] edgeMaskForFaces(JSONValue model, const long[] selFaces) {
+    ulong key(long a, long b) {
+        return a < b ? (cast(ulong)a << 32) | cast(uint)b
+                     : (cast(ulong)b << 32) | cast(uint)a;
+    }
+    bool[ulong] wanted;
+    foreach (fi; selFaces) {
+        auto f = model["faces"].array[cast(size_t)fi].array;
+        foreach (k, _; f)
+            wanted[key(f[k].integer, f[(k + 1) % f.length].integer)] = true;
+    }
+    auto edges = model["edges"].array;
+    auto mask = new bool[](edges.length);
+    foreach (ei, e; edges)
+        mask[ei] = (key(e.array[0].integer, e.array[1].integer) in wanted) !is null;
+    return mask;
+}
+
+/// Face-overlay vertices for a face selection: each face is fan-triangulated
+/// into (n - 2) triangles of 3 vertices. On an all-quad mesh this collapses to
+/// `6 * count` and stops depending on WHICH faces — see the mixed-degree block.
+long overlayVertsFor(JSONValue model, const long[] selFaces) {
+    long n = 0;
+    foreach (fi; selFaces)
+        n += (cast(long)model["faces"].array[cast(size_t)fi].array.length - 2) * 3;
+    return n;
+}
+
+void selectPolys(const long[] idx) {
+    import std.conv : to;
+    string s = "[";
+    foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
+    httpPost("/api/select", `{"mode":"polygons","indices":` ~ s ~ `]}`);
+}
+
+void selectVerts(const long[] idx) {
+    import std.conv : to;
+    string s = "[";
+    foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
+    httpPost("/api/select", `{"mode":"vertices","indices":` ~ s ~ `]}`);
+}
+
+void selectEdgesBy(const long[] idx) {
+    import std.conv : to;
+    string s = "[";
+    foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
+    httpPost("/api/select", `{"mode":"edges","indices":` ~ s ~ `]}`);
+}
+
+/// The selection type the RENDERER is feeding back, straight from the app.
+string selTypeNow() { return gj("/api/selection")["selType"].str; }
+
+unittest { // the VERTEX mask reaches drawVertices, exactly once per element
+    // `drawVertices` submits one GL_POINTS batch for the whole cloud and then
+    // one MORE for each selected vertex, so `pass.verts.calls == 1 + n`. The
+    // leading 1 is the trap this block is built around: it is submitted in
+    // every mode whether or not the mask consumer ever ran, so `calls >= 1`
+    // and `verts > 0` are both satisfied by a mask that silently reported
+    // nothing. Only the strict `> 1` on a NON-EMPTY selection proves the
+    // consumer executed — that is the positive control here, and it is why
+    // every pattern below except the first selects something.
+    resetApp();
+    auto model = gj("/api/model");
+    immutable long nv = modelVertCount(model);
+    assert(nv == 8, format("fixture premise: a cube has 8 vertices, got %d", nv));
+
+    // Patterns applied IN SEQUENCE on one instance, with no /api/reset between
+    // them: a mask that latched on its first value is correct once and wrong
+    // afterwards, and a per-pattern reset would hide exactly that.
+    foreach (pattern; [cast(long[])[], [0L, 2L, 4L], [0L,1L,2L,3L,4L,5L,6L,7L],
+                       [7L], cast(long[])[]]) {
+        selectVerts(pattern);
+        settle();
+        assert(selTypeNow() == "vertex",
+               "asked for a vertex selection and the app is feeding back "
+               ~ selTypeNow() ~ " — the rest of this block would be measuring "
+               ~ "a different mode's draw path");
+
+        auto w = lastScene();
+        immutable long n = cast(long)pattern.length;
+        assert(passCalls(w, "verts") == 1 + n,
+               format("%d selected vertices: expected %d point submissions "
+                      ~ "(1 cloud + %d dots), got %d",
+                      n, 1 + n, n, passCalls(w, "verts")));
+        assert(passVerts(w, "verts") == nv + n,
+               format("%d selected vertices: expected %d submitted points, got %d",
+                      n, nv + n, passVerts(w, "verts")));
+        if (n > 0)
+            assert(passCalls(w, "verts") > 1,
+                   "CONSUMER LIVENESS: the bare cloud submission is exactly 1 "
+                   ~ "and happens whatever the mask says; > 1 is the only "
+                   ~ "reading that proves the selection mask was consulted");
+    }
+}
+
+unittest { // the EDGE mask reaches drawEdges with the right run structure
+    resetApp();
+    auto model = gj("/api/model");
+    immutable long ne = modelEdgeCount(model);
+    assert(ne == 12, format("fixture premise: a cube has 12 edges, got %d", ne));
+    // 1:1 VBO segments is the premise expectedEdgeCalls is derived under.
+    assert(passVerts(lastScene(), "edges") == 2 * ne,
+           "fixture premise: the edge VBO is 1:1 with the cage edges");
+
+    foreach (pattern; [cast(long[])[0L], [0L, 1L], [0L, 6L],
+                       [0L,1L,2L,3L,4L,5L,6L,7L,8L,9L,10L,11L],
+                       [3L], cast(long[])[]]) {
+        selectEdgesBy(pattern);
+        settle();
+        assert(selTypeNow() == "edge", "not in the edge feedback type");
+
+        auto mask = new bool[](cast(size_t)ne);
+        foreach (i; pattern) mask[cast(size_t)i] = true;
+
+        auto w = lastScene();
+        assert(passCalls(w, "edges") == expectedEdgeCalls(mask),
+               format("edge selection %s: expected %d edge-pass submissions, "
+                      ~ "got %d", pattern, expectedEdgeCalls(mask),
+                      passCalls(w, "edges")));
+        assert(passCalls(w, "edges") >= 1,
+               "CONSUMER LIVENESS: the edge pass must run in Edges mode");
+    }
+}
+
+unittest { // the FACE selection drives BOTH the overlay and the face->edge cache
+    // This is the block that covers the face->edge mask cache and its change
+    // detector. The patterns run IN SEQUENCE with NO /api/reset between them
+    // on purpose: a detector stuck at "unchanged" produces the right answer
+    // for whichever pattern it happened to build first, and a suite that reset
+    // between patterns would let it be accidentally correct every time.
+    resetApp();
+    auto model = gj("/api/model");
+    assert(model["faces"].array.length == 6, "fixture premise: 6 cube faces");
+
+    foreach (pattern; [cast(long[])[0L], [0L, 1L], [0L, 2L, 4L],
+                       [0L,1L,2L,3L,4L,5L], [5L], cast(long[])[]]) {
+        selectPolys(pattern);
+        settle();
+        assert(selTypeNow() == "polygon", "not in the polygon feedback type");
+
+        auto w = lastScene();
+        auto mask = edgeMaskForFaces(model, pattern);
+
+        // The face->edge highlight cache, read through its consumer.
+        assert(passCalls(w, "edges") == expectedEdgeCalls(mask),
+               format("face selection %s implies the edge mask %s and so %d "
+                      ~ "edge-pass submissions, got %d",
+                      pattern, mask, expectedEdgeCalls(mask),
+                      passCalls(w, "edges")));
+        assert(passCalls(w, "edges") >= 1,
+               "CONSUMER LIVENESS: the edge pass must run in Polygons mode");
+
+        // The checker overlay: one submission per contiguous run of selected
+        // faces, and the fan-triangulated vertices of exactly those faces.
+        auto faceMask = new bool[](model["faces"].array.length);
+        foreach (fi; pattern) faceMask[cast(size_t)fi] = true;
+        assert(passCalls(w, "faceOverlay") == runsOf(faceMask, true),
+               format("face selection %s is %d contiguous run(s), got %d "
+                      ~ "overlay submissions", pattern, runsOf(faceMask, true),
+                      passCalls(w, "faceOverlay")));
+        assert(passVerts(w, "faceOverlay") == overlayVertsFor(model, pattern),
+               format("face selection %s implies %d overlay verts, got %d",
+                      pattern, overlayVertsFor(model, pattern),
+                      passVerts(w, "faceOverlay")));
+        if (pattern.length > 0)
+            assert(passCalls(w, "faceOverlay") >= 1,
+                   "CONSUMER LIVENESS: a non-empty face selection must draw "
+                   ~ "the checker overlay");
+    }
+}
+
+unittest { // MIXED FACE DEGREES — the one reading here that can see POSITION
+    // On an all-quad cube `faceOverlay.verts == 6 * count`, so a mask shifted
+    // by one face gives a byte-identical reading and this whole file is blind
+    // to it. This fixture is six DISJOINT polygons of degree 3/4/5/4/3/5, so
+    // the overlay's vertex count depends on WHICH faces are selected, not just
+    // how many — and the assertion at the end of the block states that
+    // explicitly rather than trusting the fixture to be non-degenerate.
+    resetApp();
+    string verts = "[", faces = "[";
+    long[] deg = [3, 4, 5, 4, 3, 5];
+    long next = 0;
+    foreach (fi, d; deg) {
+        immutable double ox = fi * 3.0;
+        if (fi) { verts ~= ","; faces ~= ","; }
+        faces ~= "[";
+        foreach (k; 0 .. d) {
+            immutable double ang = 2.0 * 3.14159265358979 * k / d;
+            import std.math : cos, sin;
+            if (k) { verts ~= ","; faces ~= ","; }
+            verts ~= format("[%.6f,0,%.6f]", ox + cos(ang), sin(ang));
+            faces ~= format("%d", next + k);
+        }
+        faces ~= "]";
+        next += d;
+    }
+    verts ~= "]"; faces ~= "]";
+    auto lm = parseJSON(httpPost("/api/load-mesh",
+                        format(`{"vertices":%s,"faces":%s}`, verts, faces)));
+    assert(lm["status"].str == "ok", "load-mesh failed: " ~ lm.toString);
+    settle();
+
+    auto model = gj("/api/model");
+    assert(model["faces"].array.length == 6, "fixture: six polygons");
+    foreach (fi, d; deg)
+        assert(cast(long)model["faces"].array[fi].array.length == d,
+               format("fixture: face %d should have degree %d", fi, d));
+
+    foreach (pattern; [cast(long[])[0L], [1L], [2L], [0L, 1L, 2L], [1L, 2L, 3L],
+                       cast(long[])[]]) {
+        selectPolys(pattern);
+        settle();
+        auto w = lastScene();
+        assert(passVerts(w, "faceOverlay") == overlayVertsFor(model, pattern),
+               format("mixed-degree selection %s implies %d overlay verts, got %d",
+                      pattern, overlayVertsFor(model, pattern),
+                      passVerts(w, "faceOverlay")));
+    }
+
+    // The fixture is only worth its cost if a SHIFTED mask of the same size
+    // reads differently — that is the error class an all-quad mesh hides.
+    assert(overlayVertsFor(model, [0L]) != overlayVertsFor(model, [1L]),
+           "fixture is inert: one face and its neighbour submit the same "
+           ~ "number of overlay vertices, so a shifted mask is invisible");
+    assert(overlayVertsFor(model, [0L, 1L, 2L]) != overlayVertsFor(model, [1L, 2L, 3L]),
+           "fixture is inert for a 3-wide window");
+}
+
+unittest { // PRIMARY-LAYER SWITCH — the cache is not a function of the selection alone
+    // The face->edge highlight cache read by the Polygons-mode edge pass is
+    // built from the face selection AND from `faces`/`edges`. Its rebuild
+    // trigger, however, can only compare the SELECTION. So the state it is
+    // blind to on its own is two layers whose face marks agree
+    // element-for-element while their edge lists do not: switch the primary
+    // between them and the previous layer's edge mask paints this one's edges.
+    //
+    //   layer A — the reset cube: 6 faces, 12 edges. Face 5 is [0,1,5,4] and
+    //             its edges are the SCATTERED {3,4,8,11}.
+    //   layer B — six DISJOINT quads: 6 faces, 24 edges. Face 5's edges are
+    //             the CONTIGUOUS {20,21,22,23}.
+    //
+    // Both carry a 6-long `faceMarks` with exactly face 5 set, so the marks
+    // compare is false across the switch and cannot be what saves this. The
+    // scattered-vs-contiguous shape is deliberate: it makes the two layers
+    // imply different edge-pass batch COUNTS, which is the only thing this
+    // file can see (the assertion below states that requirement rather than
+    // trusting the fixture).
+    //
+    // MEASURED against a binary with the mesh-identity term removed from the
+    // rebuild trigger: this block reads 1 submission where layer A implies 6.
+    // Not a crash and not a wrong-looking number — B's 24-entry mask over A's
+    // 12 edges reports false at every one of A's indices (a `MarkView` answers
+    // false past its end), so the highlight silently disappears.
+    resetApp();
+
+    auto modelA = gj("/api/model");
+    assert(modelA["faces"].array.length == 6, "fixture premise: 6 cube faces");
+    assert(modelEdgeCount(modelA) == 12, "fixture premise: 12 cube edges");
+    selectPolys([5L]);
+    settle();
+    assert(selTypeNow() == "polygon", "layer A is not in the polygon feedback type");
+    immutable long wantA = expectedEdgeCalls(edgeMaskForFaces(modelA, [5L]));
+    immutable long gotA  = passCalls(lastScene(), "edges");
+    assert(gotA == wantA,
+           format("layer A, face 5 selected: expected %d edge-pass submissions, got %d",
+                  wantA, gotA));
+
+    // ---- Layer B: same face count, same selected face, twice the edges ----
+    cmd("layer.add name:B");
+    string bVerts = "[", bFaces = "[";
+    foreach (f; 0 .. 6) {
+        immutable double ox = f * 3.0;
+        immutable long base = f * 4;
+        if (f) { bVerts ~= ","; bFaces ~= ","; }
+        bVerts ~= format("[%.1f,0,0],[%.1f,0,0],[%.1f,0,1],[%.1f,0,1]",
+                         ox, ox + 1.0, ox + 1.0, ox);
+        bFaces ~= format("[%d,%d,%d,%d]", base, base + 1, base + 2, base + 3);
+    }
+    bVerts ~= "]"; bFaces ~= "]";
+    auto lm = parseJSON(httpPost("/api/load-mesh",
+                        format(`{"vertices":%s,"faces":%s}`, bVerts, bFaces)));
+    assert(lm["status"].str == "ok", "load-mesh into layer B failed: " ~ lm.toString);
+    settle();
+
+    auto modelB = gj("/api/model");
+    assert(modelB["faces"].array.length == 6 && modelEdgeCount(modelB) == 24,
+           format("fixture premise: layer B is 6 faces / 24 edges, got %d / %d",
+                  modelB["faces"].array.length, modelEdgeCount(modelB)));
+
+    selectPolys([5L]);
+    settle();
+    assert(selTypeNow() == "polygon", "layer B is not in the polygon feedback type");
+    immutable long wantB = expectedEdgeCalls(edgeMaskForFaces(modelB, [5L]));
+    immutable long gotB  = passCalls(lastScene(), "edges");
+    assert(gotB == wantB,
+           format("layer B, face 5 selected: expected %d edge-pass submissions, got %d",
+                  wantB, gotB));
+
+    // Non-vacuity: a stale cache is only observable if the two layers imply
+    // different readings in the first place.
+    assert(wantA != wantB,
+           format("fixture is inert: both layers imply %d edge-pass submissions, "
+                  ~ "so a stale mask reads exactly like a fresh one", wantA));
+
+    // ---- The switch ----
+    // `layer.select` is an ITEM selection, so it moves the front of the
+    // SelType order to Item and the Polygons draw branch stops running
+    // altogether. The re-select that follows restores the polygon feedback
+    // type by asking for the SAME face that is already selected — not one mark
+    // bit changes, in either layer. That is precisely what leaves a
+    // selection-only rebuild trigger blind, and it is an ordinary thing for a
+    // user to do (click another layer, press 3).
+    cmd("layer.select index:0");
+    settle();
+    selectPolys([5L]);
+    settle();
+    assert(selTypeNow() == "polygon",
+           "back on layer A but not in the polygon feedback type");
+
+    auto modelBack = gj("/api/model");
+    assert(modelEdgeCount(modelBack) == 12,
+           format("the primary is not layer A again (it reports %d edges) — the "
+                  ~ "assertion below would be measuring the wrong mesh",
+                  modelEdgeCount(modelBack)));
+
+    immutable long gotBack = passCalls(lastScene(), "edges");
+    assert(gotBack == wantA,
+           format("after switching the primary back to layer A the edge pass "
+                  ~ "submitted %d batches; layer A's own face-5 mask implies %d "
+                  ~ "(layer B's implies %d). The face->edge highlight cache is "
+                  ~ "still the one built for layer B: its rebuild trigger is "
+                  ~ "reading the face selection alone, and the two layers' face "
+                  ~ "marks are identical.", gotBack, wantA, wantB));
+
+    resetApp();   // back to one layer for whatever runs next in this process
+}

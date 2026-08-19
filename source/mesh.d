@@ -479,6 +479,43 @@ struct MeshCacheKey {
     }
 }
 
+/// The CONNECTIVITY variant of `MeshCacheKey`, for a cache whose content is a
+/// function of `faces`/`edges` alone (task 0585: the Polygons-mode face->edge
+/// highlight mask). Same address term, same reasoning — see above — but
+/// stamped against `structVersion` instead of `mutationVersion`.
+///
+/// The distinction is not stylistic and it is the whole reason this type
+/// exists. `mutationVersion` is documented at its own declaration as bumped on
+/// any topology OR VERTEX-POSITION change, and `MorphMap.setEntry`'s comment
+/// records the rate: once per vertex per motion event. So a cache keyed on it
+/// rebuilds on every frame of a drag. For a mask that only maps selected faces
+/// to edge indices that rebuild is pure waste, and not cheap waste — read the
+/// rebuild body in `ui/viewport_render.d`: it walks the selected faces into an
+/// associative array, so keying on `mutationVersion` would put an allocation
+/// proportional to the SELECTION back on the per-frame path, which is the
+/// exact defect task 0585 took off it. `structVersion` is bumped only by the
+/// edge/face structural primitives and explicitly not by position, marks or
+/// subpatch writes — precisely the set of changes such a cache must notice.
+///
+/// Use `MeshCacheKey` when the cached value depends on where the vertices ARE;
+/// use this one when it depends only on how they are CONNECTED.
+struct MeshStructKey {
+    size_t addr      = size_t.max;
+    ulong  structVer = ulong.max;
+
+    bool matches(ref Mesh m) const {
+        return addr == cast(size_t)&m && structVer == m.structVersion;
+    }
+    void stamp(ref Mesh m) {
+        addr      = cast(size_t)&m;
+        structVer = m.structVersion;
+    }
+    void invalidate() {
+        addr      = size_t.max;
+        structVer = ulong.max;
+    }
+}
+
 /// Hermite ease-in/ease-out, `3t²-2t³` — the Bridge Twist per-ring blend
 /// curve (task 0357, see `Mesh.bridgeTwistedVertex`). `t` is assumed in
 /// [0,1]; not clamped since every call site already guarantees that range.
@@ -555,6 +592,97 @@ private void flushHideDerivePending() {
     // the pending set ever grows a removal path, or if a batch is ever opened
     // without naming its mesh.
     foreach (m; pending) if (m !is null) m.refreshHiddenDerived();
+}
+
+/// Borrowed, non-allocating view of ONE bit of a marks array.
+///
+/// This is not a second predicate. It is EXACTLY the predicate
+/// `Mesh.isVertexSelected` / `isEdgeSelected` / `isFaceSelected` apply --
+/// `i < marks.length && (marks[i] & bit) != 0`, bounds check included --
+/// only packaged so a consumer that has no `Mesh` to call a method on
+/// (`GpuMesh`, which takes a mask by value) can apply it without the
+/// materialized `bool[]` snapshot that `selectedVertices` & co. allocate.
+///
+/// LIFETIME CONTRACT -- the slice is BORROWED, not owned. It aliases the
+/// mesh's live `vertexMarks`/`edgeMarks`/`faceMarks` array, so it is
+/// invalidated by anything that changes that array's length (`resizeMarks`,
+/// every topological operation). A `MarkView` therefore lives for exactly
+/// one draw call: it is never stored in a field of a struct or class, and
+/// never survives a mesh mutation. That is a CONTRACT, not an assert --
+/// `-release` strips asserts, and a field that does not exist cannot be
+/// forgotten.
+///
+/// WHAT ACTUALLY CHECKS IT, and what it does not see.
+/// `tests/unit/mark_view_field_guard_test.d` scans `source/**.d` and fails on
+/// a declaration of this type at AGGREGATE scope -- `MarkView v;`,
+/// `private MarkView[] cache;`, `MarkView* p;`, `static MarkView x = ...` --
+/// and on a field whose initializer calls one of the `selected*View()`
+/// accessors (which is the `auto`-typed spelling of the same mistake). That
+/// is the whole of what is mechanically enforced. It is deliberately NOT the
+/// whole contract: a field reached through an `alias`, through a template
+/// parameter, or a view captured by a closure that outlives the draw call
+/// are all invisible to a source scan and remain matters for review. The
+/// guard exists so the COMMON spellings cannot land silently, not so the
+/// contract can stop being read.
+///
+/// `MarkView.init` is the empty view: `length == 0`, `empty == true`, and
+/// `opIndex` false at every index. That is what replaces the `(bool[]).init`
+/// / `[]` literals at the "no selection mask" draw call sites.
+struct MarkView {
+    // `marks_`, not `words_`: this is ONE `uint` mark per element, indexed by
+    // element, exactly as `vertexMarks`/`edgeMarks`/`faceMarks` are. Nothing
+    // here is bit-packed across elements -- `bit_` selects which BIT of each
+    // element's own mark is being read, and `opIndex(i)` reads `marks_[i]`.
+    private const(uint)[] marks_;
+    private uint          bit_;
+
+    this(const(uint)[] marks, uint bit) {
+        marks_ = marks;
+        bit_   = bit;
+    }
+
+    size_t length() const { return marks_.length; }
+    bool   empty()  const { return marks_.length == 0; }
+
+    /// Same bounds-checked shape as the scalar `is*Selected` accessors: an
+    /// index past the end is FALSE, not an error and not a range violation.
+    /// Call sites inherited that tolerance from the `bool[]` views they used
+    /// to guard with `i < sel.length`, so it is load-bearing, not defensive.
+    bool opIndex(size_t i) const {
+        return i < marks_.length && (marks_[i] & bit_) != 0;
+    }
+}
+
+/// Exact, non-allocating "did one mark BIT change" compare between a SNAPSHOT
+/// of a marks array and the live array (task 0585).
+///
+/// This is the change detector the Polygons-mode face->edge highlight cache in
+/// `ui/viewport_render.d` runs every frame. It used to be spelled
+/// `prevSelection != mesh.selectedFaces`, which materialized a fresh `bool[F]`
+/// for its own right-hand side on every frame -- the cache paid more than it
+/// saved. It lives here, next to the marks arrays it reads and away from the
+/// draw path, so it can be tested element by element against the materialized
+/// `bool[]` accessors as an independent oracle
+/// (`tests/unit/mark_view_test.d`); inline in the render function it had no
+/// identity-tier coverage at all, and an index shift that preserves run
+/// structure is invisible to the frame counters.
+///
+/// `mesh.selectionSignature` is the canonical non-allocating "did the
+/// selection change" detector and is deliberately NOT what this is. That one
+/// is a HASH, and its own contract promises only that a collision yields a
+/// stale cache hit rather than a wrong answer. For a cache that paints the
+/// screen a stale hit IS the wrong answer. An exact compare over the marks
+/// costs the same O(N) scan and cannot collide.
+///
+/// A length difference counts as a change: the snapshot cannot describe a
+/// marks array of a different size.
+bool marksBitDiffer(const(uint)[] snapshot, const(uint)[] live, uint bit)
+    pure nothrow @safe @nogc
+{
+    if (snapshot.length != live.length) return true;
+    foreach (i, mk; live)
+        if (((mk ^ snapshot[i]) & bit) != 0) return true;
+    return false;
 }
 
 struct Mesh {
@@ -763,6 +891,17 @@ struct Mesh {
     // are read-only — a `mesh.selectedX[i] = …` write would mutate a throwaway
     // temporary, which is why all writes go through the setter/helper methods
     // below. `const` so they remain callable from const methods.
+    //
+    // THE PER-FRAME DRAW PATH IS NO LONGER A CLIENT (task 0585). It was, and
+    // that allocation was the whole of the frame's mesh-scaled GC traffic:
+    // one `bool[]` per accessor call per frame per viewport cell, 102 400 B
+    // at a grid of n=316, x4 in a Quad layout. `ui/viewport_render.d` now asks
+    // `selectedVertexView()/selectedEdgeView()/selectedFaceView()` below, and
+    // the face->edge cache's change detector asks `marksBitDiffer`. What is
+    // left here are the ~100 call sites that are NOT per-frame (commands,
+    // I/O, panels' click handlers) plus this file's own unit tests — for
+    // those the snapshot is the convenient shape and its cost is paid once.
+    // Before adding a call, check whether the site runs on the draw path.
     @property bool[] selectedVertices() const {
         auto r = new bool[](vertexMarks.length);
         foreach (i, m; vertexMarks) r[i] = (m & Marks.Select) != 0;
@@ -801,6 +940,27 @@ struct Mesh {
     }
     bool isFaceSubpatch(size_t i) const {
         return i < faceMarks.length && (faceMarks[i] & Marks.Subpatch) != 0;
+    }
+
+    // --- Borrowed non-allocating mask views (task 0585) -------------------
+    // The same three questions the materialized `selectedVertices/Edges/Faces`
+    // views above answer, in the form a per-frame consumer can afford: no
+    // allocation at all, the mesh's own marks array handed out under a
+    // one-draw-call borrow. See `MarkView` for the lifetime contract.
+    //
+    // These do NOT replace the materialized accessors, and the materialized
+    // accessors are deliberately NOT reimplemented on top of these: they are
+    // the independent ORACLE that `tests/unit/mark_view_test.d` compares this
+    // carrier against element by element. One implementation would make that
+    // test compare an expression with itself.
+    MarkView selectedVertexView() const {
+        return MarkView(vertexMarks, Marks.Select);
+    }
+    MarkView selectedEdgeView() const {
+        return MarkView(edgeMarks, Marks.Select);
+    }
+    MarkView selectedFaceView() const {
+        return MarkView(faceMarks, Marks.Select);
     }
     // --- Hide (Marks.Hide, task 0613) --------------------------------------
     // The polygon plane is the ONLY stored authority (§1.2 of

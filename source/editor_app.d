@@ -398,12 +398,6 @@ ulong edgeKey(uint a, uint b) {
 /// -- exact analog of the BgGpu relocation above.
 enum RecordMode { Record, Coalescing }
 
-int countSelected(bool[] sel) {
-    int n = 0;
-    foreach (s; sel) if (s) n++;
-    return n;
-}
-
 /// Build the item-snap frame for one visible layer: world-space pivot +
 /// world-space AABB derived from ALL mesh vertices (whole-item bounds,
 /// independent of any active vertex sub-selection). Called from both the
@@ -805,10 +799,13 @@ struct EditorApp {
     @property ref int layerRenameIndex() { return *layerRenameIndexPtr; }
     char[256]* layerRenameBufPtr;
     @property ref char[256] layerRenameBuf() { return *layerRenameBufPtr; }
-    bool[]* faceSelEdgesCachePtr;
-    @property ref bool[] faceSelEdgesCache() { return *faceSelEdgesCachePtr; }
-    bool[]* faceSelEdgesPrevSelPtr;
-    @property ref bool[] faceSelEdgesPrevSel() { return *faceSelEdgesPrevSelPtr; }
+    // Marks-shaped (task 0585) — see the declarations in app.d.
+    uint[]* faceSelEdgesCachePtr;
+    @property ref uint[] faceSelEdgesCache() { return *faceSelEdgesCachePtr; }
+    uint[]* faceSelEdgesPrevSelPtr;
+    @property ref uint[] faceSelEdgesPrevSel() { return *faceSelEdgesPrevSelPtr; }
+    MeshStructKey* faceSelEdgesKeyPtr;
+    @property ref MeshStructKey faceSelEdgesKey() { return *faceSelEdgesKeyPtr; }
     Layout* layoutPtr;
     @property ref Layout layout() { return *layoutPtr; }
     // `&panels[activePanelIdx]` (address-of-ELEMENT, not address-of-field) --

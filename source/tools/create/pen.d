@@ -529,7 +529,7 @@ public:
         // face is closed, and the boundary edges of the in-progress face(s)
         // afterwards (drawn on top of the lit fill).
         if (vertices_.length >= 2)
-            previewGpu.drawEdges(shader.locColor, -1, []);
+            previewGpu.drawEdges(shader.locColor, -1, MarkView.init);
 
         // Vertex markers — three-state colour, by BoxHandler.draw precedence
         // from the arbiter-assigned HandleState:

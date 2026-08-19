@@ -276,10 +276,12 @@ import editor_app : OverlayMode;
 // Module-level helpers
 // ---------------------------------------------------------------------------
 
-// edgeKey/countSelected relocated to editor_app.d (task 0419 Б1 -- used by
+// edgeKey relocated to editor_app.d (task 0419 Б1 -- used by
 // the UI-panel block now fully relocated to source/ui/panels.d). edgeKey
 // also has a call site here, in the snap-frame JIT install path, so it is
-// imported back; countSelected has no app.d-side reference (Phase 7 cleanup).
+// imported back. (`countSelected(bool[])` used to live beside it; task 0585
+// removed it — its last caller was the Polygons-mode draw path, which now
+// asks `mesh.countSelectedFaces()` and never materializes a `bool[]`.)
 import editor_app : edgeKey;
 
 
@@ -1867,14 +1869,15 @@ void main(string[] args) {
     // render loop, alongside the pick-cache block) reads it and zeroes it.
     //
     // Today the selection highlight is drawn live every frame straight from the
-    // mesh marks (gpu.drawVertices/drawEdges read `mesh.selectedVertices` etc.
-    // each frame), and the screen-space pick caches key off GEOMETRY, not
-    // selection — so no concrete cache needs a selection-driven refresh right
-    // now. The consumer is therefore wired but minimal: it parks the domains in
-    // a frame-local flag, establishing the single selection-consumer seam the
-    // future layer panel (the plan's named future consumer) plugs into without
-    // inventing UI work now. The bus contract still holds (invalidate-only: the
-    // delegate touches nothing but the flag).
+    // mesh marks (gpu.drawVertices/drawEdges read the marks through a borrowed
+    // `MarkView` each frame — task 0585; before that they read the allocating
+    // `mesh.selectedVertices` & co.), and the screen-space pick caches key off
+    // GEOMETRY, not selection — so no concrete cache needs a selection-driven
+    // refresh right now. The consumer is therefore wired but minimal: it
+    // parks the domains in a frame-local flag, establishing the single
+    // selection-consumer seam the future layer panel (the plan's named future
+    // consumer) plugs into without inventing UI work now. The bus contract
+    // still holds (invalidate-only: the delegate touches nothing but the flag).
     uint selChangedDomains = 0;
     // Phase 2 — persistent selection epoch for the FBO dirty-cache. Selection
     // is a Marks-class change that deliberately does NOT bump mesh.mutationVersion
@@ -2066,9 +2069,35 @@ void main(string[] args) {
     mesh.resetSelection();
 
     // Cache: face→edge mask for Polygons mode edge highlighting.
-    // Rebuilt only when selectedFaces changes (comparison is a fast memcmp).
-    bool[] faceSelEdgesCache;
-    bool[] faceSelEdgesPrevSel;  // snapshot of selectedFaces at last rebuild
+    // Rebuilt when the face selection changes, when the mesh's connectivity
+    // does, or when the primary layer is switched — see the trigger in
+    // `ui/viewport_render.d` for why all three terms are needed.
+    //
+    // Both arrays are MARKS-shaped (`uint`, `Mesh.Marks` bits), not `bool[]`
+    // (task 0585). The cache is handed to `drawEdges` as a `MarkView` over
+    // itself, so it uses the one mask representation the draw path has rather
+    // than a second one that could drift from it; and the snapshot is a copy
+    // of `mesh.faceMarks` itself, so detecting a change needs no materialized
+    // `bool[]` of the current selection to compare against — that comparison
+    // used to allocate a `bool[F]` on the RIGHT-HAND SIDE of its own cache
+    // check, every frame, which cost more than the cache saved.
+    uint[] faceSelEdgesCache;    // per EDGE:  0 or Mesh.Marks.Select
+    uint[] faceSelEdgesPrevSel;  // per FACE:  copy of faceMarks at last rebuild
+    // WHICH MESH the two arrays above were built from, and at what topology.
+    // The cache is a function of the face SELECTION *and* of `faces`/`edges`,
+    // but the detector beside it can only see the selection — so without this
+    // key a primary-layer switch between two layers whose face marks happen to
+    // agree (same face count, same faces selected) leaves the previous layer's
+    // edge mask painting the new layer's edges. That is exactly the hazard
+    // `MeshCacheKey`'s doc comment describes, and this is the same
+    // address-keyed convention `snap.d` / `bvh_pick.d` already use.
+    //
+    // `MeshStructKey`, NOT `MeshCacheKey`: the mask depends on connectivity
+    // only, and `mutationVersion` moves once per vertex per motion event, so
+    // the `MeshCacheKey` spelling would rebuild this on every frame of a drag
+    // — putting a selection-sized allocation back on the per-frame path, which
+    // is what task 0585 exists to take off it.
+    MeshStructKey faceSelEdgesKey;
 
     // Cache: edge-loop hover mask for ElementMove + falloff EdgeLoops.
     // Hovering an edge pre-highlights the whole loop ring (mirrors the apply,
@@ -4273,6 +4302,7 @@ void main(string[] args) {
     app.layerRenameBufPtr      = &layerRenameBuf;
     app.faceSelEdgesCachePtr   = &faceSelEdgesCache;
     app.faceSelEdgesPrevSelPtr = &faceSelEdgesPrevSel;
+    app.faceSelEdgesKeyPtr     = &faceSelEdgesKey;
     app.layoutPtr              = &layout;
     app.panelsPtr              = &panels;
     app.statusLineGroupsPtr    = &statusLineGroups;

@@ -296,7 +296,7 @@ version (WithAI) {
 // -- see its own "Task 0419" doc comment for the full rationale on each).
 import editor_app : EditorApp, BgGpu, Layout, OverlayMode,
     kAiToggleAvailable, kGenerateAiAvailable,
-    edgeKey, countSelected, buildItemFrame, seedDefaultLayoutIfMissing,
+    edgeKey, buildItemFrame, seedDefaultLayoutIfMissing,
     g_layoutIniPathZ, g_forceLayoutReseed, g_pendingLayoutReloadPathZ;
 
 // =============================================================================
@@ -2692,10 +2692,11 @@ void drawSidePanel(EditorApp app) {
         // are MONOTONIC (incremented on each pick, never
         // decremented on deselect or selection-clear), so they
         // can't be used as a live "how many are selected right
-        // now" readout. Walk the bool[] masks via countSelected.
+        // now" readout. Walk the marks arrays via the mesh's own
+        // countSelected* accessors.
         //
-        // FUTURE perf note — countSelected is a linear walk
-        // (1 byte per `bool` entry, likely auto-vectorised). At
+        // FUTURE perf note — countSelected* is a linear walk
+        // (one `uint` mark per element). At
         // typical mesh sizes the per-frame cost is:
         //     cube      :  ~26 bytes  → < 1 µs  (0.006 % frame)
         //     subdiv ×4 :  ~9 KB      → ~2 µs   (0.012 % frame)

@@ -6,7 +6,7 @@ import std.string : toStringz;
 
 import view;
 import math;
-import mesh : Surface, GpuMesh;
+import mesh : Surface, GpuMesh, MarkView;
 import gl_thread_guard : glThreadGuard;
 import display_state : kSchemeSolidFill, SurfaceShading;
 import weightmap_view : kWeightRamp;   // task 1090: the parked neutral
@@ -903,7 +903,7 @@ void drawLitPreview(const ref LitShader litShader, const ref Shader shader,
     glUniformMatrix4fv(shader.locModel, 1, GL_FALSE, identity.ptr);
     glUniformMatrix4fv(shader.locView,  1, GL_FALSE, vp.view.ptr);
     glUniformMatrix4fv(shader.locProj,  1, GL_FALSE, vp.proj.ptr);
-    previewGpu.drawEdges(shader.locColor, -1, []);
+    previewGpu.drawEdges(shader.locColor, -1, MarkView.init);
 }
 
 class GridShader {

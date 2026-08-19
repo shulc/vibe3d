@@ -1077,8 +1077,7 @@ struct GpuMesh {
     // hovered face shows the legacy highlight even on multi-material LWO
     // meshes; the non-hover branches restore u_overrideMix=0 so the rest
     // of the mesh keeps its surface colours.
-    void drawFacesHighlighted(const ref LitShader shader,
-                               int hoveredFace, const bool[] selectedFaces) {
+    void drawFacesHighlighted(const ref LitShader shader, int hoveredFace) {
         glEnable(GL_POLYGON_OFFSET_FILL);
         glPolygonOffset(1.0f, 1.0f);
         glBindVertexArray(faceVao);
@@ -1154,7 +1153,7 @@ struct GpuMesh {
     // Optimized: batch selected faces to minimize draw calls. In subpatch
     // mode each VBO face is mapped through `faceOriginGpu` so all children
     // of a selected cage face are included.
-    void drawSelectedFacesOverlay(const bool[] selectedFaces) {
+    void drawSelectedFacesOverlay(MarkView selectedFaces) {
         glBindVertexArray(faceVao);
 
         bool preview = faceOriginGpu.length > 0;
@@ -1204,7 +1203,7 @@ struct GpuMesh {
     // loop's edge mask and the single hovered edge index. With the default
     // empty mask the behaviour is identical to the single-edge form, so every
     // existing call site is unchanged.
-    void drawEdges(GLint locColor, int hoveredEdge, const bool[] selectedEdges,
+    void drawEdges(GLint locColor, int hoveredEdge, MarkView selectedEdges,
                    const bool[] hoveredEdges = [],
                    BaseWire base = BaseWire.init) {
         int edgeCount = edgeVertCount / 2;
@@ -1240,8 +1239,13 @@ struct GpuMesh {
         bool allEdgesSelected = !preview
             && selectedEdges.length >= edgeCount
             && !anyHover;
+        // Index loop rather than a slice: `MarkView` is a borrowed one-bit
+        // view, not a range. The `selectedEdges.length >= edgeCount` guard
+        // above is kept verbatim, so this reads exactly the same elements the
+        // slice did.
         if (allEdgesSelected)
-            foreach (s; selectedEdges[0 .. edgeCount]) if (!s) { allEdgesSelected = false; break; }
+            foreach (i; 0 .. edgeCount)
+                if (!selectedEdges[i]) { allEdgesSelected = false; break; }
 
         // Gray pass — depth-tested, skip hovered/selected segments.
         //
@@ -1270,7 +1274,7 @@ struct GpuMesh {
             }
 
             glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
-            if (!anyHover && selectedEdges.length == 0) {
+            if (!anyHover && selectedEdges.empty) {
                 dcArrays(DrawPass.edges, GL_LINES, 0, edgeVertCount);
             } else if (!allEdgesSelected) {
                 int batchStart = -1;
@@ -1300,7 +1304,7 @@ struct GpuMesh {
         if (allEdgesSelected && hoveredEdge < 0) {
             glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
             dcArrays(DrawPass.edges, GL_LINES, 0, edgeVertCount);
-        } else if (selectedEdges.length > 0) {
+        } else if (!selectedEdges.empty) {
             glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
             int batchStart = -1;
             for (int i = 0; i < edgeCount; i++) {
@@ -1378,7 +1382,7 @@ struct GpuMesh {
     /// this, hovering on the subdivided surface highlighted the wrong
     /// preview vert because the cage index from picking was being
     /// used as a raw glDrawArrays offset.
-    void drawVertices(GLint locColor, int hovered, const bool[] selected) {
+    void drawVertices(GLint locColor, int hovered, MarkView selected) {
         glBindVertexArray(vertVao);
 
         // All vertices — small gray dots, with depth test

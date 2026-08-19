@@ -29,7 +29,7 @@ import handles.gl_util       : setThickLineScreenSize;
 import document              : Layer, kindInfo;
 import viewport              : Viewport3D;
 import editor_app            : EditorApp, OverlayMode, BgGpu,
-                               edgeKey, countSelected, buildItemFrame;
+                               edgeKey, buildItemFrame;
 import perf_probe            : g_fc, g_perf, DrawPass, Cat;
 import toolpipe.pipeline     : g_pipeCtx;
 import toolpipe.stage        : TaskCode;
@@ -52,7 +52,7 @@ version (WithAI) {
 // Phase 6 -- renderViewportSceneToFbo, the last panel entry point. Reads
 // shader/checkerShader/gridShader/gridVao/gridOnlyVertCount/hover x3/
 // faceSelEdgesCache+PrevSel/rebuildLoopHoverMask/litShader/gpu/mesh plus
-// bgGpuByLayer [Б2] and edgeKey/countSelected/buildItemFrame [Б1] -- all
+// bgGpuByLayer [Б2] and edgeKey/buildItemFrame [Б1] -- all
 // relocated to editor_app.d in Phase 1 and imported at this module's header;
 // this phase is a verbatim body move. Keeps its original 6 parameters,
 // EditorApp app prepended as the first (per the plan's Phase 6 note).
@@ -458,7 +458,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 // Background layers carry no selection or hover state, so the
                 // base pass is all there is here — and it reads the BACKDROP
                 // side of the activity axis, never the active side.
-                bg.gpu.drawEdges(shader.locColor, -1, [], [],
+                bg.gpu.drawEdges(shader.locColor, -1, MarkView.init, [],
                     BaseWire(true, shader.locAlpha, backdropPlan.wireAlpha));
                 shader.setDim(1.0f);
             }
@@ -584,10 +584,8 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             bool toolFaceHover = activeTool !is null
                               && activeTool.wantsHoverForType(EditMode.Polygons)
                               && hoveredFace >= 0;
-            if (selFeedbackType == SelType.Polygon) {
-                gpu.drawFacesHighlighted(litShader, hoveredFace, mesh.selectedFaces);
-            } else if (toolFaceHover) {
-                gpu.drawFacesHighlighted(litShader, hoveredFace, (bool[]).init);
+            if (selFeedbackType == SelType.Polygon || toolFaceHover) {
+                gpu.drawFacesHighlighted(litShader, hoveredFace);
             } else {
                 gpu.drawFaces(litShader);
             }
@@ -604,7 +602,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
             auto zOv = g_perf.scope_(Cat.drawOverlays);
             checkerShader.useProgram(meshModel, vp, 1.0f, 0.5f, 0.1f);
             glDisable(GL_DEPTH_TEST);
-            gpu.drawSelectedFacesOverlay(mesh.selectedFaces);
+            gpu.drawSelectedFacesOverlay(mesh.selectedFaceView());
             glEnable(GL_DEPTH_TEST);
         }
     }
@@ -654,18 +652,86 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                          && showEdgeHover && hoveredEdge >= 0)
                     loopMask = rebuildLoopHoverMask(hoveredEdge);
             }
-            gpu.drawEdges(shader.locColor, hovForDraw, mesh.selectedEdges, loopMask,
-                          baseWire);
+            gpu.drawEdges(shader.locColor, hovForDraw, mesh.selectedEdgeView(),
+                          loopMask, baseWire);
         } else if (selFeedbackType == SelType.Polygon) {
-            if (faceSelEdgesPrevSel != mesh.selectedFaces) {
-                faceSelEdgesPrevSel = mesh.selectedFaces.dup;
+            // Rebuild trigger. WHAT THE CACHE IS A FUNCTION OF is the whole
+            // question here, and it is THREE things, not one: the face
+            // selection (`faceMarks`), the topology that turns a selected face
+            // into edge indices (`faces` + `edges`), and WHICH mesh both were
+            // read from.
+            //
+            //  * selection — an EXACT compare of the marks snapshot,
+            //    `marksBitDiffer`. It used to be
+            //    `faceSelEdgesPrevSel != mesh.selectedFaces`, which
+            //    materialized a fresh `bool[F]` for its own right-hand side
+            //    every single frame; the cache was paying more than it saved
+            //    (task 0585). `mesh.selectionSignature(EditMode.Polygons)` is
+            //    the canonical non-allocating detector and is deliberately
+            //    REJECTED: it is a hash, and its contract promises only that a
+            //    collision yields a STALE HIT rather than a wrong answer — but
+            //    for a cache that paints the screen a stale hit IS the wrong
+            //    answer. The exact compare costs the same O(F) scan.
+            //
+            //  * mesh identity + connectivity — `MeshStructKey` (address +
+            //    `structVersion`). This is NOT decoration and it is not
+            //    covered by the selection compare: the primary layer can be
+            //    switched to a different `Mesh` whose face marks agree
+            //    element-for-element (same face count, same faces selected)
+            //    while its edge list is entirely different. The selection
+            //    compare is then false, the length repair below never runs,
+            //    and layer A's edge mask paints layer B's edges. Selection is
+            //    a Marks-class change that deliberately bumps no version at
+            //    all, and two distinct meshes can share a version, so neither
+            //    term alone is enough — which is what `MeshCacheKey`'s own doc
+            //    comment says. `structVersion` and not `mutationVersion`: this
+            //    mask is a function of connectivity, and `mutationVersion`
+            //    moves on every vertex-position write, so keying on it would
+            //    rebuild the mask on every frame of a drag.
+            //
+            //  * the cache array's own size, kept in the trigger rather than
+            //    only inside the branch, so a mask of the wrong length can
+            //    never reach `drawEdges` (`MarkView` answers false past its
+            //    end, so a short mask degrades to "nothing highlighted"
+            //    silently — no crash to notice).
+            bool selChanged = !faceSelEdgesKey.matches(mesh)
+                           || faceSelEdgesCache.length != mesh.edges.length
+                           || marksBitDiffer(faceSelEdgesPrevSel, mesh.faceMarks,
+                                             Mesh.Marks.Select);
+            if (selChanged) {
+                faceSelEdgesKey.stamp(mesh);
+                faceSelEdgesPrevSel.length = mesh.faceMarks.length; // no-op when equal
+                faceSelEdgesPrevSel[]      = mesh.faceMarks[];      // memcpy, no `new`
                 if (faceSelEdgesCache.length != mesh.edges.length)
-                    faceSelEdgesCache = new bool[](mesh.edges.length);
-                faceSelEdgesCache[] = false;
+                    faceSelEdgesCache = new uint[](mesh.edges.length);
+                faceSelEdgesCache[] = 0;
 
-                bool allSel = (countSelected(mesh.selectedFaces) == cast(int)mesh.selectedFaces.length);
+                // Right-hand operand is the MARKS length, not `faces.length`:
+                // that is what the materialized view this replaced reported,
+                // and the two differ on a mesh whose marks lag its geometry.
+                //
+                // DEGENERATE CASE, preserved verbatim from the `bool[]` form
+                // and called out because the length term above invites the
+                // question: when `faceMarks` is EMPTY this reads `0 == 0` and
+                // declares everything selected, so the whole wireframe below
+                // is highlighted. `hasAnySelectedFaces()` in the else-branch
+                // is what guards "nothing is selected" everywhere else here,
+                // and it would answer false.
+                //
+                // Reaching it needs `edges.length > 0` while
+                // `faceMarks.length == 0` — a mesh with loose edges and no
+                // faces, which IS representable (`Mesh.addEdge`), while in
+                // Polygons feedback. Not measured as reachable through any
+                // driveable path: deleting every face (`mesh.delete` over the
+                // whole selection) drops the edges with them and leaves an
+                // empty mesh, and `/api/load-mesh` derives edges from faces,
+                // so both land on `edges.length == 0` and draw nothing either
+                // way. Left exactly as it was: correcting it would be a
+                // behaviour change on a state nobody has produced, and this
+                // task is an allocation change with a proven-identical output.
+                bool allSel = (mesh.countSelectedFaces() == cast(int)mesh.faceMarks.length);
                 if (allSel) {
-                    faceSelEdgesCache[] = true;
+                    faceSelEdgesCache[] = Mesh.Marks.Select;
                 } else {
                     if (mesh.hasAnySelectedFaces()) {
                         bool[ulong] edgeSet;
@@ -676,12 +742,13 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                         }
                         foreach (ei, edge; mesh.edges) {
                             if (edgeKey(edge[0], edge[1]) in edgeSet)
-                                faceSelEdgesCache[ei] = true;
+                                faceSelEdgesCache[ei] |= Mesh.Marks.Select;
                         }
                     }
                 }
             }
-            gpu.drawEdges(shader.locColor, -1, faceSelEdgesCache, [], baseWire);
+            gpu.drawEdges(shader.locColor, -1,
+                          MarkView(faceSelEdgesCache, Mesh.Marks.Select), [], baseWire);
 
             // Task 0399: Loop Slice ring-preview in Polygons mode. The
             // Edges-mode branch above previews the ring through
@@ -710,7 +777,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 && mesh.hasAnySelectedFaces()) {
                 if (auto lst = cast(LoopSliceTool) activeTool) {
                     const(bool)[] loopSelMask = lst.selectionRingPreviewMask();
-                    gpu.drawEdges(shader.locColor, -1, mesh.selectedEdges,
+                    gpu.drawEdges(shader.locColor, -1, mesh.selectedEdgeView(),
                                   loopSelMask, baseWire);
                 }
             }
@@ -719,14 +786,15 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 (activeTool !is null && activeTool.wantsEdgeLoopHover())
                     ? rebuildLoopHoverMask(hoveredEdge)
                     : (bool[]).init;
-            gpu.drawEdges(shader.locColor, hoveredEdge, [], loopMask, baseWire);
+            gpu.drawEdges(shader.locColor, hoveredEdge, MarkView.init, loopMask,
+                          baseWire);
         } else if (activePlan.drawWire) {
             // The bare-overlay branch: no selection set, no hover index, so
             // `baseWire` is the ONLY thing it would draw. Kept as an explicit
             // early-out rather than a `BaseWire(false, ...)` call so that an
             // overlay of "none" with nothing selected issues no GL at all —
             // not a VAO bind and a loop over zero batches.
-            gpu.drawEdges(shader.locColor, -1, [], [], baseWire);
+            gpu.drawEdges(shader.locColor, -1, MarkView.init, [], baseWire);
         }
     }
 
@@ -854,10 +922,10 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     // absent, and it is the visible half of "kept but not drawn".
     if (activePlan.drawVerts || selFeedbackType == SelType.Vertex) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
-        gpu.drawVertices(shader.locColor, hoveredVertex, mesh.selectedVertices);
+        gpu.drawVertices(shader.locColor, hoveredVertex, mesh.selectedVertexView());
     } else if (showVertHover && hoveredVertex >= 0) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
-        gpu.drawVertices(shader.locColor, hoveredVertex, (bool[]).init);
+        gpu.drawVertices(shader.locColor, hoveredVertex, MarkView.init);
     }
 
     // ---- Active tool / falloff gizmo draws ----
