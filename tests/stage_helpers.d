@@ -177,35 +177,47 @@ void runStageFalloffSuite(string fixtureJson) {
 // `runStageAcenSuite`'s generic mesh_build/selection/pipe_setup vocabulary
 // can only reach `ActionCenterStage.computeCenter`'s Mode.Element FALLBACK
 // tiers (userPin / elementCenter()) — there is no HTTP step that writes
-// `elementVerts_` directly (by design: it is only ever set by a REAL
-// click-pick, `XfrmTransformTool.tryPickElement` -> `takeVert`/`takeEdge`/
-// `takeFace` -> `notifyAcenElementVerts`). Driving `userPlacedCenter` via
+// `elementPin` directly (by design: it is only ever set by a REAL click-pick,
+// `XfrmTransformTool.tryPickElement` -> `takeVert`/`takeEdge`/`takeFace` ->
+// `notifyAcenElementPin`). Driving `userPlacedCenter` via
 // `tool.pipe.attr actionCenter userPlacedX/Y/Z` and calling that "element
 // parity" would silently test the WRONG tier — computeCenter's Element arm
-// is `if (liveElementCenter(elc)) return elc; if (userPin.placed) return
-// userPin.center; return elementCenter();`, so liveElementCenter always
-// wins once populated, making the userPin path a dead branch whenever a
-// pick has actually happened — a fixture that only ever exercises userPin
-// would be a false green for "element parity".
+// is `if (elementPin.placed) return elementPin.center; if (userPin.placed)
+// return userPin.center; return elementCenter();`, so the frozen pick always
+// wins once written, making the userPin path a dead branch whenever a pick
+// has actually happened — a fixture that only ever exercises userPin would
+// be a false green for "element parity".
+//
+// Task 1530 inverted what the TOP tier is, and assertion 2 below changed
+// meaning with it. It used to read "the centre is not the click point, so
+// this is not the userPin tier — it is the LIVE ring centroid". The top tier
+// is now itself a frozen point, so what assertion 2 still discriminates is
+// the ANCHOR: `take*` stores the element's CENTROID, not the position on it
+// that was clicked. (Storing the ray-hit point instead is the reference's
+// other, separately-measured behaviour and deliberately not ours.) Assertion
+// 1 is unchanged in both letter and force.
 //
 // This driver instead fires a REAL /api/play-events click: hovers each
 // mesh face at an OFF-CENTRE point (halfway from the face centroid toward
 // one of its own corners — same recipe as
 // tests/test_element_pick_face_clickpoint.d) until the hovered face
-// matches, then sends a bare mouse-down with NO follow-up motion (Element
-// mode tracks the picked ring's LIVE position, so an actual drag would move
-// the vertices and the "golden" would have to chase a moving target;
-// reading back immediately after DOWN isolates the pick itself from any
-// drag). The expected center is the picked face's OWN vertex average,
+// matches, then sends a bare mouse-down with NO follow-up motion. (The
+// no-motion recipe predates task 1530, when Element tracked the picked ring
+// LIVE and a drag would have moved the golden out from under the read. It is
+// kept because it still isolates the PICK from everything a drag adds — and
+// because a frozen pivot that a drag could move would be the 1530 defect
+// returning, which tests/test_acen_element_freeze_translate.d is the cell
+// for.) The expected center is the picked face's OWN vertex average,
 // computed from live /api/model data — not a frozen JSON golden, since
 // screen-space picking is inherently camera/viewport-dependent (unlike the
 // other stage-acen cases). Two assertions close the loop:
-//   1. actionCenter.center == the face centroid (proves liveElementCenter
+//   1. actionCenter.center == the face centroid (proves the element pick
 //      fired and is what answered).
-//   2. actionCenter.center != the (off-centre) click point (proves this is
-//      NOT the userPin/click-point fallback tier — the two tiers would be
-//      indistinguishable if the click had landed ON the centroid, which is
-//      exactly why the click point is deliberately off-centre).
+//   2. actionCenter.center != the (off-centre) click point (proves the
+//      stored anchor is the element's CENTROID and not the clicked position
+//      — the two would be indistinguishable if the click had landed ON the
+//      centroid, which is exactly why the click point is deliberately
+//      off-centre).
 private string viewportLine(CameraState cam) {
     return format(`{"t":0.000,"type":"VIEWPORT","vpX":%d,"vpY":%d,"vpW":%d,"vpH":%d,"fovY":0.785398}` ~ "\n",
                   cam.vpX, cam.vpY, cam.width, cam.height);
@@ -295,7 +307,7 @@ void runStageAcenElementLivePick(string presetId = "xfrm.elementMove",
         assert(fabs(got[c] - wantCentroid[c]) <= tol,
             format("%s: actionCenter.center[%d] expected the picked face's "
                    ~ "own centroid %.6f, got %.6f (tol %.1e) — did the live "
-                   ~ "element pick (liveElementCenter) actually fire?",
+                   ~ "element pick (the frozen elementPin) actually fire?",
                    cn, c, wantCentroid[c], got[c], tol));
 
     double dClick2 = 0;
@@ -303,7 +315,7 @@ void runStageAcenElementLivePick(string presetId = "xfrm.elementMove",
     assert(dClick2 > 0.01,
         format("%s: actionCenter.center landed on/near the CLICK POINT "
                ~ "(dist^2=%.6f), not the face centroid — this would be the "
-               ~ "userPin/click-point fallback tier, not liveElementCenter "
+               ~ "userPin/click-point tier, not the element CENTROID anchor "
                ~ "(review finding R3)", cn, dClick2));
 
     playAndWait(upLog(cam, cpx, cpy));

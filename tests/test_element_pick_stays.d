@@ -1,7 +1,27 @@
 // Element Move: after a full click + drag + release on an element, the gizmo /
-// action center must STAY on the picked element — it must NOT snap back to the
-// moving-set centroid (the bug: with an empty selection the Move mouse-up
-// re-pinned the action center to the whole-mesh centroid).
+// action center must STAY AT THE POINT THE PICKING CLICK CAPTURED — it must not
+// snap back to the moving-set centroid, and it must not follow the picked
+// element as that element moves.
+//
+// THIS FILE STATED THE OPPOSITE LAW UNTIL TASK 1530, and it is worth saying why
+// rather than just editing the assert. It was written when `Mode.Element`'s
+// pivot was the LIVE centroid of the picked vertex ring, recomputed from
+// `mesh_.vertices` every read; on that law "glued to the element" was correct
+// and "frozen at the click point" was, in this file's own words, one of the
+// wrong answers. The owner hit the consequence in ordinary work — a pivot
+// recomputed from the geometry the tool is moving closes a feedback loop, and a
+// scale about it diverges — and signed the reference's law instead: the pivot
+// is a POINT captured on the button-DOWN of a picking click, held for that
+// gesture and every later one until the next such click. So the assertion below
+// is inverted BY DECISION, not because the test was wrong for its time.
+//
+// It is also, unplanned, the second independent measurement of the defect. When
+// task 1530's change landed and this file was still on the old law, it failed
+// with the pivot sitting at exactly (0.5,0.5,0.5) — the click point — while the
+// picked vertex had travelled to (0.489374,0.774534,0.5), `dist=0.27474`. The
+// purpose-built cell (tests/test_acen_element_freeze_translate.d) measured
+// 0.2646 on the same cube under its own mutation. Two instruments written for
+// different purposes, agreeing on the size of the drift, one of them for free.
 
 import std.net.curl;
 import std.json;
@@ -73,28 +93,56 @@ unittest {
                              vx, vy, vx, vy - 80, 10));
     settle();
 
-    // reference `center.element` parity: the gizmo / action center is GLUED to the
-    // picked element — after the drag it sits at the vertex's NEW position, not
-    // at the moving-set centroid (the bug) and not frozen at the click point.
+    // The captured point survives the gesture. Three answers are distinguishable
+    // here and the cell separates all three, which is why it is still worth
+    // running after the inversion:
+    //   (a) the CLICK POINT, v6's pre-drag position (0.5,0.5,0.5) — the law;
+    //   (b) v6's post-drag position — the live ring centroid, the defect;
+    //   (c) the moving-set / whole-mesh centroid, near the origin — the older
+    //       bug this file was originally written against, still guarded.
     auto verts = getJson("/api/model")["vertices"].array;
     auto v6now = verts[6].array;
     Vec3 picked = Vec3(cast(float)v6now[0].floating,
                        cast(float)v6now[1].floating,
                        cast(float)v6now[2].floating);
     Vec3 p = evalPivot();
-    float d = sqrt((p.x-picked.x)*(p.x-picked.x) +
-                   (p.y-picked.y)*(p.y-picked.y) +
-                   (p.z-picked.z)*(p.z-picked.z));
-    assert(d < 0.05f,
-        "Element gizmo must track the picked vertex's CURRENT position " ~
-        "(" ~ picked.x.to!string ~ "," ~ picked.y.to!string ~ "," ~
-        picked.z.to!string ~ "); pivot=(" ~ p.x.to!string ~ "," ~
-        p.y.to!string ~ "," ~ p.z.to!string ~ ") dist=" ~ d.to!string);
-    // And the vertex must actually have MOVED up (sanity: the drag did work,
-    // so this isn't trivially satisfied by "nothing moved").
+
+    float dClick = sqrt((p.x-v6.x)*(p.x-v6.x) +
+                        (p.y-v6.y)*(p.y-v6.y) +
+                        (p.z-v6.z)*(p.z-v6.z));
+    assert(dClick < 0.05f,
+        "Element pivot must STAY at the point the picking click captured " ~
+        "(" ~ v6.x.to!string ~ "," ~ v6.y.to!string ~ "," ~ v6.z.to!string ~
+        "); pivot=(" ~ p.x.to!string ~ "," ~ p.y.to!string ~ "," ~
+        p.z.to!string ~ ") dist=" ~ dClick.to!string);
+
+    // The vertex must actually have MOVED (sanity: the drag did work, so the
+    // green above is not trivially satisfied by "nothing moved" — without this
+    // a tool that refused the gesture would pass).
     assert(picked.y > 0.5f + 1e-3f,
         "picked vertex should have moved up under the drag; y=" ~
         picked.y.to!string);
+
+    // (b) must be REFUTED, not merely un-asserted: the vertex has moved, so a
+    // pivot that tracked it live would now be a measurable distance away. This
+    // is the assert that goes red if the live ring centroid ever comes back.
+    float dLive = sqrt((p.x-picked.x)*(p.x-picked.x) +
+                       (p.y-picked.y)*(p.y-picked.y) +
+                       (p.z-picked.z)*(p.z-picked.z));
+    assert(dLive > 0.1f,
+        "Element pivot must NOT follow the picked vertex to its new position " ~
+        "(" ~ picked.x.to!string ~ "," ~ picked.y.to!string ~ "," ~
+        picked.z.to!string ~ ") — that is the feedback loop task 1530 removed; " ~
+        "pivot=(" ~ p.x.to!string ~ "," ~ p.y.to!string ~ "," ~
+        p.z.to!string ~ ") dist=" ~ dLive.to!string);
+
+    // (c) the original bug this file guarded, unchanged in force: the pivot must
+    // not be the whole-mesh centroid either.
+    float dOrigin = sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
+    assert(dOrigin > 0.5f,
+        "Element pivot must not snap back to the moving-set / whole-mesh " ~
+        "centroid near the origin; pivot=(" ~ p.x.to!string ~ "," ~
+        p.y.to!string ~ "," ~ p.z.to!string ~ ")");
 
     postJson("/api/script", "tool.set xfrm.elementMove off");
     settle();

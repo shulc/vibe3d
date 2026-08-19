@@ -43,8 +43,8 @@ unittest {
 // R3): driving this mode through the generic mesh_build/selection/pipe_setup
 // vocabulary (e.g. writing userPlacedCenter via tool.pipe.attr) only reaches
 // the userPin FALLBACK tier of computeCenter's Element arm, never the actual
-// live-element tier (liveElementCenter()) that a real click-pick populates
-// (XfrmTransformTool.tryPickElement -> takeFace -> notifyAcenElementVerts).
+// frozen element tier (elementPin) that a real click-pick populates
+// (XfrmTransformTool.tryPickElement -> takeFace -> notifyAcenElementPin).
 // Asserting the fallback tier and calling it "element parity" would be a
 // false green. runStageAcenElementLivePick fires a REAL play-events click
 // (off-centre, so the click point provably differs from the face centroid)

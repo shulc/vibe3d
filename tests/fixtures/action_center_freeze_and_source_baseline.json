@@ -1,0 +1,80 @@
+{
+  "fixture": "action_center_freeze_and_source_baseline",
+  "version": 1,
+  "measured": "2026-08-19",
+  "what_this_pins": [
+    "An action centre placed by clicking an element is a value CAPTURED at that click, not a quantity recomputed from the element's live vertices. It cannot move while a transform gesture runs.",
+    "The capture happens on the button-DOWN of a press that hits no tool handle. It is not scoped to a gesture: the captured point stays in force across later gestures until the next such click.",
+    "The per-frame transform reads SOURCE POSITIONS from the pre-gesture mesh, not from the previous frame's output. This holds independently of the action centre and is what makes any live-pivot scheme safe.",
+    "Neither behaviour depends on which transform bank is active: translate, rotate and scale all show it."
+  ],
+  "rig": {
+    "description": "3 x 3 lattice of points in the ground plane, y = 0, spanning [-1.2, +1.2] in x and z; four quads wound so their normals point +y (toward the camera).",
+    "vertices": [
+      [-1.2, 0.0, -1.2], [0.0, 0.0, -1.2], [1.2, 0.0, -1.2],
+      [-1.2, 0.0,  0.0], [0.0, 0.0,  0.0], [1.2, 0.0,  0.0],
+      [-1.2, 0.0,  1.2], [0.0, 0.0,  1.2], [1.2, 0.0,  1.2]
+    ],
+    "faces": [[0, 3, 4, 1], [1, 4, 5, 2], [3, 6, 7, 4], [4, 7, 8, 5]]
+  },
+  "cases": [
+    {
+      "name": "element_centre_under_translate",
+      "gesture": "click one element to place the action centre, then drag to translate the whole mesh",
+      "captured_centre": [-0.915865050, 0.0, -1.200000048],
+      "captured_centre_note": "a point ON the picked element, not its midpoint: y is exactly the rig plane and z is exactly the rig's boundary row",
+      "translation_applied": [0.64, -0.17, 0.0],
+      "centre_values_observed_during_gesture": 1,
+      "pivot_placement_events_during_gesture": 0,
+      "evaluations_observed": 215,
+      "tool_reads_observed": 22,
+      "prediction_if_pivot_were_live": "the pivot would travel the full 0.64 with the geometry and compound",
+      "prediction_if_pivot_were_captured": "one value for the whole gesture",
+      "matched": "captured"
+    },
+    {
+      "name": "element_centre_under_translate_second_pick",
+      "gesture": "same, with the placing click on a different element",
+      "captured_centre": [-0.274634158, 0.0, -0.193005523],
+      "centre_values_observed_during_gesture": 1,
+      "evaluations_observed": 163,
+      "tool_reads_observed": 20,
+      "role": "positive control: the placement mechanism is alive, so the constancy above is a measurement and not a dead field"
+    },
+    {
+      "name": "element_centre_under_rotate",
+      "captured_centre": [0.213325466, 0.0, -1.200000048],
+      "centre_values_observed_during_gesture": 1,
+      "evaluations_observed": 161,
+      "tool_reads_observed": 20,
+      "role": "the law is not specific to one transform bank"
+    },
+    {
+      "name": "element_centre_under_scale",
+      "scale_recovered_from_geometry": 1.38001,
+      "centre_values_observed_during_gesture": 1,
+      "evaluations_observed": 155,
+      "drag_events_observed": 21,
+      "pivot_placement_events_during_gesture": 0,
+      "role": "a scale about its own pivot is a FIXED POINT of that pivot, so this case cannot by itself separate a captured pivot from a live one. Kept as a consistency check only; the translate cases are the discriminator."
+    },
+    {
+      "name": "source_positions_under_translate",
+      "gesture": "select two of the four quads, place the action centre at the SELECTION centroid (a quantity the engine recomputes from geometry every evaluation), then translate",
+      "selection_centroid_before": [-0.6, 0.0, 0.0],
+      "selection_centroid_after": [-0.05, -0.12, 0.0],
+      "centre_published_during_gesture": [-0.600000024, 0.0, 0.0],
+      "centre_values_observed_during_gesture": 1,
+      "publications_observed": 161,
+      "prediction_if_source_positions_were_the_previous_frame_output": "the published centroid climbs from -0.6 toward -0.05 across the gesture",
+      "prediction_if_source_positions_are_the_pre_gesture_mesh": "one value, exactly the pre-gesture centroid",
+      "matched": "pre_gesture_mesh",
+      "why_the_selection_must_not_be_empty": "with nothing selected and a rig centred on the origin the centre reads (0,0,0), which is both the centroid AND the empty-selection fallback — a constant that is constant for the wrong reason. Selecting a subset whose centroid is elsewhere is what makes this case informative."
+    }
+  ],
+  "unmeasured": [
+    "The toggle that switches the captured point between the element's centre and the position clicked on it, and its default.",
+    "The same question in item mode and in a UV editing pane.",
+    "A tolerance: all constancy claims here are bit-identical at 9 decimal places, so no tolerance was needed."
+  ]
+}

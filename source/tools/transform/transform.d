@@ -783,12 +783,20 @@ protected:
         ac.setUserPlaced(worldHit);
     }
 
-    // Record the picked element's vertex ring on the ACEN stage so Mode.Element
-    // tracks the element LIVE (gizmo follows it under the drag + stays on it
-    // after release). Paired with notifyAcenUserPlaced from the wrapper's
-    // click-pick (takeVert/takeEdge/takeFace). No-op when no ACEN stage is
-    // registered. PUBLIC for the wrapper→sub-tool (sibling-instance) reason.
-    public void notifyAcenElementVerts(const(uint)[] verts) {
+    // Task 1530 — FREEZE Mode.Element's pivot at the picked element's anchor
+    // point. Paired with notifyAcenUserPlaced from the wrapper's click-pick
+    // (takeVert/takeEdge/takeFace): the pin is a POINT, and from the write on
+    // that button-DOWN the ACEN Element arm copies it and reads no geometry,
+    // for this gesture and every later one until the next picking click.
+    //
+    // It replaced `notifyAcenElementVerts`, which handed the stage the picked
+    // element's vertex RING so the centroid could be recomputed LIVE. That
+    // recomputation read the same vertices the tool was moving; under a scale
+    // or a rotate about the pivot it closed a divergent feedback loop.
+    //
+    // No-op when no ACEN stage is registered. PUBLIC for the wrapper→sub-tool
+    // (sibling-instance) reason.
+    public void notifyAcenElementPin(Vec3 anchor) {
         import toolpipe.pipeline           : g_pipeCtx;
         import toolpipe.stages.actcenter   : ActionCenterStage;
         import toolpipe.stage              : TaskCode;
@@ -796,7 +804,23 @@ protected:
         auto ac = cast(ActionCenterStage)
                   g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
         if (ac is null) return;
-        ac.setElementVerts(verts);
+        ac.setElementPin(anchor);
+    }
+
+    /// True iff the ACEN stage already holds EXACTLY this frozen Element
+    /// anchor — the equal-write skip the wrapper's `take*` consults before
+    /// re-firing the relocate. Kept here beside the writer so the two cannot
+    /// drift apart. False when no ACEN stage is registered (nothing is held,
+    /// so nothing can be skipped).
+    public bool acenHoldsElementPin(Vec3 anchor) {
+        import toolpipe.pipeline           : g_pipeCtx;
+        import toolpipe.stages.actcenter   : ActionCenterStage;
+        import toolpipe.stage              : TaskCode;
+        if (g_pipeCtx is null) return false;
+        auto ac = cast(ActionCenterStage)
+                  g_pipeCtx.pipeline.findByTask(TaskCode.Acen);
+        if (ac is null) return false;
+        return ac.holdsElementPin(anchor);
     }
 
     // Display soft-pin hooks (BUG-1: Move gizmo settle, falloff-independent).

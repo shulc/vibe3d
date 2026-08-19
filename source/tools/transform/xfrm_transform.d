@@ -1774,7 +1774,17 @@ public:
         //
         // Requires the T flag: with T off (TransformRotate /
         // TransformScale) there's no moveSub.handler to anchor on.
-        if (picked && flagT) {
+        //
+        // Task 1530 — AND an active Element FALLOFF, which until 1530 was
+        // implied: `tryPickElement` itself refused without one, so `picked`
+        // could not be true here. Now that the pick is gated on the ACEN mode
+        // instead, this haul would become reachable from `actr.element` on any
+        // T-enabled tool with no falloff configured at all — a click on a
+        // vertex would start hauling the whole mesh. Keeping the falloff term
+        // leaves `xfrm.elementMove` byte-identical and gives bare
+        // `actr.element` what the reference gives it: the click moves the
+        // pivot, and nothing else.
+        if (picked && flagT && elementFalloffActive()) {
             // The element pick IS a relocate (it re-anchored ACEN to the
             // picked element's centroid via tryPickElement →
             // notifyAcenUserPlaced at the top of this method). If a Move
@@ -1834,11 +1844,13 @@ public:
             // ActionCenterPacket was evaluated at the START of this frame —
             // BEFORE tryPickElement ran this mouse-down — so it still holds the
             // PRE-pick center (the old gizmo position / mesh centroid). The
-            // ACEN stage's currentCenter() recomputes live and already reflects
-            // the just-picked element (elementVerts_). Feeding the stale packet
-            // here anchored the drag at the OLD center, so the gizmo moved
-            // relative to its old location instead of jumping onto the picked
-            // vertex first — the reported bug.
+            // ACEN stage's currentCenter() reads the pin the pick just froze
+            // (`elementPin`, task 1530 — before that, the live ring centroid of
+            // the same element) and so already reflects the just-picked
+            // element. Feeding the stale packet here anchored the drag at the
+            // OLD center, so the gizmo moved relative to its old location
+            // instead of jumping onto the picked vertex first — the reported
+            // bug.
             auto acForPivot = activeAcenStage();
             Vec3 pivot = acForPivot !is null
                 ? acForPivot.currentCenter()
@@ -3147,7 +3159,34 @@ public:
                 // never stale at mouseUp. The fast-path then merely skips the
                 // per-frame vertex re-upload — the GPU keeps the baseline
                 // buffer and u_model = wrapAboutPivot(fold) bridges the scale.
-                applyTRS(dragBaseline);
+                //
+                // Task 1530 — `samplePipeFromBaseline = true`, the same
+                // argument the rotate drain above already passes (:3065/:3104).
+                // It restores the run baseline BEFORE `buildLocalVts`, so the
+                // whole pipe — action centre, axis, cluster pivots — is
+                // evaluated against PRE-gesture geometry instead of against the
+                // geometry this very drain just wrote. Scale was the only live
+                // bank still sampling the pipe live, and any geometry-DERIVED
+                // action centre (Auto / Select / Border / Local, and Element's
+                // pre-click fallback) therefore drifted with its own output:
+                // `p_{n+1} = S·C0 + (I−S)·p_n`, divergent for |1−s| > 1. The
+                // geometry itself never compounded — `applyTRS` restores the
+                // baseline every frame and `run.s` is run-absolute — so the
+                // pivot was the only accumulator, which is exactly what the
+                // owner's trace shows: the dragged axis alone moving, by an
+                // order of magnitude per sample, with sign flips.
+                //
+                // Deliberately NOT done by freezing the pivot inside `applyTRS`
+                // (`runFrameValid ? runFrameOrigin : queryActionCenter`): that
+                // moves the pivot for EVERY caller — the item branch, the
+                // headless numeric path, and the panel path on a MIXED T+R+S
+                // preset, where :3741/:3778 pass `true` only for a pure preset.
+                // The flag keeps the radius at "the scale drag", and it is the
+                // more faithful mechanism besides: the reference rolls the
+                // geometry back before EVERY tool evaluation, so its whole pipe
+                // reads pre-gesture positions, not just its pivot.
+                applyTRS(dragBaseline, Vec3(0, 0, 0), 0,
+                         /*samplePipeFromBaseline=*/true);
                 // P-F Phase 3a (MAJOR-4) — the own-bank fast-path
                 // `wrapAboutPivot(lastFoldMatrix) · buffer` is valid ONLY while the
                 // GPU buffer still holds the FROZEN run baseline (lastFoldMatrix is
@@ -4775,10 +4814,23 @@ private:
     // stage's elementMode. Returns true iff the click landed on a
     // hovered element.
     bool tryPickElement(int mx, int my) {
-        FalloffStage stage = activeFalloffStage();
-        if (stage is null || stage.type != FalloffType.Element) return false;
+        // Task 1530 — the GATE is the action-centre mode, not falloff. The
+        // frozen Element pivot is ACEN state; a click that relocates it must
+        // work wherever that mode is armed (`actr.element` on a plain move
+        // tool, say), not only inside the one preset that also happens to arm
+        // an Element falloff. This is the reference's shape too: its writer is
+        // the centre tool's own event handler, and the falloff is a separate
+        // slot it knows nothing about.
+        auto ac = activeAcenStage();
+        if (ac is null || ac.mode != ActionCenterStage.Mode.Element) return false;
 
-        ElementMode em = stage.elementMode;
+        // The falloff side effects below (anchor ring, connect mask) stay
+        // gated: they belong to the Element FALLOFF, and with no such stage
+        // there is nothing to seed. `null` here means "pin only".
+        FalloffStage stage = activeFalloffStage();
+        if (stage !is null && stage.type != FalloffType.Element) stage = null;
+
+        ElementMode em = stage !is null ? stage.elementMode : ElementMode.Auto;
         bool autoMode = (em == ElementMode.Auto);
         bool wantV = autoMode || (em == ElementMode.Vertex);
         bool wantE = autoMode || (em == ElementMode.Edge);
@@ -4797,21 +4849,34 @@ private:
     }
 
     // Per take*, two pieces are written:
-    //   1. ACEN.userPlaced ← picked element's centroid (gizmo
-    //      pivot + falloff sphere anchor).
+    //   1. ACEN ← the picked element's centroid, as BOTH the frozen Element
+    //      pivot (`notifyAcenElementPin`, task 1530 — the gizmo pivot and the
+    //      falloff sphere anchor from here on) and the ordinary relocate pin
+    //      (`notifyAcenUserPlaced`, which the OTHER modes read and which the
+    //      Element arm keeps as its second tier).
     //   2. FalloffStage.anchorRing ← picked element's vert indices
     //      (every one gets weight=1 in elementWeight, so the picked
     //      element drags as a rigid unit regardless of sphere radius).
-    // Both pieces together form the `falloff.element` internal
-    // hybrid (anchor + sphere).
+    // Piece 2 is skipped when `stage` is null (Element ACEN armed without an
+    // Element falloff — see tryPickElement's gate).
+
+    /// Write the picked anchor into ACEN, skipping a write of the point
+    /// already frozen. The skip lives HERE and not inside `setUserPlaced`: that
+    /// setter also stages the in-session-cancel baseline for every relocate
+    /// caller in the editor, and widening the skip to all of them would be a
+    /// far larger radius than the behaviour it buys.
+    private void writeElementAnchor(Vec3 anchor) {
+        if (acenHoldsElementPin(anchor)) return;   // equal write skipped
+        notifyAcenUserPlaced(anchor);
+        notifyAcenElementPin(anchor);
+    }
 
     bool takeVert(FalloffStage stage, int vi) {
-        notifyAcenUserPlaced(mesh.vertices[vi]);
-        stage.anchorRing = [cast(uint)vi];
-        // ACEN.Element tracks the picked element LIVE (the gizmo follows it
-        // under the drag instead of being dragged to the moving-set centroid).
-        notifyAcenElementVerts(stage.anchorRing);
-        updateConnectMask(stage, vi);
+        writeElementAnchor(mesh.vertices[vi]);
+        if (stage !is null) {
+            stage.anchorRing = [cast(uint)vi];
+            updateConnectMask(stage, vi);
+        }
         return true;
     }
 
@@ -4819,23 +4884,23 @@ private:
         auto edge = mesh.edges[ei];
         // Anchor = edge midpoint (centroid of the two endpoints),
         // click-independent — Mesh.edgeCentroid (mesh_ops/connected_mask.d).
-        Vec3 anchor = mesh.edgeCentroid(cast(uint)ei);
-        notifyAcenUserPlaced(anchor);
-        stage.anchorRing = [cast(uint)edge[0], cast(uint)edge[1]];
-        notifyAcenElementVerts(stage.anchorRing);
-        updateConnectMask(stage, cast(int)edge[0]);
+        writeElementAnchor(mesh.edgeCentroid(cast(uint)ei));
+        if (stage !is null) {
+            stage.anchorRing = [cast(uint)edge[0], cast(uint)edge[1]];
+            updateConnectMask(stage, cast(int)edge[0]);
+        }
         return true;
     }
 
     bool takeFace(FalloffStage stage, int fi) {
         // Anchor = face centroid (vertex average), click-independent.
-        Vec3 anchor = mesh.faceCentroid(cast(uint)fi);
-        notifyAcenUserPlaced(anchor);
+        writeElementAnchor(mesh.faceCentroid(cast(uint)fi));
         auto face = mesh.faces[fi];
-        stage.anchorRing = face.dup;
-        notifyAcenElementVerts(stage.anchorRing);
-        if (face.length > 0)
-            updateConnectMask(stage, cast(int)face[0]);
+        if (stage !is null) {
+            stage.anchorRing = face.dup;
+            if (face.length > 0)
+                updateConnectMask(stage, cast(int)face[0]);
+        }
         return true;
     }
 
@@ -4879,6 +4944,16 @@ private:
         if (g_pipeCtx is null) return null;
         return cast(FalloffStage)
                g_pipeCtx.pipeline.findByTask(TaskCode.Wght);
+    }
+
+    /// True iff an Element FALLOFF is armed right now. Task 1530 — the pick
+    /// itself no longer needs one (its gate is the ACEN mode), but the
+    /// screen-plane haul an element click opens still does: without a falloff
+    /// there is no attenuation, so the "haul" would drag the entire moving set
+    /// (empty selection ⇒ the whole mesh) off a pivot click.
+    private bool elementFalloffActive() const {
+        auto st = activeFalloffStage();
+        return st !is null && st.type == FalloffType.Element;
     }
 
     // The WHOLE active falloff SET (every TaskCode.Wght stage, pipe order) —

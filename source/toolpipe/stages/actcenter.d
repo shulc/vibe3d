@@ -270,6 +270,31 @@ class ActionCenterStage : Stage, Operator, ToolSwitchTransient {
     // `userPlaced` / `userPlacedCenter` fields.
     Pin  userPin;
 
+    // Task 1530 — Mode.Element's FROZEN pivot: the world point written on the
+    // button-DOWN of a picking click that hit no tool handle
+    // (XfrmTransformTool.tryPickElement -> take*). It is a POINT, not a vertex
+    // ring: `computeCenter`'s Element arm copies these three numbers and reads
+    // no mesh at all, so the pivot cannot be recomputed from the geometry the
+    // tool is moving. That recomputation was the defect — a live ring centroid
+    // closes the loop `pivot <- geometry <- scale about pivot`, whose fixed
+    // point is unstable for |1-s| > 1 (measured on a live drag: two sign flips
+    // and an order of magnitude per sample).
+    //
+    // Lifetime — deliberately NOT "for the gesture". The point survives the
+    // whole gesture AND every later gesture, until the next such picking
+    // click; a mode switch keeps it; `resetTransient()` (tool.set / tool
+    // switch) keeps it; only a full `reset()` (= SceneReset = /api/reset)
+    // wipes it.
+    //
+    // Why its OWN field and not `userPin`: `resetTransient()` destroys
+    // `userPin` BEFORE a preset's attributes arrive, so a preserved `userPin`
+    // would have to survive the transient reset — and then the NEXT tool,
+    // armed in Auto / None / Screen / Pivot / Parent (all of which DO read
+    // `userPin` via `honoursPlacedCenter`), would find its gizmo hijacked by
+    // a pin the previous tool's element click left behind. A field only the
+    // Element arm reads survives the reset harmlessly.
+    private Pin elementPin;
+
     /// Task 0791 — which of this stage's attributes ARE the slot: the MODE
     /// (which centre tool sits in it) and every explicit relocate. See
     /// Stage.attrArmsSlot for why this is a write-counter and not a diff, and
@@ -289,16 +314,6 @@ class ActionCenterStage : Stage, Operator, ToolSwitchTransient {
     }
 
     Vec3 manualCenter = Vec3(0, 0, 0);      // valid for Mode.Manual
-    // Mode.Element: the picked element's vertex indices (single vert / edge
-    // endpoints / face vert ring), set by the transform wrapper's click-pick
-    // (XfrmTransformTool.tryPickElement). Unlike `userPlaced` (a FROZEN world
-    // point owned by the Move-tool relocate machinery), this tracks the
-    // element LIVE: computeCenter returns the current centroid of these verts,
-    // so the gizmo follows the element as it moves under the drag and stays on
-    // it after release — the gizmo pivot = element centroid (vertex pos /
-    // edge midpoint / face centroid), click-independent.
-    // Empty until a pick; cleared on reset / mode switch.
-    uint[] elementVerts_;
     int  selectSubMode = SelectSubMode.Center;
     // Phase 7.2e (Local mode): cluster count + first-cluster centroid
     // are recomputed in evaluate() and exposed via listAttrs() so
@@ -428,13 +443,14 @@ public:
     override void reset() {
         mode             = Mode.None;
         userPin          = Pin.init;
-        elementVerts_    = null;
+        elementPin       = Pin.init;
         manualCenter     = Vec3(0, 0, 0);
         selectSubMode    = SelectSubMode.Center;
         clusterCount_    = 0;
         userLocked       = false;
         cancelFrozen     = false;
         cancelSnap       = Pin.init;
+        cancelElementSnap = Pin.init;
         softPin          = Pin.init;
         invalidateClusterCache();
         publishState();
@@ -454,9 +470,21 @@ public:
     /// resetTransient: same as reset() but respects userLocked.
     /// Called by resetTransientPipeStages (tool.set / tool switch) so
     /// an explicit `actr.*` user setting survives switching tools.
+    ///
+    /// Task 1530 — `elementPin` is carried ACROSS this reset. It has to be:
+    /// `app.d` runs resetTransientPipeStages BEFORE `preActivate` unrolls a
+    /// preset's attributes, so by the time `setAttr("mode","element")` lands
+    /// the mode is already None and every pin is already `Pin.init`. Without
+    /// the carry, re-arming `xfrm.elementMove` would silently drop the frozen
+    /// pivot even though nothing about the pick changed. (A mode armed through
+    /// `actr.element` sets `userLocked` and returns above without resetting at
+    /// all — so before this carry the two arming routes disagreed. Now both
+    /// keep the point.) `reset()` still wipes it: an explicit full reset must.
     override void resetTransient() {
         if (userLocked) return;
+        auto keepElementPin = elementPin;
         reset();
+        elementPin = keepElementPin;
     }
 
     /// Set the action-center mode explicitly (called by ActrPresetCommand).
@@ -568,7 +596,6 @@ public:
         userPin.placed = false;   // preserves the pre-R5 shape: only the flag
                                    // clears, the stale center is left in place
                                    // (never read while placed==false)
-        elementVerts_ = null;
         // Re-picking Auto re-follows the selection — drop any display settle.
         softPin = Pin.init;
         publishState();
@@ -604,37 +631,43 @@ public:
     /// `setUserPlaced`, cleared by `resetAuto` or a mode switch).
     bool isUserPlaced() const { return userPin.placed; }
 
-    /// Mode.Element: record the picked element's vertex ring so computeCenter
-    /// tracks the element LIVE (see the `elementVerts_` field doc). The gizmo
-    /// pivot is always the live ring centroid (vertex pos / edge midpoint /
-    /// face centroid) — click-independent. Pass an empty slice to clear.
-    void setElementVerts(const(uint)[] verts) {
-        elementVerts_ = verts.dup;
+    /// Mode.Element: FREEZE the picked element's anchor point (task 1530).
+    /// Called from the transform wrapper's click-pick on button-DOWN; from
+    /// then on `computeCenter`'s Element arm copies this point and reads no
+    /// geometry, so the pivot cannot chase the vertices the tool is moving.
+    /// See the `elementPin` field doc for the lifetime.
+    ///
+    /// A write of the point already held is skipped whole — no re-publish, no
+    /// re-stage of the cancel baseline. (The wrapper's `take*` skips the
+    /// paired `setUserPlaced` on the same condition; this guard is the
+    /// stage-side half so a headless caller cannot slip past it.)
+    void setElementPin(Vec3 worldPoint) {
+        if (holdsElementPin(worldPoint)) return;
+        // Stage the PRIOR element pin for the in-session cancel baseline on
+        // the same terms `setUserPlaced` stages `userPin`: only while no
+        // session snapshot is frozen. Element picks fire on mouse-DOWN, ahead
+        // of the session's beginEdit, so this is what an in-session Ctrl+Z
+        // rolls the pivot back to.
+        if (!cancelFrozen) cancelElementSnap = elementPin;
+        elementPin = Pin(true, worldPoint);
         publishState();
     }
 
-    /// Live centroid of `verts` (mesh positions), false when none resolve.
-    private bool ringCentroid(const(uint)[] verts, out Vec3 c) const {
-        if (mesh_ is null || verts.length == 0) return false;
-        auto ms  = itemSpace();
-        Vec3 sum = Vec3(0, 0, 0);
-        int  n   = 0;
-        foreach (vi; verts) {
-            if (vi >= mesh_.vertices.length) continue;   // stale index guard
-            sum += ms.isIdentity ? acenVertex(vi)
-                                 : ms.toWorldPoint(acenVertex(vi));
-            n++;
-        }
-        if (n == 0) return false;
-        c = sum * (1.0f / n);
-        return true;
+    /// True iff the frozen Element pivot is placed AND sits exactly on
+    /// `worldPoint`. Drives the equal-write skip in both `setElementPin` and
+    /// the wrapper's `take*`. Exact compare on purpose: the writer re-derives
+    /// the same anchor from the same unchanged geometry, so an epsilon would
+    /// only widen the skip to points that genuinely differ.
+    bool holdsElementPin(Vec3 worldPoint) const {
+        return elementPin.placed
+            && elementPin.center.x == worldPoint.x
+            && elementPin.center.y == worldPoint.y
+            && elementPin.center.z == worldPoint.z;
     }
 
-    /// Live picked-element centroid = ring centroid, or false when no element
-    /// is recorded / the mesh / indices are unusable.
-    private bool liveElementCenter(out Vec3 c) const {
-        return ringCentroid(elementVerts_, c);
-    }
+    /// The frozen Element pivot, WHOLE — for the wrapper's undo hooks and the
+    /// state dump. `placed == false` means "no picking click yet this scene".
+    Pin currentElementPin() const { return elementPin; }
 
     // ----- In-session cancel snapshot (transform Ctrl+Z coordination) -------
     //
@@ -660,6 +693,11 @@ public:
     //     freeze WITHOUT restoring — committed relocates persist, as today.
     private bool cancelFrozen = false;   // was `snapFrozen`
     private Pin  cancelSnap;             // was `snapPlaced`/`snapPlacedCenter`
+    // Task 1530 — the same baseline for the Element pivot. It rides the
+    // IDENTICAL lifecycle (stage while not frozen / freeze / restore /
+    // discard); it is a separate field only because `elementPin` is separate
+    // state, exactly like `cancelSnap` is separate from `softPin`.
+    private Pin  cancelElementSnap;
 
     // ----- Display soft-pin (BUG-1: Move gizmo settle) ------------------------
     //
@@ -764,6 +802,7 @@ public:
     void restoreUserPlacedSnapshot() {
         if (!cancelFrozen) return;
         userPin      = cancelSnap;
+        elementPin   = cancelElementSnap;   // task 1530 — same baseline, same restore
         cancelFrozen = false;
         publishState();
     }
@@ -849,7 +888,8 @@ public:
     /// a stray call mid-session is a no-op, mirroring `setUserPlaced`'s guard.
     void stageCurrentPinState() {
         if (cancelFrozen) return;
-        cancelSnap = userPin;
+        cancelSnap        = userPin;
+        cancelElementSnap = elementPin;   // task 1530
     }
 
     // `setManualCenter(Vec3)` lived here — "switch into Manual mode and pin
@@ -875,8 +915,13 @@ public:
     /// already own a HIGHER-precedence LIVE pivot source which computeCenter
     /// returns ahead of softPlaced — so a single drop-center either can't apply or
     /// can't represent the pivot:
-    ///   - Element: liveElementCenter (the picked-element ring centroid) wins in
-    ///     computeCenter; the gizmo must keep tracking the element, not freeze.
+    ///   - Element: the frozen `elementPin` from the picking click wins in
+    ///     computeCenter, and it is ALREADY a freeze — a settle drop-centre on
+    ///     top of it would overwrite the picked point with wherever the gesture
+    ///     happened to end. (Pre-1530 the higher-precedence source here was the
+    ///     LIVE ring centroid and the reason read "must keep tracking, not
+    ///     freeze"; the exclusion survives the inversion, for the opposite
+    ///     reason.)
     ///   - Local:   per-cluster pivots (N centers) — one drop-center can't stand
     ///     in for N clusters.
     /// This is NOT a mode allow-list: every OTHER mode (Auto / None / Screen /
@@ -1000,7 +1045,7 @@ public:
     // not Element/Local), but `computeCenter` must never read that write for
     // them, or a gesture settle would freeze the gizmo at the drop point
     // instead of continuing to track the live item pivot (same class as
-    // Element's `liveElementCenter` / Local's per-cluster pivots, which
+    // Element's frozen `elementPin` / Local's per-cluster pivots, which
     // `acenSettleAllowed()` already excludes from the settle write itself).
     //
     // Task 0705: the six exclusions are no longer written out here — this IS
@@ -1150,20 +1195,40 @@ private:
                 // None too, see itemRedirectMode() above).
                 return centroidWithGeometryFallback();
             case Mode.Element:
-                // Click-pick (XfrmTransformTool.tryPickElement when
-                // falloff.element is active) records the picked element's
-                // vertex ring via setElementVerts. The pivot is the LIVE
-                // ring centroid (vertex pos / edge midpoint / face centroid),
-                // which becomes the gizmo pivot AND the falloff sphere anchor
-                // (FalloffStage.evaluate reads state.actionCenter.center).
-                // Click-position does not affect the pivot — all modes anchor
-                // at the element centroid.
-                // No pick yet → fall back to the selection-element centroid
-                // (whole mesh per the universal "empty selection = all" rule).
-                // userPlaced stays an IN-ARM check here (below the live
-                // center) — Element is excluded from `honoursPlacedCenter`.
-                Vec3 elc;
-                if (liveElementCenter(elc)) return elc;
+                // Task 1530 — the pivot is a FROZEN POINT, and this arm reads
+                // NO geometry to produce it. The click-pick
+                // (XfrmTransformTool.tryPickElement -> take*) writes it on the
+                // button-DOWN of a picking click that hit no tool handle; from
+                // then on it is the gizmo pivot AND the falloff sphere anchor
+                // (FalloffStage.evaluate reads state.actionCenter.center) for
+                // this gesture and every later one, until the next such click.
+                //
+                // It used to be the LIVE centroid of the picked vertex ring,
+                // and that was the defect: the pivot was recomputed each frame
+                // from the very vertices the tool was moving, so a scale or a
+                // rotate about it closed a feedback loop. Do not restore a
+                // geometry read here. A scale cell cannot catch the
+                // regression — scaling about its own centre leaves that centre
+                // a fixed point — so the detector is a TRANSLATE
+                // (tests/test_acen_element_freeze_translate.d).
+                //
+                // Click-position does not affect the pivot: `take*` anchors at
+                // the element CENTROID (vertex pos / edge midpoint / face
+                // centroid). Storing the ray-hit point instead is a separate,
+                // unmeasured divergence and deliberately not done here.
+                //
+                // No pick yet → `userPlaced` (an IN-ARM check — Element is
+                // excluded from `honoursPlacedCenter`, and this tier is what
+                // the headless `userPlacedCenter` attr drives), then the
+                // selection-element centroid (whole mesh per the universal
+                // "empty selection = all" rule).
+                //
+                // We have no centre handle of our own (no part id that grabs
+                // the action centre), so the click-pick is the ONLY writer of
+                // `elementPin`. If such a handle is ever added it must become
+                // the only OTHER writer, and the only one that may write
+                // mid-gesture.
+                if (elementPin.placed) return elementPin.center;
                 if (userPin.placed) return userPin.center;
                 return elementCenter();
             case Mode.Local: {
@@ -1732,7 +1797,10 @@ private:
                 mode = cast(Mode)v;
                 userPin.placed = false;   // preserves the pre-R5 shape: stale
                                            // center left in place, see resetAuto()
-                elementVerts_  = null;
+                // Task 1530 — `elementPin` deliberately SURVIVES a mode switch
+                // (including element -> something -> element). The frozen point
+                // is owned by the picking click, and nothing about a mode
+                // change says the user un-picked.
                 softPin        = Pin.init;
                 return true;
             }
@@ -2164,18 +2232,73 @@ unittest {
 
     // --- Element: NOT gated by the hoist at all (honoursPlacedCenter F,      -
     // settlePinHonored F since acenSettleAllowed() excludes Element). Keeps   -
-    // its own in-arm `liveElementCenter → userPlaced → elementCenter` ladder. -
+    // its own in-arm ladder — which since task 1530 is                        -
+    // `elementPin → userPlaced → elementCenter`.                              -
+    //                                                                         -
+    // THIS BLOCK IS THE RECORD OF THAT LAW. The tier that used to sit on top  -
+    // was `liveElementCenter` — the LIVE centroid of the picked vertex ring,  -
+    // recomputed from `mesh_.vertices` on every read. It is gone: the top     -
+    // tier is now a frozen POINT and the arm reads no geometry at all. The    -
+    // three assertions below that a re-introduced ring read would break are   -
+    // marked (ring-detector).                                                 -
     acs.mode = Mode.Element;
+    acs.elementPin = Pin.init;
     setPins(false, false); assert(vecEq(acs.currentCenter(), zero),
         "Element: no pick, no pin → elementCenter() fallback (empty sel ⇒ "
         ~ "whole-mesh average = 0)");
     setPins(true, false);  assert(vecEq(acs.currentCenter(), userPt),
-        "Element: no live pick → in-arm userPlaced still honored (below the "
-        ~ "live center, unaffected by the hoist)");
+        "Element: no element pin → in-arm userPlaced still honored (this is "
+        ~ "the tier the headless `userPlacedCenter` attr drives)");
     setPins(false, true);  assert(vecEq(acs.currentCenter(), zero),
         "Element: softPlaced is NEVER consulted (no in-arm check, and the "
         ~ "hoisted check is gated off since acenSettleAllowed() excludes "
         ~ "Element) — must fall back to elementCenter()");
+
+    // The frozen pick outranks BOTH other tiers.
+    immutable Vec3 pickPt = Vec3(0.5f, 0.5f, 0.5f);   // cube corner v6
+    setPins(true, true);
+    acs.setElementPin(pickPt);
+    assert(vecEq(acs.currentCenter(), pickPt),
+        "Element: the frozen element pin outranks userPlaced AND softPlaced");
+
+    // (ring-detector) It is a POINT, not a ring. Move EVERY vertex of the mesh
+    // and the centre must not budge by one bit — the live ring centroid would
+    // have followed the whole displacement, which is exactly the feedback loop
+    // task 1530 removed. A scale cell cannot see this (its own centre is a
+    // fixed point of the scale); a translate can, which is why this shoves the
+    // whole cube.
+    foreach (ref v; cube.vertices) v = v + Vec3(10, 0, 0);
+    assert(acs.currentCenter().x == pickPt.x
+        && acs.currentCenter().y == pickPt.y
+        && acs.currentCenter().z == pickPt.z,
+        "Element: the pivot must be BYTE-identical after the whole mesh moved "
+        ~ "by (10,0,0) — a geometry read in this arm is the defect");
+    foreach (ref v; cube.vertices) v = v - Vec3(10, 0, 0);
+
+    // (ring-detector) It survives a mode round-trip: the picking click owns it,
+    // and a mode change is not an un-pick.
+    acs.setAttr("mode", "auto");
+    acs.setAttr("mode", "element");
+    assert(vecEq(acs.currentCenter(), pickPt),
+        "Element: a mode round-trip must not lose the frozen pick");
+
+    // (ring-detector) It survives `resetTransient()` (tool.set / tool switch),
+    // and does NOT survive `reset()` (= SceneReset = /api/reset). That
+    // asymmetry is the whole reason it is its OWN field: a `userPin` carried
+    // across the transient reset would hijack the next tool's gizmo in
+    // Auto/None/Screen/Pivot/Parent, all of which read `userPin`.
+    acs.resetTransient();
+    acs.mode = Mode.Element;
+    assert(vecEq(acs.currentCenter(), pickPt),
+        "Element: the frozen pick must survive resetTransient()");
+    acs.reset();
+    acs.mode = Mode.Element;
+    setPins(false, false);
+    assert(vecEq(acs.currentCenter(), zero),
+        "Element: reset() MUST wipe the frozen pick — an explicit full reset "
+        ~ "erases every pin");
+    acs.elementPin = Pin.init;
+    acs.manualCenter = Vec3(7, 8, 9);   // reset() cleared it; later arms read it
 
     // --- Local: NOT gated by the hoist at all (honoursPlacedCenter F,       -
     // settlePinHonored F since acenSettleAllowed() excludes Local). D5       -

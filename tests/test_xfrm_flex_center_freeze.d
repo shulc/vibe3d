@@ -23,7 +23,7 @@
 //   4. An in-session Ctrl+Z after a frozen-frame rotate / scale HOLDS the gizmo
 //      center (the undo-splice carries the soft pin) — it doesn't float.
 //
-// Element-move (liveElementCenter precedence intact) is covered by the existing
+// Element-move (the frozen elementPin tier, task 1530) is covered by the existing
 // test_element_pick_drag_gizmo.d; acen.local pivots by test_acen_local_*.
 
 import std.net.curl;
