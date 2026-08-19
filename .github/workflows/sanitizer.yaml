@@ -170,6 +170,53 @@ jobs:
         # allocate at startup and never free, and those are not our leaks.
         # log_path makes any report survive run_test.d's scratch cleanup.
 
+    - name: 'Boot an instance for the fuzzer (GATING: a lane that reaches nothing is not green)'
+      id: fuzz_boot
+      # WHY THIS STEP EXISTS. Until 2026-08-19 the fuzz step below ran with NO
+      # instance anywhere: nothing booted one, VIBE3D_BASE was never set, so
+      # the fuzzer fell back to its default 127.0.0.1:8091 and every POST
+      # raised ConnectionRefused. Its per-combo body catches bare `Exception`
+      # and returns None, so all ~400 combos "ran", the summary reported
+      # raw_failures=0, and the step exited 0 under continue-on-error. A whole
+      # night of fuzzing would have reported health having exercised nothing.
+      #
+      # `lane.d boot` cannot serve here -- it reaps the instance in a
+      # scope(exit) by design; it is a smoke test, not a supervisor.
+      #
+      # This step GATES while the fuzz step below stays recorded, and that
+      # split is the point: "the instance was never reachable" is an
+      # INFRASTRUCTURE failure and must redden, whereas "the fuzzer found
+      # something" is a FINDING and is recorded deliberately (see Gate).
+      #
+      # Readiness is proven by a real COMMAND, not by /api/registry answering.
+      # A route can serve while the main-thread bridge is wedged, and the
+      # bridge is what every fuzz combo goes through.
+      run: |
+        set -o pipefail
+        PORT=8599
+        echo "VIBE3D_FUZZ_PORT=$PORT" >> "$GITHUB_ENV"
+        # ./vibe3d is the --build=sanitize binary here, staged by the previous
+        # step. ASAN_OPTIONS belongs on THIS process: the old fuzz step put it
+        # on python3, which is not instrumented, so it reached nothing.
+        env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 \
+          ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0:abort_on_error=1:log_path=$PWD/asan-fuzz \
+          xvfb-run -a ./vibe3d --test --http-port $PORT > fuzz-instance.log 2>&1 &
+        echo "VIBE3D_FUZZ_PID=$!" >> "$GITHUB_ENV"
+        for i in $(seq 90); do
+          curl -s --noproxy '*' -m 2 "http://127.0.0.1:$PORT/api/registry" \
+            | grep -q '"commands"' && break
+          sleep 1
+        done
+        curl -s --noproxy '*' -m 60 -X POST "http://127.0.0.1:$PORT/api/command" \
+          -d '{"id":"mesh.subdivide","params":{}}' > fuzz-smoke.json 2>&1 || true
+        grep -q '"ok"' fuzz-smoke.json || {
+          echo "::error::the fuzz instance never answered a command -- the fuzzer would have exercised nothing"
+          echo "--- instance log ---"; tail -40 fuzz-instance.log || true
+          echo "--- smoke reply ---"; cat fuzz-smoke.json || true
+          exit 1
+        }
+        echo "fuzz instance live on $PORT and answering commands"
+
     - name: 'Fuzz the instrumented binary (existing 13 recipes, UNCHANGED)'
       id: fuzz
       continue-on-error: true
@@ -177,7 +224,10 @@ jobs:
       # pointing it at an instrumented binary for the first time IS the delta,
       # and it is the only change worth making before the instrumentation has
       # run even once. Widening the action space to the whole registry is its
-      # own task (1411) with a nine-site list, deliberately not bundled.
+      # own task (1412), deliberately not bundled.
+      #
+      # It runs WITHOUT xvfb: it is a pure HTTP client and needs no display.
+      # The old wrapping allocated a second X server that nothing drew on.
       run: |
         set -o pipefail
         # Resolve BEFORE the pipeline, and refuse an empty answer. Inlining the
@@ -187,10 +237,33 @@ jobs:
         # because the symlink can die between the two steps.
         FUZZER="$(rdmd tools/sanitizer/lane.d fuzzer-path)"
         test -n "$FUZZER" || { echo "::error::fuzzer path did not resolve"; exit 1; }
-        env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 \
-          ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0:abort_on_error=1:log_path=$PWD/asan-fuzz \
-          xvfb-run -a python3 "$FUZZER" \
-            --minutes 60 --out "$PWD/fuzz-out" 2>&1 | tee fuzz.log
+        VIBE3D_BASE="http://127.0.0.1:${VIBE3D_FUZZ_PORT}" \
+          python3 "$FUZZER" --minutes 60 --out "$PWD/fuzz-out" 2>&1 | tee fuzz.log
+
+    - name: 'Did the fuzz instance survive (RECORDED: a crash here is a finding)'
+      id: fuzz_alive
+      if: always()
+      continue-on-error: true
+      # Deliberately NOT gating, and deliberately separate from fuzz_boot. An
+      # instance that dies mid-run is exactly what this lane exists to catch,
+      # and it is a FINDING -- the Gate's stated policy is that findings are
+      # recorded on the early nights. But it must be VISIBLE: a dead instance
+      # makes every remaining combo return None, and the fuzzer's own summary
+      # then reports a healthy run over the corpse.
+      run: |
+        if curl -s --noproxy '*' -m 10 "http://127.0.0.1:${VIBE3D_FUZZ_PORT}/api/registry" \
+             | grep -q '"commands"'; then
+          echo "instance survived the fuzz run"
+        else
+          echo "::warning::the fuzz instance did NOT survive -- every combo after its death returned nothing"
+          echo "--- instance log tail ---"; tail -60 fuzz-instance.log || true
+          ls -la asan-fuzz.* 2>/dev/null || true
+          exit 1
+        fi
+
+    - name: 'Stop the fuzz instance'
+      if: always()
+      run: kill "${VIBE3D_FUZZ_PID}" 2>/dev/null || true
 
     - name: 'Collect sanitizer reports'
       if: always()
@@ -241,12 +314,17 @@ jobs:
 
     - name: 'Gate'
       if: always()
-      # Gating: the three test signals. The fuzz step is RECORDED for now — the
+      # Gating: the three test signals PLUS fuzz_boot. The split is the lesson
+      # of 2026-08-19: "the fuzzer never reached an instance" is an
+      # INFRASTRUCTURE failure and gates; "the fuzzer found something" and "the
+      # instance died" are FINDINGS and stay recorded.
+      # The fuzz step is RECORDED for now — the
       # instrumentation has never run a full night, and a lane that goes red on
       # its first unfamiliar finding gets switched off rather than read. Flip it
       # to gating once the finding stream is understood.
       run: |
-        echo "unit=${{ steps.unit.outcome }} check=${{ steps.check_suite.outcome }} asan=${{ steps.asan_suite.outcome }} fuzz=${{ steps.fuzz.outcome }}"
+        echo "unit=${{ steps.unit.outcome }} check=${{ steps.check_suite.outcome }} asan=${{ steps.asan_suite.outcome }} fuzz_boot=${{ steps.fuzz_boot.outcome }} fuzz=${{ steps.fuzz.outcome }} fuzz_alive=${{ steps.fuzz_alive.outcome }}"
         [ "${{ steps.unit.outcome }}" = "success" ] && \
         [ "${{ steps.check_suite.outcome }}" = "success" ] && \
-        [ "${{ steps.asan_suite.outcome }}" = "success" ]
+        [ "${{ steps.asan_suite.outcome }}" = "success" ] && \
+        [ "${{ steps.fuzz_boot.outcome }}" = "success" ]
