@@ -644,9 +644,25 @@ import std.datetime : Clock, UTC;
 // that lane's own 270 minutes then start later.
 //
 //   (1) latest allowed start + kTsanTimeoutMin <= kNextLaneStartUtcMin
-//       => with 100, the start window is [17:00, 17:20)
-//   (2) 17:00 + 100 (tsan) + 270 (sanitizer) = 23:50 <= 00:30 (perf)
-enum int kTsanTimeoutMin       = 100;
+//       => with 30, the start window is [17:00, 18:30)
+//   (2) 17:00 + 30 (tsan) + 270 (sanitizer) = 22:00 <= 00:30 (perf)
+//
+// WHY 30 AND NOT 100 (changed 2026-08-19, after the first scheduled run).
+// 100 was a hang ceiling picked before this lane's cost was measured. It is
+// not the workload: the sweep is bounded by MEMORY, not by time — 4674.6
+// MB/min under `gc:manual` against an 8 GiB watchdog, i.e. about a hundred
+// SECONDS of continuous sweeping, plus a ~2-minute cold build. Running the
+// lane longer means restarting the instance, not widening the window.
+//
+// The first scheduled run made the cost of the old number concrete. GitHub
+// fired the cron at 17:27 — 27 minutes late — and the guard REFUSED, exactly
+// as designed, because 17:27 + 100 lands at 19:07, inside the sanitizer
+// lane's window. The guard was right and the constant was wrong: a 20-minute
+// start window cannot absorb this scheduler's drift, and this repository has
+// measured worse (the perf lane once fired 93 minutes late). 30 gives a
+// 90-minute window, which covers the observed drift with room, without
+// trading away the hang ceiling that a much larger cron shift would cost.
+enum int kTsanTimeoutMin       = 30;
 enum int kTsanWindowOpenUtcMin = 17 * 60;        // 17:00 UTC
 enum int kNextLaneStartUtcMin  = 19 * 60;        // sanitizer.yaml cron '0 19 * * *'
 enum int kNextLaneEndUtcMin    = 19 * 60 + 270;  // + timeout-minutes: 270 = 23:30
