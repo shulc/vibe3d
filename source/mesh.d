@@ -6797,8 +6797,66 @@ struct Mesh {
         // length of `faces` before the append").
         const appendBase = faceAppendBase();
         faces ~= idx.dup;
+        // TASK 1361 — the per-CORNER commits are REMOVED here, not deferred.
+        // Same move as task 1333 made in `rebuildEdges`, for the same reason
+        // and with the same proof; read that function's comment first.
+        //
+        // This loop used to call `addEdge` per corner, and `addEdge` is
+        // `insertEdgeDedup` + the version stamps + `commitChange(Polygons)`.
+        // `Polygons` is a Geometry-class bit, so every one of those commits
+        // ran a full-mesh `refreshHiddenDerived` whenever anything was hidden
+        // (1330's deferral is allowed only in the state where that derive
+        // provably writes nothing). A kernel appending N faces therefore paid
+        // a whole-mesh derive per corner on top of the one per face.
+        // `insertEdgeDedup` is already the private NON-committing primitive,
+        // factored out for exactly this.
+        //
+        // WHY COLLAPSING THE CORNER COMMITS INTO THE TAIL ONE IS INVISIBLE.
+        // The region in question runs from the `faces ~= idx.dup` above to the
+        // `commitChange` below. Inside it:
+        //   * `faces`, `faceMarks`, `vertexMarks` and `edgeMarks` are ALL
+        //     untouched — the face append happens BEFORE the region's first
+        //     derive, so every derive in the region already sees the new face
+        //     (this is the one place the argument differs from `rebuildEdges`,
+        //     where `faces` is untouched throughout instead);
+        //   * `edges` is APPEND-ONLY.
+        // `refreshHiddenDerived` derives the VERTEX plane from `faces` +
+        // `faceMarks` alone, so every per-corner call recomputed the same
+        // vertex plane — the first settled it and the rest were idempotent
+        // no-ops. It derives edge `ei` from `edges[ei]`'s two endpoints, whose
+        // Hide bits the same call has just settled, so an edge's answer is
+        // FIXED from the moment it is appended and never revisited; and it
+        // skips `ei >= edges.length`, so each mid-loop derive covered a strict
+        // PREFIX of what the closing one covers and recomputes identically.
+        // The Select-clear set comes along: the derive is the only writer of
+        // `Marks.Select` in this region, and nothing re-selects in between.
+        //
+        // WHAT ELSE RUNS IN THE REGION: only
+        // `growPolyVertexMapsForAppendedCorners`, and it reads and writes
+        // nothing but `meshMaps[].data` for PolyVertex-domain maps — no plane,
+        // no Marks, no `edges`, no `faces`. The `editRecorder_` hook sits
+        // AFTER the tail commit, outside the region, and reads only
+        // `appendBase` + `idx`. So nothing in the region consults a derived
+        // plane or a Mark, and there is no reader to observe the difference.
+        //
+        // The ACCUMULATED CHANGE FLAGS are unchanged bit for bit:
+        // `MeshEditScope.Geometry == Points | Polygons`, so the tail
+        // `commitChange(Geometry)` already ORs in every bit the dropped
+        // `commitChange(Polygons)` calls contributed.
+        //
+        // Unlike `rebuildEdges`, no "did anything insert?" gate is needed:
+        // the version bump + `edgeMapStamp` re-stamp below is UNCONDITIONAL
+        // already (a face whose edges all pre-exist bumped exactly once before
+        // this change too, because the loop inserted nothing), so "nothing
+        // appended ⇒ nothing bumped" was never this function's contract and
+        // nothing about it moves. What does change is the bump COUNT for a
+        // face that DOES insert edges: 1 + inserts becomes 1. Audited
+        // repo-wide in 1333 — every reader of `structVersion` /
+        // `mutationVersion` / `topologyVersion` treats them as monotone
+        // stamps, never as counts (`loopsValid()` and `edgeMapUsable()` are
+        // `== structVersion` compares; tests compare `> before` / `== before`).
         for (uint i = 0; i < idx.length; i++)
-            addEdge(idx[i], idx[(i+1) % idx.length]);
+            insertEdgeDedup(edgeIndexMap, idx[i], idx[(i+1) % idx.length]);
         // GAP-3 atomic append: addFace does NOT call buildLoops, so without
         // this the PolyVertex element count (loops.length) would lag the new
         // face's corners until some later buildLoops. The new face's corners are
@@ -6806,14 +6864,13 @@ struct Mesh {
         // `idx.length * dim` zeros at the END keeps element-major alignment and
         // the invariant `data.length == Σ face-arities * dim` holds immediately.
         growPolyVertexMapsForAppendedCorners(idx.length);
-        // The face itself is a structural change beyond whatever the addEdge
-        // loop above already bumped (covers a face whose edges ALL pre-exist,
-        // where that loop bumps nothing at all). edgeIndexMap stays fully in
-        // sync — every edge above went through addEdge, which maintains it —
-        // so re-stamp it Valid at the new structVersion. Loops are NOT
-        // rebuilt here, so loopsState_/loopsStamp are left as-is (correctly
-        // stale relative to the bumped structVersion, until the caller's
-        // terminal buildLoops()).
+        // The face plus its edges are one structural change, committed once
+        // (task 1361; it was once per corner through `addEdge`, plus this
+        // one). edgeIndexMap stays fully in sync — every edge above went
+        // through `insertEdgeDedup` on that very map — so re-stamp it Valid at
+        // the new structVersion. Loops are NOT rebuilt here, so
+        // loopsState_/loopsStamp are left as-is (correctly stale relative to
+        // the bumped structVersion, until the caller's terminal buildLoops()).
         ++structVersion;
         edgeMapStamp  = structVersion;
         edgeMapState_ = DerivedState.Valid;
@@ -9432,6 +9489,121 @@ struct Mesh {
         assert(duringBatch == 0,
                "a commit after the flush derived eagerly — the deferral is gone");
         assert(g_hideDeriveRuns == 1, "the batch close must still derive once");
+    }
+
+    unittest { // task 1361 — addFace derives ONCE per face, WHILE something is hidden
+        import std.conv : to;
+
+        // 1333 collapsed `rebuildEdges`' per-corner commits; this is the same
+        // move inside `addFace`, and it is what the bevel / inset / thicken
+        // family pays, because those append geometry through `addFace` rather
+        // than through `rebuildEdges` (thicken calls `rebuildEdges` zero
+        // times, which is why 1333 bought it exactly nothing).
+        //
+        // The COUNT is the whole test. There is no result-only assertion that
+        // can see this change: the per-corner derives and the tail derive
+        // compute the SAME planes (that is the premise), so with the collapse
+        // reverted every byte of mesh state is identical and only the number
+        // of full-mesh scans differs. The frozen HTTP oracle
+        // (tests/test_hide_bevel_selection_product.d) is inert here for a
+        // second, independent reason 1333 already measured: with geometry
+        // hidden `deferSafe` is false, so a later commit derives eagerly and
+        // covers for a missing one. Hence: a counter, not an oracle.
+        //
+        //   6---0---1---2      f0 = [0,1,4,3]  HIDDEN
+        //   |NEW|f0 |f1 |      f1 = [1,2,5,4]
+        //   7---3---4---5      NEW = [6,0,3,7], appended by addFace below
+        //
+        // NOT a cube and not a lone quad: the appended face must INSERT edges
+        // (a face whose edges all pre-exist never reached `addEdge`'s commit
+        // in the first place, so it would measure 1 either way and the test
+        // would be vacuous). [6,0,3,7] shares (0,3) with f0 and inserts the
+        // other three.
+        Mesh m;
+        m.addVertex(Vec3( 0, 0, 0));   // 0
+        m.addVertex(Vec3( 1, 0, 0));   // 1
+        m.addVertex(Vec3( 2, 0, 0));   // 2
+        m.addVertex(Vec3( 0, 0, 1));   // 3
+        m.addVertex(Vec3( 1, 0, 1));   // 4
+        m.addVertex(Vec3( 2, 0, 1));   // 5
+        m.addFace([0u, 1u, 4u, 3u]);   // f0
+        m.addFace([1u, 2u, 5u, 4u]);   // f1
+        m.buildLoops();
+        m.syncSelection();
+
+        m.setFaceHidden(0, true);
+        assert(m.isVertexHidden(0) && m.isVertexHidden(3),
+               "fixture: v0/v3 are private to f0 and must derive hidden");
+        assert(m.anyHideBitSet(),
+               "fixture: with nothing hidden 1330's deferral would already cover "
+               ~ "this and the measurement would mean nothing");
+
+        m.addVertex(Vec3(-1, 0, 0));   // 6
+        m.addVertex(Vec3(-1, 0, 1));   // 7
+        m.syncSelection();             // vertexMarks must cover 6/7 before the derive
+
+        const size_t edgesBefore = m.edges.length;
+        g_hideDeriveRuns = 0;
+        m.addFace([6u, 0u, 3u, 7u]);
+        const size_t runs = g_hideDeriveRuns;
+
+        assert(m.edges.length == edgesBefore + 3,
+               "fixture is not exercising the corner commits: the appended face "
+               ~ "inserted " ~ (m.edges.length - edgesBefore).to!string
+               ~ " edges, not 3 — with zero inserts `addEdge` never committed "
+               ~ "either and the count below would pass vacuously");
+        assert(runs == 1,
+               "addFace derived " ~ runs.to!string ~ " times: it must commit ONCE "
+               ~ "for the face plus all its corners, not once per corner (task "
+               ~ "1361). Restore the `addEdge` loop and this reads 4.");
+
+        // Second discriminator, for the OTHER direction — a future edit that
+        // removes the TAIL commit instead of the corner ones. The appended
+        // face is visible and incident on v0/v3, so both must flip back OUT of
+        // hidden right here; without any commit at all they stay stale and
+        // this compare reddens while the count above stays happily at 0.
+        assert(!m.isVertexHidden(0) && !m.isVertexHidden(3),
+               "v0/v3 were left hidden after a VISIBLE face was appended to "
+               ~ "them — addFace's tail commit did not derive");
+        auto vAfter = m.vertexMarks.dup;
+        auto eAfter = m.edgeMarks.dup;
+        auto vOrder = m.vertexSelectionOrder.dup;
+        auto eOrder = m.edgeSelectionOrder.dup;
+        m.refreshHiddenDerived();
+        assert(m.vertexMarks == vAfter, "vertex hide plane was stale after addFace");
+        assert(m.edgeMarks   == eAfter, "edge hide plane was stale after addFace");
+        assert(m.vertexSelectionOrder == vOrder && m.edgeSelectionOrder == eOrder,
+               "a selection-order stamp was left behind by the collapsed commit");
+    }
+
+    unittest { // task 1361 — the collapse must not cost 1330's clean case either
+        // `addFace` still opens no hide-derive batch of its own. Inside an
+        // OUTER batch with nothing hidden its one remaining commit must still
+        // be deferred to the batch close — i.e. derive zero times during the
+        // append — so this task cannot have paid for the hidden case by giving
+        // back the clean one.
+        //
+        // Stash-then-assert: an assert that fires mid-batch skips
+        // `endHideDeriveBatch`, leaking `g_hideDeriveDepth` and stranding a
+        // `Mesh*` into this unwound frame inside `g_hideDerivePendingMeshes`
+        // (a GC-scanned module global). Same shape as the 1330/1333 batch
+        // tests above.
+        auto m = makeCube();
+        m.syncSelection();
+        const uint base = cast(uint)m.vertices.length;
+        m.vertices ~= Vec3(2, 0, 0);
+        m.vertices ~= Vec3(2, 1, 0);
+        m.syncSelection();
+
+        m.beginHideDeriveBatch();
+        g_hideDeriveRuns = 0;
+        m.addFace([0, base, base + 1]);
+        const size_t duringBatch = g_hideDeriveRuns;
+        m.endHideDeriveBatch();
+
+        assert(duringBatch == 0,
+               "addFace must defer its one commit inside a clean batch");
+        assert(g_hideDeriveRuns == 1, "the batch close must derive exactly once");
     }
 
     void refreshHiddenDerived() {
