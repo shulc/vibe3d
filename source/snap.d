@@ -1540,7 +1540,10 @@ private bool closestOnPolygonSurface(const(uint)[] face,
 // CELL SIZE: `outerRangePx`. When degenerate (<= 0) the query falls back
 // to returning ALL non-excluded element indices (index-ascending) so the
 // caller's exact walk is a full — but still correct — linear scan; only
-// ever reached for pathological configs.
+// ever reached for pathological configs. A projected domain over
+// `MAX_GRID_INTS` takes that SAME fallback (task 1450) — the screen-space
+// domain is unbounded, because a vertex just in front of the eye plane
+// projects arbitrarily far off screen.
 
 // There is no EdgeCentre / PolyCentre kind, and its absence is the model
 // rather than an omission: a centre is never enumerated, so it never needs a
@@ -1590,6 +1593,13 @@ private struct CandidateGrid {
     int[]  items;               // element indices, possibly duplicated
                                 // across cells for EXTENT kinds.
     bool valid;
+
+    // Set when this (slot, kind)'s projected domain was over the per-build
+    // budget, so NO grid was built and the query has to answer from the
+    // all-indices path instead. Distinct from `nCols == 0`, which means the
+    // opposite — nothing projected in front of the eye, so there are no
+    // candidates at all. See MAX_GRID_INTS / buildCandidateGrid.
+    bool domainTooLarge;
 }
 
 // One grid set (Kind.max+1 grids) PER SNAP SOURCE SLOT (layers Stage 5).
@@ -1679,6 +1689,38 @@ private bool projectElementCells(Kind k, int idx, const ref Mesh mesh,
     }
 }
 
+// Ceiling on the number of `int`s ONE grid build may allocate: `cellStart`
+// (nCells+1), `cursor` (nCells) and `items` (one entry per element per
+// overlapped cell). `1 << 25` ints is a hard **128 MiB per call**, and it
+// covers every cell-scaled allocation in the build rather than just the cell
+// count, because `items` is bounded by the domain only through the elements —
+// a single edge with one endpoint near the eye plane spans the whole domain on
+// its own.
+//
+// WHY THAT IS THE RIGHT BUDGET. This build is on the interactive path: the
+// grid is keyed on the view matrices, so an orbit or a zoom rebuilds it every
+// frame, once per element kind and once per snap source slot. 128 MiB is set
+// deliberately below the editor's own steady-state footprint with a scene
+// loaded (measured ~630 MB RSS), so a per-mouse-motion rebuild can never
+// become the dominant allocation in the process.
+//
+// WHY IT IS NOT LOWER. It has to clear every domain a legitimate camera can
+// produce, or snapping would silently drop to the linear scan on ordinary
+// work. Measured on a 200x200 quad plane (40 401 verts, 80 200 edges,
+// 40 000 faces), worst of the three element kinds in each case:
+//
+//                                         cells      ints asked   headroom
+//     650x544 viewport,  40 px cells         323         87 822       382x
+//     3840x2160 viewport, 40 px cells      4 672        118 308       284x
+//     3840x2160 viewport,  1 px cells  7 240 312     22 808 125      1.47x
+//
+// The last row is the extreme LEGITIMATE configuration — a 4K viewport with
+// Outer Range typed down to a single pixel — and it still fits. That is where
+// the ceiling bites, and it is the right place for it to bite: below one pixel
+// per cell the build already costs ~0.36 s, so the linear fallback it degrades
+// to is the FASTER of the two (task 1450).
+private enum long MAX_GRID_INTS = 1 << 25;
+
 // Build (or rebuild) the grid for kind `k` of `mesh` under viewport
 // `vp`, cell size `cellPx`. Indexes ALL elements (exclusion happens at
 // query time). EXTENT kinds insert each element into every cell its
@@ -1695,6 +1737,7 @@ private void buildCandidateGrid(Kind k, int slot, const ref Mesh mesh,
     g.cellPx    = cellPx;
     g.elemCount = kindCount(k, mesh);
     g.valid     = false;
+    g.domainTooLarge = false;
 
     size_t n = g.elemCount;
     float inv = 1.0f / cellPx;
@@ -1731,11 +1774,61 @@ private void buildCandidateGrid(Kind k, int slot, const ref Mesh mesh,
         return;
     }
 
+    // THE DOMAIN IS UNBOUNDED, so it is bounded here. `projectToWindowFull`
+    // rejects only points BEHIND the eye (`w > 0`), so a vertex sitting just
+    // in front of the eye PLANE and off to the side projects to ~1e6 px or
+    // more and the cell count grows without limit. That is not a contrived
+    // camera: the eye plane cuts any mesh the camera is standing among, which
+    // is the ordinary close-up. Measured, on a 200x200 quad plane with snap at
+    // its shipped defaults, a grazing look along the surface produced
+    // 820 942 x 1 643 = 1 348 807 706 cells — a 5.4 GB `cellStart` plus a
+    // 5.4 GB `cursor` — and the editor died on the allocation (task 1450).
+    //
+    // The spans are computed in 64 bits because `nCols`/`nRows` themselves
+    // overflow `int` once a projected coordinate passes ~2e9 px, which the
+    // same configuration reaches at a small cell size.
+    immutable long spanCols = cast(long)hiCx - cast(long)loCx + 1;
+    immutable long spanRows = cast(long)hiCy - cast(long)loCy + 1;
+    // Guarded so the product cannot overflow: past the ceiling on either axis
+    // the answer is already decided.
+    immutable long cells =
+        (spanCols > MAX_GRID_INTS || spanRows > MAX_GRID_INTS)
+            ? long.max : spanCols * spanRows;
+
+    // `items` costs one int per element per overlapped cell. Sum it here —
+    // O(elements), no allocation — so the ceiling holds the WHOLE build.
+    long entries = 0;
+    if (cells <= MAX_GRID_INTS) {
+        foreach (ref b; boxes) {
+            if (!b.ok) continue;
+            entries += (cast(long)b.hiCx - cast(long)b.loCx + 1)
+                     * (cast(long)b.hiCy - cast(long)b.loCy + 1);
+            if (entries > MAX_GRID_INTS) break;
+        }
+    }
+
+    if (cells > MAX_GRID_INTS || 2 * cells + entries + 1 > MAX_GRID_INTS) {
+        // Over budget: build nothing, mark the grid, and let the query fall
+        // through to its existing all-indices branch — the same supported
+        // degenerate path an unusable range takes today. That path returns a
+        // SUPERSET of the true candidates and the caller's exact
+        // radius/distance test then elects the same winner from it, so the
+        // ceiling costs speed in a configuration that cannot be served at all
+        // without it, and changes no election.
+        g.minCx = g.minCy = 0;
+        g.nCols = g.nRows = 0;
+        g.cellStart = [0];
+        g.items = null;
+        g.domainTooLarge = true;
+        g.valid = true;
+        return;
+    }
+
     g.minCx = loCx;
     g.minCy = loCy;
-    g.nCols = hiCx - loCx + 1;
-    g.nRows = hiCy - loCy + 1;
-    size_t nCells = cast(size_t)g.nCols * g.nRows;
+    g.nCols = cast(int)spanCols;
+    g.nRows = cast(int)spanRows;
+    size_t nCells = cast(size_t)cells;
 
     // CSR counting sort into buckets. EXTENT kinds contribute one entry
     // per overlapped cell.
@@ -1857,14 +1950,21 @@ private int[] queryCandidateGrid(Kind k, int slot, const ref Mesh mesh,
     bool[] ex = excludeMembership(excludeVerts, mesh.vertices.length);
     scope (exit) clearExcludeMembership(excludeVerts);
 
-    // Degenerate range → return every non-excluded index (ascending).
-    // The caller's exact walk then degrades to a correct linear scan.
-    if (!(outerRangePx > 0)) {
+    // Every non-excluded index (ascending). The caller's exact walk then
+    // degrades to a correct linear scan over a SUPERSET of the true
+    // candidates, which it re-tests one by one, so the elected winner is the
+    // same one the buckets would have produced. TWO callers reach it: a
+    // degenerate range (immediately below) and a projected domain too large
+    // to bucket (after the build, task 1450).
+    int[] allIndices() {
         foreach (i; 0 .. n)
             if (!kindExcluded(k, cast(int)i, mesh, ex))
                 g_candScratch ~= cast(int)i;
         return g_candScratch.dup;
     }
+
+    // Degenerate range → correct linear scan.
+    if (!(outerRangePx > 0)) return allIndices();
 
     auto g = gridFor(slot, k);
 
@@ -1878,6 +1978,11 @@ private int[] queryCandidateGrid(Kind k, int slot, const ref Mesh mesh,
         buildCandidateGrid(k, slot, mesh, vp, outerRangePx);
         g = gridFor(slot, k);   // table may have reallocated on grow
     }
+
+    // Domain over the per-build budget ⇒ no buckets exist; answer from the
+    // all-indices path. Checked BEFORE the empty-grid test, which means the
+    // opposite thing (nothing projected in front of the eye ⇒ no candidates).
+    if (g.domainTooLarge) return allIndices();
 
     if (g.nCols == 0 || g.nRows == 0) return null;
 
