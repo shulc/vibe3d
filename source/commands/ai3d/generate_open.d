@@ -33,6 +33,7 @@ import view;
 import editmode;
 import params : Param;
 import io.formats : FilterSpec;
+import io.file_dialog : pickOpenPath, PickResult, PickOutcome;
 import log : logWarn;
 
 /// Client-side pre-check only (fail fast with a clear message rather than
@@ -57,14 +58,26 @@ final class Ai3dGenerateOpen : Command {
 
     override Param[] params() { return []; } // zero params — see module doc
 
-    override bool apply() {
-        // Suppressed in test mode, mirroring commands/file/load.d:108-114 —
-        // tests drive the controller directly via the ai3d.generate.start /
-        // ai3d.generate.cancel test-only hooks, never through this picker.
-        if (command.g_testMode) return false;
+    /// WHY the last apply() declined — "" for a cancel and for the SUCCESS
+    /// path too (see the `return false` at the end: this command deliberately
+    /// records no undo entry even when it picked a file, so `false` here does
+    /// NOT mean "refused"). Non-empty only when the chooser could not run.
+    override string refusalReason() const { return refusal_; }
+    private string refusal_;
 
-        string path = runOpenDialog();
-        if (path is null) return false; // user cancelled
+    override bool apply() {
+        refusal_ = null;
+        // `--test` suppression now lives in the shared chooser
+        // (`io/file_dialog.d` checks `g_testMode` first and never touches
+        // nfde), so this reaches `PickOutcome.unavailable` and returns without
+        // opening anything — same behaviour, one implementation.
+        auto pick = runOpenDialog();
+        if (pick.outcome != PickOutcome.chosen) {
+            // Cancel is silent; `unavailable` / `failed` speak.
+            refusal_ = pick.refusalReason();
+            return false;
+        }
+        string path = pick.path;
 
         const ext = extension(path).toLower;
         if (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp") {
@@ -84,27 +97,18 @@ final class Ai3dGenerateOpen : Command {
         }
 
         if (onPicked !is null) onPicked(path);
+        // TASK 1520, M4 — THIS `false` IS DELIBERATE AND STAYS. It is not a
+        // refusal: the pick SUCCEEDED and the modal has been handed the path.
+        // Returning true would give this command an undo entry it is designed
+        // not to have. `refusalReason()` is "" here, so the UI notice path
+        // (which is driven by the reason, not by the bool) stays silent.
         return false; // never a document mutation — no undo entry
     }
 
-    private string runOpenDialog() {
+    // Task 1520: the shared chooser. Its `assert(result != Result.error)`
+    // predecessor abort()ed the process on a session with no D-Bus.
+    private PickResult runOpenDialog() {
         FilterSpec[] fs = [FilterSpec("Images", "png,jpg,jpeg,webp")];
-        string path;
-        version (Windows) {
-            import std.utf : toUTF16z;
-            FilterItem[] items;
-            foreach (ref f; fs)
-                items ~= FilterItem(cast(const(ushort)*)f.name.toUTF16z,
-                                    cast(const(ushort)*)f.spec.toUTF16z);
-            auto result = openDialog(path, items);
-        } else {
-            import std.string : toStringz;
-            FilterItem[] items;
-            foreach (ref f; fs)
-                items ~= FilterItem(f.name.toStringz, f.spec.toStringz);
-            auto result = openDialog(path, items);
-        }
-        assert(result != Result.error, getError());
-        return path;
+        return pickOpenPath(fs);
     }
 }

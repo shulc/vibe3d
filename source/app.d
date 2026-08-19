@@ -8,6 +8,7 @@ import std.json : JSONValue, JSONType;
 
 // HTTP server module
 import http_server;
+import ui.discard_guard : UiRunOutcome, GuardSettle;
 import gl_thread_guard : markMainThread;
 import log : logInfo, logWarn;
 import prefs;
@@ -1123,12 +1124,12 @@ void main(string[] args) {
     // listener is disabled (release/default runs, --no-http). The ctor
     // binds no socket and spawns no thread — only start() opens the port.
     // Constructing unconditionally keeps the command-dispatch wiring below
-    // (commandHandlerDelegate / formsInteractiveDispatch / replayUndoEntry,
+    // (uiCommandDelegate / formsInteractiveDispatch / replayUndoEntry,
     // all assigned inside the `if (httpServer !is null)` block) in place for
     // the UI: status-line `kind: script` actions dispatch through
-    // commandHandlerDelegate, so it must be wired regardless of whether the
+    // uiCommandDelegate, so it must be wired regardless of whether the
     // HTTP port is open. Without this, a release build (HTTP off by default)
-    // left commandHandlerDelegate null and every `kind: script` status-line
+    // left uiCommandDelegate null and every `kind: script` status-line
     // action (falloff type, granular ACEN sub-modes, edit-mode convert, …)
     // silently no-op'd, while `kind: command` items kept working (they
     // dispatch via runCommand directly). start() stays gated on
@@ -2590,7 +2591,11 @@ void main(string[] args) {
     // RecordMode: relocated verbatim to editor_app.d's module level (app.d
     // decomp phase B) so EditorApp's applyOrRefire field can name the type;
     // resolves here via `import editor_app;`.
-    void applyOrRefire(Command cmd, RecordMode mode, string throwMsg) {
+    // Returns TRUE iff the command actually landed (applied, or fired inside
+    // an open refire bracket). Task 1520 needs the answer: the UI adapter must
+    // tell "refused" from "applied" WITHOUT a throw, because the throw is what
+    // killed the editor from inside an ImGui draw.
+    bool applyOrRefire(Command cmd, RecordMode mode, string throwMsg) {
         // Post-mode finalize (task 0463, SDK-derived — the reference's
         // MODEL command class + its command-system post-mode listener; see
         // toolcards/_framework/shift_apply_rearm.md "Command-fired post-mode
@@ -2671,16 +2676,19 @@ void main(string[] args) {
             return why.length > 0 ? throwMsg ~ ": " ~ why : throwMsg;
         }
         if (history.refireActive) {
-            if (!history.fire(cmd) && throwMsg !is null)
-                throw new Exception(failMsg());
-        } else if (cmd.apply()) {
+            if (history.fire(cmd)) return true;
+            if (throwMsg !is null) throw new Exception(failMsg());
+            return false;
+        }
+        if (cmd.apply()) {
             final switch (mode) {
                 case RecordMode.Record:     history.record(cmd);           break;
                 case RecordMode.Coalescing: history.recordCoalescing(cmd); break;
             }
-        } else if (throwMsg !is null) {
-            throw new Exception(failMsg());
+            return true;
         }
+        if (throwMsg !is null) throw new Exception(failMsg());
+        return false;
     }
 
     // Phase 7: macro recorder captures successful command lines
@@ -2909,9 +2917,17 @@ void main(string[] args) {
     //      mesh-address keys). Belt-and-braces beside the address keys.
     //   5. noteChange(MeshChangeAll) on the NEW active mesh so the per-frame
     //      bus flush invalidates every subscriber exactly as a file load does.
+    // Task 1521, R4: a deferred guarded action holds a Command built against
+    // the primary of the moment (its `Mesh*` was bound at fire time). If the
+    // primary changes while the prompt is up, DROP it — a dropped action is
+    // safer than one that lands in the wrong layer. Forward hook because the
+    // guard state is declared further down in main().
+    void delegate() dropPendingGuardHook;
+
     void delegate(size_t, size_t) onActiveLayerChanged = (size_t prev, size_t next) {
         import change_bus : MeshChangeAll, noteLayerChange, LayerChange;
         import snap       : invalidateSnapGrids;
+        if (dropPendingGuardHook !is null) dropPendingGuardHook();
         // 0. Task 0232 fold #1(b): drop any Loop Slice standing preview
         //    BEFORE the tool-drop below. By the time this hook fires the
         //    primary has ALREADY switched (this command's
@@ -2989,7 +3005,7 @@ void main(string[] args) {
     // i.e. all rows show a plain label); `layerRenameBuf` is the null-terminated
     // edit buffer fed to ImGui.InputText. Both reset when the edit commits or
     // is cancelled. The panel is pure UI — every control dispatches a `layer.*`
-    // command through commandHandlerDelegate, never mutating `document` directly.
+    // command through uiCommandDelegate, never mutating `document` directly.
     int layerRenameIndex = -1;
     char[256] layerRenameBuf;
     layerRenameBuf[] = 0;
@@ -3049,9 +3065,21 @@ void main(string[] args) {
     // decision until the frame's Save has flushed (a cancelled Save dialog
     // leaves the document dirty ⇒ the quit is aborted). lastWindowTitle caches
     // the last string handed to SDL so the title is only re-set when it changes.
-    bool   quitConfirmOpen;
-    bool   quitConfirmPending;
-    bool   quitAfterSave;
+    // Task 1521 folded 0434's bespoke quit pair into ONE deferred-action
+    // slot: the guard now covers file.new / file.open / file.import.* / quit
+    // through the single `runUiCommand` point, and a second modal entry would
+    // have asked twice AND kept the guard at two places.
+    //   * `pendingGuardedCmd` — the action held while the prompt is up. While
+    //     it is non-null a SECOND guarded dispatch is refused, not queued and
+    //     not overwritten (task 1521, B9).
+    //   * `guardSettle` — answered in the draw, PERFORMED in the post-flush
+    //     settle, so nothing mutates the document from inside an ImGui frame.
+    bool   discardConfirmOpen;
+    bool   discardConfirmPending;
+    string guardPromptText;
+    Command    pendingGuardedCmd;
+    RecordMode pendingGuardedMode;
+    GuardSettle guardSettle;
     // Command-failure notice (task 0616 review B1). Same pendingOpen→OpenPopup
     // convention. `noticeText` is built by ui.command_notice.commandNoticeText,
     // which is also what decides whether there IS a notice — a command that
@@ -3495,10 +3523,11 @@ void main(string[] args) {
     // (file.quit in particular) can capture it before the actual
     // loop runs below.
     bool running = true;
-    // Close-requested flag (task 0434). Set by SDL_QUIT (window [X]) and by the
-    // file.quit command (Ctrl+Q / File→Quit); drained once per frame by the
-    // quit-guard, which either prompts (unsaved changes) or clears `running`.
-    bool quitRequested = false;
+    // Task 1521: the 0434 `quitRequested` latch is GONE. `SDL_QUIT` now builds
+    // a `file.quit` command (with `fromWindowClose`) and runs it through
+    // `runUiCommand`, so the window [X] and Ctrl+Q are literally one path —
+    // which is what makes "remove the guard call from runUiCommand" redden all
+    // three guarded routes instead of two.
 
     Registry reg;
 
@@ -3544,7 +3573,6 @@ void main(string[] args) {
     // is lexically visible (the guard itself is declared far earlier).
     displayVboOwnedByTool_  = () => activeTool !is null && activeTool.isDragging();
     app.runningPtr          = &running;
-    app.quitRequestedPtr    = &quitRequested;
     app.showHistoryPanelPtr = &showHistoryPanel;
 
     app.ai3dRefs.ai3dModalPtr            = &ai3dModal;
@@ -3575,9 +3603,9 @@ void main(string[] args) {
     app.remeshTargetQuadsPtr          = &remeshTargetQuads;
     app.remeshAdaptivityPtr           = &remeshAdaptivity;
     app.remeshSharpEdgePtr            = &remeshSharpEdge;
-    app.quitConfirmOpenPtr            = &quitConfirmOpen;
-    app.quitConfirmPendingPtr         = &quitConfirmPending;
-    app.quitAfterSavePtr              = &quitAfterSave;
+    app.discardConfirmOpenPtr         = &discardConfirmOpen;
+    app.discardConfirmPendingPtr      = &discardConfirmPending;
+    app.guardPromptTextPtr            = &guardPromptText;
     app.noticeTextPtr                 = &noticeText;
     app.noticeOpenPtr                 = &noticeOpen;
     app.noticePendingPtr              = &noticePending;
@@ -3978,11 +4006,11 @@ void main(string[] args) {
     // ALWAYS constructed (the listener is gated separately on start()), so the
     // block always runs and these are always wired — a release build with the
     // HTTP port closed still dispatches script actions through
-    // commandHandlerDelegate.
-    void delegate(string, string) commandHandlerDelegate;
+    // uiCommandDelegate.
+    void delegate(string, string) uiCommandDelegate;
     void delegate(size_t) replayUndoEntry;
     // FormsPanel write path: dispatches a `tool.attr` exactly like
-    // commandHandlerDelegate but marks the built ToolAttrCommand `interactive`
+    // uiCommandDelegate but marks the built ToolAttrCommand `interactive`
     // (an in-process setInteractive(true)) so the universal reEvaluate() seam
     // opens the tool's live session on the first edit. Never sets the flag via
     // an argstring — see commands/tool/attr.d. Always wired now that
@@ -4057,29 +4085,189 @@ void main(string[] args) {
     // finishes (it needs app.layout, wired there). processEvent's
     // SDL_WINDOWEVENT case now calls router.handleWindowEvent.
 
-    // Run a Command through the same dispatch the HTTP /api/command path
-    // uses: refire-aware apply, history.record on success. Used by both
-    // keyboard shortcut and UI-button click sites so they're uniformly
-    // undoable.
+    // ---- The command-failure notice ------------------------------------
     //
-    // `throwMsg` stays null here (a UI click has no caller to throw at), so a
-    // command that declines still no-ops — but NOT SILENTLY when it said why
-    // (task 0616 review B1). `Command.refusalReason()` is "" for every command
-    // that does not override it and is reset at the top of every overrider's
-    // apply(), so a non-empty value here means exactly "the call I just made
-    // declined, and here is the sentence to show". A decline WITHOUT a reason
-    // is still silent, which is what keeps a cancelled file dialog quiet —
-    // see ui/command_notice.d.
-    void runCommand(Command cmd) {
+    // `Command.refusalReason()` is "" for every command that does not override
+    // it and is reset at the top of every overrider's apply(), so a non-empty
+    // value here means exactly "the call I just made declined, and here is the
+    // sentence to show". A decline WITHOUT a reason is still silent, which is
+    // what keeps a cancelled file dialog quiet — see ui/command_notice.d.
+    //
+    // Task 1520 moved this out of `runCommand` so the panel/HTTP-UI adapter
+    // raises the SAME notice from the SAME body; before that, the menu path
+    // showed a notice while the panel path threw out of the ImGui draw.
+    void raiseNotice(string text) {
+        import ui.discard_guard : recordUiNotice;
+        if (text.length == 0) return;
+        // ALWAYS recorded, so a headless test can read what the user would
+        // have been shown (`GET /api/ui/policy`).
+        recordUiNotice(text);
+        // The MODAL is suppressed under --test (task 1520, R3). Before this
+        // change no UI-origin refusal could reach a `--test` run at all, so
+        // leaving the popup live cost nothing; now `?origin=ui` drives exactly
+        // that path, and an unanswerable modal would wedge the harness.
+        if (command.g_testMode) return;
+        noticeText    = text;
+        noticeOpen    = true;
+        noticePending = true;
+    }
+
+    void raiseCommandNotice(Command cmd) {
         import ui.command_notice : commandNoticeText;
         if (cmd is null) return;
-        applyOrRefire(cmd, RecordMode.Record, null);
-        auto notice = commandNoticeText(cmd.label(), cmd.refusalReason());
-        if (notice.length) {
-            noticeText    = notice;
-            noticeOpen    = true;
-            noticePending = true;
+        raiseNotice(commandNoticeText(cmd.label(), cmd.refusalReason()));
+    }
+
+    // The guard-free half: apply + record, refusal is silent here (the caller
+    // owns the notice). `throwMsg` is null — a user gesture has no caller to
+    // throw at, and a throw from inside an ImGui draw kills the process.
+    bool runUiCommandForced(Command cmd, RecordMode mode) {
+        if (cmd is null) return false;
+        return applyOrRefire(cmd, mode, null);
+    }
+
+    // ---- THE single user-command entry point (tasks 1520 + 1521) ---------
+    //
+    // Every user-driven command line lands here: the menu / keyboard
+    // (`runCommand`), every panel button and status-line script action (the
+    // UI dispatch adapter in http_providers.d), and — since task 1521 — the
+    // window close. Three inputs, ONE guard, which is the whole point: with
+    // the quit guard left at its own modal entry, the mutation "remove the
+    // guard call from here" reddened two of the three paths instead of three.
+    //
+    // `dispatchedId` is the id the CALLER asked for and is NOT derivable from
+    // the command: `file.new`'s factory builds a `SceneReset` whose `name()`
+    // is `"scene.reset"`, the same string `/api/reset` uses. `runCommand`
+    // has no id to give and passes "", and the record shows that honestly.
+    UiRunOutcome runUiCommand(Command cmd, RecordMode mode, string dispatchedId = "") {
+        import io.doc_state    : docDirty;
+        import ui.discard_guard;
+        if (cmd is null) return UiRunOutcome.refused;
+
+        const discards = cmd.discardsUnsavedWork();
+        const dirty    = docDirty();
+        const verdict  = guardVerdict(discards, dirty);
+
+        GuardRecord rec;
+        rec.id       = dispatchedId;
+        rec.name     = cmd.name();
+        rec.discards = discards;
+        rec.dirty    = dirty;
+        rec.verdict  = verdict == GuardVerdict.prompt ? "prompt" : "proceed";
+        rec.answer   = "none";
+
+        if (verdict == GuardVerdict.prompt) {
+            // BUSY RULE (task 1521, opponent blocker B9). ImGui modals do not
+            // raise `WantTextInput`, and `WantCaptureKeyboard` is explicitly
+            // unusable as a gate in this app (see the keyboard router), so a
+            // Ctrl+N pressed while the prompt is up DOES reach here. Silently
+            // overwriting the held action would throw away a decision the user
+            // is in the middle of making, so the second one is refused and the
+            // modal stays on the first.
+            if (pendingGuardedCmd !is null) {
+                rec.suppressed = command.g_testMode;
+                rec.dropped    = "guard already pending";
+                rec.outcome    = "deferred";
+                recordGuardRequest(rec);
+                return UiRunOutcome.deferred;
+            }
+            rec.suppressed = command.g_testMode;
+            rec.outcome    = "deferred";
+            recordGuardRequest(rec);
+            // WHAT `--test` SUPPRESSES IS THE MODAL, NOT THE DEFERRAL. The
+            // action is held either way — "asked, not yet answered" is the
+            // honest state and it is what makes the busy rule observable
+            // headlessly. `/api/reset` drops the held action so one case
+            // cannot leak into the next on the shared --test instance.
+            pendingGuardedCmd  = cmd;
+            pendingGuardedMode = mode;
+            guardPromptText    =
+                "You have unsaved changes.\n\nSave them before "
+                ~ (cmd.label().length ? cmd.label() : cmd.name()) ~ "?";
+            setGuardPending(true);
+            if (!command.g_testMode) {
+                discardConfirmOpen    = true;
+                discardConfirmPending = true;
+            }
+            return UiRunOutcome.deferred;
         }
+
+        const applied = runUiCommandForced(cmd, mode);
+        rec.outcome = applied ? "applied" : "refused";
+        rec.refused = !applied;
+        recordGuardRequest(rec);
+        if (!applied) raiseCommandNotice(cmd);
+        return applied ? UiRunOutcome.applied : UiRunOutcome.refused;
+    }
+
+    // The menu / keyboard / UI-button entry. Unchanged shape for its 8
+    // callers; the body is now the single guarded point above.
+    void runCommand(Command cmd) {
+        runUiCommand(cmd, RecordMode.Record, "");
+    }
+
+    // ---- The three answers to the unsaved-work prompt (task 1521) --------
+    // Each ARMS the settle; none performs the action. Doing it here would run
+    // a document replacement from inside the ImGui frame that is drawing the
+    // modal — the shape task 0434 already avoided for the quit, kept.
+    void guardAnswerSave() {
+        import ui.discard_guard : recordGuardAnswer, GuardAnswer;
+        // The ordinary `file.save` — which prompts when the document is
+        // untitled, and whose CANCELLATION leaves the document dirty. That is
+        // exactly why the perform is conditional at settle: a cancelled Save
+        // must abort the discard, not complete it.
+        runUiCommandForced(reg.commandFactories["file.save"](), RecordMode.Record);
+        guardSettle           = GuardSettle.afterSave;
+        discardConfirmOpen    = false;
+        recordGuardAnswer(GuardAnswer.save, false);
+    }
+    void guardAnswerDiscard() {
+        import ui.discard_guard : recordGuardAnswer, GuardAnswer;
+        guardSettle        = GuardSettle.perform;
+        discardConfirmOpen = false;
+        recordGuardAnswer(GuardAnswer.discard, false);
+    }
+    // Forget the held action without performing it. Used by Cancel, by
+    // `/api/reset` (so one test's deferred action cannot leak into the next on
+    // the shared --test instance) and by a primary change (R4).
+    void dropPendingGuard() {
+        import ui.discard_guard : setGuardPending;
+        pendingGuardedCmd     = null;
+        guardSettle           = GuardSettle.none;
+        discardConfirmOpen    = false;
+        discardConfirmPending = false;
+        setGuardPending(false);
+    }
+    void guardAnswerCancel() {
+        import ui.discard_guard : recordGuardAnswer, GuardAnswer;
+        // CANCEL CANCELS. The held action is dropped, never queued.
+        dropPendingGuard();
+        recordGuardAnswer(GuardAnswer.cancel, false);
+    }
+
+    // Post-flush settle for the deferred action. Called once per frame from
+    // the same block that pushes the document revision, so `docDirty()` here
+    // already counts this frame's Save.
+    void settleGuardedAction() {
+        import ui.discard_guard : GuardSettle, recordGuardAnswer, GuardAnswer,
+                                  setGuardPending, settlePerforms;
+        import io.doc_state : docDirty;
+        if (guardSettle == GuardSettle.none) return;
+        auto cmd  = pendingGuardedCmd;
+        auto mode = pendingGuardedMode;
+        const settle       = guardSettle;
+        const wasAfterSave = (settle == GuardSettle.afterSave);
+        pendingGuardedCmd = null;
+        guardSettle       = GuardSettle.none;
+        setGuardPending(false);
+        if (cmd is null) return;
+        // A Save that did not land (cancelled dialog, unwritable path) leaves
+        // the document dirty ⇒ DROP the action. The rule itself is the pure
+        // `settlePerforms` so it can be asserted without an app.
+        if (!settlePerforms(settle, docDirty())) return;
+        const ok = runUiCommandForced(cmd, mode);
+        recordGuardAnswer(wasAfterSave ? GuardAnswer.save : GuardAnswer.discard, ok);
+        if (!ok) raiseCommandNotice(cmd);
     }
 
     // AI3D (task 0381) main-thread drain handler — the ONLY place the
@@ -4338,13 +4526,25 @@ void main(string[] args) {
     app.formsPanel                = formsPanel;
     app.propertyPanel             = propertyPanel;   // task 0722 (A2)
     app.io                        = io;
-    // app.commandHandlerDelegate / app.formsInteractiveDispatch are NOT
-    // wired here anymore (their pre-move `= commandHandlerDelegate;` lines
+    // app.uiCommandDelegate / app.formsInteractiveDispatch are NOT
+    // wired here anymore (their pre-move `= uiCommandDelegate;` lines
     // copied a still-null local): the moved HTTP block ASSIGNS both through
     // wireHttpProviders's `ref EditorApp app` parameter, and the call site
     // below syncs main()'s same-named locals back from `app`.
 
     app.runCommand           = cast(void delegate(Command))&runCommand;
+    // Task 1520/1521 — the single guarded UI entry + the shared notice raiser.
+    // Real closures, not same-arity casts: `runUiCommand` has a defaulted
+    // third parameter and a cast would reinterpret the ABI (see buildToolVts
+    // below for the crash that shape produced once already).
+    app.runUiCommand = (Command c, RecordMode m, string id) => runUiCommand(c, m, id);
+    app.raiseCommandNotice = cast(void delegate(Command))&raiseCommandNotice;
+    app.raiseNotice        = cast(void delegate(string))&raiseNotice;
+    app.guardAnswerSave    = cast(void delegate())&guardAnswerSave;
+    app.guardAnswerDiscard = cast(void delegate())&guardAnswerDiscard;
+    app.guardAnswerCancel  = cast(void delegate())&guardAnswerCancel;
+    app.dropPendingGuard   = cast(void delegate())&dropPendingGuard;
+    dropPendingGuardHook   = cast(void delegate())&dropPendingGuard;
     app.tryOpenArgsDialog    = cast(bool delegate(string))&tryOpenArgsDialog;
     app.activateToolById     = cast(void delegate(string))&activateToolById;
     // NOT a bare same-arity cast like its neighbours above: buildToolVts
@@ -4373,7 +4573,7 @@ void main(string[] args) {
     // exactly once, all before this point); hook delegates for main()'s
     // nested functions. app.replayUndoEntry is NOT wired here -- the moved
     // block ASSIGNS it through the `ref EditorApp app` parameter (synced
-    // back below, next to commandHandlerDelegate).
+    // back below, next to uiCommandDelegate).
     app.selTypeOrderPtr      = &selTypeOrder;
     app.bvhPick              = bvhPick;
     app.stepTrace            = stepTrace;
@@ -4381,7 +4581,9 @@ void main(string[] args) {
     app.ensureDisplayCurrent = cast(void delegate())&ensureDisplayCurrent;
     app.derivedEditMode      = cast(EditMode delegate())&derivedEditMode;
     app.formsInteractiveLatchPtr = &formsInteractiveLatch;
-    app.applyOrRefire        = &applyOrRefire;
+    // Phase 1b (task 1520): the BOUND reference is the non-throwing shape.
+    app.applyOrRefire         = (Command c, RecordMode m) => applyOrRefire(c, m, null);
+    app.applyOrRefireThrowing = (Command c, RecordMode m, string t) => applyOrRefire(c, m, t);
 
     // Phase-B HTTP wiring call (was the inline `if (httpServer !is null) {
     // ... }` block that sat right after this main()'s outer-scope delegate
@@ -4395,7 +4597,7 @@ void main(string[] args) {
     // `ref EditorApp app` parameter; main()'s later read sites (copilot
     // draw, script-action status line, History panel replay button) keep
     // their original local names, so mirror the values back once.
-    commandHandlerDelegate   = app.commandHandlerDelegate;
+    uiCommandDelegate   = app.uiCommandDelegate;
     formsInteractiveDispatch = app.formsInteractiveDispatch;
     replayUndoEntry          = app.replayUndoEntry;
 
@@ -5989,10 +6191,22 @@ void main(string[] args) {
         }
 
         switch (ev.type) {
-            // Window [X] / SIGINT: request a close rather than quitting
-            // outright (task 0434). The per-frame quit-guard prompts on
-            // unsaved changes; keep processing this frame (return true).
-            case SDL_QUIT:            quitRequested = true;               break;
+            // Window [X] / SIGINT (task 0434, re-pointed by 1521): build the
+            // ORDINARY `file.quit` command and run it through the ONE guarded
+            // UI entry, so the window close and Ctrl+Q are literally the same
+            // path. `fromWindowClose` is the only difference and it buys
+            // exactly one thing: `--test` must still be able to close the
+            // window (the harness ends every session that way), while a
+            // `file.quit` DISPATCHED by a test must not take the shared
+            // instance down with it. Keep processing this frame (return true).
+            case SDL_QUIT:
+                {
+                    import commands.file.quit : FileQuit;
+                    auto q = cast(FileQuit) reg.commandFactories["file.quit"]();
+                    if (q !is null) q.setFromWindowClose(true);
+                    runUiCommand(q, RecordMode.Record, "file.quit");
+                }
+                break;
             case SDL_WINDOWEVENT:     router.handleWindowEvent(ev.window); break;
             case SDL_KEYDOWN:         handleKeyDown(ev.key);             break;
             // Task 0709 — the release side of the pair above. Absent until
@@ -6539,7 +6753,7 @@ void main(string[] args) {
             import commands.ui.statistics : g_statExpand;
             import seltype : currentSelType;
             drawStatisticsPanel(&app.document(), currentSelType(app.selTypeOrder),
-                                g_statExpand, app.commandHandlerDelegate);
+                                g_statExpand, app.uiCommandDelegate);
         }
 
         // ---- Viewport Properties (floating) ----
@@ -6564,7 +6778,7 @@ void main(string[] args) {
         // Same imgui-determinism idiom as Layers/Viewport Properties above:
         // hidden by default in --test, opt-in via `ui.copilotPanel show:true`.
         // The panel is a passive list (copilot_panel.d) — every interaction
-        // dispatches through commandHandlerDelegate, never touching mesh /
+        // dispatches through uiCommandDelegate, never touching mesh /
         // document / selection state directly.
         // version(WithAI)-only — compiled out of modeling-noai entirely
         // (see import block doc comment near the top of this file).
@@ -6574,7 +6788,7 @@ void main(string[] args) {
         static if (kCopilotEnabled)
         if (!command.g_testMode || g_copilotPanelShown) {
             pushPanelChromeStyle();
-            copilotPanel.draw(aiState.enabled, commandHandlerDelegate);
+            copilotPanel.draw(aiState.enabled, uiCommandDelegate);
             popPanelChromeStyle();
         }
 
@@ -6889,12 +7103,9 @@ void main(string[] args) {
 
             syncDocRevision(changeBus.docRevision());
 
-            if (quitAfterSave) {
-                quitAfterSave = false;
-                // Exit only if the Save actually landed; a cancelled Save
-                // dialog leaves the document dirty ⇒ the quit is aborted.
-                if (!docDirty()) running = false;
-            }
+            // Task 1521: ONE settle for every deferred guarded action (New /
+            // Open / Import / Quit), replacing 0434's quit-only `quitAfterSave`.
+            settleGuardedAction();
 
             // Title: "<file> - Vibe3d", leading "*" while dirty, "untitled"
             // when no native document is open. Only touch SDL on change.
@@ -7749,8 +7960,8 @@ void main(string[] args) {
                             foreach (i, dv; kDisplayStyleOrder) {
                                 bool sel = (i == dsIdx);
                                 if (ImGui.Selectable(displayStyleLabel(dv), sel)
-                                    && commandHandlerDelegate !is null)
-                                    commandHandlerDelegate("viewport.displayStyle",
+                                    && uiCommandDelegate !is null)
+                                    uiCommandDelegate("viewport.displayStyle",
                                         format(`{"_positional":["%s"],"viewport":%d}`,
                                                displayStyleId(dv), k));
                                 if (sel) ImGui.SetItemDefaultFocus();

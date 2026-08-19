@@ -602,7 +602,7 @@ void popButtonBarStyle() {
 // `drawChannelsPanel` (the two that already did this) carry the measured
 // version of that argument, including the throwing calls that make it real
 // rather than defensive; every panel here reaches similar ones through
-// `commandHandlerDelegate` / `applyOrRefire`.
+// `uiCommandDelegate` / `applyOrRefire`.
 //
 // Registration ORDER is the behaviour: `popPanelChromeStyle` first and
 // `ImGui.End` second means they unwind End-then-pop, which is the order the
@@ -658,7 +658,7 @@ void drawTabPanel(EditorApp app) {
 // -------------------------------------------------------------------------
 // Dockable panel that reflects and drives the active cell's Independence
 // flags (indCenter / indScale / indRotate) and Master selector.  Every
-// interaction dispatches through commandHandlerDelegate (same path as
+// interaction dispatches through uiCommandDelegate (same path as
 // /api/command) — the panel NEVER mutates vpm directly.  Also hosts the
 // Reset Layout button.
 //
@@ -692,8 +692,8 @@ void drawViewportPropsPanel(EditorApp app) {
                 bool cur = (vpm.layout == lblVals[i]);
                 if (cur) ImGui.PushStyleColor(ImGuiCol.Button,
                                               ImVec4(0.30f, 0.45f, 0.65f, 1.0f));
-                if (ImGui.Button(lblNames[i]) && commandHandlerDelegate !is null)
-                    commandHandlerDelegate("viewport.layout",
+                if (ImGui.Button(lblNames[i]) && uiCommandDelegate !is null)
+                    uiCommandDelegate("viewport.layout",
                         `{"_positional":["` ~ lblIds[i] ~ `"]}`);
                 if (cur) ImGui.PopStyleColor(1);
             }
@@ -703,20 +703,20 @@ void drawViewportPropsPanel(EditorApp app) {
         ImGui.SeparatorText("Active Cell Independence");
 
         bool ic = v.indCenter;
-        if (ImGui.Checkbox("Center", &ic) && commandHandlerDelegate !is null)
-            commandHandlerDelegate("viewport.indCenter",
+        if (ImGui.Checkbox("Center", &ic) && uiCommandDelegate !is null)
+            uiCommandDelegate("viewport.indCenter",
                                   ic ? `{"value":"yes"}` : `{"value":"no"}`);
 
         ImGui.SameLine();
         bool isc = v.indScale;
-        if (ImGui.Checkbox("Scale", &isc) && commandHandlerDelegate !is null)
-            commandHandlerDelegate("viewport.indScale",
+        if (ImGui.Checkbox("Scale", &isc) && uiCommandDelegate !is null)
+            uiCommandDelegate("viewport.indScale",
                                   isc ? `{"value":"yes"}` : `{"value":"no"}`);
 
         ImGui.SameLine();
         bool ir = v.indRotate;
-        if (ImGui.Checkbox("Rotate", &ir) && commandHandlerDelegate !is null)
-            commandHandlerDelegate("viewport.indRotate",
+        if (ImGui.Checkbox("Rotate", &ir) && uiCommandDelegate !is null)
+            uiCommandDelegate("viewport.indRotate",
                                   ir ? `{"value":"yes"}` : `{"value":"no"}`);
 
         // Display: surface style + wireframe overlay, for the ACTIVE cell.
@@ -756,8 +756,8 @@ void drawViewportPropsPanel(EditorApp app) {
                 foreach (i, sv; kDisplayStyleOrder) {
                     bool sel = (i == si);
                     if (ImGui.Selectable(displayStyleLabel(sv), sel)
-                        && commandHandlerDelegate !is null)
-                        commandHandlerDelegate("viewport.displayStyle",
+                        && uiCommandDelegate !is null)
+                        uiCommandDelegate("viewport.displayStyle",
                             `{"_positional":["` ~ displayStyleId(sv) ~ `"]}`);
                     if (sel) ImGui.SetItemDefaultFocus();
                 }
@@ -777,8 +777,8 @@ void drawViewportPropsPanel(EditorApp app) {
             if (ImGui.BeginCombo("##vpWireOverlay", wireLabels[wi])) {
                 foreach (i, wl; wireLabels) {
                     bool sel = (i == wi);
-                    if (ImGui.Selectable(wl, sel) && commandHandlerDelegate !is null)
-                        commandHandlerDelegate("viewport.wireOverlay",
+                    if (ImGui.Selectable(wl, sel) && uiCommandDelegate !is null)
+                        uiCommandDelegate("viewport.wireOverlay",
                             `{"_positional":["` ~ wireIds[i] ~ `"]}`);
                     if (sel) ImGui.SetItemDefaultFocus();
                 }
@@ -795,8 +795,8 @@ void drawViewportPropsPanel(EditorApp app) {
                 // thrown command from a drag of a UI slider.
                 if (wa < 0.0f) wa = 0.0f;
                 if (wa > 1.0f) wa = 1.0f;
-                if (commandHandlerDelegate !is null)
-                    commandHandlerDelegate("viewport.wireAlpha",
+                if (uiCommandDelegate !is null)
+                    uiCommandDelegate("viewport.wireAlpha",
                         `{"_positional":[` ~ format("%.6f", wa) ~ `]}`);
             }
         }
@@ -833,8 +833,8 @@ void drawViewportPropsPanel(EditorApp app) {
                 foreach (m; kGridMaskMin .. kGridMaskMax + 1) {
                     bool sel = (m == g_viewGrid.rungMask);
                     if (ImGui.Selectable(rungLabel(m), sel)
-                        && commandHandlerDelegate !is null)
-                        commandHandlerDelegate("viewport.gridSteps",
+                        && uiCommandDelegate !is null)
+                        uiCommandDelegate("viewport.gridSteps",
                             `{"_positional":[` ~ format("%d", m) ~ `]}`);
                     if (sel) ImGui.SetItemDefaultFocus();
                 }
@@ -850,14 +850,14 @@ void drawViewportPropsPanel(EditorApp app) {
         ImGui.SetNextItemWidth(-1.0f);
         if (ImGui.BeginCombo("##vpMaster", masterLabel)) {
             bool grpSel = (mid < 0);
-            if (ImGui.Selectable("Group master", grpSel) && commandHandlerDelegate !is null)
-                commandHandlerDelegate("viewport.master", `{"_positional":["-1"]}`);
+            if (ImGui.Selectable("Group master", grpSel) && uiCommandDelegate !is null)
+                uiCommandDelegate("viewport.master", `{"_positional":["-1"]}`);
             if (grpSel) ImGui.SetItemDefaultFocus();
             foreach (ci; 0 .. vpm.cellCount) {
                 bool csel = (mid == ci);
                 string clabel = "Cell " ~ to!string(ci);
-                if (ImGui.Selectable(clabel, csel) && commandHandlerDelegate !is null)
-                    commandHandlerDelegate("viewport.master",
+                if (ImGui.Selectable(clabel, csel) && uiCommandDelegate !is null)
+                    uiCommandDelegate("viewport.master",
                         `{"_positional":["` ~ to!string(ci) ~ `"]}`);
                 if (csel) ImGui.SetItemDefaultFocus();
             }
@@ -968,7 +968,7 @@ void drawAboutPanel(EditorApp app) {
 // Phase 4 -- drawLayerListPanel (document/layer/layerRenameIndex/
 // layerRenameBuf/formsPanel/formsInteractiveDispatch/runCommand -- runCommand
 // isn't actually read by this body, verbatim comment kept from the plan's own
-// wording; the panel dispatches through commandHandlerDelegate only).
+// wording; the panel dispatches through uiCommandDelegate only).
 // =============================================================================
 
 // -------------------------------------------------------------------------
@@ -1020,7 +1020,7 @@ void drawAboutPanel(EditorApp app) {
 //     expansion state the row model holds; a triangle on a parent item would
 //     be a control with nothing behind it.
 //
-// EVERY interaction dispatches through commandHandlerDelegate — the same
+// EVERY interaction dispatches through uiCommandDelegate — the same
 // path /api/command uses — so undo/history/coalescing all work. The panel
 // NEVER mutates `document` directly. It is pure UI: no toolpipe, no mesh.
 //
@@ -1172,8 +1172,8 @@ void drawLayerListPanel(EditorApp app) {
             auto delState = layerDeleteButtonState(&document());
             ImGui.BeginDisabled(!delState.enabled);
             if (ImGui.Button("Delete")) {
-                if (delState.enabled && commandHandlerDelegate !is null)
-                    commandHandlerDelegate("layer.delete",
+                if (delState.enabled && uiCommandDelegate !is null)
+                    uiCommandDelegate("layer.delete",
                         `{"index":` ~ to!string(delState.index) ~ `}`);
             }
             ImGui.EndDisabled();
@@ -1187,8 +1187,8 @@ void drawLayerListPanel(EditorApp app) {
                 foreach (ci, c; kAddItemChoices) {
                     ImGui.PushID(cast(int) ci);
                     if (ImGui.Selectable(c.label)) {
-                        if (commandHandlerDelegate !is null)
-                            commandHandlerDelegate(c.command, c.args);
+                        if (uiCommandDelegate !is null)
+                            uiCommandDelegate(c.command, c.args);
                     }
                     // `SetTooltip(string)` in this binding formats through
                     // "%.*s", so a runtime string is safe here — it is not
@@ -1267,8 +1267,8 @@ void drawLayerListPanel(EditorApp app) {
             // this panel is not allowed to draw.
             if (r.canToggleVisible) {
                 if (ImGui.InvisibleButton("##vis", ImVec2(cellW, rowH))) {
-                    if (commandHandlerDelegate !is null)
-                        commandHandlerDelegate("layer.setVisible",
+                    if (uiCommandDelegate !is null)
+                        uiCommandDelegate("layer.setVisible",
                             `{"index":` ~ to!string(r.index) ~ `,"value":`
                             ~ (r.visible ? "false" : "true") ~ `}`);
                 }
@@ -1304,9 +1304,9 @@ void drawLayerListPanel(EditorApp app) {
             // dispatches (it must be able to deselect the sole row too).
             if (!r.isRoot) {
                 if (ImGui.InvisibleButton("##role", ImVec2(cellW, rowH))) {
-                    if (commandHandlerDelegate !is null
+                    if (uiCommandDelegate !is null
                         && (io.KeyCtrl || !r.isSoleSelection))
-                        commandHandlerDelegate("layer.select",
+                        uiCommandDelegate("layer.select",
                             `{"index":` ~ to!string(r.index) ~ `,"mode":`
                             ~ (io.KeyCtrl ? `"toggle"` : `"set"`) ~ `}`);
                 }
@@ -1382,8 +1382,8 @@ void drawLayerListPanel(EditorApp app) {
                 if (commit) {
                     string newName =
                         cast(string) fromStringz(layerRenameBuf.ptr).dup;
-                    if (newName.length && commandHandlerDelegate !is null)
-                        commandHandlerDelegate("layer.rename",
+                    if (newName.length && uiCommandDelegate !is null)
+                        uiCommandDelegate("layer.rename",
                             `{"index":` ~ to!string(r.index) ~ `,"name":`
                             ~ JSONValue(newName).toString() ~ `}`);
                     layerRenameIndex = -1;
@@ -1408,7 +1408,7 @@ void drawLayerListPanel(EditorApp app) {
                                      ImVec2(0, rowH));
                 bool dbl = ImGui.IsItemHovered()
                     && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left);
-                if (nameClicked && !dbl && commandHandlerDelegate !is null) {
+                if (nameClicked && !dbl && uiCommandDelegate !is null) {
                     // io.KeyCtrl is the frame's merged Ctrl-modifier state
                     // (matches every other modifier read in the app).
                     immutable mode = io.KeyCtrl ? `"toggle"` : `"set"`;
@@ -1421,7 +1421,7 @@ void drawLayerListPanel(EditorApp app) {
                     // It is the same defect 0671 fixed in app.d's viewport
                     // click guard, and the same fix: ask about the SELECTION.
                     if (io.KeyCtrl || !r.isSoleSelection)
-                        commandHandlerDelegate("layer.select",
+                        uiCommandDelegate("layer.select",
                             `{"index":` ~ to!string(r.index) ~ `,"mode":`
                             ~ mode ~ `}`);
                 }
@@ -1477,8 +1477,8 @@ void drawLayerListPanel(EditorApp app) {
                         && payload.DataSize == cast(int)int.sizeof) {
                         int fromIdx = *cast(const(int)*) payload.Data;
                         if (fromIdx != cast(int) r.index
-                            && commandHandlerDelegate !is null)
-                            commandHandlerDelegate("layer.reorder",
+                            && uiCommandDelegate !is null)
+                            uiCommandDelegate("layer.reorder",
                                 `{"from":` ~ to!string(fromIdx)
                                 ~ `,"to":` ~ to!string(r.index) ~ `}`);
                     }
@@ -1561,7 +1561,7 @@ void drawLayerListPanel(EditorApp app) {
                         (cast(TransformTool)activeTool) !is null,
                         currentSelType(selTypeOrder));
                     formsPanel.draw(*layerForm, layerProv,
-                                    commandHandlerDelegate,
+                                    uiCommandDelegate,
                                     formsInteractiveDispatch,
                                     /*activeToolId=*/"",
                                     /*stageId=*/"",
@@ -1615,8 +1615,8 @@ void drawLayerListPanel(EditorApp app) {
                         // first.
                         ImGui.PushID(e.layerIndex);
                         if (ImGui.Selectable(e.label, e.current) && !e.current
-                            && commandHandlerDelegate !is null)
-                            commandHandlerDelegate("imagePlane.setImage",
+                            && uiCommandDelegate !is null)
+                            uiCommandDelegate("imagePlane.setImage",
                                 `{"index":` ~ to!string(planeIdx)
                                 ~ `,"image":` ~ to!string(e.layerIndex) ~ `}`);
                         if (e.current) ImGui.SetItemDefaultFocus();
@@ -1687,7 +1687,7 @@ void drawLayerListPanel(EditorApp app) {
 // size-responsive presentations (a separate concern). No thumbnail either —
 // nothing in this build decodes pixels, only headers (see `ui/image_rows.d`).
 //
-// EVERY interaction dispatches through commandHandlerDelegate, exactly as the
+// EVERY interaction dispatches through uiCommandDelegate, exactly as the
 // Layers panel does; the panel never mutates `document` directly.
 //
 // Visibility mirrors the Layers panel: always drawn in a normal run; in
@@ -1716,7 +1716,7 @@ void drawImageListPanel(EditorApp app) {
     // inside ImGui with no connection to the code that threw.
     //
     // There ARE throwing calls on this path, which is what makes this real
-    // rather than defensive: every `commandHandlerDelegate` call below routes
+    // rather than defensive: every `uiCommandDelegate` call below routes
     // through `applyOrRefire` with a non-null `throwMsg`, so a refused
     // `image.remove` / `layer.rename` / `image.load` throws from inside the
     // draw; and the row model touches user-supplied paths (see `elideEnd`).
@@ -1731,8 +1731,8 @@ void drawImageListPanel(EditorApp app) {
         // command takes no arguments at all — measured). The by-path form
         // exists for tests and scripts and is reached through /api/command.
         if (ImGui.SmallButton("Load...")) {
-            if (commandHandlerDelegate !is null)
-                commandHandlerDelegate("image.load", "{}");
+            if (uiCommandDelegate !is null)
+                uiCommandDelegate("image.load", "{}");
         }
         ImGui.SameLine();
 
@@ -1761,9 +1761,9 @@ void drawImageListPanel(EditorApp app) {
                     if (removeConfirmText.length) {
                         removeConfirmOpen        = true;
                         removeConfirmPendingOpen = true;
-                    } else if (commandHandlerDelegate !is null) {
+                    } else if (uiCommandDelegate !is null) {
                         // Nothing references it — nothing to warn about.
-                        commandHandlerDelegate("image.remove",
+                        uiCommandDelegate("image.remove",
                             `{"index":` ~ to!string(rem.index) ~ `}`);
                     }
                 }
@@ -1785,8 +1785,8 @@ void drawImageListPanel(EditorApp app) {
                 ImGui.TextUnformatted(removeConfirmText);
                 ImGui.TextUnformatted("Remove it anyway?");
                 if (ImGui.Button("Remove")) {
-                    if (commandHandlerDelegate !is null)
-                        commandHandlerDelegate("image.remove",
+                    if (uiCommandDelegate !is null)
+                        uiCommandDelegate("image.remove",
                             `{"index":` ~ to!string(removeConfirmIndex) ~ `}`);
                     ImGui.CloseCurrentPopup();
                     removeConfirmOpen = false;
@@ -1831,8 +1831,8 @@ void drawImageListPanel(EditorApp app) {
             if (ImGui.Selectable(marker, r.focused,
                                  ImGuiSelectableFlags.AllowItemOverlap,
                                  ImVec2(14, 0))) {
-                if (!r.focused && commandHandlerDelegate !is null)
-                    commandHandlerDelegate("layer.select",
+                if (!r.focused && uiCommandDelegate !is null)
+                    uiCommandDelegate("layer.select",
                         `{"index":` ~ to!string(idx) ~ `,"mode":"set"}`);
             }
             ImGui.SameLine();
@@ -1854,8 +1854,8 @@ void drawImageListPanel(EditorApp app) {
                 if (commit) {
                     string newName =
                         cast(string) fromStringz(layerRenameBuf.ptr).dup;
-                    if (newName.length && commandHandlerDelegate !is null)
-                        commandHandlerDelegate("layer.rename",
+                    if (newName.length && uiCommandDelegate !is null)
+                        uiCommandDelegate("layer.rename",
                             `{"index":` ~ to!string(idx) ~ `,"name":`
                             ~ JSONValue(newName).toString() ~ `}`);
                     layerRenameIndex = -1;
@@ -1872,10 +1872,10 @@ void drawImageListPanel(EditorApp app) {
                                      ImVec2(180, 0));
                 bool dbl = ImGui.IsItemHovered()
                     && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left);
-                if (nameClicked && !dbl && commandHandlerDelegate !is null) {
+                if (nameClicked && !dbl && uiCommandDelegate !is null) {
                     immutable mode = io.KeyCtrl ? `"toggle"` : `"set"`;
                     if (io.KeyCtrl || !r.focused)
-                        commandHandlerDelegate("layer.select",
+                        uiCommandDelegate("layer.select",
                             `{"index":` ~ to!string(idx) ~ `,"mode":`
                             ~ mode ~ `}`);
                 }
@@ -2039,7 +2039,7 @@ void drawChannelsPanel(EditorApp app) {
     static ChannelsProvider prov;
     static ChannelsModel    model;
 
-    // BALANCED ON EVERY EXIT, INCLUDING A THROWN ONE: `commandHandlerDelegate`
+    // BALANCED ON EVERY EXIT, INCLUDING A THROWN ONE: `uiCommandDelegate`
     // and the interactive dispatch below both route through `applyOrRefire`,
     // and a refused `layer.attr` (a readonly attr, an out-of-domain value)
     // throws from inside the draw. `scope(exit)` keeps ImGui's window and style
@@ -2099,7 +2099,7 @@ void drawChannelsPanel(EditorApp app) {
             // with the live index already in them, so there is nothing for
             // `rebindBindingTarget` to overwrite.
             formsPanel.draw(model.form, prov,
-                            commandHandlerDelegate,
+                            uiCommandDelegate,
                             formsInteractiveDispatch,
                             /*activeToolId=*/"",
                             /*stageId=*/"",
@@ -2197,8 +2197,8 @@ void dispatchAction(EditorApp app, ref Action action) {
             foreach (line; action.scriptLines) {
                 auto parsed = parseArgstring(line);
                 if (parsed.isEmpty) continue;
-                if (commandHandlerDelegate !is null)
-                    commandHandlerDelegate(parsed.commandId,
+                if (uiCommandDelegate !is null)
+                    uiCommandDelegate(parsed.commandId,
                                            parsed.params.toString());
             }
             break;
@@ -2942,8 +2942,8 @@ void drawStatusBar(EditorApp app) {
                             foreach (line; action.scriptLines) {
                                 auto p2 = parseArgstring(line);
                                 if (p2.isEmpty) continue;
-                                if (commandHandlerDelegate !is null)
-                                    commandHandlerDelegate(p2.commandId,
+                                if (uiCommandDelegate !is null)
+                                    uiCommandDelegate(p2.commandId,
                                                             p2.params.toString());
                             }
                             // Activating an edit mode is conceptually
@@ -3366,59 +3366,55 @@ void drawRemeshModal(EditorApp app) {
 
 void drawQuitGuardModal(EditorApp app) {
     with (app) {
-        // ---- Unsaved-changes quit guard + confirmation modal (task 0434) ----
-        // Drain the close request once per frame. Placed inside the ImGui frame
-        // (after the menu bar and the other modals are drawn) so a same-frame
-        // File→Quit, a Ctrl+Q from the event phase, and an SDL_QUIT all land
-        // here. A dirty document opens the confirm modal; a clean one — or any
-        // --test session (the harness closes the window and must not block on a
-        // dialog) — exits immediately.
-        if (quitRequested) {
-            import io.doc_state : docDirty;
-            quitRequested = false;
-            if (docDirty() && !command.g_testMode) {
-                quitConfirmOpen    = true;
-                quitConfirmPending = true;
-            } else {
-                running = false;
-            }
-        }
-        if (quitConfirmOpen) {
-            if (quitConfirmPending) {
+        // ---- Unsaved-work prompt (task 0434's form, task 1521's scope) ----
+        //
+        // THE MODAL ENTRY THAT USED TO LIVE HERE IS GONE. Until task 1521 this
+        // function ALSO decided whether to prompt — it drained `quitRequested`
+        // and asked `docDirty()` itself. That made the guard a SECOND point
+        // beside the command dispatch, and the consequence was measurable: the
+        // mutation "remove the guard call from the dispatch point" reddened
+        // File → New and File → Open but NOT the quit, because the quit was
+        // guarded here. The decision now happens once, in `runUiCommand`
+        // (app.d); this function only DRAWS the question and hands the answer
+        // back.
+        //
+        // Three buttons, not two (owner-directed): "Yes/No" cannot tell
+        // "throw the work away" from "I changed my mind".
+        if (discardConfirmOpen) {
+            if (discardConfirmPending) {
                 ImGui.OpenPopup("Unsaved Changes");
-                quitConfirmPending = false;
+                discardConfirmPending = false;
             }
             if (ImGui.BeginPopupModal("Unsaved Changes", null,
                                       ImGuiWindowFlags.AlwaysAutoResize)) {
-                ImGui.TextUnformatted(
-                    "You have unsaved changes. Do you really want to exit?");
+                // TextUnformatted: the text carries a command LABEL, which can
+                // contain a "%" (a file name), and this is the overload that
+                // takes no format string.
+                ImGui.TextUnformatted(guardPromptText);
                 ImGui.Separator();
-                // Save: write via the ordinary file.save command (prompts if the
-                // document is untitled). The exit is DEFERRED to the post-flush
-                // settle (quitAfterSave) so a cancelled Save dialog — which
-                // leaves the document dirty — aborts the quit instead of losing
-                // work. Save→exit is the destructive-safe default, so it leads.
+                // Save leads: it is the destructive-safe default. The action is
+                // performed at the post-flush settle and ONLY if the save
+                // actually landed — a cancelled Save dialog leaves the document
+                // dirty and aborts the discard.
                 if (ImGui.Button("Save")) {
-                    runCommand(reg.commandFactories["file.save"]());
-                    quitAfterSave   = true;
-                    quitConfirmOpen = false;
+                    guardAnswerSave();
                     ImGui.CloseCurrentPopup();
                 }
                 ImGui.SameLine();
-                if (ImGui.Button("Yes")) {          // discard changes and exit
-                    running         = false;
-                    quitConfirmOpen = false;
+                if (ImGui.Button("Discard")) {
+                    guardAnswerDiscard();
                     ImGui.CloseCurrentPopup();
                 }
                 ImGui.SameLine();
-                if (ImGui.Button("No")) {           // cancel the quit
-                    quitConfirmOpen = false;
+                if (ImGui.Button("Cancel")) {
+                    guardAnswerCancel();
                     ImGui.CloseCurrentPopup();
                 }
                 ImGui.EndPopup();
             } else {
-                // Closed via ESC / [X] — same semantics as No: cancel the quit.
-                quitConfirmOpen = false;
+                // Closed via ESC / [X] — same semantics as Cancel: the held
+                // action is DROPPED, never performed.
+                guardAnswerCancel();
             }
         }
 
@@ -3429,13 +3425,15 @@ void drawQuitGuardModal(EditorApp app) {
         // text (and the decision that there is any) comes from
         // `ui.command_notice.commandNoticeText`, driven by `runCommand`.
         //
-        // NOT gated on `g_testMode`, unlike the quit guard above: that one is
-        // gated because it would BLOCK the harness's window close, whereas
-        // this one is only ever raised by a command that declined WITH a
-        // reason through the keyboard/UI path — which `--test` does not do
-        // (a pathless `file.load` in test mode returns early and sets no
-        // reason). Leaving it live keeps the surface real in the same binary
-        // the tests run.
+        // THE ARGUMENT FOR LEAVING THIS UNGATED IS DEAD (task 1520, R3). It
+        // used to read: "--test never raises a notice, because it never runs a
+        // UI-path command that declines with a reason". That was true only
+        // while panels had no test-drivable route. `POST /api/command?origin=ui`
+        // is exactly that route, so a `--test` run CAN now raise one, and an
+        // unanswerable modal would wedge the harness on the first refusal.
+        // The gate lives at the RAISE site (`app.d`'s `raiseNotice`), which
+        // also writes the text to `GET /api/ui/policy` — so what a test can
+        // read is the same string the user would have been shown.
         if (noticeOpen) {
             if (noticePending) {
                 ImGui.OpenPopup("Command Failed");
@@ -3505,8 +3503,8 @@ void drawCommandHistoryPanel(EditorApp app) {
                         ImVec4(0.95f, 0.3f, 0.3f, 1.0f));
                 ImGui.BeginDisabled(recActive);
                 if (ImGui.SmallButton("Rec")) {
-                    if (commandHandlerDelegate !is null)
-                        commandHandlerDelegate("macro.record",
+                    if (uiCommandDelegate !is null)
+                        uiCommandDelegate("macro.record",
                             `{"state":1}`);
                 }
                 ImGui.EndDisabled();
@@ -3514,8 +3512,8 @@ void drawCommandHistoryPanel(EditorApp app) {
                 ImGui.SameLine();
                 ImGui.BeginDisabled(!recActive);
                 if (ImGui.SmallButton("Stop")) {
-                    if (commandHandlerDelegate !is null)
-                        commandHandlerDelegate("macro.record",
+                    if (uiCommandDelegate !is null)
+                        uiCommandDelegate("macro.record",
                             `{"state":0}`);
                 }
                 ImGui.EndDisabled();
@@ -3790,8 +3788,8 @@ void drawCommandHistoryPanel(EditorApp app) {
                         try {
                             auto parsed = parseArgstring(line);
                             if (!parsed.isEmpty
-                                && commandHandlerDelegate !is null) {
-                                commandHandlerDelegate(parsed.commandId,
+                                && uiCommandDelegate !is null) {
+                                uiCommandDelegate(parsed.commandId,
                                     parsed.params.toString());
                                 ok = true;
                             }
@@ -3923,7 +3921,7 @@ void drawToolPropertiesPanel(EditorApp app) {
             // broken form doesn't spam stderr every frame.
             try {
                 formsPanel.draw(*stageForm, stage,
-                                commandHandlerDelegate,
+                                uiCommandDelegate,
                                 formsInteractiveDispatch,
                                 /*activeToolId=*/"",
                                 /*stageId=*/stage.id());
@@ -4036,7 +4034,7 @@ void drawToolPropertiesPanel(EditorApp app) {
                 // satisfying ToolAttrCommand's active-id guard.
                 foreach (ref fm; matchingForms)
                     formsPanel.draw(fm, activeTool,
-                                    commandHandlerDelegate,
+                                    uiCommandDelegate,
                                     formsInteractiveDispatch,
                                     activeToolId);
 

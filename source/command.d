@@ -64,6 +64,21 @@ enum string kNoEditTargetReason =
 //                name().
 // ---------------------------------------------------------------------------
 
+// WHO asked for this command line to run (task 1520).
+//
+// The refusal POLICY is a property of the CALLER, not of the command and not
+// of the dispatcher: a script that asked for something impossible must be
+// told (an exception it can see), while the same refusal raised from inside an
+// ImGui draw has nowhere to go but `_Dmain` — which killed the editor every
+// time a file dialog was cancelled from a panel button.
+//
+// One dispatcher body serves both; this enum is the only thing that differs,
+// and it is read at exactly one place (`refused()` in http_providers.d).
+enum CommandOrigin {
+    ui,      /// a panel button, a menu item, a keyboard shortcut — REFUSAL IS A NOTICE
+    script,  /// `/api/command`, `/api/script`, a macro — REFUSAL IS AN EXCEPTION
+}
+
 // Bitfield classifying a command's effect on the application. The
 // undo dispatcher and history panel read these bits; behaviour for any
 // single command is determined entirely by which bits are set.
@@ -296,6 +311,32 @@ class Command {
         import operator : Operator;
         return (cast(const(Operator)) this) !is null;
     }
+
+    // TASK 1521 — does running this command THROW AWAY unsaved work?
+    //
+    // THE POINT: the guard is a property of the ACTION, not a list of command
+    // names kept somewhere else. Before this, exactly one path asked
+    // `docDirty()` — the quit confirm (0434) — so File → New and File → Open
+    // replaced the document in silence. A fourth such path already existed
+    // when this was written (`file.import.*`, which is the same `FileLoad`),
+    // which is the whole argument for putting the question on the command
+    // rather than on each call site.
+    //
+    // NOT NAMED "replaces the document": quitting replaces nothing, and the
+    // question is the same one — "is unsaved work about to become
+    // unreachable". Declared `true` by `SceneReset` (file.new / scene.reset),
+    // `FileLoad` (file.open / file.import.*), `MeshLoadRaw` and `FileQuit`.
+    //
+    // MUST BE A TYPE PROPERTY, NOT LIVE STATE, for the same reason
+    // `needsEditTarget` must: `Registry.cacheSupportedModes` snapshots it off
+    // one COLD instance per registered id at startup, and a state-dependent
+    // answer would stale that cache.
+    //
+    // The declaration is checked against BEHAVIOUR, in both directions, by
+    // `tests/test_discard_census.d`: a command whose result does not depend on
+    // what the document held before it threw the work away, and the census
+    // fails an undeclared one AND a declared one it could not make discard.
+    bool discardsUnsavedWork() const { return false; }
 
     // The refusal a mesh-writing command owes when there is no edit target,
     // as a guard any `apply()` can open with. Returns true when the command

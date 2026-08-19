@@ -15,6 +15,7 @@ import io.lwo_export : exportLwoDocument;
 import io.scene_export : exportViaAssimp, exportDocumentViaAssimp;
 import io.native : writeV3d;
 import io.formats;
+import io.file_dialog : pickSavePath, PickResult, PickOutcome;
 import io.doc_state : currentDocPath, hasCurrentDoc, setCurrentDocPath, requestDocRebaseline;
 import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
@@ -54,10 +55,9 @@ class FileSave : Command {
         singleExt = ext;
     }
 
-    // Build the nfde filter list for this mode and open the save dialog,
-    // returning the chosen path (null if cancelled). Centralizes the
-    // POSIX/Windows narrow/wide FilterItem split.
-    private string runSaveDialog() {
+    // Task 1520: the chooser itself lives in `io/file_dialog.d`; this builds
+    // the filter list and the default name for this mode.
+    private PickResult runSaveDialog() {
         FilterSpec[] fs;
         string defaultName;
         if (mode == FileSaveMode.exportSingle) {
@@ -70,26 +70,8 @@ class FileSave : Command {
             defaultName = "Untitled.v3d";
         }
 
-        string path;
         // Seed the dialog at the last directory the user browsed to (prefs).
-        // saveDialog's signature is (path, filters, defaultName, defaultPath).
-        const startDir = g_prefs.lastDir;
-        version (Windows) {
-            import std.utf : toUTF16z;
-            FilterItem[] items;
-            foreach (ref f; fs)
-                items ~= FilterItem(cast(const(ushort)*)f.name.toUTF16z,
-                                    cast(const(ushort)*)f.spec.toUTF16z);
-            auto result = saveDialog(path, items, defaultName, startDir);
-        } else {
-            import std.string : toStringz;
-            FilterItem[] items;
-            foreach (ref f; fs)
-                items ~= FilterItem(f.name.toStringz, f.spec.toStringz);
-            auto result = saveDialog(path, items, defaultName, startDir);
-        }
-        assert(result != Result.error, getError());
-        return path;
+        return pickSavePath(fs, defaultName, g_prefs.lastDir);
     }
 
     // True for assimp's FBX exporter ids. FBX write is deferred for the
@@ -98,7 +80,17 @@ class FileSave : Command {
         return assimpExportId == "fbx" || assimpExportId == "fbxa";
     }
 
+    /// WHY the last apply() declined. EMPTY ON A CANCELLED DIALOG, on purpose
+    /// (task 1520): dismissing the save chooser also returns false, and a user
+    /// who pressed Cancel must not be told anything. Non-empty only when the
+    /// chooser could not run, or was suppressed under `--test`.
+    override string refusalReason() const { return refusal_; }
+    private string refusal_;
+
     override bool apply() {
+        // Describes the LATEST call — a command object is applied more than
+        // once (redo, re-dispatch).
+        refusal_ = null;
         string path = explicitPath;
         bool fromDialog = false;
         if (path is null) {
@@ -107,15 +99,14 @@ class FileSave : Command {
             if (mode == FileSaveMode.save && hasCurrentDoc())
                 path = currentDocPath();
             else {
-                if (command.g_testMode) {
-                    import std.stdio : stderr;
-                    stderr.writeln("file.save: no path in test mode; native dialog suppressed");
+                auto pick = runSaveDialog();
+                if (pick.outcome != PickOutcome.chosen) {
+                    refusal_ = pick.refusalReason();
                     return false;
                 }
-                path = runSaveDialog();
+                path = pick.path;
                 fromDialog = true;
             }
-            if (path is null) return false;
         }
         // Dispatch by extension via the format registry (single source of
         // truth — see io.formats). Native .v3d and unknown / non-exportable

@@ -103,6 +103,11 @@ struct Registry {
     // cannot be pressed).
     bool[string] commandNeedsTarget;
     bool[string] toolNeedsTarget;
+    /// Task 1521 — which registered ids declared `Command.discardsUnsavedWork`.
+    /// Same shape and same reason as `commandNeedsTarget`: published so the
+    /// declaration can be checked against BEHAVIOUR over the whole registry
+    /// (tests/test_discard_census.d) instead of over a hand-written list.
+    bool[string] commandDiscardsWork;
 
     /// Walk every registered factory once and snapshot its
     /// `supportedModes()` into the cache. Call after all
@@ -115,6 +120,7 @@ struct Registry {
             commandNames[id] = cmd.name;
             commandParamsJson[id] = paramsSchemaJson(cmd.params());
             commandNeedsTarget[id] = cmd.needsEditTarget();
+            commandDiscardsWork[id] = cmd.discardsUnsavedWork();
             // Fail fast on any command whose name() does not resolve back to
             // a registered command key — a dead replay string in the making
             // (history/scripting re-dispatch cmd.name through
@@ -191,6 +197,14 @@ struct Registry {
             if (!commandNeedsTarget.get(k, false)) continue;
             if (!firstNeed) buf.put(",");
             firstNeed = false;
+            buf.put(format(`"%s"`, k));
+        }
+        buf.put(`],"commandsDiscardingWork":[`);
+        bool firstDiscard = true;
+        foreach (k; cmds) {
+            if (!commandDiscardsWork.get(k, false)) continue;
+            if (!firstDiscard) buf.put(",");
+            firstDiscard = false;
             buf.put(format(`"%s"`, k));
         }
         buf.put(`],"toolsNeedingTarget":[`);

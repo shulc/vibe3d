@@ -49,7 +49,7 @@ import d_imgui.imgui_h;
 
 import std.format : format;
 
-/// Plain command dispatch — identical shape to app.d's `commandHandlerDelegate`
+/// Plain command dispatch — identical shape to app.d's `uiCommandDelegate`
 /// / forms_render's `DispatchFn`, so this module stays decoupled from the
 /// command registry and the toolpipe.
 alias DispatchFn = void delegate(string commandId, string paramsJson);

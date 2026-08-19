@@ -30,8 +30,9 @@ import params : Param;
 // runCommand path, which passes throwMsg = null — an uncaught throw there
 // unwinds past the args dialog's own popup-close call and leaves the ImGui
 // popup stack one deep. The HTTP /api/command path still reports a non-ok
-// status: applyOrRefire's generic dispatch passes a non-null throwMsg and
-// raises its OWN Exception off refusalReason() (source/app.d).
+// status: the SCRIPT-origin dispatch adapter raises its OWN Exception off
+// refusalReason() (source/http_providers.d, task 1520 — the UI-origin adapter
+// raises a notice from the same refusal instead).
 // ---------------------------------------------------------------------------
 
 private uint[] selectedEdgeIndices(ref const Mesh mesh) {

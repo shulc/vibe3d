@@ -21,6 +21,7 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
 import std.json : JSONValue, JSONType;
 import http_server;
+import ui.discard_guard : UiRunOutcome, GuardSettle;
 import log : logInfo, logWarn, logError;
 import prefs;
 import ImGui = d_imgui;
@@ -627,8 +628,7 @@ struct EditorApp {
     // Close-requested flag (task 0434): the file.quit factory sets this instead
     // of clearing `running` directly, so the main loop can route the close
     // through the unsaved-changes guard (window title / quit-confirm modal).
-    bool* quitRequestedPtr;
-    @property ref bool quitRequested() { return *quitRequestedPtr; }
+
     bool* showHistoryPanelPtr;
     @property ref bool showHistoryPanel() { return *showHistoryPanelPtr; }
 
@@ -856,7 +856,7 @@ struct EditorApp {
     // and all six reads were inside the block that moved to ui/panels.d.
     PropertyPanel propertyPanel;
     ImGuiIO*      io;
-    void delegate(string, string) commandHandlerDelegate;
+    void delegate(string, string) uiCommandDelegate;
     void delegate(string, string) formsInteractiveDispatch;
 
     // ---- (г) hook delegates: nested functions in main(), captured via
@@ -864,6 +864,11 @@ struct EditorApp {
     //      block (unlike `mesh`/`cameraView` above, none of these six are
     //      ever read bare) ----
     void delegate(Command)      runCommand;
+    /// Task 1520/1521 — the single guarded UI entry, and the notice raiser the
+    /// UI dispatch adapter shares with `runCommand`.
+    UiRunOutcome delegate(Command, RecordMode, string) runUiCommand;
+    void delegate(Command)      raiseCommandNotice;
+    void delegate(string)       raiseNotice;
     bool delegate(string)       tryOpenArgsDialog;
     void delegate(string)       activateToolById;
     void delegate(out SubjectPacket, ref VectorStack) buildToolVts;
@@ -896,7 +901,7 @@ struct EditorApp {
     //      ~1618, stepTrace ~2647, session ~3350). The moved block only
     //      READS stepTrace (null-guarded) and calls methods on session.
     //      replayUndoEntry is the reverse direction: ASSIGNED by the moved
-    //      block (like commandHandlerDelegate/formsInteractiveDispatch
+    //      block (like uiCommandDelegate/formsInteractiveDispatch
     //      above) and synced back into main()'s local after the call. ----
     BvhPick     bvhPick;
     StepTrace   stepTrace;
@@ -916,7 +921,18 @@ struct EditorApp {
     // applyOrRefire: main()'s command-apply funnel (nested func, declared
     // right after the RecordMode enum that now lives at this module's top
     // level); called with explicit args/parens in the moved block.
-    void delegate(Command, RecordMode, string) applyOrRefire;
+    // Task 1520 (Phase 1b): the BOUND reference the moved HTTP block uses is
+    // the NON-throwing shape. The throwing one is a separate field, and no
+    // file under `source/ui/**` may name it — gated by
+    // `tests/test_ui_no_throwing_dispatch.d`.
+    //
+    // The narrowing is a REAL reduction of bound references, not a compiler
+    // guarantee: `applyOrRefire` is public and `RecordMode` is module-level
+    // here, so a panel COULD still name `applyOrRefireThrowing`. That is why
+    // the claim is "no bound reference carries the script policy" and why the
+    // gate exists in addition.
+    bool delegate(Command, RecordMode) applyOrRefire;
+    bool delegate(Command, RecordMode, string) applyOrRefireThrowing;
 
     // =========================================================================
     // app.d decomp phase B (source/ui/panels.d main-loop panels): members
@@ -970,12 +986,20 @@ struct EditorApp {
     @property ref float remeshSharpEdge() { return *remeshSharpEdgePtr; }
 
     // ---- quit guard + confirmation modal ----
-    bool* quitConfirmOpenPtr;
-    @property ref bool quitConfirmOpen() { return *quitConfirmOpenPtr; }
-    bool* quitConfirmPendingPtr;
-    @property ref bool quitConfirmPending() { return *quitConfirmPendingPtr; }
-    bool* quitAfterSavePtr;
-    @property ref bool quitAfterSave() { return *quitAfterSavePtr; }
+    // Task 1521 — the generic unsaved-work prompt (was 0434's quit-only pair).
+    bool* discardConfirmOpenPtr;
+    @property ref bool discardConfirmOpen() { return *discardConfirmOpenPtr; }
+    bool* discardConfirmPendingPtr;
+    @property ref bool discardConfirmPending() { return *discardConfirmPendingPtr; }
+    string* guardPromptTextPtr;
+    @property ref string guardPromptText() { return *guardPromptTextPtr; }
+    /// The three answers, each a main()-nested function: they arm the settle,
+    /// they never perform the action from inside the draw.
+    void delegate() guardAnswerSave;
+    void delegate() guardAnswerDiscard;
+    void delegate() guardAnswerCancel;
+    /// Forget a held guarded action without performing it (`/api/reset`).
+    void delegate() dropPendingGuard;
 
     // ---- command-failure notice (task 0616 review B1) ----
     // The text a declining command asked to be shown, and the same

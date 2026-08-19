@@ -99,6 +99,12 @@ class SceneReset : Command {
         return CmdFlags.Model | CmdFlags.UndoBoundary;
     }
 
+    // Task 1521: a reset (File → New, or a bare `scene.reset`) throws the
+    // whole document away. The GUARD it triggers is not on this class — it is
+    // on the single UI dispatch point (`runUiCommand`), so `/api/reset`, which
+    // calls `apply()` directly, is unaffected and stays promptless.
+    override bool discardsUnsavedWork() const { return true; }
+
     void setPrimitive(string p) { primitive = p; emptyScene = false; }
     void setEmpty(bool b) { emptyScene = b; }
     /// Install the document handle so reset collapses to one default layer.

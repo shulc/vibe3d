@@ -18,7 +18,7 @@ import ai.analysis    : analyzeMesh;
 /// same class as ai.toggle): "Analyze" is a refresh, not an edit.
 ///
 /// The panel's "Analyze" button and the HTTP test both dispatch this SAME
-/// command id through commandHandlerDelegate — exactly one code path
+/// command id through uiCommandDelegate — exactly one code path
 /// populates the findings list.
 class CopilotAnalyzeCommand : Command {
     private CopilotPanel panel;

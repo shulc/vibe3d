@@ -32,7 +32,7 @@ __gshared bool g_copilotPanelShown = false;
 /// ui.copilotPanel show:<bool> — test-only visibility flip. Schema-driven
 /// (a bool Param, not a positional string) so /api/command's generic
 /// injectParamsInto path handles it with no special-case needed in
-/// app.d's commandHandlerDelegate closure (contrast commands.ui.layer_list,
+/// app.d's uiCommandDelegate closure (contrast commands.ui.layer_list,
 /// whose positional string arg IS special-cased there).
 class UiCopilotPanelCommand : Command {
     private bool show_ = true;

@@ -4,14 +4,14 @@ module http_providers;
 // entire `/api` endpoint-wiring block previously inline in app.d's main()
 // (the `if (httpServer !is null) { ... }` span, ~2410 lines: every
 // setXxxProvider/setXxxHandler registration, meshToDetailedJson, and the
-// commandHandlerDelegate/formsInteractiveDispatch/replayUndoEntry delegate
+// uiCommandDelegate/formsInteractiveDispatch/replayUndoEntry delegate
 // assignments). Same seam as 0415's registration.d and 0419's ui/panels.d:
 // the body is a VERBATIM cut wrapped in `with (app) { }`, so every bare
 // identifier resolves to the matching EditorApp member.
 //
 // DIFFERENCE from the 0415/0419 precedents: `app` is a `ref` parameter, not
 // by-value. The moved block ASSIGNS delegates that main() reads afterwards
-// (commandHandlerDelegate / formsInteractiveDispatch / replayUndoEntry) and
+// (uiCommandDelegate / formsInteractiveDispatch / replayUndoEntry) and
 // mutates a shared latch (formsInteractiveLatch) -- with a by-value copy
 // those writes would die inside this function's frame. All closures created
 // here capture the single `ref`, so they share main()'s `app` storage.
@@ -377,7 +377,7 @@ unittest {
 
 // ---------------------------------------------------------------------------
 // injectViewportCommandPositional — argument extraction for the ten
-// `viewport.*` commands (task 0761), called from `commandHandlerDelegate`
+// `viewport.*` commands (task 0761), called from `uiCommandDelegate`
 // (`wireCommandProviders`, below) right after construction, before apply().
 //
 // Extraction, not command logic: every `switch`/range-check/throw a caller
@@ -2227,7 +2227,7 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
 }
 
 // wireCommandProviders — `/api/command` and `/api/script`, plus the two delegates main()
-// reads back afterwards (`commandHandlerDelegate`,
+// reads back afterwards (`uiCommandDelegate`,
 // `formsInteractiveDispatch`) and the forms tweak-end hook. This is the
 // largest domain by a wide margin and the one D6 is about — ten
 // `viewport.*` ids are still intercepted inside the delegate, ahead of
@@ -2617,9 +2617,42 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
             }
         }
 
-        // Assign the named delegate declared in outer scope so that the UI
-        // replay button calls the same dispatch path as /api/command.
-        commandHandlerDelegate = (string id, string paramsJson) {
+        // ------------------------------------------------------------------
+        // ONE dispatcher BODY, TWO refusal policies (task 1520).
+        //
+        // Before this the body below was an anonymous lambda assigned to a
+        // single `commandHandlerDelegate` field that BOTH `/api/command` and
+        // the 28 `ui/panels.d` call sites shared. Its refusal policy was the
+        // script one — `applyOrRefire(..., throwMsg)` — so a legitimately
+        // refusing command dispatched from a panel button threw out of the
+        // ImGui draw, through `_Dmain`, and killed the editor. Measured, twice,
+        // on a build with no code change (task card §Лог): cancelling the
+        // Images panel's "Load…" and refusing `layer.setVisible` from the
+        // Layers panel eye BOTH died with the same four-frame trace.
+        //
+        // The fix does not average the two policies (a `try/catch` round the
+        // draw would have swallowed the HTTP errors the throw exists FOR);
+        // it names the caller. `origin` is read at exactly one place —
+        // `refused()` below.
+        // ------------------------------------------------------------------
+
+        /// THE refusal policy, and the only place `origin` is consulted.
+        ///
+        /// The UI branch reuses `app.d`'s `raiseCommandNotice` — the SAME body
+        /// the menu/keyboard path (`runCommand`) has always used, which is WHY
+        /// File → Open of a cancelled dialog never crashed while the Images
+        /// panel's "Load…" did.
+        void refused(Command cmd, string id, CommandOrigin origin) {
+            if (origin == CommandOrigin.script)
+                throw new Exception("command '" ~ id ~ "' did not apply"
+                    ~ (cmd.refusalReason().length ? ": " ~ cmd.refusalReason() : ""));
+            raiseCommandNotice(cmd);
+        }
+
+        // The dispatcher body itself. Named (not a lambda) so both adapters
+        // below can name it; the body is otherwise unchanged from the lambda
+        // it replaces except at the four policy points marked `refused(...)`.
+        void dispatchCommandLine(string id, string paramsJson, CommandOrigin origin) {
             import std.json : parseJSON, JSONType;
             import commands.file.load : FileLoad;
             import commands.file.save : FileSave;
@@ -2716,8 +2749,7 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 // tool.pipe.attr falls through to the normal paths below.
                 if (auto taq = cast(ToolAttrCommand)cmd) {
                     if (taq.isQuery()) {
-                        if (!taq.apply())
-                            throw new Exception("command '" ~ id ~ "' did not apply");
+                        if (!taq.apply()) { refused(cmd, id, origin); return; }
                         if (httpServer !is null)
                             httpServer.setCmdResult(taq.queryResultJsonOrEmpty());
                         return;
@@ -2725,8 +2757,7 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 }
                 if (auto tpaq = cast(ToolPipeAttrCommand)cmd) {
                     if (tpaq.isQuery()) {
-                        if (!tpaq.apply())
-                            throw new Exception("command '" ~ id ~ "' did not apply");
+                        if (!tpaq.apply()) { refused(cmd, id, origin); return; }
                         if (httpServer !is null)
                             httpServer.setCmdResult(tpaq.queryResultJsonOrEmpty());
                         return;
@@ -2737,8 +2768,7 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 // value, record no history, return the boxed JSON.
                 if (auto laq = cast(LayerAttr)cmd) {
                     if (laq.isQuery()) {
-                        if (!laq.apply())
-                            throw new Exception("command '" ~ id ~ "' did not apply");
+                        if (!laq.apply()) { refused(cmd, id, origin); return; }
                         if (httpServer !is null)
                             httpServer.setCmdResult(laq.queryResultJsonOrEmpty());
                         return;
@@ -2752,15 +2782,29 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                 // refire window (and non-opted-in tools) keep the plain
                 // fire(cmd) path.
                 if (!session.tryRefireDispatch(cmd, id)) {
-                    // Programmatic command-dispatch path: route through
-                    // recordCoalescing() so consecutive COMPATIBLE delta edits
-                    // (same targets, same edit label) collapse into a single
-                    // undo entry. compareOp() defaults to Different for every
-                    // command except the opted-in delta edit, so every other
-                    // command appends exactly as record() would. Interactive
-                    // tool commits stay on record() (one entry per gesture).
-                    applyOrRefire(cmd, RecordMode.Coalescing,
-                                  "command '" ~ id ~ "' did not apply");
+                    // Command-dispatch path: route through recordCoalescing()
+                    // so consecutive COMPATIBLE delta edits (same targets, same
+                    // edit label) collapse into a single undo entry.
+                    // compareOp() defaults to Different for every command
+                    // except the opted-in delta edit, so every other command
+                    // appends exactly as record() would. Interactive tool
+                    // commits stay on record() (one entry per gesture).
+                    //
+                    // THE POLICY SPLIT (task 1520). A UI-origin line goes
+                    // through `runUiCommand` — the unsaved-work guard's single
+                    // point (task 1521) — and a refusal becomes a notice.
+                    // A script-origin line applies directly and a refusal
+                    // throws, which is the contract `/api/command` clients
+                    // read.
+                    if (origin == CommandOrigin.ui) {
+                        // `runUiCommand` OWNS both the guard and the notice —
+                        // and it must, because "refused" and "deferred by the
+                        // unsaved-work prompt" are different answers and only
+                        // the first one is a notice.
+                        runUiCommand(cmd, RecordMode.Coalescing, id);
+                    } else if (!applyOrRefire(cmd, RecordMode.Coalescing)) {
+                        refused(cmd, id, origin);
+                    }
                 }
 
                 // P-E: a DISCRETE pipe-config tweak opens a NEW tweak
@@ -2787,8 +2831,41 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                     if (!isQuery) history.bumpTweakGeneration();
                 }
             }
+        }
+
+        // ---- The two adapters (task 1520) --------------------------------
+        //
+        // The UI adapter is the EditorApp field: every panel button, the
+        // status-line script actions, the forms panel and the History panel's
+        // Re-run reach the dispatcher through it, and a refusal on that route
+        // becomes a notice.
+        uiCommandDelegate = (string id, string paramsJson) {
+            dispatchCommandLine(id, paramsJson, CommandOrigin.ui);
         };
-        httpServer.setCommandHandler(commandHandlerDelegate);
+        // The THROWING adapter is deliberately a LOCAL, not a field on
+        // `EditorApp`: nothing in `source/ui/**` can reach it even by
+        // accident, because there is no bound reference to reach. (It is
+        // reachable by NAME — `applyOrRefire` is still a public field and
+        // `RecordMode` is module-level, so "it cannot be compiled from a
+        // panel" would be false; Phase 1b narrows that surface separately and
+        // `tests/test_ui_no_throwing_dispatch.d` gates it.)
+        void delegate(string, string) httpCommandDelegate =
+            (string id, string paramsJson) {
+                dispatchCommandLine(id, paramsJson, CommandOrigin.script);
+            };
+        httpServer.setCommandHandler(httpCommandDelegate);
+        // `POST /api/command?origin=ui` (--test only) drives the UI policy from
+        // a test. It MUST go through the `app.uiCommandDelegate` FIELD, not
+        // through a second closure over the same body: the whole proxy the
+        // tests observe ("the UI adapter did not throw") is only worth
+        // anything if the route exercises the binding the panels use. Nulling
+        // the field after this point is the mutation that proves it, and it
+        // reddens because of the explicit null check here.
+        httpServer.setUiCommandHandler((string id, string paramsJson) {
+            if (uiCommandDelegate is null)
+                throw new Exception("ui command delegate is not wired");
+            uiCommandDelegate(id, paramsJson);
+        });
 
         // Test-automation seam: let /api/script?interactive=true raise the same
         // formsInteractiveLatch the forms-panel scrub uses, so a sequence of
@@ -2804,10 +2881,15 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
         // ordinary `tool.attr` via the same handler, lower the latch. The handler
         // marks the built ToolAttrCommand interactive while the latch is up, so
         // the first forms edit opens the tool's live session (reEvaluate seam).
+        // UI ORIGIN (task 1520): every caller is a draw — `ui/panels.d`'s
+        // forms rows and the Tool Properties panel. HTTP's
+        // `/api/script?interactive=true` does NOT come through here (it raises
+        // the latch via setInteractiveLatchHook and dispatches through the
+        // command bridge), so it keeps the script policy.
         formsInteractiveDispatch = (string id, string paramsJson) {
             formsInteractiveLatch = true;
             scope(exit) formsInteractiveLatch = false;
-            commandHandlerDelegate(id, paramsJson);
+            dispatchCommandLine(id, paramsJson, CommandOrigin.ui);
         };
 
         // P-E: wire the forms panel's tweak-boundary hook to the history's
@@ -2828,10 +2910,26 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
             if (line.length == 0) return;
             auto parsed = parseArgstring(line);
             if (parsed.isEmpty) return;
+            // THE `try/catch` STAYS (task 1520, opponent blocker B3). Phase 1
+            // removes only the REFUSAL throw; three classes still fly out of
+            // the dispatcher body and `origin` does not touch any of them —
+            // an unknown command id, a `parseJSON` failure, and the commands
+            // that throw ON PURPOSE (`commands/mesh/morph.d`,
+            // `commands/mesh/edge_crease.d`). Their stated premise, "the only
+            // caller is /api/command", is FALSE: this replay runs an arbitrary
+            // line from the history, and its callers are the History panel's
+            // Re-run button and its context menu — both INSIDE the draw.
+            // Deleting this catch would put back exactly the crash 1520
+            // removes.
+            //
+            // What DID change: the message is no longer swallowed. The panel
+            // has no error surface of its own, so it goes to the same notice
+            // every other UI-origin failure uses.
             try {
-                commandHandlerDelegate(parsed.commandId, parsed.params.toString());
-            } catch (Exception) {
-                // Replay is best-effort; the panel has no error-reporting UI.
+                dispatchCommandLine(parsed.commandId, parsed.params.toString(),
+                                    CommandOrigin.ui);
+            } catch (Exception e) {
+                raiseNotice(e.msg);
             }
         };
     }
@@ -2992,7 +3090,7 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
             auto cmd = cast(MeshSelect)reg.commandFactories["mesh.select"]();
             cmd.setMode(mode);
             cmd.setIndices(indices);
-            applyOrRefire(cmd, RecordMode.Record, "mesh.select did not apply");
+            applyOrRefireThrowing(cmd, RecordMode.Record, "mesh.select did not apply");
         });
 
         // Phase A.5: dispatch /api/transform through MeshTransform command.
@@ -3037,7 +3135,7 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
             cmd.setAngle (floatFrom("angle", 0.0f));
             cmd.setFactor(vec3From("factor", Vec3(1, 1, 1)));
             cmd.setPivot (vec3From("pivot",  Vec3(0, 0, 0)));
-            applyOrRefire(cmd, RecordMode.Record, "mesh.transform did not apply");
+            applyOrRefireThrowing(cmd, RecordMode.Record, "mesh.transform did not apply");
         });
 
         // Phase A.5: dispatch /api/reset through SceneReset command.
@@ -3046,6 +3144,18 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
         // to NOT push it onto the stack — handled via cmd.isUndoable in
         // future if needed.
         httpServer.setResetHandler((string primitiveType, bool empty, int param) {
+            {
+                // Task 1520/1521: a test reads its OWN dispatch, not the
+                // previous case's leftovers on the shared --test instance.
+                // (This handler calls `cmd.apply()` DIRECTLY — it touches
+                // neither `applyOrRefire` nor the UI dispatch point — which is
+                // exactly why `/api/reset` is unguarded and why the mutation
+                // that reddens `apiResetIsUnguarded` has to be inserted into
+                // `SceneReset.apply()` itself.)
+                import ui.discard_guard : resetUiPolicyRecord;
+                resetUiPolicyRecord();
+                if (dropPendingGuard !is null) dropPendingGuard();
+            }
             auto cmd = cast(SceneReset)reg.commandFactories["scene.reset"]();
             if (empty)
                 cmd.setEmpty(true);

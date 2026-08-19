@@ -1310,7 +1310,7 @@ final class CommandHistory {
         if (index >= undoStack.length) return "";
         auto e = undoStack[index];
         // ToolLifecycle entries (tool.deactivate) are not registered as command
-        // factories and cannot be replayed via commandHandlerDelegate. Return ""
+        // factories and cannot be replayed via uiCommandDelegate. Return ""
         // so both history.saveAsScript and the panel replay button skip them.
         if (e.flags & HistoryFlags.ToolLifecycle) return "";
         return serializeCommandLine(e.commandName, e.args);

@@ -80,6 +80,7 @@ import params    : Param;
 import document  : Document, Layer, ItemKind, ImageData;
 import seltype   : SelMode;
 import io.formats     : FilterSpec;
+import io.file_dialog : pickOpenPath, PickResult, PickOutcome;
 import io.image_path  : refreshImageMeta;
 import change_bus     : noteLayerChange, LayerChange;
 import log            : logWarn;
@@ -168,39 +169,28 @@ private abstract class ImageCommandBase : Command {
 /// dialog cannot drift from the by-path route: it produces a path and then
 /// falls into exactly the code an explicit `path` argument reaches. Formats
 /// match what the decoder is actually compiled with (PNG / JPEG / TGA / BMP).
-private string runImageOpenDialog() {
+private PickResult runImageOpenDialog() {
     FilterSpec[] fs = [FilterSpec("Images", "png,jpg,jpeg,tga,bmp")];
-    string path;
-    version (Windows) {
-        import std.utf : toUTF16z;
-        FilterItem[] items;
-        foreach (ref f; fs)
-            items ~= FilterItem(cast(const(ushort)*)f.name.toUTF16z,
-                                cast(const(ushort)*)f.spec.toUTF16z);
-        auto result = openDialog(path, items);
-    } else {
-        import std.string : toStringz;
-        FilterItem[] items;
-        foreach (ref f; fs)
-            items ~= FilterItem(f.name.toStringz, f.spec.toStringz);
-        auto result = openDialog(path, items);
-    }
-    assert(result != Result.error, getError());
-    return path;
+    return pickOpenPath(fs);
 }
 
-/// Ask for a path: the argument when there is one, the dialog otherwise.
-/// Returns "" when there is no path to work with (cancelled, or suppressed in
-/// test mode — the `commands/file/load.d` convention, so a headless run never
-/// blocks on a native dialog nobody can click).
-private string pathOrDialog(string arg, string who) {
-    if (arg.length > 0) return arg;
-    if (command.g_testMode) {
+/// Ask for a path: the argument when there is one, the chooser otherwise.
+///
+/// TASK 1520 — THIS FUNCTION WAS THE SECOND DEFECT. It returned "" for THREE
+/// different things (an argument-less `--test` run, a chooser that could not
+/// open, and the user pressing Cancel) and its caller turned all three into
+/// `refuse("no path given")`. The owner's crash was the first of those meeting
+/// the panel's refusal policy; the false "Load Image: no path given" after a
+/// Cancel would have survived the policy fix on its own. The outcome is now
+/// carried, not flattened.
+private PickResult pathOrDialog(string arg, string who) {
+    if (arg.length > 0) return PickResult(PickOutcome.chosen, arg);
+    auto r = runImageOpenDialog();
+    if (r.outcome == PickOutcome.unavailable)
         logWarn("image", who ~ ": no path in test mode; native dialog suppressed");
-        return "";
-    }
-    auto p = runImageOpenDialog();
-    return p is null ? "" : p;
+    else if (r.outcome == PickOutcome.failed)
+        logWarn("image", who ~ ": " ~ r.refusalReason());
+    return r;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,8 +306,16 @@ final class ImageLoad : ImageCommandBase {
         }
 
         if (created_ is null) {
-            const path = pathOrDialog(pathArg, "load");
-            if (path.length == 0) { refuse("no path given"); return false; }
+            auto pick = pathOrDialog(pathArg, "load");
+            if (pick.outcome != PickOutcome.chosen) {
+                // A CANCEL IS SILENT (task 1520): `refusalReason()` stays ""
+                // so neither the notice nor the log says anything. The other
+                // two outcomes DO speak — that is the whole distinction.
+                refusal_ = pick.refusalReason();
+                if (refusal_.length) logWarn("image", name() ~ " refused: " ~ refusal_);
+                return false;
+            }
+            const path = pick.path;
 
             auto img = new ImageData();
             img.storedPath = path;
@@ -413,8 +411,14 @@ final class ImageReplace : ImageCommandBase {
         refusal_ = "";
         auto target = resolveImage(indexArg);
         if (target is null) return false;
-        const path = pathOrDialog(pathArg, "replace");
-        if (path.length == 0) { refuse("no path given"); return false; }
+        auto pick = pathOrDialog(pathArg, "replace");
+        if (pick.outcome != PickOutcome.chosen) {
+            // Cancel is silent — see the same branch in `image.load`.
+            refusal_ = pick.refusalReason();
+            if (refusal_.length) logWarn("image", name() ~ " refused: " ~ refusal_);
+            return false;
+        }
+        const path = pick.path;
 
         // READ FIRST, COMMIT SECOND (Ph5 review, S2). The new file is refreshed
         // into a SCRATCH payload, and the live item is written only once that

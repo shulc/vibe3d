@@ -376,6 +376,10 @@ class HttpServer {
     // commandHandler.
     private alias CommandHandler = void delegate(string id, string paramsJson);
     private CommandHandler commandHandler;
+    // Task 1520 — the UI-policy adapter. Separate FIELD, not a flag on the
+    // one above, because the two carry opposite refusal policies and
+    // `/api/command?origin=ui` (--test only) exists to drive the UI one.
+    private CommandHandler uiCommandHandler;
     // Test-automation only: when true, the command bridge's service raises
     // the app's formsInteractiveLatch (via interactiveLatchHook) around the
     // dispatch, so a sequence of tool.pipe.attr writes SHARES one tweak
@@ -631,7 +635,9 @@ class HttpServer {
     struct ConstrainQResp { string result; string error; }
     private MainThreadBridge!(ConstrainQReq, ConstrainQResp) constrainQueryBridge;
 
-    struct CmdReq  { string id; string params; bool interactive; }
+    // `uiOrigin` (task 1520): dispatch this line through the UI adapter, whose
+    // refusal is a notice rather than an exception. `--test` only.
+    struct CmdReq  { string id; string params; bool interactive; bool uiOrigin; }
     struct CmdResp { string error; string result; }
     private MainThreadBridge!(CmdReq, CmdResp) commandBridge;
 
@@ -918,7 +924,16 @@ class HttpServer {
                     if (interactive) interactiveLatchHook(true);
                     scope(exit) if (interactive) interactiveLatchHook(false);
                     try {
-                        commandHandler(req.id, req.params);
+                        // Task 1520: pick the adapter. THIS LAMBDA CATCHES,
+                        // which is precisely why no test here can observe the
+                        // real failure mode (an exception escaping an ImGui
+                        // draw). What it observes is the proxy "the UI adapter
+                        // did not throw" — sound only because `uiCommandHandler`
+                        // calls the app's `uiCommandDelegate` field itself.
+                        if (req.uiOrigin && uiCommandHandler !is null)
+                            uiCommandHandler(req.id, req.params);
+                        else
+                            commandHandler(req.id, req.params);
                         resp.error = "";
                     } catch (Exception e) {
                         resp.error = e.msg;
@@ -1385,6 +1400,16 @@ class HttpServer {
      */
     public void setCommandHandler(CommandHandler handler) {
         this.commandHandler = handler;
+    }
+
+    /// Task 1520 — the UI-origin adapter, used only by
+    /// `POST /api/command?origin=ui` (rejected outside `--test`). It must
+    /// dispatch through the app's `uiCommandDelegate` FIELD, not through a
+    /// second closure over the same body: the proxy every UI-policy test
+    /// observes ("the UI adapter did not throw") is only meaningful if the
+    /// route exercises the binding the 28 panel call sites use.
+    public void setUiCommandHandler(CommandHandler handler) {
+        this.uiCommandHandler = handler;
     }
 
     /// Register the main-thread hook that raises/lowers the app's
@@ -1980,6 +2005,26 @@ class HttpServer {
                 response.body = "{\"error\": \"Failed to retrieve tool state\", \"message\": \"" ~
                                jsonEsc(e.msg) ~ "\"}";
             }
+        }
+    }
+
+    private void route_apiUiPolicy(HttpRequest request, HttpResponse response) {
+        // Task 1520/1521 — what the UI policy did with the last user-origin
+        // command line: the guard verdict, whether the prompt was suppressed
+        // (`--test`), whether the command refused, and the notice text the
+        // user would have been shown.
+        //
+        // NOT marshaled: `ui/availability.d`'s shape — the main thread writes
+        // one whole record under a lock, this reads it back under the same
+        // lock. There is no live structure to walk on the wrong thread.
+        response.headers["Content-Type"] = "application/json";
+        try {
+            import ui.discard_guard : uiPolicyJson;
+            response.statusCode = 200;
+            response.body = uiPolicyJson();
+        } catch (Exception e) {
+            response.statusCode = 500;
+            response.body = "{\"error\":\"" ~ jsonEsc(e.msg) ~ "\"}";
         }
     }
 
@@ -3061,6 +3106,21 @@ class HttpServer {
 
                 commandBridge.resp.error   = "";
                 commandBridge.req.interactive = false;   // plain command = discrete
+                // `?origin=ui` — TEST ONLY (same 403 shape as
+                // /api/play-events). It routes the line through the UI policy
+                // adapter, which is the only headless way to drive what a
+                // panel button does. Precedent: `?interactive=true` on
+                // /api/script.
+                immutable bool wantUi =
+                    (parseQueryString(request.path, "origin", "") == "ui");
+                if (wantUi && !testMode) {
+                    response.statusCode = 403;
+                    response.body =
+                        `{"status":"error","message":"origin=ui is only available in --test mode"}`;
+                    response.headers["Content-Type"] = "application/json";
+                    return;
+                }
+                commandBridge.req.uiOrigin = wantUi;
                 if (!commandBridge.submitAndWait(kCommandBridgeMaxIters))
                     commandBridge.resp.error = "timeout waiting for main thread";
                 if (commandBridge.resp.error.length == 0) {
@@ -3660,6 +3720,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/tool/handles",         "GET",  Match.exact,  Answered.mainThread, "route_apiToolHandles"),
     RouteSpec("/api/tool/state",           "GET",  Match.exact,  Answered.httpThread, "route_apiToolState"),
     RouteSpec("/api/toolprops/ids",        "GET",  Match.exact,  Answered.httpThread, "route_apiToolpropsIds"),
+    RouteSpec("/api/ui/policy",            "GET",  Match.exact,  Answered.httpThread, "route_apiUiPolicy"),
     RouteSpec("/api/buttons/availability", "GET",  Match.exact,  Answered.httpThread, "route_apiButtonsAvailability"),
     RouteSpec("/api/stats",                "GET",  Match.exact,  Answered.httpThread, "route_apiStats"),
     RouteSpec("/api/layers",               "GET",  Match.exact,  Answered.mainThread, "route_apiLayers"),
@@ -3696,7 +3757,10 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/load-mesh",            "POST", Match.exact,  Answered.mainThread, "route_apiLoadMesh"),
     RouteSpec("/api/test/layer",           "POST", Match.exact,  Answered.mainThread, "route_apiTestLayer"),
     RouteSpec("/api/select",               "POST", Match.exact,  Answered.mainThread, "route_apiSelect"),
-    RouteSpec("/api/command",              "POST", Match.exact,  Answered.mainThread, "route_apiCommand"),
+    // Match.prefix (task 1520): `?origin=ui` puts a query string on the path,
+    // and Match.exact compares the whole path — the query would never match.
+    // No other route is a prefix of this one.
+    RouteSpec("/api/command",              "POST", Match.prefix, Answered.mainThread, "route_apiCommand"),
     RouteSpec("/api/script",               "POST", Match.prefix, Answered.mainThread, "route_apiScript"),
     RouteSpec("/api/undo",                 "POST", Match.exact,  Answered.mainThread, "route_apiUndoRedo"),
     RouteSpec("/api/redo",                 "POST", Match.exact,  Answered.mainThread, "route_apiUndoRedo"),

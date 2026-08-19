@@ -45,6 +45,9 @@ class MeshLoadRaw : Command {
     }
 
     override string name() const { return "scene.loadMesh"; }
+
+    // Task 1521: a raw mesh load REPLACES `*mesh` wholesale.
+    override bool discardsUnsavedWork() const { return true; }
     override string label() const { return "Load mesh"; }
 
     /// Supply the raw geometry to load. Caller owns/builds these arrays;

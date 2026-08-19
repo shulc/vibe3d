@@ -1,0 +1,3 @@
+{"t":0.000,"type":"VIEWPORT","vpX":150,"vpY":28,"vpW":650,"vpH":544,"fovY":0.785398}
+{"t":50.000,"type":"SDL_KEYDOWN","sym":110,"scan":17,"mod":64,"repeat":0}
+{"t":60.000,"type":"SDL_KEYUP","sym":110,"scan":17,"mod":64,"repeat":0}

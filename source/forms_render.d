@@ -61,12 +61,12 @@ import std.json   : JSONValue;
 
 // ---------------------------------------------------------------------------
 // Dispatch delegates the caller wires up. Both take the SAME (commandId,
-// paramsJson) shape as commandHandlerDelegate / /api/command, so the renderer
+// paramsJson) shape as uiCommandDelegate / /api/command, so the renderer
 // stays decoupled from the command system.
 // ---------------------------------------------------------------------------
 
 /// Plain command dispatch (cmd / choice rows). Identical to
-/// commandHandlerDelegate.
+/// uiCommandDelegate.
 alias DispatchFn = void delegate(string commandId, string paramsJson);
 
 /// Interactive `tool.attr` dispatch (control value rows). The caller's

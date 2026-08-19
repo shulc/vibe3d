@@ -15,6 +15,7 @@ import io.scene_import  : importViaAssimp;
 import io.scene_ir      : ImportedScene, flattenToMesh, toLayers;
 import io.native : readV3d, lastV3dRejectReason;
 import io.formats;
+import io.file_dialog : pickOpenPath, PickResult, PickOutcome;
 import io.doc_state : setCurrentDocPath, requestDocRebaseline;
 import io.assimp_runtime : isAssimpAvailable;
 import prefs : g_prefs, prefsNoteRecentFile, prefsNoteLastDir;
@@ -63,6 +64,13 @@ class FileLoad : Command {
 
     override string name() const { return "file.load"; }
 
+    // Task 1521: opening (or importing) over the current document replaces it.
+    // Declared on the CLASS, which is why `file.open` AND all four
+    // `file.import.*` ids are covered by one line — they are the same command
+    // with a different dialog framing, and the import path is exactly the
+    // fourth discard route the card's census found.
+    override bool discardsUnsavedWork() const { return true; }
+
     /// Skip the native file dialog and load from the given path.
     /// Used by /api/command params; leave unset for normal user flow.
     void setPath(string p) { explicitPath = p; }
@@ -74,34 +82,17 @@ class FileLoad : Command {
         singleExt = ext;
     }
 
-    // Build the nfde filter list for this mode and open the dialog,
-    // returning the chosen path (null if cancelled). Centralizes the
-    // POSIX/Windows narrow/wide FilterItem split.
-    private string runOpenDialog() {
+    // Task 1520: the chooser lives in `io/file_dialog.d` now — one
+    // implementation of the POSIX/Windows FilterItem split, `--test`
+    // suppression and the four-way outcome. The `assert(result != Result.error)`
+    // that used to sit here abort()ed the editor on a session with no D-Bus.
+    private PickResult runOpenDialog() {
         FilterSpec[] fs = (mode == FileLoadMode.importSingle)
             ? singleFilterSpecs(singleExt)
             : importFilterSpecs(isAssimpAvailable(), /*withAllSupported=*/true);
-
-        string path;
         // Seed the dialog at the last directory the user browsed to (prefs);
-        // null on a fresh profile lets nfde pick its platform default.
-        const startDir = g_prefs.lastDir;
-        version (Windows) {
-            import std.utf : toUTF16z;
-            FilterItem[] items;
-            foreach (ref f; fs)
-                items ~= FilterItem(cast(const(ushort)*)f.name.toUTF16z,
-                                    cast(const(ushort)*)f.spec.toUTF16z);
-            auto result = openDialog(path, items, startDir);
-        } else {
-            import std.string : toStringz;
-            FilterItem[] items;
-            foreach (ref f; fs)
-                items ~= FilterItem(f.name.toStringz, f.spec.toStringz);
-            auto result = openDialog(path, items, startDir);
-        }
-        assert(result != Result.error, getError());
-        return path;
+        // null on a fresh profile lets the backend pick its platform default.
+        return pickOpenPath(fs, g_prefs.lastDir);
     }
 
     /// WHY the last apply() declined — the `.v3d` reader's own sentence, with
@@ -129,13 +120,16 @@ class FileLoad : Command {
         string path = explicitPath;
         const fromDialog = path is null;
         if (path is null) {
-            if (command.g_testMode) {
-                import std.stdio : stderr;
-                stderr.writeln("file.load: no path in test mode; native dialog suppressed");
+            // CANCEL IS SILENT, EVERYTHING ELSE SPEAKS (task 1520). The three
+            // outcomes used to collapse into one bare `return false`, which is
+            // why `--test` suppression and a broken chooser were indistinguish-
+            // able from "the user changed their mind".
+            auto pick = runOpenDialog();
+            if (pick.outcome != PickOutcome.chosen) {
+                refusal_ = pick.refusalReason();
                 return false;
             }
-            path = runOpenDialog();
-            if (path is null) return false;
+            path = pick.path;
         }
         // Dispatch by extension: native .v3d vs. the LWO / assimp bridges.
         // Default (unknown / no extension) is native .v3d. Interchange

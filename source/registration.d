@@ -1755,7 +1755,12 @@ private void registerFileCommands(EditorApp app) {
         // request flag instead of clearing `running`. The main loop's per-frame
         // quit-guard decides whether to prompt (dirty) or exit (clean / --test).
         reg.commandFactories["file.quit"] = () => cast(Command)
-            new FileQuit(&mesh(), cameraView, editMode, () { quitRequested = true; });
+            // Task 1521: back to what it was before 0434 — the command SETS
+            // `running = false` and nothing else. The unsaved-work question is
+            // no longer asked here (nor by a second latch drained in the draw);
+            // it is asked once, by `runUiCommand`, for this command and the
+            // three other document-discarding ones alike.
+            new FileQuit(&mesh(), cameraView, editMode, () { running = false; });
     }
     }
     }

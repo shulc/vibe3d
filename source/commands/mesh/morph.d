@@ -53,10 +53,23 @@ import params : Param;
 //
 // So the two DIALOG-REACHABLE commands refuse the house way — `baseRefusal_`
 // + `return false`, which `ui/command_notice.d` renders as a notice — for
-// every rejection they can be handed, argument errors included. The
-// script-only commands (`remove` / `rename` / `set` / `clear`) keep throwing:
-// their only caller is `/api/command`, which wants a non-ok status, and no
-// popup frame is unwound. Same rule, same reason, as `edge_crease.d`.
+// every rejection they can be handed, argument errors included.
+//
+// THE JUSTIFICATION FOR THE OTHER FOUR IS FALSE, AND SAYING SO IS THE POINT
+// (task 1520, opponent blocker B3). It used to read: "the script-only commands
+// (`remove` / `rename` / `set` / `clear`) keep throwing — their only caller is
+// `/api/command`". That is not true. `replayUndoEntry` re-dispatches an
+// ARBITRARY line from the undo history, and its callers are the History
+// panel's Re-run button and its context menu — both INSIDE the draw. So these
+// four ARE reachable from a draw, and their throw is caught only because
+// `replayUndoEntry` keeps a `try/catch` (which task 1520 therefore did NOT
+// delete; it now routes the message into the notice instead of swallowing it).
+//
+// Turning these four into house refusals is a separate change with its own
+// HTTP-contract consequences (their `/api/command` callers currently read a
+// non-ok status off the throw) and is left to the backlog. What is fixed here
+// is the record: the premise is stated as false rather than repeated.
+// Same situation, same wording, in `edge_crease.d`.
 // ---------------------------------------------------------------------------
 
 /// Parse the `kind` parameter. Only the two morph kinds are namable here —
