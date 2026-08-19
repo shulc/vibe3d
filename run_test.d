@@ -10,6 +10,8 @@
  *   ./run_test.d -j N                # override the worker count (each worker
  *                                      gets its own vibe3d on a private port)
  *   ./run_test.d --print-scratch     # name this checkout's scratch tree, exit
+ *   ./run_test.d --timeout N         # per-test wall-clock cap in seconds
+ *                                      (default 600; 0 = no cap)
  *
  * With no -j the worker count auto-scales: clamp(totalCPUs/4, 4, 12), or the
  * VIBE3D_TEST_JOBS env var when set. An explicit -j always wins.
@@ -39,10 +41,11 @@ import std.stdio     : writeln, writefln, write, stdin, stdout, stderr, File;
 import std.string    : startsWith, endsWith, indexOf, splitLines, strip;
 
 import core.thread        : Thread;
-import core.time          : msecs, seconds, dur;
+import core.time          : msecs, seconds, dur, Duration;
 import core.stdc.stdlib   : exit;
 import core.sys.posix.signal : signal, kill, SIGINT, SIGTERM, SIGKILL;
-import core.sys.posix.unistd : isatty, STDOUT_FILENO, close, getpid, ftruncate;
+import core.sys.posix.unistd : isatty, STDOUT_FILENO, close, getpid, ftruncate,
+                               setpgid;
 import core.sys.posix.fcntl  : open, O_RDWR, O_CREAT;
 import core.sys.posix.sys.types : ssize_t;
 
@@ -67,6 +70,13 @@ __gshared bool   keepVibe;
 __gshared bool   useColor;
 __gshared int    runLockFd = -1;  // held for the whole run; see acquireRunLock
 __gshared string projLibPath;  // prebuilt project test-lib (see buildProjectLib); "" => -i fallback
+__gshared Duration g_testTimeout;   // per-test wall-clock cap; zero = no cap
+__gshared int[]  testGroupPids;     // process-group leader pid of each RUNNING
+                                    // test (0 = retired slot). A test that is
+                                    // still running when we are interrupted is
+                                    // in its own process group (see runOne), so
+                                    // it no longer gets the terminal's SIGINT —
+                                    // the handler below has to deliver it.
 __gshared string moldFlag;     // " -L-fuse-ld=mold" for the lib link path; "" when mold unusable
 
 // Machine-aware default worker count. See the call site in main() for the
@@ -327,6 +337,9 @@ void releaseRunLock() {
 
 extern(C) void onSignal(int sig) nothrow @nogc @system {
     foreach (p; vibePids) if (p != 0) kill(p, SIGKILL);
+    // Negative pid = the whole process group. Running tests are group leaders
+    // of their own group precisely so this reaches their children too.
+    foreach (p; testGroupPids) if (p > 0) kill(-p, SIGKILL);
     if (runLockFd >= 0) { flock(runLockFd, LOCK_UN); close(runLockFd); }
     import core.stdc.stdio : fputs, stderr;
     fputs("\ninterrupted\n", stderr);
@@ -352,6 +365,12 @@ void cleanup() {
         }
         vibePids = null;
     }
+    // Anything a per-test timeout could not reap (or a test still running when
+    // an exception unwound the run) gets one last group-wide SIGKILL. Cheap,
+    // and it is the difference between "the next lane's worker starts" and
+    // "the next lane's worker finds its port taken by an orphan".
+    foreach (p; testGroupPids) if (p > 0) { try { kill(-p, SIGKILL); } catch (Exception) {} }
+    testGroupPids = null;
     // Only ever the tree THIS run made (or adopted at startup and emptied);
     // never another checkout's, and never a parked one that is still busy.
     // Best-effort by design: a leftover here is harmless — the next run of this
@@ -407,6 +426,40 @@ string[] resolveTests(string[] args) {
 // across the per-worker scratch copies and across worktrees/checkouts.
 
 enum double EMA_ALPHA = 0.3;
+
+// ---------------------------------------------------------------------------
+// The per-test wall-clock cap
+// ---------------------------------------------------------------------------
+//
+// 600 s, and the number comes from the timing caches, not from taste (task
+// 1420, trap 1). Measured on 2026-08-19 over the 30 `.test_timings.json`
+// caches this host carries (one per lane worktree + main), ~700 tests each:
+//
+//     median test                                 0.28 s
+//     p90 / p95 / p99                        7.2 / 13.7 / 53.8 s
+//     slowest legitimate test    test_explore_fly       120.2 s
+//                                (a FIRST observation, so a raw wall-clock
+//                                 sample, not an EMA-damped one)
+//     next slowest               test_xfrm_flex_undo_pose 106.1 s
+//                                (26 caches agree to 0.1 s — its true cost)
+//
+// So the cap is 5.0x the slowest test anyone has ever measured here.
+//
+// The margin is sized against the LOADED host, not the mean, because the
+// loaded host is where a cap that is merely "generous" starts lying. One cache
+// (the cmd-quadratic-cost lane) records 16 tests at ~86.5 s whose median in
+// every OTHER cache is 0.1-0.3 s — i.e. an ordinary test, on a contended host,
+// once took at least 86.5 s. And that 86.5 s is an EMA value: at alpha 0.3
+// over the ~0.3 s prior the other caches hold, the raw sample behind it was
+// ~288 s. 600 s clears even that by 2.1x. CI is more contended still (a QEMU
+// VM reporting 16 vCPUs on a 4-core host; on 2026-08-19 the app's own
+// readiness budget was blown there by nothing but scheduling contention), so
+// the multiple is deliberately not tight.
+//
+// What it costs when it fires: 10 minutes per hung test instead of an
+// unbounded wait. The integration step carries no `timeout-minutes` of its
+// own, so today a hang there runs to GitHub's job limit and names no test.
+enum int kDefaultTestTimeoutSec = 600;
 
 string timingsPath() { return ".test_timings.json"; }
 
@@ -876,32 +929,133 @@ bool httpProbe(ushort port, int tries = 300, int timeoutSec = 5,
 // Test execution
 // ---------------------------------------------------------------------------
 
+// A test that HUNG and a test that FAILED want opposite investigations, so
+// they are different states and not one `bool passed` (task 1420). "It went
+// quiet" was read as a hang three times in one CI diagnosis on 2026-08-19 and
+// was not one; the runner is the only place that KNOWS which happened, so it
+// is the place that has to say so.
+enum TestStatus { passed, failed, timedOut }
+
 struct TestResult {
-    string name;
-    bool   passed;
-    string output;     // captured stdout+stderr (only kept on failure)
-    double seconds;    // wall-clock duration of this test (for timing cache)
+    string     name;
+    TestStatus status;
+    string     output;   // captured stdout+stderr (only kept on failure/timeout)
+    double     seconds;  // wall-clock duration of this test (for timing cache)
+
+    // Everything that only asks "is this run red?" keeps reading one flag.
+    bool passed() const { return status == TestStatus.passed; }
+}
+
+// Run in the CHILD between fork and exec: put it in its own process GROUP.
+//
+// This is what makes the timeout able to kill a TREE. Our tests shell out —
+// `curl` per API call, and some spawn their own helpers — and killing only the
+// direct child leaves those orphans behind, holding the port the next worker
+// wants (task 1420, trap 4). With the child as its own group leader, one
+// `kill(-pid)` reaches the whole subtree it created.
+//
+// The cost of the group: the terminal's Ctrl-C no longer reaches the test.
+// That is why `testGroupPids` exists and why `onSignal` kills those groups.
+bool ownProcessGroup() nothrow @nogc @trusted {
+    return setpgid(0, 0) == 0;
+}
+
+// Reap `pid` if it terminates within `limit`. Polls rather than blocking so
+// the caller keeps the option of giving up.
+private bool reapWithin(Pid pid, Duration limit) {
+    auto sw = StopWatch(AutoStart.yes);
+    while (true) {
+        if (tryWait(pid).terminated) return true;
+        if (sw.peek >= limit) return false;
+        Thread.sleep(20.msecs);
+    }
+}
+
+// Wait for `pid`, but not forever. `false` = `limit` elapsed and the process is
+// still running (and is now the caller's to kill).
+//
+// `limit <= 0` means "no cap" and takes the old blocking path verbatim, so
+// --timeout 0 costs nothing and behaves exactly as this runner did before.
+bool waitFor(Pid pid, Duration limit, out int status) {
+    if (limit <= Duration.zero) { status = wait(pid); return true; }
+    auto sw = StopWatch(AutoStart.yes);
+    while (true) {
+        auto st = tryWait(pid);
+        if (st.terminated) { status = st.status; return true; }
+        immutable waited = sw.peek;
+        if (waited >= limit) return false;
+        // Fine-grained while a test could plausibly still be a fast one (the
+        // median test here is ~0.3 s, so a coarse poll would tax every one of
+        // ~130 of them), then back off: a legitimately slow test costs 20
+        // wakeups a second instead of 500.
+        Thread.sleep(waited < 1.seconds ? 2.msecs : 50.msecs);
+    }
+}
+
+// SIGKILL the process group led by `gpid`, then reap the leader.
+//
+// SIGKILL and not a SIGTERM grace, deliberately. The process we are killing is
+// by definition WEDGED, and the live hang this task was written for lives in a
+// `scope(exit)` shutdown path (app.d's HttpServer.stop joining a server thread
+// parked on a dead main thread) — i.e. exactly in the code a polite signal
+// would ask it to run again. There is nothing to flush either: the captured
+// output is a redirected FILE, so its stdio buffer is lost the same way under
+// either signal.
+//
+// The group is killed BEFORE the leader is reaped, which is also what keeps
+// `-gpid` unambiguous: a process group cannot be recycled while it still has a
+// member, and the un-reaped leader is one.
+bool killTestTree(Pid pid, int gpid) {
+    if (gpid <= 0) return false;
+    kill(-gpid, SIGKILL);
+    return reapWithin(pid, 10.seconds);
 }
 
 TestResult runOne(string bin, bool verbose) {
     TestResult r;
     r.name = baseName(bin);
     auto sw = StopWatch(AutoStart.yes);
+
+    Config cfg;
+    cfg.preExecFunction = &ownProcessGroup;
+
+    string outPath = bin ~ ".out";
+    File   out_;
+    Pid    pid;
     if (verbose) {
-        auto pid = spawnProcess([bin]);
-        r.passed = (wait(pid) == 0);
+        pid = spawnProcess([bin], stdin, stdout, stderr, null, cfg);
     } else {
-        string outPath = bin ~ ".out";
-        auto out_ = File(outPath, "wb");
-        auto pid = spawnProcess([bin], stdin, out_, out_);
-        int code = wait(pid);
-        r.passed = (code == 0);
+        out_ = File(outPath, "wb");
+        pid  = spawnProcess([bin], stdin, out_, out_, null, cfg);
+    }
+    immutable int gpid = pid.processID;   // == its pgid: it is the group leader
+    synchronized { testGroupPids ~= gpid; }
+    scope(exit) synchronized {
+        foreach (ref p; testGroupPids) if (p == gpid) p = 0;
+    }
+
+    int code;
+    immutable finished = waitFor(pid, g_testTimeout, code);
+    r.seconds = sw.peek.total!"msecs" / 1000.0;
+
+    if (finished) {
+        r.status = (code == 0) ? TestStatus.passed : TestStatus.failed;
+    } else {
+        r.status = TestStatus.timedOut;
+        if (!killTestTree(pid, gpid))
+            stderr.writefln(red("  %s: still alive after SIGKILL — its pid %d "
+                                ~ "is unreapable (uninterruptible sleep?)"),
+                            r.name, gpid);
+    }
+
+    if (!verbose) {
         out_.close();
+        // Kept for the timeout report too: the partial output is the only
+        // evidence of HOW FAR the test got before it stopped moving.
         if (!r.passed) {
             try { r.output = readText(outPath); } catch (Exception) {}
         }
     }
-    r.seconds = sw.peek.total!"msecs" / 1000.0;
     return r;
 }
 
@@ -1166,8 +1320,18 @@ TestResult[] runWorker(ref Worker w, bool verbose) {
         resetBetweenTests(w.port);
         auto r = runOne(b, verbose);
         synchronized {
-            writeln("  ", r.passed ? green("PASS") : red("FAIL"),
-                    "  ", dim(format("[w%d]", w.id)), "  ", r.name);
+            // The three markers are the FIRST field of the line on purpose:
+            // .github/workflows/ci.yaml turns these lines into the job summary
+            // table by matching /^\s*(PASS|FAIL|TIMEOUT)\s/ and taking the
+            // test name from the field after [wN]. Change the shape here and
+            // change it there, or a timed-out test silently leaves the table.
+            writeln("  ", r.status == TestStatus.passed ? green("PASS")
+                        : r.status == TestStatus.failed ? red("FAIL")
+                        :                                 red("TIMEOUT"),
+                    "  ", dim(format("[w%d]", w.id)), "  ", r.name,
+                    r.status == TestStatus.timedOut
+                        ? red(format("  (no exit after %.0fs — killed)", r.seconds))
+                        : "");
             stdout.flush();
         }
         out_ ~= r;
@@ -1180,15 +1344,46 @@ TestResult[] runWorker(ref Worker w, bool verbose) {
 // ---------------------------------------------------------------------------
 
 void printSummary(TestResult[] results) {
-    int passed, failed;
-    foreach (ref r; results) (r.passed ? passed : failed)++;
+    int passed, failed, timedOut;
+    foreach (ref r; results) final switch (r.status) {
+        case TestStatus.passed:   passed++;   break;
+        case TestStatus.failed:   failed++;   break;
+        case TestStatus.timedOut: timedOut++; break;
+    }
 
     writeln();
     writeln(dim("─────────────────────────────────────"));
-    writefln("Total: %d  %s  %s",
+    // Three DISJOINT counters that sum to Total: a timed-out test is counted
+    // once, under "Timed out", and never also under "Failed".
+    writefln("Total: %d  %s  %s  %s",
         results.length,
         green(format("Passed: %d", passed)),
-        failed == 0 ? dim("Failed: 0") : red(format("Failed: %d", failed)));
+        failed   == 0 ? dim("Failed: 0")    : red(format("Failed: %d", failed)),
+        timedOut == 0 ? dim("Timed out: 0") : red(format("Timed out: %d", timedOut)));
+
+    if (timedOut > 0) {
+        writeln();
+        writeln(bold("Timed out (killed — these HUNG, they did not fail an assertion):"));
+        foreach (ref r; results) {
+            if (r.status != TestStatus.timedOut) continue;
+            writefln("  - %s %s", red(r.name),
+                dim(format("— no exit after %.1fs; its process tree was SIGKILLed",
+                    r.seconds)));
+            auto lines = r.output.splitLines;
+            if (lines.length) {
+                writeln(dim("      last output before it stopped moving:"));
+                foreach (line; lines.length > 5 ? lines[$ - 5 .. $] : lines)
+                    writefln("      %s", line);
+            } else {
+                writeln(dim("      (it produced no output at all)"));
+            }
+        }
+        writeln(dim(format("  A hang is not an assertion: re-run just this test "
+                  ~ "with `-v`, and while it sits there, `gdb -p <pid>` "
+                  ~ "(thread apply all bt) names the parked thread. Raise the "
+                  ~ "cap with `--timeout N` if %ds is genuinely too short.",
+                  cast(int) g_testTimeout.total!"seconds")));
+    }
 
     if (failed > 0) {
         writeln();
@@ -1218,6 +1413,7 @@ void printSummary(TestResult[] results) {
 int main(string[] args) {
     bool verbose, noBuild, keep, staleOk, writeStampOnly, printScratch;
     ushort port = 8080;
+    int timeoutSec = -1;   // -1 = not given → per-mode default, resolved below
     // Machine-aware default worker count: scale with the host but stay sane.
     // Each worker boots its OWN vibe3d (a GL app), so we don't go 1:1 with
     // cores — clamp(totalCPUs/4, 4, 12). On a 32-core host that's 8; small
@@ -1244,7 +1440,10 @@ int main(string[] args) {
                     ~ "tools/visual_test_proxy.py) instead of spawning vibe3d; "
                     ~ "forces -j1, leaves the endpoint running",              &attach,
         "exclude",    "skip a test by name (repeatable). Same name forms as "
-                    ~ "the positional args: bevel | test_bevel | tests/test_bevel.d", &exclude);
+                    ~ "the positional args: bevel | test_bevel | tests/test_bevel.d", &exclude,
+        "timeout",    "seconds one test may run before its process tree is "
+                    ~ "killed and it is reported as TIMEOUT (default 600; "
+                    ~ "0 = no cap; --attach defaults to no cap)",             &timeoutSec);
 
     // --attach: target a pre-launched endpoint (visual proxy / external vibe3d).
     // Single worker on that one port; never kill or spawn an instance.
@@ -1253,6 +1452,17 @@ int main(string[] args) {
         port = cast(ushort)attach;
         j = 1;
     }
+
+    // --attach drives an endpoint a HUMAN is driving (the visual proxy in front
+    // of a visible vibe3d), where a test sitting still for ten minutes is the
+    // point of the session and not a fault. Exempt it explicitly rather than
+    // leaving it to whether 600 s happened to be enough: no cap unless the
+    // caller asked for one by name.
+    // Any negative value (including the "not given" sentinel) means "decide
+    // for me"; 0 means the caller asked for no cap.
+    if (timeoutSec < 0)
+        timeoutSec = (g_attachPort != 0) ? 0 : kDefaultTestTimeoutSec;
+    g_testTimeout = timeoutSec.seconds;
 
     if (helpInfo.helpWanted) {
         writeln("usage: ./run_test.d [options] [test_name...]");
@@ -1408,6 +1618,15 @@ int main(string[] args) {
     writefln("Compiling %d test%s and booting %d vibe3d instance%s...",
         tests.length, tests.length == 1 ? "" : "s",
         j, j == 1 ? "" : "s");
+    // Say the cap out loud. A run that kills a test needs the reader to know
+    // the cap existed; a run under --attach needs them to know it does not.
+    writeln(dim(g_testTimeout > Duration.zero
+        ? format("Per-test timeout: %ds (--timeout N to change, 0 to disable)",
+                 g_testTimeout.total!"seconds")
+        : "Per-test timeout: none"
+          ~ (g_attachPort != 0 ? " (--attach: an externally driven endpoint is "
+                                 ~ "expected to wait as long as its human does)"
+                               : " (--timeout 0)")));
     // Source-backed tests: build the project once into a shared static lib and
     // link it (≈6× faster + ≈6× less RAM per test than recompiling via `dmd -i`,
     // and it unlocks mold). Done once here, single-threaded, before workers fan
@@ -1448,6 +1667,11 @@ int main(string[] args) {
     // the next run schedules better. Key by bare test name (drop ".out"/path).
     double[string] samples;
     foreach (ref r; results) {
+        // A timed-out test contributes NO sample. Its duration is the cap, not
+        // the test's cost, and folding it into the EMA would teach the
+        // scheduler that a 0.3 s test costs ten minutes — and would drag the
+        // median that unknown tests inherit up with it.
+        if (r.status == TestStatus.timedOut) continue;
         auto name = baseName(r.name).stripExtension;
         if (r.seconds > 0 && !r.seconds.isNaN) samples[name] = r.seconds;
     }
