@@ -104,6 +104,19 @@ string fireCommand(string id, string paramsJson) {
 // tests/test_unsaved_guard.d's `guardsQuit`).
 // ---------------------------------------------------------------------------
 immutable string[] kSkipPrefixes = [
+    // `undo.lockout.` — a TEST-AUTOMATION switch that turns history recording
+    // OFF for the life of the instance (`registration.d`, `history.setLockout`).
+    // Firing it is not a document discard, it is a service outage: after it,
+    // every later command records nothing and every undo answers "stack empty".
+    // `/api/reset` does NOT clear it.
+    //
+    // MEASURED, twice, on 2026-08-19: this census fired it and every test that
+    // ran afterwards ON THE SAME WORKER failed -- 8 on CI, 27 on the sanitizer
+    // lane -- with "expected +1 entry, got +0", "expected 3 entries; got 0",
+    // "stack empty or revert failed". None of them was a defect of its own;
+    // they were all reading a poisoned instance, because the runner reuses one
+    // editor for every test a worker takes.
+    "undo.lockout.",
     // `selftest.*` — the deliberate-defect injector (task 1410). It is NOT in
     // the shipping binary: it is registered only where `SanitizerSelfTest` is
     // declared, i.e. the four instrumented buildTypes. So in every ordinary
@@ -228,6 +241,24 @@ unittest { // THE CENSUS, both directions
         if (!observed && decl) unobserved ~= id;
     }
     resetTo("");
+
+    // The teardown that catches the NEXT one. Excluding the two ids above
+    // fixes the two we know about; this fixes the class. A registry sweep can
+    // fire anything the registry publishes, including a service switch that
+    // outlives the sweep -- so the census asserts, on its way out, that it
+    // left the history service in the state it found it. Without this the
+    // damage is invisible here and lands on whichever unrelated test the
+    // runner happens to schedule next, which is exactly how the two above
+    // presented: as eight and twenty-seven failures with no common subject.
+    {
+        const st = getJson("/api/undo/status");
+        assert(!st["lockout"].boolean,
+            "the census left the history service LOCKED OUT — some command it "
+            ~ "fired engaged `history.setLockout` and nothing released it. "
+            ~ "Every test scheduled after this one on the same worker will now "
+            ~ "record nothing and fail on an empty undo stack. Add the id to "
+            ~ "kSkipPrefixes / kSkipExact, or release it here.");
+    }
 
     assert(swept > 200,
         "the census swept only " ~ swept.to!string ~ " commands — a sweep that "
