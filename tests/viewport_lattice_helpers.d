@@ -100,21 +100,16 @@ size_t[] erodedFillIndices(in bool[] isFill) {
 // ---------------------------------------------------------------------------
 // NO `unittest` BLOCK MAY EVER LIVE IN THIS FILE, OR IN ANY `tests/*_helpers.d`
 //
-// MEASURED HERE, task 1090, and it silently disarmed a whole suite for one
-// build. `run_test.d` compiles EVERY `tests/*_helpers.d` into EVERY test
-// binary, with `-unittest` and without `-main`; the tests themselves supply an
-// `int main()`. Druntime's default unittest runner, when any unittest block
-// RAN, reports "N modules passed unittests" and DOES NOT RUN MAIN. So a single
-// unittest block in a shared helper turns every HTTP driver in `tests/` into a
-// binary that prints a pass and executes not one test case — the exact
-// "trivial fake PASS" this project has been bitten by before, but suite-wide
-// instead of one file.
+// Druntime skips main() as soon as any linked module runs unittests, and
+// run_test.d compiles every `tests/*_helpers.d` into every test binary — so one
+// block here disarms the scenarios of every test that links it, while the run
+// still exits 0.
 //
-// Observed directly: with two unittest blocks here, `test_viewport_display`
-// printed "1 modules passed unittests" and none of its fourteen flows; with
-// them removed it printed all fourteen again. None of the six pre-existing
-// `*_helpers.d` files contains a unittest block, and that is not a
-// coincidence to be tidied up.
+// Since task 1111 this is CHECKED, not requested. `run_test.d --check-gate`
+// refuses to build a set whose injected modules carry a unittest, and
+// `tests/liveness_gate.d` — linked into every test binary — kills with exit 3
+// any binary that reaches its exit having executed neither its own unittests
+// nor one counted `scenario()`. Both are pinned by `tests/test_liveness_gate.d`.
 //
 // WHERE THE CHECKS WENT INSTEAD. `fillLattice` and `latticePoint` are two
 // copies of the same origin arithmetic and must be checked against each other

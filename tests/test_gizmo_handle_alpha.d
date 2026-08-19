@@ -623,6 +623,12 @@ int main(string[] args) {
     int passed = 0, failed = 0;
 
     void run(bool function() fn, string name) {
+        // Task 1111: report the ATTEMPT to the liveness gate before the case
+        // can throw. A binary that reaches its exit having executed neither a
+        // unittest of its own nor one counted scenario dies with code 3
+        // instead of printing a pass over nothing — see tests/liveness_gate.d.
+        import liveness_gate : scenario;
+        scenario(name);
         try {
             if (fn()) { writeln("  PASS: ", name); passed++; }
             else      { writeln("  FAIL: ", name); failed++; }

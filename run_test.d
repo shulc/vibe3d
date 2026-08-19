@@ -761,6 +761,109 @@ string probeMoldFlag() {
     return "";
 }
 
+/// The modules injected into EVERY test binary's compile line, in command-line
+/// order. THIS IS THE SINGLE SOURCE OF TRUTH for that set: the compile below
+/// and the build-time barrier `gateViolations` both read it, so the barrier
+/// can never check a different list than the one that actually gets compiled.
+/// Do not re-derive the set from a glob at either call site.
+string[] injectedTestModules(string testsDir = "tests") {
+    string[] mods;
+    if (!exists(testsDir)) return mods;
+    foreach (e; dirEntries(testsDir, "*_helpers.d", SpanMode.shallow))
+        mods ~= e.name;
+    sort(mods);
+    // The liveness gate (task 1111): linked into every binary so a test that
+    // executes nothing cannot exit 0. Deliberately named so it matches neither
+    // the `test_*.d` discovery glob nor the `*_helpers.d` glob above — it is
+    // not a test and not a helper, and matching either would have quietly made
+    // it one.
+    mods ~= buildPath(testsDir, "liveness_gate.d");
+    return mods;
+}
+
+/// The BUILD-TIME half of task 1111 — the cause-side companion to the
+/// symptom-side check in tests/liveness_gate.d. Returns one "file:line: text"
+/// string per violation; empty means the tree is sound.
+///
+/// ONE IMPLEMENTATION, DELIBERATELY. `--check-gate` and the startup path must
+/// both call THIS function. A second copy written "for the test" would make
+/// every barrier case in tests/test_liveness_gate.d vacuous — they would pin
+/// the copy while real runs used the original. Same reason the injected-module
+/// set is read from injectedTestModules() rather than re-globbed here.
+///
+/// NOT A PARSER, and that limit is accepted. Rules (a) and (b) look for a line
+/// that STARTS with `unittest`, and rule (c) recognises `main` by the stripped
+/// text of its declaration line — so a `unittest` at column 0 inside a block
+/// comment, or a `main` whose brace sits on the next line, would be judged
+/// wrongly. Neither exists in tests/ today (measured: no indented unittest
+/// blocks either), and the answer to a false refusal is to reshape the two
+/// lines, not to weaken the rule into something that cannot refuse.
+string[] gateViolations(string testsDir) {
+    string[] out_;
+
+    static bool startsUnittest(string line) { return line.startsWith("unittest"); }
+
+    static bool hasOwnUnittest(string txt) {
+        foreach (line; txt.splitLines) if (startsUnittest(line)) return true;
+        return false;
+    }
+
+    // (a) A module injected into EVERY test binary must carry no unittest.
+    foreach (m; injectedTestModules(testsDir)) {
+        if (!exists(m) || !isFile(m)) continue;
+        string txt;
+        try { txt = readText(m); } catch (Exception) { continue; }
+        foreach (i, line; txt.splitLines) {
+            if (!startsUnittest(line)) continue;
+            out_ ~= format("%s:%d: a module compiled into EVERY test binary carries a "
+                ~ "`unittest` block. Druntime runs the unittests and then SKIPS main() "
+                ~ "in every test that links it, so those tests print a pass having run "
+                ~ "nothing. Put the check in a test_*.d file's own unittest block.",
+                m, i + 1);
+        }
+    }
+
+    if (!exists(testsDir)) return out_;
+
+    string[] testPaths;
+    foreach (e; dirEntries(testsDir, "test_*.d", SpanMode.shallow)) testPaths ~= e.name;
+    sort(testPaths);
+
+    foreach (t; testPaths) {
+        string txt;
+        try { txt = readText(t); } catch (Exception) { continue; }
+        immutable bool ownUt = hasOwnUnittest(txt);
+
+        // (b) A source-backed test links a -unittest build of the project
+        // library, so SOMETHING in that library will run unittests and its
+        // main() will be skipped. Its scenarios must live in its own blocks.
+        if (!ownUt && isSourceBackedTest(t))
+            out_ ~= format("%s:1: this test imports project source, so it links a "
+                ~ "-unittest build of the project library; druntime will run that "
+                ~ "library's unittests and SKIP this file's main(). Move the scenarios "
+                ~ "into this file's own `unittest` blocks.", t);
+
+        // (c) A test that has its OWN unittest blocks must have an EMPTY main:
+        // once any module runs unittests, main() is not called, so a non-empty
+        // body is code that can never execute. The symptom-side gate cannot see
+        // this class at all — from inside the process, an empty main and a main
+        // that was never called are indistinguishable.
+        if (ownUt) {
+            foreach (i, line; txt.splitLines) {
+                auto t2 = line.strip;
+                if (!t2.startsWith("void main(") && !t2.startsWith("int main(")) continue;
+                if (t2 == "void main() {}" || t2 == "void main(string[] args) {}") break;
+                out_ ~= format("%s:%d: this test has its own `unittest` block(s), so "
+                    ~ "druntime will NOT call main() — but main() has a body, and that "
+                    ~ "body can never run. Make it `void main() {}` and move its work "
+                    ~ "into a `unittest` block.", t, i + 1);
+                break;
+            }
+        }
+    }
+    return out_;
+}
+
 /// Compile each test in `paths` into `outDir`. Source is read AS-IS unless
 /// `port` differs from 8080 — then literal "localhost:8080" is rewritten
 /// to "localhost:<port>" in a per-test scratch copy. This keeps tests
@@ -777,19 +880,19 @@ string[] compileTests(string[] paths, string outDir, ushort port) {
             src = buildPath(outDir, name ~ ".d");
             std.file.write(src, txt);
         }
-        // Pull every tests/*_helpers.d into the compilation so a test
-        // can `import drag_helpers;` (or any future helpers module)
-        // without each test duplicating shared code. Helpers also have
-        // their literal "localhost:8080" rewritten to the per-worker
-        // port — without this, parallel workers' tests all hit port 8080
-        // through the helpers, corrupting each other's vibe3d state.
+        // Pull every injected module (see injectedTestModules) into the
+        // compilation so a test can `import drag_helpers;` — or
+        // `import liveness_gate : scenario;` — without duplicating shared
+        // code. They also get their literal "localhost:8080" rewritten to the
+        // per-worker port: without this, parallel workers' tests all hit port
+        // 8080 through the helpers, corrupting each other's vibe3d state.
         string helpers;
-        foreach (e; dirEntries("tests", "*_helpers.d", SpanMode.shallow)) {
-            string hSrc = e.name;
+        foreach (m; injectedTestModules()) {
+            string hSrc = m;
             if (port != 8080) {
-                string hTxt = readText(e.name)
+                string hTxt = readText(m)
                     .replace("localhost:8080", "localhost:" ~ port.to!string);
-                hSrc = buildPath(outDir, baseName(e.name));
+                hSrc = buildPath(outDir, baseName(m));
                 std.file.write(hSrc, hTxt);
             }
             helpers ~= " " ~ hSrc;
@@ -1411,7 +1514,7 @@ void printSummary(TestResult[] results) {
 // ---------------------------------------------------------------------------
 
 int main(string[] args) {
-    bool verbose, noBuild, keep, staleOk, writeStampOnly, printScratch;
+    bool verbose, noBuild, keep, staleOk, writeStampOnly, printScratch, checkGate;
     ushort port = 8080;
     int timeoutSec = -1;   // -1 = not given → per-mode default, resolved below
     // Machine-aware default worker count: scale with the host but stay sane.
@@ -1433,6 +1536,9 @@ int main(string[] args) {
                     ~ "exit — for callers that ran `dub build` themselves (CI)", &writeStampOnly,
         "print-scratch","print the scratch directory this checkout would use "
                     ~ "and exit, creating nothing",                             &printScratch,
+        "check-gate", "run the test-liveness barrier over a directory "
+                    ~ "(default tests/) and exit 0/2, building nothing and "
+                    ~ "starting no vibe3d",                                     &checkGate,
         "p|port",     "HTTP port for vibe3d (default 8080)",                  &port,
         "j|jobs",     "parallel workers — each runs its own vibe3d on a "
                     ~ "private port (default = clamp(cpus/4, 4, 12))",        &j,
@@ -1482,6 +1588,23 @@ int main(string[] args) {
         return 0;
     }
 
+    // --check-gate: the barrier alone, over an arbitrary directory, with no
+    // build and no vibe3d. This is what makes the barrier's RULES automatically
+    // testable (tests/test_liveness_gate.d lays fixtures into a temp directory
+    // and calls this) without standing up a copy of the repository. It must go
+    // through the same gateViolations() the startup path below uses.
+    if (checkGate) {
+        const dir = (args.length > 1) ? args[1] : "tests";
+        auto violations = gateViolations(dir);
+        foreach (v; violations) stderr.writeln(red(v));
+        if (violations.length) {
+            stderr.writefln(red("--check-gate: %d violation(s) in %s"), violations.length, dir);
+            return 2;
+        }
+        writefln("--check-gate: %s is clean", dir);
+        return 0;
+    }
+
     if (j < 1) {
         stderr.writeln(red("-j must be >= 1"));
         return 2;
@@ -1523,6 +1646,19 @@ int main(string[] args) {
         writeBuildStamp();
         writeln(green("build stamp written for the current source/"));
         return 0;
+    }
+
+    // The barrier runs ONCE, before anything is built and before any worker
+    // starts. A violation here means some test in this set would compile and
+    // then report success without executing its scenarios, so measuring the run
+    // at all would be measuring nothing.
+    {
+        auto violations = gateViolations("tests");
+        if (violations.length) {
+            stderr.writeln(red("test-liveness barrier: refusing to build this set."));
+            foreach (v; violations) stderr.writeln(red("  " ~ v));
+            return 2;
+        }
     }
 
     if (!noBuild && !dubBuild()) return 1;
