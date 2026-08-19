@@ -186,8 +186,16 @@ public:
             // (onParamChanged mutates vertices_[currentPoint] while
             // Drawing) — not a remembered setting. Excluded from
             // sticky-tool-defaults capture via .transient().
+            // .enforceBounds() (task 1410): the hand-written clamp in
+            // onParamChanged (`< -1 -> -1`, `>= n -> n-1`, below) is NOT on
+            // the `tool.attr` path -- measured, `tool.attr pen currentPoint
+            // 1e39` read back -2147483648, straight from the unclamped
+            // float->int cast at params.d:809. -1 is this param's "no current
+            // point" sentinel, so clamping to [-1,1024] lands on the sentinel
+            // rather than on a bogus index. Pinned by
+            // tests/test_param_cast_overflow.d.
             Param.int_("currentPoint", "Current Point", &params_.currentPoint, -1)
-                .min(-1).max(1024).transient(),
+                .min(-1).max(1024).enforceBounds().transient(),
             Param.float_("posX", "Position X", &params_.posX, 0.0f).transient(),
             Param.float_("posY", "Position Y", &params_.posY, 0.0f).transient(),
             Param.float_("posZ", "Position Z", &params_.posZ, 0.0f).transient(),

@@ -1010,6 +1010,7 @@ void registerCommands(EditorApp app) {
     registerFileCommands(app);
     registerMeshCommands(app);
     registerHistoryCommands(app);
+    registerSelfTestCommands(app);
     // The same three-deep `with` the flat body had, for the same reason the
     // family functions keep it: identical name resolution, not a narrower one.
     with (app) {
@@ -2137,3 +2138,39 @@ private void registerHistoryCommands(EditorApp app) {
     }
 }
 
+
+/// TASK 1410 — the deliberate-defect injector, registered ONLY in the four
+/// instrumented buildTypes (`check`, `check-unit`, `check-release`,
+/// `sanitize`), which are the only ones that declare `SanitizerSelfTest`.
+///
+/// `--build=release` declares no such version, so the whole
+/// `selftest_fault` module compiles to nothing, this function's body is
+/// empty, and `selftest.fault` is not a key — the id answers
+/// `status:error, unknown command id` there. The nightly preflight asserts
+/// that twice (a `dub describe` read of `targets[].buildSettings`, and a
+/// `strings` scan of the release binary for the literal `selftest.fault`,
+/// which is the strictly stronger check).
+///
+/// Modelled on the `version (WithAI)` copilot block above: version-gated
+/// import, version-gated registration, no other file aware of either.
+///
+/// It must be called BEFORE `registerCommands`'s selection-type wrap, like
+/// every other family — the wrap walks the FINISHED dictionary and anything
+/// registered after it silently misses the authority.
+///
+/// The key registered here and `SelfTestFaultCommand.name()` are the SAME
+/// string on purpose and not by coincidence: `Registry.cacheSupportedModes()`
+/// constructs every factory at startup and THROWS if a command's `name()` is
+/// not itself a registered key, so a typo here does not produce a broken
+/// command — it produces an editor that will not start, and a night in which
+/// every HTTP test fails at once for a reason that looks nothing like its
+/// cause.
+void registerSelfTestCommands(EditorApp app) {
+    version (SanitizerSelfTest) {
+        import selftest_fault : SelfTestFaultCommand;
+        with (app) {
+            reg.commandFactories["selftest.fault"] = () => cast(Command)
+                new SelfTestFaultCommand(&mesh(), cameraView, editMode);
+        }
+    }
+}

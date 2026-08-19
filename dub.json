@@ -81,6 +81,9 @@
 		"lwo2-writer": "core",
 		"bindbc-assimp6": "static"
 	},
+	"_comment-instrumented-buildtypes": "TASK 1410 -- the four instrumented buildTypes (check, check-unit, check-release, sanitize) exist so crashes are found by the nightly lane instead of by a user. THE SHIPPED RELEASE DOES NOT READ ANY OF THEM: release is `--build=release`, dub's own built-in buildType, and none of these names appear in it. That is a checkable property, not a promise -- .github/workflows/sanitizer.yaml's preflight runs `dub describe --build=release --compiler=$LDC --config=modeling` and fails if `--fsanitize` or SanitizerSelfTest shows up in targets[].buildSettings.dflags/versions, plus a `strings` check on the release binary for `selftest.fault`. Passing --compiler is not optional there: `dub describe --build=release` with no --compiler defaults to DMD and DROPS every dflags-ldc entry, so the release-untouched mutation would pass vacuously. All four are LDC-ONLY (dmd implements neither --fsanitize nor --checkaction). Use the ABSOLUTE ldc2 path ($HOME/.local/dlang/ldc2-1.42.0-linux-x86_64/bin/ldc2, the same one tools/perf/run.d hardcodes): `--compiler=ldc2` resolves to /usr/bin/ldc2 = LDC 1.40 on this host, which CANNOT build vibe3d at all (it rejects `ref` locals in six pre-existing files), so a lane using the short name would fail on an unrelated compile error and read as `the instrumented build is broken`.",
+	"_comment-instrumented-targetname": "THE BINARY NAME IS A REAL HAZARD AND `targetName` DOES NOT SOLVE IT -- measured, do not re-attempt. dub.json declares no root targetName, so EVERY buildType writes ./vibe3d, and the nightly perf lane (perf.yaml) runs `run.d frames --no-build` against exactly that path in a workspace deliberately kept unclean (`clean: false`); an instrumented binary left there is read, silently, by the next 03:30 gating run. tools/perf/run.d already carries this trap in its own words (its `NOTE: ./vibe3d is now the perf buildType binary` warnings). The obvious fix -- a per-buildType `targetName` -- was tried here and is INERT: on dub 1.41, `dub describe --build=check` reports `targetName: vibe3d` with the field set, and `dub build --build=check` writes ./vibe3d anyway. The fields were therefore removed rather than left in place looking effective. The working mechanism is explicit and lives in tools/sanitizer/lane.d: `lane.d build <buildType>` builds, immediately renames ./vibe3d to ./vibe3d-<buildType>, and FAILS if ./vibe3d still exists afterwards; `lane.d stage <buildType>` copies it back to ./vibe3d (which run_test.d hardcodes, run_test.d:792) and writes the build stamp; `lane.d teardown` deletes ./vibe3d and fails if it cannot. The workflow's teardown step is `if: always()`.",
+	"_comment-instrumented-no-ubsan": "THERE IS NO UBSan HERE, AND THAT IS NOT AN OVERSIGHT. Measured on the shipped LDC 1.42.0 tarball: --fsanitize= accepts address, thread, memory, leak, fuzzer and REJECTS undefined, integer, bounds, float-cast-overflow (`Error: Unrecognized -fsanitize value 'undefined'`). The shipped ldc2 carries no UBSan runtime, so the cheapest phase of the original plan has no mechanism at all. The only route to it is rebuilding the runtime with `ldc-build-runtime` (shipped in the same tarball) -- a separate task, deliberately not attempted here. The one UB finding that motivated UBSan (params.d's float->int cast) is covered instead by a BEHAVIOURAL test that needs no sanitizer at all: tests/test_param_cast_overflow.d.",
 	"_comment-assimp-static": "assimp is static-linked via subConfigurations.bindbc-assimp6=static. ALL build+link config (per-platform preBuildCommands that build the minimal OBJ/glTF/FBX libassimp, lflags by explicit archive path, and stdc++/m) now lives in the bindbc-assimp6 `static` configuration — a clean clone auto-builds it, no manual prerequisite. The base BindAssimp_Static version below is for vibe3d's own source/io/* guards.",
 	"buildTypes": {
 		"profile-fp": {
@@ -116,6 +119,68 @@
 			],
 			"versions": [
 				"PerfProbe"
+			]
+		},
+		"check": {
+			"_comment": "The ordinary-tests instrumented build: debug + --checkaction=C. `-C` turns a failed assert into an IMMEDIATE C abort() -- SIGABRT, before any stack unwinding -- which is the only reason the crash oracle can see an assert at all. With the default `-D` an AssertError kills the main thread while the process lives on, and every later HTTP request then costs the full 120 s command-bridge timeout (kCommandBridgeMaxIters=60_000 x 2 ms, http_server.d:79) before answering `timeout waiting for main thread`: the TEST hangs, the process does not. --boundscheck=on is carried for symmetry only and does NOTHING here -- measured: a debugMode build already traps an out-of-bounds @system index with or without it. Its value lives entirely in check-release below.",
+			"buildOptions": [
+				"debugMode",
+				"debugInfo"
+			],
+			"dflags-ldc": [
+				"--boundscheck=on",
+				"--checkaction=C",
+				"--frame-pointer=all"
+			],
+			"versions": [
+				"SanitizerSelfTest"
+			]
+		},
+		"check-unit": {
+			"_comment": "`check` MINUS --checkaction=C, PLUS the `unittests` build option, for `dub test --config=tests --build=check-unit` and for nothing else. Both halves are load-bearing. (1) The subtraction: ten sites under tests/unit/ assert that an assert raises a CATCHABLE AssertError (assertThrown!AssertError / catch (AssertError)); under --checkaction=C the binary SIGABRTs at the first of them and the whole module-unittest lane dies at once, which on an instrumented night reads like a sanitizer catastrophe rather than a build-flag mistake. (2) The addition: `--build=<name>` REPLACES dub's built-in `unittest` buildType wholesale rather than extending it, so a buildType without `unittests` compiles the test configuration WITHOUT -unittest -- measured, it fails outright with `module mesh_ops.extrude import g_vertexPosGridCandidates not found` and similar, because those symbols live behind version(unittest). Note also that `dub test` DEFAULTS to --build=unittest: a bare `dub test --config=tests` in the nightly lane would run an UNINSTRUMENTED binary all night and report health, so the lane passes --build=check-unit explicitly, and the preflight verifies EVERY binary the night executes -- including dub's own `vibe3d-test-tests`, not just ./vibe3d. Do not use this buildType to build the EDITOR: `unittests` there would run module unittests at startup.",
+			"buildOptions": [
+				"unittests",
+				"debugMode",
+				"debugInfo"
+			],
+			"dflags-ldc": [
+				"--boundscheck=on",
+				"--frame-pointer=all"
+			],
+			"versions": [
+				"SanitizerSelfTest"
+			]
+		},
+		"check-release": {
+			"_comment": "The shape of the shipped release, with the bounds checks put back -- the only build in which --boundscheck=on does any work at all. Measured on LDC 1.42.0 with an out-of-range @system index: -O0 traps with or without the flag; -O3 -release SILENTLY WRITES PAST THE END and prints the value back; -O3 -release --boundscheck=on traps again. So this buildType, and only this one, sees the class of defect that exists exclusively under optimisation. No --checkaction here: releaseMode compiles asserts out entirely, so the flag would be inert and its presence would imply otherwise.",
+			"buildOptions": [
+				"releaseMode",
+				"optimize",
+				"inline",
+				"debugInfo"
+			],
+			"dflags-ldc": [
+				"--boundscheck=on",
+				"--frame-pointer=all"
+			],
+			"versions": [
+				"SanitizerSelfTest"
+			]
+		},
+		"sanitize": {
+			"_comment": "AddressSanitizer. --fsanitize-address-use-after-return=never is NOT a performance choice: the shipped LDC 1.42 druntime is compiled WITHOUT version=SupportSanitizers (`nm libdruntime-ldc.a | grep FakeStack` is empty, though core/thread/threadbase.d does carry scanStackForASanFakeStack), so with use-after-return detection on, D's conservative GC cannot see stack roots that ASan moved to a fake stack -- lost roots, premature collection, memory corruption that looks like our bug. Pair it at RUN time with ASAN_OPTIONS=detect_stack_use_after_return=0. detect_leaks=0 belongs there too: SDL/assimp/ImGui allocate at startup and never free, and those are not our leaks. Honest limit of the method, which the phase-0 measurement did NOT shrink: the eight C/C++ wrapper dependencies and druntime/phobos all link PREBUILT and uninstrumented, so ASan sees our overruns of their buffers and our alloc/free mismatches (through the malloc interceptors) but nothing that happens INSIDE them.",
+			"buildOptions": [
+				"debugMode",
+				"debugInfo"
+			],
+			"dflags-ldc": [
+				"--fsanitize=address",
+				"--fsanitize-address-use-after-return=never",
+				"--checkaction=C",
+				"--frame-pointer=all"
+			],
+			"versions": [
+				"SanitizerSelfTest"
 			]
 		}
 	},

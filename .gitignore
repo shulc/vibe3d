@@ -12,6 +12,23 @@ vibe3d-test-library
 vibe3d-test-modeling
 vibe3d-test-tests
 vibe3d-test-with-render
+# Task 1410 — the instrumented buildTypes. dub 1.41 IGNORES a per-buildType
+# `targetName` (measured), so every instrumented build writes ./vibe3d and
+# tools/sanitizer/lane.d immediately renames it to one of these. They are
+# 32-49 MB build artifacts in a workspace the nightly lanes deliberately keep
+# unclean (`clean: false`), which is exactly where an untracked binary gets
+# swept into a commit by a stray `git add -A`.
+vibe3d-check
+vibe3d-check-unit
+vibe3d-check-release
+vibe3d-sanitize
+vibe3d-release
+vibe3d-plain
+sanitizer-boot-*.log
+asan-report.*
+asan-fuzz.*
+/.dub-sanitizer/
+/fuzz-out/
 *.dll
 *.o
 __pycache__/

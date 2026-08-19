@@ -613,7 +613,16 @@ public:
             // greyed too (it no longer drives the cut). See `effectiveDepth`.
             Param.bool_("aspect", "Keep Aspect", &aspect_, false),
             // Task 0232 — HUD geometry only, see the field comments above.
-            Param.int_("length",  "Length",   &length_,  200).min(20).max(2000),
+            // .enforceBounds() (task 1410): min/max alone are UI HINTS -- the
+            // headless `injectParamsInto` path clamps only when the bit is
+            // set. Measured over real HTTP before the bit was added:
+            // `tool.attr mesh.loopSliceTool length 1e39` read back
+            // -2147483648, because params.d:809 casts the (infinite) float to
+            // int BEFORE the :810-813 clamp, and that clamp is gated on this
+            // flag. length_ feeds length_px(), i.e. screen-space HUD geometry.
+            // Pinned by tests/test_param_cast_overflow.d.
+            Param.int_("length",  "Length",   &length_,  200)
+                .min(20).max(2000).enforceBounds(),
             Param.int_("sliderX", "Slider X", &sliderX_, 20).min(0),
             Param.int_("sliderY", "Slider Y", &sliderY_, 50).min(0),
         ];

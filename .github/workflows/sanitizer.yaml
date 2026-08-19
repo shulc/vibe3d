@@ -1,0 +1,245 @@
+name: nightly-sanitizer
+
+# The instrumented nightly (task 1410). Owner's goal, verbatim: crashes found
+# HERE rather than by a user. It builds vibe3d with checks on, runs the
+# ORDINARY (non-perf) tests against it, then points the existing fuzzer at the
+# instrumented binary for whatever budget is left.
+#
+# THE SHIPPED RELEASE IS NOT CHANGED BY ANY OF THIS, and the first two steps
+# prove it rather than assert it — see `lane.d preflight` (structural read of
+# `dub describe --build=release`, with --compiler set) and
+# `lane.d preflight-release` (a `strings` scan of the real release binary for
+# the fault injector). Passing --compiler is what makes the first one able to
+# fail: `dub describe --build=release` with no --compiler defaults to dmd and
+# DROPS every dflags-ldc entry, so the naive form passes on a config carrying
+# --fsanitize=address. Measured, both ways.
+#
+# WHY NOT NEXT TO THE PERF NIGHTLY
+# --------------------------------
+# nightly-perf runs at 00:30 UTC on this same runner and its day-over-day
+# --vs-last gate is the one perf signal that still means something. Two
+# defences, and deliberately NOT a shared concurrency group: a shared group
+# would let a 180-minute overrun here push the perf run hours later into a
+# different thermal and desktop-activity regime, which poisons exactly that
+# comparison instead of protecting it. So: a separate schedule that starts
+# five and a half hours earlier, and a HARD STOP (`timeout-minutes`) that ends
+# this job an hour before perf begins even in the worst case.
+#
+#   19:00 UTC start + 270 min cap  ⇒  latest possible end 23:30 UTC
+#   00:30 UTC  perf starts
+#
+# WHY EVERY STEP CARRIES xvfb-run
+# -------------------------------
+# This runner is a hardware-GL workstation inside the owner's graphical
+# session, and the perf lane uses DISPLAY=:0 on purpose. Measured on this
+# project: an editor boot costs ~12.5 GiB of RSS on hardware GL against
+# ~1.12 GiB under software GL, and an eight-way run once took 44.7 of 62 GiB
+# and was OOM-killed. `lane.d preflight` FAILS if DISPLAY is :0.
+
+on:
+  schedule:
+    - cron: '0 19 * * *'   # 22:00 MSK; perf is 00:30 UTC, build.yml 03:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-sanitizer
+  cancel-in-progress: false
+
+env:
+  # The instrumented builds must not write into the shared ~/.dub: it holds
+  # LDC-built archives that break the dmd test-link path with
+  # undefined-druntime-symbol errors in third-party packages. lane.d FAILS if
+  # this is unset rather than quietly using the shared cache.
+  VIBE3D_SAN_DUB_HOME: ${{ github.workspace }}/.dub-sanitizer
+  # MEASURED, not guessed — the plan wrote `-j 8` while its own trap list said
+  # the number had to be measured. Under ASan, on software GL, one instance
+  # peaks at 453 MB VmHWM (uninstrumented: 128 MB, so ~3.6x). At -j 6 that is
+  # ~2.7 GiB of instances on a 62 GiB host. The recorded 44.7 GiB OOM was a
+  # HARDWARE-GL run, which xvfb-run removes. run_test.d's own defaultJobs()
+  # would pick clamp(cpu/4,4,12) = 8 here; VIBE3D_TEST_JOBS bypasses that
+  # clamp, so the number is stated in one place instead of inferred.
+  VIBE3D_TEST_JOBS: 6
+
+jobs:
+  sanitizer:
+    runs-on: [self-hosted, Linux, perf-fedora]
+    timeout-minutes: 270
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        # Same reasoning as perf.yaml: the workspace's untracked build state is
+        # the point on this runner (the nfde path-dep's C lib, .dub's
+        # incremental objects). A clean would wipe libnfd.a and the build would
+        # fail on a link error with no relation to anything this lane measures.
+        clean: false
+
+    - name: 'D toolchain on PATH'
+      run: echo "$HOME/.local/dlang/dmd2/linux/bin64" >> "$GITHUB_PATH"
+
+    - name: 'Restore the private tools/local symlink'
+      # tools/local is a gitignored symlink into the private repo and
+      # actions/checkout does not create it. Without it the fuzzing step runs
+      # nothing and the night reports health — the exact shape in which the
+      # perf lane once lost its whole run history. This step only tries; the
+      # preflight below is what FAILS if it did not work.
+      run: |
+        if [ ! -e tools/local ]; then
+          for cand in "$GITHUB_WORKSPACE/../vibe3d_private/tools/local" \
+                      "$HOME/Code/vibe3d_private/tools/local" \
+                      "$HOME/vibe3d_private/tools/local"; do
+            if [ -d "$cand" ]; then ln -sfn "$cand" tools/local; break; fi
+          done
+        fi
+        ls -ld tools/local || true
+
+    - name: 'Preflight (fails the job, by design)'
+      run: rdmd tools/sanitizer/lane.d preflight
+
+    - name: 'Preflight: the RELEASE binary does not contain the fault injector'
+      run: rdmd tools/sanitizer/lane.d preflight-release
+
+    # ---- every LDC step first -------------------------------------------
+    # Order matters and is not cosmetic. Building with LDC rewrites the nfde
+    # PATH dependency's D archive (third_party/nfde/bin/libnfde.a) IN THE
+    # WORKTREE — DUB_HOME does not isolate it, because a path dep builds to a
+    # fixed in-tree path. run_test.d compiles its source-backed tests with
+    # **dmd** against that same archive, so a dmd link after an LDC build fails
+    # with `undefined reference to __asan_memcpy`, reported only as
+    # "worker N failed to prepare". So: all LDC builds, then ONE restore, then
+    # everything that links with dmd.
+    - name: 'Build --build=check (LDC)'
+      run: rdmd tools/sanitizer/lane.d build check
+
+    - name: 'Build --build=sanitize (LDC + ASan)'
+      run: rdmd tools/sanitizer/lane.d build sanitize
+
+    - name: 'Module unittests (--build=check-unit, EXPLICIT)'
+      id: unit
+      # `dub test` DEFAULTS to --build=unittest. A bare `dub test
+      # --config=tests` here would run an uninstrumented binary all night and
+      # report health — the inert-measurement failure this whole task exists to
+      # avoid. --config=tests is equally non-optional: a bare `dub test` builds
+      # the `modeling` configuration and silently omits tests/unit/ entirely.
+      run: |
+        set -o pipefail
+        LDC="$HOME/.local/dlang/ldc2-1.42.0-linux-x86_64/bin/ldc2"
+        env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 DUB_HOME="$VIBE3D_SAN_DUB_HOME" \
+          xvfb-run -a dub test --config=tests --build=check-unit --compiler="$LDC" 2>&1 | tee unit.log
+
+    - name: 'Verify EVERY binary the night executes'
+      # Not just ./vibe3d. dub built its own `vibe3d-test-tests` above, and
+      # that binary is the one the unittest lane actually ran.
+      run: |
+        rdmd tools/sanitizer/lane.d verify check-unit ./vibe3d-test-tests
+        rdmd tools/sanitizer/lane.d verify check      ./vibe3d-check
+        rdmd tools/sanitizer/lane.d verify sanitize   ./vibe3d-sanitize
+
+    - name: 'Restore dmd-linkable archives'
+      run: rdmd tools/sanitizer/lane.d restore-dmd-archives
+
+    # ---- everything that links with dmd ---------------------------------
+    - name: 'Full test suite against the --build=check binary'
+      id: check_suite
+      run: |
+        set -o pipefail
+        rdmd tools/sanitizer/lane.d stage check
+        env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 \
+          xvfb-run -a ./run_test.d --no-build 2>&1 | tee check_suite.log
+
+    - name: 'FFI-seam subset against the --build=sanitize binary'
+      id: asan_suite
+      # ASan's honest scope, measured in phase 0 and worth restating where the
+      # step lives: it sees C-heap overruns and alloc/free mistakes, and it is
+      # BLIND to the D GC heap (a write 400 KB past a `new int[](4)` is
+      # accepted silently — druntime sub-allocates D objects inside big pools,
+      # so the redzones are around the pool). So the subset that earns the run
+      # time is the one that crosses into C/C++: LWO / OBJ / glTF / v3d /
+      # image / subdivide.
+      run: |
+        set -o pipefail
+        rdmd tools/sanitizer/lane.d stage sanitize
+        env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 \
+          ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0:abort_on_error=1:log_path=$PWD/asan-report \
+          xvfb-run -a ./run_test.d --no-build \
+            lwo_edge_cases lwo_multilayer lwo_roundtrip lwo_surfaces lwo_uv \
+            obj_import gltf_transform native_v3d v3d_layers v3d_image_plane \
+            image_commands image_cache_api morph_lwo morph_v3d weightmap_v3d \
+            subdivide subdivide_smooth subpatch subpatch_move subpatch_preserve \
+          2>&1 | tee asan_suite.log
+        # detect_leaks=0 is permanent and deliberate: SDL / assimp / ImGui
+        # allocate at startup and never free, and those are not our leaks.
+        # log_path makes any report survive run_test.d's scratch cleanup.
+
+    - name: 'Fuzz the instrumented binary (existing 13 recipes, UNCHANGED)'
+      id: fuzz
+      continue-on-error: true
+      # The fuzzer is not widened here. It already found 17 bugs at this width;
+      # pointing it at an instrumented binary for the first time IS the delta,
+      # and it is the only change worth making before the instrumentation has
+      # run even once. Widening the action space to the whole registry is its
+      # own task (1411) with a nine-site list, deliberately not bundled.
+      run: |
+        set -o pipefail
+        env -u WAYLAND_DISPLAY SDL_VIDEODRIVER=x11 \
+          ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0:abort_on_error=1:log_path=$PWD/asan-fuzz \
+          xvfb-run -a python3 tools/local/modo_diff/atlas/fuzz_invariants_vibe.py \
+            --minutes 60 --out "$PWD/fuzz-out" 2>&1 | tee fuzz.log
+
+    - name: 'Collect sanitizer reports'
+      if: always()
+      run: |
+        {
+          echo "### nightly-sanitizer"
+          echo ""
+          echo "| signal | outcome |"
+          echo "|---|---|"
+          echo "| module unittests (check-unit) | ${{ steps.unit.outcome }} |"
+          echo "| full suite (check) | ${{ steps.check_suite.outcome }} |"
+          echo "| FFI subset (sanitize/ASan) | ${{ steps.asan_suite.outcome }} |"
+          echo "| fuzz (recorded) | ${{ steps.fuzz.outcome }} |"
+          echo ""
+          echo "#### sanitizer reports"
+          echo '```'
+          if ls asan-report.* asan-fuzz.* >/dev/null 2>&1; then
+            grep -h "ERROR: AddressSanitizer" asan-report.* asan-fuzz.* | sort | uniq -c
+          else
+            echo "(none — no ASan report file was written)"
+          fi
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: sanitizer-${{ github.run_id }}
+        path: |
+          unit.log
+          check_suite.log
+          asan_suite.log
+          fuzz.log
+          asan-report.*
+          asan-fuzz.*
+          fuzz-out/
+        retention-days: 90
+
+    - name: 'Teardown — ./vibe3d must not survive this job'
+      if: always()
+      # The 03:30 perf nightly runs `run.d frames --no-build` against exactly
+      # ./vibe3d in this same unclean workspace. An instrumented binary left
+      # here is measured by it, silently. A per-buildType `targetName` would
+      # have prevented the staging entirely, but is INERT on dub 1.41
+      # (measured: describe reports targetName vibe3d and the build writes
+      # ./vibe3d anyway), so the deletion is explicit and it is checked.
+      run: rdmd tools/sanitizer/lane.d teardown
+
+    - name: 'Gate'
+      if: always()
+      # Gating: the three test signals. The fuzz step is RECORDED for now — the
+      # instrumentation has never run a full night, and a lane that goes red on
+      # its first unfamiliar finding gets switched off rather than read. Flip it
+      # to gating once the finding stream is understood.
+      run: |
+        echo "unit=${{ steps.unit.outcome }} check=${{ steps.check_suite.outcome }} asan=${{ steps.asan_suite.outcome }} fuzz=${{ steps.fuzz.outcome }}"
+        [ "${{ steps.unit.outcome }}" = "success" ] && \
+        [ "${{ steps.check_suite.outcome }}" = "success" ] && \
+        [ "${{ steps.asan_suite.outcome }}" = "success" ]
