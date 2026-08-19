@@ -104,6 +104,28 @@ string fireCommand(string id, string paramsJson) {
 // tests/test_unsaved_guard.d's `guardsQuit`).
 // ---------------------------------------------------------------------------
 immutable string[] kSkipPrefixes = [
+    // `selftest.*` — the deliberate-defect injector (task 1410). It is NOT in
+    // the shipping binary: it is registered only where `SanitizerSelfTest` is
+    // declared, i.e. the four instrumented buildTypes. So in every ordinary
+    // run this census never sees it, which is exactly why it was missed here.
+    //
+    // Under `--build=check` it IS registered, and its whole purpose is to
+    // injure the process on purpose: `selftest.fault` asserts, and that build
+    // carries `--checkaction=C`, which turns a failed assert into an immediate
+    // abort. The census fires every registered command, so it fired this one
+    // and killed the editor mid-suite. MEASURED, on the sanitizer lane's first
+    // complete night: the core dump's thread 1 is
+    // `selftest_fault.SelfTestFaultCommand.apply` -> `__assert_fail` -> abort,
+    // reached through `dispatchCommandLine`; 31 tests then failed on that
+    // worker with "could not connect", every one of them a corpse-read rather
+    // than a defect of its own.
+    //
+    // Task 1412's fuzz policy already excludes the same prefix for the same
+    // reason, in its own words ("its purpose is to injure the process on
+    // purpose"). Two sweeps over one registry, written the same day; one
+    // author foresaw the injector because the fuzzer runs against instrumented
+    // builds, the other could not because the ordinary build hides it.
+    "selftest.",
     // Submits work to the ai3d worker (network + a subprocess); a census pass
     // would leave jobs running against the shared --test instance.
     "ai3d.",
