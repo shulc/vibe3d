@@ -818,8 +818,18 @@ bool waitForHttpReady(string logPath, ushort port) {
         if (listening) break;
         Thread.sleep(100.msecs);
     }
-    if (!listening) return false;
-    return httpProbe(port);
+    if (!listening) {
+        stderr.writefln(red("  :%d never logged \"HTTP server started\" — "
+                            ~ "the process died or never got that far"), port);
+        return false;
+    }
+    string lastStatus;
+    if (httpProbe(port, 300, 5, &lastStatus)) return true;
+    stderr.writefln(red("  :%d listened but never answered 200 (last status: %s). "
+                        ~ "500 = still wiring providers, so startup outran the "
+                        ~ "probe budget; 000 = connected but no reply, i.e. wedged."),
+                    port, lastStatus);
+    return false;
 }
 
 // Poll /api/camera until it answers 200 (or we give up). Used after we spawn
@@ -831,14 +841,32 @@ bool waitForHttpReady(string logPath, ushort port) {
 // listen backlog, so a bare `curl` CONNECTS and then waits for a reply that
 // never comes — forever, with no timeout of its own. Every caller here would
 // rather have "no" after a few seconds than hang the runner (task 0685 T5).
-bool httpProbe(ushort port, int tries = 100, int timeoutSec = 5) {
+// `tries` is 300 (~30 s), not 100. The budget has to cover the window
+// between "the listener is up" and "the app finished wiring its providers",
+// because GET /api/camera answers 500 for the whole of it
+// (`http_server.d`'s route returns 500 while `cameraDataProvider` is null).
+// On a loaded CI VM — 16 logical cores over 4 physical, four instances
+// initialising GL through a software rasteriser at once — that window
+// exceeded the old ~10 s and failed a run whose code was fine; the same
+// commit passed on a re-run (2026-08-19).
+//
+// `lastStatus` exists so the NEXT such failure is diagnosable from one
+// line. Without it the log shows a healthy-looking startup and then
+// silence, which reads as a hang and cost three misdirected attempts to
+// tell apart from a real one: 500 means "still starting", 000 means the
+// connection never completed, and those want opposite investigations.
+bool httpProbe(ushort port, int tries = 300, int timeoutSec = 5,
+               string* lastStatus = null) {
     string probe = format("curl -s -o /dev/null --connect-timeout %d "
                           ~ "--max-time %d -w '%%{http_code}' "
                           ~ "http://localhost:%d/api/camera",
                           timeoutSec, timeoutSec, port);
+    string seen = "none";
+    scope(exit) if (lastStatus !is null) *lastStatus = seen;
     for (int i = 0; i < tries; ++i) {
         auto r = executeShell(probe);
-        if (r.status == 0 && r.output.strip == "200") return true;
+        seen = (r.status == 0) ? r.output.strip : format("curl-rc=%d", r.status);
+        if (seen == "200") return true;
         Thread.sleep(100.msecs);
     }
     return false;
