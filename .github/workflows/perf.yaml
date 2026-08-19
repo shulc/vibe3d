@@ -10,12 +10,18 @@ name: nightly-perf
 # workstation, and a daytime build would both slow the desktop and pollute
 # any concurrently-running measurement.
 #
-# Four signals, three of them gating:
+# Five signals, four of them gating:
 #   1. ops absolute vs committed baseline — RECORDED ONLY for now
 #      (continue-on-error): the Jun-07 baseline is knowingly stale and red
 #      (see doc/tasks/backlog/0680 + the 2026-08-18 audit); re-baselining
 #      before those fixes land would legitimize the debt. FLIP THIS STEP TO
 #      GATING when the baseline is regenerated post-fix.
+#   1b. lane health — GATING (task 1373). The composition of the ops run:
+#      every row OK, every declared case present, every geometry command
+#      either covered by a case or explicitly excluded with a reason. It gates
+#      what (1) cannot, because (1) is a stale-baseline budget comparison and
+#      this is a set of machine-stable facts. A perf case that stops working
+#      used to redden nothing at all; now it reddens here.
 #   2. --vs-last day-over-day gate — GATING. Any per-case kernel median
 #      +20% over the previous comparable nightly fails the run. This is the
 #      "new regression since yesterday" detector that stays meaningful even
@@ -106,6 +112,43 @@ jobs:
         set -o pipefail
         rdmd tools/perf/run.d --vs-last 2>&1 | tee vslast.log
 
+    - name: 'Lane health (ops rows + declared coverage)'
+      id: lanehealth
+      # GATING, and gating is the whole point of it (task 1373).
+      #
+      # The `ops` step above runs under continue-on-error and is deliberately
+      # left out of the Gate, so a perf case that STOPS WORKING today reddens
+      # nothing: it prints ERROR, is dropped from the history map before it is
+      # written, and `--vs-last` only walks the keys of the CURRENT run, so
+      # "was here yesterday, gone today" is never asked. The lane keeps paying
+      # for the case and keeps reading as coverage. This step is the answer to
+      # that, kept narrow enough that it can gate from day one:
+      #
+      #   1. some row in results.json is not OK;
+      #   2. some case this binary DECLARES produced no row at all;
+      #   3. some geometry command is in neither the case table nor the
+      #      exclusion table (invariant L2's finding, carried in the file).
+      #
+      # All three are machine-stable facts about the COMPOSITION of the run —
+      # a status string, a set of names, a list of command ids. None is a
+      # hardware-bound budget and none has a two-month-stale baseline to be
+      # wrongly red against, which is exactly the argument the `tools` step
+      # below makes for gating on its first night. It does NOT bring `ops`
+      # back into the gate and it does not touch baseline.json: those are the
+      # other two holes, and they stay with task 1460.
+      #
+      # `always()`: an `ops` step that failed is precisely when this has
+      # something to say.
+      #
+      # It is a pure read of tools/perf/results.json — no build, no vibe3d, no
+      # port — so it cannot disturb the measurement it reports on. `ops`
+      # deletes that file before it measures, so a crashed or timed-out `ops`
+      # leaves nothing here to certify and this step says so.
+      if: always()
+      run: |
+        set -o pipefail
+        rdmd tools/perf/run.d --lane-health 2>&1 | tee lanehealth.log
+
     - name: 'Ops trend snapshot'
       # Runs while the latest history entry is still the ops run above (the
       # frames step below appends a frames entry, which would flip --trend's
@@ -166,10 +209,15 @@ jobs:
           echo "| signal | outcome |"
           echo "|---|---|"
           echo "| ops absolute vs baseline (recorded) | ${{ steps.ops.outcome }} |"
+          echo "| lane health: rows + declared coverage (gating) | ${{ steps.lanehealth.outcome }} |"
           echo "| day-over-day --vs-last (gating) | ${{ steps.vslast.outcome }} |"
           echo "| tools preview invariants (gating) | ${{ steps.tools.outcome }} |"
           echo "| frames --ci counters (gating) | ${{ steps.frames.outcome }} |"
           echo ""
+          echo "#### lane health"
+          echo '```'
+          cat lanehealth.log 2>/dev/null || echo "(no output)"
+          echo '```'
           echo "#### vs-last"
           echo '```'
           cat vslast.log 2>/dev/null || echo "(no output)"
@@ -198,6 +246,7 @@ jobs:
           tools/perf/tools_results.json
           ops.log
           vslast.log
+          lanehealth.log
           tools.log
           frames.log
           trend.log
@@ -209,7 +258,8 @@ jobs:
       # aggregated until the baseline is regenerated post-0680/snap fixes.
       if: always()
       run: |
-        echo "ops=${{ steps.ops.outcome }} vslast=${{ steps.vslast.outcome }} tools=${{ steps.tools.outcome }} frames=${{ steps.frames.outcome }}"
+        echo "ops=${{ steps.ops.outcome }} lanehealth=${{ steps.lanehealth.outcome }} vslast=${{ steps.vslast.outcome }} tools=${{ steps.tools.outcome }} frames=${{ steps.frames.outcome }}"
+        [ "${{ steps.lanehealth.outcome }}" = "success" ] && \
         [ "${{ steps.vslast.outcome }}" = "success" ] && \
         [ "${{ steps.tools.outcome }}" = "success" ] && \
         [ "${{ steps.frames.outcome }}" = "success" ]

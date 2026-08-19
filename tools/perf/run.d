@@ -383,9 +383,31 @@ enum CaseStatus { OK, SKIP, ERROR }
 
 struct CaseResult {
     string     name;
+    // The key this row is FILED under — in the run history and in
+    // baseline.json — as opposed to `name`, which is what a human reads in
+    // the table (task 1373, F1.7).
+    //
+    // They differ for exactly one class of row: a case that pins its own mesh
+    // size (`Case.meshN`) files as `<name>@n<size>`. Before this, the single
+    // pinned case (`move/snap=vertex+partial`, meshN=64) filed under its bare
+    // name, so a number measured on 4225 verts and a number measured on
+    // 100489 verts landed in THE SAME history key and the same baseline row,
+    // and `--vs-last` compared them as if they were the same benchmark.
+    //
+    // Derived from `Case.meshN` — the field of the DECLARATION — and never
+    // from `effectiveN` vs the run's `--n`: keying on the observed size would
+    // file one case under two different keys depending on what `--n` the run
+    // was given, which re-opens the hole from the other side.
+    string     historyKey;
     string     note;
     CaseStatus status;
     string     detail;
+    // What proved this command case did work, and by how much: e.g.
+    // "counts 100489 verts/99856 faces -> 200978/199712" or
+    // "positions 40012/100489 verts moved, max 0.0412". Written into
+    // results.json so a reader (and `--lane-health`) can see WHICH observable
+    // stood behind an OK row rather than trusting the word (task 1373).
+    string     witnessDetail;
     // medians/p95 across R repeats, in microseconds.
     double     kernelMedianUs, kernelP95Us;
     double     pipeMedianUs;
@@ -503,9 +525,17 @@ long sumNs(JSONValue perf, string cat) {
     return (cat in perf) ? perf[cat]["sum_ns"].integer : 0;
 }
 
+// The history/baseline key for a drag case (task 1373, F1.7). By
+// `c.meshN` — the DECLARED size — so the key is a property of the case
+// table and not of the `--n` the run happened to be given.
+string historyKeyFor(ref Case c) {
+    return c.meshN > 0 ? format("%s@n%d", c.name, c.meshN) : c.name;
+}
+
 CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
     CaseResult res;
     res.name = c.name;
+    res.historyKey = historyKeyFor(c);
     res.note = c.note;
 
     // 0. per-case mesh size (see `Case.meshN`). Grid only: under
@@ -719,22 +749,82 @@ CaseResult runCase(ref Case c, int n, string meshType, int repeats) {
 // command POST).
 // ---------------------------------------------------------------------------
 
+// PINNING A COMMAND CASE TO ITS OWN MESH SIZE: only on a measurement.
+//
+// `CmdCase` has no `meshN` and should not grow one on a hunch. The lane's
+// hard ceiling is the command bridge's leash (`kCommandBridgeMaxIters =
+// 60_000`, about 2 minutes — source/http_server.d:73-79), and the measured
+// cost of a case at n=316 is ~5 s, so there is two orders of magnitude of
+// room: `mesh.subdivide` already builds 400k faces inside that budget.
+//
+// If a case ever does need a pin, three things have to arrive WITH it:
+//   (a) the measured number that justified it — a case past ~60 s, half the
+//       leash, not a case that felt slow;
+//   (b) a check that the median at the PINNED size is still above BOTH
+//       floors — `--vs-last-floor` (200 us, run.d's default) and
+//       `ABS_NOISE_FLOOR_US` (50.0, lib/baseline.d). Shrinking a case under
+//       either silently drops it out of the very gates it exists for;
+//   (c) the `@n` history key (`historyKeyFor`), so the pinned number never
+//       shares a key with the same case at the run's size.
+// Worth saying out loud: shrinking hurts MOST on the cases that are worst
+// super-linear — which are exactly the ones this lane exists to watch.
+//
+// WHAT MAKES A COMMAND CASE NON-EMPTY (task 1373).
+//
+// A perf case whose command silently stops doing work keeps producing a
+// number, and the number gets smaller, and a smaller number reads as an
+// improvement. So every case declares WHICH OBSERVABLE proves it did work,
+// and the case is ERROR — not OK-with-a-small-number — when that observable
+// did not move.
+//
+// The three witnesses are not stylistic variants; they partition the case
+// table by what the command is *for*, and each of the other two is blind to
+// its class:
+//
+//   counts    — the vertex/face totals changed. Growing and shrinking
+//               commands. Read from /api/layers, which serialises three
+//               integers. These cases MUST NOT use a dump-based witness:
+//               their result outgrows the main-thread /api/model bridge
+//               (mesh.radial_array x6 from the n=316 grid is 599k faces).
+//   positions — counts identical, but at least one vertex moved further
+//               than 1e-5 from the ORIGINAL grid. Pure deforms. Blind to
+//               marks; `counts` is blind to it.
+//   marks     — counts identical AND every vertex still where it was, but a
+//               hide bit, a face material, or a face's vertex RING changed.
+//               hide / hideInvert / setMaterial / flip. The other two are
+//               blind to all four of those.
+//
+// `mutationVersion` is deliberately NOT one of them, and must not be added
+// back "to cover the deforms": `Mesh.commitChange` does `++mutationVersion`
+// unconditionally (source/mesh.d:1241-1243) and the kernels call it in their
+// tail whether or not anything moved (commands/mesh/quantize.d:123,
+// commands/mesh/set_material.d:91). It witnesses "a command ran", which
+// /api/command's own status already says. The tools lane killed the same
+// term on its own side for the same reason (see runToolCase step 4).
+enum CmdWitness { counts, positions, marks }
+
 struct CmdCase {
     string name;       // "delete/polygons/whole"
     string commandId;  // full argstring POSTed to /api/command, args included
                        // (e.g. "mesh.bevel inset:0.02 shift:0.02 group:false")
     string mode;       // "vertices" | "edges" | "polygons"
-    string selection;  // "whole" | "half"
+    string selection;  // "whole" | "half" | "edge3"
+    CmdWitness witness = CmdWitness.counts;
 }
 
 // Selection indices for a command case. "whole" ⇒ empty (whole mesh).
-// "half" ⇒ selHalf for vertices, faceHalf for polygons. Edges only ever
-// use "whole" (no edge-index selection helper).
+// "half" ⇒ selHalf for vertices, faceHalf for polygons.
+// "edge3" ⇒ the first three EDGE indices — the operand mesh.loopSlice /
+// mesh.addLoop need: they take a seed edge and derive a whole loop from it,
+// so the operand is O(1) while the work is O(mesh) (measured: every one of
+// the grid's 4096 face rings is rewritten). Edge indices 0..2 exist for any
+// grid resolution, so the selection does not have to be recomputed per n.
 int[] cmdIndices(ref CmdCase c, int n) {
-    if (c.selection == "whole") return [];
-    if (c.mode == "vertices")   return selHalf(n);
-    if (c.mode == "polygons")   return faceHalf(n);
-    return [];   // edges/half — unused (edges only uses whole)
+    if (c.selection == "edge3")  return [0, 1, 2];
+    if (c.selection == "whole")  return [];
+    if (c.mode == "vertices")    return selHalf(n);
+    if (c.mode == "polygons")    return faceHalf(n);
+    return [];   // edges/half — unused (edges only uses whole / edge3)
 }
 
 // Matrix: for each of mesh.delete / mesh.remove, exercise vertices(whole,
@@ -754,9 +844,9 @@ CmdCase[] commandCases() {
     // command actually mutates the grid fixture; "whole" == empty selection
     // (the operand falls back to the full mesh). mesh.bevel gets
     // group:false — the per-face bevel (~5x geometry growth); the default
-    // group bevel only rings the selection boundary and measures nothing.
-    // smooth/jitter/quantize are pure deforms: counts stay, the sanity
-    // check passes on the mutationVersion bump alone.
+    // group bevel only rings the selection boundary and measures nothing
+    // (measured 2026-08-19 on the n=64 grid: the default adds 256 faces to
+    // 4096, group:false adds 12033).
     cs ~= CmdCase("bevel/polygons/whole",
                   "mesh.bevel inset:0.02 shift:0.02 group:false", "polygons", "whole");
     cs ~= CmdCase("inset/polygons/whole",         "mesh.poly_inset",   "polygons", "whole");
@@ -767,9 +857,15 @@ CmdCase[] commandCases() {
     cs ~= CmdCase("triple/polygons/whole",        "mesh.triple",       "polygons", "whole");
     cs ~= CmdCase("mirror/polygons/whole",        "mesh.mirror",       "polygons", "whole");
     cs ~= CmdCase("collapse/polygons/half",       "mesh.collapse",     "polygons", "half");
-    cs ~= CmdCase("smooth/polygons/whole",        "mesh.smooth",       "polygons", "whole");
-    cs ~= CmdCase("jitter/vertices/whole",        "mesh.jitter",       "vertices", "whole");
-    cs ~= CmdCase("quantize/vertices/whole",      "mesh.quantize",     "vertices", "whole");
+    // Deforms: counts stay put, so `counts` would call every one of these a
+    // no-op. They are witnessed by POSITIONS (task 1373) — before 1373 they
+    // rode on a mutationVersion bump, which is not evidence of work.
+    cs ~= CmdCase("smooth/polygons/whole",        "mesh.smooth",       "polygons", "whole",
+                  CmdWitness.positions);
+    cs ~= CmdCase("jitter/vertices/whole",        "mesh.jitter",       "vertices", "whole",
+                  CmdWitness.positions);
+    cs ~= CmdCase("quantize/vertices/whole",      "mesh.quantize",     "vertices", "whole",
+                  CmdWitness.positions);
     cs ~= CmdCase("edgeExtend/edges/whole",       "mesh.edge_extend",  "edges",    "whole");
     cs ~= CmdCase("edgeExtrude/edges/whole",      "mesh.edge_extrude", "edges",    "whole");
     cs ~= CmdCase("vertexBevel/vertices/whole",   "mesh.vertexBevel amount:0.02", "vertices", "whole");
@@ -778,25 +874,398 @@ CmdCase[] commandCases() {
     // command-bridge leash. Half the vertex set exercises the same path.
     cs ~= CmdCase("vertexExtrude/vertices/half",
                   "mesh.vertexExtrude shift:0.05 width:0.02", "vertices", "half");
+
+    // -------------------------------------------------------------------
+    // Task 1373 — the growing/shrinking commands the 2026-08-18 block left
+    // out. Every argstring below was CONFIRMED against the n=64 grid on
+    // 2026-08-19 (four operand configurations per command) rather than read
+    // off a default: the numbers in the trailing comments are that
+    // measurement, and they are what says the case measures work at all.
+    //
+    // CLAMP RULE for anyone adding a row (mirrors ToolCase's, above the tool
+    // table): an integer argument that scales an allocation or a loop bound
+    // is written EXPLICITLY and kept at the low end of its documented range,
+    // never left implicit. Every count used here has both layers of the
+    // task-0365 clamp already — MAX_RADIAL_ARRAY_COUNT (source/mesh.d:5586),
+    // MAX_ARRAY_COUNT (mesh.d:5735), MAX_AXIS_SLICE_COUNT
+    // (commands/mesh/axis_slice.d:20) — so the check here is only "the value
+    // is inside those bounds", which the /api/registry?params=1 schema
+    // states: count in [1,256] for all three.
+    // -------------------------------------------------------------------
+    cs ~= CmdCase("radialArray/polygons/whole",
+                  "mesh.radial_array count:6", "polygons", "whole");   // x6 faces
+    cs ~= CmdCase("array/polygons/whole",
+                  "mesh.array count:2",        "polygons", "whole");   // x2 faces
+    cs ~= CmdCase("spikey/polygons/whole",
+                  "mesh.spikey amount:0.5",    "polygons", "whole");   // x4 faces
+    cs ~= CmdCase("clone/polygons/whole",       "mesh.clone", "polygons", "whole"); // x2
+    cs ~= CmdCase("subdivFaceted/polygons/whole",
+                  "mesh.subdivide_faceted",    "polygons", "whole");   // x4 faces
+    cs ~= CmdCase("detriangulate/polygons/whole",
+                  "mesh.detriangulate",        "polygons", "whole");   // 4096 -> 1
+    // Reached only through an operand (they refuse the empty selection):
+    // measured 2026-08-19 at n=64 in the operand sweep.
+    cs ~= CmdCase("duplicate/polygons/half",    "mesh.duplicate",  "polygons", "half"); // +2048 F
+    cs ~= CmdCase("mergeFaces/polygons/half",   "mesh.mergeFaces", "polygons", "half"); // -2047 F
+    cs ~= CmdCase("vertexSplit/vertices/half",  "mesh.vertexSplit","vertices", "half"); // +5984 V
+    // axis:0, not the default axis:1 — the grid is FLAT in Y, so the default
+    // Y-axis slice finds a zero span and refuses (axis_slice.d's
+    // `span < 1e-6` early-out). count:4, not the default 1, for the same
+    // family of reason: a single plane through the exact centre of an
+    // even-resolution grid lands ON an existing edge row and splits nothing,
+    // so the command restores its snapshot and returns false.
+    cs ~= CmdCase("axisSlice/polygons/whole",
+                  "mesh.axisSlice axis:0 count:4", "polygons", "whole"); // +256 F
+    // Seed-edge operands: O(1) selection, O(mesh) work.
+    cs ~= CmdCase("loopSlice/edges/edge3",  "mesh.loopSlice count:3", "edges", "edge3"); // +192 F
+    cs ~= CmdCase("addLoop/edges/edge3",    "mesh.addLoop",           "edges", "edge3"); // +64 F
+
+    // Deforming and marking commands (task 1373). These are the classes the
+    // `counts` witness cannot see at all.
+    cs ~= CmdCase("linearAlign/vertices/half",
+                  "mesh.linear_align mode:line weight:1", "vertices", "half",
+                  CmdWitness.positions);
+    cs ~= CmdCase("radialAlign/vertices/half",
+                  "mesh.radial_align mode:circle side:4 weight:1", "vertices", "half",
+                  CmdWitness.positions);
+    // dist:10, not the default 1: the default's falloff sphere covers only
+    // part of the [-1,1] mesh (measured 3196 of 4225 verts moved), and a case
+    // that exists to measure work proportional to the mesh should have an
+    // operand that covers the mesh. At dist:10 it is 4224 of 4225.
+    cs ~= CmdCase("magnet/vertices/whole",
+                  "mesh.magnet strength:1 dist:10", "vertices", "whole",
+                  CmdWitness.positions);
+    cs ~= CmdCase("flip/polygons/whole",     "mesh.flip",     "polygons", "whole",
+                  CmdWitness.marks);   // rings only: 4096 rewound, nothing moves
+    cs ~= CmdCase("hide/polygons/half",      "mesh.hide",     "polygons", "half",
+                  CmdWitness.marks);   // faceHidden 0 -> 2048
+    cs ~= CmdCase("hideInvert/polygons/half","mesh.hideInvert","polygons","half",
+                  CmdWitness.marks);   // faceHidden 0 -> 4096
+    cs ~= CmdCase("setMaterial/polygons/whole",
+                  "mesh.setMaterial materialId:1", "polygons", "whole",
+                  CmdWitness.marks);   // faceMaterial: 4096 entries change
     return cs;
+}
+
+// ---------------------------------------------------------------------------
+// The other half of coverage: the geometry-domain commands that deliberately
+// have NO case, each with the reason (task 1373).
+//
+// This is DATA, not prose in a task log, because invariant L2 reads it: every
+// command the running app reports under /api/registry in the geometry domain
+// must appear either in `commandCases()` above or in this table, or the run
+// goes red and names it. A command added six months from now is therefore
+// forced through one of the two doors instead of quietly never being
+// measured — which is the failure this whole task exists to make impossible.
+//
+// The reasons are of five kinds, and they are not interchangeable:
+//   * NOT A MUTATION — the command's own CmdFlags say so (read-only, UiState,
+//     UI, SideEffect). A case would measure the HTTP round trip.
+//   * O(1) — it does a constant amount of work regardless of mesh size. A
+//     perf case on it is a row that cannot regress.
+//   * NEEDS A FIXTURE THIS LANE DOES NOT HAVE — it refuses the flat grid in
+//     every operand configuration tried (measured, 2026-08-19).
+//   * DUPLICATE — another case already drives the same kernel.
+//   * MEASURED AND TOO EXPENSIVE TO RUN NIGHTLY — with the number.
+// ---------------------------------------------------------------------------
+struct CmdExclusion {
+    string commandId;
+    string reason;
+}
+
+CmdExclusion[] excludedCommands() {
+    return [
+    // --- not a mutation -------------------------------------------------
+    CmdExclusion("mesh.copy",             "CmdFlags.None, read-only (commands/mesh/copy.d:49-50)"),
+    CmdExclusion("mesh.morph.select",     "CmdFlags.UiState (commands/mesh/morph.d:273)"),
+    CmdExclusion("mesh.weightmap.select", "CmdFlags.UI (commands/mesh/weightmap.d:224)"),
+    CmdExclusion("mesh.remesh.start",     "CmdFlags.SideEffect: starts a background remesher job; "
+                                        ~ "a second repeat throws 'a remesh job is already in flight' "
+                                        ~ "(commands/mesh/remesh.d:157,177)"),
+    CmdExclusion("mesh.remesh.open",      "CmdFlags.SideEffect: opens a UI panel (remesh.d:219)"),
+    CmdExclusion("mesh.select",           "selection state, not geometry; the lane sets selection itself"),
+    CmdExclusion("mesh.subpatch_toggle",  "flips a per-face flag; the real cost is the OSD preview "
+                                        ~ "rebuild in the FRAME loop, which belongs to the `frames` lane"),
+    // --- no-op by construction at its defaults ---------------------------
+    CmdExclusion("mesh.vertex_edit",      "defaults indices:[] before:[] after:[] — no-op by construction"),
+    CmdExclusion("mesh.move_vertex",      "defaults from:(0,0,0) to:(0,0,0) — no-op by construction"),
+    CmdExclusion("mesh.quadruple",        "measured 2026-08-19: 4096 -> 4096 faces, 0 verts moved, "
+                                        ~ "0 marks changed in all four operand configurations — it "
+                                        ~ "reports ok and changes no observable this lane can see"),
+    CmdExclusion("uv.project",            "reports ok and changes no observable /api/model publishes; "
+                                        ~ "UV coordinates need a UV witness — separate task"),
+    // --- O(1) work -------------------------------------------------------
+    CmdExclusion("mesh.addVertex",        "adds exactly one vertex; O(1) regardless of mesh size"),
+    CmdExclusion("mesh.addPoint",         "same family as addVertex; O(1)"),
+    CmdExclusion("mesh.split_edge",       "measured: +1 vertex on one edge; O(1)"),
+    CmdExclusion("mesh.makePolygon",      "measured: +1 face from the selected ring; O(operand), and "
+                                        ~ "the operand is what the caller chose, not the mesh"),
+    CmdExclusion("mesh.tack",             "adds one vertex at a screen position; O(1)"),
+    CmdExclusion("mesh.setPosition",      "writes one coordinate per selected vertex; covered by the "
+                                        ~ "`magnet`/`linearAlign` position cases at lower cost"),
+    CmdExclusion("mesh.centerVertices",   "same kernel family as setPosition; duplicate coverage"),
+    // --- measured, but too expensive to run nightly ----------------------
+    CmdExclusion("mesh.spinEdge",         "MEASURED QUADRATIC 2026-08-19: 145.7 ms at 576 faces, "
+                                        ~ "539.8 ms at 1024, 2374.8 ms at 2304, 7072.5 ms at 4096 — "
+                                        ~ "exponent 1.98 over face count. Extrapolated to the n=316 "
+                                        ~ "lane mesh (99856 faces) that is ~70 MINUTES for one apply, "
+                                        ~ "and the case would need five. This is a finding, not a "
+                                        ~ "gap: it wants its own task with a profile, the way "
+                                        ~ "task 1330 did, not a perf row that eats the nightly"),
+    // --- duplicate coverage ----------------------------------------------
+    CmdExclusion("mesh.hideUnselected",   "same kernel + refreshHiddenDerived path as mesh.hide, "
+                                        ~ "which has a case"),
+    CmdExclusion("mesh.unhideAll",        "clears hide bits; refuses on a mesh with none hidden, and "
+                                        ~ "the derive path is already covered by hide/hideInvert"),
+    CmdExclusion("mesh.mirrorTool",       "measured identical to mesh.mirror (dF +4096 on the n=64 "
+                                        ~ "grid); the tool id and the command drive one kernel"),
+    CmdExclusion("mesh.bridgeTool",       "tool activation; the kernel is mesh.bridge, excluded below"),
+    CmdExclusion("mesh.radialSweepTool",  "tool activation; the kernel is mesh.sweep, excluded below"),
+    CmdExclusion("mesh.bevel_edit",       "re-opens the last bevel for editing; with no prior bevel it "
+                                        ~ "restores an EMPTY snapshot and wipes the mesh (measured "
+                                        ~ "2026-08-19: -4225 verts / -4096 faces from a fresh grid). "
+                                        ~ "Not a perf case — a correctness question for its own task"),
+    CmdExclusion("mesh.remesh",           "the remesher kernel; process-isolated third-party solver, "
+                                        ~ "and it refuses the flat grid"),
+    // --- needs a fixture this lane does not have -------------------------
+    // Every one of these was driven on the n=64 grid in four operand
+    // configurations (polygons whole/half, edges whole, vertices half) on
+    // 2026-08-19 and refused in all four; the ones with an obvious argument
+    // to try were retried with it. The grid is a flat, open, uniformly-wound
+    // quad sheet; these commands want something else.
+    CmdExclusion("mesh.bridge",           "needs two boundary loops"),
+    CmdExclusion("mesh.strokeExtrude",    "needs a `path` (screen stroke)"),
+    CmdExclusion("mesh.screenSlice",      "needs screen-space cut coordinates"),
+    CmdExclusion("mesh.cut",              "clipboard state shared with mesh.paste; a repeat-based "
+                                        ~ "case would measure a different thing each repeat"),
+    CmdExclusion("mesh.paste",            "needs a prior mesh.cut/copy in the same process"),
+    CmdExclusion("mesh.transform",        "requires kind:translate|rotate|scale; the same kernels the "
+                                        ~ "drag matrix above measures under a live gizmo"),
+    CmdExclusion("mesh.align",            "refuses the flat grid in all four operand configurations"),
+    CmdExclusion("mesh.cleanup",          "refuses: nothing degenerate to clean on a fresh grid"),
+    CmdExclusion("mesh.fixOrientation",   "refuses: the grid is already uniformly wound"),
+    CmdExclusion("mesh.julienne",         "refuses the flat grid on both axis pairs tried (0/2 and "
+                                        ~ "the defaults)"),
+    CmdExclusion("mesh.symmetrize",       "refuses the flat grid (no topology to mirror onto)"),
+    CmdExclusion("mesh.reduce",           "refuses the flat grid at ratio:0.5 with and without an operand"),
+    CmdExclusion("mesh.edgeSlice",        "refuses: needs a slice path across selected edges"),
+    CmdExclusion("mesh.edgeJoin",         "refuses: needs two boundary edges to join"),
+    CmdExclusion("mesh.edge_slide",       "interactive; needs a drag offset"),
+    CmdExclusion("mesh.splitFace",        "refuses: needs two vertices on one face"),
+    CmdExclusion("mesh.weldVertexPair",   "refuses: needs exactly two vertices"),
+    CmdExclusion("mesh.sweep",            "measured: with a 3-edge operand it adds 4 verts / 6 faces "
+                                        ~ "— O(operand), not O(mesh); with any larger operand it refuses"),
+    CmdExclusion("vert.join",             "measured shrink at vertices/half, but it is mesh.collapse's "
+                                        ~ "kernel (identical -1984 F / -2079 V), which has a case"),
+    CmdExclusion("vert.merge",            "refuses: the grid has no coincident vertices to merge"),
+    CmdExclusion("poly.unify",            "refuses: the grid has no duplicate faces to unify"),
+    CmdExclusion("mesh.setPart",          "same shape as setMaterial (a per-face uint), which has a "
+                                        ~ "case; and it refuses the empty selection"),
+    CmdExclusion("mesh.edgeCrease.set",   "per-edge weight write; needs an edge operand and publishes "
+                                        ~ "no observable in /api/model"),
+    CmdExclusion("mesh.edgeCrease.clear", "same as edgeCrease.set"),
+    CmdExclusion("mesh.morph.apply",      "needs a morph map to exist"),
+    CmdExclusion("mesh.morph.clear",      "needs a morph map to exist"),
+    CmdExclusion("mesh.morph.create",     "needs a name argument"),
+    CmdExclusion("mesh.morph.remove",     "needs a morph map to exist"),
+    CmdExclusion("mesh.morph.rename",     "needs a morph map to exist"),
+    CmdExclusion("mesh.morph.set",        "needs a morph map to exist"),
+    CmdExclusion("mesh.weightmap.create", "needs a name argument"),
+    CmdExclusion("mesh.weightmap.remove", "needs a weight map to exist"),
+    CmdExclusion("mesh.weightmap.rename", "needs a weight map to exist"),
+    CmdExclusion("mesh.weightmap.set",    "needs a weight map to exist"),
+    // uv.* — twelve commands that need a UV map and a UV witness. /api/model
+    // publishes no UV channel, so a case on any of them would be a row that
+    // cannot fail. That witness is its own task.
+    CmdExclusion("uv.clear",   "needs a UV map; no UV observable in /api/model"),
+    CmdExclusion("uv.copy",    "needs a UV map; no UV observable in /api/model"),
+    CmdExclusion("uv.delete",  "needs a UV map; no UV observable in /api/model"),
+    CmdExclusion("uv.fit",     "needs a UV map; no UV observable in /api/model"),
+    CmdExclusion("uv.flip",    "needs a UV map; no UV observable in /api/model"),
+    CmdExclusion("uv.mirror",  "needs a UV map; no UV observable in /api/model"),
+    CmdExclusion("uv.pack",    "needs a UV map; no UV observable in /api/model"),
+    CmdExclusion("uv.relax",   "needs a UV map; no UV observable in /api/model"),
+    CmdExclusion("uv.rename",  "needs a UV map; no UV observable in /api/model"),
+    CmdExclusion("uv.rotate",  "needs a UV map; no UV observable in /api/model"),
+    CmdExclusion("uv.unwrap",  "needs a UV map; no UV observable in /api/model"),
+    ];
+}
+
+// The bare command id out of a `CmdCase.commandId` argstring — everything
+// before the first space ("mesh.bevel inset:0.02 group:false" -> "mesh.bevel").
+string commandIdOf(string argstring) {
+    foreach (i, ch; argstring)
+        if (ch == ' ') return argstring[0 .. i];
+    return argstring;
+}
+
+// The geometry domain, stated once. Same prefixes the task's classification
+// sweep used, and the same ones doc/command_reference.md groups by.
+bool isGeometryDomainCommand(string id) {
+    return id.startsWith("mesh.") || id.startsWith("poly.")
+        || id.startsWith("edge")  || id.startsWith("vert")
+        || id.startsWith("uv.");
+}
+
+// Invariant L2's finding: geometry-domain commands the running app reports
+// that are in NEITHER the case table nor the exclusion table.
+//
+// The point is the direction of the check. It does not ask "is every case
+// still valid" (which a run answers by itself) but "is every COMMAND still
+// accounted for" — so a geometry command added later cannot slip into the
+// tree unmeasured and unexplained. Prose in a task log does not do this; a
+// list someone maintains by hand does not do this either, because the list
+// and the registry drift apart silently. The registry is asked at run time.
+string[] computeCoverageGap(string[] registryIds) {
+    bool[string] accounted;
+    foreach (c; commandCases())     accounted[commandIdOf(c.commandId)] = true;
+    foreach (e; excludedCommands()) accounted[e.commandId] = true;
+    string[] gap;
+    foreach (id; registryIds) {
+        if (!isGeometryDomainCommand(id)) continue;
+        if (id in accounted) continue;
+        gap ~= id;
+    }
+    gap.sort();
+    return gap;
+}
+
+// The pristine-fixture probe, taken ONCE per run and shared by every
+// `positions`/`marks` case (task 1373).
+//
+// Two facts make one probe enough. (1) Every command case begins with
+// `resetMesh(meshType, n)`, which rebuilds the SAME grid deterministically,
+// so the "before" state is identical for all of them. (2) The comparison
+// that matters is against the PRISTINE mesh, not against the previous
+// repeat: a command whose reset puts the mesh back where it started would
+// pass a repeat-to-repeat comparison while doing nothing at all (this is the
+// same hole the tools lane closed on its side, run.d's runToolCase step 4).
+//
+// It is cached because it is not cheap: measured on this host 2026-08-19,
+// one /api/model probe at n=316 is 1171 ms of GET plus 884 ms of parseJSON
+// plus 13 ms of extraction = 2068 ms. Per-case before+after would be 4.1 s
+// each; sharing the before halves it, and the `counts` cases — every growing
+// and shrinking command, i.e. most of the table — never take a probe at all.
+private MeshProbe g_pristine;
+private bool      g_pristineValid = false;
+private int       g_pristineN     = -1;
+private string    g_pristineType  = "";
+
+MeshProbe pristineProbe(string meshType, int n) {
+    if (g_pristineValid && g_pristineN == n && g_pristineType == meshType)
+        return g_pristine;
+    resetMesh(meshType, n);
+    g_pristine      = meshProbe();
+    g_pristineValid = true;
+    g_pristineN     = n;
+    g_pristineType  = meshType;
+    return g_pristine;
+}
+
+// Compare an after-probe to the pristine fixture and answer BOTH "did this
+// case do the work its witness claims" and "what exactly did it see". The
+// detail string is the point as much as the boolean: a case that goes red
+// has to say which observable stood still, or the next reader re-derives the
+// measurement to find out.
+private struct WitnessVerdict { bool ok; string detail; }
+
+WitnessVerdict judgeWitness(CmdWitness w, ref MeshProbe before, ref MeshProbe after,
+                            long beforeVerts, long beforeFaces,
+                            long afterVerts, long afterFaces) {
+    final switch (w) {
+    case CmdWitness.counts:
+        bool ok = beforeFaces > 0
+               && (afterFaces != beforeFaces || afterVerts != beforeVerts);
+        return WitnessVerdict(ok,
+            format("counts %d verts/%d faces -> %d/%d",
+                   beforeVerts, beforeFaces, afterVerts, afterFaces));
+
+    case CmdWitness.positions: {
+        if (afterVerts != beforeVerts || afterFaces != beforeFaces)
+            return WitnessVerdict(false,
+                format("positions: a deform changed the COUNTS " ~
+                       "(%d/%d -> %d/%d) — wrong witness for this command",
+                       beforeVerts, beforeFaces, afterVerts, afterFaces));
+        // EVERY vertex, not a sample. A 9-index sample cannot see a local
+        // deform (mesh.magnet at a small dist moves a neighbourhood), and
+        // under the lane-health gate a false negative reddens the nightly.
+        // The comparison is ~100k float triples against an array that is
+        // already parsed and resident — 13 ms of the 2068 ms the probe costs.
+        size_t nv = before.pos.length < after.pos.length
+                  ? before.pos.length : after.pos.length;
+        size_t moved = 0;
+        double worst = 0;
+        for (size_t i = 0; i + 2 < nv; i += 3) {
+            double dx = after.pos[i]     - before.pos[i];
+            double dy = after.pos[i + 1] - before.pos[i + 1];
+            double dz = after.pos[i + 2] - before.pos[i + 2];
+            double d  = sqrt(dx * dx + dy * dy + dz * dz);
+            if (d > 1e-5) { moved++; if (d > worst) worst = d; }
+        }
+        return WitnessVerdict(moved > 0,
+            format("positions %d/%d verts moved, max %.4f",
+                   moved, nv / 3, worst));
+    }
+
+    case CmdWitness.marks: {
+        if (afterVerts != beforeVerts || afterFaces != beforeFaces)
+            return WitnessVerdict(false,
+                format("marks: the counts changed (%d/%d -> %d/%d) — wrong " ~
+                       "witness for this command",
+                       beforeVerts, beforeFaces, afterVerts, afterFaces));
+        static size_t diffBool(bool[] a, bool[] b) {
+            size_t n = a.length < b.length ? a.length : b.length, d = 0;
+            foreach (i; 0 .. n) if (a[i] != b[i]) d++;
+            return d;
+        }
+        size_t fh = diffBool(before.faceHidden,   after.faceHidden);
+        size_t vh = diffBool(before.vertexHidden, after.vertexHidden);
+        size_t eh = diffBool(before.edgeHidden,   after.edgeHidden);
+        size_t mt = 0;
+        {
+            size_t n = before.faceMaterial.length < after.faceMaterial.length
+                     ? before.faceMaterial.length : after.faceMaterial.length;
+            foreach (i; 0 .. n)
+                if (before.faceMaterial[i] != after.faceMaterial[i]) mt++;
+        }
+        bool rings = before.ringHash != after.ringHash;
+        bool ok = fh > 0 || vh > 0 || eh > 0 || mt > 0 || rings;
+        return WitnessVerdict(ok,
+            format("marks faceHidden %d, vertexHidden %d, edgeHidden %d, " ~
+                   "faceMaterial %d changed; rings %s",
+                   fh, vh, eh, mt, rings ? "rewritten" : "identical"));
+    }
+    }
 }
 
 CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
     CaseResult res;
     res.name = c.name;
+    res.historyKey = c.name;   // command cases never pin their own size
     res.isCommand = true;
     res.note = c.mode ~ " " ~ c.selection;
-    res.effectiveN = n;   // command cases never pin their own size
+    res.effectiveN = n;
+
+    // A dump-based witness must never be pointed at a case that grows the
+    // mesh: /api/model is main-thread-serialised and the x5-growth commands
+    // reach half a million faces from the n=316 grid. `counts` reads
+    // /api/layers instead, which is three integers. This is an assertion
+    // about the TABLE, checked here rather than trusted, because the failure
+    // mode of getting it wrong is a wedged instance and every later case red.
+    immutable bool wantsProbe = c.witness != CmdWitness.counts;
+
+    MeshProbe before;
+    if (wantsProbe) before = pristineProbe(meshType, n);
 
     double[] applyUs;
     JSONValue last;
     long lastCount = 0;
     long beforeFaces = 0, afterFaces = 0;
     long beforeVerts = 0, afterVerts = 0;
-    long beforeVer = 0, afterVer = 0;
+    MeshProbe after;
 
     foreach (r; 0 .. repeats) {
-        // Rebuild the cage every repeat — delete is destructive.
+        // Rebuild the cage every repeat — most of these are destructive.
         resetMesh(meshType, n);
         // Selection (+ edit mode side effect) is OUTSIDE the measured window.
         if (!selectMode(c.mode, cmdIndices(c, n))) {
@@ -804,14 +1273,11 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
             res.detail = "selection failed";
             return res;
         }
-        // activeLayerInfo, NOT modelInfo: the full /api/model dump times
-        // out the main-thread bridge past ~half a million faces (which the
-        // 5x-growth commands reach from the 100K grid), and the layer
-        // probe also carries mutationVersion for the deform-only sanity.
+        // activeLayerInfo, NOT modelInfo/meshProbe: the counts are needed on
+        // EVERY case including the ones whose result outgrows the dump.
         auto mb = activeLayerInfo();
         beforeFaces = mb.faceCount;
         beforeVerts = mb.vertexCount;
-        beforeVer   = mb.mutationVersion;
         perfReset();
         if (!postCommand(c.commandId)) {
             res.status = CaseStatus.ERROR;
@@ -825,24 +1291,19 @@ CaseResult runCommandCase(ref CmdCase c, int n, string meshType, int repeats) {
         auto ma = activeLayerInfo();
         afterFaces = ma.faceCount;
         afterVerts = ma.vertexCount;
-        afterVer   = ma.mutationVersion;
         last = perf;
+        // The dump is taken around repeat 0 only, and OUTSIDE the measured
+        // window (perfReset..perfRead already closed above).
+        if (wantsProbe && r == 0) after = meshProbe();
     }
 
-    // Mutation sanity: the command must actually touch the cage. Count
-    // changes cover the topology commands in both directions (delete/remove
-    // shrink, bevel/extrude/subdivide grow); the mutationVersion bump covers
-    // the pure deforms (smooth/jitter/quantize move positions without
-    // changing a single count). A "successful" no-op leaves all three equal
-    // and fails the case.
-    bool changed = beforeFaces > 0 &&
-                   (afterFaces != beforeFaces || afterVerts != beforeVerts
-                    || afterVer != beforeVer);
-    if (!changed) {
+    auto v = judgeWitness(c.witness, before, after,
+                          beforeVerts, beforeFaces, afterVerts, afterFaces);
+    res.witnessDetail = v.detail;
+    if (!v.ok) {
         res.status = CaseStatus.ERROR;
-        res.detail = format("no mutation (faces %d→%d, verts %d→%d, ver %d→%d)",
-                            beforeFaces, afterFaces, beforeVerts, afterVerts,
-                            beforeVer, afterVer);
+        res.detail = format("no work witnessed (%s): %s",
+                            c.witness.to!string, v.detail);
         return res;
     }
 
@@ -2054,10 +2515,29 @@ void printTable(CaseResult[] results, int runN) {
 // jsonNum/replicate now live in lib.stats.
 
 void writeResultsJson(string path, string meshType, int n, long faceCount,
-                      string viewport, int repeats, CaseResult[] results) {
+                      string viewport, int repeats, CaseResult[] results,
+                      string[] filter, string[] coverageGap) {
     auto a = appender!string();
     a.put("{\n");
     a.put(format(`  "buildType": "perf",` ~ "\n"));
+    // The run's name-substring filter, empty for a full run (task 1373).
+    // `--lane-health` needs it: "every declared case is present" is only a
+    // fair question of a run that was asked for every declared case.
+    a.put(`  "filter": [`);
+    foreach (i, f; filter) {
+        if (i) a.put(", ");
+        a.put(format(`"%s"`, f.replaceQuotes));
+    }
+    a.put("],\n");
+    // Geometry-domain commands that are in neither the case table nor the
+    // exclusion table — invariant L2's finding, carried here so the gate step
+    // can read it without re-launching the app.
+    a.put(`  "coverageGap": [`);
+    foreach (i, g; coverageGap) {
+        if (i) a.put(", ");
+        a.put(format(`"%s"`, g.replaceQuotes));
+    }
+    a.put("],\n");
     a.put(format(`  "compiler": "ldc2 1.42.0",` ~ "\n"));
     a.put(format(`  "host": "%s",` ~ "\n", Socket.hostName));
     a.put(format(`  "meshType": "%s",` ~ "\n", meshType));
@@ -2073,9 +2553,17 @@ void writeResultsJson(string path, string meshType, int n, long faceCount,
     foreach (i, r; results) {
         a.put("    {\n");
         a.put(format(`      "name": "%s",` ~ "\n", r.name));
+        if (r.historyKey.length && r.historyKey != r.name)
+            a.put(format(`      "historyKey": "%s",` ~ "\n", r.historyKey));
         a.put(format(`      "note": "%s",` ~ "\n", r.note));
         a.put(format(`      "status": "%s",` ~ "\n", r.status.to!string));
         if (r.status == CaseStatus.OK) {
+            // What proved this row did work. Emitted on OK rows only — the
+            // non-OK branch already carries the same information inside
+            // `detail` (task 1373).
+            if (r.witnessDetail.length)
+                a.put(format(`      "witness": "%s",` ~ "\n",
+                             r.witnessDetail.replaceQuotes));
             // The size THIS case ran at (task 1359). Emitted for every OK
             // case, so a consumer never has to decide whether the run
             // header's `n` applies to this row — it applies only when the
@@ -2136,7 +2624,11 @@ void writeBaselineJson(string path, RunHeader h, CaseResult[] results) {
     lib.baseline.BaselineCase[] rows;
     foreach (r; results) {
         if (r.status != CaseStatus.OK) continue;  // only OK cases are baselined
-        rows ~= lib.baseline.BaselineCase(r.name, r.kernelMedianUs, r.kernelP95Us,
+        // `historyKey`, not `name` — a pinned case must not share a baseline
+        // row with the same case measured at the run's size (task 1373 F1.7;
+        // without this the hole simply moves from the history to the absolute
+        // lane, which is objection O5 of the plan review).
+        rows ~= lib.baseline.BaselineCase(r.historyKey, r.kernelMedianUs, r.kernelP95Us,
                                           r.pipeMedianUs, r.dominantStage,
                                           r.vertsTouched);
     }
@@ -2172,8 +2664,60 @@ struct Invariant {
 }
 
 // Run the relative invariants over the results. Per-tool where applicable.
-Invariant[] checkInvariants(CaseResult[] results) {
+//
+// `requestedCases` and `coverageGap` are the two LANE-LEVEL clauses (task
+// 1373). Every per-case clause below opens with `if (r.status !=
+// CaseStatus.OK) continue;`, and `failures` counts only failed invariants —
+// so an ERROR row contributes nothing to the exit code and a case that
+// stopped working prints one line and lets the lane pass. That is the exact
+// defect this task exists to close, and it cannot be closed from inside a
+// per-case loop, only from outside it.
+Invariant[] checkInvariants(CaseResult[] results, size_t requestedCases,
+                            string[] coverageGap) {
     Invariant[] inv;
+
+    // L1 — LANE-LEVEL: this lane produced the cases it was asked for.
+    // Copied in shape from `checkToolInvariants`'s L1 (task 1370), including
+    // its hard-won `ok > 0` conjunct: subtracting SKIP from the expected OK
+    // count re-opens the hole in the arm nobody mutates, because a run that
+    // SKIPs everything then has ok=0, expectOk=0, err=0 and every other
+    // conjunct true — a green lane over zero measurements.
+    //
+    // SKIP is legitimate here for one reason only: a case that pins a grid
+    // size (`Case.meshN`) under `--subdivcube`.
+    {
+        size_t ok = 0, err = 0, skip = 0;
+        foreach (r; results) final switch (r.status) {
+            case CaseStatus.OK:    ok++;   break;
+            case CaseStatus.SKIP:  skip++; break;
+            case CaseStatus.ERROR: err++;  break;
+        }
+        immutable size_t expectOk = requestedCases >= skip ? requestedCases - skip : 0;
+        bool pass = err == 0 && ok == expectOk && ok > 0 && requestedCases > 0;
+        inv ~= Invariant("L1", "ops lane produced every case it was asked for",
+            pass,
+            format("requested=%d, OK=%d (expected %d), SKIP=%d, ERROR=%d%s",
+                   requestedCases, ok, expectOk, skip, err,
+                   ok == 0 ? " — NOTHING was measured" : ""));
+    }
+
+    // L2 — COVERAGE: every geometry-domain command the app registers is
+    // either measured by a case or explicitly excluded with a reason.
+    //
+    // The list comes from the running app's /api/registry, not from a table
+    // in this file, so the two cannot drift. A command added later has to go
+    // through one of the two doors; "the rest are listed in the task log" is
+    // prose that nobody executes.
+    {
+        bool pass = coverageGap.length == 0;
+        inv ~= Invariant("L2",
+            "every geometry command is covered or explicitly excluded",
+            pass,
+            pass ? format("%d cases, %d exclusions, 0 unaccounted",
+                          commandCases().length, excludedCommands().length)
+                 : format("%d unaccounted: %s",
+                          coverageGap.length, coverageGap.join(", ")));
+    }
 
     // I1 — falloff loop bounded: radial kernelApply ≤ K1 × baseline (per tool).
     foreach (tool; ["move", "rotate", "scale"]) {
@@ -2758,12 +3302,15 @@ AbsRegression[] checkAbsolute(CaseResult[] results, Baseline base,
         // their moving-set size (and thus kernelApply) varies run-to-run and is
         // not a stable absolute metric — skip them (snap is still in the table).
         if (r.name.canFind("snap=")) continue;
-        auto p = r.name in base.byName;
+        // Looked up (and reported) by `historyKey`: baseline.json is written
+        // under that key, so a pinned case finds its own row and not the
+        // bare-named one (task 1373 F1.7).
+        auto p = r.historyKey in base.byName;
         if (p is null) continue;   // new case absent from baseline — not a regression
         if (p.kernelMedianUs < ABS_NOISE_FLOOR_US) continue;  // noise floor
         double g = r.kernelMedianUs / p.kernelMedianUs - 1.0;
         if (g > tolerance)
-            regs ~= AbsRegression(r.name, "kernelApply",
+            regs ~= AbsRegression(r.historyKey, "kernelApply",
                                   p.kernelMedianUs, r.kernelMedianUs, g);
     }
     return regs;
@@ -3615,6 +4162,131 @@ int runFlameSubcommand(string target, string meshType, int meshParam,
 }
 
 // ---------------------------------------------------------------------------
+// `--lane-health` — the narrow gate (task 1373 F1.4).
+//
+// WHY IT EXISTS. The `ops` step's own exit code gates nothing: the nightly
+// runs it under `continue-on-error: true` and the job's `Gate` expression
+// aggregates only `vslast`, `tools` and `frames` (.github/workflows/
+// perf.yaml). On top of that, a case that errors is dropped from the history
+// map before it is written, and `checkVsLast` iterates the keys of the
+// CURRENT run — so the direction "this key was here yesterday and is gone
+// today" is never walked. A perf case that stops working therefore costs
+// nightly runtime, reads as coverage, and reddens nothing. Task 1460 holds
+// the general problem; this closes the third of its three holes, narrowly,
+// because without it every case this task adds is unmeasurable in the same
+// way.
+//
+// WHY IT CAN BE GATING FROM DAY ONE, unlike the `ops` step it sits next to:
+// everything it checks is a machine-stable fact about the COMPOSITION of the
+// run — a status string, a set of names, a list of command ids. None of it is
+// a hardware-bound budget and none of it has a two-month-stale baseline to be
+// wrongly red against. That is the same argument the `tools` lane's step
+// comment makes for itself.
+//
+// It is a PURE FILE READ. No build, no instance, no port — so it cannot kill
+// a sibling lane's vibe3d and it costs milliseconds.
+int runLaneHealth() {
+    string path = buildPath(g_repoRoot, "tools", "perf", "results.json");
+    writeln("=== lane health (", path, ") ===");
+    if (!exists(path)) {
+        writeln("  [FAIL] results.json is absent — the ops run did not finish.");
+        writeln("         (`ops` removes the previous file before measuring, so");
+        writeln("          an absent file means THIS run produced nothing, not");
+        writeln("          that nobody ever ran one.)");
+        return 1;
+    }
+
+    JSONValue j;
+    try {
+        j = parseJSON(cast(string)std.file.readText(path));
+    } catch (Exception e) {
+        writeln("  [FAIL] results.json is not parseable: ", e.msg);
+        return 1;
+    }
+
+    int failures = 0;
+
+    // The run's own filter. "Every declared case is present" is only a fair
+    // question of a run that was asked for all of them.
+    string[] filter;
+    if ("filter" in j)
+        foreach (v; j["filter"].array) filter ~= v.str;
+    string meshType = ("meshType" in j) ? j["meshType"].str : "";
+
+    // ---- 1. every row is OK -------------------------------------------
+    bool[string] seen;
+    size_t ok = 0;
+    foreach (c; j["cases"].array) {
+        string nm  = c["name"].str;
+        string st  = c["status"].str;
+        seen[nm] = true;
+        if (st == "OK") { ok++; continue; }
+        // A SKIP is legitimate for exactly one reason: a case that pins a
+        // grid size, under a run that is not on a grid. That is the same
+        // distinction runCase itself makes, and it is keyed on the run
+        // header rather than on the detail text so it cannot be spoofed by
+        // a message.
+        if (st == "SKIP" && meshType != "grid") {
+            writefln("  [ok]   %-30s SKIP (meshType=%s) — %s",
+                     nm, meshType, ("detail" in c) ? c["detail"].str : "");
+            continue;
+        }
+        writefln("  [FAIL] %-30s %s — %s", nm, st,
+                 ("detail" in c) ? c["detail"].str : "(no detail)");
+        failures++;
+    }
+    writefln("  %d rows, %d OK", j["cases"].array.length, ok);
+
+    // ---- 2. every case this binary DECLARES is present -----------------
+    //
+    // The expected list comes from the DECLARATION (casesForTool x3 +
+    // commandCases), never from yesterday's run. That is deliberate and it
+    // is the difference between this check and the one trap-2 of task 1460
+    // warns about: deleting a case on purpose removes the declaration and
+    // the row together, so an intentional deletion is silent, while a case
+    // that vanishes at RUNTIME — its command renamed away, its selection
+    // rejected, the instance wedged before it ran — is loud.
+    if (filter.length == 0) {
+        string[] declared;
+        foreach (t; [Tool.move, Tool.rotate, Tool.scale])
+            foreach (c; casesForTool(t)) declared ~= c.name;
+        foreach (c; commandCases()) declared ~= c.name;
+        size_t missing = 0;
+        foreach (nm; declared) {
+            if (nm in seen) continue;
+            writefln("  [FAIL] declared case never reported a row: %s", nm);
+            missing++;
+        }
+        if (missing == 0)
+            writefln("  all %d declared cases present", declared.length);
+        failures += cast(int)missing;
+    } else {
+        writefln("  (declared-coverage check skipped: run was filtered by %s)",
+                 filter.join(", "));
+    }
+
+    // ---- 3. coverage gap (invariant L2's finding) ----------------------
+    if ("coverageGap" in j) {
+        auto gap = j["coverageGap"].array;
+        if (gap.length == 0) {
+            writeln("  coverage: 0 geometry commands unaccounted");
+        } else {
+            foreach (g; gap)
+                writefln("  [FAIL] geometry command neither covered nor " ~
+                         "excluded: %s", g.str);
+            failures += cast(int)gap.length;
+        }
+    } else {
+        writeln("  [FAIL] results.json carries no `coverageGap` — it was " ~
+                "written by a run.d older than task 1373");
+        failures++;
+    }
+
+    writeln(failures == 0 ? "  LANE HEALTH: PASS" : "  LANE HEALTH: FAIL");
+    return failures == 0 ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -3637,6 +4309,7 @@ int main(string[] args) {
     bool   trend = false;
     int    trendLast = 20;
     bool   vsLast = false;
+    bool   laneHealth = false;
     // NaN = "the operator did not say", which is a different state from "the
     // operator asked for the default value" — the snap threshold below is
     // resolved from it (task 1358).
@@ -3662,6 +4335,7 @@ int main(string[] args) {
         "tolerance",       "absolute-regression threshold as a fraction (default 0.30 = +30%)", &tolerance,
         "update-frames-baseline", "write tools/perf/frames_baseline.json from this `frames` run", &updateFramesBaseline,
         "trend",     "print per-case median drift from tools/perf/history/<host>.jsonl and exit", &trend,
+        "lane-health", "read tools/perf/results.json and exit nonzero if any case is not OK, if a case this binary declares is missing from it, or if a geometry command is neither covered nor excluded", &laneHealth,
         "vs-last",   "compare the latest history entry against the previous comparable run and exit nonzero on any regression (the day-over-day gate for scheduled runs)", &vsLast,
         "vs-last-threshold", "`--vs-last` regression threshold as a fraction (default 0.20 = +20%)", &vsLastThreshold,
         "vs-last-snap-threshold", "`--vs-last` threshold for the `#snapQuery` keys, which are measurably noisier (default 0.60 = +60%; lowering --vs-last-threshold below it lowers this too)", &vsLastSnapThreshold,
@@ -3728,6 +4402,12 @@ int main(string[] args) {
                                              : "localhost,127.0.0.1";
         }
     }
+
+    // `--lane-health` is a pure file read (task 1373 F1.4) and short-circuits
+    // here for the same reason `--trend` does: it must not build, must not
+    // kill a sibling lane's instance, and must not launch one.
+    if (laneHealth)
+        return runLaneHealth();
 
     // `--trend` needs no vibe3d (pure history-file read) and short-circuits
     // before killStaleVibe/launchVibe/dubBuildPerf (task 0197 Phase 4).
@@ -3830,6 +4510,20 @@ int main(string[] args) {
         return 1;
     }
 
+    // Drop the previous run's results.json BEFORE measuring anything.
+    //
+    // This is what makes `--lane-health` a gate on THIS run rather than on
+    // whatever file happened to be lying around. The two are separate
+    // processes in the nightly (`ops` then `lanehealth`), so an `ops` that
+    // dies — segfault, wedged instance, killed on the job timeout — would
+    // otherwise leave yesterday's green file in place and the health step
+    // would certify a run that never happened. With the file removed here,
+    // a dead `ops` leaves nothing and `--lane-health` says so.
+    {
+        string stale = buildPath(g_repoRoot, "tools", "perf", "results.json");
+        if (exists(stale)) std.file.remove(stale);
+    }
+
     killStaleVibe(port);
     string logPath = "/tmp/vibe3d_perf.log";
     writefln("Launching vibe3d --test --perf --http-port %d --viewport %s ...",
@@ -3873,9 +4567,20 @@ int main(string[] args) {
 
     printTable(results, meshParam);
 
+    // Coverage (invariant L2) is asked of the LIVE app — the registry is the
+    // same source doc/command_reference.md is generated from — so it has to
+    // be computed here, while the instance is still up, and carried into both
+    // results.json and the invariant list.
+    string[] coverageGap;
+    try {
+        coverageGap = computeCoverageGap(registryCommands());
+    } catch (Exception e) {
+        stderr.writeln("warning: /api/registry read failed: ", e.msg);
+    }
+
     string outPath = buildPath(g_repoRoot, "tools", "perf", "results.json");
     writeResultsJson(outPath, meshType, meshParam, mi.faceCount,
-                     viewport, repeats, results);
+                     viewport, repeats, results, requested, coverageGap);
     writeln("\nWrote ", outPath);
 
     // -------------------------------------------------------------------
@@ -3898,7 +4603,8 @@ int main(string[] args) {
     // 1. Relative invariants — ALWAYS run (machine-stable).
     writeln();
     writeln("=== relative invariants (machine-stable) ===");
-    auto invs = checkInvariants(results);
+    auto invs = checkInvariants(results, cases.length + cmdCases.length,
+                                coverageGap);
     int invFail = 0;
     foreach (iv; invs) {
         writefln("  [%s] %-4s %-52s  %s",
@@ -3966,7 +4672,7 @@ int main(string[] args) {
         double[string] kernelMedianByCase;
         foreach (r; results) {
             if (r.status != CaseStatus.OK) continue;
-            kernelMedianByCase[r.name] = r.kernelMedianUs;
+            kernelMedianByCase[r.historyKey] = r.kernelMedianUs;
             // Task 1350 — the snap query's own median, under a SECOND key.
             //
             // Why it has to be in history at all: snap cases are excluded from
@@ -4008,7 +4714,7 @@ int main(string[] args) {
             // keys now watch. Only `grid` and `workplane` — which never had a
             // geometric walk at all — fall in the skipped band.
             if (r.name.canFind("snap=")) {
-                kernelMedianByCase[r.name ~ "#snapQuery"] = r.snapQueryMedianUs;
+                kernelMedianByCase[r.historyKey ~ "#snapQuery"] = r.snapQueryMedianUs;
                 // Task 1351. `#snapQuery` times the WHOLE walk — candidate
                 // grid, election, mask and all — so a mask build that doubles
                 // while the walk gets cheaper elsewhere reads as no change.
@@ -4022,8 +4728,16 @@ int main(string[] args) {
                 // business in a map of microsecond medians whose gate carries a
                 // 200 us floor. Two different questions, two different
                 // instruments.
+                //
+                // Task 1373 merge: both sub-keys hang off `historyKey`, not
+                // `name`. `historyKey` carries the case's DECLARED `meshN` as
+                // an `@nNN` suffix, so a case pinned to one size cannot file
+                // under two keys depending on the run's `--n` — the defect
+                // 1373's M8 pins. Keying one sub-metric by `name` and the
+                // other by `historyKey` would split a single case's history
+                // across two rows the moment either lane's pin changed.
                 if (r.snapVisMaskCount > 0)
-                    kernelMedianByCase[r.name ~ "#snapVisMask"] =
+                    kernelMedianByCase[r.historyKey ~ "#snapVisMask"] =
                         r.snapVisMaskMedianUs;
             }
         }

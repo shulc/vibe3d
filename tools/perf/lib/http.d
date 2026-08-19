@@ -300,3 +300,104 @@ void settleAfterPlay() { Thread.sleep(150.msecs); }
 // positive. `--perf` runs uncapped (no vsync, no SDL_Delay), so this window
 // covers many dozens of frames.
 void settleAfterReset() { Thread.sleep(200.msecs); }
+
+// ---------------------------------------------------------------------------
+// MeshProbe — ONE /api/model dump, ONE parse, and everything a command-case
+// work-witness needs out of it (task 1373).
+//
+// WHY IT IS ONE CALL. `lib/drag.d`'s `vertexPos` answers "where is vertex i"
+// by fetching and parsing the WHOLE dump; asking it for a second index pays
+// for the dump again. At n=316 that dump is 13.2 MB and costs 1171 ms to GET
+// plus 884 ms to parse (measured 2026-08-19, this host, median of 3), so a
+// witness built on `vertexPos` would be quadratic in the number of vertices
+// it looks at. This one pulls the payload across once and hands back plain
+// arrays: extracting all of it out of the parsed tree costs 13 ms.
+//
+// WHAT IT DELIBERATELY DOES NOT CARRY: `mutationVersion`. `Mesh.commitChange`
+// bumps it unconditionally (source/mesh.d:1241-1243) and kernels call it in
+// their tail whether or not a single vertex moved, so it witnesses "a command
+// ran", never "a command did work" — see runCommandCase's witness comment.
+//
+// COST DISCIPLINE FOR CALLERS: never probe a case that GROWS the mesh. The
+// dump is main-thread-serialised and blows past the bridge's patience around
+// half a million faces, which the x5-growth commands reach from the n=316
+// grid. Growing/shrinking cases are witnessed by /api/layers counts instead,
+// which is both cheaper and the right observable for them.
+struct MeshProbe {
+    bool   valid;
+    long   vertexCount, faceCount;
+    float[] pos;           // 3 floats per vertex, flat (x,y,z)
+    bool[]  faceHidden;
+    bool[]  vertexHidden;
+    bool[]  edgeHidden;
+    uint[]  faceMaterial;
+    ulong   ringHash;      // FNV-1a over every face's vertex-index ring, in
+                           // ring ORDER — so a command that only re-winds a
+                           // polygon (mesh.flip) still moves it.
+}
+
+MeshProbe meshProbe() {
+    import std.json : JSONType;
+    // Same patience as activeLayerInfo: right after a big command the main
+    // thread can sit inside one frame for seconds and the bridge answers 500.
+    string body_;
+    for (int attempt = 0; ; ++attempt) {
+        try { body_ = cast(string)get(g_baseUrl ~ "/api/model"); break; }
+        catch (Exception e) {
+            if (attempt >= 180) throw e;
+            Thread.sleep(500.msecs);
+        }
+    }
+    auto j = parseJSON(body_);
+    MeshProbe p;
+    p.vertexCount = j["vertexCount"].integer;
+    p.faceCount   = j["faceCount"].integer;
+
+    auto vs = j["vertices"].array;
+    p.pos = new float[3 * vs.length];
+    foreach (i, v; vs) {
+        auto c = v.array;
+        p.pos[3 * i + 0] = cast(float)c[0].floating;
+        p.pos[3 * i + 1] = cast(float)c[1].floating;
+        p.pos[3 * i + 2] = cast(float)c[2].floating;
+    }
+
+    static bool[] boolArray(JSONValue node) {
+        auto a = node.array;
+        auto r = new bool[a.length];
+        foreach (i, v; a) r[i] = v.type == JSONType.true_;
+        return r;
+    }
+    p.faceHidden   = boolArray(j["faceHidden"]);
+    p.vertexHidden = boolArray(j["vertexHidden"]);
+    p.edgeHidden   = boolArray(j["edgeHidden"]);
+
+    auto fm = j["faceMaterial"].array;
+    p.faceMaterial = new uint[fm.length];
+    foreach (i, v; fm) p.faceMaterial[i] = cast(uint)v.integer;
+
+    ulong h = 1469598103934665603UL;             // FNV-1a offset basis
+    foreach (f; j["faces"].array) {
+        foreach (idx; f.array) {
+            h ^= cast(ulong)idx.integer;
+            h *= 1099511628211UL;                // FNV prime
+        }
+        h ^= 0xFFFF_FFFF_FFFF_FFFFUL;            // ring separator
+        h *= 1099511628211UL;
+    }
+    p.ringHash = h;
+    p.valid = true;
+    return p;
+}
+
+// Every registered command id, from GET /api/registry — the SAME source
+// doc/command_reference.md is generated from. Read by the perf lane's L2
+// coverage invariant, so "a geometry command exists" is a fact the harness
+// asks the app for rather than a list someone maintains by hand.
+string[] registryCommands() {
+    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/registry"));
+    string[] ids;
+    if ("commands" !in j) return ids;
+    foreach (v; j["commands"].array) ids ~= v.str;
+    return ids;
+}
