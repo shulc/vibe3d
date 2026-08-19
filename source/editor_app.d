@@ -614,6 +614,12 @@ struct EditorApp {
     //      #1/#2/#3/#4 the opponent caught -- see task doc) ----
     SubpatchPreview* subpatchPreviewPtr;
     @property ref SubpatchPreview subpatchPreview() { return *subpatchPreviewPtr; }
+    // Task 1500 — what the GPU buffers currently hold (cage vs preview).
+    // Pointer-backed for the same reason as the rest of this block: it is a
+    // main() local that a moved span has to READ, and `/api/pick` is the
+    // second of M-INV's two consumers.
+    bool* gpuUploadedPreviewPtr;
+    @property ref bool gpuUploadedPreview() { return *gpuUploadedPreviewPtr; }
     Tool* activeToolPtr;
     @property ref Tool activeTool() { return *activeToolPtr; }
     bool* runningPtr;

@@ -1684,6 +1684,18 @@ struct FrameScenarioResult {
     long       subpatchTopoHit  = -1;  // Cat.subpatchTopoHit.count
     long       subpatchLevel    = -1;  // Cat.subpatchLevelChosen.sum (== the
                                        // level, given the gated count == 1)
+    // ---- Task 1500: the WORK THAT MOVED OFF THE FRAME LOOP ---------------
+    // The preview build now runs on a worker thread. `stats` therefore stops
+    // seeing its wall time, and `stats.gcAllocBytes` stops seeing its
+    // allocation (it is `GC.allocatedInCurrentThread`, main-thread-local).
+    // Left there, this lane would report a multi-fold speed-up and a ~2x
+    // allocation win for a change that removed no work at all. These three
+    // are the window DELTAS that keep both halves of F-I9 measuring the same
+    // quantity they measured before, and F-I10 measuring that the work is
+    // still being done somewhere.
+    long       subpatchWorkerNs         = -1;  // wall ns inside the worker
+    long       subpatchWorkerAllocBytes = -1;  // GC bytes allocated there
+    long       subpatchPendingFrames    = -1;  // frames drawn while it ran
 }
 
 // Number of per-gesture move-drag undo entries `undo-spam` builds before
@@ -1803,6 +1815,31 @@ enum int K_TAB_COLD_CALIB_LEVEL = 1;
 //              it has been silently relaxed, which is the failure SF-6 named.
 // Both invocation contexts fit inside; neither edge is reachable by host load
 // at the measured spread.
+// The "the work did not shrink" floor for F-I10 (task 1500).
+//
+// Task 1500 moves the preview build off the frame loop and promises that the
+// COST IS IDENTICAL — the same stencil table, the same cage, the same level.
+// That promise needs a floor, or the change would be indistinguishable from
+// one that made the build cheaper by doing less of it.
+//
+// MEASURED, grid n=316, 2026-08-19: `subpatchWorkerBuildNs` = 186 825 500 ns
+// (186.8 ms). ONE measurement, so the floor sits at roughly half of it — the
+// job is to catch a build that VANISHED or collapsed, not to gate on host
+// jitter, and this host runs several lanes at once.
+//
+// The number is worth reading twice, because it corrects an assumption task
+// 1500 carried in: at this cage the whole preview build is ~0.19 s, NOT the
+// ~1-2 s that 1374's "4.45-4.96 us per limit face" suggests. That figure
+// describes the whole Tab FRAME, and most of that frame is the screen-space
+// cache + face-pick rebuild which FOLLOWS the build — measured on the
+// pre-change tree at 1754 ms of a 2002 ms worst frame.
+//
+// A FLOOR AND NOT A BAND, deliberately: a build that got SLOWER is an
+// ordinary timing regression and the timing lane already reports it. A build
+// that got much faster, in a task whose whole claim is that no work went
+// away, is a claim that has to be looked at.
+enum long K_TAB_COLD_MIN_BUILD_NS = 90_000_000;   // 0.09 s; measured 186.8 ms
+
 enum long K_TAB_COLD_CHROME_BYTES = 211_168;
 enum int  K_TAB_COLD_FRAMES_LO    = 40;
 enum int  K_TAB_COLD_FRAMES_HI    = 110;
@@ -2135,6 +2172,12 @@ FrameScenarioResult runTabCold(int n, string meshType) {
     settleAfterReset();
 
     perfReset();
+    // Task 1500: the worker's counters are process-cumulative and
+    // `/api/perf/reset` (HTTP thread) deliberately does not reach into
+    // SubpatchPreview -- writing main-thread state from the HTTP thread to
+    // make a counter resettable would be a race introduced for a reporting
+    // convenience. The window's share is a DIFFERENCE instead.
+    immutable auto asyncBefore = fetchSubpatchAsync();
     framesReset();      // the window opens HERE -- one call before the toggle
 
     if (!postCommand("mesh.subpatch_toggle")) {
@@ -2197,6 +2240,16 @@ FrameScenarioResult runTabCold(int n, string meshType) {
     res.subpatchTopoMiss = perfCounterCount(perf, "subpatchTopoMiss");
     res.subpatchTopoHit  = perfCounterCount(perf, "subpatchTopoHit");
     res.subpatchLevel    = perfCounterSum  (perf, "subpatchLevelChosen");
+
+    immutable auto asyncAfter = fetchSubpatchAsync();
+    if (!asyncAfter.empty && !asyncBefore.empty) {
+        res.subpatchWorkerNs =
+            asyncAfter.buildNsTotal    - asyncBefore.buildNsTotal;
+        res.subpatchWorkerAllocBytes =
+            asyncAfter.allocBytesTotal - asyncBefore.allocBytesTotal;
+        res.subpatchPendingFrames =
+            asyncAfter.pendingFrames   - asyncBefore.pendingFrames;
+    }
 
     res.status = CaseStatus.OK;
     return res;
@@ -2445,6 +2498,14 @@ void writeFramesResultsJson(string path, string meshType, int n, long faceCount,
                 a.put(format(`      "subpatchTopoMiss": %d,` ~ "\n", r.subpatchTopoMiss));
                 a.put(format(`      "subpatchTopoHit": %d,` ~ "\n", r.subpatchTopoHit));
                 a.put(format(`      "subpatchLevel": %d,` ~ "\n", r.subpatchLevel));
+            }
+            // Task 1500 — the work that moved off the frame loop, reported
+            // whether or not F-I9/F-I10 gate on it, so a reader comparing two
+            // runs can see the split rather than infer it.
+            if (r.subpatchWorkerNs >= 0) {
+                a.put(format(`      "subpatchWorkerBuildNs": %d,` ~ "\n", r.subpatchWorkerNs));
+                a.put(format(`      "subpatchWorkerAllocBytes": %d,` ~ "\n", r.subpatchWorkerAllocBytes));
+                a.put(format(`      "subpatchPendingFrames": %d,` ~ "\n", r.subpatchPendingFrames));
             }
             a.put(format(`      "steadyMaxAllocBytes": %d` ~ "\n", r.stats.steadyMaxAllocBytes));
         } else {
@@ -3191,12 +3252,38 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode,
     {
         auto r = findFrameScenario(results, "tab-cold");
         if (r !is null && r.status == CaseStatus.OK) {
-            immutable bool byteOk  = r.stats.gcAllocBytes <= K_TAB_COLD_ALLOC_BYTES;
-            immutable bool frameOk = r.stats.frameCount >= K_TAB_COLD_FRAMES_LO
-                                  && r.stats.frameCount <= K_TAB_COLD_FRAMES_HI;
+            // ---- Task 1500: BOTH HALVES ARE RE-AIMED, NOT RE-CALIBRATED ---
+            //
+            // BYTES. `stats.gcAllocBytes` is `GC.allocatedInCurrentThread`
+            // and is MAIN-THREAD-ONLY (perf_probe.d). Moving the build to a
+            // worker takes its allocation out from under this bound — so
+            // "re-calibrate the threshold to the new number" would lower the
+            // gate to a post-move value and blind it to the build's
+            // allocation FOREVER, which is exactly the instrument-stopped-
+            // seeing-the-work failure this lane keeps catching. The gate goes
+            // on the SUM main+worker instead, and the CONSTANT DOES NOT MOVE.
+            //
+            // FRAMES. The window opens before the toggle and closes after the
+            // hover sweep, so under asynchrony it now CONTAINS the frames
+            // drawn while the build ran — which is the whole point of the
+            // task, and which makes the raw count proportional to build
+            // duration. The band's meaning (chrome frames, decoupled from
+            // build time) is restored by SUBTRACTING `pendingFrames`, so the
+            // 40/110 edges keep the meaning they were derived with. The
+            // subtrahend is reported separately, so it can hide nothing.
+            immutable long workerBytes = r.subpatchWorkerAllocBytes > 0
+                                       ? r.subpatchWorkerAllocBytes : 0;
+            immutable long pendFrames  = r.subpatchPendingFrames > 0
+                                       ? r.subpatchPendingFrames : 0;
+            immutable long totalBytes  = r.stats.gcAllocBytes + workerBytes;
+            immutable long chromeFrames = r.stats.frameCount - pendFrames;
+            immutable bool byteOk  = totalBytes <= K_TAB_COLD_ALLOC_BYTES;
+            immutable bool frameOk = chromeFrames >= K_TAB_COLD_FRAMES_LO
+                                  && chromeFrames <= K_TAB_COLD_FRAMES_HI;
             bool ok = atCalibrationPoint ? (byteOk && frameOk) : true;
             string label = atCalibrationPoint
-                ? format("tab-cold: window GC alloc <= %d B, %d..%d frames",
+                ? format("tab-cold: window GC alloc (main+worker) <= %d B, "
+                         ~ "%d..%d non-pending frames",
                          K_TAB_COLD_ALLOC_BYTES,
                          K_TAB_COLD_FRAMES_LO, K_TAB_COLD_FRAMES_HI)
                 : format("tab-cold: window GC alloc + frames (RECORDED, "
@@ -3211,21 +3298,69 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode,
             // THIS. Deliberately not the gate: swapping F-I9's subject is a
             // change of what the lane promises, and belongs to whoever owns
             // that promise, not to a review fix.
-            immutable long residual = r.stats.gcAllocBytes
-                                    - r.stats.frameCount * K_TAB_COLD_CHROME_BYTES;
+            immutable long residual = totalBytes
+                                    - chromeFrames * K_TAB_COLD_CHROME_BYTES;
             inv ~= Invariant("F-I9", label,
-                ok, format("gcAllocBytes=%d B over %d frames "
-                           ~ "(chrome-free %d B, worst frame %d B — both "
-                           ~ "RECORDED non-gating)%s%s",
-                           r.stats.gcAllocBytes, r.stats.frameCount,
+                ok, format("gcAllocBytes=%d B main + %d B worker = %d B over "
+                           ~ "%d frames (%d pending, %d chrome; chrome-free "
+                           ~ "%d B, worst frame %d B — both RECORDED "
+                           ~ "non-gating)%s%s",
+                           r.stats.gcAllocBytes, workerBytes, totalBytes,
+                           r.stats.frameCount, pendFrames, chromeFrames,
                            residual, r.stats.worst.gcAllocBytes,
                            (ok || byteOk) ? "" : "  <-- OVER the byte bound",
                            (ok || frameOk) ? ""
-                              : format("  <-- frame count outside %d..%d: the "
-                                       ~ "measured WINDOW is not the one this "
-                                       ~ "byte bound was calibrated on",
+                              : format("  <-- non-pending frame count outside "
+                                       ~ "%d..%d: the measured WINDOW is not "
+                                       ~ "the one this byte bound was "
+                                       ~ "calibrated on",
                                        K_TAB_COLD_FRAMES_LO,
                                        K_TAB_COLD_FRAMES_HI)));
+        }
+    }
+
+    // F-I10 — GATING at the calibration point. tab-cold: the build still
+    // HAPPENS, and it happens OFF the frame loop (task 1500).
+    //
+    // THIS IS THE INVARIANT THAT REFUSES TO CELEBRATE THE CHANGE. Moving the
+    // stencil build to a worker collapses `tab-cold`'s worst frame by design;
+    // with nothing else asserted, a later edit that quietly made the build
+    // synchronous again — or removed it — would look like a further
+    // improvement in every number this lane prints. Two counters, and neither
+    // is written at the same site as the other:
+    //   workerNs > 0    — the work was DONE, and done on the worker thread.
+    //   pendingFrames >= 1 — the main loop drew at least one frame while it
+    //                     ran, i.e. the window was not frozen.
+    // A silent return to synchronous zeroes BOTH.
+    //
+    // `K_TAB_COLD_MIN_BUILD_NS` is the "the work did not shrink" floor. It is
+    // a FLOOR, not a band: this task promises identical cost, so a large drop
+    // is a claim that has to be examined, while a rise is the ordinary
+    // regression the timing lane already reports.
+    {
+        auto r = findFrameScenario(results, "tab-cold");
+        if (r !is null && r.status == CaseStatus.OK && r.subpatchWorkerNs >= 0) {
+            immutable bool ranOffThread = r.subpatchPendingFrames >= 1;
+            immutable bool didWork      = r.subpatchWorkerNs > 0;
+            immutable bool notShrunk    = !atCalibrationPoint
+                                       || r.subpatchWorkerNs >= K_TAB_COLD_MIN_BUILD_NS;
+            bool ok = didWork && ranOffThread && notShrunk;
+            inv ~= Invariant("F-I10",
+                atCalibrationPoint
+                  ? format("tab-cold: build ran off-thread and cost >= %d ns",
+                           K_TAB_COLD_MIN_BUILD_NS)
+                  : "tab-cold: build ran off-thread (cost floor RECORDED — off "
+                    ~ "the calibration point)",
+                ok, format("workerBuildNs=%d pendingFrames=%d%s%s%s",
+                           r.subpatchWorkerNs, r.subpatchPendingFrames,
+                           didWork ? "" : "  <-- ZERO: the build did not run "
+                                          ~ "on the worker (synchronous again?)",
+                           ranOffThread ? "" : "  <-- no frame was drawn while "
+                                               ~ "the build ran",
+                           notShrunk ? "" : format("  <-- build cost fell below "
+                                       ~ "%d ns; this task promises IDENTICAL "
+                                       ~ "work, so a drop is a finding",
+                                       K_TAB_COLD_MIN_BUILD_NS)));
         }
     }
 

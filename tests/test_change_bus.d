@@ -263,6 +263,18 @@ unittest {
     cmd("select.typeFrom polygon");
     auto tog = postJson("/api/command", `{"id":"mesh.subpatch_toggle"}`);
     assert(tog["status"].str == "ok", "subpatch toggle failed: " ~ tog.toString);
+    // Task 1500 — the preview build runs on a worker thread now, and
+    // `/api/gpu/face-vbo` is NOT gated by the input barrier (that gate covers
+    // recorded input only, so `/api/reset` keeps answering during a build).
+    // Reading the limit surface therefore has to wait for the build. Measured,
+    // not assumed: on the first full run after the async path landed this
+    // exact line failed with "face-verts 144" — the CAGE's count.
+    foreach (_; 0 .. 1500) {
+        auto st = getJson("/api/subpatch/preview");
+        if (st["pending"].type != JSONType.true_) break;
+        Thread.sleep(dur!"msecs"(20));
+    }
+    Thread.sleep(dur!"msecs"(60));
 
     // Guard: the preview must actually be ACTIVE, else the suppressCageUpload
     // redirect never fires and this test would false-pass. The subdivided

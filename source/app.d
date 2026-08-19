@@ -1663,6 +1663,26 @@ void main(string[] args) {
     SubpatchPreview subpatchPreview;
     int             subpatchDepth = 3;
 
+    // Task 1500 — the preview build runs on this thread, not on the frame
+    // loop. The editor is the ONLY user of the async path: module unittests
+    // and the IPR preview (source/render/render_mvp.d) keep the synchronous
+    // one, because they read `preview.mesh` on the line after the call and
+    // have no frame loop to run a receiver in. This is arranged for every
+    // editor run INCLUDING --test, so the async window is what the tests and
+    // the perf lane actually measure.
+    {
+        import subpatch_worker : SubpatchWorker;
+        subpatchPreview.enableAsync(new SubpatchWorker());
+    }
+    scope(exit) {
+        // Ordered before the GL teardown scope(exit)s declared above (they
+        // run in reverse): nothing may free a handle the builder is reading.
+        if (subpatchPreview.worker !is null) {
+            subpatchPreview.joinInFlight();
+            subpatchPreview.worker.shutdown();
+        }
+    }
+
     // BVH face picker (Phase 7). One BVH per active mesh, keyed on
     // (gpu.uploadVersion, source-mesh-address) — the same tuple
     // gpu_select.d:31 uses. Default ON; VIBE3D_FACE_PICK=gpu falls back to
@@ -3518,6 +3538,7 @@ void main(string[] args) {
     app.selTypeOrderPtr = &selTypeOrder;
 
     app.subpatchPreviewPtr  = &subpatchPreview;
+    app.gpuUploadedPreviewPtr = &gpuUploadedPreview;
     app.activeToolPtr       = &activeTool;
     // A5: wire the guard's tool-owns-VBO predicate now that `activeTool`
     // is lexically visible (the guard itself is declared far earlier).
@@ -5115,6 +5136,29 @@ void main(string[] args) {
                     vbMode, mesh, gpu, vpWorld, ms);
 
                 bool preview = subpatchPreview.active;
+                // ---- M-INV (task 1500), CONSUMER 1 of 2 ----------------
+                // ONE-SIDED, on purpose. `active` says the CPU side is in
+                // preview index space; `gpuUploadedPreview` says the VBOs —
+                // and `gpuVisible` below, which is keyed by PREVIEW face
+                // index — are too. The dangerous direction is exactly this
+                // one: a live trace against cage buffers reads someone
+                // else's visibility, or skips the check entirely past the
+                // mask's end, and answers with the WRONG element rather
+                // than crashing.
+                //
+                // The converse (`uploaded && !active`) is reachable TODAY
+                // and is legitimate: `deactivate()` runs from command hooks
+                // inside `tickAll`, i.e. mid events phase, and until the
+                // upload block runs the pair is split the SAFE way — the
+                // pick then goes through the cage, where `*OriginGpu` maps
+                // into the cage anyway. A two-sided assert would fire on
+                // every `/api/reset`.
+                //
+                // A plain `assert`, not `debug { }`: `-unittest` does not
+                // imply `-debug`, so a debug block would not even be
+                // compiled in the lane that is supposed to witness this.
+                if (preview) assert(gpuUploadedPreview,
+                    "lasso: preview trace is live but the VBOs still hold the cage");
                 // Phase 3c — preview.mesh.vertices may be stale after
                 // a fan-out-only drag; lasso needs fresh positions.
                 if (preview && subpatchPreview.lastRefreshSkipNonFace) {
@@ -5989,13 +6033,38 @@ void main(string[] args) {
         // No-op in the default build.
         {
             auto zFramesEvents = g_frames.phase(Phase.events);
+            // ---- Task 1500: the barrier, and EXACTLY what it covers ----
+            // RECORDED INPUT ONLY. A subpatch preview build is now
+            // asynchronous, and the preview participates in SELECTION (it
+            // carries element provenance), so delivering a recorded event
+            // while a build is in flight would make the answer depend on
+            // whether the background thread had finished — measured, not
+            // feared: task 1500's phase 0 turned
+            // tests/test_hide_geometry_pick.d's edge-lasso row from the
+            // preview's 12 edges into the cage's 16.
+            //
+            // `httpServer.tickAll()` is DELIBERATELY OUTSIDE the gate. It
+            // drains every registered main-thread bridge by construction
+            // (http_server.d, the bridges self-register), so gating it would
+            // take `/api/reset` — the harness's only recovery lever — and
+            // `/api/subpatch/preview`, which has to be able to answer
+            // `pending:true`, down with it, and would run ~30 routes into
+            // the 5 s `submitAndWait` ceiling on any build longer than that.
+            //
+            // The gate is BOUNDED (see `scriptedInputHeld`): past its
+            // ceiling the input is delivered against the cage, with a
+            // warning. Observationally this changes nothing about today's
+            // behaviour, because `EventPlayer.tick` is already wall-clock
+            // gated (eventlog.d) — a 4 s build inside one frame already made
+            // the overdue events fire in a burst right after it.
+            immutable bool scriptedInputHeld = subpatchPreview.scriptedInputHeld();
             // ---- Playback: push due events before polling ----
-            if (playbackMode) evPlay.tick();
+            if (!scriptedInputHeld) { if (playbackMode) evPlay.tick(); }
             // httpServer is always constructed now; only drain the request queues
             // when the listener is actually up (start() called). Skipped entirely
             // in a release/no-http run, where no thread ever posts requests.
             if (httpServer.running) {
-                httpServer.tickEventPlayer();
+                if (!scriptedInputHeld) httpServer.tickEventPlayer();
                 httpServer.tickAll();
             }
 
@@ -6583,6 +6652,23 @@ void main(string[] args) {
             }
         }
 
+        // ---- Task 1500: "building subpatch preview" overlay ----
+        // What is on screen while a build runs is THE CAGE, and for a first
+        // Tab that means the picture does not change at all for seconds.
+        // This is the thing that keeps that from reading as a dead key.
+        {
+            const ind = subpatchPreview.buildIndicatorText();
+            if (ind.length) {
+                ImDrawList* dl = ImGui.GetForegroundDrawList();
+                immutable float bx = 14.0f, by = 14.0f;
+                auto sz = ImGui.CalcTextSize(ind);
+                dl.AddRectFilled(ImVec2(bx - 6, by - 4),
+                                 ImVec2(bx + sz.x + 6, by + sz.y + 4),
+                                 IM_COL32(0, 0, 0, 170), 4.0f);
+                dl.AddText(ImVec2(bx, by), IM_COL32(255, 210, 90, 235), ind);
+            }
+        }
+
         // ---- RMB path trail ----
         if (rmbPath.length >= 2) {
             ImDrawList* dl = ImGui.GetForegroundDrawList();
@@ -6815,6 +6901,14 @@ void main(string[] args) {
             const p     = currentDocPath();
             const fname = p.length ? baseName(p) : "untitled";
             string title = (docDirty() ? "*" : "") ~ fname ~ " - Vibe3d";
+            // Task 1500 phase 4 — the second half of the indicator. The
+            // viewport overlay (below, with the RMB trail) is the one the
+            // user looks at; the title is what survives the window being
+            // partially covered.
+            {
+                const ind = subpatchPreview.buildIndicatorText();
+                if (ind.length) title = title ~ "  [" ~ ind ~ "]";
+            }
             if (title != lastWindowTitle) {
                 SDL_SetWindowTitle(window, toStringz(title));
                 lastWindowTitle = title;
@@ -6838,6 +6932,27 @@ void main(string[] args) {
         // rebuildIfStale stay as a correctness backstop during burn-in, so a
         // missed flag degrades to "preview rebuilds a frame late at worst",
         // never to a wrong preview.
+        // ---- Task 1500: RECEIVE a finished background preview build ----
+        // Its OWN statement, not folded into the `meshChangedFlags` gate
+        // below: a build lands whenever it lands, and most of those frames
+        // have no mesh change flagged at all.
+        //
+        // POSITION IN THE FRAME IS LOAD-BEARING, and it is here rather than
+        // at the top of the events phase for a reason that is measurable
+        // rather than stylistic — see `SubpatchPreview.pumpAsyncBuild`'s
+        // header. The single preview upload is the block immediately below;
+        // receiving any earlier leaves picks running against a live preview
+        // trace while the VBOs still hold the cage. M-INV asserts the
+        // one-sided invariant at the two consumers.
+        bool previewInstalledThisFrame =
+            subpatchPreview.pumpAsyncBuild(mesh, subpatchDepth);
+        if (previewInstalledThisFrame) {
+            // The preview's TOPOLOGY is new, so the position-only scatter
+            // path below must not be taken. Without this a rebuild that
+            // changed no `mutationVersion` (the version-silent path) would
+            // scatter positions into a VBO laid out for the OLD preview.
+            gpuUploadedPreviewTopVersion = ulong.max;
+        }
         {
             import change_bus : MeshEditScope;
             enum uint kSubpatchTriggers = MeshEditScope.Position
@@ -6873,7 +6988,13 @@ void main(string[] args) {
             gpu.suppressCageUpload = wantPreview;
             bool versionChanged = gpuUploadedVersion != mesh.mutationVersion;
             bool stateChanged   = gpuUploadedPreview != wantPreview;
-            if ((wantPreview && (versionChanged || stateChanged)) ||
+            // Task 1500 — the third trigger. For the FIRST Tab `stateChanged`
+            // is true and the upload was guaranteed; for a REBUILD (`active`
+            // already true) it is false, and `versionChanged` can be false
+            // too on the version-silent path — so a freshly received preview
+            // would never reach the GPU.
+            if ((wantPreview && (versionChanged || stateChanged
+                                 || previewInstalledThisFrame)) ||
                 (!wantPreview && stateChanged))
             {
                 if (wantPreview) {

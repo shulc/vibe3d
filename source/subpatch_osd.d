@@ -16,7 +16,7 @@ module subpatch_osd;
 
 import std.math : sqrt;
 import math : Vec3;
-import mesh : Mesh, SubpatchTrace, edgeKey, makeCube;
+import mesh : Mesh, SubpatchTrace, edgeKey, makeCube, Surface;
 import osd.c;
 import perf_probe : g_perf, Cat, g_fc, DrawPass;
 
@@ -255,6 +255,150 @@ struct GpuFanOutTargets {
     GLuint faceVbo;       int faceVertCount;
     GLuint edgeVbo;       int edgeSegCount;
     GLuint vertVbo;       int vertCount;
+}
+
+// ---------------------------------------------------------------------------
+// CageSnapshot — the cage, in buffers the BUILD owns (task 1500).
+// ---------------------------------------------------------------------------
+//
+// `buildFromSnapshot` runs on a worker thread and MUST NOT read the live
+// `Mesh`: the main thread keeps editing it (a gizmo drag rewrites
+// `vertices` every frame without bumping `mutationVersion` — see the
+// comment above `SubpatchPreview.deactivate`). Everything the build reads is
+// copied here first, on the main thread, at dispatch.
+//
+// EVERY ARRAY IS OWNED, and that is the point of the struct rather than a
+// bundle of `const` slices. The flatten buffers in particular used to be
+// `OsdAccel` fields reused between builds (`scratchCageFaceCounts` /
+// `scratchCageFaceVertIndices`) — a worker reading them while the next
+// snapshot overwrote them is precisely the race this replaces. Resized with
+// `.length =` rather than reallocated, so a snapshot held in a front/back
+// pool keeps its capacity and costs nothing after the first build.
+struct CageSnapshot {
+    int     nv;
+    int     nf;
+    long    cornerCount;
+    int     level;
+    long    memLimitFaces = MEM_LIMIT_FACES;
+
+    float[]   xyz;              // 3*nv — cage positions AS OF DISPATCH
+    int[]     faceVertCounts;   // nf
+    int[]     faceVertIndices;  // cornerCount
+    uint[]    edgeVerts;        // 2*ne, cage.edges flattened
+    bool[]    faceSubpatch;     // nf
+    bool[]    faceHidden;       // nf
+    uint[]    faceMaterial;     // nf (0 where the cage carries no entry)
+    Surface[] surfaces;
+    float[]   creaseWeights;    // the reserved crease map's data, or empty
+
+    // Decided at snapshot time so the dispatcher can refuse a build that
+    // would immediately return false, and so the worker never has to ask the
+    // live mesh anything.
+    bool anyMarked;
+    bool anyUnmarked;
+    bool creaseMapLive;
+
+    @property size_t edgeCount() const { return edgeVerts.length / 2; }
+}
+
+/// Fill `snap` from `cage`. MAIN THREAD, at dispatch.
+///
+/// `assertEdgeMapValid()` is called HERE rather than inside the build, and
+/// under the same condition it used to guard (task 0833's witness in
+/// tests/unit/subpatch_osd_test.d still sees it): it is a precondition on the
+/// LIVE mesh's derived state, so it has to be asked while the live mesh is
+/// still in reach.
+void takeCageSnapshot(ref const Mesh cage, int level, ref CageSnapshot snap,
+                       long memLimitFaces = MEM_LIMIT_FACES)
+{
+    snap.nv            = cast(int)cage.vertices.length;
+    snap.nf            = cast(int)cage.faces.length;
+    snap.level         = level;
+    snap.memLimitFaces = memLimitFaces;
+
+    snap.cornerCount = flattenCageTopology(cage, snap.faceVertCounts,
+                                                 snap.faceVertIndices);
+
+    snap.xyz.length = 3 * cage.vertices.length;
+    foreach (vi, v; cage.vertices) {
+        snap.xyz[3*vi + 0] = v.x;
+        snap.xyz[3*vi + 1] = v.y;
+        snap.xyz[3*vi + 2] = v.z;
+    }
+
+    snap.edgeVerts.length = 2 * cage.edges.length;
+    foreach (ei, e; cage.edges) {
+        snap.edgeVerts[2*ei + 0] = e[0];
+        snap.edgeVerts[2*ei + 1] = e[1];
+    }
+
+    snap.faceSubpatch.length = cage.faces.length;
+    snap.faceHidden  .length = cage.faces.length;
+    snap.faceMaterial.length = cage.faces.length;
+    bool anyMarked = false, anyUnmarked = false;
+    foreach (fi; 0 .. cage.faces.length) {
+        immutable bool marked = cage.isFaceSubpatch(fi);
+        snap.faceSubpatch[fi] = marked;
+        if (marked) anyMarked = true; else anyUnmarked = true;
+        snap.faceHidden  [fi] = cage.isFaceHidden(fi);
+        snap.faceMaterial[fi] = fi < cage.faceMaterial.length
+                              ? cage.faceMaterial[fi] : 0u;
+    }
+    snap.anyMarked   = anyMarked;
+    snap.anyUnmarked = anyUnmarked;
+
+    snap.surfaces = cage.surfaces.dup;
+
+    auto creaseMap = cage.creaseWeightMap();
+    // "Live" means at least one entry produces a nonzero sharpness — see the
+    // long-form reasoning at the (now worker-side) use site.
+    import std.algorithm : any;
+    snap.creaseMapLive = creaseMap !is null
+        && creaseMap.data.any!(w => creaseSharpnessFromWeight(w) > 0);
+    if (creaseMap !is null) {
+        snap.creaseWeights.length = creaseMap.data.length;
+        snap.creaseWeights[]      = creaseMap.data[];
+    } else {
+        snap.creaseWeights.length = 0;
+    }
+
+    if (snap.anyUnmarked || snap.creaseMapLive)
+        cage.assertEdgeMapValid();
+}
+
+/// One finished CPU build, handed from the worker thread to the main thread
+/// by value (task 1500).
+///
+/// OWNERSHIP OF `topo` IS THE FIELD THAT MATTERS. `topoOwned` is true iff the
+/// build MISSED the LRU cache and created the topology itself; the main
+/// thread must then either install it (`installInCache`) or destroy it
+/// (`osdc_topology_destroy`) — never neither, which is the leak M-LEAK
+/// witnesses. On a cache HIT the pointer is BORROWED from the cache slot and
+/// the receiver must not free it.
+struct PreviewBuildResult {
+    ulong  generation;      // dispatch counter, echoed back
+    ulong  key;             // stencil-space key this build was dispatched for
+    bool   ok;
+
+    Mesh          mesh;
+    SubpatchTrace trace;
+
+    osdc_topology_t* topo;
+    bool   topoOwned;
+    bool   cacheHit;
+    ulong  topoKey;
+    int    limitVertCount;
+    int    limitFaces;
+    int    limitEdges;
+    int    numCageVerts;
+
+    int    requestedLevel;
+    int    chosenLevel;
+    long   cageCornerCount;
+    long   memLimitFaces;
+
+    long   workerNs;         // wall time inside buildFromSnapshot
+    long   workerAllocBytes; // GC bytes allocated by the building thread
 }
 
 /// One-shot startup verification of the OSD GL evaluator. Builds a
@@ -1008,9 +1152,26 @@ struct OsdAccel {
     // is set to 0 between buildPreview and the consumer's read. Don't
     // clear it in clear(); buildPreview is the only writer, and it
     // re-populates every fi before returning.
-    private int[]  scratchFaceCounts;
-    private int[]  scratchFaceIndicesI;     // OSD writes int; outMesh.faces views as uint
-    private int[]  scratchEdgeVerts;
+    // Task 1500 — FRONT/BACK POOL, and it is PERMANENT rather than
+    // per-build. These three are the limit-proportional buffers the emitted
+    // preview either slice-ALIASES (`faces[fi]` into `faceIndicesI`) or is
+    // read beside, so a background build writing them while the live preview
+    // aliases them is a read of half-overwritten geometry. Two sets, swapped
+    // at INSTALL, remove that by construction.
+    //
+    // PERMANENT is the answer to "does this give back P0/P5's win": the
+    // second set is allocated once, at the first build, and keeps its
+    // capacity for the process's life exactly like the first — so the
+    // GC-spinlock contention P0 removed comes back for the FIRST Tab only,
+    // not for every one. The cost is named in the task's risk 2: peak memory
+    // grows by one limit-proportional set.
+    private struct LimitScratch {
+        int[] faceCounts;
+        int[] faceIndicesI;   // OSD writes int; Mesh.faces views as uint
+        int[] edgeVerts;
+    }
+    private LimitScratch[2] limitPool;
+    private size_t          limitBack = 1;   // the slot a build WRITES
     private int[]  scratchFaceOrigins;
     private int[]  scratchVertOrigins;
     private int[]  scratchEdgeOrigins;
@@ -1027,8 +1188,11 @@ struct OsdAccel {
     // limit buffers are 4× larger, so do not reason about one from the other.
     // Reused across rebuilds by `flattenCageTopology`; NOT cleared by clear()
     // for the same reason the others are not (capacity is the point).
-    private int[]  scratchCageFaceCounts;
-    private int[]  scratchCageFaceVertIndices;
+    // (Task 1500: the cage-side flatten buffers that used to live here are
+    // gone — they are `CageSnapshot.faceVertCounts` /
+    // `.faceVertIndices` now, OWNED by the snapshot, because a worker
+    // reading them while the next snapshot overwrote them is a race that no
+    // amount of call-site discipline removes.)
 
     // P1: sorted (key, value) array replacing the uint[ulong]
     // vibe3dEdgeByVerts AA. With ~50K cage edges on a 24K-poly cage
@@ -1062,6 +1226,40 @@ struct OsdAccel {
 
     bool valid;
 
+    // ---- Async build bookkeeping (task 1500) -----------------------------
+
+    /// Called FIRST, inside `clear()` and `destroyCache()`, before either
+    /// touches state a background build might still be reading.
+    ///
+    /// WHERE IT IS LOAD-BEARING, stated precisely rather than generally.
+    /// `destroyCache()` FREES `osdc_topology_t*`s — and a build that HIT the
+    /// LRU is reading exactly one of them, borrowed. Without the join that is
+    /// a use-after-free inside OpenSubdiv, on a thread whose stack names
+    /// nothing about the reset that caused it.
+    ///
+    /// `clear()`'s copy is a CONSTRUCTION guarantee, not a live fix, and it
+    /// is worth saying so: after task 1500's split, `clear()` frees only
+    /// fan-out GL objects and nulls aliases the worker no longer reads (it
+    /// builds from a `CageSnapshot` and its own local topology pointer), so
+    /// no CURRENT call site depends on it. It stays because `clear()` is the
+    /// destructive primitive every future reset path will reach for, and a
+    /// list of call sites loses its fourth entry within a month — the Tab-OFF
+    /// path (`SubpatchPreview.rebuild(source, d <= 0)`) was the one the
+    /// design's first draft had already missed.
+    ///
+    /// INSIDE, not at the call sites: a new call site is then safe by
+    /// construction rather than by its author having heard of the worker.
+    /// M-RESET witnesses the ordering property on both.
+    void delegate() joinInFlightHook;
+
+    /// Topologies this accel created, and gave back. The pair is the leak
+    /// witness: under "last dispatch wins" a discarded result owns an
+    /// `osdc_topology_t` that nothing else will ever free, and
+    /// `created - retired` is what grows when `retireResult` is skipped.
+    /// Reported through GET /api/subpatch/preview. M-LEAK.
+    ulong topologiesCreated;
+    ulong topologiesRetired;
+
     /// Reset per-rebuild state. The OSD-side handles (osd, glEval,
     /// cageGlVbo, limitGlVbo) are OWNED BY `topologyCache` and live
     /// across clear()s. This call just zeroes our local references
@@ -1069,6 +1267,11 @@ struct OsdAccel {
     /// per-build fan-out infrastructure that we always rebuild from
     /// scratch (TBOs, programs, the empty TF VAO).
     void clear() {
+        // Task 1500 — FIRST STATEMENT. Everything below nulls a handle or
+        // frees a GL object a background build may still be reading; the
+        // hook is what makes a NEW call site to this function safe without
+        // its author having heard of the worker thread. M-RESET.
+        if (joinInFlightHook !is null) joinInFlightHook();
         // OSD-side handles: cache owns; just null the local refs.
         osd       = null;
         glEval    = null;
@@ -1144,11 +1347,15 @@ struct OsdAccel {
     /// preview owns an `osdc_topology_t*` that `~this()` (which calls only
     /// `clear()`) does not free.
     void destroyCache() {
+        // Task 1500 — same reason as clear()'s first statement, and a
+        // stronger one: this FREES the topology a worker could be reading.
+        if (joinInFlightHook !is null) joinInFlightHook();
         foreach (ref e; topologyCache) {
             if (e.glEval    !is null) osdc_gl_destroy(e.glEval);
             if (e.cageGlVbo != 0)     glDeleteBuffers(1, &e.cageGlVbo);
             if (e.limitGlVbo != 0)    glDeleteBuffers(1, &e.limitGlVbo);
-            if (e.osd       !is null) osdc_topology_destroy(e.osd);
+            if (e.osd       !is null) { osdc_topology_destroy(e.osd);
+                                        ++topologiesRetired; }
             e = CachedTopology.init;
         }
         // The borrowed aliases into whatever slot was last active. Dropping
@@ -1163,30 +1370,59 @@ struct OsdAccel {
         valid      = false;
     }
 
-    /// Look up a cached OSD topology by hash. On hit, populates osd /
-    /// glEval / cageGlVbo / limitGlVbo / limitVertCount on the
-    /// OsdAccel and returns true. On miss, returns false; caller
-    /// must build a fresh topology and call `installInCache` with
-    /// the same key.
-    private bool tryReuseCachedTopology(ulong keyHash) {
-        ++cacheEpoch;
-        foreach (ref e; topologyCache) {
+    /// Look up a cached OSD topology by hash. A PURE QUERY (task 1500).
+    ///
+    /// It used to write `this.osd / glEval / cageGlVbo / limitGlVbo /
+    /// limitVertCount` on a hit. It cannot any more, because the lookup now
+    /// runs on the BUILDING thread while the LIVE preview is still on
+    /// screen — and the live preview's per-drag-frame `refresh()` evaluates
+    /// against exactly `this.osd`. Adoption happens in `installGl`, on the
+    /// main thread, at the moment the result is published.
+    struct TopoLookup {
+        bool                 hit;
+        osdc_topology_t*     osd;
+        osdc_gl_evaluator_t* glEval;
+        GLuint               cageGlVbo;
+        GLuint               limitGlVbo;
+        int                  limitVerts;
+    }
+    TopoLookup lookupCachedTopology(ulong keyHash) const {
+        TopoLookup r;
+        foreach (ref const e; topologyCache) {
             if (e.keyHash != 0 && e.keyHash == keyHash) {
-                this.osd            = e.osd;
-                this.glEval         = e.glEval;
-                this.cageGlVbo      = e.cageGlVbo;
-                this.limitGlVbo     = e.limitGlVbo;
-                this.limitVertCount = e.limitVerts;
-                e.lastUseEpoch      = cacheEpoch;
-                return true;
+                r.hit        = true;
+                r.osd        = cast(osdc_topology_t*)e.osd;
+                r.glEval     = cast(osdc_gl_evaluator_t*)e.glEval;
+                r.cageGlVbo  = e.cageGlVbo;
+                r.limitGlVbo = e.limitGlVbo;
+                r.limitVerts = e.limitVerts;
+                return r;
             }
         }
-        return false;
+        return r;
+    }
+
+    /// Mark a slot most-recently-used. Split out of the lookup because the
+    /// lookup is now a const query that a non-main thread performs; the LRU
+    /// epoch is main-thread state and moves at INSTALL.
+    private void touchCacheSlot(ulong keyHash) {
+        ++cacheEpoch;
+        foreach (ref e; topologyCache)
+            if (e.keyHash != 0 && e.keyHash == keyHash) e.lastUseEpoch = cacheEpoch;
     }
 
     /// Install a freshly-built OSD topology (and its derived GL
     /// state) into the cache. Evicts the LRU slot if both are full.
-    private void installInCache(ulong keyHash, int numCageVerts) {
+    /// The handles are passed EXPLICITLY rather than read off `this`: the
+    /// caller is the receiver of a build that may have run elsewhere, and
+    /// reading `this.osd` here would silently install whatever the previous
+    /// preview left behind.
+    private void installInCache(ulong keyHash, int numCageVerts,
+                                 osdc_topology_t* topo,
+                                 osdc_gl_evaluator_t* ev,
+                                 GLuint cageVbo, GLuint limitVbo,
+                                 int limitVerts) {
+        ++cacheEpoch;
         // Pick the slot to write into: prefer an empty slot, else
         // the entry with the smaller lastUseEpoch (= LRU).
         size_t slot = 0;
@@ -1202,12 +1438,13 @@ struct OsdAccel {
             if (e.glEval    !is null) osdc_gl_destroy(e.glEval);
             if (e.cageGlVbo != 0)     glDeleteBuffers(1, &e.cageGlVbo);
             if (e.limitGlVbo != 0)    glDeleteBuffers(1, &e.limitGlVbo);
-            if (e.osd       !is null) osdc_topology_destroy(e.osd);
+            if (e.osd       !is null) { osdc_topology_destroy(e.osd);
+                                        ++topologiesRetired; }
             *e = CachedTopology.init;
         }
         topologyCache[slot] = CachedTopology(
-            keyHash, osd, glEval, cageGlVbo, limitGlVbo,
-            numCageVerts, limitVertCount, cacheEpoch);
+            keyHash, topo, ev, cageVbo, limitVbo,
+            numCageVerts, limitVerts, cacheEpoch);
     }
 
     /// Phase 3b only: true iff the fan-out path is set up and can be
@@ -1264,38 +1501,100 @@ struct OsdAccel {
     /// pass it (see SubpatchPreview.rebuild); it is the test escape that keeps
     /// the level-choice assertions out of a synthetic re-implementation of the
     /// policy, which would be inert.
-    bool buildPreview(ref const Mesh cage, int level,
-                       out Mesh outMesh, out SubpatchTrace outTrace,
-                       long memLimitFaces = MEM_LIMIT_FACES)
+    // ======================================================================
+    // THE BUILD, CUT IN THREE (task 1500)
+    // ======================================================================
+    //
+    // `buildFromSnapshot` is the whole cost and contains NOT ONE GL CALL.
+    // `installGl` is every GL call the build ever made, and is what the main
+    // thread pays on the frame the result lands. `buildPreview` is the two of
+    // them back to back and is what every SYNCHRONOUS caller still calls
+    // (module unittests, and the IPR preview in source/render/render_mvp.d) —
+    // so the cut costs those callers nothing and adds no second
+    // implementation of the build.
+    //
+    // WHY `clear()` MOVED, and it is an observable change of ORDER rather
+    // than a tidy-up. It used to be the second statement of the build. It is
+    // now the first statement of the INSTALL, because the old preview has to
+    // stay alive and drawable for the whole time the new one is being built —
+    // that is the entire point of the async path. On the synchronous path the
+    // two orders are indistinguishable: nothing runs in between.
+    //
+    // WHAT STAYS ON THE MAIN THREAD, and it is not a list to be remembered —
+    // `installGl`'s first statement is `glThreadGuard`, so a call that drifts
+    // the other way names itself. See M-GL.
+
+    /// Pure-CPU half of the build: cage flatten is already done (it is the
+    /// snapshot), sharpness arrays, level choice, topology key, the LRU
+    /// lookup, `osdc_topology_create_sharp` on a miss, the limit-topology and
+    /// origin reads, `osdc_evaluate`, and the whole of `outMesh` /
+    /// `SubpatchTrace` / materials / hide planes.
+    ///
+    /// NO GL CALL MAY APPEAR IN THIS FUNCTION. That is not a convention: the
+    /// witness is `tests/unit/subpatch_osd_test.d`, which runs it on a
+    /// non-GL thread with the thread guard armed and requires it not to throw.
+    ///
+    /// Writes its limit-proportional scratch into the BACK slot of the
+    /// front/back pool, so `outMesh.faces[fi]`'s slice-alias into
+    /// `faceIndicesI` cannot land on the buffer the LIVE preview is aliasing.
+    /// The swap happens in `installResult`, never here.
+    bool buildFromSnapshot(ref const CageSnapshot snap,
+                            ref PreviewBuildResult res)
     {
-        auto z = g_perf.scope_(Cat.subpatchPreview);
-        clear();
+        import core.time   : MonoTime;
+        import core.memory : GC;
+        immutable MonoTime tStart      = MonoTime.currTime;
+        immutable ulong    allocBefore = GC.allocatedInCurrentThread;
+        scope(exit) {
+            res.workerNs = (MonoTime.currTime - tStart).total!"nsecs";
+            res.workerAllocBytes =
+                cast(long)(GC.allocatedInCurrentThread - allocBefore);
+        }
 
-        immutable int nv = cast(int)cage.vertices.length;
-        immutable int nf = cast(int)cage.faces.length;
-        if (nv == 0 || nf == 0 || level < 1) return false;
+        res.ok             = false;
+        res.topo           = null;
+        res.topoOwned      = false;
+        res.cacheHit       = false;
+        res.mesh           = Mesh.init;
+        res.trace          = SubpatchTrace.init;
+        res.requestedLevel = snap.level;
+        res.chosenLevel    = snap.level;
+        res.cageCornerCount = snap.cornerCount;
+        res.memLimitFaces  = snap.memLimitFaces;
+        res.numCageVerts   = snap.nv;
 
-        // ---- Flatten cage topology -----------------------------------
-        // `cornerCount` (Σ|f|) is the unit the CC limit-face projection is
-        // actually in — see projectedLimitFaces. It falls out of the flatten
-        // for free, so the depth policy costs no extra pass over the cage.
-        immutable long cageCornerCount = flattenCageTopology(
-            cage, scratchCageFaceCounts, scratchCageFaceVertIndices);
-        int[] faceVertCounts  = scratchCageFaceCounts;
-        int[] faceVertIndices = scratchCageFaceVertIndices;
-        cageScratchXyz.length = 3 * nv;
-        foreach (vi, v; cage.vertices) {
-            cageScratchXyz[3*vi + 0] = v.x;
-            cageScratchXyz[3*vi + 1] = v.y;
-            cageScratchXyz[3*vi + 2] = v.z;
+        immutable int nv = snap.nv;
+        immutable int nf = snap.nf;
+        if (nv == 0 || nf == 0 || snap.level < 1) return false;
+        // `!anyMarked` — the snapshot already answered it (same early-out the
+        // pre-1500 build made after its own scan of the cage).
+        if (!snap.anyMarked) return false;
+
+        const(int)[] faceVertCounts  = snap.faceVertCounts;
+        const(int)[] faceVertIndices = snap.faceVertIndices;
+
+        // ---- Cage edge (min,max)-key -> cage edge index ---------------
+        // Was `cage.edgeIndexMap` (an AA on the live Mesh) for the sharpness
+        // pass and a sorted array built later for the OSD-edge translation.
+        // One sorted array now serves both: the snapshot cannot carry the AA
+        // without paying ~ne GC inserts per dispatch, and the two lookups ask
+        // the same question with the same key scheme (`mesh.edgeKey`).
+        immutable size_t cageEdgeCount = snap.edgeCount;
+        scratchVibe3dEdgeKv.length = cageEdgeCount;
+        foreach (ei; 0 .. cageEdgeCount) {
+            uint a = snap.edgeVerts[2*ei + 0], b = snap.edgeVerts[2*ei + 1];
+            scratchVibe3dEdgeKv[ei] = EdgeKv(edgeKey(a, b), cast(uint)ei);
+        }
+        {
+            import std.algorithm.sorting : sort;
+            sort!"a.key < b.key"(scratchVibe3dEdgeKv);
         }
 
         // ---- Selective-subpatch + crease-weight sharpness arrays -----
         // Two independent contributors write into the SAME per-edge sharp[]
         // array, combined by MAX (task 1062 §2a): selective subpatch writes
-        // SHARP_INF on any edge touching an un-marked face (unchanged
-        // meaning from before this task); the reserved crease-weight
-        // MeshMap (source/mesh.d, MapKind.creaseWeight) writes
+        // SHARP_INF on any edge touching an un-marked face; the reserved
+        // crease-weight MeshMap (source/mesh.d, MapKind.creaseWeight) writes
         // creaseSharpnessFromWeight(w). The max is not defensive tidiness —
         // it is required: Far's assignComponentTags
         // (far/topologyDescriptor.cpp) applies crease entries by
@@ -1313,54 +1612,19 @@ struct OsdAccel {
         //
         // Uniform-subpatch cage with no crease map → both contributors
         // empty → standard smooth CC, unchanged from before this task.
-        bool anyMarked   = false;
-        bool anyUnmarked = false;
-        foreach (fi; 0 .. nf) {
-            immutable bool marked = cage.isFaceSubpatch(fi);
-            if (marked) anyMarked = true;
-            else        anyUnmarked = true;
-        }
-        if (!anyMarked) { clear(); return false; }
-
         int[]   creasePairs;
         float[] creaseWeights;
         int[]   cornerVerts;
         float[] cornerWeights;
         enum float SHARP_INF = 10.0f;     // OSD treats >= 10 as infinity
 
-        auto creaseMap = cage.creaseWeightMap();
-        // "Live" means the map has at least one entry that actually
-        // produces a nonzero sharpness — not merely that the map OBJECT
-        // exists. A uniform (fully-marked) cage that carries the reserved
-        // crease map with every entry at 0.0 (or NaN/negative, which
-        // `creaseSharpnessFromWeight` also maps to 0) contributes nothing
-        // to the sharpness vector either way, but before this guard its
-        // mere presence widened the `anyUnmarked || creaseMapLive` gate
-        // below and subjected an otherwise ordinary cage to
-        // `assertEdgeMapValid()`'s throwing precondition — a NEW failure
-        // mode for an importer-shaped cage that never had this guard run on
-        // it pre-1062 (task 1062 review, NIT 8).
-        import std.algorithm : any;
-        immutable bool creaseMapLive = creaseMap !is null
-            && creaseMap.data.any!(w => creaseSharpnessFromWeight(w) > 0);
-
-        if (anyUnmarked || creaseMapLive) {
-            // Settled-cage precondition (debug-only — task 0724 / audit-4 M6).
-            // Needed by BOTH contributors now (task 1062 widened the guard's
-            // condition, not its reasoning): the edgeKey lookup below keys
-            // edgeFaces[*p]/edgeFaceTotal[*p] for selective subpatch AND the
-            // boundary guard, and the crease-map read below is indexed by
-            // cage edge index, meaningful only once buildLoops()/
-            // rebuildEdges() settled edges[]. A stale map here mis-attributes
-            // adjacency counts, so the sharpness set comes out wrong and the
-            // preview smooths across a boundary it was supposed to hold
-            // sharp — a silently different limit surface, never an error.
-            // TASK 0833 — demonstrated live: tests/unit/subpatch_osd_test.d
-            // previews an importer-shaped cage (`addFaceFast`, no terminal
-            // buildLoops) with mixed Subpatch bits and requires the throw, then
-            // requires the same preview to build after buildLoops(). Deleting
-            // this line turns that block red.
-            cage.assertEdgeMapValid();
+        if (snap.anyUnmarked || snap.creaseMapLive) {
+            // The settled-cage precondition that used to open this block
+            // (`cage.assertEdgeMapValid()`, task 0724 / 0833) now fires at
+            // SNAPSHOT time, under this same condition — see
+            // `takeCageSnapshot`. It asks about the live mesh's derived
+            // state, so it has to be asked while the live mesh is in reach.
+            //
             // Tag verts that ANY un-marked face touches.
             bool[] vertHasUnmarked = new bool[](nv);
             // Per-edge: count marked vs un-marked adjacency (selective
@@ -1374,22 +1638,28 @@ struct OsdAccel {
             // for that assertion.
             int[2][] edgeFaces;
             int[]    edgeFaceTotal;
-            edgeFaces.length     = cage.edges.length;
-            edgeFaceTotal.length = cage.edges.length;
-            foreach (fi, face; cage.faces) {
-                immutable bool marked = cage.isFaceSubpatch(fi);
-                foreach (i; 0 .. face.length) {
-                    uint a = face[i];
-                    uint b = face[(i + 1) % face.length];
-                    if (!marked) {
-                        vertHasUnmarked[a] = true;
-                        vertHasUnmarked[b] = true;
+            edgeFaces.length     = cageEdgeCount;
+            edgeFaceTotal.length = cageEdgeCount;
+            {
+                size_t cursor = 0;
+                foreach (fi; 0 .. cast(size_t)nf) {
+                    immutable int    fl     = faceVertCounts[fi];
+                    immutable bool   marked = snap.faceSubpatch[fi];
+                    foreach (i; 0 .. fl) {
+                        uint a = cast(uint)faceVertIndices[cursor + i];
+                        uint b = cast(uint)faceVertIndices[cursor + (i + 1) % fl];
+                        if (!marked) {
+                            vertHasUnmarked[a] = true;
+                            vertHasUnmarked[b] = true;
+                        }
+                        immutable uint ei = findCageEdgeByKey(edgeKey(a, b));
+                        if (ei != uint.max) {
+                            if (marked) ++edgeFaces[ei][0];
+                            else        ++edgeFaces[ei][1];
+                            ++edgeFaceTotal[ei];
+                        }
                     }
-                    if (auto p = edgeKey(a, b) in cage.edgeIndexMap) {
-                        if (marked) ++edgeFaces[*p][0];
-                        else        ++edgeFaces[*p][1];
-                        ++edgeFaceTotal[*p];
-                    }
+                    cursor += fl;
                 }
             }
 
@@ -1402,12 +1672,12 @@ struct OsdAccel {
             // a NaN crease weight instead of skipping the un-creased ones.
             // Caught 2026-08-17 by Stage6's fixture comparison going red on
             // the very first nonzero-weight case.
-            float[] sharp = new float[](cage.edges.length);
+            float[] sharp = new float[](cageEdgeCount);
             sharp[] = 0.0f;
-            foreach (ei; 0 .. cage.edges.length) {
+            foreach (ei; 0 .. cageEdgeCount) {
                 if (edgeFaces[ei][1] > 0) sharp[ei] = SHARP_INF;
             }
-            if (creaseMapLive) {
+            if (snap.creaseMapLive) {
                 // Boundary guard: a weight must NEVER be able to lower a
                 // boundary edge (task 1062 card requirement — an assertion,
                 // not a comment). An edge with < 2 incident faces is left
@@ -1418,18 +1688,18 @@ struct OsdAccel {
                 // unconditionally, AFTER the descriptor's crease weights are
                 // applied) — never in tension with it, and never able to
                 // raise a boundary edge's sharpness above infinite either.
-                foreach (ei; 0 .. cage.edges.length) {
+                foreach (ei; 0 .. cageEdgeCount) {
                     if (edgeFaceTotal[ei] < 2) continue;   // boundary edge
-                    immutable float w = ei < creaseMap.data.length
-                        ? creaseMap.data[ei] : 0.0f;
+                    immutable float w = ei < snap.creaseWeights.length
+                        ? snap.creaseWeights[ei] : 0.0f;
                     immutable float s = creaseSharpnessFromWeight(w);
                     if (s > sharp[ei]) sharp[ei] = s;
                 }
             }
-            foreach (ei, e; cage.edges) {
+            foreach (ei; 0 .. cageEdgeCount) {
                 if (sharp[ei] <= 0) continue;
-                creasePairs   ~= cast(int)e[0];
-                creasePairs   ~= cast(int)e[1];
+                creasePairs   ~= cast(int)snap.edgeVerts[2*ei + 0];
+                creasePairs   ~= cast(int)snap.edgeVerts[2*ei + 1];
                 creaseWeights ~= sharp[ei];
             }
 
@@ -1446,25 +1716,12 @@ struct OsdAccel {
         // for why the projection is in CORNERS, not faces, and which cages
         // that moves.
         immutable int effectiveLevel =
-            chooseSubpatchLevel(cageCornerCount, level, memLimitFaces);
-        // The chosen level, unconditionally, for every build. The logWarn
-        // below fires only when the cap BIT, i.e. never on the expensive side
-        // of the cliff, where a neighbouring cage size quietly pays 4× the
-        // work — which is precisely the case the task was opened for.
-        g_perf.count(Cat.subpatchLevelChosen, effectiveLevel);
-        if (effectiveLevel != level) {
-            import log        : logWarn;
-            import std.format : format;
-            try {
-                logWarn("subpatch", format(
-                    "capping subpatch depth %d -> %d "
-                    ~ "(cage %d faces / %d corners, projected %d limit faces "
-                    ~ "exceeds memory ceiling %d)",
-                    level, effectiveLevel, nf, cageCornerCount,
-                    projectedLimitFaces(cageCornerCount, level),
-                    memLimitFaces));
-            } catch (Exception) {}
-        }
+            chooseSubpatchLevel(snap.cornerCount, snap.level, snap.memLimitFaces);
+        res.chosenLevel = effectiveLevel;
+        // The counters and the cap warning are PUBLISHED BY THE MAIN THREAD
+        // on reception (`publishBuildCounters`), not written here: `g_perf`
+        // is `__gshared` and the perf lane's F-I8 reads exactly these keys,
+        // so a worker writing them straight would make that invariant racy.
 
         // ---- Compute topology-cache key -------------------------------
         // Hashes the full (face-vert topology, level, creases,
@@ -1490,17 +1747,24 @@ struct OsdAccel {
             // a fixed non-zero value costs nothing.
             if (topoKey == 0) topoKey = 1;
         }
+        res.topoKey = topoKey;
 
-        bool cacheHit = tryReuseCachedTopology(topoKey);
-        // Task 1374: `Cat.subpatchPreview`'s scope timer opened at the TOP of
-        // this function, so its count cannot tell these two apart — a cache
-        // hit and a from-scratch stencil build both look like one "rebuild"
-        // from outside the process. Split here, where the answer is known.
-        g_perf.count(cacheHit ? Cat.subpatchTopoHit : Cat.subpatchTopoMiss, 1);
-
-        if (!cacheHit) {
-            // ---- Cache miss: build a fresh OSD topology -----------
-            osd = osdc_topology_create_sharp(
+        // ---- LRU(2) topology lookup ------------------------------------
+        // A PURE QUERY (task 1500): it must not write `this.osd` the way the
+        // old `tryReuseCachedTopology` did, because the LIVE preview's
+        // per-drag-frame `refresh()` evaluates against exactly that pointer
+        // and this function runs while the live preview is still on screen.
+        // The receiver adopts the pointer, on the main thread, in
+        // `installResult`.
+        auto look = lookupCachedTopology(topoKey);
+        osdc_topology_t* osdLocal;
+        if (look.hit) {
+            osdLocal        = look.osd;
+            res.cacheHit    = true;
+            res.topoOwned   = false;
+            res.limitVertCount = look.limitVerts;
+        } else {
+            osdLocal = osdc_topology_create_sharp(
                 nv, nf,
                 faceVertCounts.ptr, faceVertIndices.ptr,
                 effectiveLevel,
@@ -1510,91 +1774,82 @@ struct OsdAccel {
                 cast(int)cornerVerts.length,
                 cornerVerts.length    ? cornerVerts.ptr    : null,
                 cornerWeights.length  ? cornerWeights.ptr  : null);
-            if (osd is null) { clear(); return false; }
-
-            limitVertCount = osdc_topology_limit_vert_count(osd);
-
-            // GL evaluator + buffers, sized to this topology.
-            glEval = g_osdGpuEnabled ? osdc_gl_create(osd) : null;
-            if (glEval !is null) {
-                import bindbc.opengl;
-                glGenBuffers(1, &cageGlVbo);
-                glGenBuffers(1, &limitGlVbo);
-                glBindBuffer(GL_ARRAY_BUFFER, cageGlVbo);
-                glBufferData(GL_ARRAY_BUFFER,
-                    cast(GLsizeiptr)(3 * nv * float.sizeof),
-                    null, GL_DYNAMIC_DRAW);
-                glBindBuffer(GL_ARRAY_BUFFER, limitGlVbo);
-                glBufferData(GL_ARRAY_BUFFER,
-                    cast(GLsizeiptr)(3 * limitVertCount * float.sizeof),
-                    null, GL_DYNAMIC_DRAW);
-                glBindBuffer(GL_ARRAY_BUFFER, 0);
-            }
-
-            installInCache(topoKey, nv);
+            if (osdLocal is null) return false;
+            ++topologiesCreated;
+            res.cacheHit  = false;
+            res.topoOwned = true;
+            res.limitVertCount = osdc_topology_limit_vert_count(osdLocal);
         }
-        // Either way (hit or miss), `osd / glEval / cageGlVbo /
-        // limitGlVbo / limitVertCount` are populated.
+        res.topo = osdLocal;
 
-        immutable int limitVerts   = limitVertCount;
-        immutable int limitFaces   = osdc_topology_limit_face_count(osd);
-        immutable int limitIndices = osdc_topology_limit_index_count(osd);
-        immutable int limitEdges   = osdc_topology_limit_edge_count(osd);
-
-        if (glEval !is null) {
-            limitScratchXyz.length = 3 * limitVerts;
-        }
+        immutable int limitVerts   = res.limitVertCount;
+        immutable int limitFaces   = osdc_topology_limit_face_count(osdLocal);
+        immutable int limitIndices = osdc_topology_limit_index_count(osdLocal);
+        immutable int limitEdges   = osdc_topology_limit_edge_count(osdLocal);
+        res.limitFaces = limitFaces;
+        res.limitEdges = limitEdges;
 
         // ---- Read OSD limit topology + origin arrays -----------------
         // P0: scratch buffers live on OsdAccel; `.length = N` reuses
-        // the underlying GC block when N ≤ historical max — eliminates
+        // the underlying GC block when N <= historical max — eliminates
         // the per-rebuild `new int[]` allocations that dominated the
-        // GC spinlock at 24K cage polys.
-        scratchFaceCounts   .length = limitFaces;
-        scratchFaceIndicesI .length = limitIndices;
-        scratchEdgeVerts    .length = 2 * limitEdges;
-        osdc_topology_limit_topology(osd,
-            scratchFaceCounts   .ptr,
-            scratchFaceIndicesI .ptr);
-        osdc_topology_limit_edges   (osd, scratchEdgeVerts.ptr);
+        // GC spinlock at 24K cage polys. Task 1500: the three that the
+        // emitted Mesh either aliases or is read beside live in a PERMANENT
+        // front/back pool, and this writes the BACK slot.
+        auto back = &limitPool[limitBack];
+        back.faceCounts  .length = limitFaces;
+        back.faceIndicesI.length = limitIndices;
+        back.edgeVerts   .length = 2 * limitEdges;
+        osdc_topology_limit_topology(osdLocal,
+            back.faceCounts   .ptr,
+            back.faceIndicesI .ptr);
+        osdc_topology_limit_edges   (osdLocal, back.edgeVerts.ptr);
 
         scratchFaceOrigins  .length = limitFaces;
         scratchVertOrigins  .length = limitVerts;
         scratchEdgeOrigins  .length = limitEdges;
-        osdc_topology_face_origins(osd, scratchFaceOrigins.ptr);
-        osdc_topology_vert_origins(osd, scratchVertOrigins.ptr);
-        osdc_topology_edge_origins(osd, scratchEdgeOrigins.ptr);
+        osdc_topology_face_origins(osdLocal, scratchFaceOrigins.ptr);
+        osdc_topology_vert_origins(osdLocal, scratchVertOrigins.ptr);
+        osdc_topology_edge_origins(osdLocal, scratchEdgeOrigins.ptr);
+
+        Mesh          outMesh;
+        SubpatchTrace outTrace;
 
         // ---- Build preview Mesh.vertices via direct stencil eval -----
         // Preview Mesh.vertices is allocated fresh because it's
         // consumed by consumers outside OsdAccel (CPU readback into
         // preview.vertices via readLimitIntoPreview); aliasing into a
         // scratch buffer would surprise them.
+        //
+        // From the SNAPSHOT's positions, not the live cage's — and the
+        // receiver re-runs this same evaluate against the LIVE cage before
+        // publishing (see `SubpatchPreview`), so a version-silent drag during
+        // the build cannot leave a stale surface. M-GEN-POS.
         outMesh.vertices = new Vec3[](limitVerts);
-        osdc_evaluate(osd, cageScratchXyz.ptr,
+        osdc_evaluate(osdLocal, snap.xyz.ptr,
                       cast(float*)outMesh.vertices.ptr);
 
         // ---- Build preview Mesh.edges --------------------------------
         outMesh.edges.length = limitEdges;
         foreach (i; 0 .. limitEdges) {
             outMesh.edges[i] = [
-                cast(uint)scratchEdgeVerts[2*i + 0],
-                cast(uint)scratchEdgeVerts[2*i + 1],
+                cast(uint)back.edgeVerts[2*i + 0],
+                cast(uint)back.edgeVerts[2*i + 1],
             ];
         }
 
         // ---- Build preview Mesh.faces --------------------------------
-        // P0: outMesh.faces[fi] slice-aliases into scratchFaceIndicesI.
+        // P0: outMesh.faces[fi] slice-aliases into faceIndicesI.
         // Same bit layout (int vs uint, OSD always emits non-negative
         // vertex indices), zero per-face allocation. Readers of
         // outMesh.faces[fi] must not mutate via `[k] = ...` (would
         // overwrite scratch) — `~= x` is safe (it reallocates behind
         // the slice).
         outMesh.faces.length = limitFaces;
-        auto scratchFacesAsUint = cast(uint[]) scratchFaceIndicesI;
+        auto scratchFacesAsUint = cast(uint[]) back.faceIndicesI;
         int cursor = 0;
         foreach (fi; 0 .. limitFaces) {
-            int cnt = scratchFaceCounts[fi];
+            int cnt = back.faceCounts[fi];
             outMesh.faces[fi] = scratchFacesAsUint[cursor .. cursor + cnt];
             cursor += cnt;
         }
@@ -1616,7 +1871,7 @@ struct OsdAccel {
         outMesh.vertLoop    .length = 0;
         outMesh.loopEdge    .length = 0;
         outMesh.edgeIndexMap = null;
-        // This mesh's edges[] were written directly above (scratchEdgeVerts),
+        // This mesh's edges[] were written directly above (back.edgeVerts),
         // bypassing addEdge/rebuildEdges, so structVersion never bumped —
         // outMesh could otherwise carry a stale (loopsStamp == structVersion)
         // coincidence from a prior reuse of this same buffer and read as
@@ -1649,38 +1904,26 @@ struct OsdAccel {
         // surface as their source cage face. Without this, every
         // subpatch preview face would read mat slot 0 and the whole
         // model would render as a single default-grey blob (observed
-        // on Demon_Hero.lwo where every face is subpatch-tagged).
-        outMesh.surfaces = cage.surfaces.dup;
+        // on a fully subpatch-tagged import).
+        outMesh.surfaces = snap.surfaces.dup;
         outMesh.faceMaterial.length = limitFaces;
         foreach (i; 0 .. limitFaces) {
             immutable uint cf = outTrace.faceOrigin[i];
-            outMesh.faceMaterial[i] = (cf < cage.faceMaterial.length)
-                ? cage.faceMaterial[cf] : 0u;
+            outMesh.faceMaterial[i] = (cf < snap.faceMaterial.length)
+                ? snap.faceMaterial[cf] : 0u;
         }
 
         // Build OSD cage edge index → vibe3d cage edge index map.
-        // Same key scheme as Mesh.edgeKey (min,max) → uint.
-        immutable int osdCageEdges = osdc_topology_input_edge_count(osd);
+        // Same key scheme as Mesh.edgeKey (min,max) → uint; the sorted
+        // (key,value) array was built at the top of this function.
+        //   build: O(n log n) sort over the snapshot's cage edges (≈50K
+        //          entries on a 24K-poly cage), one contiguous allocation.
+        //   lookup: 16-comparison binary search vs the old AA's hash +
+        //          pointer-chase + open-addressing probe.
+        immutable int osdCageEdges = osdc_topology_input_edge_count(osdLocal);
         scratchOsdCageEdgeVerts.length = 2 * osdCageEdges;
         if (osdCageEdges > 0)
-            osdc_topology_input_edges(osd, scratchOsdCageEdgeVerts.ptr);
-        // P1: sorted (key, value) array instead of uint[ulong] AA.
-        // build: O(n log n) sort over cage.edges (≈50K entries on a
-        //        24K-poly cage). Single contiguous allocation in the
-        //        scratch buffer, no per-entry GC hit.
-        // lookup: 16-comparison binary search vs the AA's hash +
-        //         pointer-chase + open-addressing probe.
-        scratchVibe3dEdgeKv.length = cage.edges.length;
-        foreach (ei, e; cage.edges) {
-            uint a = e[0], b = e[1];
-            ulong key = (cast(ulong)(a < b ? a : b) << 32)
-                      |  cast(ulong)(a < b ? b : a);
-            scratchVibe3dEdgeKv[ei] = EdgeKv(key, cast(uint)ei);
-        }
-        {
-            import std.algorithm.sorting : sort;
-            sort!"a.key < b.key"(scratchVibe3dEdgeKv);
-        }
+            osdc_topology_input_edges(osdLocal, scratchOsdCageEdgeVerts.ptr);
 
         scratchOsdToVibe3dCageEdge.length = osdCageEdges;
         scratchOsdToVibe3dCageEdge[0 .. osdCageEdges] = uint.max;
@@ -1688,19 +1931,8 @@ struct OsdAccel {
             int a = scratchOsdCageEdgeVerts[2*oi + 0];
             int b = scratchOsdCageEdgeVerts[2*oi + 1];
             if (a < 0 || b < 0) continue;
-            ulong key = (cast(ulong)(a < b ? a : b) << 32)
-                      |  cast(ulong)(a < b ? b : a);
-            // Manual lower-bound bsearch — std.range.assumeSorted
-            // would do this but adds template overhead per call.
-            size_t lo = 0, hi = scratchVibe3dEdgeKv.length;
-            while (lo < hi) {
-                size_t mid = (lo + hi) >> 1;
-                if (scratchVibe3dEdgeKv[mid].key < key) lo = mid + 1;
-                else                                    hi = mid;
-            }
-            if (lo < scratchVibe3dEdgeKv.length
-                && scratchVibe3dEdgeKv[lo].key == key)
-                scratchOsdToVibe3dCageEdge[oi] = scratchVibe3dEdgeKv[lo].value;
+            scratchOsdToVibe3dCageEdge[oi] =
+                findCageEdgeByKey(edgeKey(cast(uint)a, cast(uint)b));
         }
         foreach (i; 0 .. limitEdges) {
             immutable int o = scratchEdgeOrigins[i];
@@ -1715,17 +1947,19 @@ struct OsdAccel {
         outMesh.resizeSubpatch();
         foreach (i; 0 .. limitFaces) {
             immutable int o = scratchFaceOrigins[i];
-            bool parentMarked = (o >= 0) && cage.isFaceSubpatch(o);
+            bool parentMarked = (o >= 0) && (o < nf) && snap.faceSubpatch[o];
             outTrace.subpatch [i] = parentMarked;
             outMesh.setFaceSubpatch(i, parentMarked);
             // Hide (task 0613 S3): the preview face inherits its cage parent's
             // hidden state. THIS is the stamp the viewport actually reads —
-            // SubpatchPreview.rebuild drives buildPreview, and GpuMesh.upload
+            // SubpatchPreview.rebuild drives the build, and GpuMesh.upload
             // then reads the Hide plane off whichever mesh it was handed
-            // (cage or preview) with no new parameter. `outMesh` is a
-            // long-lived reused struct, so both branches are written (a face
-            // that stops being hidden must stop carrying the bit).
-            outMesh.setFaceHiddenBit(i, (o >= 0) && cage.isFaceHidden(o));
+            // (cage or preview) with no new parameter. Both branches are
+            // written (a face that stops being hidden must stop carrying the
+            // bit) — `outMesh` was `Mesh.init` at the top of this function,
+            // but `resizeSubpatch` / `setFaceHiddenBit` are the same writers
+            // as before and the reasoning is unchanged.
+            outMesh.setFaceHiddenBit(i, (o >= 0) && (o < nf) && snap.faceHidden[o]);
         }
 
         outMesh.resizeVertexSelection();
@@ -1736,6 +1970,92 @@ struct OsdAccel {
         // right space. AFTER the resizes: this writes vertexMarks/edgeMarks
         // in place.
         outMesh.refreshHiddenDerived();
+
+        res.mesh  = outMesh;
+        res.trace = outTrace;
+        res.ok    = true;
+        return true;
+    }
+
+    /// Binary search into `scratchVibe3dEdgeKv` (built at the top of
+    /// `buildFromSnapshot`). `uint.max` when the key is absent — the same
+    /// answer `key in cage.edgeIndexMap` gave by being null.
+    private uint findCageEdgeByKey(ulong key) const {
+        size_t lo = 0, hi = scratchVibe3dEdgeKv.length;
+        while (lo < hi) {
+            size_t mid = (lo + hi) >> 1;
+            if (scratchVibe3dEdgeKv[mid].key < key) lo = mid + 1;
+            else                                    hi = mid;
+        }
+        if (lo < scratchVibe3dEdgeKv.length
+            && scratchVibe3dEdgeKv[lo].key == key)
+            return scratchVibe3dEdgeKv[lo].value;
+        return uint.max;
+    }
+
+
+    /// Main/GL thread. Adopt `res`'s topology as this accel's live one,
+    /// creating the GL evaluator + its two VBOs when the build MISSED the
+    /// cache, and install the topology into the LRU. Ownership of a
+    /// miss-built topology transfers to the cache here — see
+    /// `retireResult` for the other exit.
+    ///
+    /// `glThreadGuard` is the first statement, and it is the whole reason
+    /// this is a separate function: `gl_thread_guard.d`'s header used to list
+    /// `OsdAccel.buildPreview` among the funnels it deliberately did NOT
+    /// cover, on the grounds that no crash had ever come from there. Task
+    /// 1500 makes a non-GL thread run the build, so the guard moves from
+    /// "not worth it" to "the instrument that names the drift". M-GL.
+    void installGl(ref PreviewBuildResult res, ref Mesh pmesh,
+                    ref const SubpatchTrace ptrace)
+    {
+        import gl_thread_guard : glThreadGuard;
+        glThreadGuard("OsdAccel.installGl");
+        import bindbc.opengl;
+
+        immutable int nv         = res.numCageVerts;
+        immutable int limitVerts = res.limitVertCount;
+        immutable int limitFaces = res.limitFaces;
+
+        if (res.cacheHit) {
+            // Borrowed from a cache slot: pick its GL companions back up.
+            auto look = lookupCachedTopology(res.topoKey);
+            assert(look.hit && look.osd is res.topo,
+                   "cache slot moved under an in-flight build");
+            osd            = look.osd;
+            glEval         = look.glEval;
+            cageGlVbo      = look.cageGlVbo;
+            limitGlVbo     = look.limitGlVbo;
+            limitVertCount = look.limitVerts;
+            touchCacheSlot(res.topoKey);
+        } else {
+            osd            = res.topo;
+            limitVertCount = res.limitVertCount;
+            glEval         = g_osdGpuEnabled ? osdc_gl_create(osd) : null;
+            cageGlVbo      = 0;
+            limitGlVbo     = 0;
+            if (glEval !is null) {
+                glGenBuffers(1, &cageGlVbo);
+                glGenBuffers(1, &limitGlVbo);
+                glBindBuffer(GL_ARRAY_BUFFER, cageGlVbo);
+                glBufferData(GL_ARRAY_BUFFER,
+                    cast(GLsizeiptr)(3 * nv * float.sizeof),
+                    null, GL_DYNAMIC_DRAW);
+                glBindBuffer(GL_ARRAY_BUFFER, limitGlVbo);
+                glBufferData(GL_ARRAY_BUFFER,
+                    cast(GLsizeiptr)(3 * limitVertCount * float.sizeof),
+                    null, GL_DYNAMIC_DRAW);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+            }
+            installInCache(res.topoKey, nv, osd, glEval,
+                           cageGlVbo, limitGlVbo, limitVertCount);
+            // The cache owns it now; nothing downstream may free it.
+            res.topoOwned = false;
+        }
+
+        if (glEval !is null) {
+            limitScratchXyz.length = 3 * limitVerts;
+        }
 
         // ---- Phase 3b: fan-out infrastructure -----------------------
         // Built only when the GL eval is alive (Phase 3a's glEval).
@@ -1750,7 +2070,7 @@ struct OsdAccel {
             // appends each rebuild).
             size_t cornerCount = 0;
             foreach (fi; 0 .. limitFaces) {
-                immutable size_t fl = outMesh.faces[fi].length;
+                immutable size_t fl = pmesh.faces[fi].length;
                 if (fl >= 3) cornerCount += (fl - 2) * 3;
             }
 
@@ -1760,7 +2080,7 @@ struct OsdAccel {
 
             size_t cw = 0;
             foreach (fi; 0 .. limitFaces) {
-                const(uint)[] face = outMesh.faces[fi];
+                const(uint)[] face = pmesh.faces[fi];
                 scratchFaceFirstVerts[3*fi + 0] =
                     face.length >= 1 ? cast(int)face[0] : 0;
                 scratchFaceFirstVerts[3*fi + 1] =
@@ -1849,24 +2169,24 @@ struct OsdAccel {
                 // arrays are setLength()'d once instead of `~=`'d
                 // through 800K+ edges / 400K+ verts per rebuild.
                 size_t keptEdges = 0;
-                foreach (ei; 0 .. outMesh.edges.length) {
-                    immutable uint eo = ei < outTrace.edgeOrigin.length
-                                        ? outTrace.edgeOrigin[ei] : uint.max;
+                foreach (ei; 0 .. pmesh.edges.length) {
+                    immutable uint eo = ei < ptrace.edgeOrigin.length
+                                        ? ptrace.edgeOrigin[ei] : uint.max;
                     if (eo != uint.max) ++keptEdges;
                 }
                 size_t keptVerts = 0;
                 foreach (pi; 0 .. limitVerts) {
-                    immutable uint vo = pi < outTrace.vertOrigin.length
-                                        ? outTrace.vertOrigin[pi] : uint.max;
+                    immutable uint vo = pi < ptrace.vertOrigin.length
+                                        ? ptrace.vertOrigin[pi] : uint.max;
                     if (vo != uint.max) ++keptVerts;
                 }
                 scratchEdgeSegToLimit.length = 2 * keptEdges;
                 scratchVertToLimit   .length =     keptVerts;
 
                 size_t ew = 0;
-                foreach (ei, e; outMesh.edges) {
-                    immutable uint eo = ei < outTrace.edgeOrigin.length
-                                        ? outTrace.edgeOrigin[ei] : uint.max;
+                foreach (ei, e; pmesh.edges) {
+                    immutable uint eo = ei < ptrace.edgeOrigin.length
+                                        ? ptrace.edgeOrigin[ei] : uint.max;
                     if (eo == uint.max) continue;
                     scratchEdgeSegToLimit[ew + 0] = cast(int)e[0];
                     scratchEdgeSegToLimit[ew + 1] = cast(int)e[1];
@@ -1874,8 +2194,8 @@ struct OsdAccel {
                 }
                 size_t vw = 0;
                 foreach (pi; 0 .. limitVerts) {
-                    immutable uint vo = pi < outTrace.vertOrigin.length
-                                        ? outTrace.vertOrigin[pi] : uint.max;
+                    immutable uint vo = pi < ptrace.vertOrigin.length
+                                        ? ptrace.vertOrigin[pi] : uint.max;
                     if (vo == uint.max) continue;
                     scratchVertToLimit[vw++] = cast(int)pi;
                 }
@@ -1913,8 +2233,125 @@ struct OsdAccel {
         }
 
         valid = true;
+    }
+
+
+    /// Give back whatever `res` owns. Called on EVERY exit that does not
+    /// install: a failed build, and — the one that leaks if it is forgotten —
+    /// a result thrown away because the cage moved on while it was being
+    /// built. Without this, "last dispatch wins" leaks one
+    /// `osdc_topology_t` (the single most expensive object in the system)
+    /// per discarded Tab. M-LEAK.
+    void retireResult(ref PreviewBuildResult res) {
+        if (res.topoOwned && res.topo !is null) {
+            osdc_topology_destroy(res.topo);
+            ++topologiesRetired;
+        }
+        res.topo      = null;
+        res.topoOwned = false;
+        res.mesh      = Mesh.init;
+        res.trace     = SubpatchTrace.init;
+    }
+
+    /// Make the slot the build wrote the FRONT one. Called by the receiver
+    /// after it has taken `res.mesh` (whose `faces[fi]` slice-alias into that
+    /// slot's `faceIndicesI`), and never by the builder.
+    void swapLimitPool() { limitBack = 1 - limitBack; }
+
+    /// Publish the build's counters into `g_perf` — MAIN THREAD ONLY.
+    ///
+    /// These four keys are what the perf lane's F-I5/F-I8 read
+    /// (`subpatchPreview`, `subpatchTopoHit`, `subpatchTopoMiss`,
+    /// `subpatchLevelChosen`), and `g_perf` is `__gshared` with no lock, so
+    /// letting the worker write them straight would make the lane's own
+    /// invariants racy. The worker measures; the receiver publishes.
+    ///
+    /// `extraNs` is the install's own wall time, so `subpatchPreview`'s timer
+    /// still sums the WHOLE build the way it did when it was one function.
+    void publishBuildCounters(ref const PreviewBuildResult res, long extraNs) {
+        g_perf.recordNs(Cat.subpatchPreview, res.workerNs + extraNs);
+        g_perf.count(res.cacheHit ? Cat.subpatchTopoHit : Cat.subpatchTopoMiss, 1);
+        g_perf.count(Cat.subpatchLevelChosen, res.chosenLevel);
+        if (res.chosenLevel != res.requestedLevel) {
+            import log        : logWarn;
+            import std.format : format;
+            try {
+                logWarn("subpatch", format(
+                    "capping subpatch depth %d -> %d "
+                    ~ "(cage %d corners, projected %d limit faces "
+                    ~ "exceeds memory ceiling %d)",
+                    res.requestedLevel, res.chosenLevel,
+                    res.cageCornerCount,
+                    projectedLimitFaces(res.cageCornerCount, res.requestedLevel),
+                    res.memLimitFaces));
+            } catch (Exception) {}
+        }
+    }
+
+    /// Load the LIVE cage's positions into `cageScratchXyz` — the buffer
+    /// `refresh()` / `refreshIntoFaceVbo()` assert the size of on every drag
+    /// frame. MAIN THREAD: the worker uses the snapshot's own copy and never
+    /// touches this one.
+    void syncCageXyz(ref const Mesh cage) {
+        cageScratchXyz.length = 3 * cage.vertices.length;
+        foreach (vi, v; cage.vertices) {
+            cageScratchXyz[3*vi + 0] = v.x;
+            cageScratchXyz[3*vi + 1] = v.y;
+            cageScratchXyz[3*vi + 2] = v.z;
+        }
+    }
+
+    /// Re-run the stencil evaluate against the LIVE cage, straight into
+    /// `preview.vertices`. The receiver's answer to a version-silent drag
+    /// that happened WHILE the build was running: positions are never taken
+    /// from the snapshot at publish time, only topology is. M-GEN-POS.
+    ///
+    /// Cheap by construction — the stencil TABLE is the expensive object and
+    /// it already exists; this is the one pass over it that the
+    /// position-only fast path already runs every drag frame.
+    void evaluateFromCage(ref const Mesh cage, osdc_topology_t* topo,
+                           ref Mesh preview) {
+        if (topo is null || preview.vertices.length == 0) return;
+        syncCageXyz(cage);
+        osdc_evaluate(topo, cageScratchXyz.ptr,
+                      cast(float*)preview.vertices.ptr);
+    }
+
+    /// SYNCHRONOUS build — snapshot, build, clear, install, all on this
+    /// thread. Unchanged signature and unchanged observable behaviour; it is
+    /// what `dub test`'s unittests and the IPR preview
+    /// (source/render/render_mvp.d) call, and what `SubpatchPreview` falls
+    /// back to when its async path is not enabled.
+    bool buildPreview(ref const Mesh cage, int level,
+                       out Mesh outMesh, out SubpatchTrace outTrace,
+                       long memLimitFaces = MEM_LIMIT_FACES)
+    {
+        import core.time : MonoTime;
+        CageSnapshot snap;
+        takeCageSnapshot(cage, level, snap, memLimitFaces);
+
+        PreviewBuildResult res;
+        immutable bool built = buildFromSnapshot(snap, res);
+
+        immutable MonoTime tInstall = MonoTime.currTime;
+        clear();
+        if (!built) {
+            retireResult(res);
+            publishBuildCounters(res, (MonoTime.currTime - tInstall).total!"nsecs");
+            return false;
+        }
+        installGl(res, res.mesh, res.trace);
+        // Positions already came from this same cage a few statements ago, so
+        // no re-evaluate here — but `cageScratchXyz` still has to hold them
+        // for the per-drag-frame `refresh()` that follows.
+        syncCageXyz(cage);
+        swapLimitPool();
+        publishBuildCounters(res, (MonoTime.currTime - tInstall).total!"nsecs");
+        outMesh  = res.mesh;
+        outTrace = res.trace;
         return true;
     }
+
 
     /// Phase 3b — replace gpu.faceVbo's positions+normals via GPU eval
     /// + transform-feedback fan-out. Single shader dispatch per drag

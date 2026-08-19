@@ -138,6 +138,40 @@ JSONValue perfRead() {
 // /api/frames — FrameProbe (task 0195). Mirrors the /api/perf helpers above.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// /api/subpatch/preview — the ASYNC BUILD's numbers (task 1500).
+//
+// WHY THE LANE HAS TO READ THIS AT ALL. Moving the preview build off the frame
+// loop takes its wall time out of `/api/frames` and its GC bytes out of
+// `gcAllocBytes` (which is `GC.allocatedInCurrentThread`, MAIN-THREAD-LOCAL —
+// perf_probe.d says so in as many words). Left alone, the lane would report a
+// several-fold "speed-up" and a ~2x allocation "win" for a change that moved
+// work rather than removing any. These three numbers are what keep it honest.
+// ---------------------------------------------------------------------------
+struct SubpatchAsyncCounters {
+    bool empty = true;
+    long buildNsTotal;
+    long allocBytesTotal;
+    long pendingFrames;
+    long builds;
+    long discarded;
+}
+
+SubpatchAsyncCounters fetchSubpatchAsync() {
+    SubpatchAsyncCounters c;
+    try {
+        auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/subpatch/preview"));
+        if ("workerBuildNsTotal" !in j) return c;
+        c.empty           = false;
+        c.buildNsTotal    = j["workerBuildNsTotal"].integer;
+        c.allocBytesTotal = j["workerAllocBytesTotal"].integer;
+        c.pendingFrames   = j["pendingFrames"].integer;
+        c.builds          = j["builds"].integer;
+        c.discarded       = j["discarded"].integer;
+    } catch (Exception) { /* absent route / older binary — stays empty */ }
+    return c;
+}
+
 void framesReset() { postUrl("/api/frames/reset"); }
 
 FrameStats fetchFrames() {

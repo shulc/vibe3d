@@ -2,6 +2,7 @@
 // Blocks keep their original order and text. Blocks that read a module-
 // private symbol stayed behind -- see the task for the count.
 module tests.unit.subpatch_osd_test;
+import std.conv : to;
 
 import std.math : sqrt;
 import math : Vec3;
@@ -544,4 +545,163 @@ unittest {
         ~ centroidX(preview.mesh).to!string
         ~ "; the (address, version, depth) key has lost its address term and "
         ~ "two same-version layers are aliasing again");
+}
+
+// ---------------------------------------------------------------------------
+// M-GL (task 1500) — the seam between the pure build and the GL install is
+// INSTRUMENTED, not merely documented.
+//
+// TWO HALVES, and both are needed. The first is the one that reddens under
+// the mutation the task names ("move `installGl` into the body of
+// `buildFromSnapshot`"): the pure half has to run clean on a thread with no
+// GL context. The second pins that the guard is ARMED at all — without it the
+// first half would stay green even if GL calls did migrate, because an
+// off-thread GL call is a driver-dispatch SIGSEGV or a silent no-op, not a
+// catchable failure. Together they say: the pure half throws nothing, the GL
+// half throws GL-OFF-MAIN-THREAD by name.
+//
+// `g_osdGpuEnabled` is false under `dub test` (no context was ever probed),
+// so `installGl`'s body would be nearly inert anyway — which is exactly why
+// the assertion is on the GUARD's throw and not on a GL side effect.
+unittest {
+    import core.thread : Thread;
+    import gl_thread_guard : markMainThread, clearMainThreadForTest,
+                             muteGlThreadGuardForTest, GlThreadError;
+    import std.algorithm : canFind;
+
+    Mesh cage = makeCube();
+    cage.resizeSubpatch();
+    foreach (fi; 0 .. cage.faces.length) cage.setSubpatch(fi, true);
+
+    // Heap-allocated so the worker closure captures a pointer rather than a
+    // stack frame holding a struct with a destructor.
+    auto accel = new OsdAccel;
+    scope(exit) { accel.clear(); accel.destroyCache(); }
+
+    auto snap = new CageSnapshot;
+    takeCageSnapshot(cage, 1, *snap);
+
+    markMainThread();
+    scope(exit) clearMainThreadForTest();
+
+    // ---- half 1: the PURE build runs clean off the GL thread -------------
+    string buildErr;
+    bool   buildOk;
+    auto res = new PreviewBuildResult;
+    {
+        auto t = new Thread({
+            try { buildOk = accel.buildFromSnapshot(*snap, *res); }
+            catch (Throwable e) { buildErr = e.msg; }
+        });
+        t.start();
+        t.join();
+    }
+    assert(buildErr.length == 0,
+        "buildFromSnapshot must contain no GL call — it runs on the worker "
+        ~ "thread: " ~ buildErr);
+    assert(buildOk, "the off-thread cube build must succeed");
+    assert(res.mesh.faces.length == 24,
+        "cube at level 1 gives 24 limit quads, got "
+        ~ res.mesh.faces.length.to!string);
+
+    // ---- half 2: the GL install is guarded, by name ----------------------
+    string glErr;
+    muteGlThreadGuardForTest(true);
+    {
+        auto t = new Thread({
+            try { accel.installGl(*res, res.mesh, res.trace); }
+            catch (GlThreadError e) { glErr = e.msg; }
+            catch (Throwable e)     { glErr = "WRONG-ERROR:" ~ e.msg; }
+        });
+        t.start();
+        t.join();
+    }
+    muteGlThreadGuardForTest(false);
+    assert(glErr.canFind("funnel=OsdAccel.installGl"),
+        "installGl off the GL thread must name its funnel; got: " ~ glErr);
+
+    // The build owns a topology nobody installed — give it back, or this
+    // unittest is itself the leak M-LEAK is about.
+    accel.retireResult(*res);
+}
+
+// ---------------------------------------------------------------------------
+// M-RESET (task 1500) — BOTH destructive primitives wait for the builder.
+//
+// `destroyCache()` is the load-bearing one: it calls `osdc_topology_destroy`
+// on the LRU's slots, and a build that HIT the cache is reading exactly one of
+// them, borrowed. Without the join that is a use-after-free inside
+// OpenSubdiv, on a thread whose stack names nothing about the reset that
+// caused it. `clear()` is the construction guarantee — after the 1500 split it
+// frees nothing the worker still reads, and it carries the hook so that the
+// NEXT reset path added to this class is safe without its author having heard
+// of the worker thread.
+//
+// THE ASSERTION IS AN ORDERING ONE, not a counter one: a counter incremented
+// at the only site that writes it proves nothing. A stand-in builder takes
+// 200 ms; the primitive must not return before it has finished. Delete either
+// hook call and the matching half returns in microseconds and fails.
+unittest {
+    import core.thread : Thread;
+    import core.time   : msecs;
+    import core.atomic : atomicLoad, atomicStore;
+
+    void requireJoin(string which, void delegate(OsdAccel*) call) {
+        auto accel = new OsdAccel;
+        shared bool builderFinished = false;
+        auto builder = new Thread({
+            Thread.sleep(200.msecs);
+            atomicStore(builderFinished, true);
+        });
+        accel.joinInFlightHook = () { builder.join(); };
+        builder.start();
+
+        call(accel);
+
+        assert(atomicLoad(builderFinished),
+            "OsdAccel." ~ which ~ " returned while a build was still running "
+            ~ "— everything it frees or nulls is something the builder may "
+            ~ "still be reading");
+        accel.joinInFlightHook = null;
+    }
+
+    requireJoin("clear()",        (OsdAccel* a) { a.clear(); });
+    requireJoin("destroyCache()", (OsdAccel* a) { a.destroyCache(); });
+}
+
+// ---------------------------------------------------------------------------
+// M-DET-SHAPE (task 1500) — the input barrier reads STATE, and it is BOUNDED.
+//
+// The end-to-end rows in tests/test_subpatch_async_preview.d exercise this
+// through the whole app; this one pins its shape directly, which is the half
+// that would otherwise be provable only by reading the source: the gate is a
+// function of `buildPending` and elapsed wall time, not a constant, and past
+// `ceilingMs` it OPENS rather than holding forever.
+//
+// A gate that could not open is the failure this is aimed at: a build wedged
+// inside OpenSubdiv's stencil builder would take the recorded-input lane with
+// it, and the correct degraded answer (the cage) is already available.
+unittest {
+    import mesh      : SubpatchPreview;
+    import core.time : MonoTime, dur;
+
+    SubpatchPreview sp;
+    assert(!sp.scriptedInputHeld(),
+        "with no build in flight the barrier must never hold");
+
+    sp.buildPending = true;
+    sp.ceilingMs    = 10_000;
+    sp.buildStarted = MonoTime.currTime;
+    assert(sp.scriptedInputHeld(),
+        "a build in flight inside the ceiling must hold recorded input");
+
+    // Same state, one field moved: the barrier opens. This is what makes it
+    // bounded rather than a promise that it is.
+    sp.ceilingMs = 1;
+    sp.buildStarted = MonoTime.currTime - dur!"msecs"(50);
+    assert(!sp.scriptedInputHeld(),
+        "past its ceiling the barrier must deliver the input anyway");
+
+    sp.buildPending = false;
+    assert(!sp.scriptedInputHeld());
 }

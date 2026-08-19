@@ -15052,6 +15052,410 @@ struct SubpatchPreview {
     ulong reusablePreviewKey;
     bool  reusablePreviewReady;
 
+    // =====================================================================
+    // ASYNCHRONOUS BUILD (task 1500)
+    // =====================================================================
+    //
+    // WHAT IS PROMISED: no multi-second freeze. NOT "no hitches" — D stops
+    // the world to collect, and a virgin build allocates ~248 MB (task 1374),
+    // so residual per-frame jitter during a background build is a MEASUREMENT
+    // in the task's acceptance, not an assumption in this comment.
+    //
+    // THE HAZARD THIS CODE EXISTS AROUND. The preview is not just a picture:
+    // it carries element provenance (`SubpatchTrace`) and it PARTICIPATES IN
+    // SELECTION. Task 1500's phase-0 discriminator measured it — deferring
+    // the rebuild made `tests/test_hide_geometry_pick.d`'s edge-lasso row
+    // answer with the CAGE's 16 edges where it asserts the PREVIEW's 12. So
+    // "make the build async" without a discipline on when recorded input is
+    // delivered is not a perf improvement, it is a broken suite.
+    //
+    // The discipline has three parts, and each has its own witness:
+    //   1. `active` drops to false AT DISPATCH, not at arrival, whenever the
+    //      index space changes. While a build is in flight the cage is what
+    //      is drawn AND what is selected, and a cage answer is a complete,
+    //      permanent answer — every pick path already returns CAGE indices
+    //      (gpu_select.d's *OriginGpu translation, bvh_pick's _triToFace,
+    //      the lasso's trace.*Origin walk), so an arriving preview never has
+    //      to re-map or discard a selection the user already made. M-SEL.
+    //   2. RECORDED INPUT is held while a build is in flight — and only
+    //      recorded input, not the HTTP bridge tick, so `/api/reset` and the
+    //      observation routes keep answering. `scriptedInputHeld` below is
+    //      the whole of that gate. M-DET.
+    //   3. The receiver runs at ONE point in the frame, immediately before
+    //      the single GPU-upload block, so no pick can ever observe a live
+    //      preview `trace` against cage VBOs. M-INV asserts the one-sided
+    //      invariant at the two CONSUMERS.
+    //
+    // OFF BY DEFAULT. `asyncEnabled` is set by the editor's main loop only.
+    // The module unittests and the IPR preview (source/render/render_mvp.d)
+    // keep the synchronous path — they call `rebuildIfStale` and read
+    // `preview.mesh` on the next line, and there is no frame loop under them
+    // to run a receiver. This is not the "in test mode, wait synchronously"
+    // trap the task warns about: the editor, INCLUDING under --test, is
+    // always async, which is what makes M-ASYNC and the perf lane's
+    // `subpatchWorkerBuildNs > 0` able to see the window at all.
+
+    import subpatch_worker : SubpatchWorker;
+    import subpatch_osd    : CageSnapshot, PreviewBuildResult, takeCageSnapshot;
+
+    /// Ceiling on how long recorded input may be held. Taken from
+    /// measurement, not feel: task 1374 puts the worst cold build at ~4 s
+    /// with the 800 000-face budget, so this is ~4x it. Its job is that a
+    /// build wedged inside the third-party stencil builder costs one warning
+    /// and a degraded (cage) answer instead of a hung lane.
+    enum long kScriptedHoldCeilingMs = 15_000;
+
+    /// Ceiling on the bounded join `OsdAccel.clear()` runs through. Longer
+    /// than the input ceiling on purpose: this one is protecting memory a
+    /// running thread is reading, so it must outlast any build that is
+    /// merely slow.
+    enum long kJoinWaitMs = 20_000;
+
+    SubpatchWorker worker;
+    bool  asyncEnabled;
+
+    /// A build is dispatched and has not been received. This is the ONE bit
+    /// the barrier, the indicator and the observation route all read.
+    bool  buildPending;
+    /// The bounded join gave up on a build. Its topology is deliberately NOT
+    /// freed (see `joinInFlight`), so this also means "one topology has been
+    /// leaked on purpose".
+    bool  buildAbandoned;
+    ulong buildGeneration;
+    /// Stencil-space key the in-flight build was dispatched for. NOT the
+    /// tuple `rebuildIfStale` early-outs on: that one is
+    /// (address, mutationVersion, depth), and an interactive gizmo drag
+    /// changes `vertices` WITHOUT bumping `mutationVersion`, so it is both
+    /// too strong (mutationVersion moves on edits that leave the stencil
+    /// table identical) and too weak (a version-silent move does not move
+    /// it at all) to decide whether an arriving build is still wanted.
+    ulong pendingKey;
+    ulong buildsCompleted;
+    ulong buildsDiscarded;
+    /// Frames on which a build was in flight. The perf lane subtracts this
+    /// from `frameCount` so F-I9's frame band keeps measuring exactly what it
+    /// measured before the work moved off-thread.
+    ulong pendingFrames;
+    long  workerBuildNs;            // last completed build
+    long  workerAllocBytes;         // last completed build
+    /// Refinement level the depth policy actually picked for the last build
+    /// (`depth` is what was REQUESTED; `chooseSubpatchLevel` caps it).
+    int   chosenLevel = -1;
+    long  workerBuildNsTotal;       // since process start / perf reset
+    long  workerAllocBytesTotal;
+
+    import core.time : MonoTime;
+    MonoTime buildStarted;
+    bool     ceilingFired;
+
+    /// Test-only knob (POST /api/subpatch/hold). Delays RECEPTION, never the
+    /// worker: the build completes normally, so `joinInFlight` under a hold
+    /// never waits and `/api/reset` stays instant even mid-hold.
+    ///   0  — off
+    ///  >0  — hold reception for this many ms after dispatch
+    ///  <0  — hold until released (the ceiling witness, M-CEIL)
+    long holdMs;
+    long ceilingMs = kScriptedHoldCeilingMs;
+
+    /// PERMANENT front/back snapshot pool. The second one is allocated at the
+    /// first Tab and keeps its capacity for the process's life — so the GC
+    /// spinlock contention P0 removed (subpatch_osd.d, 10.5 % of samples at
+    /// 24K cage polys) comes back for the FIRST build only, not for each one.
+    /// The cost is real and is the task's risk 2: peak memory grows by one
+    /// cage-proportional snapshot.
+    private CageSnapshot[2] snapPool;
+    private size_t          snapBack;
+
+    /// Turn the async path on and give this preview its builder. Called once,
+    /// by the editor's main loop.
+    void enableAsync(SubpatchWorker w) {
+        worker       = w;
+        asyncEnabled = w !is null;
+        osdAccel.joinInFlightHook = &this.joinInFlight;
+    }
+
+    /// Is recorded input held this frame? Consulted at exactly two sites —
+    /// the `--playback` tick and the `/api/play-events` tick — and nowhere
+    /// else. In particular `httpServer.tickAll()` is NOT gated: it drains
+    /// every registered main-thread bridge, so gating it would take
+    /// `/api/reset` (the harness's only recovery lever) and
+    /// `/api/subpatch/preview` (the route that has to answer `pending:true`)
+    /// down with it, and would run the 5 s `submitAndWait` ceiling on ~30
+    /// routes.
+    ///
+    /// BOUNDED. Past `ceilingMs` the input is delivered anyway, with one
+    /// warning: the cage answer is correct (just not the limit-surface one),
+    /// and an unbounded gate would turn a wedged third-party build into a
+    /// wedged test lane.
+    bool scriptedInputHeld() {
+        if (!buildPending) return false;
+        import core.time : dur;
+        if (MonoTime.currTime - buildStarted >= dur!"msecs"(ceilingMs)) {
+            if (!ceilingFired) {
+                ceilingFired = true;
+                try {
+                    import log        : logWarn;
+                    import std.format : format;
+                    logWarn("subpatch", format(
+                        "preview build still running after %d ms — delivering "
+                        ~ "recorded input against the cage", ceilingMs));
+                } catch (Exception) {}
+            }
+            return false;
+        }
+        return true;
+    }
+
+    private bool receptionHeld() {
+        if (holdMs == 0) return false;
+        if (holdMs < 0)  return true;
+        import core.time : dur;
+        return (MonoTime.currTime - buildStarted) < dur!"msecs"(holdMs);
+    }
+
+    /// The bounded join every destructive `OsdAccel` primitive runs through
+    /// (`clear()` / `destroyCache()` call it as their FIRST statement).
+    ///
+    /// ON TIMEOUT WE LEAK, DELIBERATELY. There is nothing to interrupt a
+    /// build with — the point of no return is inside the stencil builder —
+    /// and freeing the topology or the GL objects underneath a running
+    /// thread is the use-after-free this join exists to prevent. A leak that
+    /// is logged beats a crash that is not. This branch has NO test witness
+    /// and that is recorded in doc/behavior_gap_registry.md rather than
+    /// dressed up.
+    void joinInFlight() {
+        if (worker is null || !buildPending) return;
+        if (!worker.waitIdle(kJoinWaitMs)) {
+            buildAbandoned = true;
+            buildPending   = false;
+            try {
+                import log : logError;
+                logError("subpatch", "preview build did not finish within the "
+                    ~ "join ceiling — abandoning it and leaking its topology "
+                    ~ "rather than freeing memory it may still be reading");
+            } catch (Exception) {}
+            return;
+        }
+        PreviewBuildResult res;
+        if (worker.tryTake(res)) {
+            ++buildsCompleted;
+            ++buildsDiscarded;
+            workerBuildNs         = res.workerNs;
+            workerAllocBytes      = res.workerAllocBytes;
+            workerBuildNsTotal    += res.workerNs;
+            workerAllocBytesTotal += res.workerAllocBytes;
+            osdAccel.retireResult(res);
+        }
+        buildPending = false;
+    }
+
+    /// Stencil-space key: everything the EXPENSIVE half of the build depends
+    /// on, and nothing else.
+    ///
+    /// `mutationVersion` is deliberately absent — see `pendingKey`. Positions
+    /// are absent too, because they are re-evaluated from the LIVE cage at
+    /// reception (`evaluateFromCage`), so a version-silent drag during a
+    /// build cannot produce a stale surface and must not be allowed to
+    /// invalidate the build either — `positionsDirty` is raised on every drag
+    /// frame, so a positions-sensitive key would mean a build that never
+    /// completes while the user is dragging.
+    ///
+    /// The HIDE mask is in the key: it changes which limit faces are kept, so
+    /// it changes the preview's index space. The change bus already treats it
+    /// as a preview trigger (`MeshEditScope.Marks` in app.d's
+    /// `kSubpatchTriggers`).
+    private ulong computeStencilKey(ref const Mesh source, int d) const {
+        import core.internal.hash : hashOf;
+        ulong h = hashOf(cast(size_t)&source);
+        h = hashOf(source.topologyVersion, h);
+        h = hashOf(d, h);
+        h = hashOf(source.vertices.length, h);
+        h = hashOf(source.faces.length, h);
+        h = hashOf(source.edges.length, h);
+        // Subpatch and Hide only. Reading whole `faceMarks` would fold
+        // Marks.Select in and make every click look like a topology change.
+        foreach (m; source.faceMarks)
+            h = hashOf(cast(uint)(m & (Mesh.Marks.Subpatch | Mesh.Marks.Hide)), h);
+        auto cw = source.creaseWeightMap();
+        if (cw !is null) h = hashOf(cw.data, h);
+        else             h = hashOf(0xC1EA5E00u, h);
+        return h == 0 ? 1 : h;
+    }
+
+    /// Dispatch one build. Precondition: no build in flight.
+    private void dispatchBuild(ref const Mesh source, int d) {
+        assert(!buildPending, "dispatchBuild with a build already in flight");
+        auto snap = &snapPool[snapBack];
+        takeCageSnapshot(source, d, *snap);
+        // The three answers the build would return `false` for, decided here
+        // so a pointless dispatch never happens and the cage is left drawn.
+        if (snap.nv == 0 || snap.nf == 0 || d < 1 || !snap.anyMarked) {
+            rebuild(source, d);
+            return;
+        }
+        // INDEX SPACE CHANGES NOW. The stale trace does not outlive its cage
+        // by a single frame, so `faceOrigin` can never run past
+        // `mesh.faces.length` — by construction, not by a bounds check.
+        cageVertPreview.length = 0;
+        active                = false;
+        reusablePreviewReady  = false;
+        reusablePreviewKey    = 0;
+        // Claim the staleness keys at DISPATCH so `rebuildIfStale` short-
+        // circuits for the frames the build is running, instead of trying to
+        // dispatch again on every one of them.
+        depth                 = d;
+        sourceMeshAddr        = cast(size_t)&source;
+        sourceVersion         = source.mutationVersion;
+        sourceTopologyVersion = source.topologyVersion;
+
+        osdAccel.joinInFlightHook = &this.joinInFlight;
+        ++buildGeneration;
+        pendingKey   = computeStencilKey(source, d);
+        buildPending = true;
+        ceilingFired = false;
+        buildStarted = MonoTime.currTime;
+        worker.submit(&osdAccel, snap, buildGeneration, pendingKey);
+        snapBack = 1 - snapBack;
+    }
+
+    /// MAIN LOOP, ONCE PER FRAME, immediately before the GPU-upload block.
+    ///
+    /// WHY HERE AND NOT AT THE TOP OF THE EVENTS PHASE. The only place a
+    /// preview is uploaded to the GPU is that block. `ensureDisplayCurrent`,
+    /// the mid-frame pull-guard the pick paths call, refreshes the CAGE and
+    /// does not upload the preview at all. Receiving before the events phase
+    /// would therefore leave a whole frame's worth of delivered events
+    /// picking against a live preview `trace` while every VBO — and
+    /// `gpuVisible`, which app.d keys by PREVIEW face index — still held the
+    /// cage. Preview faces past the cage's count would skip the visibility
+    /// gate on the array-length guard and the ones below it would take
+    /// someone else's visibility: a wrong selection covered by a bounds
+    /// check, i.e. not even a crash. M-INV.
+    ///
+    /// Returns true iff a build was INSTALLED this frame; the caller must
+    /// then force a FULL preview upload (a version-silent rebuild changes
+    /// neither `mutationVersion` nor the preview-on/off state, so neither of
+    /// the upload block's existing triggers would fire).
+    bool pumpAsyncBuild(ref const Mesh source, int d) {
+        if (!asyncEnabled || worker is null) return false;
+        if (!buildPending) return false;
+        ++pendingFrames;
+        if (receptionHeld()) return false;
+
+        PreviewBuildResult res;
+        if (!worker.tryTake(res)) return false;
+
+        buildPending = false;
+        ++buildsCompleted;
+        workerBuildNs          = res.workerNs;
+        workerAllocBytes       = res.workerAllocBytes;
+        workerBuildNsTotal    += res.workerNs;
+        workerAllocBytesTotal += res.workerAllocBytes;
+        chosenLevel            = res.chosenLevel;
+
+        import core.time : MonoTime;
+        immutable MonoTime tInstall = MonoTime.currTime;
+
+        if (!res.ok) {
+            // A refusal is an ARRIVAL: it clears the gate and leaves the cage
+            // on screen, exactly as the synchronous path's `return false` did.
+            osdAccel.retireResult(res);
+            osdAccel.clear();
+            mesh   = Mesh.init;
+            trace  = SubpatchTrace.init;
+            active = false;
+            reusablePreviewReady = false;
+            reusablePreviewKey   = 0;
+            osdAccel.publishBuildCounters(res,
+                (MonoTime.currTime - tInstall).total!"nsecs");
+            return false;
+        }
+
+        if (res.key != computeStencilKey(source, d)) {
+            // The cage moved on while this was building. Throw the result
+            // away — INCLUDING its topology, which is the single most
+            // expensive object in the system and which nothing else will
+            // free. M-LEAK.
+            ++buildsDiscarded;
+            osdAccel.retireResult(res);
+            osdAccel.publishBuildCounters(res,
+                (MonoTime.currTime - tInstall).total!"nsecs");
+            if (d > 0 && source.hasAnySubpatch()) dispatchBuild(source, d);
+            return false;
+        }
+
+        // ---- Install ----------------------------------------------------
+        // `clear()` runs HERE rather than at the start of the build, which is
+        // the observable ordering change of this task: the old preview has to
+        // stay drawable for the whole flight.
+        osdAccel.clear();
+        // Positions from the LIVE cage, never from the snapshot. This is what
+        // makes a version-silent drag during the build harmless, and it is
+        // the same stencil evaluate the position-only fast path already runs
+        // every drag frame. M-GEN-POS.
+        osdAccel.evaluateFromCage(source, res.topo, res.mesh);
+        osdAccel.installGl(res, res.mesh, res.trace);
+        osdAccel.swapLimitPool();
+
+        mesh  = res.mesh;
+        trace = res.trace;
+        ++mesh.mutationVersion;
+        active                = true;
+        depth                 = d;
+        sourceMeshAddr        = cast(size_t)&source;
+        sourceVersion         = source.mutationVersion;
+        sourceTopologyVersion = source.topologyVersion;
+        reusablePreviewKey    = computeReusablePreviewKey(source, d);
+        reusablePreviewReady  = true;
+        buildCageVertPreview(source);
+        osdAccel.publishBuildCounters(res,
+            (MonoTime.currTime - tInstall).total!"nsecs");
+        return true;
+    }
+
+    /// The "building preview" indicator's TEXT, and the single place its law
+    /// lives (task 1500, phase 4). Empty string = no indicator.
+    ///
+    /// It exists in the scope, not in a follow-up, and the reason is not
+    /// polish: the chosen answer to "what is shown while the build runs" is
+    /// THE CAGE — which for the FIRST Tab (the case this whole task was
+    /// opened for) means the picture does not change at all for several
+    /// seconds. Without an indicator that reads as "the key did nothing",
+    /// which is WORSE than the frozen window it replaces, and the task would
+    /// have made the product worse while making the number better.
+    ///
+    /// The renderer's use of this string has no headless probe (nothing in
+    /// this codebase reads ImGui label text), so what a test can witness is
+    /// this function and the `pending` bit it reads — that is stated in the
+    /// task rather than dressed up as coverage of the draw.
+    string buildIndicatorText() const {
+        if (!buildPending) return "";
+        immutable long ms = estimatedBuildMsRemaining();
+        if (ms <= 0) return "building subpatch preview...";
+        import std.format : format;
+        try {
+            return format("building subpatch preview... ~%.1f s",
+                          cast(double)ms / 1000.0);
+        } catch (Exception) {
+            return "building subpatch preview...";
+        }
+    }
+
+    /// Estimated wall time the in-flight build still has to run, in ms, for
+    /// the "building preview" indicator. Printed from MEASURED constants
+    /// (task 1374: 4.45-4.96 us per limit face on the reference host), not
+    /// from a guess: at the 800 000-face budget the top of the range is ~4 s.
+    long estimatedBuildMsRemaining() const {
+        if (!buildPending) return 0;
+        import subpatch_osd : projectedLimitFaces, chooseSubpatchLevel;
+        immutable long corners = snapPool[1 - snapBack].cornerCount;
+        immutable int  lvl     = chooseSubpatchLevel(corners, depth);
+        immutable long faces   = projectedLimitFaces(corners, lvl);
+        immutable long totalMs = (faces * 5) / 1000;      // ~5 us per limit face
+        immutable long spent   = (MonoTime.currTime - buildStarted).total!"msecs";
+        return totalMs > spent ? totalMs - spent : 0;
+    }
+
     import subpatch_osd : GpuFanOutTargets;
 
     /// Force the preview OFF and invalidate the staleness keys.
@@ -15240,7 +15644,50 @@ struct SubpatchPreview {
             ++mesh.mutationVersion;
             return;
         }
+        // Task 1500. The synchronous build is still what the module
+        // unittests and the IPR preview take; the editor dispatches instead.
+        if (asyncEnabled && worker !is null) {
+            requestAsyncBuild(source, d);
+            return;
+        }
         rebuild(source, d);
+    }
+
+    /// Async twin of `rebuild`'s "do the build" tail.
+    ///
+    /// Tab-OFF and "the cage has no subpatch faces" are answered
+    /// SYNCHRONOUSLY, because those are the two paths whose whole job is to
+    /// stop the preview from participating: deferring them would leave a live
+    /// preview `trace` selecting for however long the deferral lasted. The
+    /// expensive direction — build a preview — is the one that goes to the
+    /// worker.
+    private void requestAsyncBuild(ref const Mesh source, int d) {
+        if (d <= 0 || !source.hasAnySubpatch()) {
+            // TAB-OFF DOES NOT JOIN, and that is the case that matters:
+            // un-Tabbing flips the subpatch MASK, so it lands on the
+            // `!hasAnySubpatch` branch of `rebuild`, which sets `active =
+            // false` and returns without touching `osdAccel` at all. Blocking
+            // there would re-freeze the window on exactly the build this task
+            // moved off the main thread. The in-flight result is thrown away
+            // on arrival by the ordinary key check (the mask is in the key),
+            // and no re-dispatch follows because `hasAnySubpatch` is false.
+            //
+            // `d <= 0` — the depth control taken to zero, NOT Tab — does go
+            // through `rebuild`'s clearing branch and therefore through
+            // `osdAccel.clear()`'s bounded join. It is a rarer action, and
+            // the wait is bounded by the build it is waiting on.
+            rebuild(source, d);
+            return;
+        }
+        if (buildPending) {
+            // LAST DISPATCH WINS, and the loser is not cancelled: the point
+            // of no return is inside the third-party stencil builder. The
+            // in-flight build runs to completion and the receiver throws its
+            // result away on the key check, then dispatches again. Named
+            // cost: up to one full build of background core burnt.
+            return;
+        }
+        dispatchBuild(source, d);
     }
 
     void rebuild(ref const Mesh source, int d) {
@@ -15290,6 +15737,13 @@ struct SubpatchPreview {
         active = true;
         reusablePreviewKey   = computeReusablePreviewKey(source, d);
         reusablePreviewReady = true;
+        buildCageVertPreview(source);
+    }
+
+    /// Reverse `trace.vertOrigin` into `cageVertPreview`. Its own function
+    /// since task 1500: the asynchronous receiver publishes the same preview
+    /// through a different path and must build the same reverse map.
+    private void buildCageVertPreview(ref const Mesh source) {
         cageVertPreview = new uint[](source.vertices.length);
         cageVertPreview[] = uint.max;
         foreach (pi, origin; trace.vertOrigin) {

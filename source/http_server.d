@@ -663,6 +663,26 @@ class HttpServer {
     struct PickResp { string result; string error; }
     private MainThreadBridge!(PickReq, PickResp) pickBridge;
 
+    // ----- /api/subpatch/preview + /api/subpatch/hold (task 1500) ---------
+    // The ONE source of the async build's numbers: the test, the indicator
+    // and the perf lane all read this route, so there is no second place for
+    // them to disagree. Main-thread bridged (it reads live SubpatchPreview
+    // state) and — this is the point of the barrier being narrow —
+    // ANSWERABLE WHILE A BUILD IS IN FLIGHT, because `tickAll` is not gated.
+    // An observation handle that goes silent exactly when there is something
+    // to observe is not an observation handle.
+    private alias SubpatchStateProvider = string delegate();
+    private SubpatchStateProvider subpatchStateProvider;
+    struct SubpStateReq  { }
+    struct SubpStateResp { string result; string error; }
+    private MainThreadBridge!(SubpStateReq, SubpStateResp) subpatchStateBridge;
+
+    private alias SubpatchHoldHandler = string delegate(long ms, long ceilingMs);
+    private SubpatchHoldHandler subpatchHoldHandler;
+    struct SubpHoldReq  { long ms; long ceilingMs; }
+    struct SubpHoldResp { string result; string error; }
+    private MainThreadBridge!(SubpHoldReq, SubpHoldResp) subpatchHoldBridge;
+
     struct SurfaceRaycastReq  { int x; int y; float thresholdPx = -1.0f; }
     struct SurfaceRaycastResp { string result; string error; }
     private MainThreadBridge!(SurfaceRaycastReq, SurfaceRaycastResp) surfaceRaycastBridge;
@@ -990,6 +1010,34 @@ class HttpServer {
                 }
             });
 
+        subpatchStateBridge = new MainThreadBridge!(SubpStateReq, SubpStateResp)(this,
+            (ref SubpStateReq req, ref SubpStateResp resp) {
+                if (subpatchStateProvider is null) {
+                    resp.error = "subpatch-state provider not set";
+                } else {
+                    try {
+                        resp.result = subpatchStateProvider();
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
+        subpatchHoldBridge = new MainThreadBridge!(SubpHoldReq, SubpHoldResp)(this,
+            (ref SubpHoldReq req, ref SubpHoldResp resp) {
+                if (subpatchHoldHandler is null) {
+                    resp.error = "subpatch-hold handler not set";
+                } else {
+                    try {
+                        resp.result = subpatchHoldHandler(req.ms, req.ceilingMs);
+                        resp.error  = "";
+                    } catch (Exception e) {
+                        resp.error = e.msg;
+                    }
+                }
+            });
+
         pickBridge = new MainThreadBridge!(PickReq, PickResp)(this,
             (ref PickReq req, ref PickResp resp) {
                 if (pickProvider is null) {
@@ -1244,6 +1292,14 @@ class HttpServer {
     /// GET /api/pick?x=&y=&engine=bvh|gpu — A/B face-pick equivalence oracle.
     /// Provider runs on the main thread (GL context + consistent mesh state).
     /// engine=gpu calls gpuSelect.pick directly; engine=bvh calls bvhPick.
+    public void setSubpatchStateProvider(SubpatchStateProvider provider) {
+        this.subpatchStateProvider = provider;
+    }
+
+    public void setSubpatchHoldHandler(SubpatchHoldHandler handler) {
+        this.subpatchHoldHandler = handler;
+    }
+
     public void setPickProvider(PickProvider provider) {
         this.pickProvider = provider;
     }
@@ -2607,6 +2663,72 @@ class HttpServer {
         response.headers["Content-Type"] = "application/json";
     }
 
+    private void route_apiSubpatchPreview(HttpRequest request, HttpResponse response) {
+        response.headers["Content-Type"] = "application/json";
+        if (subpatchStateProvider is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"subpatch-state provider not set"}`;
+            return;
+        }
+        subpatchStateBridge.resp.result = "";
+        subpatchStateBridge.resp.error  = "";
+        if (!subpatchStateBridge.submitAndWait())
+            subpatchStateBridge.resp.error = "timeout waiting for main thread";
+        if (subpatchStateBridge.resp.error.length == 0) {
+            response.statusCode = 200;
+            response.body = subpatchStateBridge.resp.result;
+        } else {
+            response.statusCode = 500;
+            response.body = `{"error":"`
+                            ~ jsonEsc(subpatchStateBridge.resp.error) ~ `"}`;
+        }
+    }
+
+    private void route_apiSubpatchHold(HttpRequest request, HttpResponse response) {
+        response.headers["Content-Type"] = "application/json";
+        // Test-only. The knob delays RECEPTION of a finished build, which is
+        // the only way a test can hold the async window open long enough to
+        // observe it — a real 4-second build needs a cage the suite has no
+        // business carrying.
+        if (!testMode) {
+            response.statusCode = 403;
+            response.body = `{"error":"subpatch hold is --test only"}`;
+            return;
+        }
+        if (subpatchHoldHandler is null) {
+            response.statusCode = 500;
+            response.body = `{"error":"subpatch-hold handler not set"}`;
+            return;
+        }
+        long ms = 0, ceilingMs = 0;
+        try {
+            import std.json : parseJSON, JSONType;
+            auto j = parseJSON(request.body.length ? request.body : "{}");
+            if (j.type == JSONType.object) {
+                if (auto p = "ms"        in j) ms        = (*p).integer;
+                if (auto p = "ceilingMs" in j) ceilingMs = (*p).integer;
+            }
+        } catch (Exception e) {
+            response.statusCode = 400;
+            response.body = `{"error":"` ~ jsonEsc(e.msg) ~ `"}`;
+            return;
+        }
+        subpatchHoldBridge.req.ms        = ms;
+        subpatchHoldBridge.req.ceilingMs = ceilingMs;
+        subpatchHoldBridge.resp.result = "";
+        subpatchHoldBridge.resp.error  = "";
+        if (!subpatchHoldBridge.submitAndWait())
+            subpatchHoldBridge.resp.error = "timeout waiting for main thread";
+        if (subpatchHoldBridge.resp.error.length == 0) {
+            response.statusCode = 200;
+            response.body = subpatchHoldBridge.resp.result;
+        } else {
+            response.statusCode = 500;
+            response.body = `{"error":"`
+                            ~ jsonEsc(subpatchHoldBridge.resp.error) ~ `"}`;
+        }
+    }
+
     private void route_apiPick(HttpRequest request, HttpResponse response) {
         if (pickProvider is null) {
             response.statusCode = 500;
@@ -3562,6 +3684,8 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/images",               "GET",  Match.prefix, Answered.mainThread, "route_apiImages"),
     RouteSpec("/api/imageplane",           "GET",  Match.prefix, Answered.mainThread, "route_apiImageplane"),
     RouteSpec("/api/viewport/probe",       "GET",  Match.prefix, Answered.mainThread, "route_apiViewportProbe"),
+    RouteSpec("/api/subpatch/preview",     "GET",  Match.exact,  Answered.mainThread, "route_apiSubpatchPreview"),
+    RouteSpec("/api/subpatch/hold",        "POST", Match.exact,  Answered.mainThread, "route_apiSubpatchHold"),
     RouteSpec("/api/pick",                 "GET",  Match.prefix, Answered.mainThread, "route_apiPick"),
     RouteSpec("/api/surface-raycast",      "GET",  Match.prefix, Answered.mainThread, "route_apiSurfaceRaycast"),
     RouteSpec("/api/camera",               "GET",  Match.prefix, Answered.httpThread, "route_apiCameraGet"),

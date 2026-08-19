@@ -100,6 +100,29 @@ void glThreadGuard(string funnel)
     throw new GlThreadError(msg);
 }
 
+// ---------------------------------------------------------------------------
+// Test hooks (task 1500). Both were already needed by this module's OWN
+// unittest, which reached the two `shared` globals directly because it lives
+// here. Task 1500 puts a second witness in tests/unit/subpatch_osd_test.d —
+// that the subpatch build's pure half runs clean off the GL thread while its
+// GL half does not — and that one is in a different module, so the two
+// levers become a two-line public surface instead of a copied global.
+version (unittest) {
+    /// Un-mark the GL owner, returning the guard to its inert state.
+    void clearMainThreadForTest() nothrow @nogc
+    {
+        atomicStore!(MemoryOrder.rel)(g_glThread, cast(shared(void*)) null);
+    }
+
+    /// Silence the stderr line for a violation a test trips ON PURPOSE. A
+    /// green `dub test` printing GL-OFF-MAIN-THREAD teaches everyone to
+    /// scroll past the one line that matters.
+    void muteGlThreadGuardForTest(bool m) nothrow @nogc
+    {
+        atomicStore(g_mute, m);
+    }
+}
+
 private string describeThread(Thread t) nothrow
 {
     if (t is null) return "non-druntime-thread";

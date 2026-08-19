@@ -1299,6 +1299,69 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             return buf.data;
         });
 
+        // ---- GET /api/subpatch/preview (task 1500) ----------------------
+        // The SINGLE source of the async build's numbers. Deliberately not
+        // in `g_frames`: `FrameProbe` is a no-op stub in the default build
+        // (perf_probe.d), so a counter parked there would be identically
+        // zero in the test lane and every assertion on it would be vacuous.
+        // These are ordinary struct fields on SubpatchPreview, live in every
+        // configuration.
+        httpServer.setSubpatchStateProvider(() {
+            import std.format : format;
+            return format(
+                `{"active":%s,"pending":%s,"abandoned":%s,"generation":%d,`
+              ~ `"builds":%d,"discarded":%d,"chosenLevel":%d,`
+              ~ `"workerBuildNs":%d,"workerAllocBytes":%d,`
+              ~ `"workerBuildNsTotal":%d,"workerAllocBytesTotal":%d,`
+              ~ `"pendingFrames":%d,"topologiesCreated":%d,`
+              ~ `"topologiesRetired":%d,"previewFaces":%d,"previewEdges":%d,`
+              ~ `"estimatedMsRemaining":%d,"indicator":"%s"}`,
+                subpatchPreview.active         ? "true" : "false",
+                subpatchPreview.buildPending   ? "true" : "false",
+                subpatchPreview.buildAbandoned ? "true" : "false",
+                subpatchPreview.buildGeneration,
+                subpatchPreview.buildsCompleted,
+                subpatchPreview.buildsDiscarded,
+                subpatchPreview.chosenLevel,
+                subpatchPreview.workerBuildNs,
+                subpatchPreview.workerAllocBytes,
+                subpatchPreview.workerBuildNsTotal,
+                subpatchPreview.workerAllocBytesTotal,
+                subpatchPreview.pendingFrames,
+                subpatchPreview.osdAccel.topologiesCreated,
+                subpatchPreview.osdAccel.topologiesRetired,
+                subpatchPreview.mesh.faces.length,
+                subpatchPreview.mesh.edges.length,
+                subpatchPreview.estimatedBuildMsRemaining(),
+                subpatchPreview.buildIndicatorText());
+        });
+
+        // ---- POST /api/subpatch/hold {"ms":N,"ceilingMs":M} --------------
+        // Holds RECEPTION of a finished build, not the worker: the build
+        // completes normally, so the bounded join inside `OsdAccel.clear()`
+        // never waits under a hold and `/api/reset` stays instant even
+        // mid-hold — which is what lets the ceiling test clean up after
+        // itself. `ms:-1` = hold until released, `ms:0` = release.
+        // `ceilingMs` configures the input barrier's own ceiling; without
+        // that knob the ceiling would be a branch no test could ever see
+        // taken.
+        httpServer.setSubpatchHoldHandler((long ms, long ceilingMs) {
+            import std.format : format;
+            // Clamped at BOTH ends even though the route is `--test` only:
+            // an unbounded `ceilingMs` would turn the input barrier back into
+            // the thing it exists not to be, and a typo is a likelier source
+            // of one than malice. `holdMs` scales no allocation and no loop
+            // bound (it is compared against wall time), so it needs no
+            // ceiling of its own — only its `-1` sentinel is special.
+            enum long kMaxCeilingMs = 600_000;
+            subpatchPreview.holdMs = ms;
+            if (ceilingMs > 0)
+                subpatchPreview.ceilingMs =
+                    ceilingMs > kMaxCeilingMs ? kMaxCeilingMs : ceilingMs;
+            return format(`{"status":"ok","ms":%d,"ceilingMs":%d}`,
+                          subpatchPreview.holdMs, subpatchPreview.ceilingMs);
+        });
+
         // GET /api/pick?x=&y=&engine=bvh|gpu — A/B face-pick oracle.
         // engine=gpu calls gpuSelect.pick DIRECTLY regardless of VIBE3D_FACE_PICK
         // so the oracle is always reachable even when BVH is the default.
@@ -1315,6 +1378,14 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 faceIdx = gpuSelect.pick(SelectMode.Face, x, y, /*r=*/0,
                                           mesh, gpu, vp, primaryModelSpace());
             } else {
+                // ---- M-INV (task 1500), CONSUMER 2 of 2 ----------------
+                // Same one-sided invariant as the RMB-lasso site in app.d:
+                // if the CPU side has switched to preview index space, the
+                // buffers the BVH was built from must have switched too.
+                // See that site for why the converse is legal and why this
+                // is a plain `assert` rather than a `debug` block.
+                if (subpatchPreview.active) assert(gpuUploadedPreview,
+                    "pick: preview trace is live but the VBOs still hold the cage");
                 const(Mesh)* srcMesh = subpatchPreview.active
                     ? &subpatchPreview.mesh : &mesh();
                 faceIdx = bvhPick.pickFace(x, y, vp, *srcMesh, gpu, primaryModelSpace());

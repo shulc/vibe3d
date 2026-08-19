@@ -197,7 +197,7 @@ enum Cat {
     // than an observation. These two split it:
     //
     //   subpatchTopoMiss — one per buildPreview that BUILT a fresh OSD topology
-    //                      (`tryReuseCachedTopology` said no). This is the
+    //                      (`lookupCachedTopology` said no). This is the
     //                      expensive path and the one a cold-path measurement
     //                      must be able to assert it took.
     //   subpatchTopoHit  — one per buildPreview that REUSED a cached topology.
@@ -807,6 +807,12 @@ version (PerfProbe) {
     struct PerfProbe {
         pragma(inline, true) ScopeTimer scope_(Cat) { return ScopeTimer.init; }
         pragma(inline, true) void count(Cat, long) {}
+        // Task 1500: the subpatch build's timer is no longer opened by a
+        // ScopeTimer at the top of one function — the build runs on a worker
+        // thread and the MAIN thread records the elapsed span on reception.
+        // So `recordNs` is part of the public surface now and needs its
+        // no-op twin here, or the default build stops compiling.
+        pragma(inline, true) void recordNs(Cat, long) {}
         pragma(inline, true) void reset() {}
         pragma(inline, true) string toJson() { return "{}"; }
     }

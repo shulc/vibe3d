@@ -20,6 +20,8 @@ import std.net.curl;
 import std.json;
 import std.conv : to;
 import std.math : fabs;
+import core.thread : Thread;
+import core.time   : msecs;
 
 void main() {}
 
@@ -46,6 +48,27 @@ bool[] subpatchFlags() {
     bool[] r;
     foreach (n; a) r ~= n.type == JSONType.true_;
     return r;
+}
+
+/// Task 1500 — WAIT FOR THE PREVIEW BUILD.
+///
+/// The subpatch preview is built on a worker thread now. `httpServer.tickAll()`
+/// is deliberately NOT gated by the input barrier (so `/api/reset` and the
+/// observation routes keep answering during a build), which means a route that
+/// reads the LIMIT SURFACE — this file's `/api/gpu/face-vbo` — can be serviced
+/// while the build is still running and see the CAGE.
+///
+/// This is not hypothetical and it is not a flake: on the first full run after
+/// the async path landed, THIS FILE was one of exactly two that failed, with
+/// "36 face-verts vs cage 36". The task plan asserted no such pair existed in
+/// the suite; measurement said otherwise.
+void waitPreviewSettled(int timeoutMs = 30_000) {
+    foreach (_; 0 .. timeoutMs / 20) {
+        auto j = getJson("/api/subpatch/preview");
+        if (j["pending"].type != JSONType.true_) { Thread.sleep(60.msecs); return; }
+        Thread.sleep(20.msecs);
+    }
+    assert(false, "subpatch preview build did not settle");
 }
 
 struct GpuSurface {
@@ -83,6 +106,7 @@ unittest { // cage vertex moves through /api/transform while subpatch is active
     // face (whole-model). That mirrors the Tab keyboard handler.
     postJson("/api/command", "select.typeFrom polygon");
     postJson("/api/command", `{"id":"mesh.subpatch_toggle"}`);
+    waitPreviewSettled();
 
     auto sub = subpatchFlags();
     assert(sub.length == 6, "cube should still have 6 faces");
@@ -125,6 +149,7 @@ unittest { // gpu.faceVbo (the surface that the user sees) actually
 
     postJson("/api/command", "select.typeFrom polygon");
     postJson("/api/command", `{"id":"mesh.subpatch_toggle"}`);
+    waitPreviewSettled();
 
     auto preSurface = gpuSurface();
     assert(preSurface.faceVertCount > cageSurface.faceVertCount,
