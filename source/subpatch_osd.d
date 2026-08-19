@@ -43,9 +43,40 @@ __gshared bool g_osdGpuEnabled = false;
 /// allocates proportionally to the refined face count, and the cap exists so a
 /// large cage cannot make it die there. It has never bounded TIME, which is
 /// the complaint task 1374 was opened for — see the task file. Renamed from
-/// `MAX_LIMIT_FACES` so the thing it protects is in its name; the VALUE is
-/// unchanged.
-enum long MEM_LIMIT_FACES = 1_500_000;
+/// `MAX_LIMIT_FACES` (task 1374 phase 1) so the thing it protects is in its
+/// name.
+///
+/// THE VALUE IS AN OWNER DECISION, taken 2026-08-19 (task 1374 phase 2):
+/// 1 500 000 → 800 000. What it buys is a bound on the WORST cold Tab, and
+/// what it costs is refinement depth. At this task's measured 4.45–4.96 µs and
+/// ~225 B per limit face (doc/tasks/work/1374-tab-cold-path.md, «Измерение»,
+/// points C and D) the worst cold Tab this ceiling admits drops from ~7.5 s /
+/// ~345 MB to ~4.0 s / ~180 MB. The cages that PAY are exactly those whose
+/// projection at their old level fell in `(800 000, 1 500 000]` — they lose
+/// one level. On an all-quad cage at the shipped depth of 3 that is TWO
+/// disjoint ranges, not one: `nf ∈ [12 501, 23 437]` (L3 → L2) and
+/// `nf ∈ [50 001, 93 750]` (L2 → L1). One range per level transition, the
+/// same `R-1` the band rule below gives; the owner-decision table in the task
+/// file names only the second, and that gap is recorded there.
+///
+/// THE TRADE IS DELIBERATELY ASYMMETRIC, in our favour. A coarse cage keeps
+/// full depth under any of these budgets — a 500-face quad cage projects
+/// 2 000·4^2 = 32 000 limit faces at the shipped depth of 3, inside even a
+/// 200 000 ceiling — so the cages that lose a level are the DENSE ones, where
+/// an extra subdivision level buys the least visible difference.
+///
+/// WHAT LOWERING IT DOES NOT DO, and the reason no smaller number is the
+/// "right" one either: it does NOT remove the 4× cliff task 1374 was opened
+/// for. Levels are integers, so the admitted cost always lies in `(B/4, B]`,
+/// and lowering `B` MOVES the cliff rather than removing it — the band tables
+/// below are the same shape at 800 000 as at 1 500 000, just shifted down by
+/// the ratio. No single-budget policy can remove it; see the task file
+/// («Фаза 2 — решение владельца») for why, and «Два решения, записанных
+/// вместо реализации» for why the two policies that COULD — view-dependent
+/// depth, and a budget adapted to the host — are rejected on CORRECTNESS
+/// (camera-dependent selection; two machines disagreeing about one document)
+/// rather than on cost. A build constant is the only shape this may take.
+enum long MEM_LIMIT_FACES = 800_000;
 
 /// Hard ceiling on the requested refinement level, applied before the
 /// projection loop.
@@ -87,36 +118,54 @@ enum int MAX_SUBPATCH_LEVEL = 16;
 /// or L-1 where the old picked L (when r > 4).
 ///
 /// AT THE SHIPPED DEPTH — `app.d`'s `subpatchDepth = 3` — that is TWO bands
-/// per cage class, not one. Brute-force enumerated over nf ≤ 400 000 (the
-/// enumeration is reproduced as assertions in
-/// `tests/unit/subpatch_level_policy_test.d`):
+/// per cage class, not one. Enumerated with NO STRIDE over the whole band
+/// range (the enumeration is reproduced as assertions in
+/// `tests/unit/subpatch_level_policy_test.d`), for the shipped
+/// `C = MEM_LIMIT_FACES = 800 000`:
 ///
-///     triangles (r=3, C' = 2 000 000)
-///       nf ∈ [ 23 438,  31 250]   L2 → L3    4× the refinement work
-///       nf ∈ [ 93 751, 125 000]   L1 → L2    4× the refinement work
-///     hexagons  (r=6, C' = 1 000 000)
-///       nf ∈ [ 15 626,  23 437]   L3 → L2    ¼ the work; the ceiling this
-///       nf ∈ [ 62 501,  93 750]   L2 → L1    constant exists for was being
+///     triangles (r=3, C' = 1 066 666)
+///       nf ∈ [ 12 501,  16 666]   L2 → L3    4× the refinement work
+///       nf ∈ [ 50 001,  66 666]   L1 → L2    4× the refinement work
+///     hexagons  (r=6, C' =   533 333)
+///       nf ∈ [  8 334,  12 500]   L3 → L2    ¼ the work; the ceiling this
+///       nf ∈ [ 33 334,  50 000]   L2 → L1    constant exists for was being
 ///                                            BREACHED before the fix
 ///     quads     (r=4, C' = C)     no band, at any depth — identical always
 ///
-/// (At R=4 a third band appears per class, e.g. triangles nf ∈ [5 860, 7 812]
+/// (At R=4 a third band appears per class, e.g. triangles nf ∈ [3 126, 4 166]
 /// L3 → L4; at R=2 only the lowest one survives. R-1, as above.)
 ///
-/// THE EXPENSIVE BAND IS `nf ∈ [93 751, 125 000]` TRIANGLES, and it is the
-/// ORDINARY case rather than a corner: a ~100 000-triangle cage is what an
+/// `C'` NEED NOT BE AN INTEGER — 4·800 000/3 = 1 066 666.67 — and at the
+/// previous ceiling it always was (3 and 6 both divide 1 500 000; neither
+/// divides 800 000 = 2^8·5^5). Truncating it first is nonetheless exact:
+/// `⌊⌊x⌋/n⌋ = ⌊x/n⌋` for integer n > 0, so every band edge above is the same
+/// whether `C'` is carried as a rational or floored. What DID move with it is
+/// where the ceiling is met EXACTLY — the cell that makes the strict `>` in
+/// `chooseSubpatchLevel` load-bearing rather than decorative. At 1 500 000
+/// that cell existed for triangles and hexagons; at 800 000 it exists only
+/// where `4^L | C`, i.e. on QUAD cages (nf = 50 000 at L2, 12 500 at L3) and
+/// on the face-count reading. The band edges here are therefore the largest
+/// nf that still FITS (3·16 666·16 = 799 968), not one that meets the ceiling.
+///
+/// THE EXPENSIVE BAND IS `nf ∈ [50 001, 66 666]` TRIANGLES, and it is the
+/// ORDINARY case rather than a corner: a ~50 000-triangle cage is what an
 /// OBJ / glTF / FBX import routinely lands on. Inside it the first Tab goes
-/// from 375 000 limit faces to 1 500 000. At this task's measured 4.45–4.96 µs
-/// and ~225 B per limit face (doc/tasks/work/1374-tab-cold-path.md,
-/// «Измерение», points C and D) that is ~1.7 s → ~7 s and ~85 MB → ~345 MB.
-/// So on an ordinary triangulated import this change INTRODUCES exactly the
-/// 4× cliff task 1374 was opened to remove — correctly, in the sense that the
-/// memory ceiling is what it always claimed to enforce and 1.5M limit faces is
-/// inside it, but the time cost is real and new. It is written down here, in
-/// the tests and in the task file rather than left latent; the task file
-/// carries the owner decision it is waiting on («Полоса треугольников»).
-/// The [23 438, 31 250] band costs the same 4× on a smaller base
-/// (~0.4 s → ~1.7 s).
+/// from 150 003…199 998 limit faces (L1) to 600 012…799 992 (L2). At this
+/// task's measured 4.45–4.96 µs and ~225 B per limit face
+/// (doc/tasks/work/1374-tab-cold-path.md, «Измерение», points C and D) that
+/// is ~0.7–1.0 s → ~2.7–4.0 s and ~34–45 MB → ~135–180 MB. So on an ordinary
+/// triangulated import the corner projection INTRODUCES exactly the 4× cliff
+/// task 1374 was opened to remove — correctly, in the sense that the memory
+/// ceiling is what it always claimed to enforce and 800 000 limit faces is
+/// inside it, but the time cost is real. It is written down here, in the tests
+/// and in the task file rather than left latent.
+///
+/// The [12 501, 16 666] band costs the SAME, not less: both bands are pressed
+/// against the same ceiling, so both run 600 000…800 000 limit faces at their
+/// new level and 150 000…200 000 at their old one. They differ in cage size
+/// only. (The phase-1 text here claimed the lower band was "the same 4× on a
+/// smaller base, ~0.4 s → ~1.7 s"; that was wrong by a factor of four in both
+/// endpoints and is corrected rather than rescaled.)
 ///
 /// Saturates instead of overflowing: `long.max` is returned for any projection
 /// that would wrap, which the caller reads as "over the ceiling" — the same
@@ -1209,8 +1258,8 @@ struct OsdAccel {
     /// `memLimitFaces` is the ceiling `chooseSubpatchLevel` applies, exposed
     /// as a parameter for ONE reason: without it, asserting anything about the
     /// depth policy through this function costs a cage big enough to trip the
-    /// production ceiling — 23 438 triangles at minimum, i.e. a 1.1-million-
-    /// face refinement per assertion. Driving the ceiling instead of the cage
+    /// production ceiling — 12 501 triangles at minimum, i.e. a 600 000-face
+    /// refinement per assertion. Driving the ceiling instead of the cage
     /// asks the same question on a single hexagon. Production callers never
     /// pass it (see SubpatchPreview.rebuild); it is the test escape that keeps
     /// the level-choice assertions out of a synthetic re-implementation of the

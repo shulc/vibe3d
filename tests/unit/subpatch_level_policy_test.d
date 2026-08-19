@@ -28,9 +28,21 @@ import subpatch_osd;
 // `OsdAccel.buildPreview` depth-cap block (the `MAX_LIMIT_FACES` while-loop).
 // Reference side ONLY — see the module header for why it is spelled out
 // rather than called.
+//
+// ITS DEFAULT BUDGET TRACKS THE SHIPPED ONE, and must: the claim this
+// reference exists to check is that the corner projection and the face
+// projection AGREE ON QUADS — a claim about the FORMULA, at whatever budget
+// both are handed. Holding the reference at the old 1 500 000 while production
+// moved to 800 000 would turn that into a comparison of two different rules at
+// two different ceilings, which is false on quads and says nothing about
+// either. The budget is a shared input here, not the subject; the subject is
+// `nf·4^L` versus `Σ|f|·4^(L-1)`. Spelled as a literal rather than as
+// `MEM_LIMIT_FACES` so that the tripwire further down (`MEM_LIMIT_FACES == C`)
+// is what forces a re-derivation, instead of the whole file silently
+// re-deriving itself and every band edge in the comments going stale.
 // ---------------------------------------------------------------------------
 private int legacyChooseLevel(long nf, int requested,
-                              long limitFaces = 1_500_000)
+                              long limitFaces = 800_000)
 {
     int effectiveLevel = requested;
     long mul = 1L;
@@ -46,11 +58,17 @@ private int legacyChooseLevel(long nf, int requested,
 // ---------------------------------------------------------------------------
 // QUAD CAGES: identical, everywhere.
 //
-// This is the claim the change is allowed to make without an owner decision.
+// This is the claim the change is allowed to make without an owner decision,
+// and the one the phase-2 budget change is NOT allowed to disturb: lowering
+// the ceiling moves WHICH level a quad cage gets, but the two projections must
+// still answer the same on it, at every budget.
+//
 // The sweep deliberately walks THROUGH both cliff edges (nf·4^L crossing
-// 1.5M at every requested level) rather than sampling round numbers, because
-// the two formulas can only ever differ AT a cliff — a sweep that steps over
-// one proves nothing.
+// 800 000 at every requested level) rather than sampling round numbers,
+// because the two formulas can only ever differ AT a cliff — a sweep that
+// steps over one proves nothing. All four cliffs are integral here
+// (800 000 / 4 = 200 000, / 16 = 50 000, / 64 = 12 500, / 256 = 3 125), so the
+// ±4 probes straddle a real boundary rather than a rounded one.
 // ---------------------------------------------------------------------------
 unittest {
     foreach (int requested; 1 .. 5) {
@@ -60,7 +78,7 @@ unittest {
         foreach (int lvl; 1 .. requested + 1) {
             long mul = 1L;
             foreach (k; 0 .. lvl) mul *= 4L;
-            immutable long cliff = 1_500_000 / mul;
+            immutable long cliff = 800_000 / mul;
             foreach (long d; -4 .. 5)
                 if (cliff + d >= 1) probes ~= cliff + d;
         }
@@ -101,81 +119,93 @@ unittest {
 unittest {
     enum int kRequested = 3;   // app.d's subpatchDepth
 
-    // ===== BAND A — nf ∈ [23 438, 31 250], L2 -> L3 =====================
+    // ===== BAND A — nf ∈ [12 501, 16 666], L2 -> L3 =====================
 
-    // Just BELOW the band: both formulas say 3.
-    assert(legacyChooseLevel(23_437, kRequested) == 3);
-    assert(chooseSubpatchLevel(3 * 23_437, kRequested) == 3,
-        "nf=23437 tri: below band A, the policies must still agree");
+    // Just BELOW the band: both formulas say 3. The legacy projection is
+    // EXACTLY at the ceiling here (12500*64 = 800000), so the strict `>` in
+    // both policies is load-bearing at this cell — `>=` would answer 2.
+    assert(legacyChooseLevel(12_500, kRequested) == 3);
+    assert(chooseSubpatchLevel(3 * 12_500, kRequested) == 3,
+        "nf=12500 tri: below band A, the policies must still agree");
 
     // The band's first cage: legacy drops to 2, the exact projection keeps 3.
-    assert(legacyChooseLevel(23_438, kRequested) == 2);
-    assert(chooseSubpatchLevel(3 * 23_438, kRequested) == 3,
-        "nf=23438 tri: band A's lower edge — legacy capped to 2, the exact "
-        ~ "corner projection (3*23438*16 = 1124976 <= 1.5M) admits 3");
+    assert(legacyChooseLevel(12_501, kRequested) == 2);
+    assert(chooseSubpatchLevel(3 * 12_501, kRequested) == 3,
+        "nf=12501 tri: band A's lower edge — legacy capped to 2 "
+        ~ "(12501*64 = 800064 > 800000), the exact corner projection "
+        ~ "(3*12501*16 = 600048 <= 800000) admits 3");
 
-    // The band's last cage: 3*31250 = 93750 corners, 16x = 1.5M exactly, so
-    // the ceiling is met, not exceeded — `>` not `>=` is load-bearing here.
-    assert(legacyChooseLevel(31_250, kRequested) == 2);
-    assert(chooseSubpatchLevel(3 * 31_250, kRequested) == 3,
-        "nf=31250 tri: band A's upper edge — 3*31250*16 = 1500000, exactly "
-        ~ "the ceiling, which the strict `>` admits");
+    // The band's last cage: 3*16666 = 49998 corners, 16x = 799 968 — the
+    // largest that still FITS. Unlike at the old 1 500 000 ceiling there is no
+    // triangle cage that meets 800 000 exactly: 3 does not divide 2^8*5^5.
+    assert(legacyChooseLevel(16_666, kRequested) == 2);
+    assert(chooseSubpatchLevel(3 * 16_666, kRequested) == 3,
+        "nf=16666 tri: band A's upper edge — 3*16666*16 = 799968, the largest "
+        ~ "triangle cage whose L3 projection still fits 800000");
 
-    // Just ABOVE the band: both say 2 again.
-    assert(legacyChooseLevel(31_251, kRequested) == 2);
-    assert(chooseSubpatchLevel(3 * 31_251, kRequested) == 2,
-        "nf=31251 tri: above band A, the policies must agree again");
+    // Just ABOVE the band: both say 2 again (3*16667*16 = 800016 > 800000).
+    assert(legacyChooseLevel(16_667, kRequested) == 2);
+    assert(chooseSubpatchLevel(3 * 16_667, kRequested) == 2,
+        "nf=16667 tri: above band A, the policies must agree again");
 
     // And the band is CONTIGUOUS — no interior cage where they re-agree.
-    foreach (long nf; 23_438 .. 31_251) {
-        if (nf % 97 != 0) continue;      // stride: 81 samples, not 7813
+    foreach (long nf; 12_501 .. 16_667) {
+        if (nf % 53 != 0) continue;      // stride: 79 samples, not 4166
         assert(legacyChooseLevel(nf, kRequested) == 2);
         assert(chooseSubpatchLevel(3 * nf, kRequested) == 3,
-            "band A interior: every cage in [23438, 31250] must move L2 -> L3");
+            "band A interior: every cage in [12501, 16666] must move L2 -> L3");
     }
 
-    // ===== BAND B — nf ∈ [93 751, 125 000], L1 -> L2 ====================
+    // ===== BAND B — nf ∈ [50 001, 66 666], L1 -> L2 =====================
     //
     // THE EXPENSIVE ONE, and the one a reviewer chasing a Tab-cost regression
-    // lands on first: ~100 000 triangles is what an ordinary OBJ / glTF / FBX
-    // import produces. Inside this band the first Tab goes from 375 000 limit
-    // faces to 1 500 000 — at this task's measured 4.45-4.96 us and ~225 B per
-    // limit face, ~1.7 s -> ~7 s and ~85 MB -> ~345 MB. It is asserted here so
-    // that the cost is a DECLARED property of the policy rather than a
-    // discovery someone makes in a profiler.
+    // lands on first: a ~50 000-triangle cage is what an ordinary OBJ / glTF /
+    // FBX import produces. Inside this band the first Tab goes from
+    // 150 003…199 998 limit faces to 600 012…799 992 — at this task's measured
+    // 4.45-4.96 us and ~225 B per limit face, ~0.7-1.0 s -> ~2.7-4.0 s and
+    // ~34-45 MB -> ~135-180 MB. It is asserted here so that the cost is a
+    // DECLARED property of the policy rather than a discovery someone makes in
+    // a profiler.
+    //
+    // Band A costs the SAME, not less: both bands are pressed against the same
+    // ceiling, so both run 600 000…800 000 limit faces at their new level. They
+    // differ in cage size only.
 
     // Just BELOW band B both policies agree at 2 — the legacy projection is
-    // exactly AT the ceiling there, which the strict `>` admits.
-    assert(legacyChooseLevel(93_750, kRequested) == 2);
-    assert(chooseSubpatchLevel(3 * 93_750, kRequested) == 2,
-        "nf=93750 tri: below band B, both readings admit L2 "
-        ~ "(legacy 93750*16 = 1500000 == the ceiling)");
+    // exactly AT the ceiling there (50000*16 = 800000), which the strict `>`
+    // admits.
+    assert(legacyChooseLevel(50_000, kRequested) == 2);
+    assert(chooseSubpatchLevel(3 * 50_000, kRequested) == 2,
+        "nf=50000 tri: below band B, both readings admit L2 "
+        ~ "(legacy 50000*16 = 800000 == the ceiling)");
 
     // The band's first cage: legacy falls to the floor of 1, the exact
-    // projection still fits L2 (3*93751*4 = 1125012 <= 1.5M).
-    assert(legacyChooseLevel(93_751, kRequested) == 1);
-    assert(chooseSubpatchLevel(3 * 93_751, kRequested) == 2,
-        "nf=93751 tri: band B's LOWER edge — legacy dropped to 1, the exact "
-        ~ "corner projection (3*93751*4 = 1125012 <= 1.5M) admits 2. This is "
-        ~ "the 4x cost this change introduces on triangulated imports");
+    // projection still fits L2 (3*50001*4 = 600012 <= 800000).
+    assert(legacyChooseLevel(50_001, kRequested) == 1);
+    assert(chooseSubpatchLevel(3 * 50_001, kRequested) == 2,
+        "nf=50001 tri: band B's LOWER edge — legacy dropped to 1 "
+        ~ "(50001*16 = 800016 > 800000), the exact corner projection "
+        ~ "(3*50001*4 = 600012 <= 800000) admits 2. This is the 4x cost the "
+        ~ "corner projection introduces on triangulated imports");
 
-    // The band's last cage: 3*125000 = 375000 corners, 4x = 1.5M exactly.
-    assert(legacyChooseLevel(125_000, kRequested) == 1);
-    assert(chooseSubpatchLevel(3 * 125_000, kRequested) == 2,
-        "nf=125000 tri: band B's UPPER edge — 3*125000*4 = 1500000, exactly "
-        ~ "the ceiling. 1.5M limit faces is the ~7 s / ~345 MB point measured "
-        ~ "at matrix point D");
+    // The band's last cage: 3*66666 = 199998 corners, 4x = 799 992 — again the
+    // largest that fits, not a cage that meets the ceiling.
+    assert(legacyChooseLevel(66_666, kRequested) == 1);
+    assert(chooseSubpatchLevel(3 * 66_666, kRequested) == 2,
+        "nf=66666 tri: band B's UPPER edge — 3*66666*4 = 799992. ~800 000 "
+        ~ "limit faces is the ~4.0 s / ~180 MB point the 800 000 ceiling was "
+        ~ "chosen for (task 1374 phase 2, owner decision)");
 
-    // Just ABOVE: both fall to the floor of 1.
-    assert(legacyChooseLevel(125_001, kRequested) == 1);
-    assert(chooseSubpatchLevel(3 * 125_001, kRequested) == 1,
-        "nf=125001 tri: above band B, the policies agree again at the floor");
+    // Just ABOVE: both fall to the floor of 1 (3*66667*4 = 800004 > 800000).
+    assert(legacyChooseLevel(66_667, kRequested) == 1);
+    assert(chooseSubpatchLevel(3 * 66_667, kRequested) == 1,
+        "nf=66667 tri: above band B, the policies agree again at the floor");
 
-    foreach (long nf; 93_751 .. 125_001) {
-        if (nf % 397 != 0) continue;     // stride: 79 samples, not 31250
+    foreach (long nf; 50_001 .. 66_667) {
+        if (nf % 211 != 0) continue;     // stride: 79 samples, not 16666
         assert(legacyChooseLevel(nf, kRequested) == 1);
         assert(chooseSubpatchLevel(3 * nf, kRequested) == 2,
-            "band B interior: every cage in [93751, 125000] must move L1 -> L2");
+            "band B interior: every cage in [50001, 66666] must move L1 -> L2");
     }
 }
 
@@ -201,8 +231,16 @@ unittest {
 // in the wrong place.
 // ---------------------------------------------------------------------------
 unittest {
-    enum long C      = 1_500_000;   // MEM_LIMIT_FACES, spelled out (reference)
-    enum long kSweep = 140_000;     // > 125 000, the largest band edge in range
+    enum long C      = 800_000;   // MEM_LIMIT_FACES, spelled out (reference)
+    enum long kSweep =  80_000;   // > 66 666, the largest band edge in range
+
+    // `4*C/r` truncates for r = 3 and r = 6 (3 200 000/3 = 1 066 666.67),
+    // which it did NOT at the previous ceiling — 3 and 6 both divide
+    // 1 500 000, neither divides 800 000 = 2^8*5^5. Harmless, and stated
+    // rather than assumed: the band edges below are ⌊C'/4^L⌋, and
+    // ⌊⌊x⌋/n⌋ = ⌊x/n⌋ for integer n > 0, so flooring C' first gives the same
+    // edges an exact rational would. The full-sweep comparison against the two
+    // live policies is what actually proves it.
 
     static long pow4(int e) { long m = 1; foreach (_; 0 .. e) m *= 4; return m; }
 
@@ -254,16 +292,19 @@ unittest {
     }
 
     // The band edges named in projectedLimitFaces' doc comment, in the task
-    // file and in the arms above are all derived for C = 1 500 000. Re-deriving
+    // file and in the arms above are all derived for C = 800 000. Re-deriving
     // them from `C` here would be a tautology on literals; what is NOT a
     // tautology, and is the thing that actually rots, is the reference `C`
     // above drifting away from the production ceiling. Tie them:
     assert(MEM_LIMIT_FACES == C,
         "the memory ceiling moved. Every band edge written down in this file, "
         ~ "in projectedLimitFaces' doc comment and in the task file was derived "
-        ~ "for C = 1 500 000 and must be re-derived — including the expensive "
-        ~ "triangle band nf in [93751, 125000], which is what a reader chasing "
-        ~ "a Tab-cost regression looks for first");
+        ~ "for C = 800 000 and must be re-derived — including the expensive "
+        ~ "triangle band nf in [50001, 66666], which is what a reader chasing "
+        ~ "a Tab-cost regression looks for first. Derive, do not nudge: the "
+        ~ "rule is `new admits L iff nf*r*4^(L-1) <= C`, the rescaled ceiling "
+        ~ "is C' = 4C/r, and the band at transition L is "
+        ~ "nf in (min(C,C')/4^L, max(C,C')/4^L]");
 }
 
 // ---------------------------------------------------------------------------
@@ -277,33 +318,35 @@ unittest {
 //
 // Driven entirely through `cornerCount = 6*nf`, which is the reason the
 // signature takes corners: asserting this on a real mesh would mean building
-// a 62 501-hexagon cage.
+// a 33 334-hexagon cage.
 //
 // Stated at requested depth 2, where R-1 = 1 and this band is therefore the
 // WHOLE divergence. At the SHIPPED depth of 3 the hexagon class has two, the
-// second being nf in [15 626, 23 437] (L3 -> L2); both are covered by the
+// second being nf in [8 334, 12 500] (L3 -> L2); both are covered by the
 // exhaustive general-rule sweep above, which is where the completeness claim
 // lives. Do not read this arm as "the hexagon band".
 // ---------------------------------------------------------------------------
 unittest {
     enum int kRequested = 2;
 
-    assert(legacyChooseLevel(62_500, kRequested) == 2);
-    assert(chooseSubpatchLevel(6 * 62_500, kRequested) == 2,
-        "nf=62500 hex: 6*62500*4 = 1500000, exactly the ceiling — still 2");
+    assert(legacyChooseLevel(33_333, kRequested) == 2);
+    assert(chooseSubpatchLevel(6 * 33_333, kRequested) == 2,
+        "nf=33333 hex: 6*33333*4 = 799992 — the largest hexagon cage whose "
+        ~ "true L2 projection still fits 800000, so still 2");
 
-    assert(legacyChooseLevel(62_501, kRequested) == 2);
-    assert(chooseSubpatchLevel(6 * 62_501, kRequested) == 1,
-        "nf=62501 hex: THE band's lower edge — the legacy projection (1000016) "
-        ~ "fits the ceiling while the TRUE one (1500024) does not");
+    assert(legacyChooseLevel(33_334, kRequested) == 2);
+    assert(chooseSubpatchLevel(6 * 33_334, kRequested) == 1,
+        "nf=33334 hex: THE band's lower edge — the legacy projection (533344) "
+        ~ "fits the ceiling while the TRUE one (800016) does not");
 
-    assert(legacyChooseLevel(93_750, kRequested) == 2);
-    assert(chooseSubpatchLevel(6 * 93_750, kRequested) == 1,
-        "nf=93750 hex: the band's upper edge");
+    assert(legacyChooseLevel(50_000, kRequested) == 2);
+    assert(chooseSubpatchLevel(6 * 50_000, kRequested) == 1,
+        "nf=50000 hex: the band's upper edge — and the cell where the strict "
+        ~ "`>` is load-bearing on the LEGACY side (50000*16 = 800000 exactly)");
 
-    assert(legacyChooseLevel(93_751, kRequested) == 1);
-    assert(chooseSubpatchLevel(6 * 93_751, kRequested) == 1,
-        "nf=93751 hex: above the band both formulas cap to 1");
+    assert(legacyChooseLevel(50_001, kRequested) == 1);
+    assert(chooseSubpatchLevel(6 * 50_001, kRequested) == 1,
+        "nf=50001 hex: above the band both formulas cap to 1");
 }
 
 // ---------------------------------------------------------------------------
@@ -320,12 +363,21 @@ unittest {
     // fixture at the app's requested depth of 3.
     assert(chooseSubpatchLevel(4 * 24_576, 3) == 2,
         "24576 quads at depth 3 projects 1572864 limit faces — over the "
-        ~ "ceiling — so the policy must cap to 2");
+        ~ "ceiling — so the policy must cap to 2 (393216 at L2, under it). "
+        ~ "The ANSWER here is the same at 1 500 000 and at 800 000: 1572864 "
+        ~ "is over both, 393216 under both");
 
     // General form. For EVERY (cage, request) in a wide sweep the answer must
     // either sit under the ceiling or be the floor of 1.
-    foreach (long cc; [4L, 12L, 4_000L, 98_304L, 399_424L, 1_499_999L,
-                       1_500_000L, 1_500_001L, 6_000_000L, 99_000_000L]) {
+    //
+    // The ceiling-adjacent probes are re-derived for C = 800 000: the triple
+    // AT the ceiling in corners, and the triple at the L2 cliff (4*cc crossing
+    // C at cc = 200 000), which is where "pick the LARGEST level that fits"
+    // and the strict `>` actually bite — an exactly-at-the-ceiling cage exists
+    // in corners at every level here, because 4^L divides 800 000 = 2^8*5^5.
+    foreach (long cc; [4L, 12L, 4_000L, 98_304L, 199_999L, 200_000L,
+                       200_001L, 399_424L, 799_999L, 800_000L, 800_001L,
+                       6_000_000L, 99_000_000L]) {
         foreach (int req; 1 .. 9) {
             immutable int lvl = chooseSubpatchLevel(cc, req);
             assert(lvl >= 1 && lvl <= req,
@@ -362,7 +414,7 @@ unittest {
 unittest {
     // Driven with an UNBOUNDED ceiling on purpose. Under the production
     // ceiling the clamp is invisible in the ANSWER — a cage that projects over
-    // 1.5M limit faces is walked back down to the same level with or without
+    // 800 000 limit faces is walked back down to the same level with or without
     // it, and only the iteration count differs — so an assertion phrased
     // against the default ceiling would be inert and would ALSO hang under the
     // mutation instead of failing. With `long.max` the projection loop never
@@ -482,8 +534,8 @@ unittest {
 // function directly and so agree with a production path that never calls it.
 //
 // Driven by the CEILING rather than by the cage. Asking this question at the
-// production ceiling of 1 500 000 needs a cage of at least 23 438 triangles —
-// a 1.1-million-face refinement inside the unit lane, per assertion. One
+// production ceiling of 800 000 needs a cage of at least 12 501 triangles —
+// a 600 000-face refinement inside the unit lane, per assertion. One
 // hexagon plus a ceiling of 20 asks it exactly.
 // ---------------------------------------------------------------------------
 unittest {
