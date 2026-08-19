@@ -182,6 +182,22 @@
 			"versions": [
 				"SanitizerSelfTest"
 			]
+		},
+		"tsan": {
+			"_comment": "ThreadSanitizer. Three parts of this are load-bearing and none is symmetry with `sanitize`. (1) version=SanitizerThreadPreinit pulls in source/tsan_preinit.d, WITHOUT WHICH THE BINARY DOES NOT REACH main: compiler-rt's tsan_preinit.cpp.o is never pulled out of libldc_rt.tsan.a (its only symbol is local), so the binary has no .preinit_array, so libcap.so.2's ELF constructor calls prctl() during _dl_init through a still-null REAL(prctl) and SIGSEGVs. Read out of a coredump under gdb; see that module's header. (2) --enable-asserts=false, AND NO --checkaction=C, and this pair is FORCED rather than chosen. The lane must run under --DRT-gcopt=gc:manual (see below). ManualGC.reserveArrayCapacity() returns 0 unconditionally (shipped source, manual/gc.d:283-286), and druntime's own _d_arraysetcapacity does `curCapacity = gc_reserveArrayCapacity(...); assert(curCapacity);` (capacity.d:181-182) -- so with asserts compiled in, ANY array.reserve() ABORTS THE PROCESS. The editor hit it during startup (_d_arraysetcapacity!(Param)) and never reached /api/registry. Measured four ways on a five-line program: debug + gc:manual dies with AssertError at capacity.d:182; -release + gc:manual and --enable-asserts=false + gc:manual both run and report capacity 0; debug + the ordinary collector reports capacity 1019. --enable-asserts=false is the surgical half of -release: bounds checks and debugInfo stay. --checkaction=C is then DROPPED rather than carried for symmetry, because with no asserts left to action it is inert and its presence would imply otherwise. The cost is stated rather than hidden: this lane cannot exercise ANY assert oracle, the validity asserts included -- that is `check`'s job, which is why it is a different buildType. A second cost follows from the same stub: reserve() silently yields capacity 0, so every append reallocates. (3) --boundscheck=on is deliberately NOT carried: it is measurably inert in a debugMode build (1410, M4), and symmetry with `check` is worth less than not implying a check that does nothing. RUN-TIME half, which lives in tools/sanitizer/lane.d's BuildTypeSpec and not in a workflow: the instance MUST run with --DRT-gcopt=gc:manual. Measured -- with the ordinary conservative GC, TSan deadlocks the process outright at >=2 allocating threads (thread_suspendAll parks in sem_wait while the other threads spin in an UNinstrumented SpinLock.lock(), so the stop-the-world signal is never acknowledged), and short of that it emits ~124 reports a minute, all of them GC memory REUSE that TSan cannot see freed. TSAN_OPTIONS must carry history_size=7 (without it reports arrive with no stack frames at all) and must NOT carry symbolize=0 (it silently disables suppression matching, which is by symbol NAME).",
+			"buildOptions": [
+				"debugMode",
+				"debugInfo"
+			],
+			"dflags-ldc": [
+				"--fsanitize=thread",
+				"--enable-asserts=false",
+				"--frame-pointer=all"
+			],
+			"versions": [
+				"SanitizerSelfTest",
+				"SanitizerThreadPreinit"
+			]
 		}
 	},
 	"configurations": [

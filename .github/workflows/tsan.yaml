@@ -1,0 +1,290 @@
+name: nightly-tsan
+
+# The ThreadSanitizer lane (task 1411). Separate from nightly-sanitizer, and
+# not a fifth buildType inside it, for one measured reason: TSan costs its own
+# window, and it has to run the editor under a DIFFERENT GC than every other
+# lane.
+#
+# WHAT MAKES THIS LANE DIFFERENT FROM THE ASan ONE NEXT DOOR
+# ----------------------------------------------------------
+# It is QUIET when it is healthy. Measured in phase 0: with the ordinary
+# conservative GC, TSan deadlocks the editor outright once two threads
+# allocate (druntime stops the world with a real-time signal, the collector
+# parks in sem_wait, and the other threads spin inside an UNinstrumented
+# SpinLock.lock() which has no deferred-signal delivery point, so the
+# acknowledgement never comes); short of the deadlock it emitted 124 reports in
+# one minute, 123 of them GC memory REUSE that TSan cannot see freed. Under
+# --DRT-gcopt=gc:manual the same drive produced 0 reports, 111 MB instead of
+# 242 MB, and 3 threads instead of 34.
+#
+# Zero reports is also exactly what a binary built without --fsanitize=thread
+# produces, what an instance that never started produces, and what a sweep
+# killed at route 3 of 57 produces. So this lane is built around telling those
+# apart, and two mechanisms carry that weight:
+#
+#   * `tsan-selfcheck` GATES on a SYNTHETIC race (selftest.fault kind:race)
+#     being reported exactly once, and on the suppression canary both silencing
+#     it and printing its `Matched N suppressions` block. Nothing this workflow
+#     prints afterwards means anything if that step is red.
+#   * `tsan-verdict` is the ONLY gate on findings, and it is a divergence from
+#     tools/sanitizer/tsan_expected.txt in BOTH directions: an undeclared
+#     signature is red, and a `required` signature that STOPPED firing is red
+#     too — it was either fixed (delete the row) or the instrument went blind,
+#     and those look identical from here. The exit code is NOT the verdict:
+#     TSan returns 66 whenever it has reported anything at all, and this lane
+#     reports on a healthy night by construction (five routes carry races the
+#     source records as real and defers to task 0950), so exitcode=0 is set and
+#     the verdict decides.
+#
+# THE SHIPPED RELEASE IS NOT CHANGED BY ANY OF THIS, and the preflights prove
+# it rather than assert it — `lane.d preflight` reads `dub describe
+# --build=release` STRUCTURALLY and WITH --compiler set, and `preflight-release`
+# scans the real release binary with `strings`. Passing --compiler is what
+# makes the first one able to fail at all: with no --compiler, dub describe
+# defaults to dmd and DROPS every dflags-ldc entry, so the naive form of that
+# check passes on a config carrying --fsanitize=thread. Reproduced here, not
+# taken on trust from 1410.
+#
+# THE WINDOW, AND WHY THERE IS NO LOCK
+# ------------------------------------
+# One runner (~/actions-runner-perf, one Runner.Listener, agentName
+# fedora-perf), which takes ONE job at a time. The three lanes that target it
+# cannot overlap — they QUEUE. That is why there is no flock: the collision a
+# lock would defend against cannot happen, and a lock only one of three sides
+# takes protects nothing. The real hazard is the queue, so the arithmetic is
+# about cumulative occupancy:
+#
+#   17:00 + 100 (this)      = 18:40 worst end, before 19:00
+#   19:00 + 270 (sanitizer) = 23:30            <=  00:30 (perf)
+#
+# The next lane has its OWN cron, so it starts at max(19:00, when this one lets
+# go of the runner) — the sum 17:00 + 100 + 270 that an earlier draft wrote
+# down is only the worst case if this lane overruns past 19:00, which the guard
+# and timeout-minutes together prevent. `preflight-tsan` recomputes this and
+# fails if it stops closing.
+#
+# `lane.d window-guard` COMPUTES the allowed start interval from
+# kTsanTimeoutMin and the next lane's start rather than storing it, so raising
+# the timeout narrows the window by itself; `preflight-tsan` fails if the
+# timeout-minutes and cron below stop agreeing with those constants. An earlier
+# draft stored the interval as a literal [17:00, 18:40) — 18:40 is the worst
+# END of an on-time run, and it had been written down as the latest allowed
+# START, which put the worst case at 20:19 UTC, 79 minutes inside the
+# sanitizer lane's window.
+#
+# WHY EVERY STEP CARRIES xvfb-run
+# -------------------------------
+# This runner is a hardware-GL workstation inside the owner's graphical
+# session. An editor boot costs ~12.5 GiB of RSS on hardware GL against
+# ~1.12 GiB under software GL. `lane.d preflight` FAILS if DISPLAY is :0.
+
+on:
+  schedule:
+    - cron: '0 17 * * *'   # 20:00 MSK; sanitizer 19:00 UTC, perf 00:30 UTC
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Run even though the current time falls inside another lane''s window (it will DELAY that lane — this runner serialises)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: nightly-tsan
+  cancel-in-progress: false
+
+env:
+  # Same reason as nightly-sanitizer: instrumented builds must not write into
+  # the shared ~/.dub, which holds LDC-built archives that break the dmd
+  # test-link path. lane.d FAILS if this is unset.
+  VIBE3D_SAN_DUB_HOME: ${{ github.workspace }}/.dub-tsan
+  # 8599 belongs to the sanitizer lane. Read by lane.d's spawnInstance, which
+  # is the single place any instance is started.
+  VIBE3D_TSAN_PORT: 8630
+
+jobs:
+  tsan:
+    runs-on: [self-hosted, Linux, perf-fedora]
+    timeout-minutes: 100
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        # The workspace's untracked build state is the point on this runner
+        # (the nfde path-dep's C lib, .dub's incremental objects). A clean
+        # would wipe libnfde.a and the build would fail on a link error with no
+        # relation to anything this lane measures.
+        clean: false
+
+    - name: 'D toolchain on PATH'
+      run: echo "$HOME/.local/dlang/dmd2/linux/bin64" >> "$GITHUB_PATH"
+
+    - name: 'Restore the private tools/local symlink'
+      # tools/local is a gitignored symlink into the private repo and
+      # actions/checkout does not create it. `lane.d preflight` FAILS on a dead
+      # link; this step only tries.
+      run: |
+        if [ ! -e tools/local ]; then
+          for cand in "$GITHUB_WORKSPACE/../vibe3d_private/tools/local" \
+                      "$HOME/Code/vibe3d_private/tools/local" \
+                      "$HOME/vibe3d_private/tools/local"; do
+            if [ -d "$cand" ]; then ln -sfn "$cand" tools/local; break; fi
+          done
+        fi
+        ls -ld tools/local || true
+
+    - name: 'Window guard (a refused window is a RED job, not a skip)'
+      # Deliberately a failure and not an `if:` condition. "The lane did not
+      # run" has to be visible; a skipped job looks like a green night.
+      run: |
+        rdmd tools/sanitizer/lane.d window-guard \
+          "${{ github.event_name }}" \
+          "${{ github.event.inputs.force == 'true' && 'force' || '' }}"
+
+    - name: 'Preflight (fails the job, by design)'
+      # --no-fuzzer is scoping, not loosening: the shared preflight also checks
+      # that the private fuzzer's symlink is alive, which exists because the
+      # ASan lane RUNS that fuzzer and a dead link makes its step a silent
+      # no-op. This lane has no fuzz step, so on it that check can only turn a
+      # missing private repo into a red night about something this lane never
+      # touches.
+      run: rdmd tools/sanitizer/lane.d preflight --no-fuzzer
+
+    - name: 'Preflight: the RELEASE binary does not contain the fault injector'
+      run: rdmd tools/sanitizer/lane.d preflight-release
+
+    - name: 'Preflight: this lane''s own invariants'
+      # No symbolisation-disabling option anywhere in this file (the check is
+      # a plain grep and is deliberately strict enough to fire on a COMMENTED
+      # occurrence too, so the option cannot be named here even in prose — see
+      # tools/sanitizer/tsan_canary.supp for what it does); the
+      # expected-signature and canary files parse; the window arithmetic below
+      # still closes against lane.d's constants.
+      run: rdmd tools/sanitizer/lane.d preflight-tsan
+
+    - name: 'Build --build=tsan (LDC + ThreadSanitizer)'
+      # `verify` runs inside `build` and checks BOTH halves of the tsan
+      # promise: __tsan_init AND a .preinit_array section. The second is not a
+      # formality — without source/tsan_preinit.d the binary links, carries the
+      # symbol, and then SIGSEGVs before main() inside ___interceptor_prctl,
+      # called from libcap's ELF constructor while REAL(prctl) is still null.
+      run: rdmd tools/sanitizer/lane.d build tsan
+
+    - name: 'Selfcheck (GATE: a lane whose instrument is dead reports health)'
+      id: selfcheck
+      run: rdmd tools/sanitizer/lane.d tsan-selfcheck
+
+    - name: 'Live shutdown control + the bridge-ordering A/B (RECORDED)'
+      id: shutdown
+      continue-on-error: true
+      # Recorded and not gating on purpose: the bridge's seq-cst atomics ARE
+      # instrumented (core.atomic is a template instantiated in our modules, so
+      # the TSan pass lowers it to __tsan_atomic*), and TSan's io_sync=1 adds a
+      # second happens-before edge over the socket. Either can erase this
+      # signal on any given night, and a gate on a flapping signal produces a
+      # lane that gets switched off rather than read.
+      run: rdmd tools/sanitizer/lane.d tsan-shutdown
+
+    - name: 'Sweep: all 57 kRoutes rows under concurrent document mutation'
+      id: sweep
+      continue-on-error: true
+      # The FINDINGS here are recorded; the verdict step below is what gates on
+      # them. But the sweep can also fail for infrastructure reasons (the RSS
+      # watchdog stopping it, the instance dying), and those come back as a
+      # missing or short sentinel, which tsan-verdict treats as red — a sweep
+      # killed at route 3 of 57 leaves a report file that greps exactly like a
+      # clean night.
+      run: rdmd tools/sanitizer/lane.d tsan-sweep
+
+    - name: 'Bridge timeout race (RECORDED)'
+      id: bridge
+      continue-on-error: true
+      run: rdmd tools/sanitizer/lane.d tsan-bridge
+
+    - name: 'Suppression expiry audit'
+      id: supp
+      if: always()
+      continue-on-error: true
+      run: rdmd tools/sanitizer/lane.d tsan-audit-suppressions selfcheck shutdown sweep bridge
+
+    - name: 'Collect ThreadSanitizer reports'
+      if: always()
+      # `if: always()` is load-bearing and is the mirror of the same step in
+      # nightly-sanitizer: without it, a night cancelled by timeout-minutes
+      # collects nothing and reads as a night with no findings.
+      #
+      # And the grep is `WARNING: ThreadSanitizer`, NOT `ERROR:
+      # AddressSanitizer`. A copy of the sanitizer lane's step would have
+      # collected zero lines for any number of findings.
+      run: |
+        {
+          echo "### nightly-tsan"
+          echo ""
+          echo "| signal | outcome |"
+          echo "|---|---|"
+          echo "| selfcheck (GATE) | ${{ steps.selfcheck.outcome }} |"
+          echo "| shutdown A/B (recorded) | ${{ steps.shutdown.outcome }} |"
+          echo "| sweep (recorded) | ${{ steps.sweep.outcome }} |"
+          echo "| bridge (recorded) | ${{ steps.bridge.outcome }} |"
+          echo "| suppression audit | ${{ steps.supp.outcome }} |"
+          echo ""
+          echo "#### reports"
+          echo '```'
+          if ls tsan-report-* >/dev/null 2>&1; then
+            grep -h "WARNING: ThreadSanitizer" tsan-report-* | sort | uniq -c
+          else
+            echo "(none — no TSan report file was written at all)"
+          fi
+          echo '```'
+          echo ""
+          echo "#### sweep sentinel"
+          echo '```'
+          cat tsan-sweep.done 2>/dev/null || echo "(missing — the sweep did not finish)"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: 'VERDICT (the only gate on findings)'
+      id: verdict
+      if: always()
+      run: rdmd tools/sanitizer/lane.d tsan-verdict selfcheck shutdown sweep bridge
+
+    - uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: tsan-${{ github.run_id }}
+        path: |
+          tsan-report-*
+          tsan-instance-*.log
+          tsan-sweep.done
+          tsan-rss-sweep.csv
+        retention-days: 90
+
+    - name: 'Restore dmd-linkable archives'
+      if: always()
+      # NOT optional, and not the same check it used to be. nfde is a PATH
+      # dependency, so dub builds its D archive to a fixed path INSIDE THE
+      # WORKTREE (third_party/nfde/bin/libnfde.a) and an LDC build rewrites it
+      # in place. After a --fsanitize=thread build that archive carried
+      # __tsan_func_entry / __tsan_init / __tsan_read1..16, and the check that
+      # existed before this task looked only for `__asan` — it would have
+      # passed in silence and the NEXT lane's dmd-linked tests would have died
+      # in the LINK step, reported only as "worker N failed to prepare". Pure
+      # HTTP tests stay green either way, so a narrow run cannot tell you.
+      run: rdmd tools/sanitizer/lane.d restore-dmd-archives
+
+    - name: 'Teardown — ./vibe3d must not survive this job'
+      if: always()
+      # The 00:30 perf nightly runs `run.d frames --no-build` against exactly
+      # ./vibe3d in this same unclean workspace.
+      run: rdmd tools/sanitizer/lane.d teardown
+
+    - name: 'Gate'
+      if: always()
+      # Two gates and only two: the instrument was armed, and the findings did
+      # not diverge from what is declared. Everything else is recorded. The
+      # split matters — "the fuzzer/sweep found something" is a FINDING and
+      # belongs in the verdict's declared list, while "the instrument was not
+      # armed" is an INFRASTRUCTURE failure and nothing downstream of it means
+      # anything.
+      run: |
+        echo "selfcheck=${{ steps.selfcheck.outcome }} verdict=${{ steps.verdict.outcome }} shutdown=${{ steps.shutdown.outcome }} sweep=${{ steps.sweep.outcome }} bridge=${{ steps.bridge.outcome }} supp=${{ steps.supp.outcome }}"
+        [ "${{ steps.selfcheck.outcome }}" = "success" ] && \
+        [ "${{ steps.verdict.outcome }}" = "success" ]

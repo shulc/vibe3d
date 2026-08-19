@@ -72,7 +72,46 @@ import log    : logWarn;
 __gshared int  g_selfTestSink;
 __gshared long g_selfTestSlowSink;
 
-/// `selftest.fault kind:<heapoverflow|uaf|assertfail|hang|slow|invariant>`
+// ---------------------------------------------------------------------------
+// The ThreadSanitizer lane's synthetic positive control (task 1411).
+//
+// WHY IT IS SYNTHETIC AND NOT ONE OF THE REAL RACES
+// -------------------------------------------------
+// The lane runs under --DRT-gcopt=gc:manual, without which TSan either
+// deadlocks the process outright or drowns the log in GC memory-REUSE false
+// positives. Under that flag a healthy night is QUIET -- and a quiet lane is
+// exactly what a dead instrument produces too. So the arming proof cannot be
+// one of the real races: those depend on the scheduler, and some of them are
+// ordered away by the main-thread bridge's seq-cst atomics (which ARE
+// instrumented, being core.atomic templates instantiated in our own modules).
+// This one depends on nothing: two threads, one __gshared int, no
+// synchronisation whatsoever.
+//
+// WHY ONE WORKER FUNCTION AND NOT TWO
+// -----------------------------------
+// Both threads run THIS function, so there is exactly one distinct stack pair,
+// and TSan's default suppress_equal_stacks / suppress_equal_addresses collapse
+// the whole storm into exactly ONE report -- which is what `lane.d
+// tsan-selfcheck` requires: not "at least one", exactly one. Two different
+// bodies could be reported in either order and would make the count flap.
+//
+// WHY A BARE STORE AND NOT AN INCREMENT
+// -------------------------------------
+// `cell = cell + 1` is a read AND a write, potentially at two different source
+// lines, i.e. two stacks and possibly two reports. A single store is one line,
+// one stack, one report.
+//
+// The iteration count is an `enum`, NOT a Param: see WHY NO NUMERIC PARAM
+// above -- a count-shaped param on this command would fail the registry-wide
+// bounds sweep that the instrumented build runs on itself.
+private enum int kSelfTestRaceIters = 1_000_000;
+__gshared int g_selfTestRaceCell;
+
+void selfTestRaceWorker() {
+    foreach (int i; 0 .. kSelfTestRaceIters) g_selfTestRaceCell = i;
+}
+
+/// `selftest.fault kind:<heapoverflow|uaf|assertfail|hang|slow|invariant|race>`
 final class SelfTestFaultCommand : Command {
     private string kind_ = "assertfail";
 
@@ -101,6 +140,7 @@ final class SelfTestFaultCommand : Command {
                 ["hang",         "wedge the main thread"],
                 ["slow",         "runaway-but-finite command (DoS oracle)"],
                 ["invariant",    "corrupt a face index (mesh oracle)"],
+                ["race",         "unsynchronised __gshared int, 2 threads (TSan CATCHES)"],
             ], "assertfail"),
         ];
     }
@@ -240,6 +280,30 @@ final class SelfTestFaultCommand : Command {
             if (mesh is null) return false;
             if (mesh.faces.length == 0 || mesh.faces[0].length == 0) return false;
             mesh.faces[0][0] = cast(uint)(mesh.vertices.length + 1000);
+            return true;
+        }
+
+        // ------------------------------------------------------------------
+        // The ThreadSanitizer lane's positive control -- the ONE check that
+        // separates "the night was clean" from "the instrument was dead".
+        // Exactly one report is expected, naming selfTestRaceWorker above; see
+        // its header for why the shape is what it is. This returns TRUE: the
+        // command succeeds and the finding is in the TSan report file, not in
+        // the HTTP reply, so a lane that reads only the reply sees nothing.
+        //
+        // Built without --fsanitize=thread this kind is silent and harmless,
+        // which is the mutation `lane.d tsan-selfcheck` is required to redden
+        // on.
+        // ------------------------------------------------------------------
+        case "race": {
+            g_selfTestRaceCell = 0;
+            auto a = new Thread(&selfTestRaceWorker);
+            auto b = new Thread(&selfTestRaceWorker);
+            a.start();
+            b.start();
+            a.join();
+            b.join();
+            g_selfTestSink = g_selfTestRaceCell;
             return true;
         }
 

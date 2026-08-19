@@ -29,6 +29,18 @@ asan-report.*
 asan-fuzz.*
 /.dub-sanitizer/
 /fuzz-out/
+# Task 1411 — the ThreadSanitizer lane. Same reasoning as the block above, plus
+# one of its own: this lane WRITES ITS EVIDENCE INTO THE WORKSPACE (TSAN_OPTIONS
+# log_path, the sweep sentinel, the RSS series). Those files are read by
+# `lane.d tsan-verdict` in the same job and uploaded as artifacts; they must not
+# become a commit.
+vibe3d-tsan
+vibe3d-debug
+tsan-report-*
+tsan-instance-*.log
+tsan-sweep*.done
+tsan-rss-*.csv
+/.dub-tsan/
 *.dll
 *.o
 __pycache__/

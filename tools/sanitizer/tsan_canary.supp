@@ -1,0 +1,34 @@
+# tools/sanitizer/tsan_canary.supp — the suppression-machinery CANARY (task
+# 1411). NOT the working list; that is tsan.supp, and it is empty.
+#
+# This file exists to keep three silent failure modes out of the lane, all of
+# which look identical to a clean night:
+#
+#   1. symbolize=0 in TSAN_OPTIONS. Measured: the same run reports 0 warnings
+#      and rc=0 with symbolisation on and `Matched 6 suppressions`, and 6
+#      warnings with rc=66 and NO suppression matched when symbolisation is
+#      off — because matching is by symbol NAME. Turning symbolisation off
+#      "for speed" silently disables the whole suppression file.
+#   2. A degraded external symbolizer. llvm-symbolizer is NOT installed on this
+#      runner; the fallback addr2line works but already prints
+#      `DWARF error: mangled line number section`. If it degrades further,
+#      names stop resolving and door (1) opens again, just as quietly.
+#   3. A `Matched N suppressions` parser that has never seen the block. At zero
+#      matches the runtime prints no block at all, so a parser written against
+#      it can be permanently untested.
+#
+# `lane.d tsan-selfcheck` runs the synthetic control TWICE: once with no
+# suppressions file (expect exactly 1 report and NO Matched block) and once
+# with this one (expect 0 reports AND a `ThreadSanitizer: Matched N
+# suppressions` block with N >= 1). Both halves gate. Deleting the rule below
+# reddens run B. N is 2 rather than 1 for a single suppressed race, measured:
+# both access stacks of the race match the rule and each counts as a hit.
+#
+# It targets the synthetic control's own worker and nothing else, so it can
+# never hide a real finding — and it keeps working on the day tsan.supp gets
+# its first genuine entry.
+# 2026-08-19 | 1411 | the synthetic control's worker (selftest_fault.d); canary only.
+# NOTE the comment is ABOVE the rule and not after it: compiler-rt's suppression
+# parser copies the REST OF THE LINE into the pattern, so a trailing `# ...` would
+# silently become part of the template and match nothing.
+race:selfTestRaceWorker

@@ -1,0 +1,46 @@
+# tools/sanitizer/tsan.supp — the ThreadSanitizer lane's WORKING suppression
+# list (task 1411). It is deliberately EMPTY, and that is a measured decision,
+# not an unfinished file.
+#
+# WHY EMPTY
+# ---------
+# The one candidate phase 0 produced was `signal:thread_suspendHandler` — the
+# druntime stop-the-world handler that TSan's deferred signal delivery
+# deadlocks against. The lane does not need it: it runs under
+# --DRT-gcopt=gc:manual, the world is never stopped, and that handler is never
+# called. Adding a suppression to make the audit below non-vacuous would be
+# exactly the defect this whole campaign exists to catch.
+#
+# WHAT AN ENTRY WOULD MEAN
+# ------------------------
+# A line here says: "TSan reports this, we have read it, it is not ours to fix,
+# and here is who owns the decision." It is NOT the place to hide a real race —
+# a suppressed race is not reported at all, so it cannot serve as evidence that
+# the instrument is armed, and the lane's verdict function (tsan_expected.txt)
+# is where a KNOWN race is declared instead. Suppress only what is not ours:
+# druntime/Phobos/libc internals, or a third-party thread.
+#
+# FORMAT — every rule carries its own expiry evidence on the line ABOVE it:
+#   # <YYYY-MM-DD> | <task> | <one reason>
+#   <type>:<pattern>
+# The metadata goes above and NOT after the rule: compiler-rt's suppression
+# parser copies the rest of the line into the pattern, so a trailing `# ...`
+# becomes part of the template and the rule then matches nothing — silently.
+# Types are TSan's own: race, race_top, thread, mutex, signal, called_from_lib,
+# deadlock. A rule without a task is not accepted at review.
+#
+# HOW A STALE LINE IS CAUGHT
+# --------------------------
+# `lane.d tsan-audit-suppressions` parses the `ThreadSanitizer: Matched N
+# suppressions` block that print_suppressions=1 emits and FAILS on a declared
+# line that matched zero times. Note the mechanic it has to allow for: at ZERO
+# total matches the runtime prints NO BLOCK AT ALL — not "Matched 0" — so with
+# a non-empty file, a missing block is a failure and not a zero.
+#
+# WHILE THIS FILE IS EMPTY THAT AUDIT IS VACUOUS, and it is not pretended
+# otherwise. The witness for the whole mechanism is tsan_canary.supp, which is
+# a SEPARATE file (so it suppresses nothing in the sweep) exercised twice every
+# night by `lane.d tsan-selfcheck`: once without it (expect 1 report, no
+# Matched block) and once with it (expect 0 reports and `Matched 1
+# suppressions`). That one control proves symbolisation produces names, that
+# matching is by name, and that the audit's parser sees the block.
