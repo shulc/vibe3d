@@ -1173,6 +1173,15 @@ struct FrameScenarioResult {
     long       subpatchRebuilds = -1;  // subpatchPreview.count (tab-subpatch, F-I5)
     long       lassoSelected    = -1;  // selected polygon count (lasso-dense, F-I6b)
     long       undoApplies      = -1;  // undoApply counter (undo-spam, F-I7)
+    // tab-cold (task 1374, F-I8/F-I9). `subpatchPreview.count` above cannot
+    // tell a cold stencil build from an LRU cache hit -- the scope timer opens
+    // at the TOP of buildPreview, before the cache lookup -- so a cold-path
+    // measurement needs the split counters to be able to assert it measured
+    // what it claims. See perf_probe.d's Cat.subpatchTopoMiss.
+    long       subpatchTopoMiss = -1;  // Cat.subpatchTopoMiss.count
+    long       subpatchTopoHit  = -1;  // Cat.subpatchTopoHit.count
+    long       subpatchLevel    = -1;  // Cat.subpatchLevelChosen.sum (== the
+                                       // level, given the gated count == 1)
 }
 
 // Number of per-gesture move-drag undo entries `undo-spam` builds before
@@ -1185,6 +1194,116 @@ enum int kUndoSpamN = 8;
 // small margin without hiding a real per-frame rebuild storm (which would
 // scale with frameCount, not sit at a small constant).
 enum long K_SUBPATCH_REBUILD = 2;
+
+// --- tab-cold (task 1374) -------------------------------------------------
+
+// Post-build frames, driven as a fixed hover sweep. Two frames in this
+// scenario are expensive, not one: the buildPreview frame, and then the GPU
+// upload / first draw of the limit surface. A measurement that stops at the
+// first misses half the cost of Tab -- and since the main loop is
+// event-driven, "stops at the first" is exactly what a bare sleep gives
+// (re-measured 2026-08-19 under the review fixes: replacing the sweep with a
+// 600 ms sleep leaves the window at frameCount == 1 and gcAllocBytes at
+// 7 551 520 B, which the byte bound passes by 13x -- see F-I9).
+//
+// WHAT THE STEP COUNT DOES, measured rather than assumed: it is NOT what sets
+// the window's frame count. Dropping it 30 -> 1 changes the window from ~84 to
+// 76 frames, not to a handful. The sweep's job is to WAKE the event-driven main
+// loop; once awake it free-runs through the playback and the settle, and the
+// count is then a function of host speed, not of this number. So do not reach
+// for this constant to move the frame count -- and see K_TAB_COLD_FRAMES_LO/HI
+// for what actually bounds it.
+enum int kTabColdHoverSteps = 30;
+
+// Give up waiting for the build. Generous: the worst measured cold Tab on the
+// bad side of the depth cliff is seconds, and a scenario that times out is
+// reported as an ERROR (which fails the run) rather than silently measuring a
+// window the build never entered.
+enum int kTabColdBuildTimeoutMs = 90_000;
+
+// F-I9's ceiling on the measured window's TOTAL main-thread GC allocation.
+//
+// Gates the WINDOW SUM (`FrameStats.gcAllocBytes`), deliberately NOT the
+// worst-frame figure. There are two expensive frames here and which one is
+// slowest can flip after any fix to either -- pinning the worst frame's bytes
+// would move the gate's subject without any regression having happened. The
+// worst-frame bytes are still REPORTED, in F-I9's detail and in the
+// worst-frame breakdown line.
+//
+// Calibrated in the cold-topology / WARM-BUFFER regime `runTabCold` pins (see
+// its header), on the n=316 grid: 5 relaunched repeats measured
+// 88.85 / 89.06 / 89.69 / 89.69 / 89.90 MB (2026-08-19, loadavg 1.6-1.9,
+// ldc2 1.42 perf build), max + ~15%.
+enum long K_TAB_COLD_ALLOC_BYTES = 104_000_000;
+
+// ... and the point it was calibrated ON. Unlike every other F-Ix, F-I9 is a
+// BYTE value, so it scales with the cage: the same code allocates 72 MB at
+// n=157 and 345 MB at n=306 (measured). Gating it off the calibration point
+// would turn `frames --n 400` into a red run with no regression in it, so off
+// that point F-I9 is RECORDED, non-gating. CI runs `--n 316` (see
+// .github/workflows/perf.yaml), which IS the calibration point.
+enum string K_TAB_COLD_CALIB_MESH = "grid";
+enum int    K_TAB_COLD_CALIB_N    = 316;
+
+// The refinement level the depth policy picks at that point, and the FIRST
+// live witness the policy has (task 1374 review, SF-2). `Cat.
+// subpatchLevelChosen` landed reported-but-not-gated: F-I8's verdict read only
+// count/miss/hit, and `perfCounterSum` answers 0 for an absent key, so deleting
+// the `g_perf.count(Cat.subpatchLevelChosen, ...)` line reddened nothing
+// anywhere.
+//
+// grid n=316 is 99 856 quad cage faces = 399 424 corners; at the app's
+// requested depth of 3 the corner projection gives 399 424*16 = 6 390 784 (L3,
+// over the ceiling), 399 424*4 = 1 597 696 (L2, over), 399 424 (L1, under) --
+// so level 1. The PRE-1374 face projection lands on 1 as well, which is what
+// makes this a witness for the counter and the production wiring rather than a
+// restatement of the change: a quad cage cannot discriminate the two formulas
+// (see tests/unit/subpatch_level_policy_test.d), so this number would not move
+// even if the projection were reverted. It pins that the policy is READ and
+// REPORTED in the live process, on a production-sized cage.
+//
+// Gated only at the calibration point, like the byte bound: the chosen level
+// is a function of the cage.
+enum int K_TAB_COLD_CALIB_LEVEL = 1;
+
+// The window's per-frame ImGui-chrome allocation floor, and F-I9's FRAME-COUNT
+// band (task 1374 review, SF-6).
+//
+// WHAT WAS MEASURED, 2026-08-19, grid n=316, and it is stronger than the
+// argument it replaces. The window's allocation is EXACTLY linear in its frame
+// count, with a deterministic intercept:
+//
+//     gcAllocBytes  =  79 137 568 B  +  211 168 B x frameCount
+//
+// Nine runs across two sessions and both invocations — (97 720 352, 88),
+// (97 298 016, 86), (95 186 336, 76), (97 298 016, 86), (96 875 680, 84) from
+// the full `--ci` lane; (89 062 464, 47), (89 903 040, 51), (97 505 088, 87)
+// solo — all give the same intercept to within 4 096 B (one page). The slope
+// is `steadyMaxAllocBytes` for this scenario, 211 168 B, on the nose.
+//
+// So the frame count is NOT a constant of the scenario, and the claim that it
+// was is corrected here and at runTabCold. It is also NOT explained by the
+// invocation: solo runs have been measured at 47 and at 87 frames in different
+// sessions, so it tracks host conditions, not the scenario list. Every byte of
+// the spread is chrome — which is exactly why the count has to be BOUNDED
+// rather than assumed: F-I9's subject moves ~9 MB across the observed range,
+// and a change that collapsed the window to a handful of frames would take
+// ~10 MB of floor out of the bound with nothing red anywhere.
+//
+// THE BAND'S EDGES ARE DERIVED, not padded:
+//   HI = 110 — the chrome floor ALONE reaches K_TAB_COLD_ALLOC_BYTES at 118
+//              frames ((104 000 000 - 79 137 568) / 211 168 = 117.7). Past
+//              that the byte bound would red on window SHAPE and report it as
+//              an allocation regression. HI sits below it, so a window that
+//              grows is named by the frame half instead of misattributed.
+//   LO =  40 — 15 % under the smallest count ever measured (47, solo). Below
+//              it the byte bound has ~16 MB of slack instead of ~6 MB, i.e.
+//              it has been silently relaxed, which is the failure SF-6 named.
+// Both invocation contexts fit inside; neither edge is reachable by host load
+// at the measured spread.
+enum long K_TAB_COLD_CHROME_BYTES = 211_168;
+enum int  K_TAB_COLD_FRAMES_LO    = 40;
+enum int  K_TAB_COLD_FRAMES_HI    = 110;
 
 FrameScenarioResult* findFrameScenario(FrameScenarioResult[] results, string name) {
     foreach (ref r; results)
@@ -1426,6 +1545,197 @@ FrameScenarioResult runTabSubpatch(int n, string meshType) {
     return res;
 }
 
+// ---------------------------------------------------------------------------
+// tab-cold — the FIRST Tab on a heavy cage: the user-visible cost that the
+// LRU(2) topology cache exists to avoid paying twice, and that `tab-subpatch`
+// measures only by accident.
+//
+// WHY IT IS A SEPARATE SCENARIO AND NOT AN EXTRA ASSERTION ON tab-subpatch.
+// `tab-subpatch` today runs after three scenarios that never touch
+// buildPreview, so it happens to be the process's first preview build and its
+// numbers happen to be cold ones. It cannot PROVE that -- before task 1374
+// there was no counter that could tell a cold stencil build from a cache hit
+// (`Cat.subpatchPreview`'s scope timer opens at the top of buildPreview,
+// above the cache lookup), so its "one rebuild" invariant F-I5 is equally
+// green either way. This scenario asserts the coldness instead of inheriting
+// it.
+//
+// THE REGIME, stated because it IS the measurement. "Cold" here means COLD
+// TOPOLOGY: the LRU(2) OSD topology cache and the layer-2 reusable-preview key
+// (SubpatchPreview.reusablePreviewKey) are both empty when the toggle lands,
+// so buildPreview pays the full OSD topology + stencil-table build. It does
+// NOT mean a virgin process: `OsdAccel`'s ~dozen `scratch*` buffers keep their
+// capacity across `clear()` and are not touched by `destroyCache()` either, so
+// nothing reachable from inside a running vibe3d can restore the allocation
+// state of a freshly launched one. A user's real first Tab after launch is
+// therefore MORE expensive than this scenario reports; measuring that one
+// needs a relaunch per repeat, which is a manual measurement, not a gate.
+//
+// That regime is PINNED here rather than inherited from whatever ran first:
+// the warm-up toggle below fills every scratch buffer at this cage's size
+// before the measured window opens. Without it, `frames tab-cold` run solo and
+// the same scenario inside a full `frames` run would be two different
+// measurements under one name -- and F-I9's byte bound would be calibrated for
+// whichever the operator happened to run.
+FrameScenarioResult runTabCold(int n, string meshType) {
+    FrameScenarioResult res;
+    res.name = "tab-cold";
+
+    // --- Warm-up: fill the scratch buffers at this cage size. -----------
+    resetMesh(meshType, n);
+    if (!selectMode("polygons", [])) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "selectMode polygons failed (warm-up)";
+        return res;
+    }
+    settleAfterReset();
+    // Reset the counters BEFORE the warm-up toggle, not just before the
+    // measured one: the wait below keys on `subpatchPreview.count >= 1`, and
+    // an earlier scenario in the same process (tab-subpatch) leaves that
+    // counter at 1 already. Without this the warm-up wait returns instantly
+    // and the "warm buffers" this scenario claims to pin are whatever the
+    // previous scenario left -- exactly the contamination the warm-up exists
+    // to remove.
+    perfReset();
+    if (!postCommand("mesh.subpatch_toggle")) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "mesh.subpatch_toggle failed (warm-up)";
+        return res;
+    }
+    // `.length`, not `if (why)`: a string is an array, and `if (arr)` tests the
+    // POINTER — `""` is a non-null literal, so the truthiness form would fire
+    // on success.
+    immutable warmWhy = waitForSubpatchBuild(1);
+    if (warmWhy.length) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "warm-up preview build: " ~ warmWhy;
+        return res;
+    }
+    // Let the warm-up's own upload/draw frame run before the reset, so the
+    // limit-side buffers are hot too, not just the cage-side ones.
+    Thread.sleep(600.msecs);
+
+    // --- The reset that makes the NEXT toggle a genuine miss. -----------
+    // scene.reset's hook (source/registration.d) runs
+    // deactivate() -> SubpatchPreview.dropTopologyCache(), which drops
+    // both cache layers and leaves the scratch buffers hot. Note that WITHOUT
+    // destroyCache() this is not merely weaker, it is wrong: the topology key
+    // hashes only the cage's (topology, level, sharpness) tuple, so resetting
+    // to the same grid twice reproduces the SAME key and the toggle below
+    // would be a cache HIT wearing this scenario's name. F-I8 is what refuses
+    // to report that as a cold build.
+    resetMesh(meshType, n);
+    if (!selectMode("polygons", [])) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "selectMode polygons failed";
+        return res;
+    }
+    settleAfterReset();
+
+    perfReset();
+    framesReset();      // the window opens HERE -- one call before the toggle
+
+    if (!postCommand("mesh.subpatch_toggle")) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "mesh.subpatch_toggle failed";
+        return res;
+    }
+    // Wait on the COUNTER, not on a fixed sleep. The build is one frame
+    // however long it takes, so this keeps the window's FRAME COUNT (and
+    // hence its ImGui-chrome allocation floor) stable across cage sizes --
+    // which is the only thing that makes a byte bound on the window sum
+    // comparable between points at all.
+    immutable coldWhy = waitForSubpatchBuild(1);   // `.length`, see the warm-up
+    if (coldWhy.length) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "cold preview build: " ~ coldWhy;
+        return res;
+    }
+
+    // A FIXED number of post-build frames, driven by a hover sweep.
+    //
+    // Not decoration: vibe3d's main loop is event-driven, so a bare sleep here
+    // records ZERO further frames (measured: a 600 ms sleep after the build
+    // left the window at frameCount == 1) and the window would stop at the
+    // buildPreview frame, missing the GPU upload / first draw of the limit
+    // surface entirely. Driving a fixed sweep decouples the window from HOW
+    // LONG THE BUILD TOOK, which is what a sleep cannot do.
+    //
+    // It does NOT make the frame count a constant, and an earlier draft of this
+    // comment claimed it did. MEASURED at this one cage size: 47, 51, 76, 84,
+    // 86, 86, 87, 88 across two sessions and both invocations (and 69/51/59/11
+    // over the A'/B/C/D cage-size matrix). Every byte of that spread is
+    // per-frame ImGui chrome — the window sum is 79 137 568 B + 211 168 B x
+    // frames to within one page across all of them, see
+    // K_TAB_COLD_CHROME_BYTES. So the count is BOUNDED by F-I9 rather than
+    // assumed, and both of F-I9's halves gate only at the calibration point.
+    auto cam = fetchCamera();
+    int cx = cam.vpX + cam.width  / 2;
+    int cy = cam.vpY + cam.height / 2;
+    string log = buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                               cx - 20, cy, cx + 20, cy, kTabColdHoverSteps);
+    try {
+        playAndWait(log);
+    } catch (Exception e) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "post-build sweep: " ~ e.msg;
+        return res;
+    }
+    settleAfterPlay();
+
+    res.stats = fetchFrames();
+    if (res.stats.empty) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "no frames recorded — vibe3d not built with --build=perf?";
+        return res;
+    }
+
+    auto perf = perfRead();
+    res.subpatchRebuilds = perfCounterCount(perf, "subpatchPreview");
+    res.subpatchTopoMiss = perfCounterCount(perf, "subpatchTopoMiss");
+    res.subpatchTopoHit  = perfCounterCount(perf, "subpatchTopoHit");
+    res.subpatchLevel    = perfCounterSum  (perf, "subpatchLevelChosen");
+
+    res.status = CaseStatus.OK;
+    return res;
+}
+
+// `count` / `sum` off one /api/perf entry, 0 when the category is absent
+// (a non-perf build answers "{}").
+long perfCounterCount(JSONValue perf, string key) {
+    return (key in perf) ? perf[key]["count"].integer : 0;
+}
+long perfCounterSum(JSONValue perf, string key) {
+    return (key in perf) ? perf[key]["sum"].integer : 0;
+}
+
+// Poll /api/perf until `subpatchPreview.count` reaches `want`. /api/perf is
+// answered on the HTTP thread, so polling it does not serialize against the
+// frame loop the way a main-thread-bridged route would.
+//
+// Returns "" on success, otherwise the reason, for the caller's ERROR detail.
+// A bool would collapse the two failures that matter into one: /api/perf
+// answers a bare "{}" on a NON-PERF build, where `subpatchPreview` is absent
+// and `perfCounterCount` reads 0 forever -- so the wrong binary would burn the
+// full 90 s timeout and then report a build that "did not land", which is a
+// misdiagnosis of something decidable on the FIRST probe. Checked once per
+// poll rather than once up front so a mid-scenario relaunch cannot slip past.
+string waitForSubpatchBuild(long want) {
+    foreach (i; 0 .. kTabColdBuildTimeoutMs / 50) {
+        try {
+            auto perf = perfRead();
+            if (perf.type != JSONType.object || perf.object.length == 0)
+                return "/api/perf answered an empty object — vibe3d is not the "
+                       ~ "PerfProbe binary (build with --build=perf)";
+            if (perfCounterCount(perf, "subpatchPreview") >= want)
+                return "";
+        } catch (Exception) { /* transient — keep polling */ }
+        Thread.sleep(50.msecs);
+    }
+    return "no preview build within "
+           ~ (kTabColdBuildTimeoutMs / 1000).to!string ~ "s";
+}
+
 // lasso-dense — Polygons-mode RMB lasso covering the central 60% of the
 // viewport over a dense grid. Selection is Marks-class (change_bus.d), NOT
 // Geometry/Position, so it must not trigger a mesh-cache rebuild / GPU
@@ -1588,6 +1898,11 @@ void printFramesTable(FrameScenarioResult[] results) {
                  r.stats.worst.gcCollections);
         writefln("  %-16s F-I2 steady-state alloc/frame (whole-frame, main-thread, " ~
                  "post-warmup): %d B", r.name, r.stats.steadyMaxAllocBytes);
+        if (r.subpatchTopoMiss >= 0)
+            writefln("  %-16s subpatch topology: miss=%d hit=%d level=%d "
+                     ~ "(cold-topology / WARM-BUFFER regime — see runTabCold)",
+                     r.name, r.subpatchTopoMiss, r.subpatchTopoHit,
+                     r.subpatchLevel);
     }
 }
 
@@ -1624,6 +1939,11 @@ void writeFramesResultsJson(string path, string meshType, int n, long faceCount,
                 a.put(format(`      "lassoSelected": %d,` ~ "\n", r.lassoSelected));
             if (r.undoApplies >= 0)
                 a.put(format(`      "undoApplies": %d,` ~ "\n", r.undoApplies));
+            if (r.subpatchTopoMiss >= 0) {
+                a.put(format(`      "subpatchTopoMiss": %d,` ~ "\n", r.subpatchTopoMiss));
+                a.put(format(`      "subpatchTopoHit": %d,` ~ "\n", r.subpatchTopoHit));
+                a.put(format(`      "subpatchLevel": %d,` ~ "\n", r.subpatchLevel));
+            }
             a.put(format(`      "steadyMaxAllocBytes": %d` ~ "\n", r.stats.steadyMaxAllocBytes));
         } else {
             a.put(format(`      "detail": "%s"` ~ "\n", r.detail.replaceQuotes));
@@ -2038,7 +2358,13 @@ Invariant[] checkInvariants(CaseResult[] results) {
 // on the CI host (0195/0197 evidence), so `--ci` routes around it.
 // ---------------------------------------------------------------------------
 
-Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode) {
+// `atCalibrationPoint` — whether this run is the (mesh, n) the two tab-cold
+// bounds that scale with the cage were calibrated on. Both F-I8's chosen-level
+// assertion and F-I9's byte + frame-count bounds are functions of the cage, so
+// off that point they are RECORDED, non-gating; every other invariant here is
+// cage-independent and gates everywhere.
+Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode,
+                                  bool atCalibrationPoint = true) {
     Invariant[] inv;
 
     // F-I1 — GATING. orbit-dense must trigger ZERO mesh-cache rebuilds: the
@@ -2073,14 +2399,23 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode) {
     // a nonzero count means a stop-the-world collection stalled the main
     // loop (triggered by ANY thread — see the GC-metric-asymmetry note in
     // perf_probe.d).
+    //
+    // `tab-cold` (task 1374) is carved out in DEV runs too, and unlike the old
+    // drag-falloff carve-out this one is not a stopgap: a cold preview build
+    // allocates a ~200 MB one-shot working set inside a single frame, so it
+    // CROSSES a GC pool threshold by construction. Zero collections there
+    // would mean the build did not happen. Recorded, never gated -- if that
+    // count is ever to become a gate it needs its own bound, not this one.
     foreach (r; results) {
         if (r.status != CaseStatus.OK) continue;
-        bool gating = !ciMode;
+        bool gating = !ciMode && r.name != "tab-cold";
         bool ok = gating ? r.stats.gcCollections == 0 : true;
+        string why = ciMode ? " — --ci"
+                            : (r.name == "tab-cold"
+                               ? " — cold build's one-shot working set" : "");
         string label = gating
             ? format("%s: 0 GC collections", r.name)
-            : format("%s: GC collections (RECORDED, non-gating%s)", r.name,
-                     ciMode ? " — --ci" : "");
+            : format("%s: GC collections (RECORDED, non-gating%s)", r.name, why);
         inv ~= Invariant("F-I4", label, ok,
             format("gcCollections=%d", r.stats.gcCollections));
     }
@@ -2115,6 +2450,125 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode) {
                 format("tab-subpatch: subpatchPreview rebuilds bounded (1..%d)",
                        K_SUBPATCH_REBUILD),
                 ok, format("subpatchPreview.count=%d", r.subpatchRebuilds));
+        }
+    }
+
+    // F-I8 — GATING. tab-cold: the measured build was a genuine COLD one.
+    //
+    // Three counts, and all three are needed, because each covers a way the
+    // measurement can be a lie:
+    //   count == 1  — buildPreview ran exactly once in the window (a rebuild
+    //                 storm would inflate the byte bound's subject too).
+    //   miss  == 1  — that run BUILT a fresh OSD topology. This is the one
+    //                 assertion that could not exist before task 1374: the
+    //                 `subpatchPreview` timer opens above the cache lookup, so
+    //                 count == 1 is equally true of a 77 ms cache hit.
+    //   hit   == 0  — and it did not additionally reuse one.
+    //
+    // The layer-2 cache is covered by count, not by hit: a
+    // reusablePreviewKey/Ready reuse short-circuits in mesh.d BEFORE
+    // buildPreview is entered at all, so it shows as count == 0 / miss == 0 --
+    // which this fails on. `hit == 0` alone would pass it.
+    //
+    // FOURTH, at the calibration point only: the chosen refinement LEVEL.
+    // Without it `Cat.subpatchLevelChosen` has no live witness anywhere --
+    // the level is printed in the detail and the JSON, and `perfCounterSum`
+    // answers 0 for an absent key, so deleting the counter's call site in
+    // subpatch_osd.d reddens nothing. It also makes this lane the first live
+    // reading of the depth policy on a production-sized cage. Off the
+    // calibration point the level is a function of the cage, so it is reported
+    // and not gated (see K_TAB_COLD_CALIB_LEVEL for why a QUAD cage is
+    // nonetheless the right place to pin the counter, not the projection).
+    {
+        auto r = findFrameScenario(results, "tab-cold");
+        if (r !is null && r.status == CaseStatus.OK) {
+            immutable bool levelOk = !atCalibrationPoint
+                                  || r.subpatchLevel == K_TAB_COLD_CALIB_LEVEL;
+            bool ok = r.subpatchRebuilds == 1
+                   && r.subpatchTopoMiss == 1
+                   && r.subpatchTopoHit  == 0
+                   && levelOk;
+            string label = atCalibrationPoint
+                ? format("tab-cold: COLD build (1 rebuild, 1 miss, 0 hits, L%d)",
+                         K_TAB_COLD_CALIB_LEVEL)
+                : "tab-cold: measured a COLD build (1 rebuild, 1 topo miss, 0 hits)";
+            inv ~= Invariant("F-I8", label,
+                ok, format("subpatchPreview.count=%d topoMiss=%d topoHit=%d "
+                           ~ "chosenLevel=%d%s%s",
+                           r.subpatchRebuilds, r.subpatchTopoMiss,
+                           r.subpatchTopoHit, r.subpatchLevel,
+                           atCalibrationPoint ? "" : " (level RECORDED — off "
+                                                     ~ "the calibration point)",
+                           ok ? ""
+                              : (levelOk
+                                 ? "  <-- measured a cache HIT (or no build at "
+                                   ~ "all), NOT a cold build"
+                                 : format("  <-- the depth policy chose L%d, "
+                                          ~ "not L%d", r.subpatchLevel,
+                                          K_TAB_COLD_CALIB_LEVEL))));
+        }
+    }
+
+    // F-I9 — GATING. tab-cold: total main-thread GC allocation over the
+    // measured window.
+    //
+    // The WINDOW SUM, not the worst frame. Two frames here are expensive (the
+    // stencil build, then the GPU upload / first draw of the limit surface)
+    // and which of them is slowest can flip after a fix to either -- a bound
+    // pinned to "the worst frame" would then be describing a different frame
+    // than the one it was calibrated on, with no regression having occurred.
+    // The worst frame's bytes are reported in the detail, non-gating.
+    //
+    // Bytes, not milliseconds: machine-stable, like every other F-Ix here.
+    //
+    // AND the window's FRAME COUNT, in a band, because the byte bound alone is
+    // one-sided and can only get easier. The window's ImGui-chrome allocation
+    // is roughly linear in its frame count, so a change that collapsed the
+    // post-build sweep from ~50 frames to a handful would drop the sum by
+    // ~44 frames' worth of chrome and permanently relax this gate with nothing
+    // red anywhere. `runTabCold` ARGUES the count is a constant of the
+    // scenario (a fixed hover log, not a sleep); this is that argument
+    // asserted. Both halves share the calibration-point condition: the byte
+    // bound scales with the cage and, measured, so does the frame count
+    // (69/51/59/11 across the A'/B/C/D matrix).
+    {
+        auto r = findFrameScenario(results, "tab-cold");
+        if (r !is null && r.status == CaseStatus.OK) {
+            immutable bool byteOk  = r.stats.gcAllocBytes <= K_TAB_COLD_ALLOC_BYTES;
+            immutable bool frameOk = r.stats.frameCount >= K_TAB_COLD_FRAMES_LO
+                                  && r.stats.frameCount <= K_TAB_COLD_FRAMES_HI;
+            bool ok = atCalibrationPoint ? (byteOk && frameOk) : true;
+            string label = atCalibrationPoint
+                ? format("tab-cold: window GC alloc <= %d B, %d..%d frames",
+                         K_TAB_COLD_ALLOC_BYTES,
+                         K_TAB_COLD_FRAMES_LO, K_TAB_COLD_FRAMES_HI)
+                : format("tab-cold: window GC alloc + frames (RECORDED, "
+                         ~ "non-gating — off the %s n=%d calibration point)",
+                         K_TAB_COLD_CALIB_MESH, K_TAB_COLD_CALIB_N);
+            // The chrome-free residual, RECORDED and never gated. It is the
+            // part of the window sum that is NOT the per-frame ImGui floor,
+            // and it is deterministic to the byte across every measurement so
+            // far (79 137 568 B; see K_TAB_COLD_CHROME_BYTES). Printed because
+            // it is what makes the gated number interpretable — a reader
+            // comparing two runs with different frame counts should compare
+            // THIS. Deliberately not the gate: swapping F-I9's subject is a
+            // change of what the lane promises, and belongs to whoever owns
+            // that promise, not to a review fix.
+            immutable long residual = r.stats.gcAllocBytes
+                                    - r.stats.frameCount * K_TAB_COLD_CHROME_BYTES;
+            inv ~= Invariant("F-I9", label,
+                ok, format("gcAllocBytes=%d B over %d frames "
+                           ~ "(chrome-free %d B, worst frame %d B — both "
+                           ~ "RECORDED non-gating)%s%s",
+                           r.stats.gcAllocBytes, r.stats.frameCount,
+                           residual, r.stats.worst.gcAllocBytes,
+                           (ok || byteOk) ? "" : "  <-- OVER the byte bound",
+                           (ok || frameOk) ? ""
+                              : format("  <-- frame count outside %d..%d: the "
+                                       ~ "measured WINDOW is not the one this "
+                                       ~ "byte bound was calibrated on",
+                                       K_TAB_COLD_FRAMES_LO,
+                                       K_TAB_COLD_FRAMES_HI)));
         }
     }
 
@@ -2284,7 +2738,30 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
         ScenarioSpec("tab-subpatch", &runTabSubpatch),
         ScenarioSpec("lasso-dense",  &runLassoDense),
         ScenarioSpec("undo-spam",    &runUndoSpam),
+        // tab-cold goes LAST, and the position is load-bearing (task 1374).
+        // `tab-subpatch` above is today the process's FIRST buildPreview --
+        // the three scenarios before it never call one -- so it already
+        // measures a virgin cold build, it just cannot prove it. Insert
+        // tab-cold ANYWHERE above it and tab-subpatch silently becomes a
+        // warm-buffer build against a populated topology cache: its p99 and
+        // its allocation numbers move, its committed baseline entry stops
+        // describing the thing it names, and F-I5 (`count == 1`) stays green
+        // through all of it. No gate in this file can see that; only this
+        // ordering prevents it.
+        ScenarioSpec("tab-cold",     &runTabCold),
     ];
+    // ... and the ordering is asserted, not just commented. The pollution an
+    // accidental reorder causes is invisible to every counter in this file: with
+    // `destroyCache()` on the reset hooks a reordered `tab-subpatch` still
+    // reports subpatchPreview.count=1 / topoMiss=1, because what it loses is not
+    // the topology cache but the SCRATCH BUFFERS -- OsdAccel's ~dozen capacity
+    // fields, which nothing observes. F-I5 stays green while the window drops
+    // 61 % (measured, mutation M8). This assert is the only thing standing
+    // between a one-line edit and a baseline entry that silently stops
+    // describing what it names.
+    assert(allScenarios[$-1].name == "tab-cold",
+        "tab-cold MUST stay last — see the comment above; a reorder is not "
+        ~ "observable in any invariant this file emits");
 
     ScenarioSpec[] scenarios;
     foreach (sc; allScenarios) {
@@ -2341,8 +2818,25 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
     writeln();
     writeln("=== frame counter invariants (machine-stable) ===");
     if (ciMode)
-        writeln("  (--ci: GATING = F-I1/F-I5/F-I6/F-I7 only; F-I2/F-I4 RECORDED)");
-    auto invs = checkFramesInvariants(results, ciMode);
+        writeln("  (--ci: GATING = F-I1/F-I5/F-I6/F-I7/F-I8/F-I9 only; "
+                ~ "F-I2/F-I4 RECORDED)");
+    auto invs = checkFramesInvariants(results, ciMode,
+        meshType == K_TAB_COLD_CALIB_MESH && meshParam == K_TAB_COLD_CALIB_N);
+    // A scenario that ERRORed contributes NO invariants at all — F-I8/F-I9 are
+    // emitted only under `status == OK` — so without this a `tab-cold` that
+    // timed out, or whose toggle/playback failed, prints ERROR, contributes
+    // nothing to `failures`, and the run exits 0 with the CI step green. F-I8
+    // exists precisely to refuse an unproven measurement; its silent
+    // DISAPPEARANCE is the same lie it was written to catch. Counted here,
+    // before the invariant loop, so the verdict below reports it.
+    int errored = 0;
+    foreach (r; results) {
+        if (r.status != CaseStatus.ERROR) continue;
+        writefln("  [FAIL] %-4s %-52s  %s", "ERR", r.name ~ ": scenario ERRORed",
+                 r.detail);
+        errored++;
+        failures++;
+    }
     int invFail = 0;
     foreach (iv; invs) {
         writefln("  [%s] %-4s %-52s  %s",
@@ -2389,6 +2883,8 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
     writeln();
     writeln("=== verdict ===");
     writefln("  counter invariants: %d/%d passed", invs.length - invFail, invs.length);
+    if (errored > 0)
+        writefln("  scenarios that ERRORed (no invariants emitted): %d", errored);
     if (absFail > 0)
         writefln("  absolute regressions: %d", absFail);
     writeln(failures == 0 ? "  OVERALL: PASS" : "  OVERALL: FAIL");

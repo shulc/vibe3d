@@ -14788,6 +14788,28 @@ struct SubpatchPreview {
         reusablePreviewKey    = 0;
     }
 
+    /// Drop the OSD-side LRU(2) TOPOLOGY cache — the cache layer BELOW the
+    /// `reusablePreviewKey` one `deactivate()` clears (task 1374).
+    ///
+    /// ONE function rather than two copies of two lines, and the reason is
+    /// evidence, not tidiness. Both scene-reset hooks call it
+    /// (`scene.reset` and `file.new`, source/registration.d) but only the
+    /// `scene.reset` one is reachable from a test: `/api/reset` routes to that
+    /// factory, and nothing in the test suite or the perf lane drives
+    /// `file.new`. With the body here, the perf lane's F-I8 witnesses the BODY
+    /// for both hooks — mutate it and `frames --n 316 tab-cold` goes red. What
+    /// remains unwitnessed is the single CALL LINE in the `file.new` hook, and
+    /// that is said out loud at the call site rather than left looking covered.
+    void dropTopologyCache() {
+        // `clear()` first is no longer required for SAFETY — `destroyCache()`
+        // drops its own borrowed aliases and clears `valid` (see its comment).
+        // It is still wanted here because it ALSO frees the per-build fan-out
+        // GL infrastructure (TBOs, programs, TF VAO) that a reset scene has no
+        // further use for.
+        osdAccel.clear();
+        osdAccel.destroyCache();
+    }
+
     private ulong computeReusablePreviewKey(ref const Mesh source, int d) const {
         import core.internal.hash : hashOf;
         ulong h = hashOf(d);

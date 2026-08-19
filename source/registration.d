@@ -1711,6 +1711,30 @@ private void registerFileCommands(EditorApp app) {
                                      // uploads into stray mutationVersion bumps
                                      // (see SubpatchPreview.deactivate).
                                      subpatchPreview.deactivate();
+                                     // ... and drop the LRU(2) OSD topology
+                                     // cache too (task 1374). deactivate()
+                                     // clears the LAYER-2 key
+                                     // (reusablePreviewKey/Ready) but not this
+                                     // one; the reasons this is wanted on a
+                                     // reset — memory, and making the next Tab
+                                     // a genuine miss for `tab-cold` — are on
+                                     // OsdAccel.destroyCache.
+                                     //
+                                     // UNWITNESSED, DELIBERATELY SO: this CALL
+                                     // LINE is exercised by nothing. /api/reset
+                                     // routes to the `scene.reset` factory
+                                     // below, and no test or perf scenario
+                                     // drives `file.new` — deleting this line
+                                     // reddens nothing anywhere. Acceptable
+                                     // because the BODY is shared with
+                                     // `scene.reset` (SubpatchPreview.
+                                     // dropTopologyCache, mesh.d), which the
+                                     // perf lane's F-I8 does witness, so what
+                                     // is uncovered is one call, not a policy.
+                                     // Said here rather than left implied: the
+                                     // day File→New grows an HTTP route, drive
+                                     // this too.
+                                     subpatchPreview.dropTopologyCache();
                                  },
                                  () {
                                      vpm.resetToDefault();
@@ -2050,6 +2074,13 @@ private void registerHistoryCommands(EditorApp app) {
                            // Clean slate: force the subpatch preview OFF (see
                            // SubpatchPreview.deactivate / the scene.reset hook).
                            subpatchPreview.deactivate();
+                           // ... and free the LRU(2) OSD topology cache, which
+                           // deactivate() does not touch (task 1374). THIS is
+                           // the witnessed copy: /api/reset routes here, so the
+                           // perf lane's `tab-cold` scenario drives it and F-I8
+                           // goes red if the body stops dropping the cache
+                           // (mutation M5 in the task file).
+                           subpatchPreview.dropTopologyCache();
                        },
                        () {
                            vpm.resetToDefault();

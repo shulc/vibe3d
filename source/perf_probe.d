@@ -163,9 +163,53 @@ enum Cat {
     snapVisReject,
     snapHit,
     snapHitGeom,
+    // --- subpatch preview topology cache (task 1374) ---
+    //
+    // `subpatchPreview` above is a TIMER opened as the FIRST statement of
+    // `OsdAccel.buildPreview` — BEFORE the LRU(2) topology-cache lookup a few
+    // hundred lines further down. So its `count` is "how many times
+    // buildPreview was entered", and a cache HIT is indistinguishable from a
+    // cold stencil build in it. That is not an oversight to work around at the
+    // reader's end: from OUTSIDE the process there was no way to tell whether a
+    // Tab measurement paid ~1.9 s of StencilBuilder/QuadRefinement work or 77 ms
+    // of cache reuse, which makes every "cold Tab" number an assumption rather
+    // than an observation. These two split it:
+    //
+    //   subpatchTopoMiss — one per buildPreview that BUILT a fresh OSD topology
+    //                      (`tryReuseCachedTopology` said no). This is the
+    //                      expensive path and the one a cold-path measurement
+    //                      must be able to assert it took.
+    //   subpatchTopoHit  — one per buildPreview that REUSED a cached topology.
+    //
+    // Note the third state they make visible by their absence: the LAYER-2
+    // cache (`SubpatchPreview.reusablePreviewKey/Ready`, mesh.d) short-circuits
+    // BEFORE buildPreview is entered at all, so a layer-2 reuse shows
+    // subpatchPreview.count == 0 with both of these at 0. Hit==0 alone
+    // therefore does NOT mean "a build happened"; miss==1 does.
+    //
+    // subpatchLevelChosen — one per buildPreview, with the EFFECTIVE
+    // refinement level as its value. The depth cap
+    // (`chooseSubpatchLevel`, subpatch_osd.d) can silently spend 4x the work of
+    // its neighbour cage size, and until this counter the chosen level was
+    // visible only in a `logWarn` line that fires ONLY when the level was
+    // capped — i.e. never for the case where the cap did not bite, which is
+    // exactly the expensive side of the cliff. With the gated `count == 1` of
+    // the `tab-cold` scenario, `sum` IS the level.
+    subpatchTopoMiss,
+    subpatchTopoHit,
+    subpatchLevelChosen,
 }
 
 /// First counter category. Categories with ordinal < this are timers.
+///
+/// PLACEMENT TRAP for anyone extending `Cat`: this split is what routes a
+/// category into `timers_` (ordinal < firstCounter) or `counters_` (ordinal
+/// >= firstCounter), and NOTHING checks that a new member landed in the half
+/// its call sites use. A TIMER appended after `firstCounter` is silently
+/// routed into `counters_`, `recordNs` returns early, and its `scope_` becomes
+/// a no-op that still compiles and still reports `{"count":0,"sum":0}`. Append
+/// COUNTERS at the very end (as task 1374's three above); insert TIMERS before
+/// `falloffEvalCount`.
 private enum Cat firstCounter = Cat.falloffEvalCount;
 
 // ---------------------------------------------------------------------------

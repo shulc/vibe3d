@@ -27,6 +27,175 @@ import perf_probe : g_perf, Cat, g_fc, DrawPass;
 /// context and segfault.
 __gshared bool g_osdGpuEnabled = false;
 
+// ---------------------------------------------------------------------------
+// Subpatch depth policy (task 1374, phase 1).
+//
+// Extracted VERBATIM IN ROLE from the inline block that used to sit inside
+// `OsdAccel.buildPreview`, with ONE deliberate behaviour change (below), so
+// that the policy can be exercised on a cage size that would take ~2 s and
+// ~200 MB to actually refine — the unit lane cannot afford to build a
+// 1.5-million-face limit surface just to ask which level the policy picks.
+// ---------------------------------------------------------------------------
+
+/// Ceiling on the limit-face count the refiner is allowed to project to.
+///
+/// This constant defends MEMORY, and only memory: OSD's stencil-table build
+/// allocates proportionally to the refined face count, and the cap exists so a
+/// large cage cannot make it die there. It has never bounded TIME, which is
+/// the complaint task 1374 was opened for — see the task file. Renamed from
+/// `MAX_LIMIT_FACES` so the thing it protects is in its name; the VALUE is
+/// unchanged.
+enum long MEM_LIMIT_FACES = 1_500_000;
+
+/// Hard ceiling on the requested refinement level, applied before the
+/// projection loop.
+///
+/// `requested` reaches here from app-level state (`subpatchDepth`, prefs) and
+/// from `/api/command`, i.e. it is not a compile-time constant, and
+/// `chooseSubpatchLevel`'s loop below walks DOWN one level per iteration —
+/// so an absurd request would spin `requested` times before the memory
+/// ceiling caught it. 16 is far above anything the memory ceiling can ever
+/// admit (the smallest possible non-degenerate cage, a single triangle, already
+/// projects 3·4^15 = 3.2e9 limit faces at level 16), so this clamp changes no
+/// reachable answer — it only bounds the loop.
+enum int MAX_SUBPATCH_LEVEL = 16;
+
+/// EXACT Catmull-Clark limit face count for a cage with `cornerCount` corners
+/// (`Σ_f |f|`, summed over cage faces) refined to `level`.
+///
+/// THE FORMULA CHANGED HERE, AND IT IS A BEHAVIOUR CHANGE — not a refactor.
+/// The old inline code projected `nf · 4^level` from the cage FACE count. The
+/// first CC pass replaces every n-gon with n quads and every pass after that
+/// quadruples, so the true count is `(Σ|f|) · 4^(level-1)`. Those agree
+/// EXACTLY — and only — when `Σ|f| == 4·nf`, i.e. on an all-quad cage.
+///
+/// THE GENERAL RULE, stated rather than exemplified, because the blast radius
+/// is wider than any one enumerated case and an enumeration alone invites the
+/// reader to believe it is complete. Write `r = Σ|f| / nf` — the cage's mean
+/// corners per face; 3 for triangles, 4 for quads, 6 for hexagons — and
+/// `C = MEM_LIMIT_FACES`. The new policy admits level L iff
+/// `nf·r·4^(L-1) ≤ C`, i.e. iff `nf·4^L ≤ 4C/r`. So the change is EXACTLY
+/// "the old rule under a rescaled ceiling" `C' = 4C/r` — above C for r < 4,
+/// below C for r > 4, equal at r = 4. Two rules of that shape disagree in
+/// **one band per LEVEL TRANSITION**, so a requested depth R gives `R-1` bands
+/// (transitions L ∈ [2, R]; below 2 the floor of 1 makes both agree). The band
+/// at transition L is, in cage faces,
+///
+///     nf ∈ ( min(C, C') / 4^L ,  max(C, C') / 4^L ]
+///
+/// and inside it the new policy picks L where the old picked L-1 (when r < 4)
+/// or L-1 where the old picked L (when r > 4).
+///
+/// AT THE SHIPPED DEPTH — `app.d`'s `subpatchDepth = 3` — that is TWO bands
+/// per cage class, not one. Brute-force enumerated over nf ≤ 400 000 (the
+/// enumeration is reproduced as assertions in
+/// `tests/unit/subpatch_level_policy_test.d`):
+///
+///     triangles (r=3, C' = 2 000 000)
+///       nf ∈ [ 23 438,  31 250]   L2 → L3    4× the refinement work
+///       nf ∈ [ 93 751, 125 000]   L1 → L2    4× the refinement work
+///     hexagons  (r=6, C' = 1 000 000)
+///       nf ∈ [ 15 626,  23 437]   L3 → L2    ¼ the work; the ceiling this
+///       nf ∈ [ 62 501,  93 750]   L2 → L1    constant exists for was being
+///                                            BREACHED before the fix
+///     quads     (r=4, C' = C)     no band, at any depth — identical always
+///
+/// (At R=4 a third band appears per class, e.g. triangles nf ∈ [5 860, 7 812]
+/// L3 → L4; at R=2 only the lowest one survives. R-1, as above.)
+///
+/// THE EXPENSIVE BAND IS `nf ∈ [93 751, 125 000]` TRIANGLES, and it is the
+/// ORDINARY case rather than a corner: a ~100 000-triangle cage is what an
+/// OBJ / glTF / FBX import routinely lands on. Inside it the first Tab goes
+/// from 375 000 limit faces to 1 500 000. At this task's measured 4.45–4.96 µs
+/// and ~225 B per limit face (doc/tasks/work/1374-tab-cold-path.md,
+/// «Измерение», points C and D) that is ~1.7 s → ~7 s and ~85 MB → ~345 MB.
+/// So on an ordinary triangulated import this change INTRODUCES exactly the
+/// 4× cliff task 1374 was opened to remove — correctly, in the sense that the
+/// memory ceiling is what it always claimed to enforce and 1.5M limit faces is
+/// inside it, but the time cost is real and new. It is written down here, in
+/// the tests and in the task file rather than left latent; the task file
+/// carries the owner decision it is waiting on («Полоса треугольников»).
+/// The [23 438, 31 250] band costs the same 4× on a smaller base
+/// (~0.4 s → ~1.7 s).
+///
+/// Saturates instead of overflowing: `long.max` is returned for any projection
+/// that would wrap, which the caller reads as "over the ceiling" — the same
+/// answer an exact bignum would give.
+long projectedLimitFaces(long cornerCount, int level) pure nothrow @safe @nogc
+{
+    if (cornerCount <= 0 || level < 1) return 0;
+    long p = cornerCount;
+    foreach (_; 1 .. level) {
+        if (p > long.max / 4) return long.max;
+        p *= 4;
+    }
+    return p;
+}
+
+/// The depth the refiner will actually run at: the largest level ≤ `requested`
+/// whose EXACT projected limit-face count fits under `memLimitFaces`, floored
+/// at 1 (a cage that cannot fit even one refinement level is refined once
+/// anyway — dropping to level 0 would mean "no preview at all", which is not
+/// what the cap is for and never was).
+///
+/// `cornerCount` is `Σ_f |f|`, NOT the face count. That is the whole point of
+/// the signature: the caller already sums it while flattening the cage for OSD,
+/// and passing it (rather than `nf`) is what makes the policy correct on
+/// non-quad cages AND testable on one — `chooseSubpatchLevel(6 * nf, 2)` asks
+/// the hexagon question without anyone building a hexagonal mesh.
+///
+/// `memLimitFaces` is a parameter with a default rather than a hard-wired
+/// constant so a test can drive the ceiling instead of the cage: asserting the
+/// ceiling is still ENFORCED costs a two-face fixture this way, and a
+/// 1.5-million-face refinement the other way.
+int chooseSubpatchLevel(long cornerCount, int requested,
+                        long memLimitFaces = MEM_LIMIT_FACES) pure nothrow @safe @nogc
+{
+    if (requested < 1) return requested;
+    int lvl = requested < MAX_SUBPATCH_LEVEL ? requested : MAX_SUBPATCH_LEVEL;
+    while (lvl > 1 && projectedLimitFaces(cornerCount, lvl) > memLimitFaces)
+        --lvl;
+    return lvl;
+}
+
+/// Flatten `cage`'s face table into the (per-face vertex count, concatenated
+/// vertex index) pair `osdc_topology_create_sharp` takes, reusing whatever
+/// capacity the two caller-owned buffers already hold. Returns `Σ_f |f|` —
+/// the corner count `chooseSubpatchLevel` wants.
+///
+/// Split out of `buildPreview` for two reasons, only one of them cosmetic:
+///
+///  1. The index buffer used to be a FRESH LOCAL grown with `~=`, one append
+///     per corner — ~400 000 of them on the n=316 fixture, and a fresh 1.6 MB
+///     block on every rebuild however many times the same cage is rebuilt.
+///     Sizing it once and filling by index costs one `.length` assignment, and
+///     when the caller passes a persistent buffer (`OsdAccel`'s scratch fields)
+///     a repeat build at the same cage size allocates NOTHING.
+///  2. It is the only shape of this fix a test can hold still: see
+///     `tests/unit/subpatch_level_policy_test.d` for the measurement showing
+///     that the OBVIOUS witnesses for "does this reallocate" — GC alloc bytes
+///     and `.capacity` — are both INERT here, because druntime grows a
+///     page-backed array in place via `GC.extend` and ends at the SAME capacity
+///     the exact sizing produces. The property that is actually observable, and
+///     the one the old code could not have, is buffer REUSE: called twice with
+///     the same buffers, this never moves them.
+long flattenCageTopology(ref const Mesh cage, ref int[] outCounts, ref int[] outIndices)
+{
+    long cornerCount = 0;
+    foreach (face; cage.faces) cornerCount += face.length;
+
+    outCounts .length = cage.faces.length;
+    outIndices.length = cast(size_t)cornerCount;
+
+    size_t k = 0;
+    foreach (fi, face; cage.faces) {
+        outCounts[fi] = cast(int)face.length;
+        foreach (vi; face) outIndices[k++] = cast(int)vi;
+    }
+    assert(k == cast(size_t)cornerCount);
+    return cornerCount;
+}
+
 /// Phase 3c — caller bundle of GPU VBO targets the GPU fan-out can
 /// write to. Each (vbo, count) pair gates the corresponding fan-out
 /// dispatch; passing 0 for any vbo opts out of that one. The caller
@@ -803,6 +972,14 @@ struct OsdAccel {
     private int[]  scratchFaceFirstVerts;
     private int[]  scratchEdgeSegToLimit;
     private int[]  scratchVertToLimit;
+    // Cage-side flatten buffers (task 1374). CAGE-proportional, unlike every
+    // scratch buffer above, which is LIMIT-proportional — on the n=316 fixture
+    // at level 1 those two are within 0.4 % of each other, but at level 2 the
+    // limit buffers are 4× larger, so do not reason about one from the other.
+    // Reused across rebuilds by `flattenCageTopology`; NOT cleared by clear()
+    // for the same reason the others are not (capacity is the point).
+    private int[]  scratchCageFaceCounts;
+    private int[]  scratchCageFaceVertIndices;
 
     // P1: sorted (key, value) array replacing the uint[ulong]
     // vibe3dEdgeByVerts AA. With ~50K cage edges on a 24K-poly cage
@@ -874,11 +1051,49 @@ struct OsdAccel {
         valid                  = false;
     }
 
-    /// Free every cached OSD handle and GL resource. Call at app
-    /// teardown to avoid leaking the LRU(2) cache contents. Not
-    /// called from anywhere yet — `OsdAccel` is process-lived in the
-    /// current architecture (held by `SubpatchPreview` which lives
-    /// for the app's lifetime). Useful for unittest hygiene.
+    /// Free every cached OSD handle and GL resource — the LRU(2) topology
+    /// cache, and nothing else — and leave this `OsdAccel` in a state that is
+    /// safe to touch afterwards.
+    ///
+    /// SAFE BY CONSTRUCTION, not by call order. The slots own `osd` / `glEval`
+    /// / `cageGlVbo` / `limitGlVbo`, and `OsdAccel`'s OWN fields of those names
+    /// are borrowed aliases into whichever slot was last active — so freeing
+    /// the storage without dropping the aliases would leave them pointing at
+    /// destroyed OSD objects while `valid` still said yes, and the next
+    /// `refresh()` (which checks only `valid`) would dereference freed memory.
+    /// This used to be an ordering CONTRACT on the caller — `clear()` first,
+    /// then this — with two call sites each getting it right by hand. It is now
+    /// discharged here: the aliases are nulled and `valid` is cleared below, so
+    /// the function is correct called on its own. `clear()` remains the right
+    /// companion at the reset hooks because it ALSO frees the per-build fan-out
+    /// GL infrastructure (TBOs, programs, the TF VAO), which this does not
+    /// touch — but that is a completeness reason, no longer a safety one.
+    ///
+    /// Does NOT touch the `scratch*` buffers, by design — they are pure
+    /// capacity, hold no handle, and keeping them is what makes a second build
+    /// cheap. Read that the other way round when measuring: an in-process
+    /// forced miss after this call is a COLD-TOPOLOGY / WARM-BUFFER build, not
+    /// the virgin one a freshly launched process performs. See
+    /// `tools/perf/run.d`'s `runTabCold` for how that regime is pinned rather
+    /// than left to whatever ran before.
+    ///
+    /// WHY THE SCENE-RESET HOOKS CALL IT (source/registration.d, `scene.reset`
+    /// and `file.new`) — and NOT for the reason a first reading suggests. The
+    /// topology key hashes `(nv, nf, effectiveLevel, faceVertCounts,
+    /// faceVertIndices, creases, corners)` and NOT vertex positions, correctly,
+    /// since an OSD stencil table is position-independent. So a slot surviving
+    /// a reset to the same primitive and being reused is CORRECT — it is not a
+    /// discarded scene leaking into a fresh one, and anyone "fixing" that is
+    /// fixing a bug that is not there. The two real reasons are:
+    ///   * MEMORY — File→New / scene reset should not keep two stencil tables
+    ///     for a 100k cage alive across a document the user threw away; and
+    ///   * MEASUREMENT — it is the only in-process lever that makes the next
+    ///     Tab a genuine topology MISS, which is what `tab-cold` needs and what
+    ///     F-I8 refuses to report without (tools/perf/run.d).
+    ///
+    /// Also the unittest-hygiene call: a fixture `OsdAccel` that built a
+    /// preview owns an `osdc_topology_t*` that `~this()` (which calls only
+    /// `clear()`) does not free.
     void destroyCache() {
         foreach (ref e; topologyCache) {
             if (e.glEval    !is null) osdc_gl_destroy(e.glEval);
@@ -887,6 +1102,16 @@ struct OsdAccel {
             if (e.osd       !is null) osdc_topology_destroy(e.osd);
             e = CachedTopology.init;
         }
+        // The borrowed aliases into whatever slot was last active. Dropping
+        // them here is what makes the function safe standalone; `valid` is the
+        // one of the five that is observable from outside the module, and it is
+        // the one `refresh()` gates on, so it is also the witness — see
+        // tests/unit/subpatch_level_policy_test.d.
+        osd        = null;
+        glEval     = null;
+        cageGlVbo  = 0;
+        limitGlVbo = 0;
+        valid      = false;
     }
 
     /// Look up a cached OSD topology by hash. On hit, populates osd /
@@ -981,8 +1206,18 @@ struct OsdAccel {
     /// `refresh()` below only ever writes `preview.vertices`, never
     /// `preview.faces`, so even a live map on a preview mesh would never
     /// reach a face rewrite through this class.
+    /// `memLimitFaces` is the ceiling `chooseSubpatchLevel` applies, exposed
+    /// as a parameter for ONE reason: without it, asserting anything about the
+    /// depth policy through this function costs a cage big enough to trip the
+    /// production ceiling — 23 438 triangles at minimum, i.e. a 1.1-million-
+    /// face refinement per assertion. Driving the ceiling instead of the cage
+    /// asks the same question on a single hexagon. Production callers never
+    /// pass it (see SubpatchPreview.rebuild); it is the test escape that keeps
+    /// the level-choice assertions out of a synthetic re-implementation of the
+    /// policy, which would be inert.
     bool buildPreview(ref const Mesh cage, int level,
-                       out Mesh outMesh, out SubpatchTrace outTrace)
+                       out Mesh outMesh, out SubpatchTrace outTrace,
+                       long memLimitFaces = MEM_LIMIT_FACES)
     {
         auto z = g_perf.scope_(Cat.subpatchPreview);
         clear();
@@ -992,12 +1227,13 @@ struct OsdAccel {
         if (nv == 0 || nf == 0 || level < 1) return false;
 
         // ---- Flatten cage topology -----------------------------------
-        int[] faceVertCounts  = new int[](nf);
-        int[] faceVertIndices;
-        foreach (fi, face; cage.faces) {
-            faceVertCounts[fi] = cast(int)face.length;
-            foreach (vi; face) faceVertIndices ~= cast(int)vi;
-        }
+        // `cornerCount` (Σ|f|) is the unit the CC limit-face projection is
+        // actually in — see projectedLimitFaces. It falls out of the flatten
+        // for free, so the depth policy costs no extra pass over the cage.
+        immutable long cageCornerCount = flattenCageTopology(
+            cage, scratchCageFaceCounts, scratchCageFaceVertIndices);
+        int[] faceVertCounts  = scratchCageFaceCounts;
+        int[] faceVertIndices = scratchCageFaceVertIndices;
         cageScratchXyz.length = 3 * nv;
         foreach (vi, v; cage.vertices) {
             cageScratchXyz[3*vi + 0] = v.x;
@@ -1157,26 +1393,27 @@ struct OsdAccel {
         }
 
         // ---- Depth cap so OSD's stencil build stays in memory --------
-        enum long MAX_LIMIT_FACES = 1_500_000;
-        int effectiveLevel = level;
-        long projected = cast(long)nf;
-        long mul = 1L;
-        foreach (k; 0 .. level) mul *= 4L;
-        projected = cast(long)nf * mul;
-        while (effectiveLevel > 1 && projected > MAX_LIMIT_FACES) {
-            --effectiveLevel;
-            projected /= 4L;
-        }
+        // The policy itself is `chooseSubpatchLevel` (module scope) — see it
+        // for why the projection is in CORNERS, not faces, and which cages
+        // that moves.
+        immutable int effectiveLevel =
+            chooseSubpatchLevel(cageCornerCount, level, memLimitFaces);
+        // The chosen level, unconditionally, for every build. The logWarn
+        // below fires only when the cap BIT, i.e. never on the expensive side
+        // of the cliff, where a neighbouring cage size quietly pays 4× the
+        // work — which is precisely the case the task was opened for.
+        g_perf.count(Cat.subpatchLevelChosen, effectiveLevel);
         if (effectiveLevel != level) {
             import log        : logWarn;
             import std.format : format;
             try {
                 logWarn("subpatch", format(
                     "capping subpatch depth %d -> %d "
-                    ~ "(cage %d faces, projected %d limit faces exceeds %d)",
-                    level, effectiveLevel, nf,
-                    cast(long)nf * (1L << (2 * level)),
-                    MAX_LIMIT_FACES));
+                    ~ "(cage %d faces / %d corners, projected %d limit faces "
+                    ~ "exceeds memory ceiling %d)",
+                    level, effectiveLevel, nf, cageCornerCount,
+                    projectedLimitFaces(cageCornerCount, level),
+                    memLimitFaces));
             } catch (Exception) {}
         }
 
@@ -1206,6 +1443,11 @@ struct OsdAccel {
         }
 
         bool cacheHit = tryReuseCachedTopology(topoKey);
+        // Task 1374: `Cat.subpatchPreview`'s scope timer opened at the TOP of
+        // this function, so its count cannot tell these two apart — a cache
+        // hit and a from-scratch stencil build both look like one "rebuild"
+        // from outside the process. Split here, where the answer is known.
+        g_perf.count(cacheHit ? Cat.subpatchTopoHit : Cat.subpatchTopoMiss, 1);
 
         if (!cacheHit) {
             // ---- Cache miss: build a fresh OSD topology -----------

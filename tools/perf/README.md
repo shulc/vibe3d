@@ -129,7 +129,7 @@ you want to validate against the 100K baseline on the baseline's host.
 `rdmd tools/perf/run.d frames` is a sibling subcommand that reads
 `/api/frames` (the `FrameProbe` ring buffer — per-frame phase timings +
 GC deltas from the `app.d` main loop; see `doc/frame_probe_scenarios_plan.md`)
-instead of `/api/perf`. It runs six scenarios, each resetting the frame
+instead of `/api/perf`. It runs seven scenarios, each resetting the frame
 ring immediately before its measured window:
 
 - **`orbit-dense`** — Alt+LMB camera orbit around a dense mesh, no selection,
@@ -163,9 +163,45 @@ ring immediately before its measured window:
   per successful `undo()` at `command_history.d:1090`) equals exactly N —
   immune to main-loop frame batching, unlike `meshCacheRebuilds` which only
   bounds `[1, N]`.
+- **`tab-cold`** (task 1374) — the FIRST Tab on a heavy cage: the cost the
+  LRU(2) topology cache exists to avoid paying twice. Warms the `OsdAccel`
+  scratch buffers with one throwaway toggle, resets the scene (which now drops
+  BOTH cache layers — `deactivate()` + `SubpatchPreview.dropTopologyCache()`
+  in the `scene.reset` hook), then toggles again and measures. **F-I8** asserts the build really was cold (`subpatchPreview.count
+  == 1` AND `subpatchTopoMiss == 1` AND `subpatchTopoHit == 0`, plus the
+  chosen refinement level at the calibration point); **F-I9** bounds the
+  window's total GC allocation and its frame count.
+
+  Two things about it are load-bearing and easy to undo by accident:
+
+  * It is registered **LAST** in `allScenarios`. `tab-subpatch` is today the
+    process's first `buildPreview` — the three scenarios before it never call
+    one — so it measures a virgin cold build by position alone. Insert
+    `tab-cold` above it and `tab-subpatch` silently becomes a warm build
+    against a populated cache: its baseline entry moves and **F-I5 stays
+    green throughout**. Nothing here can detect that; the ordering is the
+    only guard.
+  * "Cold" means **cold topology, warm buffers**. `OsdAccel`'s ~dozen
+    `scratch*` fields keep their capacity across `clear()` and are untouched
+    by `destroyCache()`, so no in-process reset can reproduce a freshly
+    launched process's allocation state. A user's real first Tab costs more
+    than this scenario reports. The scenario PINS the warm-buffer regime (via
+    its warm-up toggle) rather than inheriting whatever ran first. Measured,
+    that pin holds where it matters: the window's allocation MINUS the
+    per-frame ImGui floor is 79 137 568 B to within one page across nine runs,
+    solo and inside the full lane alike. What is NOT pinned is the window's
+    frame COUNT (47–89 observed), and since each frame carries 211 168 B of
+    chrome, that is ±9 MB of F-I9's subject — which is why F-I9 bounds the
+    frame count too. To measure the virgin build, relaunch the process per
+    repeat.
+
+  In DEV runs `tab-cold` reports a standing absolute-budget failure
+  (`K_FRAMES_P99_MS = 33` vs a p99 in the hundreds of ms), exactly as
+  `tab-subpatch` already does. CI is unaffected: `--ci` implies
+  `--no-absolute`.
 
 ```bash
-rdmd tools/perf/run.d frames                       # all 6 scenarios, n=316
+rdmd tools/perf/run.d frames                       # all 7 scenarios, n=316
 rdmd tools/perf/run.d frames --no-build orbit       # subset by substring
 rdmd tools/perf/run.d frames --n 64                 # smaller mesh, fast smoke
 rdmd tools/perf/run.d frames --update-frames-baseline   # capture frames_baseline.json
@@ -182,9 +218,10 @@ above (`checkFramesInvariants`, alongside `checkInvariants`):
 - **F-I4** (GATING in dev, RECORDED/non-gating under `--ci`) — every
   scenario: `gcCollections == 0` (a stop-the-world collection during the
   measured window, counted globally across threads — see the
-  GC-metric-asymmetry note in `source/perf_probe.d`). `drag-falloff` is
-  always RECORDED/non-gating (it legitimately allocates enough to trip a
-  collection).
+  GC-metric-asymmetry note in `source/perf_probe.d`). `tab-cold` is always
+  RECORDED/non-gating (a cold preview build's one-shot working set crosses a
+  GC pool threshold by construction — zero collections there would mean the
+  build did not happen).
 - **F-I2** (RECORDED, NON-GATING) — `drag-falloff`'s steady-state alloc/frame
   (`steadyMaxAllocBytes` in the `/api/frames` response, warmup-skipped). This
   is **whole-frame main-thread allocation**, not drag-only — in `--test` the
@@ -198,6 +235,40 @@ above (`checkFramesInvariants`, alongside `checkInvariants`):
   `selected polygons > 0` (task 0200).
 - **F-I7** (GATING) — `undo-spam`: `undoApply == kUndoSpamN` exactly
   (task 0200).
+- **F-I8** (GATING) — `tab-cold`: `subpatchPreview.count == 1` AND
+  `subpatchTopoMiss == 1` AND `subpatchTopoHit == 0` (task 1374). All three
+  are needed. `count` alone cannot see coldness — `Cat.subpatchPreview`'s
+  scope timer opens at the TOP of `buildPreview`, above the cache lookup, so
+  a 77 ms cache hit reads as one "rebuild" too; that is what the two new
+  counters split. And `hit == 0` alone cannot see a build at all: the
+  layer-2 reuse (`SubpatchPreview.reusablePreviewKey`) short-circuits before
+  `buildPreview` is entered, showing `count == 0 / miss == 0 / hit == 0`.
+  A fourth term, gated only at the `grid n=316` calibration point, pins the
+  chosen refinement level (`K_TAB_COLD_CALIB_LEVEL`) — without it
+  `Cat.subpatchLevelChosen` has no live witness anywhere, since
+  `perfCounterSum` answers 0 for an absent key.
+- **F-I9** (GATING) — `tab-cold`: the measured window's TOTAL main-thread GC
+  allocation ≤ `K_TAB_COLD_ALLOC_BYTES`, **and** its frame count inside
+  `K_TAB_COLD_FRAMES_LO..HI` (task 1374). Deliberately the window SUM, not the
+  worst frame: two frames here are expensive (the stencil build, then the
+  limit-surface upload / first draw) and which is slowest flips between runs,
+  so a worst-frame bound would change its own subject with no regression
+  having happened. The worst frame's bytes are reported in the detail line,
+  non-gating, together with the chrome-free residual.
+
+  The frame band is not padding — the byte bound alone is one-sided and can
+  only get easier. Measured: `gcAllocBytes = 79 137 568 B + 211 168 B ×
+  frameCount`, exactly, across nine runs. Replace the post-build sweep with a
+  bare sleep and the window collapses to ONE frame and 7 551 520 B — which the
+  byte bound passes by 13×, and only the frame band refuses. `HI = 110` sits
+  below the 118 frames at which the chrome floor alone would breach the byte
+  bound, so a window that GROWS is named by the frame half instead of
+  misreported as an allocation regression.
+- **A scenario that ERRORs now fails the run** (task 1374 review). Scenario
+  results only emit invariants under `status == OK`, so before this a
+  `tab-cold` that timed out printed ERROR, contributed nothing to the failure
+  count, and the run exited 0 — F-I8's silent disappearance being exactly the
+  unproven measurement F-I8 exists to refuse.
 
 ### `--ci` mode (task 0200)
 
@@ -207,8 +278,8 @@ false-positives on a CI host (see the note above and task 0197) and
 hardening it is task 0202's job, not this flag's — and implies
 `--no-absolute` (the p99/hitch budgets are baseline-host-relative and
 meaningless off that host). The GATING set under `--ci` is **F-I1 / F-I5 /
-F-I6a / F-I6b / F-I7** only; F-I2/F-I4 are still printed (RECORDED) so the
-numbers stay visible to a human reading the CI log.
+F-I6a / F-I6b / F-I7 / F-I8 / F-I9** only; F-I2/F-I4 are still printed
+(RECORDED) so the numbers stay visible to a human reading the CI log.
 
 ```bash
 rdmd tools/perf/run.d frames --no-build --ci --n 64
