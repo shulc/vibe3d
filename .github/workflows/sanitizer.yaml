@@ -152,6 +152,24 @@ jobs:
       run: rdmd tools/sanitizer/lane.d build sanitize
 
     - name: 'Module unittests (--build=check-unit, EXPLICIT)'
+      env:
+        # The census gate (task 0850) compares the tree against the point the
+        # work began at. This lane runs on a SCHEDULE, and a scheduled run has
+        # no such point by construction: `github.event.before` exists for a
+        # push and `pull_request.base.sha` for a PR, and neither event is this
+        # one. The gate's own message names `none` as the spelling for "this
+        # build really has no baseline", and it is the truthful answer here
+        # rather than a way to quiet it.
+        #
+        # Nothing is lost by saying so. ci.yaml runs the same gate on EVERY
+        # push with a real branch point, so committed coverage loss is already
+        # caught there, once, with a baseline that means something. Handing
+        # this lane HEAD -- which is what it does with no branch point -- would
+        # give a check under which "nothing committed can fail", and the gate
+        # refuses that state on purpose. A second, weaker copy of a gate that
+        # already runs properly elsewhere is not coverage; it is noise that
+        # would eventually be silenced.
+        VIBE3D_CENSUS_BRANCH_POINT: none
       id: unit
       # `dub test` DEFAULTS to --build=unittest. A bare `dub test
       # --config=tests` here would run an uninstrumented binary all night and
