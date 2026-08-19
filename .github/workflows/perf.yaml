@@ -40,7 +40,24 @@ concurrency:
 jobs:
   perf:
     runs-on: [self-hosted, Linux, perf-fedora]
-    timeout-minutes: 90
+    # Raised 90 -> 240 on the owner's call (2026-08-19): they want a full
+    # perf lane AND the instrumented sanitizer lane to run every night, and
+    # 90 was chosen when this lane held 26 command rows and nothing else.
+    #
+    # This is a CEILING, not a duration. The measured scheduled run of
+    # 2026-08-19 (run 32207177526) spent 375 s in the ops step -- build
+    # included -- and 10 s in frames, i.e. under 7 minutes wall for the whole
+    # job. The ceiling exists for a hang, not for the workload, and the
+    # workload has ~34x of room before it is the binding constraint.
+    #
+    # The window is what bounds it, not this number: the lane fires at 00:30
+    # UTC and the sanitizer lane's next fire is 19:00 UTC, so even a full
+    # 240-minute stall (ending 04:30 UTC / 07:30 MSK) collides with nothing.
+    # If that end time ever becomes the problem -- it is the owner's morning --
+    # move the cron earlier rather than shrinking the ceiling, because a
+    # ceiling that cuts a real run turns a slow lane into a red one and hides
+    # the slowness behind a timeout.
+    timeout-minutes: 240
     steps:
     - uses: actions/checkout@v4
       with:
