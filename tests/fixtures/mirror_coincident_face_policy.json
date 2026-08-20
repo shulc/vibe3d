@@ -11,28 +11,205 @@
     "The survivor is the earlier polygon, kept byte-identical: same ring, same winding, same tags. Nothing is flipped and nothing is merged into it.",
     "A face lying IN the mirror plane yields a duplicated face with ZERO non-manifold edges. A duplicate-face defect taxonomy keyed on edge valence cannot see this case."
   ],
-
   "rigs": {
     "cube": {
       "description": "unit cube centred on the origin, spanning [-0.5, +0.5] on every axis; faces wound outward",
       "vertices": [
-        [-0.5, -0.5, -0.5], [0.5, -0.5, -0.5], [0.5, -0.5, 0.5], [-0.5, -0.5, 0.5],
-        [-0.5,  0.5, -0.5], [0.5,  0.5, -0.5], [0.5,  0.5, 0.5], [-0.5,  0.5, 0.5]
+        [
+          -0.5,
+          -0.5,
+          -0.5
+        ],
+        [
+          0.5,
+          -0.5,
+          -0.5
+        ],
+        [
+          0.5,
+          -0.5,
+          0.5
+        ],
+        [
+          -0.5,
+          -0.5,
+          0.5
+        ],
+        [
+          -0.5,
+          0.5,
+          -0.5
+        ],
+        [
+          0.5,
+          0.5,
+          -0.5
+        ],
+        [
+          0.5,
+          0.5,
+          0.5
+        ],
+        [
+          -0.5,
+          0.5,
+          0.5
+        ]
       ],
-      "faces": [[0,3,2,1],[4,5,6,7],[3,7,6,2],[0,1,5,4],[0,4,7,3],[1,2,6,5]]
+      "faces": [
+        [
+          0,
+          3,
+          2,
+          1
+        ],
+        [
+          4,
+          5,
+          6,
+          7
+        ],
+        [
+          3,
+          7,
+          6,
+          2
+        ],
+        [
+          0,
+          1,
+          5,
+          4
+        ],
+        [
+          0,
+          4,
+          7,
+          3
+        ],
+        [
+          1,
+          2,
+          6,
+          5
+        ]
+      ]
     },
     "cube_shifted": {
       "description": "the same cube translated so it spans x in [0, 1]; the x = 0 face lies IN the mirror plane",
       "vertices": [
-        [0.0, -0.5, -0.5], [1.0, -0.5, -0.5], [1.0, -0.5, 0.5], [0.0, -0.5, 0.5],
-        [0.0,  0.5, -0.5], [1.0,  0.5, -0.5], [1.0,  0.5, 0.5], [0.0,  0.5, 0.5]
+        [
+          0.0,
+          -0.5,
+          -0.5
+        ],
+        [
+          1.0,
+          -0.5,
+          -0.5
+        ],
+        [
+          1.0,
+          -0.5,
+          0.5
+        ],
+        [
+          0.0,
+          -0.5,
+          0.5
+        ],
+        [
+          0.0,
+          0.5,
+          -0.5
+        ],
+        [
+          1.0,
+          0.5,
+          -0.5
+        ],
+        [
+          1.0,
+          0.5,
+          0.5
+        ],
+        [
+          0.0,
+          0.5,
+          0.5
+        ]
       ],
-      "faces": [[0,3,2,1],[4,5,6,7],[3,7,6,2],[0,1,5,4],[0,4,7,3],[1,2,6,5]]
+      "faces": [
+        [
+          0,
+          3,
+          2,
+          1
+        ],
+        [
+          4,
+          5,
+          6,
+          7
+        ],
+        [
+          3,
+          7,
+          6,
+          2
+        ],
+        [
+          0,
+          1,
+          5,
+          4
+        ],
+        [
+          0,
+          4,
+          7,
+          3
+        ],
+        [
+          1,
+          2,
+          6,
+          5
+        ]
+      ]
     },
     "plane_quad": {
       "description": "a single quad lying IN the mirror plane z = 0",
-      "vertices": [[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [1.0, 1.0, 0.0], [-1.0, 1.0, 0.0]],
-      "faces": [[0, 1, 2, 3]]
+      "vertices": [
+        [
+          -1.0,
+          -1.0,
+          0.0
+        ],
+        [
+          1.0,
+          -1.0,
+          0.0
+        ],
+        [
+          1.0,
+          1.0,
+          0.0
+        ],
+        [
+          -1.0,
+          1.0,
+          0.0
+        ]
+      ],
+      "faces": [
+        [
+          0,
+          1,
+          2,
+          3
+        ]
+      ]
     },
     "doubled_cube": {
       "description": "the cube's 8 vertices carrying 12 faces: the 6 originals plus 6 duplicates on the SAME vertex records. This is what a self-coincident mirror leaves behind.",
@@ -45,15 +222,57 @@
       "faces": "cube faces, plus the same rings with every index offset by 8"
     }
   },
-
   "mirror_cases": [
     {
       "name": "self_coincident_merge_on",
       "rig": "cube",
       "op": "mirror across the plane x = 0, vertex-merge ON",
-      "result": {"vertices": 8, "edges": 12, "faces": 12,
-                 "edge_face_valence_histogram": {"4": 12}},
-      "new_face_rings": [[1,0,3,2],[5,6,7,4],[2,3,7,6],[1,5,4,0],[1,2,6,5],[0,4,7,3]],
+      "result": {
+        "vertices": 8,
+        "edges": 12,
+        "faces": 12,
+        "edge_face_valence_histogram": {
+          "4": 12
+        }
+      },
+      "new_face_rings": [
+        [
+          1,
+          0,
+          3,
+          2
+        ],
+        [
+          5,
+          6,
+          7,
+          4
+        ],
+        [
+          2,
+          3,
+          7,
+          6
+        ],
+        [
+          1,
+          5,
+          4,
+          0
+        ],
+        [
+          1,
+          2,
+          6,
+          5
+        ],
+        [
+          0,
+          4,
+          7,
+          3
+        ]
+      ],
       "new_face_note": "each new ring is a cyclic ROTATION of an original ring with the SAME winding: the mirror's own polygon flip cancels the reflection's reversal on a closed solid. This case therefore CANNOT discriminate a winding-sensitive collapse from a winding-blind one -- the doubled_cube cases below are what discriminate it.",
       "this_is_the_shape_our_fuzz_lane_flagged": true
     },
@@ -61,140 +280,338 @@
       "name": "self_coincident_merge_off",
       "rig": "cube",
       "op": "mirror across the plane x = 0, vertex-merge OFF",
-      "result": {"vertices": 16, "edges": 24, "faces": 12,
-                 "edge_face_valence_histogram": {"2": 24}}
+      "result": {
+        "vertices": 16,
+        "edges": 24,
+        "faces": 12,
+        "edge_face_valence_histogram": {
+          "2": 24
+        }
+      }
     },
     {
       "name": "self_coincident_then_explicit_collapse",
       "rig": "cube",
       "op": "mirror across x = 0 with merge ON, then the explicit duplicate-polygon collapse over the whole mesh",
-      "result": {"vertices": 8, "edges": 12, "faces": 6,
-                 "edge_face_valence_histogram": {"2": 12}},
-      "surviving_face_rings": [[0,3,2,1],[4,5,6,7],[3,7,6,2],[0,1,5,4],[0,4,7,3],[1,2,6,5]],
+      "result": {
+        "vertices": 8,
+        "edges": 12,
+        "faces": 6,
+        "edge_face_valence_histogram": {
+          "2": 12
+        }
+      },
+      "surviving_face_rings": [
+        [
+          0,
+          3,
+          2,
+          1
+        ],
+        [
+          4,
+          5,
+          6,
+          7
+        ],
+        [
+          3,
+          7,
+          6,
+          2
+        ],
+        [
+          0,
+          1,
+          5,
+          4
+        ],
+        [
+          0,
+          4,
+          7,
+          3
+        ],
+        [
+          1,
+          2,
+          6,
+          5
+        ]
+      ],
       "surviving_face_note": "the six ORIGINAL rings, verbatim -- identical order, identical winding. The later (mirrored) polygon is the one deleted."
     },
     {
       "name": "seam_plane_touches_geometry",
       "rig": "cube_shifted",
       "op": "mirror across the plane x = 0, vertex-merge ON",
-      "result": {"vertices": 12, "edges": 20, "faces": 12,
-                 "edge_face_valence_histogram": {"2": 16, "4": 4}},
+      "result": {
+        "vertices": 12,
+        "edges": 20,
+        "faces": 12,
+        "edge_face_valence_histogram": {
+          "2": 16,
+          "4": 4
+        }
+      },
       "note": "the four seam vertices weld; the seam face is left DOUBLED, and its two copies have OPPOSITE winding ([0,4,7,3] and [0,3,7,4]). The four seam edges are the only non-manifold ones.",
-      "after_explicit_collapse": {"vertices": 12, "faces": 11}
+      "after_explicit_collapse": {
+        "vertices": 12,
+        "faces": 11
+      }
     },
     {
       "name": "face_lying_in_the_mirror_plane",
       "rig": "plane_quad",
       "op": "mirror across the plane z = 0, vertex-merge ON",
-      "result": {"vertices": 4, "edges": 4, "faces": 2,
-                 "edge_face_valence_histogram": {"2": 4}},
-      "face_rings": [[0,1,2,3],[0,3,2,1]],
+      "result": {
+        "vertices": 4,
+        "edges": 4,
+        "faces": 2,
+        "edge_face_valence_histogram": {
+          "2": 4
+        }
+      },
+      "face_rings": [
+        [
+          0,
+          1,
+          2,
+          3
+        ],
+        [
+          0,
+          3,
+          2,
+          1
+        ]
+      ],
       "note": "a duplicated face with ZERO non-manifold edges -- the cell a valence-based duplicate detector is blind to. The pair here IS reversed, so this case discriminates winding, and the collapse still removes one.",
-      "after_explicit_collapse": {"vertices": 4, "faces": 1, "surviving_ring": [0,1,2,3]}
+      "after_explicit_collapse": {
+        "vertices": 4,
+        "faces": 1,
+        "surviving_ring": [
+          0,
+          1,
+          2,
+          3
+        ]
+      }
     },
     {
       "name": "plane_cuts_through_at_no_symmetry",
       "rig": "cube",
       "op": "mirror across the plane x = 0.25, vertex-merge ON",
-      "result": {"vertices": 16, "edges": 24, "faces": 12,
-                 "edge_face_valence_histogram": {"2": 24}},
+      "result": {
+        "vertices": 16,
+        "edges": 24,
+        "faces": 12,
+        "edge_face_valence_histogram": {
+          "2": 24
+        }
+      },
       "note": "the plane passes through the solid but nothing coincides, so nothing welds and nothing doubles. Control for the two cases above."
     },
     {
       "name": "no_selection",
       "rig": "cube",
       "op": "mirror across x = 0 with merge ON and NO face selection",
-      "result": {"vertices": 8, "edges": 12, "faces": 12},
+      "result": {
+        "vertices": 8,
+        "edges": 12,
+        "faces": 12
+      },
       "note": "empty selection means the whole mesh, identical to selecting every face."
     }
   ],
-
   "collapse_law_cases": [
-    {"name": "reversed_duplicates", "rig": "doubled_cube",
-     "duplicate_rings": "each original ring REVERSED",
-     "before": {"vertices": 8, "faces": 12}, "after": {"vertices": 8, "faces": 6},
-     "pins": "winding is IGNORED -- this is the case the reference's own help text says should not collapse"},
-
-    {"name": "same_winding_duplicates", "rig": "doubled_cube",
-     "duplicate_rings": "each original ring copied verbatim",
-     "before": {"vertices": 8, "faces": 12}, "after": {"vertices": 8, "faces": 6},
-     "pins": "control for the row above: both windings collapse, so the rule is winding-blind, not winding-inverted"},
-
-    {"name": "rotated_ring_duplicates", "rig": "doubled_cube",
-     "duplicate_rings": "each original ring cyclically rotated by one",
-     "before": {"vertices": 8, "faces": 12}, "after": {"vertices": 8, "faces": 6},
-     "pins": "the ring's start index does not matter"},
-
-    {"name": "same_vertex_set_different_ring",
-     "rig": "one quad on 4 vertices, rings [0,1,2,3] and [0,2,1,3]",
-     "before": {"faces": 2}, "after": {"faces": 2},
-     "pins": "the test is the cyclic RING up to rotation and reversal, NOT the vertex SET. A collapse keyed on a sorted vertex set would wrongly merge these two, which are different polygons (one convex, one self-crossing)."},
-
-    {"name": "coincident_but_unwelded", "rig": "two_independent_cubes",
-     "before": {"vertices": 16, "faces": 12}, "after": {"vertices": 16, "faces": 12},
-     "pins": "no positional term at all: identical coordinates are not enough, the faces must reference the SAME vertex records"},
-
-    {"name": "weld_then_collapse", "rig": "two_independent_cubes",
-     "after_vertex_weld": {"vertices": 8, "edges": 12, "faces": 12,
-                           "edge_face_valence_histogram": {"4": 12}},
-     "after_collapse": {"vertices": 8, "faces": 6},
-     "pins": "the vertex weld alone does NOT remove the doubled faces. Ownership: weld and face-collapse are two independent passes, and only the weld is ever run implicitly."},
-
-    {"name": "partial_overlap",
-     "rig": "two quads sharing 3 of 4 vertices",
-     "before": {"vertices": 5, "faces": 2}, "after": {"vertices": 5, "faces": 2},
-     "pins": "a shared majority of vertices is not a collapse"},
-
-    {"name": "different_material_tags", "rig": "doubled_cube",
-     "duplicate_rings": "reversed, and tagged with a different material",
-     "after_default": {"faces": 12},
-     "after_forced": {"faces": 6},
-     "surviving_material": "the material of the EARLIER polygon",
-     "pins": "by default the collapse refuses when the two faces carry different material or part tags; a force flag bypasses both tag gates. The survivor keeps its own tag -- tags are not merged."},
-
-    {"name": "only_one_of_the_pair_selected", "rig": "doubled_cube",
-     "duplicate_rings": "each original ring REVERSED",
-     "selection": "exactly one face",
-     "before": {"faces": 12}, "after": {"faces": 11},
-     "pins": "the selection chooses which faces are EXAMINED; the partner that gets deleted need not be selected. Exactly one face was removed."},
-
-    {"name": "no_selection", "rig": "doubled_cube",
-     "duplicate_rings": "each original ring REVERSED",
-     "before": {"faces": 12}, "after": {"faces": 6},
-     "pins": "an empty selection means the whole mesh"}
+    {
+      "name": "reversed_duplicates",
+      "rig": "doubled_cube",
+      "duplicate_rings": "each original ring REVERSED",
+      "before": {
+        "vertices": 8,
+        "faces": 12
+      },
+      "after": {
+        "vertices": 8,
+        "faces": 6
+      },
+      "pins": "winding is IGNORED -- this is the case the reference's own help text says should not collapse"
+    },
+    {
+      "name": "same_winding_duplicates",
+      "rig": "doubled_cube",
+      "duplicate_rings": "each original ring copied verbatim",
+      "before": {
+        "vertices": 8,
+        "faces": 12
+      },
+      "after": {
+        "vertices": 8,
+        "faces": 6
+      },
+      "pins": "control for the row above: both windings collapse, so the rule is winding-blind, not winding-inverted"
+    },
+    {
+      "name": "rotated_ring_duplicates",
+      "rig": "doubled_cube",
+      "duplicate_rings": "each original ring cyclically rotated by one",
+      "before": {
+        "vertices": 8,
+        "faces": 12
+      },
+      "after": {
+        "vertices": 8,
+        "faces": 6
+      },
+      "pins": "the ring's start index does not matter"
+    },
+    {
+      "name": "same_vertex_set_different_ring",
+      "rig": "one quad on 4 vertices, rings [0,1,2,3] and [0,2,1,3]",
+      "before": {
+        "faces": 2
+      },
+      "after": {
+        "faces": 2
+      },
+      "pins": "the test is the cyclic RING up to rotation and reversal, NOT the vertex SET. A collapse keyed on a sorted vertex set would wrongly merge these two, which are different polygons (one convex, one self-crossing)."
+    },
+    {
+      "name": "coincident_but_unwelded",
+      "rig": "two_independent_cubes",
+      "before": {
+        "vertices": 16,
+        "faces": 12
+      },
+      "after": {
+        "vertices": 16,
+        "faces": 12
+      },
+      "pins": "no positional term at all: identical coordinates are not enough, the faces must reference the SAME vertex records"
+    },
+    {
+      "name": "weld_then_collapse",
+      "rig": "two_independent_cubes",
+      "after_vertex_weld": {
+        "vertices": 8,
+        "edges": 12,
+        "faces": 12,
+        "edge_face_valence_histogram": {
+          "4": 12
+        }
+      },
+      "after_collapse": {
+        "vertices": 8,
+        "faces": 6
+      },
+      "pins": "the vertex weld alone does NOT remove the doubled faces. Ownership: weld and face-collapse are two independent passes, and only the weld is ever run implicitly."
+    },
+    {
+      "name": "partial_overlap",
+      "rig": "two quads sharing 3 of 4 vertices",
+      "before": {
+        "vertices": 5,
+        "faces": 2
+      },
+      "after": {
+        "vertices": 5,
+        "faces": 2
+      },
+      "pins": "a shared majority of vertices is not a collapse"
+    },
+    {
+      "name": "different_material_tags",
+      "rig": "doubled_cube",
+      "duplicate_rings": "reversed, and tagged with a different material",
+      "after_default": {
+        "faces": 12
+      },
+      "after_forced": {
+        "faces": 6
+      },
+      "surviving_material": "the material of the EARLIER polygon",
+      "pins": "by default the collapse refuses when the two faces carry different material or part tags; a force flag bypasses both tag gates. The survivor keeps its own tag -- tags are not merged."
+    },
+    {
+      "name": "only_one_of_the_pair_selected",
+      "rig": "doubled_cube",
+      "duplicate_rings": "each original ring REVERSED",
+      "selection": "exactly one face",
+      "before": {
+        "faces": 12
+      },
+      "after": {
+        "faces": 11
+      },
+      "pins": "the selection chooses which faces are EXAMINED; the partner that gets deleted need not be selected. Exactly one face was removed."
+    },
+    {
+      "name": "no_selection",
+      "rig": "doubled_cube",
+      "duplicate_rings": "each original ring REVERSED",
+      "before": {
+        "faces": 12
+      },
+      "after": {
+        "faces": 6
+      },
+      "pins": "an empty selection means the whole mesh"
+    }
   ],
-
   "weld_tolerance": {
     "shape": "Chebyshev (per-axis, axis-aligned box), NOT a Euclidean radius; the per-axis differences are taken in 32-bit floating point and compared against a double tolerance.",
     "automatic_mode": {
       "law": "tolerance = maxAbsCoordinate(bounding box of the SOURCE vertices) / 336000",
       "note": "the term is the largest ABSOLUTE COORDINATE of the box, not its extent -- see the discriminator below. Two vertices weld iff every axis difference is <= that tolerance.",
       "brackets": [
-        {"max_abs_coordinate": 0.005,  "predicted": 1.4881e-08, "welds_at": 2.0e-09, "refuses_at": 2.0e-08},
-        {"max_abs_coordinate": 0.5,    "predicted": 1.4881e-06, "welds_at": 1.4e-06, "refuses_at": 1.6e-06},
-        {"max_abs_coordinate": 50.0,   "predicted": 1.4881e-04, "welds_at": 2.0e-05, "refuses_at": 2.0e-04},
-        {"max_abs_coordinate": 1000.5, "predicted": 2.9777e-03, "welds_at": 2.95e-03, "refuses_at": 2.98e-03}
+        {
+          "max_abs_coordinate": 0.005,
+          "predicted": 1.4881e-08,
+          "welds_at": 2e-09,
+          "refuses_at": 2e-08
+        },
+        {
+          "max_abs_coordinate": 0.5,
+          "predicted": 1.4881e-06,
+          "welds_at": 1.4e-06,
+          "refuses_at": 1.6e-06
+        },
+        {
+          "max_abs_coordinate": 50.0,
+          "predicted": 0.00014881,
+          "welds_at": 2e-05,
+          "refuses_at": 0.0002
+        },
+        {
+          "max_abs_coordinate": 1000.5,
+          "predicted": 0.0029777,
+          "welds_at": 0.00295,
+          "refuses_at": 0.00298
+        }
       ],
       "extent_vs_max_abs_discriminator": "a unit cube translated to x = 1000 has the SAME extent (1.0) and 2001x the max absolute coordinate. Its threshold moved by ~2000x, so the tolerance follows the max absolute coordinate. An extent-based rule predicts no change at all and is refuted."
     },
     "fixed_mode": {
       "law": "tolerance = the distance the caller supplies, exactly",
-      "bracket": {"distance": 1.0e-03, "welds_at": 9.9e-04, "refuses_at": 1.01e-03}
+      "bracket": {
+        "distance": 0.001,
+        "welds_at": 0.00099,
+        "refuses_at": 0.00101
+      }
     }
   },
-
   "provenance": {
     "schema": 1,
-    "source": "static-read + live-capture",
+    "source": "live-capture",
     "reference": "ref-editor@11.2v3",
     "method": "self-drive",
     "captured_utc": "2026-08-20",
     "harness": "headless scripted capture, one process, private isolated profile; scripts and raw per-case results live in the private tree",
-    "notes": "The ownership and winding answers were read out of the shipped binary first (the duplicate-polygon predicate and its complete caller set) and then confirmed by 19 + 24 + 20 live cells. The reference's own help text disagrees with both the binary and the measurement on the winding question; the measurement is what this fixture records."
+    "notes": "The capture had TWO arms and both are load-bearing: a static read of the shipped binary enumerated the candidate mechanisms (which layer owns a collapse at all, and that the equivalence predicate returns +1/-1 while its caller tests only != 0), and four headless boots selected among them and produced these numbers. `source` records the arm the NUMBERS came from -- the enum has no 'static-read' value, and inventing one made provenance_check.py reject the whole file, which is worse than recording the static arm here in prose. The ownership and winding answers were read out of the shipped binary first (the duplicate-polygon predicate and its complete caller set) and then confirmed by 19 + 24 + 20 live cells. The reference's own help text disagrees with both the binary and the measurement on the winding question; the measurement is what this fixture records."
   },
-
   "_classification_note": "Everything ABOVE this line is the capture, promoted byte-identical from the private toolcard. Everything BELOW is vibe3d's own reading of it, added when the fixture was promoted (task 1560) and maintained on our side.",
-
   "classification": {
     "verdict": "the mirror agrees in full; the explicit collapse agrees on every row our kernel can express except its coincidence KEY",
     "read_by": "tests/unit/mirror_coincident_face_test.d",

@@ -1,0 +1,970 @@
+{
+  "schema": 1,
+  "name": "backdrop_size_law",
+  "provenance": {
+    "schema": 1,
+    "source": "live-capture",
+    "reference": "ref-editor@11.2v3",
+    "method": "self-drive",
+    "captured_utc": "2026-08-09",
+    "task": "0612 Phase 0",
+    "harness": "live GUI on an isolated Xvfb, private HOME, software GL, PID-only teardown; the drawn plane is the largest connected component of a saturated-colour mask inside the 3D viewport rect",
+    "notes": "28 cases. The rows below are transcribed from the retained evidence file doc/tasks/0612-evidence/phase0_size_law.txt (private tree) and every one was re-checked against the law while writing this fixture. World metres per pixel was MEASURED, not assumed: a 1 m quad moved a known 10 m gave 320.00 px = 32 px/m, with a zero-changed-pixel null control."
+  },
+  "why_this_fixture_exists": "Until 2026-08-20 this law had no toolcard, no fixture and no test -- it existed as one evidence .txt and a paragraph in an agent's memory. It is the size law for an entire item type we ship, and it overturned three separate candidates in the design plan that produced it, so re-deriving it from scratch would be expensive.",
+  "instrument": {
+    "view": "front orthographic, ortho scale 32",
+    "px_per_metre": 32.0,
+    "calibration": "a 1 m reference quad moved a known 10 m in X -> 320.00 px; null control (move back to 0) -> zero changed pixels",
+    "pixel_size_meaning": "ILxView3D::PixelSize() read 0.03125 = 1/32, i.e. metres per pixel in an ortho view, exactly 1 / the SetScale argument",
+    "gate": "the reference's own documented worked example, 512 px at 10 mm -> 5.12 m, reproduced to +0.16 px before any case was scored"
+  },
+  "law": {
+    "inputs": "W,H = clip pixel size; p = pixelSize channel (metres per image pixel, default 0.01); sx,sy = item scale X/Y",
+    "sz_has_no_effect": true,
+    "base_extent": {
+      "uniform=0, aspect=1 (DEFAULT)": "(W*p, H*p)",
+      "uniform=0, aspect=0": "(H*p, H*p)  -- the image HEIGHT on BOTH axes",
+      "uniform=1, aspect=1": "(W/H, 1.0) metres",
+      "uniform=1, aspect=0": "(1.0, 1.0) metres"
+    },
+    "scale_composition": {
+      "aspect=1 (DEFAULT)": "extent = base * min(sx, sy)   -- ONE scalar, not per-axis",
+      "aspect=0": "extent = (base_u * sx, base_v * sy)"
+    },
+    "placement": "the quad is centred on the item and carried RIGIDLY by its position and rotation; scale is consumed by the extent formula and is NOT additionally applied to the quad",
+    "live_not_frozen": "pixelSize is read LIVE. Rewriting it after the clip is linked resizes the plane every time (2.56 -> 5.12 -> 1.28 -> 2.56 m), and writing it before the link gives a bit-identical frame to writing it after (case A2pre)."
+  },
+  "tolerance": {
+    "residual_px": 0.96,
+    "why": "rasterisation quantisation, not model error: the two worst rows predict 40.96 px and rasterise to 40. Stated in pixels because that is the unit the error lives in."
+  },
+  "cases": [
+    {
+      "case": "V",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 0,
+      "measured_px": [
+        82,
+        82
+      ],
+      "measured_m": [
+        2.5625,
+        2.5625
+      ],
+      "law_m": [
+        2.56,
+        2.56
+      ],
+      "residual_px": [
+        0.08,
+        0.08
+      ]
+    },
+    {
+      "case": "A",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.02,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 0,
+      "measured_px": [
+        164,
+        164
+      ],
+      "measured_m": [
+        5.125,
+        5.125
+      ],
+      "law_m": [
+        5.12,
+        5.12
+      ],
+      "residual_px": [
+        0.16,
+        0.16
+      ]
+    },
+    {
+      "case": "E",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.005,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 0,
+      "measured_px": [
+        40,
+        40
+      ],
+      "measured_m": [
+        1.25,
+        1.25
+      ],
+      "law_m": [
+        1.28,
+        1.28
+      ],
+      "residual_px": [
+        0.96,
+        0.96
+      ]
+    },
+    {
+      "case": "F1",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 0,
+      "measured_px": [
+        82,
+        82
+      ],
+      "measured_m": [
+        2.5625,
+        2.5625
+      ],
+      "law_m": [
+        2.56,
+        2.56
+      ],
+      "residual_px": [
+        0.08,
+        0.08
+      ]
+    },
+    {
+      "case": "B",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        2.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 0,
+      "measured_px": [
+        82,
+        164
+      ],
+      "measured_m": [
+        2.5625,
+        5.125
+      ],
+      "law_m": [
+        2.56,
+        5.12
+      ],
+      "residual_px": [
+        0.08,
+        0.16
+      ]
+    },
+    {
+      "case": "C",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        3.0,
+        2.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 0,
+      "measured_px": [
+        246,
+        164
+      ],
+      "measured_m": [
+        7.6875,
+        5.125
+      ],
+      "law_m": [
+        7.68,
+        5.12
+      ],
+      "residual_px": [
+        0.24,
+        0.16
+      ]
+    },
+    {
+      "case": "D",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        3.0,
+        2.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        328,
+        164
+      ],
+      "measured_m": [
+        10.25,
+        5.125
+      ],
+      "law_m": [
+        10.24,
+        5.12
+      ],
+      "residual_px": [
+        0.32,
+        0.16
+      ]
+    },
+    {
+      "case": "R",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        3.0,
+        2.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 1,
+      "measured_px": [
+        96,
+        64
+      ],
+      "measured_m": [
+        3.0,
+        2.0
+      ],
+      "law_m": [
+        3.0,
+        2.0
+      ],
+      "residual_px": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "R0",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 1,
+      "measured_px": [
+        32,
+        32
+      ],
+      "measured_m": [
+        1.0,
+        1.0
+      ],
+      "law_m": [
+        1.0,
+        1.0
+      ],
+      "residual_px": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "A2pre",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.02,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 0,
+      "measured_px": [
+        164,
+        164
+      ],
+      "measured_m": [
+        5.125,
+        5.125
+      ],
+      "law_m": [
+        5.12,
+        5.12
+      ],
+      "residual_px": [
+        0.16,
+        0.16
+      ]
+    },
+    {
+      "case": "W1",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        164,
+        82
+      ],
+      "measured_m": [
+        5.125,
+        2.5625
+      ],
+      "law_m": [
+        5.12,
+        2.56
+      ],
+      "residual_px": [
+        0.16,
+        0.08
+      ]
+    },
+    {
+      "case": "W2",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        3.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        164,
+        82
+      ],
+      "measured_m": [
+        5.125,
+        2.5625
+      ],
+      "law_m": [
+        5.12,
+        2.56
+      ],
+      "residual_px": [
+        0.16,
+        0.08
+      ]
+    },
+    {
+      "case": "W3",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        3.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        164,
+        82
+      ],
+      "measured_m": [
+        5.125,
+        2.5625
+      ],
+      "law_m": [
+        5.12,
+        2.56
+      ],
+      "residual_px": [
+        0.16,
+        0.08
+      ]
+    },
+    {
+      "case": "W4",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        2.0,
+        3.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        328,
+        164
+      ],
+      "measured_m": [
+        10.25,
+        5.125
+      ],
+      "law_m": [
+        10.24,
+        5.12
+      ],
+      "residual_px": [
+        0.32,
+        0.16
+      ]
+    },
+    {
+      "case": "W5",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        1.0,
+        3.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        164,
+        82
+      ],
+      "measured_m": [
+        5.125,
+        2.5625
+      ],
+      "law_m": [
+        5.12,
+        2.56
+      ],
+      "residual_px": [
+        0.16,
+        0.08
+      ]
+    },
+    {
+      "case": "W6",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        3.0,
+        2.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 1,
+      "measured_px": [
+        128,
+        64
+      ],
+      "measured_m": [
+        4.0,
+        2.0
+      ],
+      "law_m": [
+        4.0,
+        2.0
+      ],
+      "residual_px": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "case": "W7",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.02,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        328,
+        164
+      ],
+      "measured_m": [
+        10.25,
+        5.125
+      ],
+      "law_m": [
+        10.24,
+        5.12
+      ],
+      "residual_px": [
+        0.32,
+        0.16
+      ]
+    },
+    {
+      "case": "W8",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 0,
+      "measured_px": [
+        82,
+        82
+      ],
+      "measured_m": [
+        2.5625,
+        2.5625
+      ],
+      "law_m": [
+        2.56,
+        2.56
+      ],
+      "residual_px": [
+        0.08,
+        0.08
+      ]
+    },
+    {
+      "case": "T1",
+      "image": "tall",
+      "clip_px": [
+        256,
+        512
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        82,
+        164
+      ],
+      "measured_m": [
+        2.5625,
+        5.125
+      ],
+      "law_m": [
+        2.56,
+        5.12
+      ],
+      "residual_px": [
+        0.08,
+        0.16
+      ]
+    },
+    {
+      "case": "T2",
+      "image": "tall",
+      "clip_px": [
+        256,
+        512
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 0,
+      "measured_px": [
+        164,
+        164
+      ],
+      "measured_m": [
+        5.125,
+        5.125
+      ],
+      "law_m": [
+        5.12,
+        5.12
+      ],
+      "residual_px": [
+        0.16,
+        0.16
+      ]
+    },
+    {
+      "case": "T3",
+      "image": "tall",
+      "clip_px": [
+        256,
+        512
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        3.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        82,
+        164
+      ],
+      "measured_m": [
+        2.5625,
+        5.125
+      ],
+      "law_m": [
+        2.56,
+        5.12
+      ],
+      "residual_px": [
+        0.08,
+        0.16
+      ]
+    },
+    {
+      "case": "T4",
+      "image": "tall",
+      "clip_px": [
+        256,
+        512
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        3.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        82,
+        164
+      ],
+      "measured_m": [
+        2.5625,
+        5.125
+      ],
+      "law_m": [
+        2.56,
+        5.12
+      ],
+      "residual_px": [
+        0.08,
+        0.16
+      ]
+    },
+    {
+      "case": "Y0",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        164,
+        82
+      ],
+      "measured_m": [
+        5.125,
+        2.5625
+      ],
+      "law_m": [
+        5.12,
+        2.56
+      ],
+      "residual_px": [
+        0.16,
+        0.08
+      ]
+    },
+    {
+      "case": "X1",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        0.5,
+        4.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        82,
+        40
+      ],
+      "measured_m": [
+        2.5625,
+        1.25
+      ],
+      "law_m": [
+        2.56,
+        1.28
+      ],
+      "residual_px": [
+        0.08,
+        0.96
+      ]
+    },
+    {
+      "case": "X2",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        4.0,
+        0.5,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        82,
+        40
+      ],
+      "measured_m": [
+        2.5625,
+        1.25
+      ],
+      "law_m": [
+        2.56,
+        1.28
+      ],
+      "residual_px": [
+        0.08,
+        0.96
+      ]
+    },
+    {
+      "case": "X3",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        1.5,
+        2.5,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        246,
+        122
+      ],
+      "measured_m": [
+        7.6875,
+        3.8125
+      ],
+      "law_m": [
+        7.68,
+        3.84
+      ],
+      "residual_px": [
+        0.24,
+        0.88
+      ]
+    },
+    {
+      "case": "X4",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        2.0,
+        2.0,
+        1.0
+      ],
+      "aspect": 1,
+      "uniform": 0,
+      "measured_px": [
+        328,
+        164
+      ],
+      "measured_m": [
+        10.25,
+        5.125
+      ],
+      "law_m": [
+        10.24,
+        5.12
+      ],
+      "residual_px": [
+        0.32,
+        0.16
+      ]
+    },
+    {
+      "case": "X5",
+      "image": "wide",
+      "clip_px": [
+        512,
+        256
+      ],
+      "pixel_size": 0.01,
+      "scale": [
+        0.5,
+        4.0,
+        1.0
+      ],
+      "aspect": 0,
+      "uniform": 0,
+      "measured_px": [
+        40,
+        328
+      ],
+      "measured_m": [
+        1.25,
+        10.25
+      ],
+      "law_m": [
+        1.28,
+        10.24
+      ],
+      "residual_px": [
+        0.96,
+        0.32
+      ]
+    }
+  ],
+  "rejected_candidates": [
+    {
+      "candidate": "pixelSize frozen at import (plan candidate F)",
+      "verdict": "REFUTED",
+      "cell": "rewrite pixelSize after linking the clip -- the plane resizes every time; and A2pre (written before the link) is bit-identical to writing it after"
+    },
+    {
+      "candidate": "the uniform=1 metre-based mode is the default (plan candidate R)",
+      "verdict": "REFUTED",
+      "cell": "it never appeared in any of the 20 uniform=0 rows; it is a real mode, but a negative control"
+    },
+    {
+      "candidate": "scale applied PER AXIS under the default (plan candidate M, section 4.2 form)",
+      "verdict": "REFUTED",
+      "cell": "W2 (3,1,1) and W3 (1,3,1) both give 5.12 x 2.56 -- identical to W1 (1,1,1); per-axis would give 15.36 x 2.56 and 5.12 x 7.68. min(sx,sy) is the only form that fits, and X1/X2 (0.5,4) vs (4,0.5) both landing on 2.56 x 1.28 confirm it is symmetric in the two."
+    }
+  ],
+  "falsifiers": [
+    "W2 or W3 differing from W1 (would mean per-axis scale under the default aspect)",
+    "X1 and X2 differing from each other (would mean min(sx,sy) is not symmetric)",
+    "W5 differing from W1 (would mean sz enters the extent)",
+    "T2 not square (would mean aspect=0 does not use the HEIGHT on both axes)",
+    "R0 not exactly 1 x 1 m (would mean uniform=1 aspect=0 is not a unit metre quad)",
+    "any row's law_m differing from the recorded value by more than 0.96 px at 32 px/m"
+  ],
+  "dead_instrument_do_not_retry": "The viewport API's own backdrop-query accessors are a dead channel and must not be retried: the name query returns None and the placement query returns the constant (0.0, 0.0, 1.0, 1.0) in every one of 40+ reads, INCLUDING frames where the plane is demonstrably drawn and measured; the aspect / orientation / look / render queries are likewise constant. They are only meaningful inside a viewport draw pass -- from a script context they are not a readback of the item at all. The screenshot is the only working channel for this question. The specific accessor names are in the private toolcard, toolcards/backdrop_item/status.yaml.",
+  "also_measured": {
+    "view_visibility": "a `front` plane is drawn in the FRONT and PERSPECTIVE views only; back and top do not draw it, and a front plane does NOT appear mirrored in back",
+    "unlinked_backdrop": "a backdrop item with no clip linked draws a small screen-constant grey item glyph (~12 x 12 px) at its centre, not nothing"
+  }
+}

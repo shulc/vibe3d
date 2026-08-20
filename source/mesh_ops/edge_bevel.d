@@ -43,7 +43,7 @@ mixin template MeshEdgeBevelOps() {
     /// Edge bevel (Candidate A — slide-along-adjacent-edge, generalized).
     ///
     /// Replaces every qualifying selected edge with a chamfer strip (a flat
-    /// quad at `roundLevel==0`, or `2^roundLevel` rings at `roundLevel>0`.
+    /// quad at `roundLevel==0`, or `2·roundLevel` rings at `roundLevel>0`.
     /// The isolated K1 SLIDE profile and the K2 shared-vertex miter rails are
     /// both capture-verified (bit-exact convex round-over / hub arc); a K3+
     /// junction's per-pair rails use the same verified law, but its central
@@ -119,8 +119,11 @@ mixin template MeshEdgeBevelOps() {
     /// mutation (task 0439, preflight below) — the same shape on an
     /// interior (closed-fan) vertex gets the cap.
     ///
-    /// `roundLevel` subdivides every eligible cross-section into `2^L`
-    /// segments.  A rail is owned by its two already-resolved L0 endpoint
+    /// `roundLevel` subdivides every eligible cross-section into `2·L`
+    /// segments (L≥1; L==0 is the separate flat-chamfer path, one segment).
+    /// `2·L` equals `2^L` only at L≤2, which is why the old `1<<roundLevel`
+    /// looked right — see the note beside the junction law below.
+    /// A rail is owned by its two already-resolved L0 endpoint
     /// vertices, not by an individual strip: the same interior indices are
     /// threaded through both of its consumers (support face, neighbouring
     /// strip, or hub cap).  ALL rails — clean slide, bare-end, and miter —
