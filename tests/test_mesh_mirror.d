@@ -2,7 +2,12 @@
 // duplicate across an axis-aligned plane: clones the selected faces
 // (or the whole mesh if no selection), reflects the cloned verts,
 // reverses winding when flip_normals is on, and optionally welds
-// coincident seam verts (which also drops the doubled seam polygon).
+// coincident seam verts. The weld merges VERTS ONLY -- it does NOT drop the
+// doubled seam polygon, which this file's own `params:{}` cell has asserted
+// since d5366c12 (12 faces on a mirrored cube) and which the frozen capture in
+// `tests/fixtures/mirror_coincident_face_policy.json` pins as the reference's
+// answer. The line that used to stand here said the opposite; it was written
+// before the behaviour was measured and it contradicted the assertions below.
 //
 // Cube layout (centered at origin, size 1):
 //   v0=(-,-,-)  v1=(+,-,-)  v2=(+,+,-)  v3=(-,+,-)
