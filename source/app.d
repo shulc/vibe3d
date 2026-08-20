@@ -2398,6 +2398,53 @@ void main(string[] args) {
     import edit_session : EditSession;
     EditSession session;
 
+    // -------------------------------------------------------------------------
+    // Task 1670 — POSE THE FRESH TOOL AT ARM TIME.
+    //
+    // Every `tool.set` builds a NEW tool (the drop above destroys the old
+    // one), and `activate()` poses nothing. The tool's resident pose — for
+    // `xfrm.transform` that is `moveSub.handler.center`, written only by
+    // `setSharedGizmoPose` at the top of `update()`/`draw()` — therefore held
+    // its CONSTRUCTOR value, `Vec3(0,0,0)`, from the moment `setActiveTool`
+    // returned until the frame loop reached `activeTool.update(vts)`.
+    //
+    // That is observable and it was observed. `/api/tool/state` is answered
+    // STRAIGHT OFF THE HTTP THREAD from those resident fields (deliberately —
+    // see http_server.d's route-contract comment), so a read served after the
+    // command bridge drained `tool.set` inside `httpServer.tickAll()` and
+    // before that same frame reached the tool tick reports the un-ticked
+    // default. It surfaced as one `(0,0,0)` gizmo centre in 689 tests on the
+    // nightly sanitizer lane, where software GL stretches the frame far
+    // enough to hit a window that is sub-millisecond on hardware GL.
+    //
+    // MARSHALLING THE ROUTE WOULD NOT HAVE CLOSED IT, which is why the fix is
+    // here and not in http_server.d (whose own comment suggests marshalling
+    // for this family of hazard). The bridges drain at the TOP of the frame,
+    // `foreach (b; bridges) b.tick()`; a read arriving right after the command
+    // reply can be picked up by a LATER bridge in the SAME `tickAll` pass and
+    // answered ahead of `update()` regardless. Posing at arm time closes the
+    // window for EVERY consumer of the tool's resident state — the route, the
+    // panels, anything that reads a freshly armed tool — instead of for one
+    // route on the frames where the draw order happens to help.
+    //
+    // Declared HERE and wired further down (next to `ifs.app`), because
+    // `buildToolVts` is a nested function declared much later in `main()`:
+    // the same null-until-wired hook pattern `lifecycleRecordHook` above uses.
+    // A `setActiveTool` that runs before the wiring behaves exactly as it did
+    // before this task.
+    void delegate() armedToolPoseHook;
+
+    // Task 1670 — the instrument that makes the window above a DETERMINISTIC
+    // cell instead of a lottery. Repetition is not an instrument here: 40 idle
+    // runs and 30 under six-way load produced zero failures on this host.
+    // Edge-triggered by an arm below, consumed at the seam in the frame loop,
+    // and inert unless VIBE3D_STALL_PRE_TOOL_TICK_MS is set — source/
+    // frame_stall.d carries the reasoning and the unittests that assert that
+    // inertness by wall clock.
+    import frame_stall : FrameStall;
+    auto preToolTickStall =
+        FrameStall.fromEnvironment("VIBE3D_STALL_PRE_TOOL_TICK_MS");
+
     void setActiveTool(Tool t) {
         // One-shot falloff-drag cancel at the universal tool
         // activation/switch/drop chokepoint (BOTH activateToolById and
@@ -2443,7 +2490,24 @@ void main(string[] args) {
         if (t is null) resetTransientPipeStages();
         activeTool   = t;
         activeToolId = "";
-        if (activeTool) activeTool.activate();
+        if (activeTool) {
+            activeTool.activate();
+            // Task 1670 — tick the fresh tool ONCE, right here, with the same
+            // (SubjectPacket, VectorStack) pair the frame loop builds for its
+            // own `activeTool.update(vts)`. Only the MOMENT differs: the pose
+            // and `cachedSubjType_` are now valid the instant `tool.set`
+            // returns. See `armedToolPoseHook`'s declaration above for the
+            // window this closes and why the route was the wrong place.
+            //
+            // Not re-entrant by inspection: no tool's `update()` reaches
+            // `setActiveTool` (nothing under source/tools/ touches
+            // `resetActiveTool` or a tool drop), so this cannot recurse.
+            if (armedToolPoseHook !is null) armedToolPoseHook();
+            // …and tell the stall a tool was armed, so a test run with
+            // VIBE3D_STALL_PRE_TOOL_TICK_MS set widens EXACTLY this window
+            // once, rather than pausing every frame of the run.
+            preToolTickStall.arm();
+        }
         // deactivate() may have added geometry. We no longer resize / invalidate
         // / syncSelection the pick caches here (change-notification bus, Stage 2):
         // any geometry a tool appended on deactivate went through mesh primitives
@@ -4662,6 +4726,24 @@ void main(string[] args) {
     ifs.app                = app;
     ifs.viewportHoveredPtr = &g_viewportWindowHovered;
 
+    // Task 1670 — wire the arm-time pose hook declared next to
+    // `setActiveTool`. HERE, and not at `buildToolVts`'s own declaration a
+    // little above it, because the body below runs `buildToolVts`, whose
+    // forwarder needs `ifs.app` — the very line above. This is the earliest
+    // point at which the hook could fire correctly, and everything before it
+    // still sees the null hook and behaves exactly as it did before.
+    //
+    // The body is a verbatim copy of the frame loop's tool-tick site (search
+    // `activeTool.update(vts)`): build this frame's subject packet, publish
+    // it, tick. Kept as a copy rather than a shared helper because the frame
+    // loop's site is inside the not-yet-extracted loop body and hoisting it
+    // would be a refactor of that, not of this.
+    armedToolPoseHook = () {
+        if (activeTool is null) return;
+        SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+        activeTool.update(vts);
+    };
+
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         // Active tool gets first dibs on key events. Tools that handle keys
         // (e.g. PenTool's Enter/Backspace/Esc) return true to consume; tools
@@ -6291,6 +6373,20 @@ void main(string[] args) {
                 if (!scriptedInputHeld) httpServer.tickEventPlayer();
                 httpServer.tickAll();
             }
+
+            // Task 1670 — THE DIAGNOSED SEAM, and the only place this stall
+            // is consumed. The command bridge has just drained: if that batch
+            // held a `tool.set`, a tool is armed and its reply is already on
+            // the wire, while this frame has NOT yet reached
+            // `activeTool.update(vts)` far below. That gap is where a
+            // `/api/tool/state` read used to see an un-posed tool.
+            //
+            // Inert unless VIBE3D_STALL_PRE_TOOL_TICK_MS is set (asserted in
+            // source/frame_stall.d), and when set it fires ONCE per arm — a
+            // keyboard-armed tool arms it too and simply consumes the pause
+            // one frame later, harmlessly, since the instrument is aimed at
+            // the HTTP path.
+            preToolTickStall.waitAtSeam();
 
             // AI3D async controller drain (task 0381 Phase 2). Deliberately
             // OUTSIDE the `httpServer.running` guard above — the controller

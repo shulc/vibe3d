@@ -68,14 +68,82 @@ JSONValue history()            { return getJson("/api/history"); }
 
 JSONValue doUndo() { return parseJSON(cast(string) post(BASE ~ "/api/undo", "")); }
 
+/// ONE read of the armed transform tool's own state dump — no polling.
+///
+/// THE PRECONDITION IS THE PART THAT CHANGED (task 1670, side finding 2). It
+/// used to be `assert("pivot" in st)`, standing in for "the transform tool is
+/// armed". That stopped being true at task 1610, when the edge-extend tool's
+/// own `toolStateJson` began publishing a `pivot` too: a key that two different
+/// tools emit says nothing about WHICH tool answered, so all the check still
+/// ruled out was `{}` — the no-tool reply — and every real arming of the
+/// WRONG tool passed it. It had become a claim about the reply's shape rather
+/// than about the app's state.
+///
+/// What discriminates is the dump's own `tool` tag: `XfrmTransformTool` is the
+/// sole writer of `"xfrm"` (grep `root["tool"]` across source/tools — eleven
+/// tools, eleven distinct names). `enabled.t` is the second half, and it is
+/// not decoration: `pivot` is `moveGizmoCenter()`, the MOVE bank's handler
+/// centre, so a preset that armed R/S with T off would publish a `pivot` this
+/// file's numbers are not about. Every caller here arms `move`, so both are
+/// real claims.
+JSONValue toolState() {
+    auto st = getJson("/api/tool/state");
+    assert("tool" in st && st["tool"].str == "xfrm",
+        "the TRANSFORM tool must be the armed one — `/api/tool/state` answers "
+        ~ "`{}` with no tool at all and its own name with any other, and "
+        ~ "since task 1610 the presence of a `pivot` key no longer tells "
+        ~ "those cases apart. got " ~ st.toString);
+    assert("enabled" in st && st["enabled"]["t"].boolean,
+        "…and its MOVE bank must be on, because `pivot` IS the move bank's "
+        ~ "handler centre (`moveGizmoCenter()`). got " ~ st.toString);
+    return st;
+}
+
 /// The shared gizmo centre the tool publishes — `ActionCenterStage`'s answer,
 /// read through the tool rather than inferred from a drag.
-double[3] toolPivot() {
-    auto st = getJson("/api/tool/state");
-    assert("pivot" in st,
-        "the active tool must publish a pivot — got " ~ st.toString);
+double[3] pivotOf(JSONValue st) {
     auto p = st["pivot"].array;
     return [p[0].floating, p[1].floating, p[2].floating];
+}
+
+/// The same centre, read through the PIPE instead of through the tool. Two
+/// independent channels onto one quantity, which is what makes T-X7 below an
+/// assertion about agreement rather than about a number.
+double[3] actionCentre() {
+    auto c = getJson("/api/toolpipe/eval")["actionCenter"]["center"].array;
+    return [c[0].floating, c[1].floating, c[2].floating];
+}
+
+/// The gizmo centre with a BOUNDED SETTLE — at most 1 s, 40 x 25 ms, the same
+/// shape as `gizmoCentreSettled` in tests/test_item_panel_gizmo_sync.d.
+///
+/// WHY THIS IS THE SECOND LAYER AND NOT THE FIX (task 1670). `/api/tool/state`
+/// is answered straight off the HTTP thread from the tool's resident fields,
+/// so a read issued the instant after `tool.set` returns can land before the
+/// frame loop has ticked the tool. That is a PRODUCT hazard, it was fixed in
+/// the product (app.d's `armedToolPoseHook` poses the fresh tool at arm time),
+/// and a settle alone would have hidden it: the poll would simply have waited
+/// out the wrong answer and gone green over a race every other consumer of
+/// that route still had. The sibling fix on 2026-08-08 landed both halves for
+/// the same reason, and this is the matching pair.
+///
+/// So the settle earns its place only as insurance against the OTHER sources
+/// of staleness on this route (a command whose effect needs a main-loop pass),
+/// and it is deliberately NOT used by T-X7, whose whole subject is the value
+/// at the instant of arming. Nothing is weakened here either: the poll hands
+/// back the last value it saw and the caller's own assertion, on the caller's
+/// own numbers, still runs on it.
+double[3] toolPivot(double[3] want, double eps = 1e-4) {
+    import core.thread : Thread;
+    import core.time   : dur;
+    double[3] got;
+    foreach (_; 0 .. 40) {                 // 40 x 25 ms = 1 s ceiling
+        got = pivotOf(toolState());
+        if (approx(got[0], want[0], eps) && approx(got[1], want[1], eps)
+         && approx(got[2], want[2], eps)) return got;
+        Thread.sleep(dur!"msecs"(25));
+    }
+    return got;
 }
 
 /// One headless Move gesture of `dx` along X, opened and CLOSED (the tool
@@ -135,19 +203,118 @@ void planeFixture() {
 // `document.primary` (what it was until this stage). It reads the CUBE's
 // world pivot, (0,0,0), where the correct answer is the plane's (4.25, 1.5,
 // -2). All three components differ, so no single-axis coincidence can hide it.
+//
+// TASK 1670 CORRECTED WHAT A ZERO HERE MEANS, and the message below carries
+// the correction because this row's failure text is the first thing the next
+// reader sees. The row still pins the binding; it is no longer the ONLY thing
+// a zero can mean, and the accusation the message used to make on its own was
+// measured false.
 // ---------------------------------------------------------------------------
 unittest {
     planeFixture();
     cmd("tool.set move on");
     scope (exit) cmd("tool.set move off");
 
-    auto piv = toolPivot();
+    auto piv = toolPivot([4.25, 1.5, -2.0]);
     assert(approx(piv[0], 4.25) && approx(piv[1], 1.5) && approx(piv[2], -2.0),
         format("T-X1: the gizmo centre must be the FOCUSED item's world pivot "
-             ~ "(pos + pivot = 4.25, 1.5, -2). A binding still reading "
-             ~ "document.primary reports the cube's (0,0,0) — the gizmo "
-             ~ "sitting on the character while the panel shows the plane. "
-             ~ "got (%.4f, %.4f, %.4f)", piv[0], piv[1], piv[2]));
+             ~ "(pos + pivot = 4.25, 1.5, -2), got (%.4f, %.4f, %.4f).\n"
+             ~ "  READ THIS BEFORE HUNTING A BINDING. A zero here does NOT by "
+             ~ "itself mean `ActionCenterStage.primarySrc_` is back on "
+             ~ "`document.primary`; that is one cause, and it is the one this "
+             ~ "row was written for, but it is not what a zero meant the last "
+             ~ "time this fired. Measured on task 1670: in the same instant "
+             ~ "/api/toolpipe/eval reported the CORRECT centre and this very "
+             ~ "snapshot carried subject:\"component\" — a freshly built tool's "
+             ~ "constructor defaults, in both fields at once. The stage was "
+             ~ "right the whole way through.\n"
+             ~ "  So check WHICH of the two it is, and check it with the "
+             ~ "action centre: if /api/toolpipe/eval also reports (0,0,0), the "
+             ~ "binding is the suspect; if it reports the plane's pivot while "
+             ~ "this reads zero, the tool was READ BEFORE ITS FIRST TICK. "
+             ~ "Every `tool.set` builds a NEW tool whose pose starts at the "
+             ~ "origin, and app.d's `armedToolPoseHook` is what ticks it "
+             ~ "before `tool.set` returns. T-X7 below is the row that pins "
+             ~ "that half, and it fails on its own terms.", piv[0], piv[1], piv[2]));
+}
+
+// ---------------------------------------------------------------------------
+// T-X7 — THE TOOL IS POSED BY THE TIME `tool.set` RETURNS.
+//
+// The two channels onto one quantity must agree in the instant right after
+// arming: the tool's own resident pivot (`/api/tool/state`, answered straight
+// off the HTTP thread from `moveSub.handler.center`) and the pipe's action
+// centre (`/api/toolpipe/eval`, evaluated on the main thread from the stage).
+//
+// WHAT THIS CATCHES, and why the suite had no cell for it. `activate()` poses
+// nothing, and the pose's only writer used to be the top of `update()`/
+// `draw()` — so between the command bridge draining `tool.set` at the top of
+// the frame and that same frame reaching `activeTool.update(vts)`, the tool
+// held its constructor's `Vec3(0,0,0)` and the route reported it. The window
+// is sub-millisecond on hardware GL: it opened ONCE in 689 tests on the
+// nightly runner under software GL and never once in 70 deliberate attempts
+// here. Repetition cannot test it. What CAN is this comparison, because it
+// asserts the invariant the fix establishes — the two channels agree at the
+// instant of arming — rather than waiting for the race to show itself.
+//
+// SO IT IS READ ONCE, IN THIS ORDER, AND ON PURPOSE. The tool-state read is
+// the EARLY channel (HTTP thread, no main-loop pass needed) and goes first;
+// the eval read is marshalled onto the main thread and can only be later. No
+// settle: `toolPivot`'s bounded poll exists for the other rows, and using it
+// here would poll away exactly the state this row is about.
+//
+// THE DEGENERACY GUARD IS NOT DECORATION. "Two channels agree" is satisfied by
+// both reading (0,0,0), which is precisely the shape of the defect, so a
+// fixture whose action centre sat at the origin would pass this row on the
+// broken product. `planeFixture` puts it at (4.25, 1.5, -2) and the guard
+// asserts that it did — the comparison is only evidence while the agreed
+// value is one the un-ticked tool could not have produced.
+//
+// `subject` is the second, independent witness of the same tick. It is
+// `cachedSubjType_`, refreshed from the same packet the pose is derived from,
+// and a pre-tick read answers "component" — the constructor's `SelType.Vertex`
+// — while the document is in Item selection. One snapshot, two fields, one
+// cause; if only one of them is wrong the fix has come apart in a way worth
+// knowing about separately.
+// ---------------------------------------------------------------------------
+unittest {
+    planeFixture();
+    cmd("tool.set move on");
+    scope (exit) cmd("tool.set move off");
+
+    auto st   = toolState();          // early channel, one read, no settle
+    auto piv  = pivotOf(st);
+    auto acen = actionCentre();       // late channel, main-thread marshalled
+
+    assert(!(approx(acen[0], 0.0) && approx(acen[1], 0.0) && approx(acen[2], 0.0)),
+        format("T-X7 degeneracy guard: the fixture's action centre must NOT "
+             ~ "be the origin, or 'the two channels agree' is satisfied by the "
+             ~ "very failure this row exists to catch. got (%.4f, %.4f, %.4f) "
+             ~ "— check planeFixture still poses the plane away from it",
+               acen[0], acen[1], acen[2]));
+
+    assert(approx(piv[0], acen[0]) && approx(piv[1], acen[1])
+        && approx(piv[2], acen[2]),
+        format("T-X7: the instant `tool.set` returns, the tool's own pivot and "
+             ~ "the pipe's action centre must be the SAME point. tool "
+             ~ "(%.4f, %.4f, %.4f) vs pipe (%.4f, %.4f, %.4f).\n"
+             ~ "  A tool pivot of (0,0,0) against a non-zero pipe centre is "
+             ~ "the signature: the tool was read before it was ever ticked. "
+             ~ "`tool.set` builds a FRESH tool, `activate()` poses nothing, "
+             ~ "and app.d's `armedToolPoseHook` — called from setActiveTool "
+             ~ "right after activate() — is what closes that. If that hook is "
+             ~ "gone, unwired, or moved after the pose is read, this is what "
+             ~ "you get. Reproduce it deterministically: set "
+             ~ "VIBE3D_STALL_PRE_TOOL_TICK_MS=250 (source/frame_stall.d) and "
+             ~ "the window this row aims at is wide open.",
+               piv[0], piv[1], piv[2], acen[0], acen[1], acen[2]));
+
+    assert(st["subject"].str == "item",
+        "T-X7: …and the same tick must have refreshed the cached subject "
+        ~ "type. \"component\" here is the freshly built tool's constructor "
+        ~ "default (SelType.Vertex) on a document that is in ITEM selection — "
+        ~ "the same un-ticked tool the pivot assertion above describes, seen "
+        ~ "through a second field of the same snapshot. got " ~ st.toString);
 }
 
 // ---------------------------------------------------------------------------
