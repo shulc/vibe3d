@@ -20,6 +20,7 @@ module http_json;
 import std.datetime : Clock;
 import std.json;
 
+import json_num : jsonNum;
 import mesh : Mesh, Surface;
 import mesh_selsets : selSetNamesVertex, selSetNamesEdge, selSetNamesPolygon,
     selSetMembersVertex, selSetMembersEdge, selSetMembersPolygon;
@@ -89,8 +90,43 @@ string jsonEsc(string s) {
 string meshToJsonDetailed(ref const(Mesh) m) {
     import std.format : format;
     import std.array : appender;
+    import std.math  : isFinite;
 
     auto json = appender!string();
+
+    // ---- the `"nonFinite"` signal (task 1550) ----------------------------
+    // `jsonNum` keeps the BODY parseable by printing `null` for a coordinate
+    // that is not a number. On its own that is honest but mute: a client sees
+    // a hole and cannot tell a corrupt mesh from a serialiser bug. So this
+    // provider counts what it replaced and reports the FIRST one, in a fixed
+    // walk order — vertices by ascending index with component 0/1/2 = x/y/z,
+    // then surfaces — so the report is reproducible rather than
+    // whichever-came-first.
+    //
+    // The block is emitted ALWAYS, `{"count":0}` on a healthy mesh included.
+    // That is deliberate and is what makes it testable: a change that drops
+    // the block reddens the HEALTHY case too, not only the poisoned one.
+    //
+    // The counting lives here and not in `jsonNum` on purpose — the helper is
+    // a pure function of two arguments, shared by three layers, and giving it
+    // a counter would give it state and a lifetime.
+    size_t nonFiniteCount;
+    bool   nfHaveFirst;
+    string nfArray;
+    size_t nfIndex;
+    size_t nfComponent;
+    string nfValue;
+
+    void noteNonFinite(string arr, size_t idx, size_t comp, double v) {
+        ++nonFiniteCount;
+        if (nfHaveFirst) return;
+        nfHaveFirst  = true;
+        nfArray      = arr;
+        nfIndex      = idx;
+        nfComponent  = comp;
+        nfValue      = format("%s", v);   // "inf" / "-inf" / "nan" / "-nan"
+    }
+
     json ~= "{";
     json ~= format("\"vertexCount\": %d, ", m.vertices.length);
     json ~= format("\"edgeCount\": %d, ", m.edges.length);
@@ -101,8 +137,14 @@ string meshToJsonDetailed(ref const(Mesh) m) {
     json ~= "\"vertices\": [";
     for (size_t i = 0; i < m.vertices.length; ++i) {
         if (i > 0) json ~= ", ";
-        json ~= format("[%f, %f, %f]",
-                       m.vertices[i].x, m.vertices[i].y, m.vertices[i].z);
+        immutable double vx = m.vertices[i].x;
+        immutable double vy = m.vertices[i].y;
+        immutable double vz = m.vertices[i].z;
+        if (!isFinite(vx)) noteNonFinite("vertices", i, 0, vx);
+        if (!isFinite(vy)) noteNonFinite("vertices", i, 1, vy);
+        if (!isFinite(vz)) noteNonFinite("vertices", i, 2, vz);
+        json ~= format("[%s, %s, %s]",
+                       jsonNum(vx, "%f"), jsonNum(vy, "%f"), jsonNum(vz, "%f"));
     }
     json ~= "], ";
 
@@ -175,12 +217,21 @@ string meshToJsonDetailed(ref const(Mesh) m) {
         // `const(Mesh)` it arrives as `const(string)`, which `replace` will
         // not deduce a template argument from.
         string name = s.name;
+        // Component numbering, fixed so the `"nonFinite"` report is stable:
+        // 0/1/2 = baseColor x/y/z, 3 = diffuseAmount, 4 = specularAmount,
+        // 5 = glossiness, 6 = opacity.
+        immutable double[7] sv = [s.baseColor.x, s.baseColor.y, s.baseColor.z,
+                                  s.diffuseAmount, s.specularAmount,
+                                  s.glossiness, s.opacity];
+        foreach (ci, sc; sv)
+            if (!isFinite(sc)) noteNonFinite("surfaces", i, ci, sc);
         json ~= format(
-            "{\"name\":\"%s\",\"baseColor\":[%f,%f,%f],\"diffuseAmount\":%f," ~
-            "\"specularAmount\":%f,\"glossiness\":%f,\"opacity\":%f}",
+            "{\"name\":\"%s\",\"baseColor\":[%s,%s,%s],\"diffuseAmount\":%s," ~
+            "\"specularAmount\":%s,\"glossiness\":%s,\"opacity\":%s}",
             jsonEsc(name),
-            s.baseColor.x, s.baseColor.y, s.baseColor.z,
-            s.diffuseAmount, s.specularAmount, s.glossiness, s.opacity);
+            jsonNum(sv[0], "%f"), jsonNum(sv[1], "%f"), jsonNum(sv[2], "%f"),
+            jsonNum(sv[3], "%f"), jsonNum(sv[4], "%f"), jsonNum(sv[5], "%f"),
+            jsonNum(sv[6], "%f"));
     }
     json ~= "], ";
     // PADDING RULE (was the caller's `matCopy`): one entry per FACE, 0 where
@@ -231,6 +282,16 @@ string meshToJsonDetailed(ref const(Mesh) m) {
         json ~= "]}";
     }
     json ~= "]}";
+
+    // The signal, always present (see the block comment at the top of this
+    // function). `value` is a STRING and not a number precisely because the
+    // thing it reports cannot be written as a JSON number.
+    json ~= format(", \"nonFinite\": {\"count\": %d", nonFiniteCount);
+    if (nfHaveFirst)
+        json ~= format(", \"first\": {\"array\": \"%s\", \"index\": %d, "
+                       ~ "\"component\": %d, \"value\": \"%s\"}",
+                       jsonEsc(nfArray), nfIndex, nfComponent, jsonEsc(nfValue));
+    json ~= "}";
 
     json ~= "}";
 

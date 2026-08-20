@@ -34,6 +34,7 @@ import std.math : tan, sin, cos, sqrt, PI, abs;
 import std.conv;
 import std.json : JSONValue, JSONType;
 import http_server;
+import json_num : jsonNum;
 import log : logInfo, logWarn, logError;
 import prefs;
 import ImGui = d_imgui;
@@ -309,6 +310,7 @@ private string scalarArgToString(JSONValue v) {
     import std.conv   : to;
     switch (v.type) {
         case JSONType.string:   return v.str;
+        // json-num-exempt: builds an argstring, not a JSON body
         case JSONType.float_:   return format("%.9g", v.floating);
         case JSONType.integer:  return to!string(v.integer);
         case JSONType.uinteger: return to!string(v.uinteger);
@@ -705,13 +707,17 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
                 float[16] m = x.composedMatrix();
                 auto xb = appender!string();
                 xb.put(format(
-                    `{"pos":[%.6f,%.6f,%.6f],"rot":[%.6f,%.6f,%.6f],` ~
-                    `"scl":[%.6f,%.6f,%.6f],"pivot":[%.6f,%.6f,%.6f],"matrix":[`,
-                    x.pos.x, x.pos.y, x.pos.z, x.rot.x, x.rot.y, x.rot.z,
-                    x.scl.x, x.scl.y, x.scl.z, x.pivot.x, x.pivot.y, x.pivot.z));
+                    `{"pos":[%s,%s,%s],"rot":[%s,%s,%s],` ~
+                    `"scl":[%s,%s,%s],"pivot":[%s,%s,%s],"matrix":[`,
+                    jsonNum(x.pos.x, "%.6f"), jsonNum(x.pos.y, "%.6f"),
+                    jsonNum(x.pos.z, "%.6f"), jsonNum(x.rot.x, "%.6f"),
+                    jsonNum(x.rot.y, "%.6f"), jsonNum(x.rot.z, "%.6f"),
+                    jsonNum(x.scl.x, "%.6f"), jsonNum(x.scl.y, "%.6f"),
+                    jsonNum(x.scl.z, "%.6f"), jsonNum(x.pivot.x, "%.6f"),
+                    jsonNum(x.pivot.y, "%.6f"), jsonNum(x.pivot.z, "%.6f")));
                 foreach (mi; 0 .. 16) {
                     if (mi > 0) xb.put(",");
-                    xb.put(format("%.6f", m[mi]));
+                    xb.put(jsonNum(m[mi], "%.6f"));
                 }
                 xb.put("]}");
                 // Task 0082: find the parent layer's index (-1 = no parent).
@@ -941,14 +947,15 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
             auto pl = resolvePlacementFor(document, lyr, preset, isOrtho);
 
             string vec(Vec3 v) {
-                return format("[%.6f,%.6f,%.6f]", v.x, v.y, v.z);
+                return format("[%s,%s,%s]", jsonNum(v.x, "%.6f"),
+                              jsonNum(v.y, "%.6f"), jsonNum(v.z, "%.6f"));
             }
             return format(
                 `{"index":%d,"cell":%d,"cellPreset":%s,"cellOrtho":%s,`
                 ~ `"drawn":%s,"source":%s,"clipWidth":%d,"clipHeight":%d,`
                 ~ `"center":%s,"halfU":%s,"halfV":%s,`
                 ~ `"flipU":%s,"invert":%s,"smooth":%s,`
-                ~ `"brightness":%.6f,"contrast":%.6f,"transparency":%.6f,`
+                ~ `"brightness":%s,"contrast":%s,"transparency":%s,`
                 ~ `"sourcePath":%s}`,
                 index, cell, JSONValue(preset.to!string).toString(),
                 isOrtho ? "true" : "false",
@@ -958,7 +965,8 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
                 pl.flipU  ? "true" : "false",
                 pl.invert ? "true" : "false",
                 pl.smooth ? "true" : "false",
-                pl.brightness, pl.contrast, pl.transparency,
+                jsonNum(pl.brightness, "%.6f"), jsonNum(pl.contrast, "%.6f"),
+                jsonNum(pl.transparency, "%.6f"),
                 JSONValue(pl.sourcePath).toString());
         });
     }
@@ -1015,7 +1023,7 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 mb.put("[");
                 foreach (i; 0 .. 16) {
                     if (i > 0) mb.put(",");
-                    mb.put(format("%.6f", meshModel[i]));
+                    mb.put(jsonNum(meshModel[i], "%.6f"));
                 }
                 mb.put("]");
                 modelStr = mb.data;
@@ -1050,8 +1058,10 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                         glBindBuffer(GL_ARRAY_BUFFER, 0);
                         foreach (i; 0 .. count) {
                             if (i > 0) sink.put(",");
-                            sink.put(format("[%.6f,%.6f,%.6f]",
-                                d[i*3 + 0], d[i*3 + 1], d[i*3 + 2]));
+                            sink.put(format("[%s,%s,%s]",
+                                jsonNum(d[i*3 + 0], "%.6f"),
+                                jsonNum(d[i*3 + 1], "%.6f"),
+                                jsonNum(d[i*3 + 2], "%.6f")));
                         }
                     }
                     sink.put("]");
@@ -1075,8 +1085,10 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             buf.put(`,"positions":[`);
             foreach (i; 0 .. vertCount) {
                 if (i > 0) buf.put(",");
-                buf.put(format("[%.6f,%.6f,%.6f]",
-                    data[i * 6 + 0], data[i * 6 + 1], data[i * 6 + 2]));
+                buf.put(format("[%s,%s,%s]",
+                    jsonNum(data[i * 6 + 0], "%.6f"),
+                    jsonNum(data[i * 6 + 1], "%.6f"),
+                    jsonNum(data[i * 6 + 2], "%.6f")));
             }
             buf.put(`],"model":`);
             buf.put(modelStr);
@@ -1107,23 +1119,28 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 // it can no longer SEPARATE the two unlit styles, which is
                 // exactly why `shading` joins it rather than replaces it.
                 return format(
-                    `{"drawFaces":%s,"facesLit":%s,"shading":"%s","dim":%.6f,` ~
-                    `"fillColor":[%.6f,%.6f,%.6f],` ~
-                    `"drawWire":%s,"wireAlpha":%.6f,` ~
-                    `"wireColor":[%.6f,%.6f,%.6f],"drawVerts":%s}`,
+                    `{"drawFaces":%s,"facesLit":%s,"shading":"%s","dim":%s,` ~
+                    `"fillColor":[%s,%s,%s],` ~
+                    `"drawWire":%s,"wireAlpha":%s,` ~
+                    `"wireColor":[%s,%s,%s],"drawVerts":%s}`,
                     p.drawFaces ? "true" : "false",
                     p.facesLit  ? "true" : "false",
                     p.shading.to!string,
-                    p.dim,
-                    p.fillColor[0], p.fillColor[1], p.fillColor[2],
+                    jsonNum(p.dim, "%.6f"),
+                    jsonNum(p.fillColor[0], "%.6f"),
+                    jsonNum(p.fillColor[1], "%.6f"),
+                    jsonNum(p.fillColor[2], "%.6f"),
                     p.drawWire  ? "true" : "false",
-                    p.wireAlpha,
-                    p.wireColor[0], p.wireColor[1], p.wireColor[2],
+                    jsonNum(p.wireAlpha, "%.6f"),
+                    jsonNum(p.wireColor[0], "%.6f"),
+                    jsonNum(p.wireColor[1], "%.6f"),
+                    jsonNum(p.wireColor[2], "%.6f"),
                     p.drawVerts ? "true" : "false");
             }
             static string stateJson(in DisplayState s) {
-                return format(`{"style":"%s","wire":"%s","wireAlpha":%.6f}`,
-                    s.style.to!string, s.wire.to!string, s.wireAlpha);
+                return format(`{"style":"%s","wire":"%s","wireAlpha":%s}`,
+                    s.style.to!string, s.wire.to!string,
+                    jsonNum(s.wireAlpha, "%.6f"));
             }
 
             // Task 0570: the grid terms, per cell, straight from the
@@ -1139,11 +1156,13 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 // site calls, not recomputed here — a reporter with its own
                 // copy of a formula is how a dump starts lying.
                 return format(
-                    `{"mask":%d,"pixelSize":%.9g,"size":%.9g,"subStep":%.9g,` ~
-                    `"cellPixels":%.9g,"fadeRadius":%.9g}`,
-                    g_viewGrid.rungMask, px, gs, ss,
-                    px > 0 ? gs / px : 0.0f,
-                    viewGridFadeRadius(gs > 0 ? gs : 1.0f));
+                    `{"mask":%d,"pixelSize":%s,"size":%s,"subStep":%s,` ~
+                    `"cellPixels":%s,"fadeRadius":%s}`,
+                    g_viewGrid.rungMask,
+                    jsonNum(px, "%.9g"), jsonNum(gs, "%.9g"),
+                    jsonNum(ss, "%.9g"),
+                    jsonNum(px > 0 ? gs / px : 0.0f, "%.9g"),
+                    jsonNum(viewGridFadeRadius(gs > 0 ? gs : 1.0f), "%.9g"));
             }
 
             // Task 1090: WHICH weight map is current, and whether it resolves.
@@ -1451,12 +1470,14 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             }
 
             return format(
-                `{"hit":%s,"point":[%.6f,%.6f,%.6f],"normal":[%.6f,%.6f,%.6f],`
+                `{"hit":%s,"point":[%s,%s,%s],"normal":[%s,%s,%s],`
               ~ `"layer":%d,"face":%d,"nearestVert":%d,"nearestEdge":%d,`
               ~ `"targetKind":"%s","targetVert":%d,"targetEdge":%d}`,
                 hp.hit ? "true" : "false",
-                hp.point.x, hp.point.y, hp.point.z,
-                hp.normal.x, hp.normal.y, hp.normal.z,
+                jsonNum(hp.point.x, "%.6f"), jsonNum(hp.point.y, "%.6f"),
+                jsonNum(hp.point.z, "%.6f"),
+                jsonNum(hp.normal.x, "%.6f"), jsonNum(hp.normal.y, "%.6f"),
+                jsonNum(hp.normal.z, "%.6f"),
                 hp.layer, hp.face, hp.nearestVert, hp.nearestEdge,
                 kindToken, tgt.vert, tgt.edge);
         });
@@ -1752,7 +1773,8 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             if (auto p = vts.get!SnapPacket())         snapPkt = *p;
 
             void putVec3(Vec3 v) {
-                buf.put(format(`[%f,%f,%f]`, v.x, v.y, v.z));
+                buf.put(format(`[%s,%s,%s]`, jsonNum(v.x, "%f"),
+                               jsonNum(v.y, "%f"), jsonNum(v.z, "%f")));
             }
             void putVec3List(Vec3[] list) {
                 buf.put("[");
@@ -1921,9 +1943,22 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
                             // custom cubic-Bezier shapes can overshoot [0,1].
                             // Guard so the emitter never produces nan/inf/out-of-
                             // range (invalid JSON / broken wire contract).
+                            // Task 1550 looked at replacing this with the
+                            // tree's new `jsonNum` (non-finite -> `null`) and
+                            // DECIDED AGAINST IT, so the divergence is a
+                            // decision and not an oversight. A falloff weight
+                            // has a DEFINED range, [0,1], in which 0 means "no
+                            // influence" — and the same guard clamps the
+                            // out-of-range overshoot right below. A COORDINATE
+                            // has no such range, which is why 0 is a lie
+                            // there and `null` is the answer for the
+                            // serialisers 1550 did convert. The [0,1] contract
+                            // is frozen by task 0342's fixtures; changing it
+                            // is not in 1550's scope.
                             if (!isFinite(w)) w = 0.0f;
                             else if (w < 0.0f) w = 0.0f;
                             else if (w > 1.0f) w = 1.0f;
+                            // json-num-exempt: clamped to the [0,1] weight contract above, task 1550 decision 4.1
                             buf.put(format(`%f`, w));
                         }
                         buf.put(`]`);
@@ -2058,15 +2093,18 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             buf.put(format(
                 `{"snapped":%s,"highlighted":%s,"targetType":%d,`
               ~ `"targetIndex":%d,"targetSource":%d,"constraintType":%d,`
-              ~ `"worldPos":[%f,%f,%f],"highlightPos":[%f,%f,%f]}`,
+              ~ `"worldPos":[%s,%s,%s],"highlightPos":[%s,%s,%s]}`,
                 sr.snapped ? "true" : "false",
                 sr.highlighted ? "true" : "false",
                 cast(int)sr.targetType,
                 sr.targetIndex,
                 sr.targetSource,
                 cast(int)sr.constraintType,
-                sr.worldPos.x, sr.worldPos.y, sr.worldPos.z,
-                sr.highlightPos.x, sr.highlightPos.y, sr.highlightPos.z));
+                jsonNum(sr.worldPos.x, "%f"), jsonNum(sr.worldPos.y, "%f"),
+                jsonNum(sr.worldPos.z, "%f"),
+                jsonNum(sr.highlightPos.x, "%f"),
+                jsonNum(sr.highlightPos.y, "%f"),
+                jsonNum(sr.highlightPos.z, "%f")));
             return buf.data;
         });
 
@@ -2082,15 +2120,18 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             auto sr = g_lastSnap;
             buf.put(format(
                 `{"snapped":%s,"highlighted":%s,"targetType":%d,`
-              ~ `"targetIndex":%d,"targetSource":%d,"worldPos":[%f,%f,%f],`
-              ~ `"highlightPos":[%f,%f,%f]}`,
+              ~ `"targetIndex":%d,"targetSource":%d,"worldPos":[%s,%s,%s],`
+              ~ `"highlightPos":[%s,%s,%s]}`,
                 sr.snapped ? "true" : "false",
                 sr.highlighted ? "true" : "false",
                 cast(int)sr.targetType,
                 sr.targetIndex,
                 sr.targetSource,
-                sr.worldPos.x, sr.worldPos.y, sr.worldPos.z,
-                sr.highlightPos.x, sr.highlightPos.y, sr.highlightPos.z));
+                jsonNum(sr.worldPos.x, "%f"), jsonNum(sr.worldPos.y, "%f"),
+                jsonNum(sr.worldPos.z, "%f"),
+                jsonNum(sr.highlightPos.x, "%f"),
+                jsonNum(sr.highlightPos.y, "%f"),
+                jsonNum(sr.highlightPos.z, "%f")));
             return buf.data;
         });
 
@@ -2171,9 +2212,10 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             bool hit = (dx*dx + dy*dy + dz*dz) > 1e-12f;
 
             buf.put(format(
-                `{"projected":%s,"resultPos":[%f,%f,%f]}`,
+                `{"projected":%s,"resultPos":[%s,%s,%s]}`,
                 hit ? "true" : "false",
-                result.x, result.y, result.z));
+                jsonNum(result.x, "%f"), jsonNum(result.y, "%f"),
+                jsonNum(result.z, "%f")));
             return buf.data;
         });
 
@@ -2214,10 +2256,12 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             // present in the JSON output (prevents integer-type parse on
             // values like 0.0, 1.0, 2.0 where %g would strip the point).
             return format(
-                `{"enabled":true,"value":[%f,%f,%f],"tangent":[%f,%f,%f],"length":%f}`,
-                val.x, val.y, val.z,
-                tan.x, tan.y, tan.z,
-                len);
+                `{"enabled":true,"value":[%s,%s,%s],"tangent":[%s,%s,%s],"length":%s}`,
+                jsonNum(val.x, "%f"), jsonNum(val.y, "%f"),
+                jsonNum(val.z, "%f"),
+                jsonNum(tan.x, "%f"), jsonNum(tan.y, "%f"),
+                jsonNum(tan.z, "%f"),
+                jsonNum(len, "%f"));
         });
 
         // Helper: inject _positional args from the argstring pipeline into

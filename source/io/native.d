@@ -425,6 +425,33 @@ unittest {
 /// Serialize one `Mesh` to the shared `.v3d` "mesh" sub-object (vertices /
 /// faces / subpatch / surfaces / faceMaterial / per-corner uvMaps). The same
 /// codec serves every layer's mesh sub-object.
+/// Pre-flight for `meshToJson`: the index and component name of the first
+/// vertex component that is not a finite number, or `-1` in `vi` when the
+/// mesh is clean.
+///
+/// WHY IT EXISTS (task 1550). `JSONValue(float.infinity).toString()` THROWS
+/// ("Cannot encode Infinity"), so the `.v3d` writer already failed loudly on a
+/// corrupt mesh rather than writing a file that is not JSON — which is the
+/// right half of the behaviour and is why this task does not change it. What
+/// it did not do is say WHICH vertex, and a std.json exception surfacing from
+/// a save is not a message anyone can act on. This names the vertex before a
+/// single byte is written.
+///
+/// The two halves of 1550 pull in opposite directions ON PURPOSE: `/api/model`
+/// is a DIAGNOSTIC read that must stay readable when the mesh is broken, so it
+/// prints `null` and reports a count; `.v3d` is the document of record, where
+/// a silent hole would be a lie about what the user saved, so it refuses.
+void firstNonFiniteVertex(ref const Mesh mesh, out long vi, out string comp)
+{
+    import std.math : isFinite;
+    vi = -1;
+    foreach (i, v; mesh.vertices) {
+        if (!isFinite(v.x)) { vi = cast(long) i; comp = "x"; return; }
+        if (!isFinite(v.y)) { vi = cast(long) i; comp = "y"; return; }
+        if (!isFinite(v.z)) { vi = cast(long) i; comp = "z"; return; }
+    }
+}
+
 JSONValue meshToJson(ref const Mesh mesh)
 {
     JSONValue m;
@@ -904,6 +931,29 @@ bool writeV3d(ref const Document document, string path)
         lj["channels"] = channelsToJson(layer);
 
         // --- payload blocks, one per payload capability ---------------------
+        // Pre-flight (task 1550): name the offending vertex BEFORE std.json
+        // throws its own "Cannot encode Infinity" from somewhere inside the
+        // encoder, where nothing identifies the mesh, the layer or the index.
+        //
+        // IT THROWS, and that is the point of the phase. The old failure was
+        // already HONEST — std.json refused, `writeV3d` propagated, the
+        // command bridge turned the exception into `{"status":"error"}` and
+        // no file appeared. Only the message was useless. Returning `false`
+        // here instead would have downgraded that to a silent `{"status":
+        // "ok"}` with the file merely absent (`FileSave` threads the return
+        // value into the dirty flag, not into its own result), i.e. it would
+        // have traded a bad message for a lost failure. Measured, not
+        // assumed: source/http_server.d's command bridge is the `catch
+        // (Exception e) { resp.error = e.msg; }` that makes this visible.
+        if (layer.hasMesh) {
+            long nfVert; string nfComp;
+            firstNonFiniteVertex(layer.meshRef(), nfVert, nfComp);
+            if (nfVert >= 0)
+                throw new Exception(format("refusing to write %s: item %d "
+                    ~ "(\"%s\") vertex %d component %s is not finite, and a "
+                    ~ "non-finite number has no JSON encoding. Nothing was "
+                    ~ "written.", path, li, layer.name, nfVert, nfComp));
+        }
         if (layer.hasMesh)  lj["mesh"]  = meshToJson(layer.meshRef());
         if (layer.hasImage) lj["image"] = imageToJson(layer.imageOrNull(), path);
 

@@ -60,11 +60,20 @@ bool presetBasis(ViewPreset p, out Vec3 right, out Vec3 up) @safe pure nothrow @
 /// roughly seven of the mantissa's bits — fine for an angle a human reads, not
 /// fine for the matrix that IS the camera, where a lossy round trip means the
 /// horizon quietly tilts a little on every save and load.
+/// The nine values go out through `jsonNum` (task 1550) so a non-finite
+/// orientation prints `null` instead of the bare token `nan`, which is not
+/// JSON. The `%.9g` is handed over EXPLICITLY at every one of the nine —
+/// `jsonNum` has no default specifier, exactly so this precision cannot be
+/// erased by a call that forgets to state it.
 string orientationToJson(Orientation o) {
     import std.format : format;
-    return format("[%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g]",
-                  o.m[0], o.m[1], o.m[2], o.m[3], o.m[4],
-                  o.m[5], o.m[6], o.m[7], o.m[8]);
+    import json_num   : jsonNum;
+    return format("[%s,%s,%s,%s,%s,%s,%s,%s,%s]",
+                  jsonNum(o.m[0], "%.9g"), jsonNum(o.m[1], "%.9g"),
+                  jsonNum(o.m[2], "%.9g"), jsonNum(o.m[3], "%.9g"),
+                  jsonNum(o.m[4], "%.9g"), jsonNum(o.m[5], "%.9g"),
+                  jsonNum(o.m[6], "%.9g"), jsonNum(o.m[7], "%.9g"),
+                  jsonNum(o.m[8], "%.9g"));
 }
 
 /// Parse what `orientationToJson` wrote. Returns false (leaving `out_`
@@ -633,19 +642,22 @@ class View {
     /// precision, so every existing reader is unaffected.
     string toJsonWith(Vec3 f, float d, Orientation o) const {
         import std.format : format;
+        import json_num   : jsonNum;
         Viewport vp = viewportWith(f, d, o);
         float a, e, r;
         o.toAngles(a, e, r);
         return format(
-            `{"azimuth":%f,"elevation":%f,"distance":%f,"roll":%f,` ~
+            `{"azimuth":%s,"elevation":%s,"distance":%s,"roll":%s,` ~
             `"orientation":%s,` ~
-            `"focus":{"x":%f,"y":%f,"z":%f},` ~
-            `"eye":{"x":%f,"y":%f,"z":%f},` ~
+            `"focus":{"x":%s,"y":%s,"z":%s},` ~
+            `"eye":{"x":%s,"y":%s,"z":%s},` ~
             `"width":%d,"height":%d,"vpX":%d,"vpY":%d}`,
-            a, e, d, r,
+            jsonNum(a, "%f"), jsonNum(e, "%f"), jsonNum(d, "%f"),
+            jsonNum(r, "%f"),
             orientationToJson(o),
-            f.x, f.y, f.z,
-            vp.eye.x, vp.eye.y, vp.eye.z,
+            jsonNum(f.x, "%f"), jsonNum(f.y, "%f"), jsonNum(f.z, "%f"),
+            jsonNum(vp.eye.x, "%f"), jsonNum(vp.eye.y, "%f"),
+            jsonNum(vp.eye.z, "%f"),
             width, height, x, y);
     }
 
