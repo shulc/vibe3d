@@ -69,6 +69,7 @@ import std.json;
 import std.exception : enforce;
 import std.format : format;
 import std.conv : to;
+import std.stdio  : writefln;
 import core.thread : Thread;
 import core.time   : msecs;
 
@@ -303,6 +304,19 @@ void checkMode(string mode, string indices, string what) {
                   what, a.frames, b.frames));
 
     immutable long delta = b.alloc - a.alloc;
+
+    // Print the two readings on EVERY run, not only on the failing one.
+    // This cell has now been green here and red on the CI runner three times
+    // over, with byte-identical numbers on the red side (129168 -> 197440),
+    // which rules out load and scheduling noise and means the two machines
+    // genuinely take different draw paths. Nothing recorded what the GREEN
+    // side measures, so every comparison between them has been a guess. A
+    // reading costs one line of output and turns the next run on either
+    // machine into the measurement.
+    writefln("[alloc-scaling] %s: n=%d %d B/frame -> n=%d %d B/frame "
+             ~ "(delta %d B, limit %d)",
+             what, kSmall, a.alloc, kLarge, b.alloc, delta, kMaxDelta);
+
     assert(delta <= kMaxDelta,
            format("%s: per-frame GC allocation grew by %d B when the mesh went "
                   ~ "from n=%d to n=%d (%d -> %d B/frame). The draw path is "
