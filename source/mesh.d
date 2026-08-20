@@ -1868,6 +1868,35 @@ struct Mesh {
         return idx;
     }
 
+    /// Overwrite EVERY vertex position from `src`, changing nothing else, and
+    /// publish the write as `MeshEditScope.Position` — a POSITION-class change
+    /// and deliberately NOT a Geometry one, so `topologyVersion` does not move.
+    ///
+    /// That last clause is the whole point of the method, not an incidental
+    /// property (task 1620). `topologyVersion` is the key the subpatch preview
+    /// reads to decide whether its index space still holds; a bump makes it
+    /// drop `active` and re-derive, which on a per-frame drag is the flicker
+    /// between the cage and the subdivided surface. The interactive
+    /// topology-creating tools use this to land a re-run of their kernel whose
+    /// topology is IDENTICAL to the one already standing — see
+    /// `tools/edit/preview_rebuild.d`, which owns the decision about when a
+    /// re-run is in fact identical and verifies it rather than assuming it.
+    ///
+    /// Refuses (returns false, writes nothing) on a length mismatch: this
+    /// method carries no topology, so a differently-sized source is a caller
+    /// error, and a partial write would leave a mesh whose positions and
+    /// topology disagree.
+    ///
+    /// No tracker hook, matching the other `commitChange(Position)` sites: the
+    /// operation log records vertex MOVES through the transform commands'
+    /// own entries, and the interactive preview drag runs batchless.
+    bool adoptVertexPositions(in Vec3[] src) {
+        if (src.length != vertices.length) return false;
+        vertices[] = src[];
+        commitChange(MeshEditScope.Position);
+        return true;
+    }
+
     /// True once a weld/merge/reduce pass has left the mesh with no
     /// vertices or no faces. The `weldVerticesByMask` family
     /// (`weldVertexPair`, `reduce`, and `mirrorFacesPlane`'s weld pass) can
@@ -15233,6 +15262,25 @@ struct SubpatchPreview {
     ulong         sourceTopologyVersion = ulong.max;
     int           depth                 = -1;
 
+    /// How many times this preview has BUILT a subdivided surface for the cage
+    /// (task 1620) — the synchronous `rebuild` path that reaches OpenSubdiv,
+    /// plus every asynchronous `dispatchBuild`. Those are the events that
+    /// discard the preview's INDEX SPACE, and in the async case the one that
+    /// drops `active` outright, i.e. what a viewer sees as the surface
+    /// snapping back to the cage.
+    ///
+    /// Three things deliberately do NOT count, because none of them derives
+    /// anything: the position-only fast path in `rebuildIfStale` (it keeps the
+    /// index space and only re-evaluates limit positions), a `rebuild` on a
+    /// cage with no subpatch faces, and a `rebuild` at depth <= 0. The last
+    /// two mean the preview is OFF — a cage that can never dispatch, which is
+    /// exactly the rig on which a churn assertion would be vacuous.
+    ///
+    /// It exists so a test can assert on the flicker's proximate cause
+    /// instead of on a screenshot: a drag that changes no topology must leave
+    /// this number where it was. Monotone, never reset.
+    ulong         topologyBuilds;
+
     /// Reverse-lookup: for each CAGE vertex index, the preview-mesh
     /// vertex that carries its smoothed position (`uint.max` if no
     /// preview vert traces back to this cage vert). Built alongside
@@ -15527,6 +15575,7 @@ struct SubpatchPreview {
         sourceTopologyVersion = source.topologyVersion;
 
         osdAccel.joinInFlightHook = &this.joinInFlight;
+        ++topologyBuilds;      // task 1620 — see the field's doc comment
         ++buildGeneration;
         pendingKey   = computeStencilKey(source, d);
         buildPending = true;
@@ -15928,6 +15977,12 @@ struct SubpatchPreview {
             return;
         }
 
+        // Task 1620 — THE INDEX SPACE IS DISCARDED HERE, which is the event
+        // the counter is about. Counted after the two branches above, which
+        // derive nothing: `d <= 0` (Tab / depth zero) and a cage with no
+        // subpatch faces both leave the preview off, and neither can happen
+        // mid-drag. See the field's doc comment.
+        ++topologyBuilds;
         cageVertPreview.length = 0;
         osdAccel.clear();
 

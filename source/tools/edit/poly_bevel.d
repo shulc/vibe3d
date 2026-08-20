@@ -19,6 +19,8 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
+import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
+    PreviewRebuildCounts;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -63,6 +65,9 @@ private:
     bool         active;
     bool         built;
     MeshSnapshot before;
+    // The restore-and-rebuild seam (task 1620) — see
+    // tools/edit/preview_rebuild.d.
+    PreviewRebuild preview_;
     Viewport     cachedVp;
 
     // LOCAL (task 0645): `anchor` / `baseAnchor` are mesh-space points and
@@ -154,6 +159,7 @@ public:
         dragPart = -1;
         inset_   = 0.0f;
         shift_   = 0.0f;
+        preview_.reset();          // a new clean cage ⇒ a new topology key
         before   = MeshSnapshot.capture(*mesh);
         computeGizmoFrame();
     }
@@ -165,6 +171,7 @@ public:
         built      = false;
         dragPart   = -1;
         gizmoValid = false;
+        preview_.reset();          // drop the clean-cage scratch with the session
         toolHandles.clearHaul();
     }
 
@@ -199,6 +206,17 @@ public:
     }
     override void evaluate() {}
 
+    /// Test/diagnostic seam (task 1620): how the preview-rebuild seam split
+    /// this session's rebuilds. `fullRebuilds` are the restore-and-rebuild
+    /// frames (a real topology change, and the ones that legitimately cost a
+    /// subpatch dispatch), `placements` the position-only ones, `keyMisses`
+    /// the frames where the declared topology key claimed "unchanged" and the
+    /// produced topology disagreed. A correct key never misses — see
+    /// tools/edit/preview_rebuild.d.
+    public PreviewRebuildCounts previewRebuildCounts() const {
+        return preview_.counts();
+    }
+
     // Read-only test/introspection seams (mirror edge.bevel). The handle
     // registry stays the hit-testing authority; these expose its drawn state
     // + the tool's live params to /api/tool/handles + /api/tool/state.
@@ -225,6 +243,9 @@ public:
             before.restore(*mesh);
             built = false;
         }
+        // This path rebuilds the live mesh behind the seam's back, so the
+        // key it remembers no longer describes what is standing.
+        preview_.reset();
         if (mesh.faces.length == 0) return false;
         if (inset_ == 0.0f && shift_ == 0.0f) return true;
         auto mask = currentMask();
@@ -423,14 +444,27 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        before.restore(*mesh);
-        if (inset_ == 0.0f && shift_ == 0.0f) {
-            built = false;
-            refreshCaches();
-            return;
-        }
-        auto mask = currentMask();
-        size_t n = mesh.bevelFacesByMask(mask, inset_, shift_, group_, segments_, square_);
+        // TOPOLOGY KEY (task 1620): the operand mask, `segments`, `group`,
+        // `square` — and THE ZERO CROSSING.
+        //
+        // `inset_ == 0 && shift_ == 0` is the kernel-side "build nothing"
+        // branch below; dragging either handle down through zero and back
+        // makes the bevel geometry disappear and reappear, so a key over the
+        // non-dragged parameters ALONE would sit still across two real
+        // topology changes. The degenerate predicate is therefore a field of
+        // the key. `group` and `square` change the emitted face set outright;
+        // `segments` is the ring count.
+        size_t n = preview_.run(*mesh, before,
+            (ref Mesh cage) => PreviewTopologyKey.make(
+                                   cage.operandFaceMask(),
+                                   inset_ == 0.0f && shift_ == 0.0f,
+                                   segments_, group_ ? 1 : 0, square_ ? 1 : 0),
+            (ref Mesh target) {
+                if (inset_ == 0.0f && shift_ == 0.0f) return cast(size_t)0;
+                return target.bevelFacesByMask(target.operandFaceMask(),
+                                               inset_, shift_, group_,
+                                               segments_, square_);
+            });
         built = (n != 0);
         refreshCaches();
     }
@@ -446,6 +480,7 @@ private:
 
     void cancelLiveEdit() {
         if (built && before.filled) before.restore(*mesh);
+        preview_.reset();
         built    = false;
         dragPart = -1;
         toolHandles.clearHaul();

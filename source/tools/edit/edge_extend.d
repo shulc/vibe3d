@@ -15,6 +15,8 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
+import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
+    PreviewRebuildCounts;
 import mesh_edit_delta : MeshEditTracker, MeshEditDelta, MeshEditScope,
     undoTrackerEnabled;
 import tools.transform.xfrm_transform : XfrmTransformTool;
@@ -151,6 +153,10 @@ private:
     bool         active;           // between activate() and deactivate()
     bool         built;            // true once the kernel built ridge topology
     MeshSnapshot before;           // captured at activate() (geometry + selection)
+    // The restore-and-rebuild seam (task 1620). Owns the split between a
+    // topology-changing rebuild and a position-only one; see
+    // tools/edit/preview_rebuild.d for what the key must contain and why.
+    PreviewRebuild preview_;
     Viewport     cachedVp;
 
     // Which gizmo bank the shared arbiter handed this drag (mirrors how
@@ -323,6 +329,7 @@ public:
     private void reinitSession() {
         built    = false;
         dragBank = DragBank.None;
+        preview_.reset();          // a new clean cage ⇒ a new topology key
         before   = MeshSnapshot.capture(*mesh);
         // THE MOMENT the R/S pivot is captured (task 1610) — tool
         // initialisation, and nowhere else. It is not recomputed at drag
@@ -360,6 +367,7 @@ public:
         active   = false;
         built    = false;
         dragBank = DragBank.None;
+        preview_.reset();          // drop the clean-cage scratch with the session
     }
 
     // ----- History-coordination hooks (undo/redo migration P0) -------------
@@ -421,6 +429,17 @@ public:
     }
     override void evaluate() {}
 
+    /// Test/diagnostic seam (task 1620): how the preview-rebuild seam split
+    /// this session's rebuilds. `fullRebuilds` are the restore-and-rebuild
+    /// frames (a real topology change, and the ones that legitimately cost a
+    /// subpatch dispatch), `placements` the position-only ones, `keyMisses`
+    /// the frames where the declared topology key claimed "unchanged" and the
+    /// produced topology disagreed. A correct key never misses — see
+    /// tools/edit/preview_rebuild.d.
+    public PreviewRebuildCounts previewRebuildCounts() const {
+        return preview_.counts();
+    }
+
     // Read-only test/introspection seam (mirrors poly.bevel / edge.bevel):
     // exposes the tool's live params to /api/tool/state + the step-trace `tool`
     // block so a per-step differential (trace_diff) can route this headless
@@ -476,6 +495,9 @@ public:
             before.restore(*mesh);
             built = false;
         }
+        // This path rebuilds the live mesh behind the seam's back, so the
+        // key it remembers no longer describes what is standing.
+        preview_.reset();
         if (mesh.edges.length == 0) return false;
         auto mask = currentMask();
         // Headless pivot policy — the world ORIGIN, and that is REFERENCE-
@@ -756,11 +778,27 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        before.restore(*mesh);
-        auto mask = currentMask();
-        size_t n = mesh.extendEdgesByMask(mask, inset_, shift_,
-                                          offsetVec(), rotateVec(), scaleVec(),
-                                          segments_, livePivot());
+        // TOPOLOGY KEY (task 1620): the operand mask and `segments`, and
+        // nothing else. Those two decide how many ring vertices and how many
+        // bridge quads `extendEdgesByMask` creates; inset / shift / offset /
+        // rotate / scale / pivot only decide WHERE the created vertices sit
+        // (the kernel's own per-ring formula is
+        // `pivot + RS(E_src - pivot) + insetShiftDelta + (k/N)*offset`, with
+        // the created SET fixed by `exEdges` x `segments`).
+        //
+        // NO DEGENERATE TERM, and that is a reading of the kernel rather than
+        // an omission: extend's only early return is `exEdges.length == 0`,
+        // which is a function of the mask alone. `segments < 1` is clamped to
+        // 1 rather than refusing. So no position parameter of this tool can
+        // make geometry appear or disappear — unlike both bevels, whose zero
+        // crossing IS a topology change and is keyed as one.
+        size_t n = preview_.run(*mesh, before,
+            (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
+                                                       false, segments_),
+            (ref Mesh target) => target.extendEdgesByMask(
+                                     target.operandEdgeMask(), inset_, shift_,
+                                     offsetVec(), rotateVec(), scaleVec(),
+                                     segments_, livePivot()));
         built = (n != 0);
         refreshCaches();
     }
@@ -790,6 +828,7 @@ private:
                                    segments_, livePivot());
             auto delta = mesh.endEditBatch();
 
+            preview_.reset();      // the live mesh was rebuilt outside the seam
             refreshCaches();
 
             if (!delta.isEmpty) {
@@ -814,6 +853,7 @@ private:
     // restore the original cage, reset the drag state. Records nothing.
     void cancelLiveEdit() {
         before.restore(*mesh);
+        preview_.reset();
         refreshCaches();
         built       = false;
         dragBank    = DragBank.None;

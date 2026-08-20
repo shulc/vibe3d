@@ -19,6 +19,8 @@ import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
+import tools.edit.preview_rebuild : PreviewRebuild, PreviewTopologyKey,
+    PreviewRebuildCounts;
 
 import std.math : abs, sqrt;
 import std.json : JSONValue;
@@ -64,6 +66,9 @@ private:
     bool         active;
     bool         built;
     MeshSnapshot before;
+    // The restore-and-rebuild seam (task 1620) — see
+    // tools/edit/preview_rebuild.d.
+    PreviewRebuild preview_;
     Viewport     cachedVp;
 
     bool gizmoValid;
@@ -131,6 +136,7 @@ public:
         built    = false;
         dragPart = -1;
         width_   = 0.0f;
+        preview_.reset();          // a new clean cage ⇒ a new topology key
         before   = MeshSnapshot.capture(*mesh);
         computeGizmoFrame();
     }
@@ -142,6 +148,7 @@ public:
         built      = false;
         dragPart   = -1;
         gizmoValid = false;
+        preview_.reset();          // drop the clean-cage scratch with the session
         toolHandles.clearHaul();
     }
 
@@ -173,6 +180,17 @@ public:
     }
     override void evaluate() {}
 
+    /// Test/diagnostic seam (task 1620): how the preview-rebuild seam split
+    /// this session's rebuilds. `fullRebuilds` are the restore-and-rebuild
+    /// frames (a real topology change, and the ones that legitimately cost a
+    /// subpatch dispatch), `placements` the position-only ones, `keyMisses`
+    /// the frames where the declared topology key claimed "unchanged" and the
+    /// produced topology disagreed. A correct key never misses — see
+    /// tools/edit/preview_rebuild.d.
+    public PreviewRebuildCounts previewRebuildCounts() const {
+        return preview_.counts();
+    }
+
     override bool applyHeadless() {
         if (*editMode != EditMode.Edges) return false;
         // If a live drag (or an interactive-attr scrub) previously built
@@ -186,6 +204,9 @@ public:
             before.restore(*mesh);
             built = false;
         }
+        // This path rebuilds the live mesh behind the seam's back, so the
+        // key it remembers no longer describes what is standing.
+        preview_.reset();
         if (mesh.edges.length == 0) return false;
         if (width_ == 0.0f) return true;
         auto mask = currentMask();
@@ -339,14 +360,29 @@ private:
         // line: an early-out must record no sample, or `count` tallies
         // refusals as work. See Cat.toolPreview for the decomposition.
         auto zPreview = g_perf.scope_(Cat.toolPreview);
-        before.restore(*mesh);
-        if (width_ == 0.0f) {
-            built = false;
-            refreshCaches();
-            return;
-        }
-        auto mask = currentMask();
-        size_t n = mesh.bevelEdgesByMask(mask, width_, roundLevel_, widthMode_);
+        // TOPOLOGY KEY (task 1620): the operand mask, `roundLevel` (which is
+        // the bevel's segment count and therefore how many rings exist),
+        // `widthMode` — and THE ZERO CROSSING.
+        //
+        // `width_ == 0` is the kernel-side "build nothing" branch below, and
+        // dragging the width down through zero and back makes the bevel
+        // geometry disappear and reappear. A key of (mask, roundLevel) alone
+        // would not move across either crossing while the topology moved
+        // twice, so the degenerate predicate is part of the key rather than a
+        // case beside it. `widthMode` only reinterprets the width (a
+        // position quantity), but it is a dropdown that changes at human
+        // speed: keying it costs an occasional extra full rebuild and buys
+        // not having to prove that no width mode can collapse a face.
+        size_t n = preview_.run(*mesh, before,
+            (ref Mesh cage) => PreviewTopologyKey.make(cage.operandEdgeMask(),
+                                                       width_ == 0.0f,
+                                                       roundLevel_,
+                                                       widthMode_ ? 1 : 0),
+            (ref Mesh target) {
+                if (width_ == 0.0f) return cast(size_t)0;
+                return target.bevelEdgesByMask(target.operandEdgeMask(),
+                                               width_, roundLevel_, widthMode_);
+            });
         built = (n != 0);
         refreshCaches();
     }
@@ -362,6 +398,7 @@ private:
 
     void cancelLiveEdit() {
         if (built && before.filled) before.restore(*mesh);
+        preview_.reset();
         built    = false;
         dragPart = -1;
         toolHandles.clearHaul();
