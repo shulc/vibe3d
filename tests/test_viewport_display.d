@@ -24,8 +24,11 @@
 // Flow C — the probe reads real pixels from the cell's framebuffer.
 // Flow D — the plan and the pixels agree: the passes the plan describes are
 //          the passes that ran.
-// Flow E — the "--test renders only the active cell" trap is REPORTED by the
-//          endpoints rather than left as a comment for a test to trip over.
+// Flow E — the `--test` render set is REPORTED by the endpoints rather than
+//          left as a comment for a test to trip over. (Task 1650 widened that
+//          set to every cell of a multi-cell layout; see the flow's own
+//          comment for why the old rule made the multi-cell overlay replica
+//          untestable.)
 //
 // Task 0589 adds the third surface style:
 // Flow L — Solid draws a fill and does NOT shade it: uniform across faces, at
@@ -389,18 +392,39 @@ bool testFlowD() {
 }
 
 // --------------------------------------------------------------------------
-// Flow E — the single-rendered-cell trap is reported, not hidden.
+// Flow E — the render set is reported, not hidden.
 //
-// Under --test only the ACTIVE cell is rendered each frame. A multi-cell
-// pixel assertion written naively passes by reading a framebuffer that was
-// never filled. Rather than leave that as a comment for a future test to trip
-// over, both endpoints report a per-cell `renders` flag — so a test can
-// assert on it, and this flow pins that the flag tells the truth.
+// A pixel assertion aimed at a cell that was never rendered passes by reading
+// a framebuffer nobody filled. Rather than leave that as a comment for a
+// future test to trip over, both endpoints report a per-cell `renders` flag —
+// so a test can assert on it, and this flow pins that the flag tells the truth.
+//
+// TASK 1650 CHANGED THE RULE THIS FLOW PINS. `--test` used to render the
+// ACTIVE cell and nothing else; it now renders every cell of a MULTI-cell
+// layout as well (`viewport.testRendersCell`). The old rule made the
+// `OverlayMode.Visual` replica path structurally unreachable from the test
+// lane — under `--test` the overlay owner is always the active cell, so the
+// only cell that rendered was the only cell that did not draw a replica, and
+// an assertion about the replica could not come out differently whatever the
+// code did. A SINGLE-cell layout still renders exactly one cell, which is
+// every live cell there, so nothing that never touches `viewport.layout`
+// changed. What this flow asserts is unchanged in KIND: the flag agrees with
+// the loop.
 // --------------------------------------------------------------------------
 
 bool testFlowE() {
-    writeln("  [E] Per-cell `renders` flag reports the --test limitation...");
+    writeln("  [E] Per-cell `renders` flag agrees with the --test render set...");
     resetApp();
+
+    // Single layout first: one cell, and it renders. This is the arm that
+    // would catch "renders was hard-wired to true" — without it, the Quad
+    // assertions below are satisfied by a constant.
+    auto s = displayDump();
+    enforce(cast(int)jsonNum(s, "cellCount") == 1,
+        "precondition: --test starts in the Single layout");
+    enforce(jsonBool(s["cells"].array[0], "renders"),
+        "the single cell must be rendered");
+
     postCommand("viewport.layout", "Quad");
     Thread.sleep(400.msecs);
 
@@ -412,23 +436,24 @@ bool testFlowE() {
     foreach (i, cell; j["cells"].array) {
         immutable int id = cast(int)jsonNum(cell, "id");
         enforce(id == cast(int)i, "cells must be reported in index order");
-        immutable bool renders = jsonBool(cell, "renders");
-        enforce(renders == (id == activeId),
-            format("cell %d reports renders=%s but only the active cell (%d) "
-                   ~ "is rendered under --test; a pixel assertion aimed at a "
-                   ~ "non-rendered cell would pass for the wrong reason",
-                   id, renders, activeId));
+        enforce(jsonBool(cell, "renders"),
+            format("cell %d reports renders=false in a Quad layout. Since task "
+                   ~ "1650 every cell of a multi-cell layout is rendered under "
+                   ~ "--test; a cell that is not leaves its framebuffer unfilled "
+                   ~ "and makes any pixel assertion on it pass for the wrong "
+                   ~ "reason — and it puts the OverlayMode.Visual replica path "
+                   ~ "back out of the test lane's reach", id));
     }
-    writefln("    E1 PASS: only cell %d reports renders=true, cells 0-3 all listed",
+    writefln("    E1 PASS: all four cells report renders=true (active is %d)",
              activeId);
 
-    // The probe agrees with the dump — a probe aimed at a cell that is not
-    // being rendered says so, in the response, where a test can see it.
+    // The probe agrees with the dump — one predicate, two endpoints.
     immutable int other = (activeId == 0) ? 3 : 0;
     auto r = probe(other, "");
-    enforce(!r.renders,
-        format("probing non-active cell %d must report renders=false", other));
-    writefln("    E2 PASS: probe of non-active cell %d reports renders=false", other);
+    enforce(r.renders,
+        format("the dump says cell %d renders but the probe says it does not — "
+               ~ "the two endpoints must read the same predicate", other));
+    writefln("    E2 PASS: probe of non-active cell %d agrees: renders=true", other);
 
     // Every cell still gets a full, independently resolved plan — a cell that
     // is not rendered is not a cell without state.
@@ -1608,7 +1633,7 @@ int main(string[] args) {
     run(&testFlowB, "Flow B — activity axis carried in state and plan");
     run(&testFlowC, "Flow C — pixel probe reads the cell framebuffer");
     run(&testFlowD, "Flow D — plan and pixels agree about which passes ran");
-    run(&testFlowE, "Flow E — per-cell renders flag reports the --test limit");
+    run(&testFlowE, "Flow E — per-cell renders flag agrees with the render set");
     run(&testFlowF, "Flow F — backdrop plan reaches the pixels");
     run(&testFlowG, "Flow G — lines-only style: faces off, model see-through");
     run(&testFlowH, "Flow H — overlay axis on/off, selection surviving None");

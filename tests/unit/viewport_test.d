@@ -279,6 +279,86 @@ unittest {
     assert(overlayDrawOrder(4, 0) == [1, 2, 3, 0]);
 }
 
+unittest {
+    // Task 1650 — owner-LAST is the property the whole eligibility drop rests
+    // on, so state it as a law over every owner rather than as two literals.
+    //
+    // Since 1650 EVERY non-owner cell draws a `Visual` replica, and most tools
+    // do not honour `Tool.draw`'s `visualOnly` contract (measured: 10 of 38
+    // `Tool.draw` overrides read the flag; 21 of the other 28 write `cachedVp`
+    // and/or run a `ToolHandles` register/hit-test cycle regardless). What
+    // keeps that safe is that the owner's `Interactive` draw runs LAST and
+    // overwrites whatever the replicas left. Reverse this order and the
+    // owner's interaction state is whatever the last foreign cell wrote.
+    foreach (owner; 0 .. 4) {
+        auto order = overlayDrawOrder(4, owner);
+        assert(order.length == 4, "every live cell is visited exactly once");
+        assert(order[$ - 1] == owner,
+               "the overlay owner must be visited LAST — a replica's cachedVp "
+               ~ "/ ToolHandles writes are only harmless because the owner's "
+               ~ "own draw comes after them");
+        bool[4] seen;
+        foreach (k; order) seen[k] = true;
+        foreach (k; 0 .. 4) assert(seen[k], "cell left unvisited");
+    }
+}
+
+unittest {
+    // Task 1650 — the `--test` render set.
+    //
+    // Single layout: the active cell and nothing else, i.e. the pre-1650 rule,
+    // so every test that never switches layout is byte-identical.
+    assert(testRendersCell(0, 0, 1));
+
+    // Multi-cell: EVERY cell, whichever is active. Under the old rule the
+    // three non-active cells were never rendered, which made the
+    // `OverlayMode.Visual` replica path unreachable from the test lane — an
+    // assertion about it could not come out differently, whatever the code
+    // did — and left `/api/viewport/probe` reading never-filled framebuffers.
+    foreach (active; [0, 2])
+        foreach (k; 0 .. 4)
+            assert(testRendersCell(k, active, 4),
+                   "a multi-cell layout must render EVERY cell under --test");
+    // SplitH/SplitV (two cells) are multi-cell too.
+    assert(testRendersCell(1, 0, 2));
+}
+
+unittest {
+    // Task 1650 — `overlayOwnerId` is the ONE formula for "which cell owns the
+    // pointer, and therefore this frame's interactive overlay". It had a
+    // second copy inside `inputSnapshot`; the two agreed, but nothing made
+    // them, so the law is asserted here and `inputSnapshot` now calls it.
+    auto m = new ViewportManager(0, 0, 640, 480);
+    m.applyLayout(LayoutPreset.Quad);
+    assert(m.cellCount == 4, "precondition: Quad gives four cells");
+
+    // No drag: the hovered cell owns it.
+    m.dragOriginId = -1;
+    m.activeId = 0;
+    m.hoveredId = 2;
+    assert(m.overlayOwnerId() == 2, "hovered cell owns the overlay");
+
+    // A drag pins the owner to the ORIGIN cell even as the cursor leaves it —
+    // this is what keeps a gesture that crosses a splitter on one basis.
+    m.dragOriginId = 1;
+    assert(m.overlayOwnerId() == 1, "a live drag pins the owner to its origin");
+
+    // Cursor outside every cell: fall back to the active one.
+    m.dragOriginId = -1;
+    m.hoveredId = -1;
+    assert(m.overlayOwnerId() == 0, "no hovered cell ⇒ the active cell");
+
+    // Single layout: the hovered term is inert (the `--test` invariant), so
+    // the answer is activeId whatever `hoveredId` says.
+    m.applyLayout(LayoutPreset.Single);
+    m.activeId = 0;
+    m.hoveredId = 3;
+    m.dragOriginId = -1;
+    assert(m.cellCount == 1);
+    assert(m.overlayOwnerId() == 0,
+           "cellCount == 1 makes the hovered term inert — the pre-0209 gate");
+}
+
 // ---------------------------------------------------------------------------
 // Unittests — pure (no GL), verifying the data-model invariants the refactor
 // rests on.  Run via `dub test --config=tests`.

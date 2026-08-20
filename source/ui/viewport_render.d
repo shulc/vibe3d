@@ -931,24 +931,26 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     // ---- Active tool / falloff gizmo draws ----
     // Task 0206 (Quad/Split multi-cell overlays): `overlayMode` decides
     // WHICH cells draw and HOW:
-    //   - None:        nothing (no tool/falloff active for this cell's
-    //                   call, or a non-eligible tool — see the N-cell
-    //                   loop's `_multiCellEligible` gate).
+    //   - None:        nothing — no tool and no falloff is active. (Until
+    //                   task 1650 this was also the answer for a tool
+    //                   outside a hand-written eligibility list; that list
+    //                   is gone, see the N-cell loop's header.)
     //   - Interactive: the overlay-owner (origin cell during a drag,
     //                   else the active cell) — today's exact path,
     //                   visualOnly=false. Pins cachedVp + runs the
     //                   arbiter cycle; this is the primary Step-B
     //                   freeze mechanism for multi-viewport drag
     //                   correctness.
-    //   - Visual:      every OTHER live cell, when the active tool/
-    //                   falloff is multi-cell-eligible (v1: XfrmTransformTool
-    //                   + CommandWrapperTool + no-tool falloff — see
-    //                   doc/quad_overlays_all_cells_plan.md). Draws the
+    //   - Visual:      every OTHER live cell, for ANY active tool or
+    //                   falloff (task 1650 — no tool-type term). Draws the
     //                   SAME world-derived gizmo geometry reprojected
-    //                   under THIS cell's vp with visualOnly=true — no
-    //                   cachedVp / ToolHandles writes, so this cell's
-    //                   draw cannot corrupt the owner cell's
-    //                   interaction state (see Tool.draw's doc comment).
+    //                   under THIS cell's vp with visualOnly=true, which
+    //                   ASKS the tool to skip its cachedVp / ToolHandles
+    //                   writes (see Tool.draw's doc comment). Most tools do
+    //                   not honour that ask — measured: 10 of 38 overrides
+    //                   read the flag — so what actually keeps a replica
+    //                   from corrupting the owner's interaction state is
+    //                   `overlayDrawOrder` visiting the owner LAST.
     // NOTE: activeTool.update() already ran ONCE in the main loop
     // (against the origin snapshot) before this function is called for
     // any cell this frame, so handle-hover state is current for all of

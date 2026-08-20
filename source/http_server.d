@@ -506,6 +506,13 @@ class HttpServer {
     // background layer. It is a real assertion target precisely because the
     // renderer reads the same struct this dumps — a parallel re-derivation
     // could silently drift from what is actually drawn; this cannot.
+    //
+    // Task 1650 added `overlayOwner` (top level) and `overlayMode` per cell,
+    // on the same terms: they come off `editor_app.resolveOverlayMode`, the
+    // one function the N-cell render loop branches on. That is what lets a
+    // test assert WHICH cells draw the tool gizmo — the question
+    // /api/viewport/probe answers only in pixels, and only for cells that
+    // rendered.
     // Marshaled onto the main thread: it reads live per-cell viewport state.
     private alias ViewportDisplayProvider = string delegate();
     private ViewportDisplayProvider viewportDisplayProvider;
@@ -515,13 +522,20 @@ class HttpServer {
     // can assert what GL actually produced rather than what the plan says it
     // should have. Needs the GL context, hence the main-thread bridge.
     //
-    // ⚠ KNOWN LIMITATION, and it is a silent-pass trap: under --test only the
-    // ACTIVE cell is rendered each frame (the render loop's needRender is
-    // `k == activeId` there). A probe aimed at a non-active cell reads a
-    // never-filled FBO and any assertion on it passes for the wrong reason.
-    // The response therefore carries a `renders` flag per request; assert on
-    // it, or probe the active cell only. Non-active cells are covered by
-    // /api/viewport/display state assertions, which do not need a render.
+    // ⚠ KNOWN LIMITATION, and it is a silent-pass trap: a probe aimed at a
+    // cell that was not rendered reads a never-filled FBO, and any assertion
+    // on it passes for the wrong reason. The response therefore carries a
+    // `renders` flag per request; assert on it.
+    //
+    // Task 1650 NARROWED the limitation but did not remove it. `--test` used
+    // to render the ACTIVE cell and nothing else; it now renders every cell
+    // of a MULTI-cell layout as well (`viewport.testRendersCell`), because the
+    // old rule made the `OverlayMode.Visual` replica path unreachable from the
+    // test lane — a check on it could not come out differently. A SINGLE-cell
+    // layout still renders one cell, which is every live cell there, so the
+    // flag is the thing to assert either way. Cells that are not rendered are
+    // still covered by /api/viewport/display state assertions, which need no
+    // render.
     private alias ViewportProbeProvider =
         string delegate(int cell, string points, bool wantHash);
     private ViewportProbeProvider viewportProbeProvider;

@@ -25,6 +25,11 @@ module http_providers;
 // from app.d's top-level import block for task 0415), plus step_trace for
 // the StepTrace-typed ctx field.
 import editor_app : EditorApp, RecordMode;
+// Task 1650 — `/api/viewport/display` reports the per-cell overlay decision
+// the N-cell render loop STAMPED (`Viewport3D.lastOverlayMode`), so only the
+// enum's name is needed here, not the resolver.
+import editor_app : OverlayMode;
+import viewport   : testRendersCell;
 import step_trace : StepTrace;
 import bindbc.sdl;
 import bindbc.opengl;
@@ -1188,26 +1193,46 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     && resolveWeightMap(*pm, wmName) !is null;
             }
 
+            // Task 1650 — the per-cell OVERLAY decision. NOT re-derived here:
+            // reported from the stamp the N-cell render loop wrote when it
+            // made the decision (`Viewport3D.lastOverlayMode`).
+            //
+            // The difference is not pedantry, it was measured. The defect
+            // task 1650 fixed was a tool-type gate at the loop's CALL SITE,
+            // and a first version of this dump called the shared resolver
+            // itself. With the pre-fix gate restored, that dump still reported
+            // `Visual` for all three non-owner cells while the loop drew
+            // nothing in them — the endpoint the test asserts on had stopped
+            // describing the thing the test was about. `overlayOwner` is read
+            // live because it is an input the loop does not consume
+            // destructively.
+            immutable int _ovlOwner = vpm.overlayOwnerId();
+
             auto buf = appender!string();
-            buf.put(format(`{"activeId":%d,"cellCount":%d,` ~
+            buf.put(format(`{"activeId":%d,"cellCount":%d,"overlayOwner":%d,` ~
                            `"weightMap":%s,"weightMapResolved":%s,"cells":[`,
-                           vpm.activeId, vpm.cellCount,
+                           vpm.activeId, vpm.cellCount, _ovlOwner,
                            JSONValue(wmName).toString(),
                            wmResolved ? "true" : "false"));
             foreach (k; 0 .. vpm.cellCount) {
                 if (k > 0) buf.put(",");
                 Viewport3D cv = vpm.views[k];
-                immutable bool renders = testMode ? (k == vpm.activeId) : true;
+                // Same predicate the render loop uses, not a second copy of
+                // it — see viewport.testRendersCell.
+                immutable bool renders =
+                    testMode ? testRendersCell(k, vpm.activeId, vpm.cellCount) : true;
                 // The SAME snapshot the render loop feeds
                 // renderViewportSceneToFbo, so the reported grid cannot
                 // disagree with the drawn one by construction.
                 Viewport gvp = vpm.resolvedSnapshot(k);
                 buf.put(format(
-                    `{"id":%d,"renders":%s,"ortho":%s,"userSet":%s,` ~
+                    `{"id":%d,"renders":%s,"overlayMode":"%s",` ~
+                    `"ortho":%s,"userSet":%s,` ~
                     `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s"},` ~
                     `"plan":{"active":%s,"backdrop":%s},"grid":%s}`,
                     k,
                     renders ? "true" : "false",
+                    (cast(OverlayMode)cv.lastOverlayMode).to!string,
                     // Task 0594. `ortho` is what the shipped display default
                     // is a function of, and `userSet` is what outranks it —
                     // reporting both is what lets a test assert the DEFAULT
@@ -1254,7 +1279,11 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 return format(`{"error":"cell %d out of range"}`, cell);
 
             Viewport3D cv = vpm.views[cell];
-            immutable bool renders = testMode ? (cell == vpm.activeId) : true;
+            // Same predicate the render loop and /api/viewport/display use —
+            // one implementation, so the flag cannot claim a cell rendered
+            // when the loop skipped it (see viewport.testRendersCell).
+            immutable bool renders =
+                testMode ? testRendersCell(cell, vpm.activeId, vpm.cellCount) : true;
             immutable int W = cv.fbo.w;
             immutable int H = cv.fbo.h;
             immutable string head = format(

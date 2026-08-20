@@ -357,7 +357,27 @@ int[] overlayDrawOrder(int cellCount, int ownerId) {
     return order;
 }
 
-
+/// Which cells the N-cell FBO loop re-renders under `--test` (task 1650).
+///
+/// `--test` used to render the ACTIVE cell and nothing else. Under the Single
+/// layout invariant that is every live cell, so the rule was invisible — but a
+/// test that switches to Quad with `viewport.layout` got three cells whose FBO
+/// was never filled. That is a silent-pass trap for `/api/viewport/probe`
+/// (documented at its own declaration in http_server.d), and worse, it made
+/// the whole `OverlayMode.Visual` replica path UNREACHABLE from the test lane:
+/// a check on it could not come out differently, whatever the code did.
+///
+/// So the rule is now "the active cell, plus every cell of a MULTI-cell
+/// layout". Single layout ⇒ `cellCount == 1` ⇒ the answer is `k == activeId`
+/// exactly as before, and every test that never touches `viewport.layout` is
+/// byte-identical. A test opts in by the very act that makes the extra cells
+/// worth rendering.
+///
+/// Interactive mode does not consult this — it renders on the per-cell dirty
+/// key, which already visits every cell.
+bool testRendersCell(int k, int activeId, int cellCount) {
+    return k == activeId || cellCount > 1;
+}
 
 // ---------------------------------------------------------------------------
 // Viewport3D
@@ -380,6 +400,27 @@ final class Viewport3D {
     ViewportFbo fbo;
     bool        dirty    = true;   // starts dirty → first frame always renders
     DirtyKey    lastKey;
+
+    /// The overlay-draw mode the N-cell loop RESOLVED for this cell on the
+    /// last frame that considered it (task 1650). Stamped as an `int` rather
+    /// than an `OverlayMode` on purpose: the enum lives in `editor_app.d`,
+    /// which already imports THIS module, and a back-edge from here would
+    /// close an import cycle. `editor_app.OverlayMode` is what the value
+    /// means; `/api/viewport/display` casts it back.
+    ///
+    /// WHY THIS IS RECORDED AND NOT RE-DERIVED. `/api/viewport/display` is
+    /// the endpoint a multi-cell overlay test asserts on, and the defect task
+    /// 1650 fixed lived at the loop's CALL SITE, not inside the resolver — a
+    /// dump that called the resolver itself would keep reporting `Visual`
+    /// while the loop, gated by something the dump never sees, drew nothing.
+    /// That failure was reproduced deliberately: with the pre-fix type
+    /// enumeration restored at the call site, a re-deriving dump still said
+    /// `Visual` for all three non-owner cells and only the pixel arm noticed.
+    /// So the loop stamps what it decided and the dump reads the stamp.
+    ///
+    /// Written for every cell the loop CONSIDERS, before the dirty-key skip —
+    /// the decision is made whether or not the cell then renders.
+    int lastOverlayMode = 0;   // == OverlayMode.None
 
     // Task 0559 — this cell's display state (surface style, wireframe
     // overlay, backdrop representation), for BOTH activity states.
@@ -1049,15 +1090,29 @@ final class ViewportManager {
         return resolvedSnapshot(dragOriginId >= 0 ? dragOriginId : activeId);
     }
 
-    /// Resolved snapshot for the cell that owns the CURRENT pointer input:
-    /// the drag-origin cell during a gesture, else the hovered cell, else the
-    /// active cell. In Single layout (cellCount==1) this is identical to
-    /// originSnapshot() (there is no second cell to hover), so `--test`
-    /// stays byte-neutral.
+    /// The cell that owns the CURRENT pointer input, and with it this frame's
+    /// overlay: the drag-origin cell during a gesture, else the HOVERED cell,
+    /// else the active cell.
+    ///
+    /// The `cellCount > 1` guard makes the hovered term inert in `--test`
+    /// (Single layout invariant), so the answer there is `activeId` — the
+    /// pre-task-0209 gate exactly.
+    ///
+    /// Task 1650: this formula had TWO copies — here (as `inputSnapshot`'s
+    /// body) and again in app.d's N-cell FBO loop as a local named
+    /// `overlayOwner`. They agreed, but nothing made them: the overlay owner
+    /// and the input owner are the same cell BY DESIGN (the arbiter's hit-test
+    /// runs where the cursor is), so they get one implementation.
+    int overlayOwnerId() const {
+        return dragOriginId >= 0 ? dragOriginId
+             : (cellCount > 1 && hoveredId >= 0 ? hoveredId : activeId);
+    }
+
+    /// Resolved snapshot for the cell that owns the CURRENT pointer input.
+    /// In Single layout (cellCount==1) this is identical to originSnapshot()
+    /// (there is no second cell to hover), so `--test` stays byte-neutral.
     Viewport inputSnapshot() {
-        int id = dragOriginId >= 0 ? dragOriginId
-               : (cellCount > 1 && hoveredId >= 0 ? hoveredId : activeId);
-        return resolvedSnapshot(id);
+        return resolvedSnapshot(overlayOwnerId());
     }
 
     /// Return resolved camera JSON for cell `id`.  `const`, non-mutating — safe

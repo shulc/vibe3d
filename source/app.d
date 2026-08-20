@@ -273,6 +273,11 @@ import input_frame_state : DragMode;
 //                 visualOnly=false. Pins cachedVp + runs the arbiter cycle.
 import editor_app : OverlayMode;
 
+// Task 1650 — the per-cell overlay-mode decision, in editor_app.d so that
+// `/api/viewport/display` answers off the SAME code the render loop branches
+// on rather than a second copy of it.
+import editor_app : resolveOverlayMode;
+
 // ---------------------------------------------------------------------------
 // Module-level helpers
 // ---------------------------------------------------------------------------
@@ -2201,6 +2206,11 @@ void main(string[] args) {
     // Properties AND draw the falloff overlay in the viewport even when NO
     // transform tool is selected — a user-locked falloff persists across tool
     // switches (resetTransient), so it should stay visible/editable on its own.
+    //
+    // Reachable from other modules as `EditorApp.anyFalloffActive` (the
+    // delegate bound below) — that is how ui/viewport_render.d and, since
+    // task 1650, `/api/viewport/display`'s provider call it, so the overlay
+    // gate and the endpoint that reports it share one predicate.
     bool anyFalloffActive() {
         import toolpipe.pipeline       : g_pipeCtx;
         import toolpipe.stage          : TaskCode;
@@ -8412,23 +8422,34 @@ void main(string[] args) {
         // into the NEXT frame's event handling, regardless of how many
         // Visual replicas ran first this frame.
         //
-        // "Multi-cell-eligible" (v1 scope — see
-        // doc/quad_overlays_all_cells_plan.md): XfrmTransformTool (the
-        // transform gizmo) and CommandWrapperTool (Smooth/Jitter/Quantize —
-        // falloff-only, no gizmo bank) both got their `visualOnly` seam
-        // wired this task; so did the no-tool falloff-only path. Any OTHER
-        // active tool (edge/poly extrude, bevel, cone, bend, edge-extend,
-        // primitives, pen, …) keeps the pre-0206 single-cell-only behaviour
-        // (Visual is never assigned to them, so their draw() only ever runs
-        // in the owner cell) — deferred to v2, since each owns its own
-        // cachedVp / ToolHandles pair that hasn't been made visualOnly-safe.
+        // WHICH CELLS DRAW THE OVERLAY: every live one. The owner cell gets
+        // `Interactive`, all the others a world-derived `Visual` replica.
         //
-        // --test: renders ONLY the active cell (Single layout ⇒ cell 0 = ph2);
-        // cellCount == 1 ⇒ overlayDrawOrder returns [activeId], so the
-        // Visual branch below is NEVER taken — byte-identical to
-        // pre-task-0206 behaviour.
+        // Task 0206 shipped this with a v1 ALLOWLIST — `XfrmTransformTool`,
+        // `CommandWrapperTool`, and the no-tool falloff path, the three whose
+        // `visualOnly` seam had been wired — and deferred every other tool to
+        // a v2 that never came. Task 1650 removed the list: it was an
+        // enumeration standing in for a capability, and it was wrong about
+        // `EdgeExtendTool` / `EdgeBevelTool`, which COMPOSE a transform
+        // wrapper rather than inheriting one. Both casts missed, so in a Quad
+        // layout their gizmos appeared only in the cell under the cursor —
+        // the owner's dogfood report.
+        //
+        // The allowlist's premise (that only wired tools are safe) does not
+        // survive measurement either: of the 38 `Tool.draw` overrides only 10
+        // read `visualOnly`, and 21 of the other 28 write `cachedVp` and/or
+        // run a `ToolHandles` cycle unconditionally — including the two that
+        // WERE eligible via `CommandWrapperTool`'s subclasses. What actually
+        // makes a replica harmless is `overlayDrawOrder` visiting the owner
+        // LAST, so its own draw re-pins every one of those writes before the
+        // frame ends. See `resolveOverlayMode` in editor_app.d.
+        //
+        // --test: Single layout ⇒ cellCount == 1 ⇒ overlayDrawOrder returns
+        // [activeId] and the Visual branch is never taken, byte-identical to
+        // pre-task-0206 behaviour. A test that switches to Quad opts into the
+        // multi-cell path, and into rendering every cell (testRendersCell).
         {
-            import viewport : DirtyKey, overlayDrawOrder;
+            import viewport : DirtyKey, overlayDrawOrder, testRendersCell;
             import image_cache : imagePixelCache;
             import image_plane : collectLivePlanePaths, imagePlaneDigest;
             import tools.transform.xfrm_transform : XfrmTransformTool;
@@ -8460,19 +8481,23 @@ void main(string[] args) {
             // Overlay-owner cell: origin cell during a drag, else the HOVERED
             // cell (task 0209 — the arbiter/Test pass now runs where the
             // cursor is, so hover/hit-test/click work in any Quad/Split
-            // cell), else the active cell. `cellCount > 1` guard makes the
-            // hovered branch inert in `--test` (Single layout invariant), so
-            // this stays IDENTICAL to the pre-0209 `_drawOverlays` gate
-            // there — same single cell (activeId), now also the LAST one
-            // visited.
-            int overlayOwner = (vpm.dragOriginId >= 0) ? vpm.dragOriginId
-                             : (vpm.cellCount > 1 && vpm.hoveredId >= 0) ? vpm.hoveredId
-                             : vpm.activeId;
+            // cell), else the active cell. Task 1650 folded the formula into
+            // `ViewportManager.overlayOwnerId` — `inputSnapshot()` held a
+            // second copy of it, and the input owner and the overlay owner are
+            // the same cell by design. The `--test` answer is unchanged
+            // (`activeId`, and also the LAST cell visited).
+            int overlayOwner = vpm.overlayOwnerId();
 
-            bool multiCellEligible =
-                   (cast(XfrmTransformTool)  activeTool !is null)
-                || (cast(CommandWrapperTool) activeTool !is null)
-                || (activeTool is null && anyFalloffActive());
+            // Is there an overlay to draw AT ALL? Exactly the pair of branches
+            // inside renderViewportSceneToFbo's overlay block, and the only
+            // term `resolveOverlayMode` needs besides the owner id.
+            //
+            // Task 1650 removed the tool-TYPE list that used to gate the
+            // non-owner (`Visual`) cells here. See `resolveOverlayMode`'s doc
+            // comment in editor_app.d for the defect it caused, and for why
+            // `overlayDrawOrder`'s owner-last visitation — not per-tool
+            // `visualOnly` discipline — is what makes dropping it safe.
+            bool anyOverlay = (activeTool !is null) || anyFalloffActive();
 
             // Phase 1 (task 0206): overlay-state stamp for DirtyKey, computed
             // ONCE per frame — the gizmo's WORLD state is view-independent,
@@ -8546,16 +8571,19 @@ void main(string[] args) {
                 g_fc.bumpCellConsidered();
 
                 // Per-cell overlay mode: Interactive for the owner cell,
-                // Visual for every other multi-cell-eligible cell, None
-                // otherwise (a v2 tool, or nothing active — matches the
-                // pre-0206 no-op when neither branch inside
-                // renderViewportSceneToFbo's overlay block would fire).
-                OverlayMode _ovMode;
-                if (k == overlayOwner)
-                    _ovMode = (activeTool !is null || anyFalloffActive())
-                            ? OverlayMode.Interactive : OverlayMode.None;
-                else
-                    _ovMode = multiCellEligible ? OverlayMode.Visual : OverlayMode.None;
+                // Visual for every other live cell, None when nothing is
+                // active (matches the pre-0206 no-op when neither branch
+                // inside renderViewportSceneToFbo's overlay block would
+                // fire). One implementation, shared with the
+                // `/api/viewport/display` dump — see resolveOverlayMode.
+                OverlayMode _ovMode = resolveOverlayMode(k, overlayOwner, anyOverlay);
+                // Stamp what was DECIDED, for /api/viewport/display to report.
+                // Here, not at the resolver: the gate this replaced lived at
+                // this call site, so a dump that called the resolver itself
+                // would not see a term reintroduced here (measured — see
+                // Viewport3D.lastOverlayMode). Before the dirty-key skip: the
+                // decision is made whether or not the cell then renders.
+                _cv.lastOverlayMode = cast(int)_ovMode;
 
                 // Per-cell camera snapshot.  x/y is the actual screen
                 // position so tool overlay math (cachedVp screen→world) uses
@@ -8570,10 +8598,14 @@ void main(string[] args) {
                 _cv.fbo.ensure(cast(int)(_cv.camera.width  * dpiX),
                                cast(int)(_cv.camera.height * dpiY));
 
-                // --test: only render the active cell.
+                // --test: the active cell, plus every cell of a MULTI-cell
+                // layout. See `viewport.testRendersCell` for why the rule is
+                // not just `k == activeId` any more — under the Single layout
+                // invariant the two are the same answer, and a test only gets
+                // the wider one by switching layout itself.
                 bool needRender;
                 if (testMode) {
-                    needRender = (k == vpm.activeId);
+                    needRender = testRendersCell(k, vpm.activeId, vpm.cellCount);
                 } else {
                     // Interactive: dirty-key compare (skip if nothing changed).
                     bool _hovK = (k == vpm.hoveredId);
