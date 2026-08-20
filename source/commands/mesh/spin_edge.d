@@ -116,16 +116,16 @@ class MeshSpinEdge : Command, Operator {
                 }
             }
 
+            // Task 1471: ONE bulk call, not one `mesh.spinEdge` per key. The
+            // per-key loop paid `rebuildEdges` + `buildLoops` + a commit — all
+            // three O(M) — for every edge, which is the measured exponent 1.98.
+            // `spinEdgesByKeys` pays them once per ROUND. The gate above already
+            // guarantees pairwise-disjoint face pairs, so this branch settles in
+            // ONE round and its result is bit-identical; `selKeys` are handed
+            // over UNSORTED on purpose (see the kernel's note — sorting would
+            // rewrite `edgeSelectionOrder` through `repointToEdgeKeys` below).
             ulong[] productKeys;
-            foreach (k; selKeys) {
-                uint ei = mesh.edgeIndexByKey(k);
-                if (ei == ~0u) continue;   // earlier spin consumed this edge
-                uint[2] diag;
-                if (mesh.spinEdge(ei, diag)) {
-                    ++affected;
-                    productKeys ~= edgeKey(diag[0], diag[1]);
-                }
-            }
+            affected = mesh.spinEdgesByKeys(selKeys, productKeys);
             // Post-op (task 1180): the old edge no longer exists — re-point the
             // selection at the PRODUCT, the new diagonal. Clearing instead (what
             // this line used to do) is what made two spins of one edge in a row
@@ -152,9 +152,14 @@ class MeshSpinEdge : Command, Operator {
                     uint ei = mesh.edgeIndexByKey(ek);
                     if (ei == ~0u) continue;
                     // Both incident faces must be selected.
-                    // Bounded write: see the same collector in Mesh.spinEdge —
-                    // `EdgeFaceRange` caps at two today, and a `uint[2]` filled
-                    // by a bare `[n++]` overflows the day it does not.
+                    // Bounded write: the same collector as
+                    // `Mesh.spinEdgeRings_`, and bounded for the same reason —
+                    // `EdgeFaceRange` does NOT cap itself at two any more (task
+                    // 1290 gave it a `_spill`), so a `uint[2]` filled by a bare
+                    // `[n++]` would overflow. The question here is "exactly two
+                    // or not", which `nif != 2` answers; a caller that needs
+                    // the COUNT must use `edgePolygonCounts` — the ring walk
+                    // under-reports a non-manifold fan as one face.
                     uint[2] ifaces; uint nif = 0;
                     foreach (f; mesh.facesAroundEdge(ei)) {
                         if (nif >= 2) { nif = 3; break; }
@@ -168,13 +173,21 @@ class MeshSpinEdge : Command, Operator {
             }
 
             import std.algorithm : sort;
-            sort(intKeys);   // deterministic processing order
+            sort(intKeys);   // deterministic processing order — OURS, not the
+                             // kernel's: `spinEdgesByKeys` processes in caller
+                             // order precisely so the Edges branch above can
+                             // keep its own.
 
-            foreach (k; intKeys) {
-                uint ei = mesh.edgeIndexByKey(k);
-                if (ei == ~0u) continue;   // earlier spin removed this edge
-                if (mesh.spinEdge(ei)) ++affected;
-            }
+            // Task 1471, and this branch is where the 66 minutes were measured
+            // (`polygons/half` on an n=316 grid). Rounds change WHAT this
+            // branch produces on an overlapping face selection — the spins now
+            // group into rounds instead of running straight through — and that
+            // is taken deliberately: no reference fixture drives this branch
+            // (all four frozen spin fixtures select `mode: "edges"`), it is our
+            // own extension by the comment above, and today's answer already
+            // depends on the order the edges happen to be collected in.
+            ulong[] productKeys;
+            affected = mesh.spinEdgesByKeys(intKeys, productKeys);
             // Polygon scope: face indices are stable (no faces added/removed),
             // keep the existing face selection so repeated Spin Polygons works.
         }

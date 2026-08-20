@@ -60,6 +60,7 @@ import commands.mesh.vertex_split      : MeshVertexSplit;
 import commands.mesh.axis_slice        : MeshAxisSlice;
 import commands.mesh.subdivide_faceted : SubdivideFaceted;
 import commands.mesh.detriangulate     : MeshDetriangulate;
+import commands.mesh.spin_edge         : MeshSpinEdge;
 
 // The operand. Several of these commands refuse an empty selection outright
 // (measured 2026-08-19: mesh.duplicate and mesh.vertexSplit are two), so the
@@ -104,6 +105,11 @@ private Command[] candidates(Mesh* m, ref View v) {
         Cand(new MeshAxisSlice  (m, v, EditMode.Polygons), `{"axis":0,"count":4}`),
         Cand(new SubdivideFaceted   (m, v, EditMode.Polygons, null)),
         Cand(new MeshDetriangulate  (m, v, EditMode.Polygons, null)),
+        // Task 1471. The multi-target POLYGON spin — the operand the 66-minute
+        // number was measured through (polygons/half). It neither grows nor
+        // moves geometry, so it is a class the 1373 sweep's "growing command"
+        // filter could not see.
+        Cand(new MeshSpinEdge       (m, v, EditMode.Polygons)),
     ];
     Command[] out_;
     foreach (c; cs) out_ ~= configured(c);

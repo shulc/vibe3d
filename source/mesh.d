@@ -618,6 +618,29 @@ version (unittest) {
     // body is not compiled into a plain `-unittest` build, so a test over it
     // would pass vacuously.
     size_t g_hideDeriveRuns;
+
+    // ---- Task 1471 — the structural instrument for the bulk spin -------
+    // Same two reasons as above, verbatim: module scope because a kernel of
+    // the form `*mesh = …` would zero a struct field mid-measurement, and
+    // `version (unittest)` rather than `debug {}` because a `debug` body is
+    // not compiled into a plain `-unittest` build and the test over it would
+    // pass vacuously.
+    //
+    // Not `perf_probe` counters: `perf_probe` is entirely under
+    // `version (PerfProbe)` (the `perf` buildType), and the gate that reads
+    // these lives in `dub test --config=tests`, which never defines it.
+    //
+    // No production reader by design. The cap firing is already observable
+    // without one — it looks exactly like today's partial refusal of some
+    // targets — so a shipped reader would be a second way to say the same
+    // thing.
+    size_t g_rebuildEdgesRuns;   // Mesh.rebuildEdges entries
+    size_t g_buildLoopsRuns;     // Mesh.buildLoops entries
+    size_t g_spinRounds;         // rounds the last spinEdgesByKeys ran
+    bool   g_spinRoundsCapped;   // did MAX_SPIN_ROUNDS stop it?
+    size_t g_spinCollisions;     // spins whose new diagonal already existed
+    ulong[] g_spinCollisionKeys; // the diagonals those spins landed on
+    size_t g_spinsApplied;       // spins the last spinEdgesByKeys performed (S)
 }
 
 private void noteHideDerivePending(Mesh* m) {
@@ -6916,6 +6939,7 @@ struct Mesh {
     // finalize so a delta apply/revert produces the same canonical edge order
     // the kernels do.
     void rebuildEdges() {
+        version (unittest) ++g_rebuildEdgesRuns;   // task 1471 instrument
         edges.length = 0;
         edgeIndexMap.clear();
         // TASK 1333 — the commits are REMOVED here, not deferred.
@@ -6998,7 +7022,7 @@ struct Mesh {
             // tests compare `> before` (changed) or `== before` (untouched).
             // One bump invalidates a stamp exactly as well as E do — for a
             // MONOTONE counter, which is what these are at every site but two:
-            // `source/subpatch_osd.d:505` and `:1311` hard-RESET
+            // `source/subpatch_osd.d:867` and `:1857` hard-RESET
             // `mutationVersion = 1` on a freshly built mesh, and the first of
             // those reaches the DOCUMENT mesh through `*mesh = subdivide(…)`.
             // Against a reset like that a slower-growing counter shrinks the
@@ -11868,14 +11892,56 @@ struct Mesh {
     /// guard below refuses: on a refusal the caller reads `[0, 0]`, which is a
     /// legal-looking vertex pair. Gate on the bool; never on the value.
     bool spinEdge(uint ei, out uint[2] newDiagonal) {
+        if (!spinEdgeRings_(ei, newDiagonal)) return false;
+        rebuildEdges();
+        buildLoops();
+        commitChange(MeshEditScope.Geometry);
+        return true;
+    }
+
+    /// The RINGS half of a spin: every guard, the ring computation and the two
+    /// `faces[]` writes — and NOT the three derived-structure calls
+    /// (`rebuildEdges` / `buildLoops` / `commitChange`) the public overload
+    /// above adds.
+    ///
+    /// Task 1471. Splitting it out is what lets a BULK spin pay those three
+    /// once per round instead of once per edge. One apply of `mesh.spinEdge`
+    /// over a polygon selection performs S spins, and S grows with the mesh,
+    /// so S x O(M) is the measured exponent 1.98 (145.7 ms at 576 faces ->
+    /// 7072.5 ms at 4096). Profiled 2026-08-20 at n=64 with `perf record
+    /// --call-graph fp` on a `profile-fp` build: inside the 19.4% of cycles
+    /// this kernel owns, `buildLoops` is 9.1% and `rebuildEdges` 7.5% — 85% of
+    /// it — while `MeshSnapshot.capture` and the GPU upload do not appear at
+    /// all.
+    ///
+    /// This is exactly the pattern `rebuildEdges`' own comment reserves for
+    /// callers (`insertEdgeDedup` is the non-committing primitive underneath
+    /// it for the same reason): the derive is the CALLER's to place.
+    ///
+    /// Leaves `edges`, `edgeIndexMap` and the half-edge rings STALE. Any
+    /// caller must run `rebuildEdges(); buildLoops(); commitChange(Geometry);`
+    /// before the mesh is read again.
+    private bool spinEdgeRings_(uint ei, out uint[2] newDiagonal) {
         if (ei >= edges.length) return false;
 
-        // Collect at most 2 incident faces. `EdgeFaceRange` caps ITSELF at two
-        // (`mesh_topo.d`'s `uint[2] _faces`), but the bound is written here as
-        // well: task 1200 made a three-face edge an ordinary product of this
-        // very function, and a `uint[2]` filled by an unbounded `[n++]` is a
-        // stack-buffer overflow the day that cap moves. Same shape as
-        // `mesh_ops/loop_slice.d`'s collector, which already bounds it.
+        // Collect at most 2 incident faces, and the bound is written HERE
+        // rather than relied on from the range: since task 1290
+        // `EdgeFaceRange` has a `_spill` (`mesh_topo.d`'s `_push`), so it is no
+        // longer capped at its own `uint[2] _faces`. Task 1200 made a
+        // three-face edge an ordinary product of this very function, and a
+        // `uint[2]` filled by an unbounded `[n++]` is a stack-buffer overflow.
+        // Same shape as `mesh_ops/loop_slice.d`'s collector.
+        //
+        // The bounded write stays CORRECT for a second reason, and it is not
+        // "the range yields three": `facesAroundEdge` is "hand me a
+        // neighbouring face", not a counter. Its ring walk has no
+        // representation for a non-manifold fan and reports three quads
+        // sharing an edge as ONE face (its own note at `facesAroundEdge`); the
+        // true count only comes out of the CSR arm, which engages solely when
+        // one endpoint's fan is already marked unordered
+        // (`mesh_topo.d`'s `fromCsr` branch). What this collector needs is
+        // "exactly two or not", and `nFaces != 2` below answers that either
+        // way. A caller that needs the COUNT must use `edgePolygonCounts`.
         uint[2] incFaces;
         uint nFaces = 0;
         foreach (fi; facesAroundEdge(ei)) {
@@ -11953,11 +12019,162 @@ struct Mesh {
         faces[f1i] = ring1;
         faces[f2i] = ring2;
         newDiagonal = [c, e];   // the product, for the post-op selection
-
-        rebuildEdges();
-        buildLoops();
-        commitChange(MeshEditScope.Geometry);
         return true;
+    }
+
+    /// A spin round may not run more than this many times. Task 1471's
+    /// kernel-cap: `spinEdgesByKeys` loops until every target is resolved, and
+    /// the round count is bounded by the CONFLICT GRAPH, not by a parameter —
+    /// which is a conjecture (the graph is rebuilt between rounds), not a
+    /// theorem. Without a ceiling a defect in the greedy pick is an infinite
+    /// loop on the main thread. 64 is a backstop and NOT a working regime:
+    /// `tests/unit/spin_edge_cost_test.d`'s K2-cap arm asserts it never fires.
+    enum size_t MAX_SPIN_ROUNDS = 64;
+
+    /// Spin EVERY edge named in `keys`, paying the derived-structure rebuild
+    /// once per ROUND instead of once per edge. Returns how many spins were
+    /// performed and appends each spin's product diagonal to `productKeys`, in
+    /// the order the spins happened.
+    ///
+    /// TASK 1471, and the cost is the whole point. `spinEdge` rebuilds edges,
+    /// rebuilds loops and commits — all three O(M) — so a bulk caller that
+    /// loops over S targets pays S x O(M). On a grid S grows with the mesh, so
+    /// that is quadratic: measured 145.7 ms at 576 faces and 7072.5 ms at 4096,
+    /// exponent 1.98, extrapolating to ~66 minutes for ONE apply on the
+    /// 99 856-face lane mesh.
+    ///
+    /// THE KERNEL DOES NOT SORT `keys`, and that is not a style choice. The
+    /// two callers hand it two DIFFERENT orders on purpose and both are
+    /// observable: `commands/mesh/spin_edge.d`'s Edges branch collects its keys
+    /// by walking `selectedEdges`, i.e. in EDGE-INDEX order, and its
+    /// `productKeys` inherit that order straight into `repointToEdgeKeys`,
+    /// which stamps `edgeSelectionOrder[]` one `selectEdge` at a time — stamps
+    /// that live in `MeshSnapshot` and survive undo. Sorting here would
+    /// silently rewrite the post-spin selection ORDER. The Polygons branch
+    /// hands over an already-sorted array because IT wants determinism; that
+    /// is its call to make, not this function's.
+    ///
+    /// One round:
+    ///   1. walk the still-pending keys IN CALLER ORDER, resolving each through
+    ///      the real derived structures (`edgeIndexByKey` + `facesAroundEdge`);
+    ///   2. greedily take the ones whose two incident faces have not already
+    ///      been rewritten this round — the same disjointness idea as the
+    ///      Edges branch's transaction gate, except this SELECTS rather than
+    ///      refusing;
+    ///   3. apply them with `spinEdgeRings_`, which touches no derived array;
+    ///   4. rebuild + commit ONCE;
+    ///   5. repeat with the deferred remainder, in its original relative order.
+    ///
+    /// A pending key whose edge is the PRODUCT of a spin already taken this
+    /// round is deferred too, and that is what keeps the Edges branch's result
+    /// the same as the one-at-a-time loop it replaced. A spin's only side effect on
+    /// any edge other than its own is on the diagonal it creates: of the two
+    /// rewritten rings, `(a,b)` disappears, `(b,c)` and `(a,e)` merely change
+    /// which of the two faces owns them, and `(c,e)` is the one edge that GAINS
+    /// incidences. So a later target can only be disturbed by being that
+    /// diagonal — sequentially it would then see 3+ incident faces and refuse
+    /// (`spinEdgeRings_`'s `nFaces != 2` guard), and deferring it to the next
+    /// round, where the topology has been rebuilt, reproduces that.
+    ///
+    /// The residual, stated rather than papered over: the deferred target is
+    /// re-evaluated at the START of round 2, which is LATER in the sequence
+    /// than its own turn would have been. If some other round-1 spin had
+    /// meanwhile taken the third face back off that edge, the retry could
+    /// succeed where the sequential pass refused. No fixture reaches that on
+    /// the Edges branch — the transaction gate already demands pairwise
+    /// disjoint face pairs there, and `K4-geometry` in
+    /// `tests/unit/spin_edge_cost_test.d` measures the reachable case (the
+    /// retry refuses, both paths spin exactly one) — so "identical" here means
+    /// "identical on everything measured", not "proved for all topologies".
+    ///
+    /// Round-start topology is what steps 1-2 read: `edges`, `edgeIndexMap`
+    /// and the half-edge rings are deliberately left stale until step 4. That
+    /// is safe only because of the two deferrals above; do not add a target
+    /// filter here that assumes fresh derived arrays.
+    ///
+    /// No spins at all ⇒ no `rebuildEdges`, no `commitChange`, no
+    /// `mutationVersion` bump — the caller's existing "no work, no change"
+    /// contract.
+    size_t spinEdgesByKeys(const(ulong)[] keys, ref ulong[] productKeys) {
+        version (unittest) {
+            g_spinRounds       = 0;
+            g_spinRoundsCapped = false;
+            g_spinCollisions   = 0;
+            g_spinCollisionKeys = null;
+            g_spinsApplied     = 0;
+        }
+        if (keys.length == 0) return 0;
+
+        ulong[] pending = keys.dup;
+        size_t affected = 0;
+        size_t rounds   = 0;
+        auto faceUsed   = new bool[](faces.length);
+
+        while (pending.length > 0) {
+            if (rounds >= MAX_SPIN_ROUNDS) {
+                version (unittest) g_spinRoundsCapped = true;
+                break;
+            }
+            ++rounds;
+            if (faceUsed.length < faces.length) faceUsed.length = faces.length;
+            faceUsed[] = false;
+            bool[ulong] roundProducts;
+            ulong[] deferred;
+            size_t spunThisRound = 0;
+
+            foreach (k; pending) {
+                immutable uint ei = edgeIndexByKey(k);
+                if (ei == ~0u) continue;            // consumed by an earlier round
+                if ((k in roundProducts) !is null) { deferred ~= k; continue; }
+
+                uint[2] inc;
+                uint nInc = 0;
+                foreach (fi; facesAroundEdge(ei)) {
+                    if (nInc >= 2) { nInc = 3; break; }   // 3 = "more than two"
+                    inc[nInc++] = fi;
+                }
+                if (nInc != 2) continue;            // spinEdgeRings_ refuses these too
+                if ((inc[0] < faceUsed.length && faceUsed[inc[0]]) ||
+                    (inc[1] < faceUsed.length && faceUsed[inc[1]])) {
+                    deferred ~= k;
+                    continue;
+                }
+
+                uint[2] diag;
+                if (!spinEdgeRings_(ei, diag)) continue;   // a real refusal — drop it
+
+                immutable ulong pk = edgeKey(diag[0], diag[1]);
+                version (unittest) {
+                    // Row 17: the new diagonal already existed, so `rebuildEdges`
+                    // will dedup it into a three-face edge and the edge count
+                    // falls. Read against round-start `edges` plus this round's
+                    // own products, which together are the state a sequential
+                    // pass would have seen.
+                    if (edgeIndexByKey(pk) != ~0u || (pk in roundProducts) !is null) {
+                        ++g_spinCollisions;
+                        g_spinCollisionKeys ~= pk;
+                    }
+                }
+                roundProducts[pk] = true;
+                if (inc[0] < faceUsed.length) faceUsed[inc[0]] = true;
+                if (inc[1] < faceUsed.length) faceUsed[inc[1]] = true;
+                productKeys ~= pk;
+                ++affected;
+                ++spunThisRound;
+            }
+
+            if (spunThisRound == 0) break;   // the remainder is all refusals
+            rebuildEdges();
+            buildLoops();
+            commitChange(MeshEditScope.Geometry);
+            pending = deferred;
+        }
+
+        version (unittest) {
+            g_spinRounds   = rounds;
+            g_spinsApplied = affected;
+        }
+        return affected;
     }
 
     /// Walk an edge loop starting from `startEdge` in the direction given by
@@ -12145,6 +12362,7 @@ struct Mesh {
     /// which now skips `buildLoops` on the preview mesh entirely rather than
     /// calling it with the map suppressed).
     void buildLoops() {
+        version (unittest) ++g_buildLoopsRuns;     // task 1471 instrument
 
         // Pre-compute total loop count + per-face start offset in one
         // pass. Lets pass 1 below run in parallel — each face writes

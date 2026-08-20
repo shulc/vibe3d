@@ -944,6 +944,22 @@ CmdCase[] commandCases() {
     cs ~= CmdCase("setMaterial/polygons/whole",
                   "mesh.setMaterial materialId:1", "polygons", "whole",
                   CmdWitness.marks);   // faceMaterial: 4096 entries change
+    // Task 1471. This was an exclusion until the quadratic behind it was
+    // fixed: 7072.5 ms for ONE apply at 4096 faces, exponent 1.98, which
+    // extrapolated to ~66 MINUTES on this lane's n=316 grid. The spin now
+    // pays the derived-structure rebuild once per ROUND rather than once per
+    // spun edge; re-measured on the fixed `perf` build 2026-08-20, five reps
+    // at n=316 with a fresh reset between them: 0.699 / 0.617 / 0.618 / 0.610
+    // / 0.624 s, median 0.618 s.
+    //
+    // `marks` is not optional here. A spin moves NO vertex and changes NO
+    // element count (verified at n=316: 99856 faces / 100489 verts / 200344
+    // edges before and after), so `counts` and `positions` would both witness
+    // nothing and the case would report "no work witnessed". What does move is
+    // the face RINGS — `ringHash` 17319654470044337117 -> 4975600424886181897
+    // on that same apply.
+    cs ~= CmdCase("spinEdge/polygons/half", "mesh.spinEdge", "polygons", "half",
+                  CmdWitness.marks);   // rings rewritten; no counts, no positions
     return cs;
 }
 
@@ -1006,14 +1022,6 @@ CmdExclusion[] excludedCommands() {
     CmdExclusion("mesh.setPosition",      "writes one coordinate per selected vertex; covered by the "
                                         ~ "`magnet`/`linearAlign` position cases at lower cost"),
     CmdExclusion("mesh.centerVertices",   "same kernel family as setPosition; duplicate coverage"),
-    // --- measured, but too expensive to run nightly ----------------------
-    CmdExclusion("mesh.spinEdge",         "MEASURED QUADRATIC 2026-08-19: 145.7 ms at 576 faces, "
-                                        ~ "539.8 ms at 1024, 2374.8 ms at 2304, 7072.5 ms at 4096 — "
-                                        ~ "exponent 1.98 over face count. Extrapolated to the n=316 "
-                                        ~ "lane mesh (99856 faces) that is ~70 MINUTES for one apply, "
-                                        ~ "and the case would need five. This is a finding, not a "
-                                        ~ "gap: it wants its own task with a profile, the way "
-                                        ~ "task 1330 did, not a perf row that eats the nightly"),
     // --- duplicate coverage ----------------------------------------------
     CmdExclusion("mesh.hideUnselected",   "same kernel + refreshHiddenDerived path as mesh.hide, "
                                         ~ "which has a case"),
@@ -1120,15 +1128,26 @@ bool isGeometryDomainCommand(string id) {
 // list someone maintains by hand does not do this either, because the list
 // and the registry drift apart silently. The registry is asked at run time.
 string[] computeCoverageGap(string[] registryIds) {
-    bool[string] accounted;
-    foreach (c; commandCases())     accounted[commandIdOf(c.commandId)] = true;
-    foreach (e; excludedCommands()) accounted[e.commandId] = true;
+    bool[string] cased, excluded;
+    foreach (c; commandCases())     cased[commandIdOf(c.commandId)] = true;
+    foreach (e; excludedCommands()) excluded[e.commandId] = true;
     string[] gap;
     foreach (id; registryIds) {
         if (!isGeometryDomainCommand(id)) continue;
-        if (id in accounted) continue;
+        if ((id in cased) !is null || (id in excluded) !is null) continue;
         gap ~= id;
     }
+    // Task 1471 — the OTHER way the two tables can disagree, which this
+    // function used to be blind to. It merged both into one `accounted` set,
+    // so "in neither" was caught and "in BOTH" read as covered. That is not
+    // hypothetical: promoting a command out of the exclusion table into a case
+    // is exactly the edit that leaves the stale exclusion behind, and its text
+    // — here, "~70 MINUTES for one apply" — then sits in the tree beside a
+    // sub-second row, saying the opposite of the truth, with the lane green.
+    foreach (id; cased.byKey)
+        if ((id in excluded) !is null)
+            gap ~= id ~ " (BOTH a case and an exclusion — the exclusion's " ~
+                        "reason is now stale prose; delete one)";
     gap.sort();
     return gap;
 }
