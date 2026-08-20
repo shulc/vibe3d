@@ -1,6 +1,5 @@
 module tools.edit.edge_extend;
 
-import document : primaryModelSpace;
 import bindbc.opengl;
 import bindbc.sdl;
 import operator : VectorStack;
@@ -68,8 +67,31 @@ alias EdgeExtendEditFactory = MeshSessionEdit delegate();
 // geometry. The host reads that scalar, projects it through the move handler's
 // world axes, accumulates it into the Extend `offset` param, and the kernel
 // RE-RUN is the geometry apply. The wrapper still gets draw/update so the banks
-// render + the arbiter highlights on hover. Phase 4a consumes the Move bank +
-// haul (Offset) only; Rotate/Scale banks are 4b (kernel pivot arg already wired).
+// render + the arbiter highlights on hover.
+//
+// WHICH BANKS ARE DRAWN IS A PARAMETER, AND THE DEFAULT IS MOVE ALONE (task
+// 1610). Five banks are offered there — move, rotate, scale, plane, local —
+// each behind its own switch, and the tool-reset slot turns MOVE on and the
+// other four off. That table is frozen in
+// `tests/fixtures/edge_extend/handles_and_pivot.json`.
+//
+// We used to hard-wire T=R=S on, which drew two banks that are not drawn
+// there. That is a live defect, not a cosmetic one: only the Move gesture was
+// ever wired, so grabbing the rotate ring produced a TRANSLATE. The fix is
+// this switch, not two missing drag handlers.
+//
+// `moveHandle_` / `rotateHandle_` / `scaleHandle_` are ordinary tool params
+// (Tool Properties + headless `tool.attr`), pushed into the wrapper's
+// flagT/flagR/flagS by syncBankFlags(). A bank that is off is not drawn, not
+// registered with the shared arbiter, and not offered the click. The
+// off-handle HAUL is deliberately NOT gated on them — it is a separate mode
+// there too (global|local, default global = Offset), so the Move sub-tool is
+// brought online even when its bank is hidden.
+//
+// The plane bank, the local bank and the local haul MODE are NOT implemented.
+// They are default-off there as well, so they are gaps rather than
+// divergences; the fixture records them so a later task starts from the
+// measurement instead of from a fresh guess.
 //
 // PER-TICK RE-EVALUATE (the critical law, §4.2): a drag WRITES the op's params
 // and RE-RUNS the kernel from the pre-extend cage — it does NOT vertex-transform
@@ -97,20 +119,33 @@ private:
     CommandHistory        history;
     EdgeExtendEditFactory factory;
 
-    // Embedded transform gizmo — T=R=S all enabled (all banks visible), but only
-    // the Move bank's gesture is consumed in 4a. Constructed in this().
+    // Embedded transform gizmo. WHICH of its banks render + hit-test is driven
+    // by the bank params below through syncBankFlags(); the wrapper never owns
+    // geometry here. Constructed in this().
     XfrmTransformTool xfrm;
 
     // Parameters — exposed via params() so both the Tool Properties panel and
-    // the headless tool.attr path write into them. Same defaults as the one-shot
-    // mesh.edge_extend command (inset=0.1, shift=0, offset=0, rotate=0, scale=1,
-    // segments=1).
-    float inset_   = 0.1f;
+    // the headless tool.attr path write into them. The defaults are the
+    // captured tool-reset defaults: shift=0, offset=0, rotate=0, scale=1,
+    // segments=1 and **inset=0** (task 1610 — ours was 0.1).
+    //
+    // The one-shot `mesh.edge_extend` COMMAND keeps its own inset=0.1 default.
+    // That is our own convenience surface rather than a port of the tool's
+    // reset slot, and the two are pinned by separate tests; the fixture's
+    // `parameter_defaults` block is about the tool.
+    float inset_   = 0.0f;
     float shift_   = 0.0f;
     float offsetX_ = 0.0f, offsetY_ = 0.0f, offsetZ_ = 0.0f;
     float rotateX_ = 0.0f, rotateY_ = 0.0f, rotateZ_ = 0.0f;
     float scaleX_  = 1.0f, scaleY_  = 1.0f, scaleZ_  = 1.0f;
     int   segments_ = 1;
+
+    // Handle banks (task 1610) — independently switchable, MOVE alone on by
+    // default. See the header note for why this is a switch and not two
+    // missing drag handlers.
+    bool  moveHandle_   = true;
+    bool  rotateHandle_ = false;
+    bool  scaleHandle_  = false;
 
     // Interactive session state.
     bool         active;           // between activate() and deactivate()
@@ -129,12 +164,37 @@ private:
     // offset; each motion sets offset = dragBaseOffset + (move world delta since
     // drag start).
     Vec3 dragBaseOffset;           // `offset` at drag start (Move bank)
-    Vec3 frozenPivot = Vec3(0, 0, 0);  // ACEN center frozen at drag start (R/S pivot)
+
+    // The R/S pivot: the MID of the BOUNDING BOX of the SELECTED vertices,
+    // captured once at tool INITIALISATION (reinitSession) and recomputed at
+    // no later point — not at drag start, not per evaluation. Task 1610; the
+    // law was read at its own compute site and is frozen in
+    // `tests/fixtures/edge_extend/handles_and_pivot.json`.
+    //
+    // TWO things this is NOT, both of which this field used to be:
+    //
+    //  * NOT THE ACTION CENTRE. The action centre plays no part: the compute
+    //    slot never asks for it, and forcing it to the world origin leaves the
+    //    pivot bit-identical (`action_centre_control` in the fixture, and a
+    //    cell of tests/test_fixture_edge_extend_handles_pivot.d). We used to
+    //    read `xfrm.actionCenter(vts)` here, so an ACEN mode switch silently
+    //    moved the extend's pivot.
+    //  * NOT A CENTROID. It is (min + max) * 0.5 over the operand vertices,
+    //    which on an asymmetric selection is nowhere near their mean — 0.57
+    //    apart on the fixture's rig, and every ring vertex 0.30 out. A cube
+    //    edge cannot tell the two apart, which is exactly how an earlier
+    //    campaign came to write this pivot down as "the selection centroid".
+    //
+    // `Mesh.selectionBBoxCenterEdges()` already IS that quantity (it is also
+    // what the action centre's Select MODE computes), so it is reused rather
+    // than re-implemented: same point, arrived at independently of the stage,
+    // which is the whole content of the finding above.
+    Vec3 initPivot_ = Vec3(0, 0, 0);
 
     // Test-only override for the headless apply pivot. Backed by the HIDDEN
     // `_dragPivot` param (set via tool.attr): writing it arms `.active`; the next
-    // applyHeadless consumes it (one-shot). Lets a parity test pin the sel-center
-    // R/S pivot the interactive drag would freeze, without a synthesized viewport
+    // applyHeadless consumes it (one-shot). Lets a test pin the INTERACTIVE
+    // pivot (initPivot_) on the headless path without a synthesized viewport
     // drag. `.value` IS the param's storage so injectParamsInto writes it directly.
     struct PivotOverride { bool active; Vec3 value = Vec3(0, 0, 0); }
     PivotOverride dragPivotOverride_;
@@ -149,10 +209,11 @@ public:
         this.vc        = vc;
         this.ec        = ec;
         this.fc        = fc;
-        // The embedded wrapper reuses the same mesh/gpu/editMode pointers. T/R/S
-        // all on; for 4a only the Move bank's gesture is drained, but the Rotate/
-        // Scale banks still render (4b consumes them).
+        // The embedded wrapper reuses the same mesh/gpu/editMode pointers. The
+        // bank switches land immediately, so a tool that is constructed and
+        // never activated already reports the right set.
         xfrm = new XfrmTransformTool(meshSrc, gpu, editMode);
+        syncBankFlags();
     }
 
     /// Inject undo plumbing — called by app.d after construction. commitEdit()
@@ -184,7 +245,7 @@ public:
         // a numeric rotate/scale edit re-runs the kernel about the world origin
         // (pivot defaults to origin) exactly like the one-shot command.
         return [
-            Param.float_("inset",   "Local Inset", &inset_,   0.1f),
+            Param.float_("inset",   "Local Inset", &inset_,   0.0f),
             Param.float_("shift",   "Local Shift", &shift_,   0.0f),
             Param.float_("offsetX", "Offset X",    &offsetX_, 0.0f),
             Param.float_("offsetY", "Offset Y",    &offsetY_, 0.0f),
@@ -199,10 +260,20 @@ public:
             // internal `MAX_EXTEND_SEGMENTS` cap — the Param bound alone is
             // a UI-only hint and does not clamp a raw HTTP write.
             Param.int_  ("segments","Segments",    &segments_, 1).min(1).max(1024).enforceBounds(),
-            // HIDDEN test-automation hook (Phase 4b): the sel-center R/S pivot the
-            // interactive drag would freeze. Setting it via tool.attr arms a
-            // one-shot override consumed by the next applyHeadless (see
-            // dragPivotOverride_ / onParamChanged). Not shown in the panel.
+            // Handle banks — move ON, rotate/scale OFF (task 1610). Flipping
+            // one goes straight through onParamChanged → syncBankFlags(), so
+            // the panel checkbox and `tool.attr edge.extend rotateHandle true`
+            // are the same write.
+            Param.bool_ ("moveHandle",   "Move Handle",   &moveHandle_,   true),
+            Param.bool_ ("rotateHandle", "Rotate Handle", &rotateHandle_, false),
+            Param.bool_ ("scaleHandle",  "Scale Handle",  &scaleHandle_,  false),
+            // HIDDEN test-automation hook: the interactive R/S pivot (the
+            // bbox mid an armed tool holds in initPivot_). Setting it via
+            // tool.attr arms a one-shot override consumed by the next
+            // applyHeadless (see dragPivotOverride_ / onParamChanged), which
+            // lets a test drive the kernel about a pivot it read back from
+            // /api/tool/state without synthesising a viewport drag. Not shown
+            // in the panel.
             Param.vec3_ ("_dragPivot", "Drag Pivot (test)",
                          &dragPivotOverride_.value, Vec3(0, 0, 0)).hidden(),
         ];
@@ -210,11 +281,31 @@ public:
 
     override void activate() {
         active = true;
+        // Bank flags BEFORE xfrm.activate(): the wrapper activates only the
+        // sub-tools its flags enable, so a bank that was switched on while the
+        // tool was down has to be visible to that call.
+        syncBankFlags();
         // Bring the embedded gizmo online (its sub-tools' activate + wrapperRef
         // wiring). The wrapper never owns geometry here, but it needs to be
         // active so its banks render + hit-test.
         xfrm.activate();
+        // The Move sub-tool is ALSO the off-handle haul engine (see the header
+        // note), and the haul is not gated on the move BANK — so bring it
+        // online even when that bank is hidden, which xfrm.activate() did not.
+        if (!moveHandle_) xfrm.moveBank().activate();
         reinitSession();
+    }
+
+    // Push the bank switches into the embedded wrapper. flagT/flagR/flagS gate
+    // registration with the shared arbiter, the per-frame hit-geometry refresh
+    // and each bank's draw (xfrm_handles.d / xfrm_transform.d), so this one
+    // assignment is the whole "is the bank there" seam. The CLICK is gated
+    // separately in onMouseButtonDown, because this host drives the sub-tools
+    // directly rather than through the arbiter.
+    private void syncBankFlags() {
+        xfrm.flagT = moveHandle_;
+        xfrm.flagR = rotateHandle_;
+        xfrm.flagS = scaleHandle_;
     }
 
     // (Re)initialise the edit session against the CURRENT mesh — shared by
@@ -233,6 +324,32 @@ public:
         built    = false;
         dragBank = DragBank.None;
         before   = MeshSnapshot.capture(*mesh);
+        // THE MOMENT the R/S pivot is captured (task 1610) — tool
+        // initialisation, and nowhere else. It is not recomputed at drag
+        // start and not per evaluation, so a gesture cannot chase its own
+        // output (the failure mode task 1530 measured on the action centre)
+        // and a mid-session selection change cannot move it either.
+        //
+        // reinitSession() is the shared init of activate() and
+        // resyncSession(); both run against the CLEAN cage (resyncSession is
+        // only reached after history navigation restored it), so both see the
+        // same operand set and the same box.
+        //
+        // Layer space: the kernel conjugates against raw mesh vertices, so the
+        // pivot is wanted in the layer's own coordinates — which is what the
+        // default (identity) ModelSpace argument gives. The removed
+        // action-centre read needed `primaryModelSpace().toLocalPoint` here
+        // precisely because ACEN publishes in WORLD (task 0649).
+        //
+        // EMPTY-SELECTION FOOTNOTE, stated because the two fallbacks differ.
+        // selectionBBoxCenterEdges falls back to EVERY edge when nothing is
+        // selected; currentMask() (operandEdgeMask) falls back to every VISIBLE
+        // edge, and the kernel drops hidden edges again on top of that. So on a
+        // mesh with hidden geometry AND no selection, the pivot spans a little
+        // more than the kernel extends. Left alone deliberately: the captured
+        // law is about the selection, and forking a second implementation of
+        // "mid of the box" to cover it would cost more than the case is worth.
+        initPivot_ = mesh.selectionBBoxCenterEdges();
     }
 
     override void deactivate() {
@@ -274,6 +391,23 @@ public:
         // the panel (property_panel/args_dialog skip hidden params). Arming only
         // on a non-zero value keeps a default write inert so the override can
         // never be latched accidentally.
+        // Bank switches: push the flags and, when the tool is already armed,
+        // bring a newly-enabled sub-tool online (xfrm.activate() only
+        // activates the banks its flags had at the time). Deliberately does
+        // NOT rebuild the preview — a bank switch is not a geometry param, and
+        // rebuilding would re-run the kernel for a purely visual change.
+        // TransformTool.activate() is `active = true; resetTransientState()`,
+        // which touches only drag-invariant cache/gizmo bookkeeping, so
+        // calling it on an already-active bank between drags is inert.
+        if (name == "moveHandle" || name == "rotateHandle" || name == "scaleHandle") {
+            syncBankFlags();
+            if (active) {
+                xfrm.moveBank().activate();     // also the haul engine
+                if (rotateHandle_) xfrm.rotateBank().activate();
+                if (scaleHandle_)  xfrm.scaleBank().activate();
+            }
+            return;
+        }
         if (name == "_dragPivot") {
             Vec3 p = dragPivotOverride_.value;
             dragPivotOverride_.active = (p.x != 0 || p.y != 0 || p.z != 0);
@@ -308,6 +442,16 @@ public:
         root["scaleZ"]   = JSONValue(scaleZ_);
         root["segments"] = JSONValue(segments_);
         root["built"]    = JSONValue(built);
+        // Bank switches + the init-frozen R/S pivot (task 1610). The pivot is
+        // read-only state, not a param, and exposing it is what lets a test
+        // pin the POINT and the MOMENT separately: it is already populated
+        // when the tool is armed, before any drag or param write.
+        root["moveHandle"]   = JSONValue(moveHandle_);
+        root["rotateHandle"] = JSONValue(rotateHandle_);
+        root["scaleHandle"]  = JSONValue(scaleHandle_);
+        root["pivot"] = JSONValue([JSONValue(initPivot_.x),
+                                   JSONValue(initPivot_.y),
+                                   JSONValue(initPivot_.z)]);
         return root;
     }
 
@@ -334,18 +478,20 @@ public:
         }
         if (mesh.edges.length == 0) return false;
         auto mask = currentMask();
-        // Headless pivot policy. The headless `tool.attr ...; tool.doApply` path
-        // uses the world ORIGIN by default — the SAME pivot the one-shot
-        // mesh.edge_extend command uses — so the headless tool path and the command
-        // path stay byte-identical (the 4a command-parity test pins this; the ACEN
-        // sel-center would diverge even on an origin cube because an edge's ACEN is
-        // its centroid, not the origin). The sel-center R/S pivot is an
-        // INTERACTIVE-drag property (frozenPivot, captured at drag-start, fed via
-        // livePivot() into rebuildPreview) reached through the gizmo bank drain,
-        // NOT this attr path. The HIDDEN test-automation param `_dragPivot` (set via
-        // tool.attr) pins that drag pivot for ONE doApply so a parity test can
-        // reproduce the captured off-origin R/S numbers — which depend on the
-        // sel-center pivot — without a synthesized viewport drag.
+        // Headless pivot policy — the world ORIGIN, and that is REFERENCE-
+        // FAITHFUL rather than a convenience. The non-interactive command path
+        // never initialises a pivot there either, so it rotates about the world
+        // origin; the fixture carries that as its own case
+        // (`command_path_rotate_pivot`, the CONTROL for the interactive one:
+        // same tool, same params, same rig, pivot field simply never
+        // populated). It also keeps this path byte-identical to the one-shot
+        // mesh.edge_extend command, which the 4a command-parity test pins.
+        //
+        // The bbox-mid pivot is an INTERACTIVE property (initPivot_, captured
+        // at tool init, fed to the kernel through livePivot()). The HIDDEN
+        // test-automation param `_dragPivot` overrides this path's pivot for
+        // ONE apply, so a test can drive the kernel about a pivot it read back
+        // from the armed tool without synthesising a viewport drag.
         Vec3 pivot = dragPivotOverride_.active
                    ? dragPivotOverride_.value : Vec3(0, 0, 0);
         dragPivotOverride_.active = false;   // one-shot: never leak into a later apply
@@ -367,15 +513,21 @@ public:
     // Rotate, then Scale; the first bank whose hit-test grabs a REAL handle
     // (dragAxis>=0) owns the drag. The banks' screen radii are disjoint (move
     // arrows vs rotate rings vs scale handles) so in practice exactly one grabs.
-    // On a total miss, the Move bank begins a HAUL (screen-plane Offset drag),
-    // matching 4a.
+    // On a total miss, the Move bank begins a HAUL (screen-plane Offset drag).
     //   - Move   → Offset (world-axis, pivot-agnostic; haul + on-arrow share it).
     //   - Rotate → rotateDeg component (principal ring axis → X/Y/Z), about the
-    //              FROZEN sel-center pivot.
-    //   - Scale  → scale component (handle axis → X/Y/Z), about the FROZEN pivot.
+    //              init-frozen bbox-mid pivot.
+    //   - Scale  → scale component (handle axis → X/Y/Z), about the same pivot.
     // R/S are absolute-since-drag-start (the sub-tools publish the accumulated
     // factor/angle), so the host SETS the component (not +=); Move accumulates a
-    // world delta. The frozen pivot is captured at drag-start for ALL banks.
+    // world delta.
+    //
+    // A SWITCHED-OFF BANK IS NOT OFFERED THE CLICK (task 1610). Its flag has
+    // already kept it out of the arbiter and off the screen, but this host
+    // drives the sub-tools DIRECTLY, so an ungated call here would let an
+    // invisible bank hit-test — and, worse, run its click-side effects. The
+    // haul is deliberately NOT gated: it is a mode of its own, not part of the
+    // move bank (see the header note).
     // -----------------------------------------------------------------------
     override bool onMouseButtonDown(ref const SDL_MouseButtonEvent e, ref VectorStack vts) {
         if (!active) return false;
@@ -407,42 +559,44 @@ public:
         // NOTE the chain does NOT short-circuit on first-consumed (unlike the
         // wrapper): Rotate/Scale CONSUME a relocate-miss, so stopping there would
         // swallow the total-miss click before it can become a haul. On a total
-        // miss all three banks' onMouseButtonDown run, so their click-side
+        // miss every ENABLED bank's onMouseButtonDown runs, so their click-side
         // effects (screen-falloff disc recenter, Move/Rotate ACEN click-relocate)
         // fire more than once — but all are IDEMPOTENT at the same click point
         // (same e.x,e.y → same projected ACEN, same disc center), so the observed
         // result is unchanged. Revisit if a bank's miss-handler ever gains
         // non-idempotent state; once a bank OWNS (dragAxis>=0) the `else if`
         // short-circuits and later banks never run.
+        //
+        // With the default bank set (move only) this is now ONE call rather
+        // than three, so the multiple-fire caveat above applies to strictly
+        // fewer clicks than it used to — a switched-off bank is never asked.
         DragBank picked = DragBank.None;
-        if (mv.onMouseButtonDown(e, vts) && mv.dragAxisPublic() >= 0) {
+        if (moveHandle_ && mv.onMouseButtonDown(e, vts) && mv.dragAxisPublic() >= 0) {
             picked = DragBank.Move;
-        } else if (rt.onMouseButtonDown(e, vts)
+        } else if (rotateHandle_ && rt.onMouseButtonDown(e, vts)
                    && rt.dragAxisPublic() >= 0 && rt.dragAxisPublic() <= 2) {
             // Principal rings only (0/1/2 → X/Y/Z Euler component). The view-ring
             // (3) maps to no single rotateDeg component; defer it (the command's
             // rotateDeg has no arbitrary-axis slot). Leave it unowned.
             picked = DragBank.Rotate;
-        } else if (sc.onMouseButtonDown(e, vts) && sc.dragAxisPublic() >= 0) {
+        } else if (scaleHandle_ && sc.onMouseButtonDown(e, vts) && sc.dragAxisPublic() >= 0) {
             picked = DragBank.Scale;
         } else {
-            // Total miss across every bank → HAUL via the Move bank's screen-plane
-            // drag (world-axis Offset), anchored at the gizmo center.
+            // Total miss across every ENABLED bank (or none enabled) → HAUL via
+            // the Move bank's screen-plane drag (world-axis Offset), anchored at
+            // the gizmo center.
             bool ctrl = (mods & KMOD_CTRL) != 0;
             mv.beginScreenPlaneDragAt(e.x, e.y, xfrm.moveGizmoCenter(),
                                       ctrl, /*notifyAcen=*/false, vts);
             picked = DragBank.Move;
         }
 
-        // Begin the host-owned drag. Freeze the kernel-fed pivot for ALL banks
-        // (§4.4): R/S conjugate about it; Offset is pivot-agnostic so it is inert
-        // for a pure Move drag but harmless to freeze.
+        // Begin the host-owned drag. NOTHING about the pivot happens here: it
+        // was captured at tool init (initPivot_) and a drag does not re-take
+        // it. This line used to read the ACTION CENTRE at drag start, and both
+        // halves of that were wrong — see initPivot_'s comment.
         dragBank       = picked;
         dragBaseOffset = offsetVec();
-        // ACEN publishes in WORLD (task 0649); this pivot is conjugated
-        // against raw mesh vertices by the R/S banks below, so it is frozen in
-        // the layer's own coordinates.
-        frozenPivot    = primaryModelSpace().toLocalPoint(xfrm.actionCenter(vts));
         accumLocal_    = Vec3(0, 0, 0);   // fresh basis-local accumulator per drag
         return true;
     }
@@ -501,7 +655,7 @@ public:
             if      (ax == 0) rotateX_ = deg;
             else if (ax == 1) rotateY_ = deg;
             else              rotateZ_ = deg;
-            rebuildPreview();   // re-run about frozenPivot (livePivot())
+            rebuildPreview();   // re-run about initPivot_ (livePivot())
         }
         return true;
     }
@@ -521,7 +675,7 @@ public:
             scaleX_ = f.x;
             scaleY_ = f.y;
             scaleZ_ = f.z;
-            rebuildPreview();   // re-run about frozenPivot (livePivot())
+            rebuildPreview();   // re-run about initPivot_ (livePivot())
         }
         return true;
     }
@@ -554,14 +708,18 @@ private:
     Vec3 rotateVec() const { return Vec3(rotateX_, rotateY_, rotateZ_); }
     Vec3 scaleVec()  const { return Vec3(scaleX_,  scaleY_,  scaleZ_); }
 
-    // Pivot fed to the kernel for the live preview. During a drag (any bank) the
-    // R/S factors conjugate about `frozenPivot` (the ACEN sel-center frozen at
-    // drag-start); Offset is pivot-agnostic so a pure Move drag is unaffected.
-    // Outside a drag (numeric param edits via the panel/onParamChanged) the pivot
-    // is the world ORIGIN — matching the one-shot command path, which is the
-    // distinction the off-origin pivot test pins.
+    // Pivot fed to the kernel for every INTERACTIVE evaluation — a bank drag
+    // and a numeric Tool Properties edit alike. Both are "the tool is armed in
+    // a viewport", which is the state whose pivot the fixture's first case
+    // measures; the drag is not a separate regime (task 1610). Offset and
+    // inset/shift are pivot-agnostic, so a pure Move drag is unaffected either
+    // way.
+    //
+    // Inactive ⇒ the world origin, which is the non-interactive command path
+    // (applyHeadless has its own copy of that policy, with the fixture's
+    // control case cited).
     Vec3 livePivot() const {
-        return (dragBank != DragBank.None) ? frozenPivot : Vec3(0, 0, 0);
+        return active ? initPivot_ : Vec3(0, 0, 0);
     }
 
     // Drain the per-event Move scalar the sub-tool just produced, fold it into a
@@ -629,7 +787,7 @@ private:
             auto mask = currentMask();
             mesh.extendEdgesByMask(mask, inset_, shift_,
                                    offsetVec(), rotateVec(), scaleVec(),
-                                   segments_, frozenPivot);
+                                   segments_, livePivot());
             auto delta = mesh.endEditBatch();
 
             refreshCaches();

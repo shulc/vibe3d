@@ -167,9 +167,22 @@ void selectCubeTopFront(JSONValue before) {
 
 // ---------------------------------------------------------------------------
 // 1. Defaults apply: one interior edge + tool on + doApply (no param change)
-//    builds the 10v/7f identity ridge (inset=0.1, shift=0, identity TRS). Like
-//    the extrude template, activate() leaves the mesh clean (so the headless
-//    pre-snapshot stays clean); the kernel runs on doApply.
+//    builds the 10v/7f identity ridge. Like the extrude template, activate()
+//    leaves the mesh clean (so the headless pre-snapshot stays clean); the
+//    kernel runs on doApply.
+//
+//    THE DEFAULTS ARE inset=0, shift=0, identity TRS (task 1610 — inset was
+//    0.1 here until then, and 0 is what the captured tool-reset slot holds).
+//    At inset=0 the ridge is COINCIDENT with the source edge, which is a
+//    sharper statement of "identity" than the old (±0.4,0.4,0.4) assertion
+//    was: the kernel does not weld the new ring to the cage, so each endpoint
+//    must now be occupied TWICE.
+//
+//    THIS IS THE ONLY CELL THAT OWNS THE DEFAULT. Every cell below whose
+//    frozen numbers were captured at inset=0.1 now writes that inset
+//    explicitly, rather than leaning on a default it does not test. The
+//    one-shot mesh.edge_extend command keeps its own inset=0.1 and is pinned
+//    separately, in tests/test_edge_extend.d.
 // ---------------------------------------------------------------------------
 unittest {
     resetCube();
@@ -182,9 +195,14 @@ unittest {
         ~ m["vertexCount"].integer.to!string);
     assert(m["faceCount"].integer == 7, "default apply: expected 7 faces, got "
         ~ m["faceCount"].integer.to!string);
-    // Identity ridge verts at (±0.4, 0.4, 0.4).
-    assert(vertAt(m, V3( 0.4, 0.4, 0.4)) >= 0, "ridge vert (0.4,0.4,0.4) missing");
-    assert(vertAt(m, V3(-0.4, 0.4, 0.4)) >= 0, "ridge vert (-0.4,0.4,0.4) missing");
+    // inset=0 ⇒ the ridge lands ON the source edge: both endpoints doubled,
+    // and nothing at the (±0.4,0.4,0.4) the old inset=0.1 default produced.
+    assert(countAt(m, V3( 0.5, 0.5, 0.5)) == 2,
+        "default apply: expected the ridge to coincide with (0.5,0.5,0.5)");
+    assert(countAt(m, V3(-0.5, 0.5, 0.5)) == 2,
+        "default apply: expected the ridge to coincide with (-0.5,0.5,0.5)");
+    assert(vertAt(m, V3( 0.4, 0.4, 0.4)) < 0,
+        "default apply: inset is 0 now — nothing may land at (0.4,0.4,0.4)");
     cmd("tool.set edge.extend off");
 }
 
@@ -200,6 +218,7 @@ unittest {
     auto before = getModel();
     selectCubeTopFront(before);
     cmd("tool.set edge.extend on");
+    cmd("tool.attr edge.extend inset 0.1");   // frozen numbers below are at inset 0.1 (default is 0)
     cmd("tool.attr edge.extend segments 3");   // set segments FIRST
     cmd("tool.attr edge.extend offsetY 0.3");
     cmd("tool.doApply");
@@ -333,6 +352,7 @@ unittest {
     auto m0 = getModel();
     selectTopFrontAt(m0, 2.0);
     cmd("tool.set edge.extend on");
+    cmd("tool.attr edge.extend inset 0.1");   // frozen numbers below are at inset 0.1 (default is 0)
     cmd("tool.attr edge.extend rotateZ 55.4");
     setDragPivot(V3(2.0, 0.5, 0.5));   // sel-center the drag freezes
     cmd("tool.doApply");
@@ -353,6 +373,7 @@ unittest {
     auto m0 = getModel();
     selectTopFrontAt(m0, 2.0);
     cmd("tool.set edge.extend on");
+    cmd("tool.attr edge.extend inset 0.1");   // frozen numbers below are at inset 0.1 (default is 0)
     // sclX=6.43376 reproduces the captured ridge X = 1.9 + 0.5·s = 5.11688.
     cmd("tool.attr edge.extend scaleX 6.43376");
     setDragPivot(V3(2.0, 0.5, 0.5));
@@ -377,6 +398,7 @@ unittest {
     auto mt0 = getModel();
     selectTopFrontAt(mt0, 2.0);
     cmd("tool.set edge.extend on");
+    cmd("tool.attr edge.extend inset 0.1");   // frozen numbers below are at inset 0.1 (default is 0)
     cmd("tool.attr edge.extend rotateZ 55.4");
     setDragPivot(V3(2.0, 0.5, 0.5));
     cmd("tool.doApply");
@@ -411,6 +433,7 @@ unittest {
     auto before = getModel();
     selectCubeTopFront(before);
     cmd("tool.set edge.extend on");
+    cmd("tool.attr edge.extend inset 0.1");   // frozen numbers below are at inset 0.1 (default is 0)
     cmd("tool.attr edge.extend segments 2");
     cmd("tool.attr edge.extend rotateZ 30");
     setDragPivot(V3(0.0, 0.5, 0.5));   // origin-cube top-front sel-center
