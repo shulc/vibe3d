@@ -987,7 +987,9 @@ CmdExclusion[] excludedCommands() {
     CmdExclusion("mesh.subpatch_toggle",  "flips a per-face flag; the real cost is the OSD preview "
                                         ~ "rebuild in the FRAME loop, which belongs to the `frames` lane"),
     // --- no-op by construction at its defaults ---------------------------
-    CmdExclusion("mesh.vertex_edit",      "defaults indices:[] before:[] after:[] — no-op by construction"),
+    CmdExclusion("mesh.vertex_edit",      "defaults indices:[] before:[] after:[] — since task 1552 it "
+                                        ~ "REFUSES (\"no vertex edit payload\") rather than running as a "
+                                        ~ "no-op; either way there is no work here to time"),
     CmdExclusion("mesh.move_vertex",      "defaults from:(0,0,0) to:(0,0,0) — no-op by construction"),
     CmdExclusion("mesh.quadruple",        "measured 2026-08-19: 4096 -> 4096 faces, 0 verts moved, "
                                         ~ "0 marks changed in all four operand configurations — it "
@@ -1021,10 +1023,11 @@ CmdExclusion[] excludedCommands() {
                                         ~ "grid); the tool id and the command drive one kernel"),
     CmdExclusion("mesh.bridgeTool",       "tool activation; the kernel is mesh.bridge, excluded below"),
     CmdExclusion("mesh.radialSweepTool",  "tool activation; the kernel is mesh.sweep, excluded below"),
-    CmdExclusion("mesh.bevel_edit",       "re-opens the last bevel for editing; with no prior bevel it "
-                                        ~ "restores an EMPTY snapshot and wipes the mesh (measured "
-                                        ~ "2026-08-19: -4225 verts / -4096 faces from a fresh grid). "
-                                        ~ "Not a perf case — a correctness question for its own task"),
+    CmdExclusion("mesh.bevel_edit",       "the RECORD of a tool session (MeshSessionEdit): it carries "
+                                        ~ "the gesture's before/after snapshots and /api/command has no "
+                                        ~ "way to hand it a payload, so since task 1552 it REFUSES with "
+                                        ~ "\"no recorded edit session\". Not a perf case — there is no "
+                                        ~ "kernel behind this name to time"),
     CmdExclusion("mesh.remesh",           "the remesher kernel; process-isolated third-party solver, "
                                         ~ "and it refuses the flat grid"),
     // --- needs a fixture this lane does not have -------------------------

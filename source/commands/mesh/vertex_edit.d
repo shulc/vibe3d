@@ -220,6 +220,28 @@ class MeshVertexEdit : Command, Operator {
                 ~ "(indices=" ~ indices.length.to!string
                 ~ " before=" ~ before.length.to!string
                 ~ " after=" ~ after.length.to!string ~ ")");
+        // TASK 1552 — the neighbour of `mesh.bevel_edit`: this class is also
+        // reachable by name from the registry (`mesh.vertex_edit`), and built
+        // fresh it carries no target vertices at all. It did not lose data
+        // the way the session carrier did, but it reported `ok`, wrote a
+        // junk "Edit 0 verts" undo entry, and committed a Position change
+        // that invalidates every position-keyed cache for nothing.
+        //
+        // PLACED AFTER THE LENGTH CHECK ON PURPOSE. The `throw` above names
+        // all three lengths, and `tests/test_vertex_edit.d` drives a body
+        // with before/after of 1 and NO `indices` — a real length mismatch.
+        // A gate placed ahead of it would swallow that case and tell the
+        // caller all three arrays were empty, which is a lie about two of
+        // them, while the test (which only reads `status`) stayed green.
+        // `tests/test_session_edit_no_payload.d`'s C-4b pins that ordering.
+        //
+        // `isEmpty()` already existed here with zero readers; this is its
+        // first one.
+        if (isEmpty()) {
+            baseRefusal_ =
+                "no vertex edit payload: the command carries no target vertices";
+            return false;
+        }
         foreach (i, vid; indices) {
             if (vid < mesh.vertices.length)
                 mesh.vertices[vid] = after[i];

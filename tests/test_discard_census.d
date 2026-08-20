@@ -155,13 +155,6 @@ immutable string[] kSkipExact = [
     // side forever. Its guard is pinned directly by
     // tests/test_unsaved_guard.d::guardsQuit.
     "file.quit",
-    // MEASURED LIMIT: a snapshot/delta CARRIER (`MeshSessionEdit`). The bevel
-    // tool installs a payload via setSnapshots()/setDelta(); dispatched from
-    // /api/command it has neither, so `after.restore(*mesh)` restores an EMPTY
-    // snapshot — input-independent by construction, and a statement about the
-    // carrier's blank state rather than about document policy. /api/command
-    // has no way to hand it a payload.
-    "mesh.bevel_edit",
 ];
 
 // ---------------------------------------------------------------------------

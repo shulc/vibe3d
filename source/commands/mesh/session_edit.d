@@ -41,6 +41,20 @@ import mesh_edit_delta : MeshEditDelta, MeshEditScope;
 /// promote-hook) and `MeshVertexEdit` (per-vertex position delta, its own
 /// coalescing/merge/run-consolidation machinery) are NOT instances of this
 /// shape and intentionally stay as their own classes.
+/// The refusal a payload-less carrier owes. `MeshSessionEdit` is the RECORD
+/// of a tool session: the tool installs the session's (before, after)
+/// snapshots — or its operation-log delta — at the moment it commits the
+/// gesture, and only REDO ever re-enters `evaluate()` with that payload
+/// present. Built fresh from the command registry (`/api/command
+/// mesh.bevel_edit`, `/api/history/replay`, the History panel's `>` button
+/// and "Re-run" item, a recorded macro, a saved script) the carrier is BLANK,
+/// and a blank `MeshSnapshot` is not "a snapshot of an empty mesh" — it is
+/// "no snapshot was ever taken" (`snapshot.d`'s `filled`, written only by
+/// `capture()`). Restoring it wiped the mesh. Task 1552.
+enum string kNoSessionReason =
+    "no recorded edit session: this command carries a tool session's "
+    ~ "before/after snapshots and cannot run on its own";
+
 class MeshSessionEdit : Command, Operator {
     mixin OperatorActrCommon;
 
@@ -105,11 +119,44 @@ class MeshSessionEdit : Command, Operator {
         import toolpipe.packets : SubjectPacket;
         auto subj = vts.get!SubjectPacket();
         if (subj is null) return false;
+        // TASK 1552 — a carrier with NO PAYLOAD must refuse, not restore a
+        // blank snapshot over the live mesh. The predicate is `filled`, the
+        // same one ~98 sibling `revert()` bodies and the session tools' own
+        // pre-record gates read; it is deliberately NOT "the snapshot is
+        // empty", because a session may LEGITIMATELY end on an empty mesh
+        // (delete the last face) and `capture(emptyMesh)` is `filled` and
+        // MUST still redo. The `useDelta_` term is load-bearing: the delta
+        // path (edge_extrude / edge_extend) never sets `after` at all.
+        if (!useDelta_ && !after.filled) {
+            // Written into the base field rather than through an
+            // `override refusalReason()`: `Command.apply()` writes
+            // `kNoEditTargetReason` into the same field and clears it on the
+            // non-refusing path (`command.d`'s `refusedForNoEditTarget`),
+            // which runs BEFORE `op.evaluate(vts)` — so a separate field plus
+            // an override would shadow the earlier, more specific message.
+            baseRefusal_ = kNoSessionReason;
+            return false;
+        }
         if (useDelta_) delta_.apply(*mesh);   // forward replay (redo)
         else           after.restore(*mesh);
         return true;
     }
 
+    // NO `filled` GATE HERE, and that is a decision, not an oversight
+    // (task 1552). A payload-less carrier cannot reach `revert()`: it never
+    // gets RECORDED, because `evaluate()` above refuses and `applyOrRefire`
+    // records nothing on a refusal — and every producer that DOES record one
+    // gates on `before.filled` before calling `setSnapshots` (the one that
+    // does not, `tools/edit/tack.d`, captures `pre` unconditionally, so
+    // `filled` is true by construction).
+    //
+    // If such a producer is ever written, the correct shape here is a NO-OP
+    // returning `true` — "nothing to undo" — and NEVER `return false`. A
+    // false from a Model entry's `revert()` makes `CommandHistory.undo()` do
+    // `undoStack = undoStack[0 .. mi]`: it silently drops that entry AND the
+    // whole tail above it, which the comment at that site says outright is
+    // unrecoverable. A guard meant as free insurance would turn "undo leaves
+    // an empty mesh" into "undo destroys the history".
     override bool revert() {
         if (useDelta_) delta_.revert(*mesh);  // LIFO inverse replay (undo)
         else           before.restore(*mesh);
@@ -118,10 +165,15 @@ class MeshSessionEdit : Command, Operator {
 }
 
 // ---------------------------------------------------------------------------
-// wireName / label / editScope round-trip — no snapshots involved (evaluate()
-// / revert() need a real GL-backed GpuMesh to be meaningful and are exercised
-// by the HTTP suite instead; this unit test only pins the per-caller metadata
-// contract the ctor establishes).
+// wireName / label / editScope round-trip — no snapshots involved; this unit
+// test only pins the per-caller metadata contract the ctor establishes.
+//
+// The old form of this banner claimed evaluate()/revert() "need a real
+// GL-backed GpuMesh to be meaningful and are exercised by the HTTP suite
+// instead". That was false and it actively discouraged the next reader from
+// covering them: neither touches GL — `MeshSnapshot.restore` is pure data
+// plus `buildLoops`/`resizeAllMeshMaps`/`commitChange`. They are covered
+// CPU-only in `tests/unit/session_edit_payload_test.d` (task 1552).
 // ---------------------------------------------------------------------------
 unittest {
     import mesh      : Mesh;
