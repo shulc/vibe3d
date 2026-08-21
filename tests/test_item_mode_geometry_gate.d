@@ -645,13 +645,28 @@ unittest {
     cmd("select.typeFrom item");
     settle();
 
+    // The primary BEFORE the click is the discriminator, and it is why this
+    // reading exists. The runner reports primary == 1 after the click. If it
+    // was already 1, the click was SWALLOWED and the primary simply never
+    // moved; if it was something else, the click LANDED and resolved to the
+    // wrong item — two different defects that the after-value alone cannot
+    // tell apart. The guard terms are already known to be innocent
+    // (selType=item, armedTool=<none>, measured on the runner 2026-08-21), so
+    // a swallow would have to come from a term this test cannot read: the
+    // viewport refusing input because ImGui claimed the mouse.
+    immutable int primaryBefore = primaryIndex();
     clickAt(c, rig.boxes[0].cx, rig.boxes[0].cy);
     assert(primaryIndex() == 0,
-        format("the click on item 0 must make it primary — the app reports %d. "
-             ~ "The click may simply have been SWALLOWED: app.d delivers an "
-             ~ "item pick only with no tool active, Alt up, and the current "
-             ~ "selection type at Item. Guard state at the failure: %s",
-               primaryIndex(), guardState()));
+        format("the click on item 0 must make it primary — the app reports %d "
+             ~ "(it was %d BEFORE the click: unchanged ⇒ the click was "
+             ~ "swallowed, changed ⇒ it landed on the wrong item). Clicked "
+             ~ "(%d,%d); box0 centre (%d,%d), box1 centre (%d,%d). Guard "
+             ~ "state: %s",
+               primaryIndex(), primaryBefore,
+               rig.boxes[0].cx, rig.boxes[0].cy,
+               rig.boxes[0].cx, rig.boxes[0].cy,
+               rig.boxes[1].cx, rig.boxes[1].cy,
+               guardState()));
     assert(selectedVertices().length == 0,
         format("item 0 carries no geometry selection of its own — reading %s "
                ~ "here would mean /api/selection is not following the primary",
