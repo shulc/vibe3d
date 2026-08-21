@@ -1086,6 +1086,81 @@ struct RaceReport {
     string file;        // the file the report came from
 }
 
+// ---------------------------------------------------------------------------
+// THE SOURCE-POSITION SUFFIX IN A MANGLED NAME, AND WHY ONLY HALF OF IT GOES.
+//
+// The compiler names a generated symbol after WHERE IT WAS WRITTEN:
+// `__lambda_L1564_C35`, and the same shape for `__dgliteral_`, `__foreachbody_`
+// and friends. So the LINE NUMBER is in the mangled name, therefore in the
+// TSan frame, therefore in the signature — and an edit ANYWHERE ABOVE the
+// lambda renames it without changing one instruction inside it.
+//
+// Measured, 2026-08-21 (task 1700, the first night this lane ever reached its
+// reports): the verdict declared TEN new races. One was new. Four were the
+// same long-tolerated `start().__lambda ^ stop()` pair whose baseline row said
+// `_L1469_C35` while the tree had moved that lambda to `_L1564_C35`; three
+// more were the same story in http_providers.d, `_L1632_C13` against
+// `_L1807_C13`. The lane's ONLY gate therefore reddened on commits that
+// introduced no race at all — the one failure mode a gate must not have,
+// because a gate that cries wolf gets switched off rather than read.
+//
+// WHAT THIS FUNCTION DOES: DROP THE LINE, KEEP THE COLUMN. That is a choice
+// between two live options and it is written here rather than left implicit in
+// a pattern, because the two differ in what the verdict can still tell apart:
+//
+//   * The LINE moves under every edit above the symbol. http_server.d is
+//     4000 lines long and the lambda sits at 1564; essentially any change to
+//     the file invalidates the row. That is the defect.
+//   * The COLUMN moves only when the lambda's own statement is re-indented, or
+//     the text before it ON THAT LINE changes — i.e. when the lambda or its
+//     immediately enclosing block was edited. That is exactly the occasion on
+//     which re-reading the baseline row is the RIGHT thing to do, so the
+//     column failing is a signal rather than noise.
+//
+// THE PRICE, SAID OUT LOUD RATHER THAN DISCOVERED LATER: two DIFFERENT lambdas
+// declared in the SAME function at the SAME column collapse into ONE signature
+// and the verdict can no longer separate them — a race in the second would be
+// silently accepted by the first one's row. Keeping the column shrinks that
+// set (two lambdas in one function usually sit at different nesting depths,
+// hence different columns) but does NOT empty it: two `new Thread({` at the
+// same indentation in one function is a perfectly ordinary thing to write.
+// Dropping the column too would collapse EVERY lambda in a function, which is
+// strictly worse; keeping the line makes the gate unusable, which is strictly
+// worse the other way. This is the middle, and it is a trade.
+//
+// What survives either way: the enclosing function's FULL signature and the
+// module basename stay in the key, so a collapsed pair is still pinned to one
+// function in one file for whoever reads the log.
+//
+// The match is deliberately anchored on the PAIR `_L<digits>_C<digits>`, not
+// on `_L<digits>` alone, so an ordinary identifier that happens to end in
+// `_L12` is untouched. Written as an explicit scan rather than a regex so the
+// rule is readable as a rule.
+// ---------------------------------------------------------------------------
+string dropSourceLine(string sym) {
+    string outp;
+    size_t i = 0;
+    while (i < sym.length) {
+        if (i + 1 < sym.length && sym[i] == '_' && sym[i + 1] == 'L') {
+            size_t d = i + 2;
+            while (d < sym.length && sym[d] >= '0' && sym[d] <= '9') ++d;
+            const bool haveDigits = d > i + 2;
+            const bool haveCol    = d + 2 < sym.length
+                                 && sym[d] == '_' && sym[d + 1] == 'C'
+                                 && sym[d + 2] >= '0' && sym[d + 2] <= '9';
+            if (haveDigits && haveCol) { i = d; continue; }   // keep `_C<n>`
+        }
+        outp ~= sym[i];
+        ++i;
+    }
+    return outp;
+}
+
+/// The same drop, applied to a whole `A ^ B` signature. Both sides of the
+/// comparison go through THIS call — the parsed frame and the declared row —
+/// because a normalisation applied to one side only is a silent mismatch.
+string normaliseSignature(string sig) { return dropSourceLine(sig); }
+
 /// `#0 some.symbol(args) /abs/path/file.d:123:4 (vibe3d-tsan+0x1234)`
 /// -> `some.symbol(args)@file.d`, but only when the path is under source/.
 /// The symbol may contain spaces (`std.functional.binaryFun!("a < b")`), so
@@ -1117,7 +1192,9 @@ string frameKey(string line) {
     auto path = colon > 0 ? loc[0 .. colon] : loc;
     if (!(path.canFind("/source/") || path.startsWith("source/"))) return null;
     if (!sym.length) return null;
-    return sym ~ "@" ~ baseName(path);
+    // The line number is dropped HERE, at the one place an observed frame
+    // becomes a key, so no caller can forget to do it. See dropSourceLine.
+    return dropSourceLine(sym) ~ "@" ~ baseName(path);
 }
 
 bool isAccessHeader(string line) {
@@ -1232,10 +1309,36 @@ enum kTsanCanary    = "tools/sanitizer/tsan_canary.supp";
 enum kTsanExpected  = "tools/sanitizer/tsan_expected.txt";
 
 struct ExpectedRow {
-    string klass, scenario, signature, date, task, reason;
+    string klass;
+    /// EVERY scenario this signature is expected in, not one of them. See the
+    /// note above loadExpected for why this is a list and why it is not a
+    /// wildcard.
+    string[] scenarios;
+    string signature, date, task, reason;
 }
 
-/// `class | scenario | signature | date | task | reason`
+/// `class | scenario[,scenario...] | signature | date | task | reason`
+///
+/// THE SCENARIO FIELD IS A LIST, AND IT IS NOT ALLOWED TO BE A WILDCARD.
+/// -------------------------------------------------------------------
+/// It used to be a single name, and that was a recording error rather than a
+/// property of any race. The `start().__lambda ^ stop()` row says so in its
+/// own reason — "it fires on every clean shutdown, so every scenario that
+/// shuts down cleanly carries it" — and it was nonetheless written out four
+/// times, once per scenario, with the one reason copied and drifting. The
+/// registry rows drifted the other way: declared for `bridge` and `sweep`,
+/// they fired in `selfcheck` and `shutdown` on 2026-08-21 and reddened the
+/// night as three separate NEW RACES that were nothing of the kind, while
+/// their absence from `bridge` — the scenario they WERE declared for — went by
+/// as a note (task 1700).
+///
+/// So a row now names every scenario it is expected in, in one place, with one
+/// reason. A wildcard (`*`, `any`) is REFUSED rather than supported: the
+/// verdict's second direction is "declared here and did NOT fire", and a row
+/// that matches every scenario by construction can never fail that way. It
+/// would turn the `required` class into a grep and quietly delete half the
+/// gate. Naming the four costs four words and keeps absence-per-scenario a
+/// visible outcome.
 ExpectedRow[] loadExpected(string path = kTsanExpected) {
     if (!exists(path)) fail("no " ~ path ~ " — the lane has no verdict function");
     ExpectedRow[] rows;
@@ -1254,13 +1357,38 @@ ExpectedRow[] loadExpected(string path = kTsanExpected) {
                         path, lineNo, f[0]));
         static immutable string[] scen =
             ["selfcheck", "sweep", "shutdown", "bridge", "parallel"];
-        if (!scen.canFind(f[1]))
-            fail(format("%s:%d: scenario must be one of %s, got `%s`",
-                        path, lineNo, scen, f[1]));
+        if (f[1] == "*" || f[1] == "any" || f[1] == "all")
+            fail(format("%s:%d: `%s` is refused as a scenario. A row that "
+                      ~ "matches every scenario cannot fail the verdict's "
+                      ~ "second direction (declared, did not fire), so it "
+                      ~ "silently deletes half the gate. Name the scenarios: "
+                      ~ "`%s`.", path, lineNo, f[1], scen.join(",")));
+        auto scens = f[1].split(",").map!(a => a.strip)
+                                    .filter!(a => a.length).array;
+        if (!scens.length)
+            fail(format("%s:%d: empty scenario field", path, lineNo));
+        foreach (sc; scens) {
+            if (!scen.canFind(sc))
+                fail(format("%s:%d: scenario must be one of %s, got `%s`",
+                            path, lineNo, scen, sc));
+            if (scens.count(sc) > 1)
+                fail(format("%s:%d: scenario `%s` listed twice", path, lineNo, sc));
+        }
         if (!f[4].length)
             fail(format("%s:%d: a row with no owning task is not accepted",
                         path, lineNo));
-        rows ~= ExpectedRow(f[0], f[1], f[2], f[3], f[4], f[5]);
+        // The declared signature goes through the SAME normalisation as an
+        // observed frame (dropSourceLine), and a row that CHANGES under it is
+        // refused rather than quietly repaired: a pasted `_L1564_C35` would
+        // otherwise keep working while the file stopped saying what the
+        // verdict actually compares. The message names the text to write.
+        const norm = normaliseSignature(f[2]);
+        if (norm != f[2])
+            fail(format("%s:%d: the signature carries a source LINE, which "
+                      ~ "moves under any edit above the symbol and is dropped "
+                      ~ "before comparison. Write it without the `_L<n>`:\n"
+                      ~ "    %s", path, lineNo, norm));
+        rows ~= ExpectedRow(f[0], scens, norm, f[3], f[4], f[5]);
     }
     return rows;
 }
@@ -1948,7 +2076,8 @@ void cmdTsanVerdict(string[] scenarios) {
         foreach (r; reps) tally[r.signature] = tally.get(r.signature, 0) + 1;
         foreach (sig, n; tally) {
             firedKey[scen ~ "|" ~ sig] = true;
-            const declared = expected.any!(e => e.scenario == scen && e.signature == sig);
+            const declared = expected.any!(e => e.scenarios.canFind(scen)
+                                              && e.signature == sig);
             writeln(format("lane.d:   %-9s %4dx  %s", declared ? "declared" : "NEW", n, sig));
             if (!declared)
                 red ~= format("NEW RACE in scenario `%s` (%dx): %s\n"
@@ -1957,27 +2086,33 @@ void cmdTsanVerdict(string[] scenarios) {
                               reps.find!(r => r.signature == sig).front.frames);
         }
         if (files.length == 0
-            && expected.any!(e => e.scenario == scen && e.klass == "required"))
+            && expected.any!(e => e.scenarios.canFind(scen)
+                               && e.klass == "required"))
             red ~= format("scenario `%s` ran and declares a `required` "
                         ~ "signature, but NO REPORT FILE EXISTS AT ALL. Either "
                         ~ "the instance never started, or log_path never "
                         ~ "reached it.", scen);
     }
 
+    // Per (row, scenario) PAIR, not per row: a row now names every scenario it
+    // is expected in, so "declared for four, fired in three" has to name the
+    // fourth. Collapsing this to one check per row would hide exactly that.
     foreach (e; expected) {
-        if (!scenarios.canFind(e.scenario)) continue;
-        if ((e.scenario ~ "|" ~ e.signature) in firedKey) continue;
-        if (e.klass == "required")
-            red ~= format("REQUIRED signature declared for scenario `%s` did "
-                        ~ "NOT fire: %s\n"
-                        ~ "        (task %s, %s: %s)\n"
-                        ~ "        Either it was fixed — delete the row — or "
-                        ~ "the instrument went blind. Those two look "
-                        ~ "identical from here, which is why this is red.",
-                          e.scenario, e.signature, e.task, e.date, e.reason);
-        else
-            notes ~= format("tolerated signature did not fire in `%s`: %s",
-                            e.scenario, e.signature);
+        foreach (es; e.scenarios) {
+            if (!scenarios.canFind(es)) continue;
+            if ((es ~ "|" ~ e.signature) in firedKey) continue;
+            if (e.klass == "required")
+                red ~= format("REQUIRED signature declared for scenario `%s` did "
+                            ~ "NOT fire: %s\n"
+                            ~ "        (task %s, %s: %s)\n"
+                            ~ "        Either it was fixed — delete the row — or "
+                            ~ "the instrument went blind. Those two look "
+                            ~ "identical from here, which is why this is red.",
+                              es, e.signature, e.task, e.date, e.reason);
+            else
+                notes ~= format("tolerated signature did not fire in `%s`: %s",
+                                es, e.signature);
+        }
     }
 
     if (scenarios.canFind("sweep")) {

@@ -24,7 +24,7 @@
 #     it was fixed — delete the line — or the instrument went blind)
 #   * a `tolerated` signature that did not fire                -> recorded only
 #   * the sweep sentinel missing                               -> RED (the
-#     sweep died partway; without this, a process killed at route 3 of 57 is
+#     sweep died partway; without this, a process killed a few routes in is
 #     indistinguishable from a clean run)
 #   * no report file at all while a scenario carrying a `required` signature
 #     ran                                                      -> RED
@@ -55,28 +55,59 @@
 # A block whose two stacks contain no source/ frame at all normalises to the
 # literal `<no-source-frame>` and is reported as such rather than dropped.
 #
+# ...AND THE LINE NUMBER INSIDE A MANGLED LAMBDA NAME GOES TOO (task 1700)
+# ------------------------------------------------------------------------
+# Dropping the `:line` off the frame was not enough, because the compiler puts
+# the source position INSIDE the symbol: `start().__lambda_L1564_C35`. On
+# 2026-08-21 — the first night this lane ever reached its reports — the verdict
+# declared TEN new races and exactly ONE was new. Seven were long-tolerated
+# pairs whose lambdas had merely MOVED: the rows said `_L1469_C35` and
+# `_L1632_C13`, the tree said `_L1564_C35` and `_L1807_C13`. Nothing about
+# those races had changed. So `lane.d` now drops `_L<n>` from every symbol,
+# on BOTH sides of the comparison, and a row written here that still carries
+# one is REFUSED with the text to write instead.
+#
+# THE COLUMN IS KEPT, AND THE PRICE OF THAT IS: two different lambdas declared
+# in the same function at the same column collapse into one signature and the
+# verdict cannot separate them. The column was kept rather than dropped
+# because it only moves when the lambda's own statement is re-indented — i.e.
+# when re-reading the row is the right thing to do — whereas the line moves
+# under any edit above it. See `dropSourceLine` in lane.d for the full trade.
+#
 # ROW FORMAT
-#   class | scenario | signature | date | task | one reason
+#   class | scenario[,scenario...] | signature | date | task | one reason
 #   class    ∈ required, tolerated
 #   scenario ∈ selfcheck, sweep, shutdown, bridge, parallel
+#
+# THE SCENARIO FIELD IS A LIST OF EVERY SCENARIO THE SIGNATURE IS EXPECTED IN,
+# not one of them (task 1700). It used to be a single name, and that produced
+# both halves of the same defect on 2026-08-21: the `start ^ stop` pair was
+# written out FOUR times with its one reason copied and drifting, while the two
+# provider-wiring pairs were declared for `bridge`/`sweep` and fired in
+# `selfcheck`/`shutdown` — reddening the night as "new races" that were nothing
+# of the kind, while their ABSENCE from the scenarios they were declared for
+# passed as a note. A wildcard is refused: a row matching every scenario by
+# construction can never fail the "declared and did not fire" direction, which
+# is half the gate.
 #
 # Blank lines and `#` lines are ignored. A row without a task is not accepted
 # at review. `required` is earned, not assumed: a finding enters it only after
 # three consecutive reproductions; anything else is `tolerated` with the reason
 # written down.
+#
+# NOT LISTED, ON PURPOSE: `running() const ^ start().__lambda`. It was the one
+# genuinely new finding of 2026-08-21 and it was FIXED rather than tolerated
+# (task 1710) — HttpServer.isRunning is now `shared` and every access goes
+# through core.atomic. If it ever reappears here, the fix regressed; do not
+# add a row for it without saying why the atomics stopped holding.
 
 required | selfcheck | selftest_fault.selfTestRaceWorker()@selftest_fault.d ^ selftest_fault.selfTestRaceWorker()@selftest_fault.d | 2026-08-19 | 1411 | the synthetic control; deterministic by construction, and the only proof the instrument is armed
-tolerated | selfcheck | http_server.HttpServer.start().__lambda_L1469_C35()@http_server.d ^ http_server.HttpServer.stop()@http_server.d | 2026-08-19 | 0950 | the accept loop against stop(): isRunning (:1507 vs :1480) and serverSocket (:1519 vs :1482). MEASURED here, and it fires on every clean shutdown, so every scenario that shuts down cleanly carries it
-tolerated | shutdown | http_server.HttpServer.start().__lambda_L1469_C35()@http_server.d ^ http_server.HttpServer.stop()@http_server.d | 2026-08-19 | 0950 | same pair, in the dedicated shutdown A/B. tolerated and not required: the plan predicted the bridge atomics would order it away, and although they measurably do not, one night's measurement is not three
-tolerated | sweep | http_server.HttpServer.start().__lambda_L1469_C35()@http_server.d ^ http_server.HttpServer.stop()@http_server.d | 2026-08-19 | 0950 | same pair; the sweep also ends in a clean shutdown
-tolerated | bridge | http_server.HttpServer.start().__lambda_L1469_C35()@http_server.d ^ http_server.HttpServer.stop()@http_server.d | 2026-08-19 | 0950 | same pair; the bridge scenario also ends in a clean shutdown
-tolerated | sweep | change_bus.ChangeBus.flush(uint, uint, uint, bool, seltype.SelType)@change_bus.d ^ http_server.HttpServer.route_apiChanges(http_server.HttpRequest, http_server.HttpResponse)@http_server.d | 2026-08-19 | 0950 | NEW FINDING: /api/changes reads the change bus on the HTTP thread while the main thread flushes it. Its kRoutes row says httpThread, and it is NOT one of the five races 0763 recorded - exactly the class the route table cannot certify
-tolerated | sweep | eventlog.EventPlayer.load(immutable(char)[])@eventlog.d ^ eventlog.EventPlayer.tick()@eventlog.d | 2026-08-19 | 0950 | /api/play-events: entries[] written on the HTTP thread while tick() reads it. Recorded in the source and deferred to 0950; this is that race, observed
-tolerated | sweep | perf_probe.FrameWorkProbe.backdrop()@perf_probe.d ^ perf_probe.FrameWorkProbe.reset()@perf_probe.d | 2026-08-19 | 0950 | NEW FINDING: the frame counters are reset from the HTTP thread (/api/frames/counts/reset) while the main thread writes them
-tolerated | sweep | perf_probe.FrameWorkProbe.beginFrame()@perf_probe.d ^ perf_probe.FrameWorkProbe.reset()@perf_probe.d | 2026-08-19 | 0950 | NEW FINDING: same counters, begin-of-frame writer
-tolerated | sweep | perf_probe.FrameWorkProbe.endFrame()@perf_probe.d ^ perf_probe.FrameWorkProbe.reset()@perf_probe.d | 2026-08-19 | 0950 | NEW FINDING: same counters, end-of-frame writer
-tolerated | bridge | http_server.HttpServer.route_apiRegistry(http_server.HttpRequest, http_server.HttpResponse)@http_server.d ^ http_server.HttpServer.setRegistryProvider(immutable(char)[](bool) delegate)@http_server.d | 2026-08-19 | 0950 | NEW FINDING: the HTTP thread serves /api/registry while the main thread is still INSTALLING that provider. This is the readiness window measured here - start() at app.d:1145, wireHttpProviders() at :4372 - now confirmed as a data race, not just a timing gap
-tolerated | sweep | http_server.HttpServer.route_apiRegistry(http_server.HttpRequest, http_server.HttpResponse)@http_server.d ^ http_server.HttpServer.setRegistryProvider(immutable(char)[](bool) delegate)@http_server.d | 2026-08-19 | 0950 | same pair; any scenario whose first request lands during provider wiring can see it
-tolerated | bridge | http_providers.wireHttpProviders(http_server.HttpServer, ref editor_app.EditorApp)@http_providers.d ^ http_providers.wireToolpipeProviders(http_server.HttpServer, ref editor_app.EditorApp, ref immutable(char)[][]).__lambda_L1632_C13(bool)@http_providers.d | 2026-08-19 | 0950 | NEW FINDING: same provider-installation window, second pair
-tolerated | sweep | http_providers.wireHttpProviders(http_server.HttpServer, ref editor_app.EditorApp)@http_providers.d ^ http_providers.wireToolpipeProviders(http_server.HttpServer, ref editor_app.EditorApp, ref immutable(char)[][]).__lambda_L1632_C13(bool)@http_providers.d | 2026-08-19 | 0950 | same pair, in the sweep
-tolerated | sweep | perf_probe.FrameWorkProbe.endFrame()@perf_probe.d ^ perf_probe.FrameWorkProbe.toJson()@perf_probe.d | 2026-08-19 | 0950 | NEW FINDING: GET /api/frames/counts serialises the counters on the HTTP thread while the main thread writes them at end of frame
+tolerated | selfcheck,shutdown,sweep,bridge | http_server.HttpServer.start().__lambda_C35()@http_server.d ^ http_server.HttpServer.stop()@http_server.d | 2026-08-19 | 0950 | the accept loop against stop(), on the serverSocket field (the isRunning half of this pair was fixed by 1710; serverSocket is still plain). It fires on every CLEAN SHUTDOWN, so every scenario that shuts down cleanly carries it - which is all four, and was four copies of this row until 1710 merged them. tolerated and not required: the plan predicted the bridge atomics would order it away and they measurably do not, but one night's measurement is not three
+tolerated | sweep | change_bus.ChangeBus.flush(uint, uint, uint, bool, seltype.SelType)@change_bus.d ^ http_server.HttpServer.route_apiChanges(http_server.HttpRequest, http_server.HttpResponse)@http_server.d | 2026-08-19 | 0950 | NEW FINDING: /api/changes reads the change bus on the HTTP thread while the main thread flushes it. Its kRoutes row says httpThread, and it is NOT one of the five races 0763 recorded - exactly the class the route table cannot certify. sweep only: the sweep is the only scenario that calls /api/changes
+tolerated | sweep | eventlog.EventPlayer.load(immutable(char)[])@eventlog.d ^ eventlog.EventPlayer.tick()@eventlog.d | 2026-08-19 | 0950 | /api/play-events: entries[] written on the HTTP thread while tick() reads it. Recorded in the source and deferred to 0950; this is that race, observed. sweep only: the sweep is the only scenario that posts /api/play-events
+tolerated | sweep | perf_probe.FrameWorkProbe.backdrop()@perf_probe.d ^ perf_probe.FrameWorkProbe.reset()@perf_probe.d | 2026-08-19 | 0950 | NEW FINDING: the frame counters are reset from the HTTP thread (/api/frames/counts/reset) while the main thread writes them. sweep only: that route is the only writer from the HTTP side
+tolerated | sweep | perf_probe.FrameWorkProbe.beginFrame()@perf_probe.d ^ perf_probe.FrameWorkProbe.reset()@perf_probe.d | 2026-08-19 | 0950 | NEW FINDING: same counters, begin-of-frame writer. sweep only, same reason
+tolerated | sweep | perf_probe.FrameWorkProbe.endFrame()@perf_probe.d ^ perf_probe.FrameWorkProbe.reset()@perf_probe.d | 2026-08-19 | 0950 | NEW FINDING: same counters, end-of-frame writer. sweep only, same reason
+tolerated | selfcheck,shutdown,sweep,bridge | http_server.HttpServer.route_apiRegistry(http_server.HttpRequest, http_server.HttpResponse)@http_server.d ^ http_server.HttpServer.setRegistryProvider(immutable(char)[](bool) delegate)@http_server.d | 2026-08-19 | 0950 | NEW FINDING: the HTTP thread serves /api/registry while the main thread is still INSTALLING that provider - the readiness window between start() and wireHttpProviders() in app.d's boot, now confirmed as a data race and not just a timing gap. ANY scenario whose first request lands during provider wiring can see it, which is why all four are listed: it was declared for bridge and sweep and fired in selfcheck and shutdown on 2026-08-21 (task 1700)
+tolerated | selfcheck,shutdown,sweep,bridge | http_providers.wireHttpProviders(http_server.HttpServer, ref editor_app.EditorApp)@http_providers.d ^ http_providers.wireToolpipeProviders(http_server.HttpServer, ref editor_app.EditorApp, ref immutable(char)[][]).__lambda_C13(bool)@http_providers.d | 2026-08-19 | 0950 | NEW FINDING: same provider-installation window, second pair - so the same four scenarios, and it drifted the same way (declared for bridge and sweep, fired in selfcheck and shutdown on 2026-08-21, task 1700)
+tolerated | sweep | perf_probe.FrameWorkProbe.endFrame()@perf_probe.d ^ perf_probe.FrameWorkProbe.toJson()@perf_probe.d | 2026-08-19 | 0950 | NEW FINDING: GET /api/frames/counts serialises the counters on the HTTP thread while the main thread writes them at end of frame. sweep only: that route is the only reader from the HTTP side
