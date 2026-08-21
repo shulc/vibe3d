@@ -82,6 +82,7 @@
 import std.net.curl;
 import std.json;
 import std.format  : format;
+import std.conv    : to;
 import std.math    : round;
 import std.algorithm : min, max, map;
 import std.array   : array;
@@ -134,21 +135,43 @@ private string selType()  { return getJson("/api/selection")["selType"].str; }
 ///
 /// Why this exists: `app.d`'s item-pick branch fires only when no tool is
 /// active, Alt is not held, the current selection type is Item, and the
-/// delegate is wired. All four decline the same way from outside — the click
-/// is simply swallowed and the primary does not move — so a red run reports
-/// one indistinguishable line and cannot say WHICH term refused. This cell
-/// has been red on the runner seven runs in a row, always on the worker that
+/// delegate is wired — and the whole surrounding input path sits behind
+/// `viewportInputAllowed()`. All of them decline the same way from outside —
+/// the click is simply swallowed and the primary does not move — so a red run
+/// reports one indistinguishable line and cannot say WHICH term refused. This
+/// cell was red on the runner eight runs in a row, always on the worker that
 /// also takes `test_discard_census`, and could not be reproduced here; the
-/// missing information is exactly this. Costs two HTTP reads, on the failure
-/// path only.
+/// missing information was exactly this.
+///
+/// ROUND 2 (task 1691) adds the LAST term. The first two readings cleared
+/// `selType` and the armed tool on the runner, which left
+/// `viewportInputAllowed()` — in `--test` exactly `!io.WantCaptureMouse` — as
+/// the only remaining candidate, and nothing published it. It does now:
+/// `/api/viewport/display` carries an `input` object with the raw ImGui flag,
+/// the RESOLVED guard, and the names of the app's own modal latches. The last
+/// is what turns "ImGui held the mouse" into an actionable answer, because a
+/// `BeginPopupModal` captures the mouse globally, survives `/api/reset`, and
+/// so swallows every click for the rest of the worker's slice.
+///
+/// Costs three HTTP reads, on the failure path only.
 private string guardState() {
-    string sel = "?", tool = "?";
+    string sel = "?", tool = "?", input = "?";
     try { sel  = selType(); } catch (Exception e) { sel  = "<unreadable: " ~ e.msg ~ ">"; }
     try {
         auto st = getJson("/api/tool/state");
         tool = ("tool" in st) ? st["tool"].str : "<none>";
     } catch (Exception e) { tool = "<unreadable: " ~ e.msg ~ ">"; }
-    return format("selType=%s armedTool=%s", sel, tool);
+    try {
+        auto vd = getJson("/api/viewport/display");
+        auto ip = vd["input"];
+        string[] modals;
+        foreach (m; ip["modals"].array) modals ~= m.str;
+        input = format("viewportInputAllowed=%s wantCaptureMouse=%s openModals=%s",
+                       ip["viewportInputAllowed"].boolean ? "true" : "false",
+                       ip["wantCaptureMouse"].boolean     ? "true" : "false",
+                       modals.length ? to!string(modals) : "[]");
+    } catch (Exception e) { input = "<unreadable: " ~ e.msg ~ ">"; }
+    return format("selType=%s armedTool=%s %s", sel, tool, input);
 }
 /// The derived geometry view. It must keep reading a geometry type under Items
 /// — that persistence is what makes 1/2/3 restore the previous mode, and it is
@@ -650,10 +673,11 @@ unittest {
     // was already 1, the click was SWALLOWED and the primary simply never
     // moved; if it was something else, the click LANDED and resolved to the
     // wrong item — two different defects that the after-value alone cannot
-    // tell apart. The guard terms are already known to be innocent
-    // (selType=item, armedTool=<none>, measured on the runner 2026-08-21), so
-    // a swallow would have to come from a term this test cannot read: the
-    // viewport refusing input because ImGui claimed the mouse.
+    // tell apart. The runner measured `unchanged` (2026-08-21), i.e. a
+    // swallow, with `selType=item` and no tool armed — which cleared every
+    // guard term the test could then read and left only
+    // `viewportInputAllowed()`. `guardState()` publishes that one too now
+    // (task 1691), together with the modal latch that turns it false.
     immutable int primaryBefore = primaryIndex();
     clickAt(c, rig.boxes[0].cx, rig.boxes[0].cy);
     assert(primaryIndex() == 0,

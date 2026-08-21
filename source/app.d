@@ -4639,6 +4639,12 @@ void main(string[] args) {
     // at a real call site, not by ABI coincidence.
     app.buildToolVts = (out SubjectPacket s, ref VectorStack v) { buildToolVts(s, v); };
     app.anyFalloffActive     = cast(bool delegate())&anyFalloffActive;
+    // Task 1691 — bound to THIS forwarder, the same one every mouse handler
+    // below calls, so the diagnostic in `/api/viewport/display` cannot drift
+    // from the branch it describes. Assigned before `wireHttpProviders` (just
+    // below) for the same reason every other field in these blocks is: the
+    // moved provider closures read `app` through the `ref` parameter.
+    app.viewportInputAllowedDg = &viewportInputAllowed;
     app.rebuildLoopHoverMask = cast(const(bool)[] delegate(int))&rebuildLoopHoverMask;
 
     // Phase-B ctx wiring (source/http_providers.d): same rules as the blocks

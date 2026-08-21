@@ -1208,12 +1208,66 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             // destructively.
             immutable int _ovlOwner = vpm.overlayOwnerId();
 
+            // Task 1691 — the one term of the viewport-input guard that had
+            // no observable at all. `app.d`'s item-pick branch, the lasso, the
+            // camera drags and the tool dispatch all sit behind
+            // `viewportInputAllowed()`, which in `--test` is exactly
+            // `!io.WantCaptureMouse`; when ImGui holds the mouse every click
+            // in the instance is swallowed silently, and from outside that is
+            // indistinguishable from a pick that resolved to nothing.
+            //
+            // WHY HERE. This route is already test-only and already answered
+            // on the MAIN thread (http_server.d's RouteSpec table,
+            // `Answered.mainThread`), which is the only place `app.io` may be
+            // touched — `WantCaptureMouse` is recomputed inside NewFrame and
+            // an HTTP-thread read would race it. Nothing new is opened, and
+            // the fields cost two bool reads.
+            //
+            // `viewportInputAllowed` comes from the app's OWN forwarder
+            // (`EditorApp.viewportInputAllowedDg`), not from a second copy of
+            // its formula written here — see `overlayOwner` above for the
+            // defect that shape produced when this file last re-derived a
+            // call-site decision.
+            //
+            // `modals` names WHICH latch is up, because "ImGui held the mouse"
+            // does not say what did. A `BeginPopupModal` captures the mouse
+            // globally and survives `/api/reset`, so one left open by a blind
+            // command sweep swallows every later click in the worker's shared
+            // instance. These are the app's own latches, read live; the popup
+            // stack itself is not reachable through the binding.
+            string inputJson;
+            {
+                auto ib = appender!string();
+                immutable bool wantMouse = (io !is null) && io.WantCaptureMouse;
+                immutable bool allowed   = viewportInputAllowedDg !is null
+                                         ? viewportInputAllowedDg() : true;
+                ib.put(format(`{"wantCaptureMouse":%s,"viewportInputAllowed":%s,`
+                              ~ `"modals":[`,
+                              wantMouse ? "true" : "false",
+                              allowed   ? "true" : "false"));
+                size_t nModal = 0;
+                void modal(string id, bool open) {
+                    if (!open) return;
+                    if (nModal++ > 0) ib.put(",");
+                    ib.put(JSONValue(id).toString());
+                }
+                modal("ai3d.generate",  ai3dModalOpen);
+                modal("ai3d.install",   ai3dInstallConfirmOpen);
+                modal("mesh.remesh",    remeshModalOpen);
+                modal("discard.confirm", discardConfirmOpen);
+                modal("command.notice", noticeOpen);
+                ib.put("]}");
+                inputJson = ib.data;
+            }
+
             auto buf = appender!string();
             buf.put(format(`{"activeId":%d,"cellCount":%d,"overlayOwner":%d,` ~
-                           `"weightMap":%s,"weightMapResolved":%s,"cells":[`,
+                           `"weightMap":%s,"weightMapResolved":%s,"input":%s,` ~
+                           `"cells":[`,
                            vpm.activeId, vpm.cellCount, _ovlOwner,
                            JSONValue(wmName).toString(),
-                           wmResolved ? "true" : "false"));
+                           wmResolved ? "true" : "false",
+                           inputJson));
             foreach (k; 0 .. vpm.cellCount) {
                 if (k > 0) buf.put(",");
                 Viewport3D cv = vpm.views[k];

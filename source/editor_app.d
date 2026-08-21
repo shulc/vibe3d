@@ -908,6 +908,13 @@ struct EditorApp {
     void delegate(string)       activateToolById;
     void delegate(out SubjectPacket, ref VectorStack) buildToolVts;
     bool delegate()              anyFalloffActive;
+    /// Task 1691 — the RESOLVED `viewportInputAllowed()`, bound to main()'s own
+    /// nested forwarder so `/api/viewport/display` reports the value the mouse
+    /// handlers actually branched on rather than a second copy of its formula.
+    /// A re-derivation here would repeat exactly the defect task 1650 measured:
+    /// a dump that recomputes a call-site decision keeps answering after the
+    /// call site has stopped asking, and the test then asserts about the dump.
+    bool delegate()              viewportInputAllowedDg;
     const(bool)[] delegate(int) rebuildLoopHoverMask;
 
     // =========================================================================

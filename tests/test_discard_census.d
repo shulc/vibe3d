@@ -182,6 +182,35 @@ immutable string[] kSkipPrefixes = [
 immutable string[] kSkipExact = [
     // Spawns the quad-remesher subprocess.
     "mesh.remesh",
+    // MEASURED, task 1691: `mesh.remesh.open` opens the "Remesh (Quad)"
+    // `BeginPopupModal`. Its `apply()` returns FALSE — so the census reads
+    // `"did not apply"` and moves on — while its `onOpen` delegate has already
+    // latched `remeshModalOpen`. A modal captures the mouse GLOBALLY:
+    // `io.WantCaptureMouse` goes true and stays true, `viewportInputAllowed()`
+    // (in `--test`, exactly `!io.WantCaptureMouse`) goes false, and every
+    // viewport click on this worker's shared instance is swallowed from then
+    // on. Neither `/api/reset` nor the runner's `resetBetweenTests` closes it.
+    //
+    // Same class as `undo.lockout.` and `ui.` above: a switch that outlives the
+    // sweep, invisible to the document signature, and it presents as a failure
+    // in an unrelated test. Measured on 2026-08-21 by firing this one command
+    // against a clean instance and then running
+    // `tests/test_item_mode_geometry_gate.d`, which failed with the runner's
+    // own message and, with task 1691's reading attached, its cause:
+    //   "the click on item 0 must make it primary — the app reports 1 (it was
+    //    1 BEFORE the click: unchanged ⇒ the click was swallowed …) … Guard
+    //    state: selType=item armedTool=<none> viewportInputAllowed=false
+    //    wantCaptureMouse=true openModals=["mesh.remesh"]"
+    // A sweep of all 243 commands the census fires found this to be the ONLY
+    // one that leaves the mouse captured.
+    //
+    // Why it did not show up as a permanent red here: whether the popup is
+    // still open when a LATER test clicks is incidental — a subsequent frame in
+    // the same sweep can drop it — which is exactly the shape of a cell that is
+    // red on the runner and green on a dev box. The tripwire in the sweep below
+    // does not depend on that: it reads the guard after EVERY command, so the
+    // next such id is caught at the moment it latches rather than at the end.
+    "mesh.remesh.open",
     // MEASURED LIMIT, not an exemption: quitting discards unsaved work, but it
     // discards nothing the census's instrument (the document) can see, so it
     // can only ever read as "input-dependent" and would fail the declaration
@@ -230,6 +259,40 @@ bool skipped(string id) {
     return false;
 }
 
+/// The viewport-input guard, read live (task 1691). `/api/viewport/display`
+/// answers on the MAIN thread and reports `viewportInputAllowed()` from the
+/// app's own forwarder — the same call every mouse handler branches on — plus
+/// the raw ImGui flag and the names of the app's modal latches.
+///
+/// This is the census's THIRD state-outlives-the-sweep instrument, and it is
+/// deliberately shaped like the second (`statRebuilds`) rather than the first:
+/// it measures the DAMAGE — input refused — and reports the cause beside it,
+/// instead of asserting on a flag that might be set for an innocent reason.
+///
+/// It runs after EVERY command, not once at the end. That placement is the
+/// whole point: a modal opened mid-sweep can be dropped again by a later frame,
+/// so an end-of-sweep reading passes on a run that spent 200 commands with the
+/// mouse captured. Per-command, the offender is named at the moment it latches.
+struct InputGuard {
+    bool     allowed;
+    bool     wantCaptureMouse;
+    string[] modals;
+    string toString() const {
+        return "viewportInputAllowed=" ~ (allowed ? "true" : "false")
+             ~ " wantCaptureMouse=" ~ (wantCaptureMouse ? "true" : "false")
+             ~ " openModals=" ~ modals.to!string;
+    }
+}
+
+InputGuard readInputGuard() {
+    auto ip = getJson("/api/viewport/display")["input"];
+    InputGuard g;
+    g.allowed          = ip["viewportInputAllowed"].boolean;
+    g.wantCaptureMouse = ip["wantCaptureMouse"].boolean;
+    foreach (m; ip["modals"].array) g.modals ~= m.str;
+    return g;
+}
+
 unittest { // THE CENSUS, both directions
     auto seeds = buildSeeds();
 
@@ -259,6 +322,23 @@ unittest { // THE CENSUS, both directions
         seedSelection();
         fireCommand(id, args);
         const b = documentSignature();
+
+        // THE TRIPWIRE (task 1691). See readInputGuard above for why it sits
+        // here and not in a teardown.
+        {
+            const g = readInputGuard();
+            assert(g.allowed,
+                "the census left the VIEWPORT REFUSING INPUT after firing `"
+                ~ id ~ "`: " ~ g.toString() ~ ". ImGui is holding the mouse, so "
+                ~ "`viewportInputAllowed()` is false and EVERY viewport click "
+                ~ "on this worker's shared instance is now swallowed — silently, "
+                ~ "because a swallowed click is indistinguishable from a pick "
+                ~ "that hit nothing. A `BeginPopupModal` captures the mouse "
+                ~ "globally and neither `/api/reset` nor the runner's "
+                ~ "`resetBetweenTests` closes one. Add the id to kSkipExact "
+                ~ "(see `mesh.remesh.open` there for the first one), or dismiss "
+                ~ "the modal here.");
+        }
 
         swept++;
         const observed = (a == b);              // output independent of input
