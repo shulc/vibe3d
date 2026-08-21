@@ -19,7 +19,7 @@ name: nightly-tsan
 #
 # Zero reports is also exactly what a binary built without --fsanitize=thread
 # produces, what an instance that never started produces, and what a sweep
-# killed at route 3 of 57 produces. So this lane is built around telling those
+# killed a few routes in produces. So this lane is built around telling those
 # apart, and two mechanisms carry that weight:
 #
 #   * `tsan-selfcheck` GATES on a SYNTHETIC race (selftest.fault kind:race)
@@ -214,14 +214,14 @@ jobs:
       # lane that gets switched off rather than read.
       run: rdmd tools/sanitizer/lane.d tsan-shutdown
 
-    - name: 'Sweep: all 57 kRoutes rows under concurrent document mutation'
+    - name: 'Sweep: every kRoutes row under concurrent document mutation'
       id: sweep
       continue-on-error: true
       # The FINDINGS here are recorded; the verdict step below is what gates on
       # them. But the sweep can also fail for infrastructure reasons (the RSS
       # watchdog stopping it, the instance dying), and those come back as a
       # missing or short sentinel, which tsan-verdict treats as red — a sweep
-      # killed at route 3 of 57 leaves a report file that greps exactly like a
+      # killed a few routes in leaves a report file that greps exactly like a
       # clean night.
       run: rdmd tools/sanitizer/lane.d tsan-sweep
 

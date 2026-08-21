@@ -45,7 +45,7 @@
  *   tsan-shutdown           the LIVE control on HttpServer's own fields, and
  *                           the A/B that measures whether the bridge's atomics
  *                           order it away
- *   tsan-sweep              all 57 kRoutes rows plus the connection path,
+ *   tsan-sweep              every kRoutes row plus the connection path,
  *                           under concurrent document mutation, with an RSS
  *                           watchdog and a completion sentinel
  *   tsan-bridge             the main-thread bridge's timeout race
@@ -612,7 +612,7 @@ void cmdTeardown() {
 // emits ~124 reports a minute that are all GC memory REUSE rather than races.
 // Under gc:manual the same drive produced zero reports. Zero is also exactly
 // what a binary built without --fsanitize=thread produces, what an instance
-// that never started produces, and what a sweep killed on route 3 of 57
+// that never started produces, and what a sweep killed a few routes in
 // produces. So every check here is built around telling those apart.
 // ---------------------------------------------------------------------------
 
@@ -1007,7 +1007,7 @@ bool shutdownInstance(ref Instance ins, bool viaSignal, int budgetSec = 60) {
 }
 
 // ---------------------------------------------------------------------------
-// A minimal HTTP client. Not curl, for two reasons: a sweep of 57 routes x N
+// A minimal HTTP client. Not curl, for two reasons: a sweep of every route x N
 // concurrent callers is 200+ processes, and curl's exit status cannot
 // distinguish "the route answered 400 because we sent no body" from "the
 // instance is gone" without parsing anyway. The sweep's completion invariant
@@ -1691,6 +1691,9 @@ enum SweepRoute[] kSweepRoutes = [
     SweepRoute("/api/images", "GET", null),
     SweepRoute("/api/imageplane", "GET", null),
     SweepRoute("/api/viewport/probe", "GET", null),
+    SweepRoute("/api/subpatch/preview",    "GET",  null),
+    SweepRoute("/api/subpatch/hold",       "POST", `{}`),
+    SweepRoute("/api/ui/policy",           "GET",  null),
     SweepRoute("/api/pick", "GET", null),
     SweepRoute("/api/surface-raycast", "GET", null),
     SweepRoute("/api/camera", "GET", null),
@@ -1881,7 +1884,7 @@ void cmdTsanSweep(string[] args) {
             foreach (c; 0 .. kSweepCallers) {
                 auto rr = r;
                 callers ~= new Thread({
-                    // 30 s, not 60: the worst case is 57 routes x this, and
+                    // 30 s, not 60: the worst case is every route x this, and
                     // a route that needs longer than 30 s under TSan is a
                     // finding to record, not a budget to widen.
                     auto rep = httpRequest(port, rr.method, rr.path, rr.body_, 30);
@@ -2118,7 +2121,7 @@ void cmdTsanVerdict(string[] scenarios) {
     if (scenarios.canFind("sweep")) {
         if (!exists("tsan-sweep.done"))
             red ~= "THE SWEEP DID NOT FINISH: no tsan-sweep.done. A sweep "
-                 ~ "killed at route 3 of 57 leaves a report file that greps "
+                 ~ "killed a few routes in leaves a report file that greps "
                  ~ "exactly like a clean night; this sentinel is the only "
                  ~ "thing that separates them.";
         else {
