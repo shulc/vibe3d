@@ -128,6 +128,28 @@ private int[] selectedVertices() {
 }
 
 private string selType()  { return getJson("/api/selection")["selType"].str; }
+
+/// Every term of the guard that decides whether an item click is DELIVERED,
+/// read from the live app and printed beside any failure below.
+///
+/// Why this exists: `app.d`'s item-pick branch fires only when no tool is
+/// active, Alt is not held, the current selection type is Item, and the
+/// delegate is wired. All four decline the same way from outside — the click
+/// is simply swallowed and the primary does not move — so a red run reports
+/// one indistinguishable line and cannot say WHICH term refused. This cell
+/// has been red on the runner seven runs in a row, always on the worker that
+/// also takes `test_discard_census`, and could not be reproduced here; the
+/// missing information is exactly this. Costs two HTTP reads, on the failure
+/// path only.
+private string guardState() {
+    string sel = "?", tool = "?";
+    try { sel  = selType(); } catch (Exception e) { sel  = "<unreadable: " ~ e.msg ~ ">"; }
+    try {
+        auto st = getJson("/api/tool/state");
+        tool = ("tool" in st) ? st["tool"].str : "<none>";
+    } catch (Exception e) { tool = "<unreadable: " ~ e.msg ~ ">"; }
+    return format("selType=%s armedTool=%s", sel, tool);
+}
 /// The derived geometry view. It must keep reading a geometry type under Items
 /// — that persistence is what makes 1/2/3 restore the previous mode, and it is
 /// also precisely why it is the wrong thing for a pick site to read.
@@ -625,8 +647,11 @@ unittest {
 
     clickAt(c, rig.boxes[0].cx, rig.boxes[0].cy);
     assert(primaryIndex() == 0,
-        format("the click on item 0 must make it primary — the app reports %d",
-               primaryIndex()));
+        format("the click on item 0 must make it primary — the app reports %d. "
+             ~ "The click may simply have been SWALLOWED: app.d delivers an "
+             ~ "item pick only with no tool active, Alt up, and the current "
+             ~ "selection type at Item. Guard state at the failure: %s",
+               primaryIndex(), guardState()));
     assert(selectedVertices().length == 0,
         format("item 0 carries no geometry selection of its own — reading %s "
                ~ "here would mean /api/selection is not following the primary",
