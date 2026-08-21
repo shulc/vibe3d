@@ -140,7 +140,44 @@ final class MainThreadBridge(Req, Resp) : IMainThreadBridge {
  */
 class HttpServer {
     private Socket serverSocket;
-    private bool isRunning;
+    // WHY THIS IS `shared` AND WHY EVERY ACCESS GOES THROUGH core.atomic
+    // (task 1710; the race was reported by the tsan lane on 2026-08-21).
+    //
+    // The flag is WRITTEN by the accept-loop thread (`start()`'s lambda, once
+    // bind/listen have succeeded) and by the main thread (`stop()`), and it is
+    // READ by both. Nothing synchronised any of that: it was a plain
+    // non-shared bool, which in D means a racing access is undefined, not
+    // merely unordered.
+    //
+    // What the HARDWARE is permitted to do: the load and the store are one
+    // aligned byte, so nothing can tear — but on a weakly-ordered target
+    // (aarch64; we ship macOS arm64) the accept thread's `isRunning = true`
+    // carries NO happens-before edge for the `serverSocket = new TcpSocket()`
+    // and `listen()` that precede it. A main thread that saw `true` was
+    // entitled to see a stale `serverSocket`, and `stop()` — main thread —
+    // dereferences exactly that field to close it.
+    //
+    // What the COMPILER is permitted to do: treat a non-shared field as
+    // untouched by other threads, i.e. keep it in a register across a region
+    // it can prove does no aliasing write, and fold `running()` (a trivial
+    // `const` accessor, visible for inlining because dub compiles the package
+    // as one unit) into the caller.
+    //
+    // Whether any caller DEPENDS on the answer — yes, both of them, which is
+    // what makes this a defect and not a benign flag:
+    //   * app.d's frame loop gates the whole HTTP drain on `running()`. A
+    //     stale `false` there means requests are accepted and never answered,
+    //     the exact failure the 0652 comment below calls the worst shape a
+    //     harness can meet.
+    //   * app.d's `scope(exit)` calls `stop()` only if `running()` is true,
+    //     and `stop()` itself early-outs on the same flag. A stale `false` on
+    //     either read means the accept loop is never asked to stop and never
+    //     has its socket closed, so process teardown joins a thread parked in
+    //     accept() — a hang, not a wrong pixel.
+    // Sequentially-consistent order is the default and is kept: the store
+    // happens twice in a process lifetime, so there is nothing to buy by
+    // weakening it and a real cost to reasoning about it.
+    private shared bool isRunning;
     private ushort port;
     private Thread serverThread;
     private alias DetailedModelDataProvider = string delegate();
@@ -809,7 +846,7 @@ class HttpServer {
 
     public this(ushort port = 8080) {
         this.port = port;
-        this.isRunning = false;
+        atomicStore(this.isRunning, false);
         this.eventPlayer = EventPlayer();
 
         resetBridge = new MainThreadBridge!(ResetReq, ResetResp)(this,
@@ -1556,7 +1593,7 @@ class HttpServer {
      * Start the HTTP server in a separate thread
      */
     public void start() {
-        if (isRunning) {
+        if (atomicLoad(isRunning)) {
             logWarn("http", "Server is already running");
             return;
         }
@@ -1570,14 +1607,14 @@ class HttpServer {
                 serverSocket.listen(10);
 
                 logInfo("http", format("HTTP server started on port %d", port));
-                isRunning = true;
+                atomicStore(isRunning, true);
 
-                while (isRunning) {
+                while (atomicLoad(isRunning)) {
                     try {
                         Socket clientSocket = serverSocket.accept();
                         handleClient(clientSocket);
                     } catch (Exception e) {
-                        if (isRunning) {
+                        if (atomicLoad(isRunning)) {
                             logWarn("http", "Error accepting client: " ~ e.msg);
                         }
                     }
@@ -1594,12 +1631,12 @@ class HttpServer {
      * Stop the HTTP server
      */
     public void stop() {
-        if (!isRunning) {
+        if (!atomicLoad(isRunning)) {
             logWarn("http", "Server is not running");
             return;
         }
 
-        isRunning = false;
+        atomicStore(isRunning, false);
         if (serverSocket !is null) {
             // Connect to ourselves to unblock the accept() call in serverThread
             try {
@@ -3655,7 +3692,7 @@ class HttpServer {
      * Check if the server is currently running
      */
     public bool running() const {
-        return isRunning;
+        return atomicLoad(isRunning);
     }
 
     /**
