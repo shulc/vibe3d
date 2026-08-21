@@ -306,23 +306,40 @@ void checkMode(string mode, string indices, string what) {
     immutable long delta = b.alloc - a.alloc;
 
     // Print the two readings on EVERY run, not only on the failing one.
-    // This cell has now been green here and red on the CI runner three times
-    // over, with byte-identical numbers on the red side (129168 -> 197440),
-    // which rules out load and scheduling noise and means the two machines
-    // genuinely take different draw paths. Nothing recorded what the GREEN
-    // side measures, so every comparison between them has been a guess. A
-    // reading costs one line of output and turns the next run on either
-    // machine into the measurement.
+    //
+    // The reading is what SETTLED the six-run CI red (129168 -> 197440, then
+    // 129136 -> 197408): it made the FLOOR legible, and the floor was the whole
+    // story. A clean instance reads 6288 B/frame on BOTH legs — measured on the
+    // CI machine itself, so "the two machines take different draw paths" (what
+    // this comment used to say) was wrong. What differs is the instance: the
+    // runner hands one `vibe3d --test` to a whole worker slice, and by the time
+    // this test ran, an earlier test had left every floating panel OPEN. The
+    // floor is those panels; the SLOPE is the Statistics panel among them.
+    //
+    // The absolute numbers below are therefore diagnostic, not a budget — they
+    // are the state the instance was in, and this test still asserts only the
+    // slope.
     writefln("[alloc-scaling] %s: n=%d %d B/frame -> n=%d %d B/frame "
              ~ "(delta %d B, limit %d)",
              what, kSmall, a.alloc, kLarge, b.alloc, delta, kMaxDelta);
 
     assert(delta <= kMaxDelta,
            format("%s: per-frame GC allocation grew by %d B when the mesh went "
-                  ~ "from n=%d to n=%d (%d -> %d B/frame). The draw path is "
-                  ~ "allocating in proportion to the mesh again — look for a "
-                  ~ "materialized bool[] view (mesh.selectedVertices / "
-                  ~ "selectedEdges / selectedFaces) back on a per-frame path. "
+                  ~ "from n=%d to n=%d (%d -> %d B/frame). Something on the "
+                  ~ "frame path is allocating in proportion to the mesh. TWO "
+                  ~ "FAMILIES, and the floor tells them apart — a clean "
+                  ~ "instance reads about 6.3 kB/frame on both legs.\n"
+                  ~ "  * floor NORMAL: the draw path itself regressed — look "
+                  ~ "for a materialized bool[] view (mesh.selectedVertices / "
+                  ~ "selectedEdges / selectedFaces) back on a per-frame path.\n"
+                  ~ "  * floor HUGE (tens of kB): this instance is not clean. "
+                  ~ "An earlier test on the same worker left a panel open, and "
+                  ~ "/api/reset does not close one. An open Statistics panel "
+                  ~ "rebuilds its row model every frame, which is mesh-"
+                  ~ "proportional whenever a category needing a derived array "
+                  ~ "is expanded. Read `statRebuilds` in /api/frames/counts: "
+                  ~ "nonzero means the panel is drawing and this number is not "
+                  ~ "about the draw path at all.\n"
                   ~ "The threshold is one GC page and is not the thing to "
                   ~ "adjust.",
                   what, delta, kSmall, kLarge, a.alloc, b.alloc));

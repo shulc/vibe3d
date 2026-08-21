@@ -117,6 +117,39 @@ immutable string[] kSkipPrefixes = [
     // they were all reading a poisoned instance, because the runner reuses one
     // editor for every test a worker takes.
     "undo.lockout.",
+    // `ui.*` — the --test-only PANEL VISIBILITY toggles (`ui.statistics`,
+    // `ui.layerList`, `ui.channels`, `ui.imageList`, `ui.viewportProps`,
+    // `ui.toolProperties`, `ui.about`, and `ui.statistics.expand`). Same class
+    // as `undo.lockout.` above and not a document discard either: each one
+    // writes a single `__gshared bool` that no signature can see, so the census
+    // can never learn anything from firing them.
+    //
+    // What it DOES learn is a floating window. The argument-less form these are
+    // fired with never calls `setVisible`, so `apply()` publishes the command
+    // object's FIELD DEFAULT — and every one of them declares
+    // `private bool show_ = true`. A census pass therefore leaves EVERY panel
+    // OPEN on the instance the runner shares across a whole worker slice, and
+    // `/api/reset` does not close them. `tests/test_app_version.d` already
+    // states the hazard in as many words for its own window ("MUST leave the
+    // window hidden: it is a floating window, and one left open would sit over
+    // the viewport for every later test in this worker's slice"); this sweep
+    // opened seven of them.
+    //
+    // MEASURED (CI 32303254597 / 32340597743 / 32342721835 / 32353119894 /
+    // 32358311256 / 32415544322, six runs, `test_draw_alloc_scaling` red in all
+    // six with a byte-identical delta of 68272 B/frame). An OPEN Statistics
+    // panel rebuilds its row model every frame, and with the `Vertices/By Edge`
+    // category expanded that rebuild calls `Mesh.vertexEdgeCounts()` — one
+    // `new uint[V]` per frame, i.e. an allocation PROPORTIONAL TO THE MESH on
+    // the frame path, which is exactly what that test exists to forbid. The
+    // expand state comes from `test_stat_panel_rows` earlier in the same slice:
+    // that test closes the panel it opened but the expand bits live on in
+    // `g_statExpand`, invisible until something re-opens the panel. This census
+    // was that something. Reproduced end to end on a dev box by running
+    // `test_stat_panel_rows` -> `test_discard_census` -> `test_draw_alloc_scaling`
+    // against one instance: 6288 -> 6288 B/frame clean, 129040 -> 197312 after,
+    // the same 68272 delta the runner reports.
+    "ui.",
     // `selftest.*` — the deliberate-defect injector (task 1410). It is NOT in
     // the shipping binary: it is registered only where `SanitizerSelfTest` is
     // declared, i.e. the four instrumented buildTypes. So in every ordinary
@@ -251,6 +284,55 @@ unittest { // THE CENSUS, both directions
             ~ "Every test scheduled after this one on the same worker will now "
             ~ "record nothing and fail on an empty undo stack. Add the id to "
             ~ "kSkipPrefixes / kSkipExact, or release it here.");
+    }
+
+    // The SECOND teardown of the same shape, and it is here because the first
+    // one's own words came true: "a registry sweep can fire anything the
+    // registry publishes, including a service switch that outlives the sweep".
+    // The switch that got out the second time was PANEL VISIBILITY. It cost six
+    // CI runs (32303254597 .. 32415544322) before anyone read the floor of the
+    // number that went red, and it presented exactly as the lockout did — as a
+    // failure in an unrelated test, with a message pointing somewhere else.
+    //
+    // `statRebuilds` is the instrument because it is the one that MEASURES the
+    // damage rather than the state: it counts Statistics-panel row-model
+    // rebuilds, which happen only while that panel is drawing, and an open
+    // Statistics panel is the one whose per-frame cost is PROPORTIONAL TO THE
+    // MESH (`buildStatContext` -> `Mesh.vertexEdgeCounts`, a `new uint[V]` per
+    // frame whenever a category needing a derived array is expanded). That is
+    // what `tests/test_draw_alloc_scaling.d` exists to forbid, and what it kept
+    // reporting from this instance.
+    //
+    // Both numbers are read from the SAME window — the one that opens at the
+    // counter reset — so that the zero MEANS something: a frozen editor also
+    // rebuilds nothing, and this assertion must not pass for that reason. The
+    // frame count is therefore read AFTER the reset, not across it: the reset
+    // zeroes `frames` too, so a before/after comparison reads as a counter
+    // running BACKWARDS and fails on a perfectly live editor (measured, first
+    // run of this block: "14020 -> 91").
+    {
+        import core.thread : Thread;
+        import core.time   : msecs;
+        postRaw("/api/frames/counts/reset", "{}");
+        Thread.sleep(400.msecs);
+        const counts        = getJson("/api/frames/counts");
+        const long drawn    = counts["frames"].integer;
+        const long rebuilds = counts["totals"]["statRebuilds"].integer;
+        assert(drawn > 0,
+            "the census teardown could not take a reading: no frame was "
+            ~ "committed in the 400 ms after the counter reset. A zero below "
+            ~ "would then be a frozen editor, not a closed panel.");
+        assert(rebuilds == 0,
+            "the census left a PANEL OPEN — the Statistics panel rebuilt its "
+            ~ "row model " ~ rebuilds.to!string ~ " times in the 400 ms after "
+            ~ "the sweep, so it is drawing. `/api/reset` does not close a "
+            ~ "floating window, so every test scheduled after this one on the "
+            ~ "same worker gets a viewport with a window over it and a frame "
+            ~ "that allocates in proportion to the mesh. The argument-less form "
+            ~ "of a `ui.*` toggle publishes the command object's field default, "
+            ~ "which is `show_ = true`; that is why `\"ui.\"` is in "
+            ~ "kSkipPrefixes. If a new visibility switch escaped the sweep, add "
+            ~ "it there or close it here.");
     }
 
     assert(swept > 200,
