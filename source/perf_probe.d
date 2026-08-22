@@ -163,9 +163,37 @@ enum Cat {
     // subject.
     bvhRebuildTris,
     // The abort path's subject (task 1540): faces walked / vertices seen by a
-    // rebuild that returned without calling `dbvh_build`.
+    // rebuild that returned without calling `dbvh_build`. These read ZERO on
+    // every run so far, and that is their result, not their failure: they are
+    // what ruled the empty-mesh branch OUT as the explanation for the extra
+    // ~385 ms sample. See `bvhRebuildEnter` for what it actually was.
     bvhAbortFaces,
     bvhAbortVerts,
+    // Task 1720 — one bump on ENTRY to `BvhPick.rebuild`, before the scope
+    // timer is armed. It exists because entry and exit disagreed, and it is
+    // what SETTLED that disagreement, so the answer is recorded here rather
+    // than left as folklore.
+    //
+    // THE DISAGREEMENT: `bvhRebuild.count` read 2 while the exit counters read
+    // 0 aborts + 1 build. Neither instrument was broken. `ScopeTimer` cannot
+    // double-count (`@disable this(this)`), and replacing it with manual
+    // `recordNs` reproduced the 2 exactly.
+    //
+    // THE CAUSE, and it is a general hazard rather than a fact about the BVH:
+    // `/api/perf/reset` is served on the HTTP THREAD and can land in the
+    // MIDDLE of a long main-thread operation. A cage-sized BVH construction
+    // takes ~385 ms at n=316 — an enormous window — so its entry bump was
+    // wiped by the reset while its timer sample, recorded at exit, landed
+    // AFTER it. One operation, its two halves on opposite sides of a window
+    // boundary.
+    //
+    // THE CONSEQUENCE FOR ANY READER OF THIS PROBE: a perf window can be
+    // inflated by the tail of an operation that began before it. `entries`
+    // against `timerOpens` is how you SEE that, and the tab-cold lane prints
+    // both for exactly that reason. Under task 1540's option C the same lane
+    // prints `entries=0 timerOpens=1` — the straddle with the in-window build
+    // now removed — which is the same artifact seen from the other side.
+    bvhRebuildEnter,
     vertsTouched,
     // undoApply — bumped once per successful `undo()` (Case A/B success
     // return, command_history.d:1090). A true counter (ordinal >

@@ -5946,14 +5946,56 @@ void main(string[] args) {
         // BVH ray-cast (default) or GPU face re-render (VIBE3D_FACE_PICK=gpu).
         // BVH: O(log n) per pick, view-independent, no GL readback. Keyed on
         // (gpu.uploadVersion, source-mesh-address) — identical to gpu_select.d:31.
-        // GPU path retained as oracle for A/B equivalence testing.
         // Task 0617: both engines pick against the PRIMARY layer here —
         // primaryModelSpace() for both, so the BVH/GPU A/B stays apples-to-apples.
+        //
+        // TASK 1540 — WHILE A SUBPATCH PREVIEW IS LIVE, THE ENGINE IS THE GPU
+        // ONE, AND THAT IS A PERF DECISION MADE ON A MEASUREMENT.
+        //
+        // The BVH is keyed on (gpu.uploadVersion, source-mesh address), and
+        // under a live preview the source is the LIMIT surface — four times
+        // the cage at level 1. Installing a fresh preview moves both key
+        // terms, so the very next hover pick pays a full construction over
+        // that surface. Measured, grid n=316 (99 856 cage quads -> 798 848
+        // limit triangles), `frames --n 316 tab-cold`:
+        //
+        //     worst frame  BVH engine 1719.6 ms   GPU engine 125.0 ms
+        //     `cache` phase   1588.9 ms              0.072 ms
+        //
+        // and the 1588.9 ms IS one `dbvh_build` — it and the phase agree to
+        // four microseconds. So on the frame a preview lands, the structure
+        // that exists to make picking cheap is what makes the window freeze.
+        //
+        // WHY THE GATE IS `active` AND NOT `active || buildPending`. While a
+        // build is in flight the VBOs still hold the CAGE, so the cage tree is
+        // both correct and the thing being drawn — and it is a quarter the
+        // size. Gating on `buildPending` too would ALSO make the engine a
+        // function of whether a worker thread had finished, i.e. of wall
+        // clock, and selection under scripted input would stop being
+        // reproducible. `active` is document state; this branch is
+        // deterministic.
+        //
+        // WHAT MAKES THIS SAFE is that the two engines are held equivalent by
+        // a test, not by intent: `tests/test_bvh_pick_equivalence.d` sweeps
+        // (fixture, camera, pixel) and includes a subpatch-preview fixture.
+        // Both engines answer in CAGE face indices — the GPU one translates
+        // through `gpu.faceOriginGpu` after readback (gpu_select.d), the BVH
+        // one folds the same map into `_triToFace` at build time
+        // (bvh_pick.d). The documented exemption is exactly-coincident /
+        // coplanar faces, where GPU draw order and nanort's arbitrary `t`
+        // may disagree.
+        //
+        // WHAT IT COSTS: ~143 us per pick against ~0.8 us, and a full ID
+        // re-render whenever the camera moves (the GPU slot key carries view
+        // and proj). Both are bounded — this branch is only taken while a
+        // preview is live, and `pickFaces` returns above during a camera
+        // drag, so the re-render is one per camera settle rather than one per
+        // frame. `/api/pick?engine=bvh` is UNCHANGED and still reaches the
+        // BVH directly, so the oracle that proves the equivalence above does
+        // not route through this decision.
         int hit;
-        if (useBvhFacePick) {
-            const(Mesh)* srcMesh = subpatchPreview.active
-                ? &subpatchPreview.mesh : &mesh();
-            hit = bvhPick.pickFace(mx, my, vp, *srcMesh, gpu, primaryModelSpace());
+        if (useBvhFacePick && !subpatchPreview.active) {
+            hit = bvhPick.pickFace(mx, my, vp, mesh(), gpu, primaryModelSpace());
         } else {
             hit = gpuSelect.pick(SelectMode.Face, mx, my, /*r=*/0,
                                   mesh, gpu, vp, primaryModelSpace());

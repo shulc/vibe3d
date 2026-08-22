@@ -305,6 +305,7 @@ private:
     }
 
     void rebuild(const ref Mesh sourceMesh, const ref GpuMesh gpu) {
+        g_perf.count(Cat.bvhRebuildEnter, 1);   // task 1720 — see the enum
         // Task 1540 — the construction, split out of `hoverPick`. Opened
         // BEFORE `invalidate()` so the handle teardown is inside the number
         // too: freeing the previous BVH is part of what a rebuild costs.

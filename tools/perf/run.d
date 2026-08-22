@@ -1742,6 +1742,10 @@ struct FrameScenarioResult {
     long       bvhAbortFaces     = -1;
     long       bvhAbortVerts     = -1;
     long       bvhAbortN         = -1;
+    long       bvhEnterN         = -1;
+    // Cage face count at the moment of the measured toggle — F-I11's yardstick
+    // for "cage-sized or limit-sized".
+    long       cageFacesAtToggle = -1;
     long       hoverPickCount    = -1;
     long       cacheNsWindowSum  = -1;  // sum of the PHASE over the window
 }
@@ -2300,6 +2304,9 @@ FrameScenarioResult runTabCold(int n, string meshType) {
     res.bvhAbortFaces     = perfCounterSum  (perf, "bvhAbortFaces");
     res.bvhAbortVerts     = perfCounterSum  (perf, "bvhAbortVerts");
     res.bvhAbortN         = perfCounterCount(perf, "bvhAbortFaces");
+    res.bvhEnterN         = perfCounterCount(perf, "bvhRebuildEnter");
+    try res.cageFacesAtToggle = activeLayerInfo().faceCount;
+    catch (Exception) { res.cageFacesAtToggle = -1; }
     res.worstCacheNs      = res.stats.worst.cacheNs;
     res.viewcacheRebuildNs = perfTimerSumNs(perf, "viewcacheRebuild");
     res.cacheNsWindowSum  = res.stats.sumCacheNs;
@@ -2565,6 +2572,10 @@ void printFramesTable(FrameScenarioResult[] results) {
             // Does the biggest single rebuild FIT in the frame that is
             // supposed to contain it? The window sums cannot answer that --
             // they are the g_perf window, which is not the g_frames ring.
+            writefln("  %-16s   1720 ledger: entries=%d timerOpens=%d"
+                     ~ " builds=%d aborts=%d",
+                     r.name, r.bvhEnterN, r.bvhRebuildCount,
+                     r.bvhRebuildTrisN, r.bvhAbortN);
             if (r.bvhAbortN > 0)
                 writefln("  %-16s   ABORTED rebuilds: %d, walked %d faces /"
                          ~ " %d verts total (built nothing)",
@@ -3477,6 +3488,48 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode,
                                        ~ "%d ns; this task promises IDENTICAL "
                                        ~ "work, so a drop is a finding",
                                        K_TAB_COLD_MIN_BUILD_NS)));
+        }
+    }
+
+    // F-I11 — GATING. tab-cold: NO BVH is constructed over the LIMIT surface.
+    //
+    // This is the half of task 1540's option C that the HTTP suite cannot
+    // reach. `tests/test_subpatch_interactive_pick_engine.d` pins that the
+    // interactive pick still answers correct CAGE indices under a live
+    // preview — but both engines do, so that file stays green whichever one
+    // answered and says so in its own header. Which engine ran is visible
+    // ONLY through `Cat.bvhRebuild*`, and those report `{}` outside the perf
+    // buildType. So the choice is gated here.
+    //
+    // The subject is TRIANGLES, not the rebuild count, and that is deliberate.
+    // A cage-sized construction in this window is legitimate (the cage tree is
+    // what answers a pick before the preview lands) and can even straddle
+    // `/api/perf/reset` — measured: a ~385 ms cage build that started before
+    // the reset lands its timer sample after it, so a count-based gate would
+    // be flaky by construction. Triangle count separates the two subjects
+    // cleanly instead: at level 1 the limit surface is 4x the cage in faces
+    // and 4x in fan triangles, so anything at or below the cage's own
+    // triangle count cannot be a limit build.
+    {
+        auto r = findFrameScenario(results, "tab-cold");
+        if (r !is null && r.status == CaseStatus.OK && r.bvhRebuildTris >= 0) {
+            // Four fan triangles per CAGE face. The cage's real count is two
+            // per quad; the slack absorbs an n-gon cage without ever reaching
+            // the limit surface, which at level 1 is four QUADS per cage face
+            // and therefore eight fan triangles per cage face. So the gate
+            // separates 2F from 8F with 4F, and no fixture shape moves it.
+            immutable long cageTris = r.cageFacesAtToggle > 0
+                                    ? r.cageFacesAtToggle * 4 : long.max;
+            immutable bool ok = r.bvhRebuildTris <= cageTris;
+            inv ~= Invariant("F-I11",
+                format("tab-cold: no BVH built over the limit surface "
+                       ~ "(<= %d tris, the cage's own fan count)", cageTris),
+                ok, format("bvhRebuildTris=%d over %d build(s)%s",
+                           r.bvhRebuildTris, r.bvhRebuildTrisN,
+                           ok ? "" : "  <-- a LIMIT-sized construction ran on "
+                                     ~ "the main thread: option C's engine "
+                                     ~ "gate in app.d's pickFaces is not "
+                                     ~ "holding"));
         }
     }
 
