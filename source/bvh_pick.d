@@ -305,6 +305,10 @@ private:
     }
 
     void rebuild(const ref Mesh sourceMesh, const ref GpuMesh gpu) {
+        // Task 1540 — the construction, split out of `hoverPick`. Opened
+        // BEFORE `invalidate()` so the handle teardown is inside the number
+        // too: freeing the previous BVH is part of what a rebuild costs.
+        auto zBvh = g_perf.scope_(Cat.bvhRebuild);
         invalidate();
 
         // Count triangles produced by fan triangulation.
@@ -313,7 +317,16 @@ private:
             if (face.length >= 3 && !hideSkipFace(sourceMesh, fi))
                 triCount += cast(uint)(face.length - 2);
         }
-        if (triCount == 0 || sourceMesh.vertices.length == 0) return;
+        if (triCount == 0 || sourceMesh.vertices.length == 0) {
+            // Task 1540 probe — a rebuild that WALKED the faces and then
+            // built nothing. The walk is not free (measured ~383 ms at
+            // n=316), so "how many faces did it walk to decide that" is the
+            // whole question. Instrumented here only, not in the
+            // `rebuildSurface` twin below, so the counter has one subject.
+            g_perf.count(Cat.bvhAbortFaces, cast(long)sourceMesh.faces.length);
+            g_perf.count(Cat.bvhAbortVerts, cast(long)sourceMesh.vertices.length);
+            return;
+        }
 
         // Flat vertex array (XYZ per vertex).
         float[] verts = new float[](sourceMesh.vertices.length * 3);
@@ -362,6 +375,7 @@ private:
 
         int nv = cast(int)sourceMesh.vertices.length;
         int nt = cast(int)ti;
+        g_perf.count(Cat.bvhRebuildTris, nt);   // task 1540 — see the enum
         _handle = dbvh_build(verts.ptr, nv, indices.ptr, nt);
         if (_handle !is null) {
             _uploadVersion = gpu.uploadVersion;

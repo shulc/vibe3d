@@ -192,6 +192,7 @@ FrameStats fetchFrames() {
     s.gcAllocBytes  = j["gcAllocBytes"].integer;
     s.gcCollections = j["gcCollections"].integer;
     s.steadyMaxAllocBytes = j["steadyMaxAllocBytes"].integer;
+    if ("sumCacheNs" in j) s.sumCacheNs = j["sumCacheNs"].integer;
     if (j["worst"].type != JSONType.null_) s.worst = parseFrameRec(j["worst"]);
     return s;
 }

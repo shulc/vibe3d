@@ -79,5 +79,6 @@ struct FrameStats {
     long gcAllocBytes;     // sum across the window
     long gcCollections;    // sum across the window
     long steadyMaxAllocBytes;
+    long sumCacheNs;        // task 1540 — the `cache` phase over the window
     FrameRecJ worst;
 }

@@ -1718,6 +1718,32 @@ struct FrameScenarioResult {
     long       subpatchWorkerNs         = -1;  // wall ns inside the worker
     long       subpatchWorkerAllocBytes = -1;  // GC bytes allocated there
     long       subpatchPendingFrames    = -1;  // frames drawn while it ran
+    // ---- Task 1540: what the `cache` PHASE is actually made of ----------
+    // The phase timer (`stats.worst.cacheNs`) spans two unrelated jobs: the
+    // viewcache block (`Cat.cacheInvalidate`) and the per-frame hover pick
+    // (`Cat.hoverPick`), the latter of which pays a full BVH construction
+    // (`Cat.bvhRebuild`) on the frame after the source mesh changed. 1500
+    // reported the phase at 87-94 % of the first Tab's worst frame and named
+    // the BVH as its bulk WITHOUT splitting it -- these three are the split.
+    //
+    // They are WINDOW SUMS off /api/perf, not per-frame ring values, so they
+    // are comparable to the SUM of `cacheNs` over the window and not to the
+    // worst frame alone. `framesReset()` and `perfReset()` are called back to
+    // back in runTabCold, so both windows open at the same point.
+    long       cacheInvalidateNs = -1;
+    long       viewcacheRebuildNs = -1;
+    long       hoverPickNs       = -1;
+    long       bvhRebuildNs      = -1;
+    long       bvhRebuildCount   = -1;
+    long       bvhRebuildTris    = -1;
+    long       bvhRebuildTrisN   = -1;  // how many rebuilds REACHED the build
+    long       bvhRebuildMaxNs   = -1;  // the single most expensive rebuild
+    long       worstCacheNs      = -1;  // the worst FRAME's cache phase
+    long       bvhAbortFaces     = -1;
+    long       bvhAbortVerts     = -1;
+    long       bvhAbortN         = -1;
+    long       hoverPickCount    = -1;
+    long       cacheNsWindowSum  = -1;  // sum of the PHASE over the window
 }
 
 // Number of per-gesture move-drag undo entries `undo-spam` builds before
@@ -2262,6 +2288,21 @@ FrameScenarioResult runTabCold(int n, string meshType) {
     res.subpatchTopoMiss = perfCounterCount(perf, "subpatchTopoMiss");
     res.subpatchTopoHit  = perfCounterCount(perf, "subpatchTopoHit");
     res.subpatchLevel    = perfCounterSum  (perf, "subpatchLevelChosen");
+    // Task 1540 -- the `cache` phase, split.
+    res.cacheInvalidateNs = perfTimerSumNs (perf, "cacheInvalidate");
+    res.hoverPickNs       = perfTimerSumNs (perf, "hoverPick");
+    res.hoverPickCount    = perfCounterCount(perf, "hoverPick");
+    res.bvhRebuildNs      = perfTimerSumNs (perf, "bvhRebuild");
+    res.bvhRebuildCount   = perfCounterCount(perf, "bvhRebuild");
+    res.bvhRebuildTris    = perfCounterSum  (perf, "bvhRebuildTris");
+    res.bvhRebuildTrisN   = perfCounterCount(perf, "bvhRebuildTris");
+    res.bvhRebuildMaxNs   = perfTimerMaxNs  (perf, "bvhRebuild");
+    res.bvhAbortFaces     = perfCounterSum  (perf, "bvhAbortFaces");
+    res.bvhAbortVerts     = perfCounterSum  (perf, "bvhAbortVerts");
+    res.bvhAbortN         = perfCounterCount(perf, "bvhAbortFaces");
+    res.worstCacheNs      = res.stats.worst.cacheNs;
+    res.viewcacheRebuildNs = perfTimerSumNs(perf, "viewcacheRebuild");
+    res.cacheNsWindowSum  = res.stats.sumCacheNs;
 
     immutable auto asyncAfter = fetchSubpatchAsync();
     if (!asyncAfter.empty && !asyncBefore.empty) {
@@ -2284,6 +2325,18 @@ long perfCounterCount(JSONValue perf, string key) {
 }
 long perfCounterSum(JSONValue perf, string key) {
     return (key in perf) ? perf[key]["sum"].integer : 0;
+}
+// A TIMER's accumulated nanoseconds. NOT interchangeable with
+// `perfCounterSum`: `PerfProbe.toJson` emits `sum_ns` for a timer and `sum`
+// for a counter, so asking a timer for "sum" throws Key not found — which is
+// exactly what a first draft of the 1540 split did, and it threw on the
+// first run rather than reading a silent zero. Kept as its own function so
+// the two halves of the enum stay two functions at the reader's end too.
+long perfTimerSumNs(JSONValue perf, string key) {
+    return (key in perf) ? perf[key]["sum_ns"].integer : 0;
+}
+long perfTimerMaxNs(JSONValue perf, string key) {
+    return (key in perf) ? perf[key]["max_ns"].integer : 0;
 }
 
 // Poll /api/perf until `subpatchPreview.count` reaches `want`. /api/perf is
@@ -2480,6 +2533,47 @@ void printFramesTable(FrameScenarioResult[] results) {
                      ~ "(cold-topology / WARM-BUFFER regime — see runTabCold)",
                      r.name, r.subpatchTopoMiss, r.subpatchTopoHit,
                      r.subpatchLevel);
+        if (r.bvhRebuildNs >= 0) {
+            immutable long other = r.cacheNsWindowSum
+                                 - r.cacheInvalidateNs - r.hoverPickNs;
+            writefln("  %-16s CACHE PHASE SPLIT (window sums): phase=%.1fms"
+                     ~ " = viewcache %.3fms (of which invalidate %.3fms)"
+                     ~ " + hoverPick %.3fms + residual %.3fms",
+                     r.name, msFromNs(r.cacheNsWindowSum),
+                     msFromNs(r.cacheInvalidateNs),
+                     msFromNs(r.viewcacheRebuildNs), msFromNs(r.hoverPickNs),
+                     msFromNs(other));
+            writefln("  %-16s   hoverPick %.3fms (n=%d) = bvhRebuild %.3fms (n=%d,"
+                     ~ " %d tris total) + raycast %.3fms",
+                     r.name, msFromNs(r.hoverPickNs), r.hoverPickCount,
+                     msFromNs(r.bvhRebuildNs), r.bvhRebuildCount,
+                     r.bvhRebuildTris,
+                     msFromNs(r.hoverPickNs - r.bvhRebuildNs));
+            // The divisor is the TRIS counter's own count, not the timer's:
+            // `rebuild()` early-returns on an empty/zero-tri mesh AFTER the
+            // timer opens but BEFORE the tri count is recorded, so the two
+            // are different populations and dividing one by the other invents
+            // a mesh that does not exist. A first draft did exactly that and
+            // printed 399 424 tris/rebuild -- a number matching neither the
+            // cage nor the limit surface, which is how it was caught.
+            if (r.bvhRebuildTrisN > 0)
+                writefln("  %-16s   builds that reached dbvh_build: %d of %d;"
+                         ~ " %d tris each avg, %.3f us/tri",
+                         r.name, r.bvhRebuildTrisN, r.bvhRebuildCount,
+                         r.bvhRebuildTris / r.bvhRebuildTrisN,
+                         (cast(double)r.bvhRebuildNs / 1000.0) / r.bvhRebuildTris);
+            // Does the biggest single rebuild FIT in the frame that is
+            // supposed to contain it? The window sums cannot answer that --
+            // they are the g_perf window, which is not the g_frames ring.
+            if (r.bvhAbortN > 0)
+                writefln("  %-16s   ABORTED rebuilds: %d, walked %d faces /"
+                         ~ " %d verts total (built nothing)",
+                         r.name, r.bvhAbortN, r.bvhAbortFaces, r.bvhAbortVerts);
+            writefln("  %-16s   biggest single rebuild %.3fms vs worst frame's"
+                     ~ " cache phase %.3fms / whole frame %.3fms",
+                     r.name, msFromNs(r.bvhRebuildMaxNs),
+                     msFromNs(r.worstCacheNs), msFromNs(r.stats.worst.totalNs));
+        }
     }
 }
 

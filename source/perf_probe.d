@@ -130,8 +130,42 @@ enum Cat {
     // still compiles and still reports `{"count":0,"sum":0}`. See the trap note
     // on `firstCounter` below.
     snapVisMask,
+    // --- BVH pick-structure rebuild (task 1540 measurement) ------------
+    //
+    // `hoverPick` above times the WHOLE face pick, which is two different
+    // things wearing one number: an O(log n) raycast, and — on the frame
+    // after the source mesh changed — a full O(n) BVH construction over
+    // the geometry the GPU rasterised (the LIMIT surface while a subpatch
+    // preview is active, ~400 K faces at n=316). 1500 measured the frame
+    // phase `cache` at 87-94 % of the first Tab's worst frame and named
+    // this rebuild as its bulk, but the phase timer also spans the
+    // viewcache block, so the attribution was an inference. This timer is
+    // what turns it into an observation: opened inside `BvhPick.rebuild`,
+    // it is the construction and nothing else, so
+    // `hoverPick - bvhRebuild` is the raycast half and
+    // `cacheNs - cacheInvalidate - hoverPick` is what neither covers.
+    //
+    // A TIMER at CONSTRUCTION granularity — one open per rebuild, never one
+    // per triangle, so the per-element instrumentation rule holds.
+    //
+    // PLACEMENT: still below `falloffEvalCount`, which IS `firstCounter` —
+    // see the trap note on `snapVisMask` directly above.
+    bvhRebuild,
     // --- counters ---
     falloffEvalCount,
+    // Triangles fed to `dbvh_build` per rebuild (task 1540). A COUNTER, and
+    // it is the term that decides WHICH MESH a rebuild was over: while the
+    // async preview is in flight `subpatchPreview.active` is false, so the
+    // hover pick answers from the CAGE and builds a cage-sized BVH that the
+    // preview's arrival then throws away. Cage and limit differ by the
+    // refinement factor, so `sum / count` names the mesh without a second
+    // instrument -- and without it, "two rebuilds" is a number with no
+    // subject.
+    bvhRebuildTris,
+    // The abort path's subject (task 1540): faces walked / vertices seen by a
+    // rebuild that returned without calling `dbvh_build`.
+    bvhAbortFaces,
+    bvhAbortVerts,
     vertsTouched,
     // undoApply — bumped once per successful `undo()` (Case A/B success
     // return, command_history.d:1090). A true counter (ordinal >
@@ -529,6 +563,13 @@ version (PerfProbe) {
         private long sumAllocBytes;
         private long sumCollections;
         private long meshCacheRebuilds;
+        // Task 1540 — the `cache` PHASE summed over the window, so the
+        // window-wide `Cat.*` sums off /api/perf (which is the only
+        // granularity those have) can be compared against the phase they are
+        // supposed to decompose. Without it the comparison is a window sum
+        // against a single worst frame, which is not a decomposition of
+        // anything.
+        private long sumCacheNs;
 
         // In-flight frame state.
         private FrameRec  cur_;
@@ -643,6 +684,7 @@ version (PerfProbe) {
             if (cur_.totalNs > 33_000_000) hitch33++;
             sumAllocBytes  += cur_.gcAllocBytes;
             sumCollections += cur_.gcCollections;
+            sumCacheNs     += cur_.cacheNs;
         }
 
         /// Zero the ring + every published counter. Call before a measured
@@ -668,6 +710,7 @@ version (PerfProbe) {
             sumAllocBytes = 0;
             sumCollections = 0;
             meshCacheRebuilds = 0;
+            sumCacheNs = 0;
         }
 
         private static string recJson(const ref FrameRec r) {
@@ -759,6 +802,7 @@ version (PerfProbe) {
                         steadyMaxAllocBytes = s[i].gcAllocBytes;
             }
             app.formattedWrite(`,"steadyMaxAllocBytes":%d`, steadyMaxAllocBytes);
+            app.formattedWrite(`,"sumCacheNs":%d`, sumCacheNs);
 
             // Worst frame (max totalNs) — full record.
             if (len > 0) {
