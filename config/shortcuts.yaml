@@ -50,10 +50,6 @@ commands:
   file.save:             "Ctrl+S"
   file.saveAs:           "Ctrl+Shift+S"
   file.quit:             "Ctrl+Q"
-  # Pie (radial) menu. The text after the key spec is the menu id in
-  # config/pies.yaml — the same baked-argstring mechanism `mesh.subdivide`
-  # uses above.  ref: ctrl-space
-  ui.pie:                "Ctrl+Space viewport"
 
 editmodes:
   vertices: "1"
@@ -64,3 +60,33 @@ editmodes:
   # the material-tag type, which we do not have (see the task card). Taking
   # 4 now would mean renumbering the day that type lands, so 4 stays free.
   items:    "5"       # ref: 5
+
+# ---------------------------------------------------------------------------
+# Scoped bindings.
+#
+# The three sections above bind a chord GLOBALLY — they are rows here with
+# every slot left wildcard, and they keep working untouched. A row below may
+# additionally require:
+#
+#   zone:     where the cursor is — one of the names in source/input_zones.d
+#             (viewport3d, sidePanel, tabPanel, statusBar, layerList,
+#             toolProps, history). An unknown name is a load error, because a
+#             binding scoped to a zone nobody publishes never fires and never
+#             says so.
+#   mode:     the current selection type — vertex | edge | polygon | item
+#   whenTool: the armed tool id; a trailing `*` matches a family (`sculpt.*`)
+#
+# The MOST SPECIFIC matching row wins, and specificity is a weight, not a
+# count: zone(4) > whenTool(2) > mode(1). Distinct powers of two mean two rows
+# can only tie if they fill the very same slots — so "equally specific along
+# different axes" cannot happen. Two rows identical in chord AND slots are a
+# load error rather than a silent first-wins.
+#
+# Exactly one of `command:` / `tool:` / `editmode:` per row. `command:` takes
+# the whole argstring, like the baked form above.
+# ---------------------------------------------------------------------------
+bindings:
+  # Pie (radial) menu — the same chord means a different menu depending on
+  # what the cursor is over.  ref: ctrl-space
+  - { key: "Ctrl+Space",                    command: "ui.pie viewport" }
+  - { key: "Ctrl+Space", zone: layerList,   command: "ui.pie layers" }

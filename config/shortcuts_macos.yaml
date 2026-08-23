@@ -58,11 +58,6 @@ commands:
   file.save:             "Cmd+S"
   file.saveAs:           "Cmd+Shift+S"
   file.quit:             "Cmd+Q"
-  # Pie (radial) menu — Ctrl, NOT Cmd, on macOS too: Cmd+Space is claimed by
-  # Spotlight at the OS level and never reaches SDL, so the Cmd spelling would
-  # be a binding that silently does nothing. Same class as mesh.hideInvert
-  # above. The text after the key spec is the menu id in config/pies.yaml.
-  ui.pie:                "Ctrl+Space viewport"
 
 editmodes:
   vertices: "1"
@@ -73,3 +68,11 @@ editmodes:
   # the material-tag type, which we do not have (see the task card). Taking
   # 4 now would mean renumbering the day that type lands, so 4 stays free.
   items:    "5"       # ref: 5
+
+# Scoped bindings — see config/shortcuts.yaml for the full slot documentation.
+# Ctrl, NOT Cmd, on macOS too: Cmd+Space is claimed by Spotlight at the OS
+# level and never reaches SDL, so the Cmd spelling would be a binding that
+# silently does nothing. Same class as mesh.hideInvert above.
+bindings:
+  - { key: "Ctrl+Space",                    command: "ui.pie viewport" }
+  - { key: "Ctrl+Space", zone: layerList,   command: "ui.pie layers" }

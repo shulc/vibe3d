@@ -70,6 +70,12 @@ struct ShortcutTable {
     // `mesh.subdivide: "D ccsds"`). Absent for argless bindings; the dispatcher
     // consults it only in the command branch to run-with-args, no dialog.
     string[string] argsByCanon;
+
+    // The scoped input map (task 1810): every legacy row above flattened with
+    // wildcard slots, plus `bindings:`. This is what the KEYBOARD dispatcher
+    // resolves against; the maps above remain the answer to "print the shortcut
+    // for this id" and are unaffected.
+    Binding[] bindings;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,5 +271,213 @@ ShortcutTable loadShortcuts(string path) {
     loadSection("commands",  tbl.byCommandId, tbl.commandIdByCanon);
     loadSection("editmodes", tbl.byEditMode,  tbl.editModeByCanon);
 
+    // Task 1810 — the same three sections, flattened into the scoped-binding
+    // table with every slot left wildcard, plus the `bindings:` list. The
+    // legacy maps above stay populated: `byToolId` & co. are what the UI reads
+    // to print "W" next to the Move button, and that is a different question
+    // from "what does W do right now".
+    tbl.bindings = buildBindings(root, tbl, path);
+
     return tbl;
+}
+
+// ===========================================================================
+// Scoped bindings (task 1810)
+// ===========================================================================
+
+enum BindingKind { tool, command, editMode }
+
+/// One row of the resolved input map: a chord, the context slots it requires,
+/// and what it runs. An empty slot is a WILDCARD — it matches anything.
+struct Binding {
+    Shortcut    key;
+    string      canon;      // key.toCanonical(), cached — the match is by this
+
+    // ---- context slots; "" = wildcard --------------------------------------
+    string      zone;       // input_zones name
+    string      mode;       // selection type name
+    string      whenTool;   // armed tool id; a trailing '*' matches by prefix
+
+    // ---- action ------------------------------------------------------------
+    BindingKind kind;
+    string      id;
+    string      args;       // baked argstring, as in `mesh.subdivide: "D ccsds"`
+
+    // ---- tie-break provenance ---------------------------------------------
+    bool        scoped_;    // came from `bindings:` rather than a legacy section
+    int         legacyRank; // tool 0 / command 1 / editMode 2 — today's order in
+                            // handleKeyDown, preserved rather than re-decided
+}
+
+/// How specific a binding is. **The weights are powers of two on purpose.**
+///
+/// With distinct powers, two bindings share a weight if and only if they fill
+/// the SAME SET of slots — so "equally specific but along different axes"
+/// cannot arise, and the resolver never has to invent a winner between, say, a
+/// zone-scoped and a mode-scoped rule. That is exactly the ambiguity the
+/// reference's own shipped map contains (its `ctrl-space` has two entries
+/// differing only in whether the context slot is present), and it is the one
+/// thing here deliberately NOT ported.
+///
+/// The ORDER zone > whenTool > mode is our decision, not a measurement: where
+/// the cursor is is the most concrete thing about a keystroke, and what tool is
+/// armed is more specific than which selection type is current.
+int bindingWeight(const Binding b) {
+    int w = 0;
+    if (b.zone.length)     w += 4;
+    if (b.whenTool.length) w += 2;
+    if (b.mode.length)     w += 1;
+    return w;
+}
+
+/// Does one slot pattern accept one live value? `""` is the wildcard; a
+/// trailing `*` matches by prefix (`sculpt.*`), which is what keeps a family of
+/// tools from needing one line each — without it, a chord that behaves the same
+/// way under any one of a dozen sibling tools costs a dozen near-identical
+/// rows, and the next sibling silently misses out.
+bool slotMatches(string pattern, string value) {
+    if (pattern.length == 0) return true;
+    if (pattern[$ - 1] == '*')
+        return value.length >= pattern.length - 1
+            && value[0 .. pattern.length - 1] == pattern[0 .. $ - 1];
+    return pattern == value;
+}
+
+/// Pick the binding that wins for `canon` in this context, or -1.
+///
+/// PURE, and that is the point: "which binding won" is otherwise invisible —
+/// a chord that resolves to the wrong rule and a chord that resolves to
+/// nothing look identical from outside (nothing happens, or the wrong thing
+/// happens, with no way to tell which rule decided). Everything the rest of
+/// the task does hangs off this function being separately checkable.
+int resolveBinding(const(Binding)[] bindings, string canon,
+                   string zone, string mode, string whenTool) {
+    int best = -1, bestW = -1;
+    foreach (i, ref b; bindings) {
+        if (b.canon != canon) continue;
+        if (!slotMatches(b.zone,     zone))     continue;
+        if (!slotMatches(b.mode,     mode))     continue;
+        if (!slotMatches(b.whenTool, whenTool)) continue;
+
+        immutable int w = bindingWeight(b);
+        if (w > bestW) { bestW = w; best = cast(int) i; continue; }
+        if (w < bestW) continue;
+        // Equal weight ⇒ identical slot SET (see bindingWeight). Break it the
+        // way the app already behaved: an explicit `bindings:` row beats a
+        // legacy section, and among legacy sections the order handleKeyDown
+        // has always used — tool, then command, then editmode — decides.
+        // A pair that ties even here cannot exist: the loader refuses it.
+        auto cur = bindings[best];
+        if (b.scoped_ && !cur.scoped_) { best = cast(int) i; continue; }
+        if (!b.scoped_ && cur.scoped_) continue;
+        if (b.legacyRank < cur.legacyRank) best = cast(int) i;
+    }
+    return best;
+}
+
+private Binding[] buildBindings(NodeT)(NodeT root, ref ShortcutTable tbl, string path) {
+    import dyaml : Node;
+    import input_zones : isKnownZone;
+    import std.algorithm : canFind;
+
+    Binding[] outb;
+
+    // ---- the three legacy sections, as all-wildcard rows -------------------
+    void flatten(string section, BindingKind kind, int rank) {
+        if (!root.containsKey(section)) return;
+        foreach (string id, Node val; root[section]) {
+            Shortcut sc = parseShortcut(val.as!string);
+            string canon = sc.toCanonical();
+            if (canon.length == 0) continue;      // deliberately unbound ("")
+            Binding b;
+            b.key = sc; b.canon = canon;
+            b.kind = kind; b.id = id; b.args = sc.args;
+            b.legacyRank = rank;
+            outb ~= b;
+        }
+    }
+    flatten("tools",     BindingKind.tool,     0);
+    flatten("commands",  BindingKind.command,  1);
+    flatten("editmodes", BindingKind.editMode, 2);
+
+    // ---- the scoped list ---------------------------------------------------
+    if (root.containsKey("bindings")) {
+        foreach (Node row; root["bindings"]) {
+            if (!row.containsKey("key"))
+                throw new Exception(format(
+                    "shortcuts: a `bindings:` row in '%s' is missing 'key'", path));
+            string rawKey = row["key"].as!string;
+
+            Binding b;
+            b.key     = parseShortcut(rawKey);
+            b.canon   = b.key.toCanonical();
+            b.args    = b.key.args;
+            b.scoped_ = true;
+            if (b.canon.length == 0)
+                throw new Exception(format(
+                    "shortcuts: `bindings:` row '%s' in '%s' has an unusable key",
+                    rawKey, path));
+
+            if (row.containsKey("zone")) {
+                b.zone = row["zone"].as!string;
+                // A zone nobody publishes is a binding that never fires and
+                // never complains — the whole point of the closed list.
+                if (!isKnownZone(b.zone))
+                    throw new Exception(format(
+                        "shortcuts: `bindings:` row '%s' in '%s' names unknown zone '%s'",
+                        rawKey, path, b.zone));
+            }
+            if (row.containsKey("mode"))     b.mode     = row["mode"].as!string;
+            if (row.containsKey("whenTool")) b.whenTool = row["whenTool"].as!string;
+
+            int actions = 0;
+            if (row.containsKey("command"))  ++actions;
+            if (row.containsKey("tool"))     ++actions;
+            if (row.containsKey("editmode")) ++actions;
+            if (actions != 1)
+                throw new Exception(format(
+                    "shortcuts: `bindings:` row '%s' in '%s' must have exactly one of "
+                    ~ "command / tool / editmode, found %d", rawKey, path, actions));
+
+            if (row.containsKey("command")) {
+                b.kind = BindingKind.command;
+                // The command form carries its own arguments inline
+                // ("ui.pie viewport"), the same shape the baked-argstring
+                // bindings already use.
+                string line = row["command"].as!string;
+                size_t sp = 0;
+                while (sp < line.length && line[sp] != ' ' && line[sp] != '\t') ++sp;
+                b.id   = line[0 .. sp];
+                b.args = sp < line.length ? line[sp .. $].strip : "";
+            } else if (row.containsKey("tool")) {
+                b.kind = BindingKind.tool;
+                b.id   = row["tool"].as!string;
+            } else {
+                b.kind = BindingKind.editMode;
+                b.id   = row["editmode"].as!string;
+            }
+            outb ~= b;
+        }
+    }
+
+    // ---- refuse a pair nothing could choose between ------------------------
+    foreach (i, ref a; outb)
+        foreach (j; i + 1 .. outb.length) {
+            auto b = outb[j];
+            if (a.canon != b.canon) continue;
+            if (a.zone != b.zone || a.mode != b.mode || a.whenTool != b.whenTool)
+                continue;
+            if (a.scoped_ != b.scoped_) continue;
+            if (!a.scoped_ && a.legacyRank != b.legacyRank) continue;
+            throw new Exception(format(
+                "shortcuts: '%s' in '%s' is bound twice with identical scope "
+                ~ "(%s / %s / %s) — '%s' and '%s'; nothing can choose between them",
+                a.canon, path,
+                a.zone.length     ? a.zone     : "any-zone",
+                a.mode.length     ? a.mode     : "any-mode",
+                a.whenTool.length ? a.whenTool : "any-tool",
+                a.id, b.id));
+        }
+
+    return outb;
 }

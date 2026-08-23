@@ -34,3 +34,15 @@ menus:
       # The reference puts "Maximize" here; our nearest equivalent is the
       # single-cell viewport layout.
       - { label: Single,      action: { kind: script, lines: ["viewport.layout Single"] } }     # NW
+
+  # Item / layer operations. Bound to the SAME chord as the menu above, scoped
+  # to the Items panel — see the `bindings:` block in config/shortcuts.yaml.
+  # Four items, so the circle is divided into quarters: index 0 is still noon
+  # and the rest still run clockwise, they are just 90° apart instead of 45°.
+  - id: layers
+    title: Items
+    items:
+      - { label: "Add",       action: { kind: command, id: layer.add } }        # N
+      - { label: "Duplicate", action: { kind: command, id: layer.duplicate } }  # E
+      - { label: "Delete",    action: { kind: command, id: layer.delete } }     # S
+      - { label: "Rename…",   action: { kind: command, id: layer.rename } }     # W

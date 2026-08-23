@@ -3977,6 +3977,15 @@ void main(string[] args) {
         enum shortcutsPath = "config/shortcuts.yaml";
     }
     ShortcutTable shortcuts         = loadShortcuts(shortcutsPath);
+    // Freeze the resolved input map for `/api/input/context` (task 1810). The
+    // table never changes after load, and `resolveBinding` is pure, so the
+    // HTTP thread can answer "which binding would win" without touching
+    // anything live — and without a second implementation that could drift
+    // from the one the keyboard actually runs.
+    {
+        import input_context : setBindingSnapshot;
+        setBindingSnapshot(shortcuts.bindings);
+    }
 
     // Validate: every action id (including modifier variants) must exist in
     // the registry. For script actions, validate the first token of each
@@ -4843,14 +4852,29 @@ void main(string[] args) {
         SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
         if (activeTool && activeTool.onKeyDown(kev, vts)) return;
 
-        // YAML-driven shortcut lookup (tool, command, editmode).
+        // YAML-driven shortcut lookup, resolved IN CONTEXT (task 1810).
+        //
+        // The three legacy sections and the `bindings:` list are one table by
+        // the time they get here; `resolveBinding` picks the most specific row
+        // whose zone / mode / armed-tool slots accept the current context, and
+        // a row with no slots filled — which is every legacy row — matches
+        // everywhere, exactly as before this task.
         string canon = canonFromEvent(kev.keysym.sym, cast(SDL_Keymod)kev.keysym.mod);
         if (canon.length > 0) {
-            if (auto id = canon in shortcuts.toolIdByCanon) {
-                activateToolById(*id);
+            import input_context : currentInputContext;
+            import seltype       : selTypeToken;
+            auto ictx = currentInputContext(
+                selTypeToken(currentSelType(selTypeOrder)), activeToolId);
+            immutable int bi = resolveBinding(shortcuts.bindings, canon,
+                                              ictx.zone, ictx.mode, ictx.whenTool);
+            if (bi >= 0) {
+              auto bnd = shortcuts.bindings[bi];
+              if (bnd.kind == BindingKind.tool) {
+                activateToolById(bnd.id);
                 return;
-            }
-            if (auto id = canon in shortcuts.commandIdByCanon) {
+              }
+              if (bnd.kind == BindingKind.command) {
+                auto id = &bnd.id;
                 // AUTO-REPEAT MUST NOT RE-OPEN A PIE (task 1800). The ring is
                 // held-open: it closes when the chord is released, and it also
                 // closes the moment a wedge is clicked — while the chord is
@@ -4869,10 +4893,11 @@ void main(string[] args) {
                 // scripted history nav and must remain tool-agnostic.
                 if (*id == "history.undo") { navHistory(true);  return; }
                 if (*id == "history.redo") { navHistory(false); return; }
-                // A binding that pinned arguments (baked "D ccsds") runs
-                // immediately with them injected — no args dialog.
-                if (auto argp = canon in shortcuts.argsByCanon) {
-                    runCommandWithArgs(*id, *argp);
+                // A binding that pinned arguments (baked "D ccsds", or a
+                // `bindings:` row's inline "ui.pie viewport") runs immediately
+                // with them injected — no args dialog.
+                if (bnd.args.length > 0) {
+                    runCommandWithArgs(*id, bnd.args);
                     pieArmIfOpened(kev);
                     return;
                 }
@@ -4880,8 +4905,9 @@ void main(string[] args) {
                     runCommand(reg.commandFactories[*id]());
                 pieArmIfOpened(kev);
                 return;
-            }
-            if (auto id = canon in shortcuts.editModeByCanon) {
+              }
+              {
+                auto id = &bnd.id;
                 // Route the selection-type keys through the selection-type
                 // funnel: it promotes the SelType, sets editMode in lockstep,
                 // and drops the active tool ONLY on a front-flip (pressing the
@@ -4892,13 +4918,15 @@ void main(string[] args) {
                 // — because there is no EditMode to set in lockstep: EditMode
                 // is the geometry view and must keep its remembered value under
                 // SelType.Item. Same front-flip contract otherwise.
-                final switch (*id) {
+                switch (*id) {
                     case "vertices": switchGeometryType(EditMode.Vertices); break;
                     case "edges":    switchGeometryType(EditMode.Edges);    break;
                     case "polygons": switchGeometryType(EditMode.Polygons); break;
                     case "items":    switchItemType();                      break;
+                    default: break;
                 }
                 return;
+              }
             }
         }
 
@@ -7073,6 +7101,22 @@ void main(string[] args) {
         // was not drawn" from "that button is currently called something else".
         beginButtonAvailabilityFrame(document.hasEditTarget(), activeToolId,
                                      cast(uint)SDL_GetModState());
+
+        // ---- Zone frame (task 1810) ---------------------------------------
+        // The viewport CELLS are published straight from the layout, not from
+        // a draw call: `vpm.views[k]`'s rect is already the authoritative one
+        // and is identical under `--test`, where no "Viewport" ImGui window
+        // exists to be hovered at all. Published FIRST so that any panel
+        // overlapping a cell wins the last-published rule below it.
+        {
+            import input_zones : beginZoneFrame, publishZone;
+            beginZoneFrame();
+            foreach (k; 0 .. vpm.cellCount) {
+                auto vv = vpm.views[k];
+                publishZone("viewport3d", cast(float) vv.winX, cast(float) vv.winY,
+                            cast(float) vv.winW, cast(float) vv.winH);
+            }
+        }
         drawSidePanel(app);
         drawTabPanel(app);
 
@@ -7240,6 +7284,31 @@ void main(string[] args) {
         // Moved VERBATIM to ui/panels.d's drawCommandHistoryPanel (app.d
         // decomp, phase B; same `with (app)` seam as the 0419 panels).
         drawCommandHistoryPanel(app);
+
+        // ---- Close the zone frame (task 1810) ------------------------------
+        // HERE, and not next to `endButtonAvailabilityFrame` above, which is
+        // where it first went: the availability bracket closes after the status
+        // bar, but Layers / Tool Properties / Command History are all drawn
+        // AFTER it. A zone frame closed there records only the docked panels,
+        // and every floating one is silently missing — which reads exactly like
+        // "the cursor is over nothing", so a binding scoped to `layerList`
+        // would never match and nothing would look broken. Caught by probing
+        // the live endpoint before writing the test, not by the test.
+        //
+        // The last PANEL is the boundary, deliberately: what follows is modals
+        // and viewport overlays, and neither is a place a chord is aimed at.
+        {
+            import input_zones   : endZoneFrame, publishedZones;
+            import input_context : publishInputContext;
+            import seltype       : selTypeToken;
+            import eventlog      : queryMouse;
+            endZoneFrame();
+            int _cx, _cy;
+            queryMouse(_cx, _cy);
+            publishInputContext(publishedZones(),
+                                selTypeToken(currentSelType(selTypeOrder)),
+                                activeToolId, _cx, _cy);
+        }
 
         // ---- Universal args dialog ----
         // Any command whose params() returns non-empty gets a modal dialog

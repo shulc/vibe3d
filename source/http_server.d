@@ -2132,6 +2132,44 @@ class HttpServer {
         }
     }
 
+    private void route_apiInputContext(HttpRequest request, HttpResponse response) {
+        // Task 1810 — GET /api/input/context[?x=&y=][&key=<canon>]
+        //
+        // What the keyboard router would see right now: the zone under the
+        // cursor (or under the given point), the selection type, the armed
+        // tool, every zone rectangle of the last complete frame, and — when a
+        // `key` is given — WHICH BINDING WINS and by what weight.
+        //
+        // The last part is the reason this route exists at all. A scoped
+        // binding that resolves to the wrong row and one that resolves to
+        // nothing are indistinguishable from their effects: in both cases the
+        // expected thing did not happen. Without a readback, a test can pin
+        // the effect and still be blind to the rule that produced it.
+        //
+        // Served from the HTTP thread against a published mirror + the frozen
+        // binding table, exactly as /api/buttons/availability is: nothing live
+        // is walked from here.
+        response.headers["Content-Type"] = "application/json";
+        try {
+            import input_context : inputContextJson;
+            // Sentinel-based "was it given": the query helpers take a default,
+            // and (0,0) is a legitimate pixel — so a missing x/y must not be
+            // mistaken for the top-left corner, which is inside the tab strip.
+            immutable int px = parseQueryInt(request.path, "x", int.min);
+            immutable int py = parseQueryInt(request.path, "y", int.min);
+            immutable bool havePoint = (px != int.min && py != int.min);
+            immutable string canon = parseQueryString(request.path, "key", "");
+            response.statusCode = 200;
+            response.body = inputContextJson(havePoint,
+                                             havePoint ? px : 0,
+                                             havePoint ? py : 0, canon);
+        } catch (Exception e) {
+            response.statusCode = 500;
+            response.body = "{\"error\": \"Failed to resolve input context\", \"message\": \"" ~
+                           jsonEsc(e.msg) ~ "\"}";
+        }
+    }
+
     private void route_apiStats(HttpRequest request, HttpResponse response) {
         // Task 1100 — every row the last complete frame of the Statistics
         // panel DREW, with the cell text exactly as drawn. This is the
@@ -3773,6 +3811,7 @@ private enum RouteSpec[] kRoutes = [
     RouteSpec("/api/toolprops/ids",        "GET",  Match.exact,  Answered.httpThread, "route_apiToolpropsIds"),
     RouteSpec("/api/ui/policy",            "GET",  Match.exact,  Answered.httpThread, "route_apiUiPolicy"),
     RouteSpec("/api/buttons/availability", "GET",  Match.exact,  Answered.httpThread, "route_apiButtonsAvailability"),
+    RouteSpec("/api/input/context",        "GET",  Match.prefix, Answered.httpThread, "route_apiInputContext"),
     RouteSpec("/api/stats",                "GET",  Match.exact,  Answered.httpThread, "route_apiStats"),
     RouteSpec("/api/layers",               "GET",  Match.exact,  Answered.mainThread, "route_apiLayers"),
     RouteSpec("/api/perf/reset",           "POST", Match.exact,  Answered.httpThread, "route_apiPerfReset"),

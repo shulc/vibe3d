@@ -250,6 +250,7 @@ import command;
 import registry;
 import shortcuts;
 import buttonset;
+import input_zones : publishZone;
 import ai.debug_trace : latestHandleDebugTraceJson;
 import ai.element_candidates : publishElementCandidates,
     collectElementCandidates, resolveElementCandidateDecision;
@@ -616,6 +617,24 @@ void popButtonBarStyle() {
 // a string mixin, which would trade two greppable lines for a body no search
 // can see. A named rule beats an invisible one.
 // ────────────────────────────────────────────────────────────────────────────
+
+// ---------------------------------------------------------------------------
+// Task 1810 — publish this panel's screen rectangle so the keyboard router can
+// name the zone the cursor is in. Called right after a successful `Begin`,
+// where ImGui's cursor sits at the content origin and `GetContentRegionAvail`
+// is the content extent. Those two are what this binding exposes; it has no
+// `GetWindowPos`/`GetWindowSize`, and no `IsWindowHovered` to ask instead —
+// see source/input_zones.d for why that shapes the whole design.
+//
+// The rect is the CONTENT box, not the window frame: title bar and padding are
+// chrome the user does not aim a chord at.
+// ---------------------------------------------------------------------------
+private void publishPanelZone(string name) {
+    auto o = ImGui.GetCursorScreenPos();
+    auto a = ImGui.GetContentRegionAvail();
+    publishZone(name, o.x, o.y, a.x, a.y);
+}
+
 void drawTabPanel(EditorApp app) {
     with (app) {
     pushPanelChromeStyle();
@@ -629,6 +648,7 @@ void drawTabPanel(EditorApp app) {
     scope(exit) ImGui.End();
     if (ImGui.Begin("Tab bar", null, tabFlags))
     {
+        publishPanelZone("tabPanel");
         pushButtonBarStyle();
         scope(exit) popButtonBarStyle();
 
@@ -1077,6 +1097,7 @@ void drawLayerListPanel(EditorApp app) {
     // silently, to everyone.
     scope(exit) ImGui.End();
     if (ImGui.Begin("Items###Layers")) {
+        publishPanelZone("layerList");
         // ---- Metrics -----------------------------------------------------
         // Derived from the ROW HEIGHT rather than written as pixel constants:
         // that height already carries the UI scale and the font swap between
@@ -2558,6 +2579,7 @@ void drawSidePanel(EditorApp app) {
     scope(exit) ImGui.End();
     if (ImGui.Begin("Mesh Info", null, sidePanelFlags))
     {
+        publishPanelZone("sidePanel");
         pushButtonBarStyle();
         scope(exit) popButtonBarStyle();
         void renderButton(ref Button btn) {
@@ -2751,6 +2773,7 @@ void drawStatusBar(EditorApp app) {
     scope(exit) ImGui.End();
     if (ImGui.Begin("Status line", null, statusFlags))
     {
+        publishPanelZone("statusBar");
         pushButtonBarStyle();
         scope(exit) popButtonBarStyle();
 
@@ -3475,6 +3498,7 @@ void drawCommandHistoryPanel(EditorApp app) {
             bool open = showHistoryPanel;
             scope(exit) ImGui.End();
             if (ImGui.Begin("Command History", &open)) {
+                publishPanelZone("history");
                 import imgui_style : pushPopupStyle, popPopupStyle;
                 auto undoArr = history.undoEntries();
                 auto redoArr = history.redoEntries();
@@ -3941,6 +3965,7 @@ void drawToolPropertiesPanel(EditorApp app) {
     // the user's own resize sticky in a normal run.
     ImGui.SetNextWindowSize(ImVec2(260, 520), ImGuiCond.FirstUseEver);
     if (ImGui.Begin("Tool Properties")) {
+        publishPanelZone("toolProps");
         // Start/finish one recording of this column's id namespace
         // (task 0640) — a no-op outside --test. Publishing at the end
         // means a reader on the HTTP thread sees whole columns only.
