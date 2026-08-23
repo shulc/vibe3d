@@ -574,6 +574,66 @@ void applyXformMatrix(
     const bool routed = route.covers(mesh.vertices.length);
     MeshMap* routeMap = routed ? mesh.morphMapForWrite(route.name) : null;
     bool routeWrote = false;
+
+    // ---- TASK 1760: LOOP-INVARIANT HOIST -------------------------------
+    //
+    // Half the per-vertex body below does not depend on the vertex. When no
+    // falloff is enabled, `w` is 1.0 for every vertex, so `Mw` is one value;
+    // and with no cluster override `Mv` is `M` and `pivot` is `pivotFallback`,
+    // so the whole double-precision `off` block — which the comment further
+    // down already describes as "computed in double once per (Mw, pivot,
+    // anchor)" — is one value too. It was nevertheless being recomputed
+    // 100 489 times per drag step, along with TWO `float[16]` copies per
+    // vertex (`Mv = M`, then `blendToIdentity` returning by value).
+    //
+    // That case is not a corner: `move/baseline`, `rotate/baseline` and
+    // `scale/baseline` are the harness's largest drag cases and all three run
+    // with falloff off and no clusters.
+    //
+    // BIT-IDENTICAL, not merely close. Every input to the hoisted expressions
+    // is the same on every iteration, so computing them once yields the same
+    // bits the loop was producing; the surviving per-vertex arithmetic is the
+    // same operations in the same order. There is no reassociation here and
+    // none may be added — the double-precision re-centering exists for
+    // cancellation reasons spelled out below, and a "simplification" that
+    // folds `off` into the matrix would undo it.
+    immutable bool uniform = !dragFalloff.enabled
+                          && clusterM is null
+                          && !clusterPivots.active;
+    double u_m00, u_m10, u_m20, u_m01, u_m11, u_m21, u_m02, u_m12, u_m22;
+    double u_off0, u_off1, u_off2;
+    if (uniform) {
+        const float[16] Mw = blendToIdentity(M, 1.0f, mode);
+        u_m00 = Mw[0]; u_m10 = Mw[1]; u_m20 = Mw[2];
+        u_m01 = Mw[4]; u_m11 = Mw[5]; u_m21 = Mw[6];
+        u_m02 = Mw[8]; u_m12 = Mw[9]; u_m22 = Mw[10];
+        immutable double cpx = cast(double)anchor.x - cast(double)pivotFallback.x;
+        immutable double cpy = cast(double)anchor.y - cast(double)pivotFallback.y;
+        immutable double cpz = cast(double)anchor.z - cast(double)pivotFallback.z;
+        u_off0 = u_m00*cpx + u_m01*cpy + u_m02*cpz - cpx + Mw[12];
+        u_off1 = u_m10*cpx + u_m11*cpy + u_m12*cpz - cpy + Mw[13];
+        u_off2 = u_m20*cpx + u_m21*cpy + u_m22*cpz - cpz + Mw[14];
+    }
+    immutable double u_ax = anchor.x, u_ay = anchor.y, u_az = anchor.z;
+
+    if (uniform) {
+        foreach (i, vi; indices) {
+            if (vi >= mesh.vertices.length) continue;
+            if (i >= baseline.length) continue;
+            const Vec3 base = baseline[i];
+            immutable double dx = cast(double)base.x - u_ax;
+            immutable double dy = cast(double)base.y - u_ay;
+            immutable double dz = cast(double)base.z - u_az;
+            const Vec3 moved = Vec3(
+                cast(float)(u_ax + u_m00*dx + u_m01*dy + u_m02*dz + u_off0),
+                cast(float)(u_ay + u_m10*dx + u_m11*dy + u_m12*dz + u_off1),
+                cast(float)(u_az + u_m20*dx + u_m21*dy + u_m22*dz + u_off2));
+            if (routeMap !is null) routeWrote |= storeRouted(routeMap, route, vi, moved);
+            else                   mesh.vertices[vi] = moved;
+        }
+        goto tail;
+    }
+
     foreach (i, vi; indices) {
         if (vi >= mesh.vertices.length) continue;
         if (i >= baseline.length) continue;
@@ -645,6 +705,7 @@ void applyXformMatrix(
             }
         }
     }
+tail:
     // ONE change note for the whole loop, and only when something was
     // written. Going through `Mesh.setMorphValue` per vertex instead would
     // `commitChange` -- bumping `mutationVersion` once per vertex per motion

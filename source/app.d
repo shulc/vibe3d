@@ -1612,8 +1612,25 @@ void main(string[] args) {
     // installed below) and tool activation both refuse first, and
     // `test_empty_item_selection.d` asserts the stand-in stays empty afterwards.
     ref Mesh mesh() {
-        return document.hasEditTarget() ? document.activeMeshRef()
-                                        : noEditTargetMesh();
+        // ONE walk, not three (task 1760). `hasEditTarget()` is
+        // `primary !is null` and `activeMeshRef()` used to name `primary`
+        // twice more, so this three-line accessor ran the derived
+        // edit-target scan THREE times — and it is the accessor essentially
+        // every `mesh.` in this file goes through, including the ones inside
+        // per-vertex and per-element loops.
+        //
+        // Measured on `move/baseline`, n=316, one drag window: 1 213 372
+        // derivations for 20 kernel applies. The comment that licenses
+        // deriving rather than storing budgets "~100 times a frame"
+        // (document_selection.d) — that premise is what this repairs, without
+        // touching the decision it rests on: no pointer is stored, the walk is
+        // simply not run three times for one answer.
+        //
+        // Behaviour is identical, branch for branch: today `hasEditTarget()`
+        // true implies `primary !is null`, so `activeMeshRef()`'s throw is
+        // unreachable from here and the false arm is `noEditTargetMesh()`.
+        auto p = document.primary;
+        return p !is null ? p.meshRef() : noEditTargetMesh();
     }
     // The command layer's half of the same rule. `command.d` cannot import
     // `document.d` (it is imported by headless tests that hold a bare `Mesh`),

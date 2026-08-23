@@ -324,12 +324,25 @@ mixin template DocumentSelection() {
     /// `noEditTargetMesh()`; callers that genuinely require a target let it
     /// propagate.
     ref Mesh  activeMeshRef() {
+        // ONE walk, not two (task 1760). `primary` is a DERIVED accessor —
+        // `nthEditTargetCandidate(0)`, a scan of `layers` — so naming it twice
+        // in four lines runs it twice. Measured before this change: 1 213 372
+        // derivations in a single measured drag window of 20 kernel applies,
+        // against a design comment that budgets "~100 times a frame". Three of
+        // those walks were one `mesh()` call: one here for the null test, one
+        // here for the dereference, one in the caller's `hasEditTarget()`.
+        //
+        // Hoisting is EXACTLY equivalent, not merely close: the walk is a pure
+        // read of `layers` with no side effect and nothing between these two
+        // statements can mutate the document.
+        //
         // The reason is the shared enum, not a third copy of the sentence
         // (task 0668): the module already goes to the trouble of a
         // `static assert` to keep `command.d`'s duplicate byte-identical, and
         // a literal here was a silent way for the throw to say something else.
-        if (primary is null) throw new NoEditTargetException(kNoEditTargetReason);
-        return primary.meshRef();
+        auto p = primary;
+        if (p is null) throw new NoEditTargetException(kNoEditTargetReason);
+        return p.meshRef();
     }
 
     /// True iff `l` is the primary (the single edit target).
