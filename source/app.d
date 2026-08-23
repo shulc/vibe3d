@@ -1712,6 +1712,40 @@ void main(string[] args) {
     // while the preview is active.
     ulong gpuUploadedVersion = ulong.max;
     bool  gpuUploadedPreview;
+    // TASK 1730 — the window in which the VBOs hold a limit surface whose
+    // index space no longer matches the cage.
+    //
+    // `dispatchBuild` drops `active` and says why: "INDEX SPACE CHANGES NOW.
+    // The stale trace does not outlive its cage by a single frame, so
+    // `faceOrigin` can never run past `mesh.faces.length` — by construction,
+    // not by a bounds check." Leaving the stale surface DRAWN (which is the
+    // whole of 1730 — otherwise the cage is uploaded and uploaded back, and
+    // the viewport flickers between polygonal and subdivided) makes the trace
+    // outlive its cage on purpose. The construction that stood in for a bounds
+    // check is therefore gone, and this predicate is what replaces it.
+    //
+    // NOT the same as the `uploaded && !active` pair the M-INV comment at the
+    // lasso site calls legitimate. That one lives ONE frame, between a
+    // mid-`tickAll` `deactivate()` and the upload block, and across it THE
+    // CAGE HAS NOT CHANGED — which is exactly why `*OriginGpu` still maps into
+    // it. Here the cage is what changed. Same pair of bits, different fact.
+    //
+    // Everything that reads `gpu.*OriginGpu` must refuse while this is true:
+    // the three hover pickers and the lasso's `elementVisibility`. They are
+    // the readers, and a stale map does not crash — it answers with SOMEONE
+    // ELSE'S ELEMENT, which is the failure this project pays most for.
+    // BOUNDED BY THE SAME CEILING as the recorded-input barrier, and that is
+    // not symmetry for its own sake — an unbounded freeze wedges the viewport
+    // on a build that never finishes, which is exactly what
+    // `test_subpatch_async_preview` M-CEIL refuses. Past the ceiling this goes
+    // false, the upload block swaps the cage in, and drawn and picked agree
+    // again: a wedged build degrades to the pre-1730 flicker rather than to a
+    // viewport that has stopped answering.
+    bool previewIndexSpaceStale() {
+        return subpatchPreview.buildPending
+            && !subpatchPreview.buildPastCeiling()
+            && gpuUploadedPreview;
+    }
     // Source topologyVersion of the last FULL preview upload. When this
     // matches the current preview's source topology, the preview mesh
     // layout (#faces, fan order, edge / vert filter mask) is identical
@@ -5349,7 +5383,8 @@ void main(string[] args) {
             // is still drawn and still cleared below, it simply selects
             // nothing.
             if (rmbPath.length >= 3
-                && viewportPickType(selTypeOrder) != SelType.Item) {
+                && viewportPickType(selTypeOrder) != SelType.Item
+                && !previewIndexSpaceStale()) {   // task 1730, see inside
                 // ---------------------------------------------------------
                 // Task 0617 Stage 3 (doc/picking_item_transform_plan.md):
                 // this block used to project RAW LOCAL vertices while Stage 1
@@ -5431,6 +5466,31 @@ void main(string[] args) {
                     case EditMode.Polygons: vbMode = SelectMode.Face;   break;
                 }
                 ensureDisplayCurrent(); // mid-batch pull-guard: FBO readback below renders from the VBO
+
+                // Task 1730 — the fourth `*OriginGpu` reader, and the one the
+                // M-INV comment below already describes the danger of. While a
+                // rebuild is in flight the VBOs hold a limit surface built
+                // against the PREVIOUS cage, so `gpuVisible` — keyed by
+                // preview face index — would be read as a cage index by the
+                // `preview == false` branch. That is the "answers with the
+                // WRONG element rather than crashing" case, stated three
+                // paragraphs down, arrived at from the other side.
+                //
+                // The gate itself is on this block's own `if` above, NOT a
+                // `return` from here: `rmbPath = null` runs further down in
+                // `handleMouseButtonUp`, so returning out of the middle would
+                // leave the band path armed — the next RMB drag would append
+                // to it and the overlay would keep drawing the old rubber
+                // band. Skipping the selection while still falling through to
+                // the cleanup is the only shape that ends the gesture.
+                //
+                // Refusing the band outright rather than falling back to a
+                // cage band: the band is a GESTURE the user completed against
+                // pixels showing the limit surface, and answering it from cage
+                // geometry would select a different set than the one they drew
+                // around. Nothing selected is wrong in a way they can see and
+                // repeat; a plausible wrong set is not.
+
                 // vpWorld + ms — gpuSelect composes `ms` internally (R10).
                 bool[] gpuVisible = gpuSelect.elementVisibility(
                     vbMode, mesh, gpu, vpWorld, ms);
@@ -5877,6 +5937,13 @@ void main(string[] args) {
         else
             alias hovered = hoveredEdge;
         ensureDisplayCurrent(); // mid-batch pull-guard: VBO reader below
+        // Task 1730 — the SAME freeze, for the same reason, over a different
+        // window: this picker reads the ID buffer and maps it back through
+        // `gpu.vertOriginGpu` / `edgeOriginGpu`, and while a rebuild is in
+        // flight those map into the cage the preview was built against, not
+        // the one that exists. Returning without re-picking holds the last
+        // answer, exactly as the drag freeze below does.
+        if (previewIndexSpaceStale()) return;
         // Freeze hover during an active tool drag (element-move haul): return
         // WITHOUT re-picking so the element picked at drag-start stays
         // highlighted instead of every element the moving cursor passes over.
@@ -5929,6 +5996,14 @@ void main(string[] args) {
         // gpu.uploadVersion, so the guard's upload is what triggers its
         // rebuild against the post-mutation mesh.
         ensureDisplayCurrent();
+        // Task 1730 — freeze while the drawn surface and the cage disagree.
+        // Under option C (task 1540) this picker answers from the ID buffer
+        // whenever a preview is `active`, so it is a `*OriginGpu` reader like
+        // the two above. It is frozen even on the BVH branch, which reads no
+        // GPU buffer at all: that branch would answer against the CAGE while
+        // the LIMIT surface is what is on screen, i.e. pick geometry the user
+        // cannot see. A held answer beats a confidently wrong one.
+        if (previewIndexSpaceStale()) return;
         if (activeTool !is null && activeTool.isDragging()) return;  // freeze hover mid-drag
         hoveredFace = -1;
         if (!viewportInputAllowed() || doingCameraDrag) return;
@@ -7349,7 +7424,19 @@ void main(string[] args) {
             // default build. Single coarse site, per the plan.
             auto zGpu = g_perf.scope_(Cat.gpuUpload);
             auto zFramesUpload = g_frames.phase(Phase.upload);
-            bool wantPreview = subpatchPreview.active;
+            // Task 1730 — FREEZE the buffers while a rebuild is in flight.
+            //
+            // Without this, `dispatchBuild`'s `active = false` reaches here as
+            // `wantPreview == false` with `stateChanged == true`, so the CAGE
+            // is uploaded; when the build lands the preview is uploaded back.
+            // Two full VBO uploads that accomplish nothing between them, and
+            // the flicker the owner reported in dogfood is the frames in
+            // between. Holding `wantPreview` true keeps the stale limit
+            // surface on screen AND keeps `suppressCageUpload` on, so a
+            // tool-side upload cannot write cage data into the preview
+            // buffers and reintroduce the flicker by another door.
+            immutable bool staleOnScreen = previewIndexSpaceStale();
+            bool wantPreview = subpatchPreview.active || staleOnScreen;
             gpu.suppressCageUpload = wantPreview;
             bool versionChanged = gpuUploadedVersion != mesh.mutationVersion;
             bool stateChanged   = gpuUploadedPreview != wantPreview;
@@ -7358,7 +7445,20 @@ void main(string[] args) {
             // already true) it is false, and `versionChanged` can be false
             // too on the version-silent path — so a freshly received preview
             // would never reach the GPU.
-            if ((wantPreview && (versionChanged || stateChanged
+            // `staleOnScreen` short-circuits BEFORE the condition rather
+            // than being folded into it, and deliberately: with the freeze
+            // active `versionChanged` is TRUE (the topology edit bumped
+            // mutationVersion — that is why a rebuild was dispatched at all),
+            // so folding it in would take the `wantPreview` branch and upload
+            // `subpatchPreview.mesh` through a `trace` built against the
+            // PREVIOUS cage. The buffers already hold exactly what we want
+            // drawn; the correct action is none.
+            //
+            // `gpuUploadedVersion` is deliberately NOT advanced here either,
+            // so the install frame still sees `versionChanged` and uploads.
+            if (staleOnScreen) {
+                // Nothing. See above.
+            } else if ((wantPreview && (versionChanged || stateChanged
                                  || previewInstalledThisFrame)) ||
                 (!wantPreview && stateChanged))
             {

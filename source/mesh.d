@@ -15453,10 +15453,36 @@ struct SubpatchPreview {
     /// warning: the cage answer is correct (just not the limit-surface one),
     /// and an unbounded gate would turn a wedged third-party build into a
     /// wedged test lane.
-    bool scriptedInputHeld() {
+    /// The in-flight build has outrun its ceiling.
+    ///
+    /// ONE definition, because there are now TWO mechanisms bounded by it and
+    /// they must lift together (task 1730). `scriptedInputHeld` below holds
+    /// recorded input while a build runs; `App.previewIndexSpaceStale` holds
+    /// the VBOs on the stale limit surface and freezes the pickers that read
+    /// its index map. Both exist so a build in flight is invisible to the
+    /// user, and both would wedge FOREVER on a build that never finishes —
+    /// which is not hypothetical, the point of no return is inside the
+    /// third-party stencil builder and there is nothing to interrupt it with.
+    ///
+    /// Past the ceiling both give up in the same direction: input is delivered
+    /// against the cage, and the cage is what is drawn and picked. A wedged
+    /// build degrades to the pre-1730 behaviour — a visible flicker — rather
+    /// than to a viewport that no longer answers. `test_subpatch_async_preview`
+    /// M-CEIL is what refuses the other choice.
+    ///
+    /// Reads the CLOCK rather than `ceilingFired`: that flag latches inside
+    /// `scriptedInputHeld`, so it is only ever set if something asked on the
+    /// scripted path, and a second consumer keying on it would sit frozen
+    /// through the whole build in any session where nothing did.
+    bool buildPastCeiling() {
         if (!buildPending) return false;
         import core.time : dur;
-        if (MonoTime.currTime - buildStarted >= dur!"msecs"(ceilingMs)) {
+        return MonoTime.currTime - buildStarted >= dur!"msecs"(ceilingMs);
+    }
+
+    bool scriptedInputHeld() {
+        if (!buildPending) return false;
+        if (buildPastCeiling()) {
             if (!ceilingFired) {
                 ceilingFired = true;
                 try {

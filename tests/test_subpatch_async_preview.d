@@ -209,6 +209,20 @@ bool playAndWait(string log, int budgetMs = 12_000) {
     return false;
 }
 
+/// Length, in floats, of the face position VBO as it stands ON THE GPU.
+///
+/// The size is the discriminator between "the cage is drawn" and "a limit
+/// surface is drawn" (task 1730), and it is read back from GL rather than
+/// inferred from any CPU-side flag — the whole point of that task is that a
+/// flag and the buffers had come apart.
+size_t faceVboFloats() {
+    auto j = parseJSON(get(BASE ~ "/api/gpu/face-vbo"));
+    auto p = "positions" in j;
+    assert(p !is null && p.type == JSONType.array,
+           "/api/gpu/face-vbo has no positions array: " ~ j.toString);
+    return p.array.length;
+}
+
 /// The strip with every face subpatched and the preview LIVE.
 void stripWithLivePreview() {
     resetApp();
@@ -511,6 +525,111 @@ unittest {
         "topologies are leaking: created " ~ p.topologiesCreated.to!string
         ~ ", retired " ~ p.topologiesRetired.to!string ~ ", live "
         ~ live.to!string ~ " (the LRU holds at most 2)");
+}
+
+// ===========================================================================
+// M-DRAW — the cage is NEVER drawn while a rebuild is in flight (task 1730)
+// ===========================================================================
+//
+// The flicker the owner reported in dogfood was two full VBO uploads that
+// cancelled each other: `dispatchBuild` dropped `active`, the upload block saw
+// `wantPreview == false` with `stateChanged == true` and uploaded the CAGE,
+// and the arriving build uploaded the preview back. Between them the viewport
+// showed polygons.
+//
+// WHAT IS OBSERVED, and why it is the right observable: `/api/gpu/face-vbo`
+// reads back the actual face VBO on the GL thread, so its LENGTH answers "what
+// is on screen" rather than "what the CPU thinks is active". A test keyed on
+// `/api/subpatch/preview`'s `active` bit would pass on a build that drew the
+// cage anyway — `active` is precisely the flag the fix stops the buffers from
+// following.
+//
+// `hold(-1, huge)` is what makes this deterministic: the build never publishes
+// and the ceiling never fires, so the in-flight window is as long as the test
+// needs instead of the ~150 ms it lasts in life.
+unittest {
+    stripWithLivePreview();
+    immutable size_t previewVbo = faceVboFloats();
+    assert(previewVbo > 0, "setup: the preview VBO must be non-empty");
+
+    // The cage's own VBO size, for a yardstick that is measured rather than
+    // assumed. Toggling the preview off leaves the cage uploaded.
+    selectMode("polygons", [0, 1, 2, 3, 4, 5, 6]);
+    cmdId("mesh.subpatch_toggle");
+    selectMode("polygons", []);
+    waitPreviewSettled();
+    assert(!prev().active, "setup: the preview must be off");
+    immutable size_t cageVbo = faceVboFloats();
+    assert(cageVbo != previewVbo,
+        "setup is vacuous: cage and preview VBOs are the same size ("
+        ~ cageVbo.to!string ~ "), so this test cannot tell them apart");
+
+    // Back to a live preview, then wedge the next build.
+    stripWithLivePreview();
+    hold(-1, 600_000);                   // never publish, ceiling far away
+    scope(exit) { hold(0, 15_000); waitPreviewSettled(); }
+
+    hidePolygons([0, 2, 4]);             // a real topology change -> dispatch
+    assert(prev().pending, "setup: the build must be in flight");
+
+    // THE ASSERTION IS AGAINST `previewVbo`, NOT AGAINST `cageVbo`, and the
+    // reason is a trap worth writing down: `hidePolygons` is the topology
+    // change that triggers the dispatch, and hidden faces LEAVE THE VBO
+    // (task 0613 consumes the Hide bit at upload time). So the cage uploaded
+    // after the hide is a DIFFERENT size from the cage measured before it, and
+    // `now != cageVbo` would be satisfied by the flicker itself. "The buffer
+    // still holds the stale preview" is the property, and it is exact.
+    //
+    // Sampled over a stretch of frames rather than once: the flicker is a
+    // TRANSIENT, and a single probe can land on either side of a one-frame
+    // cage upload and call it clean.
+    foreach (i; 0 .. 12) {
+        immutable size_t now = faceVboFloats();
+        assert(now == previewVbo,
+            "frame sample " ~ i.to!string ~ ": the stale preview left the VBO "
+            ~ "while a rebuild is in flight (" ~ now.to!string ~ " floats, "
+            ~ "want the preview's " ~ previewVbo.to!string ~ "; the unhidden "
+            ~ "cage measures " ~ cageVbo.to!string ~ ") — the flicker is back");
+        Thread.sleep(40.msecs);
+    }
+    assert(prev().pending, "the build must still be held at the end");
+}
+
+// ===========================================================================
+// M-DRAW-CEIL — and the freeze gives up at the SAME ceiling as the barrier
+// ===========================================================================
+//
+// The control for M-DRAW, and it is the assertion that keeps the freeze from
+// being a wedge. An unbounded freeze would hold the stale surface forever on a
+// build that never finishes, and there is nothing to interrupt such a build
+// with — the point of no return is inside the third-party stencil builder. So
+// past the ceiling the freeze lifts and the cage comes back: a wedged build
+// degrades to the pre-1730 flicker, never to a viewport that stopped
+// answering. Without this case M-DRAW above would be satisfied by a fix that
+// simply never lets go.
+unittest {
+    stripWithLivePreview();
+    immutable size_t previewVbo = faceVboFloats();
+
+    hold(-1, 300);                       // never publish; freeze expires at 300 ms
+    scope(exit) { hold(0, 15_000); waitPreviewSettled(); }
+
+    hidePolygons([0, 2, 4]);
+    assert(prev().pending, "setup: the build must be in flight");
+
+    // "The stale preview LEFT the buffer", for the same reason M-DRAW asserts
+    // it stayed: the cage that comes back has three faces hidden and so is not
+    // the size of any cage this test could have measured up front.
+    bool freezeExpired = false;
+    foreach (_; 0 .. 60) {               // up to ~3 s, well past the 300 ms bound
+        if (faceVboFloats() != previewVbo) { freezeExpired = true; break; }
+        Thread.sleep(50.msecs);
+    }
+    assert(freezeExpired,
+        "the freeze never expired: the stale preview (" ~ previewVbo.to!string
+        ~ " floats) is still in the VBO although the build is wedged and its "
+        ~ "ceiling is 300 ms — an unbounded freeze is a wedged viewport");
+    assert(prev().pending, "reception is still held, so the build is still pending");
 }
 
 // ===========================================================================
