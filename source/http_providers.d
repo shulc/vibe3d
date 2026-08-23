@@ -851,10 +851,12 @@ private void wireModelProviders(HttpServer httpServer, ref EditorApp app,
         // in whichever direction the scheduler picks. Marshalling alone does
         // not fix it (the bridge ticks in the event phase), so this handler
         // runs `reconcile` ITSELF before reading the counters. It is
-        // idempotent, main-thread, and there is precedent for exactly this
-        // JIT recompute for an HTTP reader: `buildItemFrame`'s doc comment
-        // names "the render-thread per-frame install and the HTTP-thread JIT
-        // install" as the two callers of one function.
+        // idempotent, main-thread, and it is the only such JIT recompute left
+        // in a provider. The precedent this used to cite — `buildItemFrame`
+        // being called from "the render-thread per-frame install and the
+        // HTTP-thread JIT install" — died with task 0587, which deleted the
+        // JIT half; the doc comment that named it was corrected by task 1780.
+        // The argument above stands on its own and never rested on that.
         httpServer.setImagesDataProvider(() {
             import std.array  : appender;
             import std.format : format;

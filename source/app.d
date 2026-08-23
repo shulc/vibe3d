@@ -416,10 +416,12 @@ void setWindowIcon(SDL_Window* window) {
     SDL_FreeSurface(surf);
 }
 
-// buildItemFrame relocated to editor_app.d (task 0419 Б1 -- used by the
-// UI-panel block now in source/ui/panels.d; imported back below since it
-// also has a call site here, in the HTTP-thread JIT snap-frame install).
-import editor_app : buildItemFrame;
+// Task 1780: app.d's own call site for `buildItemFrame` was the HTTP-thread
+// just-in-time snap-frame install, and task 0587 deleted that. What it imports
+// from editor_app now is `installSnapState` — the once-per-frame install that
+// `buildItemFrame`'s single remaining caller lives in — called from the frame
+// loop just above the N-cell FBO render loop.
+import editor_app : installSnapState;
 
 // ---------------------------------------------------------------------------
 // Module-level globals (interactive-session state; never read by --test)
@@ -8821,6 +8823,16 @@ void main(string[] args) {
             // above is NOT skipped: residency is real state a test asserts on.
             immutable ulong _planeKey = testMode ? 0
                 : imagePlaneDigest(document, imagePixelCache().decodeCount());
+
+            // Snap's per-frame view of the document (task 1780). ONE call,
+            // here rather than inside the per-cell pass it was hoisted out of:
+            // it reads `document` and nothing else, so a per-cell site did it
+            // once per live cell — and only for cells whose DIRTY KEY moved,
+            // which no snap-config change ever does. `installSnapState`'s
+            // comment has the rest; the placement rule is simply "before
+            // anything can draw or pick from these frames, after every event
+            // and command this frame has already run".
+            installSnapState(app);
 
             foreach (k; overlayDrawOrder(vpm.cellCount, overlayOwner)) {
                 Viewport3D _cv = vpm.views[k];

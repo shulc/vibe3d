@@ -28,8 +28,7 @@ import mesh_gpu              : BaseWire;
 import handles.gl_util       : setThickLineScreenSize;
 import document              : Layer, kindInfo;
 import viewport              : Viewport3D;
-import editor_app            : EditorApp, OverlayMode, BgGpu,
-                               edgeKey, buildItemFrame;
+import editor_app            : EditorApp, OverlayMode, BgGpu, edgeKey;
 import perf_probe            : g_fc, g_perf, DrawPass, Cat;
 import toolpipe.pipeline     : g_pipeCtx;
 import toolpipe.stage        : TaskCode;
@@ -52,7 +51,8 @@ version (WithAI) {
 // Phase 6 -- renderViewportSceneToFbo, the last panel entry point. Reads
 // shader/checkerShader/gridShader/gridVao/gridOnlyVertCount/hover x3/
 // faceSelEdgesCache+PrevSel/rebuildLoopHoverMask/litShader/gpu/mesh plus
-// bgGpuByLayer [Б2] and edgeKey/buildItemFrame [Б1] -- all
+// bgGpuByLayer and edgeKey (buildItemFrame's call site left with the snap
+// install, task 1780) -- all
 // relocated to editor_app.d in Phase 1 and imported at this module's header;
 // this phase is a verbatim body move. Keeps its original 6 parameters,
 // EditorApp app prepended as the first (per the plan's Phase 6 note).
@@ -465,58 +465,14 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
         }
     }
 
-    // Install background snap sources (layers Stage 5). The parallel
-    // `snapSrcLayerIdx` (topology-pen P0 NIT-3) records each source's
-    // Document-layer index (this loop's `i`) so the CONS stage's
-    // background-surface raycast can publish a real Document-layer index
-    // in `ConstrainHitPacket.layer` instead of the bgSrc-order slot.
-    {
-        import snap : setBackgroundSnapSources;
-        import document : Document;
-        const(Mesh)*[] snapSrc;
-        ModelSpace[]   snapSrcSpaces;
-        int[] snapSrcLayerIdx;
-        if (document.layers.length > 1) {
-            foreach (i, lyr; document.layers) {
-                // Task 0615 Stage 4 (§Tier-2 :2162): a non-mesh layer is not a
-                // snap source.
-                if (document.background(lyr) && lyr.hasMesh) {
-                    snapSrc ~= cast(const(Mesh)*)&lyr.meshRef();
-                    // Task 0617 Stage 4: same source as `bgModel` in the draw
-                    // loop above (`lyr.xform.composedMatrix()`) — a background
-                    // layer now snaps where it is DRAWN, not at its identity
-                    // pose.
-                    //
-                    // The three arrays are appended together under ONE guard so
-                    // they stay index-aligned: a layer that is not a snap source
-                    // contributes to none of them. Splitting the guard is how
-                    // they would silently drift apart.
-                    snapSrcSpaces ~= lyr.xform.modelSpace();
-                    snapSrcLayerIdx ~= cast(int)i;
-                }
-            }
-        }
-        setBackgroundSnapSources(snapSrc, snapSrcSpaces, snapSrcLayerIdx);
-    }
-    // Install item snap frames (Stage 3).
-    {
-        import snap : setItemSnapFrames, ItemSnapFrame;
-        import document : kindInfo;
-        ItemSnapFrame[] itemFrames;
-        foreach (lyr; document.layers) {
-            if (!lyr.visible) continue;
-            // Task 0616 Stage 2 (Bend #1): a kind with no transform
-            // capability (e.g. an image — a document RESOURCE, not a thing
-            // positioned in space) has no pivot to snap to. Without this
-            // gate `buildItemFrame` would read `Layer.xform`'s inert default
-            // identity and offer (0,0,0) as a snap target for every such
-            // item — meaningless, since nothing ever authors that field for
-            // a kind `layer_params.d` does not expose it on.
-            if (!kindInfo(lyr.kind).hasXform) continue;
-            itemFrames ~= buildItemFrame(lyr);
-        }
-        setItemSnapFrames(itemFrames);
-    }
+    // The background-snap-source and item-snap-frame installs that stood here
+    // are GONE, not disabled: they are `editor_app.installSnapState`, called
+    // once per frame from the frame loop (task 1780). Both read `document` and
+    // nothing else, so running them in a per-CELL pass repeated identical work
+    // per live cell — and, because this pass is gated on the cell's dirty key,
+    // skipped it entirely on a frame where nothing visible moved. That second
+    // half is what made a snap-config-dependent decision unrepresentable here;
+    // `installSnapState`'s own comment carries the full argument.
 
     // ---- Which selection type this cell draws FEEDBACK for (task 0655) -----
     //

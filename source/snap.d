@@ -210,12 +210,25 @@ bool snapSourceSpace(int slot, out ModelSpace ms) {
 // own pivot/box — unlike setBackgroundSnapSources which skips the primary).
 //
 // Install shape mirrors setBackgroundSnapSources exactly: the setItemSnapFrames
-// CALL is unconditional every draw (ui/panels.d, next to
-// setBackgroundSnapSources) so a /api/reset that collapses the document to one
+// CALL is unconditional, so a /api/reset that collapses the document to one
 // layer self-clears the prior test's multi-layer frames. Only the slice-fill
-// loop may early-out. That draw is the SOLE installer as of task 0587 — the
-// /api/snap provider used to install its own copy just-in-time, because it ran
-// on the HTTP thread and would otherwise race this one.
+// loop may early-out.
+//
+// WHERE FROM, twice corrected. `editor_app.installSnapState`, called once per
+// frame from app.d's frame loop, is the sole installer. It is not "the draw"
+// and it is deliberately no longer inside one: until task 1780 both installs
+// sat in the per-CELL scene pass, which repeated them per live cell and — in
+// the interactive build — ran them only when that cell's dirty key moved. The
+// earlier correction was task 0587's: the /api/snap provider used to install
+// its own copy just-in-time, because it ran on the HTTP thread and would
+// otherwise race the other installer.
+//
+// What a reader here may NOT assume: that `hasBBox` is a fact about the
+// geometry. Since 1780 it is also a fact about `enabledTypes & Box` at install
+// time — the producer skips the whole-mesh bounds walk when nothing can read
+// it. The Box branch below is the only reader, so the two agree by
+// construction; a SECOND reader of the bbox fields would not inherit that and
+// must state its own claim on the bit (see buildItemFrame's `wantBBox`).
 // ---------------------------------------------------------------------------
 
 /// Per-layer (item) snap frame: world pivot point + world-space AABB.

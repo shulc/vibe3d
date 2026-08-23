@@ -434,11 +434,29 @@ ulong edgeKey(uint a, uint b) {
 /// -- exact analog of the BgGpu relocation above.
 enum RecordMode { Record, Coalescing }
 
-/// Build the item-snap frame for one visible layer: world-space pivot +
-/// world-space AABB derived from ALL mesh vertices (whole-item bounds,
-/// independent of any active vertex sub-selection). Called from both the
-/// render-thread per-frame install and the HTTP-thread JIT install.
-ItemSnapFrame buildItemFrame(Layer lyr)
+/// Build the item-snap frame for one visible layer: world-space pivot, plus —
+/// only when `wantBBox` — the world-space AABB derived from ALL mesh vertices
+/// (whole-item bounds, independent of any active vertex sub-selection).
+///
+/// `wantBBox` IS THE COST OF THIS FUNCTION. The pivot half is two vector adds.
+/// The box half walks every vertex of the layer and then transforms eight
+/// corners: 7.9% of a falloff-drag frame, measured on a 316x316 grid (100 489
+/// vertices), and it was being paid on every frame of every drag. Exactly one
+/// reader consumes the box — `snapCursor`'s `SnapType.Box` branch in snap.d,
+/// which is the only code anywhere that reads `hasBBox`/`bboxMin`/`bboxMax` —
+/// so the caller hands in that bit and the walk does not happen while box
+/// snapping is off. Off is the default: `SnapPacket.enabledTypes` starts at
+/// `SnapType.Vertex` alone.
+///
+/// WHAT BREAKS IT. Frames are installed by the DRAW and read by a snap query
+/// in a LATER frame, so passing `false` on a frame whose query then wants a box
+/// costs that query its Box targets SILENTLY — `hasBBox == false` is
+/// indistinguishable at the reader from "this item has no geometry". The bit
+/// must therefore be re-asked on a frame boundary a box-enable cannot slip
+/// through, which is why the only caller is `installSnapState` and why that
+/// runs once per frame from the frame loop rather than from the per-cell scene
+/// pass; see its own comment for what the per-cell site could not guarantee.
+ItemSnapFrame buildItemFrame(Layer lyr, bool wantBBox)
 {
     ItemSnapFrame fr;
     fr.pivot = lyr.xform.pos + lyr.xform.pivot;
@@ -448,7 +466,10 @@ ItemSnapFrame buildItemFrame(Layer lyr)
     // Task 0615 Stage 4: a non-mesh item has no vertices to bound — `meshOrNull`
     // is null and the loop below simply never runs, so `seen` stays false and
     // `hasBBox` comes out false while `pivot` (set above) is still meaningful.
-    if (auto mp = lyr.meshOrNull) foreach (v; mp.vertices) {
+    // Task 1780 gives `!wantBBox` that same exit deliberately: a suppressed box
+    // and an absent one are the same frame, because the reader has no third
+    // state to tell them apart with.
+    if (wantBBox) if (auto mp = lyr.meshOrNull) foreach (v; mp.vertices) {
         if (v.x < mn.x) mn.x = v.x; if (v.x > mx.x) mx.x = v.x;
         if (v.y < mn.y) mn.y = v.y; if (v.y > mx.y) mx.y = v.y;
         if (v.z < mn.z) mn.z = v.z; if (v.z > mx.z) mx.z = v.z;
@@ -476,6 +497,128 @@ ItemSnapFrame buildItemFrame(Layer lyr)
     }
     return fr;
 }
+
+/// Install the snap service's per-frame view of the document: the background
+/// snap SOURCES and the item snap FRAMES. Both blocks are verbatim from
+/// `ui/viewport_render.d`'s `renderViewportSceneToFbo`, where they stood until
+/// task 1780 hoisted them out of it.
+///
+/// WHY THEY DO NOT BELONG IN A SCENE PASS. Neither block reads a camera, a
+/// viewport or a GL object — only `document`. Sitting inside the per-cell pass
+/// they therefore ran once per LIVE CELL, four times a frame under a Quad
+/// layout, each time installing byte-identical arrays over the previous one,
+/// and each time re-walking every vertex of every visible layer.
+///
+/// AND WHY THE MOVE IS A CORRECTNESS FIX, NOT ONLY A COST ONE. The per-cell
+/// pass is gated on that cell's DIRTY KEY (`app.d`, Phase 4). The key carries
+/// view/proj, mesh mutation version, selection epoch, edit mode, hover, the
+/// resolved draw plan, image planes and the weight map — it does not carry
+/// snap configuration, and it should not: snap config does not change what a
+/// cell draws. So interactively, a frame in which nothing visible changed
+/// installed NOTHING, and any decision taken here from snap state — which is
+/// exactly what `buildItemFrame`'s `wantBBox` now is — would have stayed
+/// frozen at whatever the last redraw happened to decide, for as long as the
+/// scene sat still. Ticking box snapping on and getting no box targets until
+/// something else moved the camera is the shape that would have taken.
+///
+/// THE `--test` BUILD CANNOT EXHIBIT ANY OF THAT, so do not read a green suite
+/// as evidence about it: under `--test`, `needRender` is `testRendersCell(...)`
+/// — unconditional for the active cell — so the install ran every frame
+/// whatever the dirty key said. The hazard is interactive-only.
+///
+/// Called once per frame from the frame loop, immediately before the cell
+/// loop. That is a superset of the old schedule (0..N calls per frame becomes
+/// exactly 1) and keeps the same position in the frame: after all event and
+/// command processing, before anything draws.
+void installSnapState(EditorApp app)
+{
+    with (app) {
+    // Install background snap sources (layers Stage 5). The parallel
+    // `snapSrcLayerIdx` (topology-pen P0 NIT-3) records each source's
+    // Document-layer index (this loop's `i`) so the CONS stage's
+    // background-surface raycast can publish a real Document-layer index
+    // in `ConstrainHitPacket.layer` instead of the bgSrc-order slot.
+    {
+        import snap : setBackgroundSnapSources;
+        const(Mesh)*[] snapSrc;
+        ModelSpace[]   snapSrcSpaces;
+        int[] snapSrcLayerIdx;
+        if (document.layers.length > 1) {
+            foreach (i, lyr; document.layers) {
+                // Task 0615 Stage 4 (§Tier-2 :2162): a non-mesh layer is not a
+                // snap source.
+                if (document.background(lyr) && lyr.hasMesh) {
+                    snapSrc ~= cast(const(Mesh)*)&lyr.meshRef();
+                    // Task 0617 Stage 4: same source as `bgModel` in the draw
+                    // loop (`lyr.xform.composedMatrix()`) — a background layer
+                    // now snaps where it is DRAWN, not at its identity pose.
+                    //
+                    // The three arrays are appended together under ONE guard so
+                    // they stay index-aligned: a layer that is not a snap source
+                    // contributes to none of them. Splitting the guard is how
+                    // they would silently drift apart.
+                    snapSrcSpaces ~= lyr.xform.modelSpace();
+                    snapSrcLayerIdx ~= cast(int)i;
+                }
+            }
+        }
+        setBackgroundSnapSources(snapSrc, snapSrcSpaces, snapSrcLayerIdx);
+    }
+    // Install item snap frames (Stage 3).
+    {
+        import snap             : setItemSnapFrames;
+        import toolpipe.packets : SnapType;
+        import toolpipe.stage   : TaskCode;
+        import toolpipe.stages.snap : SnapStage;
+        import document         : kindInfo;
+
+        // Does anything downstream read the BOX half of these frames this
+        // frame? Only `snapCursor`'s `SnapType.Box` branch does, so the bit is
+        // asked of the SNAP stage's own `enabledTypes` — the single authority,
+        // not a mirror of one: the packet that branch reads is `pkt.config =
+        // config`, a verbatim copy of the field read here.
+        //
+        // Asked WITHOUT the `typeEligible(Box, snapScope)` half of the reader's
+        // condition, on purpose. A superset is the safe direction (it can only
+        // build a box nobody reads, never withhold one somebody does), and the
+        // scope law has one home in `snap.typeEligible`; restating it here
+        // would give it two that must be kept in step by hand.
+        //
+        // No pipeline, or no SNAP stage in it, means the bit cannot be READ —
+        // so pay the walk rather than assume it is clear. That is the headless
+        // and unittest shape, where the meshes are small and the walk is free.
+        bool wantBBox = true;
+        if (g_pipeCtx !is null)
+            if (auto ss = cast(SnapStage) g_pipeCtx.pipeline.findByTask(TaskCode.Snap))
+                wantBBox = (ss.enabledTypes & SnapType.Box) != 0;
+
+        // Reused across frames rather than freshly appended each one:
+        // `setItemSnapFrames` COPIES element-by-element into its own buffer
+        // under the grid mutex, so nothing here outlives the call and no reader
+        // can hold a slice of this block. Bytes are not the point — one small
+        // array per frame is — the per-frame GC MARK SET is.
+        g_itemFrameScratch.length = 0;
+        g_itemFrameScratch.assumeSafeAppend();
+        foreach (lyr; document.layers) {
+            if (!lyr.visible) continue;
+            // Task 0616 Stage 2 (Bend #1): a kind with no transform
+            // capability (e.g. an image — a document RESOURCE, not a thing
+            // positioned in space) has no pivot to snap to. Without this
+            // gate `buildItemFrame` would read `Layer.xform`'s inert default
+            // identity and offer (0,0,0) as a snap target for every such
+            // item — meaningless, since nothing ever authors that field for
+            // a kind `layer_params.d` does not expose it on.
+            if (!kindInfo(lyr.kind).hasXform) continue;
+            g_itemFrameScratch ~= buildItemFrame(lyr, wantBBox);
+        }
+        setItemSnapFrames(g_itemFrameScratch);
+    }
+    }
+}
+
+/// Scratch for `installSnapState`'s item-frame loop. Main-thread only (the
+/// frame loop is its sole caller) and never escapes: see the note at its use.
+private ItemSnapFrame[] g_itemFrameScratch;
 
 /// Backing storage for the versioned imgui.ini path. ImGui stores the raw
 /// char* without copying, so the string must outlive the context. Set once
