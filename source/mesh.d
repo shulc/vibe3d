@@ -1319,8 +1319,31 @@ struct Mesh {
     // Accumulate-only: OR the given MeshEditScope flags into the pending set.
     // Does NOT bump the version counters, so it is safe inside loops and safe
     // mid-drag (where the intentional version-stability invariant must hold).
+    /// Bumped whenever anything `selectionSignature` reads can have changed:
+    /// the marks themselves (Marks), the Hide bit it folds in (Visibility), or
+    /// the LENGTH of the arrays (Points / Polygons). Deliberately NOT bumped on
+    /// Position — a drag moves vertices without touching a single mark, and a
+    /// counter that moved there would make the memo it exists for miss on every
+    /// frame of the one gesture that matters.
+    ///
+    /// It hangs off the SAME two funnels that publish `MeshEditScope.Marks`
+    /// and nothing else writes `pendingChanges_`, so its coverage is exactly
+    /// the Marks publication's coverage — which is already load-bearing (the
+    /// display-refresh mask and the GPU-select invalidation both key on it) and
+    /// already gated (`changeBus.missedPublishers`). A new invariant would have
+    /// been a new thing to get wrong; this is the existing one, counted.
+    ulong marksVersion;
+
+    // Anything that changes what `selectionSignature` would return. Named once
+    // so the two funnels below cannot drift apart.
+    private enum uint kMarksAffecting = MeshEditScope.Marks
+                                      | MeshEditScope.Visibility
+                                      | MeshEditScope.Points
+                                      | MeshEditScope.Polygons;
+
     void noteChange(uint flags) {
         pendingChanges_ |= flags;
+        if (flags & kMarksAffecting) ++marksVersion;
     }
 
     // Accumulate + bump the version counters, reproducing EXACTLY the existing
@@ -1364,6 +1387,7 @@ struct Mesh {
     void noteSelectionChange(SelDomain domain) {
         pendingChanges_     |= MeshEditScope.Marks;
         pendingSelDomains_  |= cast(uint)domain;
+        ++marksVersion;     // see the field: this is the SECOND of two funnels
     }
 
     unittest { // noteSelectionChange / marks-setter accumulation (change-bus Stage 5)

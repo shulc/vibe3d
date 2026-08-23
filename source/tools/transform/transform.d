@@ -633,9 +633,40 @@ protected:
     // replaces the former per-mode selectionHash{V,E,F} dispatch. ulong (was
     // uint): a wider same-run change-detector token, harmless — nothing here
     // is persisted or compared across runs.
+    // Memo for the line below, and it is worth its three fields: measured at
+    // 21.25 % of a falloff drag's whole profile, the single largest symbol in
+    // it — larger than the transform kernel, the falloff evaluation and the
+    // GPU upload combined. `selectionSignature` is an FNV-1a walk over the
+    // entire marks array, so it is O(V) per call, and `update()` asks it every
+    // frame the tool is armed and not dragging.
+    //
+    // The key is (marksVersion, editMode, MESH ADDRESS). The address term is
+    // not defensive padding: `mesh` is a pointer the tool re-binds when the
+    // primary layer changes, and two layers can sit at the same marksVersion,
+    // so without it a layer switch would serve the previous layer's signature.
+    // Every version-keyed cache in this repository carries this term for that
+    // reason.
+    private ulong    selHashCache_;
+    private ulong    selHashKeyVer_  = ulong.max;
+    private size_t   selHashKeyMesh_;
+    private EditMode selHashKeyMode_;
+
+    // Single canonical selection-signature call (Mesh.selectionSignature) —
+    // replaces the former per-mode selectionHash{V,E,F} dispatch. ulong (was
+    // uint): a wider same-run change-detector token, harmless — nothing here
+    // is persisted or compared across runs.
     ulong computeSelectionHash() {
+        immutable ulong  ver  = mesh.marksVersion;
+        immutable size_t addr = cast(size_t)mesh;
+        if (ver == selHashKeyVer_ && addr == selHashKeyMesh_
+            && *editMode == selHashKeyMode_)
+            return selHashCache_;
         { import perf_probe : g_perf, Cat; g_perf.count(Cat.selectionHashCompute, 1); }
-        return mesh.selectionSignature(*editMode);
+        selHashCache_   = mesh.selectionSignature(*editMode);
+        selHashKeyVer_  = ver;
+        selHashKeyMesh_ = addr;
+        selHashKeyMode_ = *editMode;
+        return selHashCache_;
     }
 
     void buildVertexCacheIfNeeded() {
