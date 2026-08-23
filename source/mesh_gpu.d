@@ -1422,9 +1422,20 @@ struct GpuMesh {
         // cost more than the draw calls it saved — frame p50 went 0.390 ->
         // 0.422 ms, an optimisation that was a slowdown. Two explicit loops
         // inline their predicate and keep the win.
+        // EARLY-OUT BEFORE THE WALK (task 1790). With nothing selected the
+        // loop below still visited every vertex — a bounds check, a load from
+        // `vertOriginGpu` and a sentinel compare each — only to draw nothing.
+        // That is the shape of every whole-mesh drag, because an empty
+        // selection means "all visible" through the fallback rather than
+        // "none", so the drag cases never mark a vertex and this walked
+        // 100 489 entries per frame for no submission at all.
+        //
+        // `anySet`, not `empty`: `empty` is only true for a null view. A live
+        // view over an unselected mesh is full-length and bitless, which is
+        // exactly the case being skipped.
         glPointSize(10.0f);
         glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
-        {
+        if (selected.anySet()) {
             int runStart = -1;
             for (int i = 0; i <= vertCount; i++) {
                 bool hit = false;

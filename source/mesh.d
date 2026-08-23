@@ -741,6 +741,25 @@ struct MarkView {
     bool opIndex(size_t i) const {
         return i < marks_.length && (marks_[i] & bit_) != 0;
     }
+
+    /// Is ANY element's bit set? The early-out for consumers that would
+    /// otherwise walk the whole view to discover it is empty of marks.
+    ///
+    /// NOT the same question as `empty`, and the difference is the one that
+    /// matters here: `empty` asks whether the view has any ELEMENTS, which is
+    /// true only for `MarkView.init`. A live view over a mesh with nothing
+    /// selected has 100 489 elements and no bits, and it is that shape —
+    /// the shape of every whole-mesh drag, which operates on an empty
+    /// selection through the whole-mesh fallback — that made `drawVertices`
+    /// walk its entire cloud each frame to draw nothing.
+    ///
+    /// O(V) worst case, but over CONTIGUOUS uints with one AND each and an
+    /// early exit on the first hit, against a consumer loop that pays a
+    /// bounds check, a second array's load and a sentinel compare per element.
+    bool anySet() const {
+        foreach (m; marks_) if (m & bit_) return true;
+        return false;
+    }
 }
 
 /// Exact, non-allocating "did one mark BIT change" compare between a SNAPSHOT
