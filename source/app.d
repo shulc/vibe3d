@@ -188,6 +188,9 @@ import registration : registerTools, registerCommands;
 import http_providers : wireHttpProviders;
 import shortcuts;
 import buttonset;
+// Pie menus (task 1800): state + aim live in their own module so the command,
+// the event pump and the drawer all read one place.
+import pie_state : g_pie, openPie, closePie, aimPie, armPie;
 import ai.debug_trace : latestHandleDebugTraceJson;
 import ai.element_candidates : publishElementCandidates,
     collectElementCandidates, resolveElementCandidateDecision;
@@ -3942,6 +3945,13 @@ void main(string[] args) {
 
     Panel[]       panels            = loadButtons("config/buttons.yaml");
     Group[]       statusLineGroups  = loadStatusLine("config/statusline.yaml");
+    // Pie menus (task 1800). Same button schema, third surface — so they join
+    // the id-validation pass below rather than getting a check of their own.
+    {
+        import buttonset : loadPies;
+        import pie_menus : setPieMenus;
+        setPieMenus(loadPies("config/pies.yaml"));
+    }
     // The AI master-switch (ai.toggle/enable/disable) status-line buttons are
     // live only when those commands are actually registered — i.e. a WithAI
     // build (ONNX ranker compiled in) AND the copilot enabled (kCopilotEnabled,
@@ -4023,8 +4033,14 @@ void main(string[] args) {
         foreach (ref grp; statusLineGroups)
             foreach (ref btn; grp.buttons)
                 checkButton(btn);
+        {
+            import pie_menus : pieMenus;
+            foreach (ref pm; pieMenus())
+                foreach (ref btn; pm.items)
+                    checkButton(btn);
+        }
         if (missing.data.length > 0)
-            throw new Exception("buttons.yaml/statusline.yaml references unknown ids:"
+            throw new Exception("buttons.yaml/statusline.yaml/pies.yaml references unknown ids:"
                                 ~ missing.data);
     }
     // Validate shortcut tool/command ids.
@@ -4803,6 +4819,22 @@ void main(string[] args) {
         activeTool.update(vts);
     };
 
+    // Task 1800 — if the command this keypress just ran put a pie menu up,
+    // remember the chord that did it, so that RELEASING that chord dismisses
+    // the ring (and so that releasing any OTHER key does not). This is the only
+    // place the keysym is known: the binding reaches the command through
+    // `runCommandWithArgs`, which carries an argstring and no key. A pie opened
+    // any other way (an `/api/command ui.pie` from a test, a button) stays
+    // unarmed and simply waits for the click.
+    //
+    // `g_pie.armedKey == 0` is what makes this "did THIS press open it": a
+    // press arriving while a ring is already up never reaches here — the grab
+    // in `processEvent` swallows it.
+    void pieArmIfOpened(ref SDL_KeyboardEvent kev) {
+        if (g_pie.open && g_pie.armedKey == 0)
+            armPie(cast(uint) kev.keysym.sym, cast(ushort) kev.keysym.mod);
+    }
+
     void handleKeyDown(ref SDL_KeyboardEvent kev) {
         // Active tool gets first dibs on key events. Tools that handle keys
         // (e.g. PenTool's Enter/Backspace/Esc) return true to consume; tools
@@ -4819,6 +4851,16 @@ void main(string[] args) {
                 return;
             }
             if (auto id = canon in shortcuts.commandIdByCanon) {
+                // AUTO-REPEAT MUST NOT RE-OPEN A PIE (task 1800). The ring is
+                // held-open: it closes when the chord is released, and it also
+                // closes the moment a wedge is clicked — while the chord is
+                // still physically down. From that instant the OS keeps sending
+                // this same chord as repeats, and each one would dispatch
+                // `ui.pie` again and pop the ring straight back up under the
+                // cursor. While the ring IS open no repeat gets this far (the
+                // grab in `processEvent` swallows every keydown), so this guard
+                // covers exactly the window between "closed" and "released".
+                if (*id == "ui.pie" && kev.repeat != 0) return;
                 // Interactive history nav (Ctrl+Z / Ctrl+Shift+Z) goes through
                 // the navHistory chokepoint so an active tool with an open live
                 // edit gets a chance to cancel it (instead of popping a prior
@@ -4831,10 +4873,12 @@ void main(string[] args) {
                 // immediately with them injected — no args dialog.
                 if (auto argp = canon in shortcuts.argsByCanon) {
                     runCommandWithArgs(*id, *argp);
+                    pieArmIfOpened(kev);
                     return;
                 }
                 if (!tryOpenArgsDialog(*id))
                     runCommand(reg.commandFactories[*id]());
+                pieArmIfOpened(kev);
                 return;
             }
             if (auto id = canon in shortcuts.editModeByCanon) {
@@ -6357,11 +6401,108 @@ void main(string[] args) {
     //     thus the X11 motion-event coalescing that drops most motion
     //     events when many are queued in a single PollEvent batch).
     // Returns true to keep the main loop running, false to quit.
+    // ---- Pie menu (task 1800) -------------------------------------------
+    //
+    // Fire whatever the ring is currently aimed at, then close. Closing FIRST
+    // is deliberate: a wedge's action may itself open a dialog or a popup, and
+    // a menu still "open" underneath it would keep swallowing input.
+    //
+    // The same two gates the side panel and the status bar apply to a button
+    // apply here (`disabled` placeholder, `actionRefusal`) — one availability
+    // policy for all three surfaces, so a wedge drawn greyed cannot fire.
+    void pieFireHovered() {
+        import pie_menus       : findPieMenu;
+        import ui.availability : actionRefusal;
+        import ui.panels       : dispatchAction;
+
+        auto m    = findPieMenu(g_pie.menuId);
+        int  slot = g_pie.hover;
+        closePie();
+        if (m is null || slot < 0 || slot >= cast(int) m.items.length) return;
+
+        auto btn = m.items[slot];
+        if (btn.disabled) return;
+        if (actionRefusal(reg, btn.action, document.hasEditTarget(),
+                          activeToolId).length > 0) return;
+        dispatchAction(app, btn.action);
+    }
+
+    // Is `sym` one of the modifier keys the opening chord required? Releasing
+    // EITHER half of "Ctrl+Space" ends the gesture — a user who lets go of
+    // Ctrl first has finished aiming just as much as one who lets go of Space.
+    static bool pieChordModifier(SDL_Keycode sym, ushort mods) {
+        switch (sym) {
+            case SDLK_LCTRL:  case SDLK_RCTRL:  return (mods & KMOD_CTRL)  != 0;
+            case SDLK_LSHIFT: case SDLK_RSHIFT: return (mods & KMOD_SHIFT) != 0;
+            case SDLK_LALT:   case SDLK_RALT:   return (mods & KMOD_ALT)   != 0;
+            case SDLK_LGUI:   case SDLK_RGUI:   return (mods & KMOD_GUI)   != 0;
+            default: return false;
+        }
+    }
+
     bool processEvent(SDL_Event* ev) {
         evLog.log(*ev);
         bool isF1orF2 = ev.type == SDL_KEYDOWN &&
             (ev.key.keysym.sym == SDLK_F1 || ev.key.keysym.sym == SDLK_F2);
         if (!isF1orF2) recLog.log(*ev);
+
+        // ---- Pie menu input grab (task 1800) ----------------------------
+        //
+        // BEFORE ImGui and before every gate below, because an open pie is
+        // MODAL and is anchored wherever the chord was pressed — which may be
+        // over a docked panel, where `viewportInputAllowed()` would otherwise
+        // eat the very click meant for a wedge, or over an ImGui button, which
+        // would otherwise see the press under the ring and fire on release.
+        // The event is still LOGGED above, so a replay reproduces the gesture.
+        if (g_pie.open) {
+            switch (ev.type) {
+                case SDL_MOUSEMOTION:
+                    aimPie(ev.motion.x, ev.motion.y);
+                    return true;
+                case SDL_MOUSEBUTTONDOWN:
+                    // Swallowed; the wedge runs on the RELEASE half of the
+                    // click, off the position the button came UP at — which is
+                    // the wedge the ring was visibly highlighting.
+                    return true;
+                case SDL_MOUSEBUTTONUP:
+                    if (ev.button.button == SDL_BUTTON_LEFT) {
+                        aimPie(ev.button.x, ev.button.y);
+                        pieFireHovered();
+                    } else {
+                        closePie();
+                    }
+                    return true;
+                case SDL_KEYUP:
+                    // RELEASING THE CHORD DISMISSES — it never selects. The
+                    // ring lives exactly as long as the chord is held down,
+                    // and the only thing that runs a wedge is a CLICK while it
+                    // is up (owner's call 2026-08-23, matching the reference).
+                    //
+                    // Either half of the chord ends it: a user who lets go of
+                    // Ctrl first has stopped holding "Ctrl+Space" just as much
+                    // as one who lets go of Space.
+                    //
+                    // `armedKey == 0` — a ring opened by something other than a
+                    // chord (`/api/command ui.pie …`) — has no chord to
+                    // release, so no key release may close it; it waits for the
+                    // click or for Esc.
+                    if (g_pie.armedKey != 0 &&
+                        (ev.key.keysym.sym == g_pie.armedKey ||
+                         pieChordModifier(ev.key.keysym.sym, g_pie.armedMods)))
+                        closePie();
+                    return true;
+                case SDL_KEYDOWN:
+                    if (ev.key.keysym.sym == SDLK_ESCAPE) { closePie(); return true; }
+                    // Every other key is swallowed while the ring is up: it
+                    // is a menu, not an overlay. The opening chord's own auto-
+                    // repeat lands here too and stops here, so a held chord
+                    // cannot re-dispatch `ui.pie` and drag the ring along
+                    // under the cursor.
+                    return true;
+                default: break;
+            }
+        }
+
         ImGui_ImplSDL2_ProcessEvent(ev);
 
         // Route through viewportInputAllowed() so mouse events over the docked
@@ -6951,6 +7092,27 @@ void main(string[] args) {
         drawQuitGuardModal(app);
 
         drawStatusBar(app);
+
+        // ---- Pie menu (task 1800) ------------------------------------------
+        // Inside the availability bracket, so a wedge shows up in
+        // `/api/buttons/availability` under source "pie" exactly as a side
+        // panel row does under "side" — same record, same disabled reason, and
+        // the only headless read there is of what the ring actually offered.
+        // Drawn LAST of the button surfaces because it sits over all of them.
+        {
+            import ui.pie_render   : drawPieMenu;
+            import ui.availability : actionRefusal, recordDrawnButton;
+            drawPieMenu((ref Button b) {
+                string why = b.disabled
+                    ? ""
+                    : actionRefusal(reg, b.action, document.hasEditTarget(),
+                                    activeToolId);
+                recordDrawnButton("pie", b.label, b.action.kind, b.action.id,
+                                  b.disabled || why.length > 0, why);
+                return why;
+            });
+        }
+
         endButtonAvailabilityFrame();
         version (WithRender) drawIPRPanel(&mesh(), cameraView);
 

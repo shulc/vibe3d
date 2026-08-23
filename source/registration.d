@@ -242,6 +242,7 @@ import commands.ui.statistics      : UiStatisticsCommand, UiStatisticsExpandComm
                                      g_statisticsShown;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 import commands.ui.about           : UiAboutCommand;
+import commands.ui.pie             : UiPieCommand;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
 import commands.snap.mode        : SnapModeCommand;
@@ -1104,6 +1105,8 @@ private void registerToolLifecycleCommands(EditorApp app) {
         new UiViewportPropsCommand(&mesh(), cameraView, editMode);
     reg.commandFactories["ui.about"] = () => cast(Command)
         new UiAboutCommand(&mesh(), cameraView, editMode);
+    reg.commandFactories["ui.pie"] = () => cast(Command)
+        new UiPieCommand(&mesh(), cameraView, editMode);
     }
     }
     }

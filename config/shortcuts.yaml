@@ -50,6 +50,10 @@ commands:
   file.save:             "Ctrl+S"
   file.saveAs:           "Ctrl+Shift+S"
   file.quit:             "Ctrl+Q"
+  # Pie (radial) menu. The text after the key spec is the menu id in
+  # config/pies.yaml — the same baked-argstring mechanism `mesh.subdivide`
+  # uses above.  ref: ctrl-space
+  ui.pie:                "Ctrl+Space viewport"
 
 editmodes:
   vertices: "1"

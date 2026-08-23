@@ -278,6 +278,104 @@ Group[] loadStatusLine(string path) {
 }
 
 // ---------------------------------------------------------------------------
+// PieMenu — one radial menu (task 1800).
+//
+// Deliberately NOT a new item schema: a wedge is a `Button`, parsed by the very
+// `parseButton` the side panel and the status bar already use, so every action
+// kind, `checked:`, `disable:` and modifier variant behaves identically on all
+// three surfaces and there is exactly one place where a button's YAML is
+// defined. What a pie adds is only the *arrangement*: an id, a title and an
+// ORDERED list whose index is a compass direction (see source/pie_geometry.d).
+// ---------------------------------------------------------------------------
+struct PieMenu {
+    string   id;       // referenced by `ui.pie <id>` and by the shortcut binding
+    string   title;    // drawn in the middle of the ring
+    Button[] items;    // index == slot, 0 = twelve o'clock, clockwise
+}
+
+/// Hard ceiling on wedges in one menu. The reference caps its pies at 8 and
+/// silently uses "the first 8 items" past that; we throw instead — a config
+/// that loses an item without saying so is indistinguishable from one that
+/// never had it.
+enum size_t PIE_MAX_ITEMS = 8;
+
+// ---------------------------------------------------------------------------
+// Load config/pies.yaml
+//
+//   menus:
+//     - id: viewport
+//       title: Viewport
+//       items:
+//         - { label: Top, action: { kind: command, id: viewport.view } }
+//         ...
+//
+// Every refusal below is a throw, not a repair: this file is read once at
+// startup, and a menu that quietly drops a wedge, or renders a blank one,
+// is a bug that only shows up as muscle memory hitting nothing.
+// ---------------------------------------------------------------------------
+PieMenu[] loadPies(string path) {
+    import dyaml;
+
+    Node root;
+    try {
+        root = Loader.fromFile(path).load();
+    } catch (Exception e) {
+        throw new Exception(format("pies: failed to load '%s': %s", path, e.msg));
+    }
+
+    if (!root.containsKey("menus"))
+        throw new Exception(format("pies: '%s' missing top-level 'menus' key", path));
+
+    PieMenu[] menus;
+    foreach (Node menuNode; root["menus"]) {
+        if (!menuNode.containsKey("id"))
+            throw new Exception(format("pies: a menu in '%s' is missing 'id'", path));
+
+        PieMenu m;
+        m.id = menuNode["id"].as!string;
+        if (m.id.length == 0)
+            throw new Exception(format("pies: a menu in '%s' has an empty 'id'", path));
+        foreach (ref prev; menus)
+            if (prev.id == m.id)
+                throw new Exception(
+                    format("pies: duplicate menu id '%s' in '%s'", m.id, path));
+
+        m.title = menuNode.containsKey("title") ? menuNode["title"].as!string : m.id;
+
+        if (!menuNode.containsKey("items"))
+            throw new Exception(
+                format("pies: menu '%s' in '%s' is missing 'items'", m.id, path));
+
+        foreach (Node itemNode; menuNode["items"]) {
+            auto btn = parseButton(itemNode, "<pie:" ~ m.id ~ ">", m.id, path);
+            // A pie wedge is chosen by DIRECTION and released over; a dropdown
+            // that would need a second, aimed click has nowhere to open from.
+            if (btn.action.kind == ActionKind.popup)
+                throw new Exception(format(
+                    "pies: item '%s' of menu '%s' ('%s') uses action kind 'popup' — "
+                    ~ "nested menus are not supported in a pie",
+                    btn.label, m.id, path));
+            m.items ~= btn;
+        }
+
+        if (m.items.length == 0)
+            throw new Exception(
+                format("pies: menu '%s' in '%s' has no items", m.id, path));
+        if (m.items.length > PIE_MAX_ITEMS)
+            throw new Exception(format(
+                "pies: menu '%s' in '%s' has %d items — the maximum is %d",
+                m.id, path, m.items.length, PIE_MAX_ITEMS));
+
+        menus ~= m;
+    }
+
+    if (menus.length == 0)
+        throw new Exception(format("pies: '%s' declares no menus", path));
+
+    return menus;
+}
+
+// ---------------------------------------------------------------------------
 // Helper: flatten all buttons in a panel (used by startup validation).
 // ---------------------------------------------------------------------------
 

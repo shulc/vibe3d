@@ -236,6 +236,7 @@ import commands.ui.image_list      : UiImageListCommand;
 import commands.ui.channels        : UiChannelsCommand;
 import commands.ui.statistics      : UiStatisticsCommand, UiStatisticsExpandCommand;
 import commands.ui.about           : UiAboutCommand;
+import commands.ui.pie             : UiPieCommand;
 import commands.ui.viewport_props  : UiViewportPropsCommand, g_viewportPropsShown;
 import commands.tool.panel_edit    : ToolPanelEditCommand;
 import commands.snap.toggle_type : SnapToggleTypeCommand;
@@ -2613,6 +2614,18 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                             uab.setVisible(pos[0].str);
                     }
                 }
+            } else if (auto upie = cast(UiPieCommand)cmd) {
+                // ui.pie <menuId|close> (task 1800). The menu id also rides
+                // the keyboard binding as a baked argstring
+                // (`ui.pie: "Ctrl+Space viewport"` in config/shortcuts.yaml),
+                // which funnels through this same positional slot.
+                if (auto pp = "_positional" in pj) {
+                    if (pp.type == JSONType.array) {
+                        auto pos = pp.array;
+                        if (pos.length >= 1 && pos[0].type == JSONType.string)
+                            upie.setMenu(pos[0].str);
+                    }
+                }
             } else if (auto fad = cast(FalloffAddCommand)cmd) {
                 // falloff.add <type>
                 if (auto pp = "_positional" in pj) {
@@ -3330,6 +3343,16 @@ private void wireMutationHandlers(HttpServer httpServer, ref EditorApp app,
             {
                 import eventlog : parkOverrideMouse;
                 parkOverrideMouse();
+            }
+            // Third global with the same argument (task 1800): an OPEN PIE
+            // MENU. It is modal — it swallows every mouse and key event — so a
+            // test that left one up would hand the next test on this shared
+            // `--test` worker an editor whose input goes nowhere, and the
+            // symptom would be "the next test's clicks did nothing", read as a
+            // picking bug.
+            {
+                import pie_state : closePie;
+                closePie();
             }
             // selTypeOrder is kept in lockstep with editMode by the
             // promoteGeometryType hook installed on the scene.reset factory — no

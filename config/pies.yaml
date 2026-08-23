@@ -1,0 +1,36 @@
+# Pie (radial) menus.
+#
+# One menu = an id, a title and an ORDERED list of at most 8 items. The index
+# in `items:` IS the compass direction: item 0 sits at twelve o'clock and the
+# rest follow clockwise (item 1 = NE, 2 = E, 3 = SE, 4 = S, 5 = SW, 6 = W,
+# 7 = NW for a full 8; with fewer items the circle is divided evenly, still
+# starting at noon). Reorder the list and you move the wedges.
+#
+# An item is a BUTTON — exactly the schema config/buttons.yaml and
+# config/statusline.yaml use (`label` + `action` + optional `checked` /
+# `disable`), parsed by the same loader. `action: { kind: popup }` is the one
+# kind a pie refuses: a wedge is aimed at, not opened.
+#
+# Bind a menu to a chord in config/shortcuts.yaml:
+#     commands:
+#       ui.pie: "Ctrl+Space viewport"
+# — the text after the key spec is the menu id below.
+
+menus:
+  # Camera views. Item order matches the reference's own viewport pie: the
+  # four axis views land on their own compass point (Top north, Right east,
+  # Bottom south, Left west) and the remaining four fill the diagonals.
+  # ref: ctrl-space
+  - id: viewport
+    title: Viewport
+    items:
+      - { label: Top,         action: { kind: script, lines: ["viewport.view Top"] } }          # N
+      - { label: Perspective, action: { kind: script, lines: ["viewport.view Perspective"] } }  # NE
+      - { label: Right,       action: { kind: script, lines: ["viewport.view Right"] } }        # E
+      - { label: Front,       action: { kind: script, lines: ["viewport.view Front"] } }        # SE
+      - { label: Bottom,      action: { kind: script, lines: ["viewport.view Bottom"] } }       # S
+      - { label: Back,        action: { kind: script, lines: ["viewport.view Back"] } }         # SW
+      - { label: Left,        action: { kind: script, lines: ["viewport.view Left"] } }         # W
+      # The reference puts "Maximize" here; our nearest equivalent is the
+      # single-cell viewport layout.
+      - { label: Single,      action: { kind: script, lines: ["viewport.layout Single"] } }     # NW
