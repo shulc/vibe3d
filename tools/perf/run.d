@@ -1746,6 +1746,7 @@ struct FrameScenarioResult {
     // Cage face count at the moment of the measured toggle — F-I11's yardstick
     // for "cage-sized or limit-sized".
     long       cageFacesAtToggle = -1;
+    long       settles           = -1;  // tab-orbit: camera settles in the window
     long       hoverPickCount    = -1;
     long       cacheNsWindowSum  = -1;  // sum of the PHASE over the window
 }
@@ -1939,6 +1940,153 @@ FrameScenarioResult runOrbitDense(int n, string meshType) {
         res.detail = "no frames recorded — vibe3d not built with --build=perf?";
         return res;
     }
+    res.status = CaseStatus.OK;
+    return res;
+}
+
+// tab-orbit (task 1540) — the scenario that prices option C's ONE remaining
+// unknown: what a MOVING CAMERA costs while a subpatch preview is live.
+//
+// WHY IT NEEDED ITS OWN SCENARIO. Neither existing one can see this.
+// `orbit-dense` orbits with NO preview, so the picker never touches the limit
+// surface. `tab-cold` has a preview but a FIXED camera, which is exactly the
+// state the GPU slot key is best at — it never invalidates. Option C was
+// measured there (worst frame 1719.6 -> 128.9 ms) and the number is real, but
+// it says nothing about the case the BVH exists for.
+//
+// THE ASYMMETRY BEING MEASURED. The BVH is view-INDEPENDENT: build it once per
+// mesh change and every later pick is a ~0.8 us raycast no matter where the
+// camera goes. The GPU slot key carries (view, proj), so every camera change
+// throws the ID buffer away and the next pick re-renders the whole limit
+// surface. One pays O(N) per EDIT, the other O(N) per CAMERA SETTLE.
+//
+// SETTLE, not frame — and that is why this scenario alternates instead of just
+// orbiting. `pickFaces` returns early while `doingCameraDrag` is true, so a
+// pure orbit performs no picks at all and would measure nothing. The cost
+// lands on the FIRST hover after the button comes up. So: orbit, hover, orbit,
+// hover, ... and each hover segment opens with one re-render.
+//
+// WHAT THE RESULT DECIDES. `hoverPick / hoverPickCount` here is the price of a
+// settle. Against it stands one limit-surface BVH construction, measured at
+// 1588.9 ms on this cage. The crossover is how many settles a user spends
+// before the GPU path costs more than the build it replaced — printed by the
+// reporter so nobody has to divide two numbers from different tables. A large
+// crossover closes task 1540; a small one is the argument for variant A
+// (construction on a worker thread), and the only one worth introducing
+// concurrency into the selection path for.
+enum int kTabOrbitCycles = 3;
+
+// One limit-surface BVH construction on the tab-cold calibration cage
+// (grid n=316: 99 856 cage quads -> 798 848 fan triangles). MEASURED, five
+// runs, 2026-08-22: 1588.896 / 1588.900 / 1591.670 / 1591.675 / 1585.325 ms.
+// This is the cost option C removed, and it is the numerator of the crossover
+// tab-orbit prints. It is a constant OF THIS HOST AND THIS CAGE and says so:
+// nothing adapts it, and a run at another `n` will print a crossover whose
+// numerator does not belong to it.
+enum long K_TAB_COLD_LIMIT_BUILD_NS = 1_589_000_000;
+
+FrameScenarioResult runTabOrbit(int n, string meshType) {
+    FrameScenarioResult res;
+    res.name = "tab-orbit";
+
+    resetMesh(meshType, n);
+    if (!selectMode("polygons", [])) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "selectMode polygons failed";
+        return res;
+    }
+    settleAfterReset();
+
+    // The preview must be LIVE before the window opens: this scenario prices
+    // steady-state camera work, not the install frame. tab-cold already owns
+    // the install. `perfReset` before the toggle so the wait below keys on
+    // this scenario's own build rather than a previous one's counter.
+    perfReset();
+    if (!postCommand("mesh.subpatch_toggle")) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "mesh.subpatch_toggle failed";
+        return res;
+    }
+    immutable why = waitForSubpatchBuild(1);
+    if (why.length) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "preview build: " ~ why;
+        return res;
+    }
+    // Let the install frame (upload + first draw + whatever the first pick
+    // builds) finish BEFORE the measured window. Without this the install
+    // lands inside the window and its cost is read as camera cost.
+    Thread.sleep(600.msecs);
+    auto cam = fetchCamera();
+    {   // one hover to force whatever the first post-install pick costs
+        string warm = buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                    cam.vpX + cam.width / 2 - 10,
+                                    cam.vpY + cam.height / 2,
+                                    cam.vpX + cam.width / 2 + 10,
+                                    cam.vpY + cam.height / 2, 8);
+        try playAndWait(warm);
+        catch (Exception e) {
+            res.status = CaseStatus.ERROR;
+            res.detail = "warm hover: " ~ e.msg;
+            return res;
+        }
+        settleAfterPlay();
+    }
+
+    perfReset();
+    framesReset();      // the window opens HERE — preview live, install paid
+
+    immutable int ox0 = cam.vpX + cast(int)(cam.width  * 0.35);
+    immutable int oy0 = cam.vpY + cast(int)(cam.height * 0.55);
+    immutable int hx0 = cam.vpX + cast(int)(cam.width  * 0.35);
+    immutable int hx1 = cam.vpX + cast(int)(cam.width  * 0.65);
+    immutable int hy  = cam.vpY + cast(int)(cam.height * 0.50);
+
+    foreach (c; 0 .. kTabOrbitCycles) {
+        // A SHORT orbit. The point is the settle, not the drag — a long orbit
+        // would pad the window with frames that perform no pick and dilute
+        // every average this scenario reports.
+        immutable int ox1 = ox0 + 40 + c * 10;   // vary so no two are identical
+        immutable int oy1 = oy0 - 30 - c * 10;
+        string orbit = buildOrbitLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                     ox0, oy0, ox1, oy1, 12);
+        string hover = buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                                     hx0, hy, hx1, hy, 12);
+        try {
+            playAndWait(orbit);
+            playAndWait(hover);
+        } catch (Exception e) {
+            res.status = CaseStatus.ERROR;
+            res.detail = format("cycle %d: %s", c, e.msg);
+            return res;
+        }
+    }
+    settleAfterPlay();
+
+    res.stats = fetchFrames();
+    if (res.stats.empty) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "no frames recorded — vibe3d not built with --build=perf?";
+        return res;
+    }
+
+    auto perf = perfRead();
+    res.cacheInvalidateNs  = perfTimerSumNs (perf, "cacheInvalidate");
+    res.viewcacheRebuildNs = perfTimerSumNs (perf, "viewcacheRebuild");
+    res.hoverPickNs        = perfTimerSumNs (perf, "hoverPick");
+    res.hoverPickCount     = perfCounterCount(perf, "hoverPick");
+    res.bvhRebuildNs       = perfTimerSumNs (perf, "bvhRebuild");
+    res.bvhRebuildCount    = perfCounterCount(perf, "bvhRebuild");
+    res.bvhRebuildTris     = perfCounterSum  (perf, "bvhRebuildTris");
+    res.bvhRebuildTrisN    = perfCounterCount(perf, "bvhRebuildTris");
+    res.bvhRebuildMaxNs    = perfTimerMaxNs  (perf, "bvhRebuild");
+    res.bvhAbortN          = perfCounterCount(perf, "bvhAbortFaces");
+    res.bvhEnterN          = perfCounterCount(perf, "bvhRebuildEnter");
+    res.cacheNsWindowSum   = res.stats.sumCacheNs;
+    res.settles            = kTabOrbitCycles;
+    try res.cageFacesAtToggle = activeLayerInfo().faceCount;
+    catch (Exception) { res.cageFacesAtToggle = -1; }
+
     res.status = CaseStatus.OK;
     return res;
 }
@@ -2580,6 +2728,32 @@ void printFramesTable(FrameScenarioResult[] results) {
                 writefln("  %-16s   ABORTED rebuilds: %d, walked %d faces /"
                          ~ " %d verts total (built nothing)",
                          r.name, r.bvhAbortN, r.bvhAbortFaces, r.bvhAbortVerts);
+            // tab-orbit's whole point, computed here so the decision is not
+            // two numbers from two tables that a reader must divide.
+            // K_TAB_COLD_LIMIT_BUILD_NS is what option C removed; the
+            // per-settle cost is what it charges instead.
+            if (r.settles > 0 && r.hoverPickCount > 0) {
+                immutable double perSettleMs =
+                    msFromNs(r.hoverPickNs) / cast(double)r.settles;
+                // AMORTIZED OVER THE CYCLE, and the label says so because
+                // the obvious reading is wrong: this divides ALL hoverPick
+                // time by the cycle count, and only ONE pick per cycle pays a
+                // re-render while the rest are plain readbacks. It is the cost
+                // of an orbit-plus-hover CYCLE, not the price of the settle
+                // alone. The number that bounds the user-visible hitch is the
+                // worst frame on the line above, not this one.
+                writefln("  %-16s   ORBIT+HOVER CYCLES: %d, hoverPick %.3fms"
+                         ~ " over %d picks => %.3f ms per cycle (amortized,"
+                         ~ " ~1 re-render per cycle)",
+                         r.name, r.settles, msFromNs(r.hoverPickNs),
+                         r.hoverPickCount, perSettleMs);
+                if (perSettleMs > 0.0)
+                    writefln("  %-16s   CROSSOVER: %.0f such cycles cost what"
+                             ~ " ONE limit-surface BVH build cost (%.1f ms)",
+                             r.name,
+                             msFromNs(K_TAB_COLD_LIMIT_BUILD_NS) / perSettleMs,
+                             msFromNs(K_TAB_COLD_LIMIT_BUILD_NS));
+            }
             writefln("  %-16s   biggest single rebuild %.3fms vs worst frame's"
                      ~ " cache phase %.3fms / whole frame %.3fms",
                      r.name, msFromNs(r.bvhRebuildMaxNs),
@@ -3702,6 +3876,7 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
         ScenarioSpec("tab-subpatch", &runTabSubpatch),
         ScenarioSpec("lasso-dense",  &runLassoDense),
         ScenarioSpec("undo-spam",    &runUndoSpam),
+        ScenarioSpec("tab-orbit",    &runTabOrbit),
         // tab-cold goes LAST, and the position is load-bearing (task 1374).
         // `tab-subpatch` above is today the process's FIRST buildPreview --
         // the three scenarios before it never call one -- so it already
