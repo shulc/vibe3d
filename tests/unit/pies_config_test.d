@@ -41,12 +41,58 @@ unittest {  // the shipped config loads, and the compass order is what it claims
     assert(vp.items[4].label == "Bottom", "slot 4 is south");
     assert(vp.items[6].label == "Left",   "slot 6 is west");
 
-    // Wedges carry real, dispatchable actions — not popups (refused below) and
-    // not empty labels.
-    foreach (ref it; vp.items) {
+    // Slot 7 is a RESERVED EMPTY one: it holds the compass and does nothing.
+    // Asserted explicitly rather than left to "the other seven are fine",
+    // because the failure it guards against is the slot quietly acquiring a
+    // command — which would work, and would be wrong.
+    assert(vp.items[7].label.length == 0, "slot 7 (NW) is the reserved empty slot");
+    assert(vp.items[7].disabled, "...and it must be inert, not merely unlabelled");
+
+    // Every OTHER wedge carries a real, dispatchable action — not a popup
+    // (refused below) and not a blank label.
+    foreach (i, ref it; vp.items) {
+        if (i == 7) continue;
         assert(it.label.length > 0);
+        assert(!it.disabled);
         assert(it.action.kind != ActionKind.popup);
     }
+}
+
+unittest {  // an empty slot needs no label and no action — and refuses both
+    auto p = writeTmpYaml("emptyslot",
+        "menus:\n  - id: holed\n    title: T\n    items:\n"
+        ~ "      - { label: A, action: { kind: command, id: viewport.fit } }\n"
+        ~ "      - { empty: true }\n");
+    scope(exit) remove(p);
+    auto m = loadPies(p)[0];
+    assert(m.items.length == 2, "the empty slot still OCCUPIES a slot — that is "
+                              ~ "its whole purpose; dropping it would re-aim "
+                              ~ "every wedge after it");
+    assert(m.items[1].label.length == 0 && m.items[1].disabled);
+
+    // Declaring both is a mixed intent, not a shorthand.
+    foreach (body_; [
+        "menus:\n  - id: x\n    title: T\n    items:\n      - { empty: true, label: Camera }\n",
+        "menus:\n  - id: x\n    title: T\n    items:\n      - { empty: true, action: { kind: command, id: viewport.fit } }\n",
+    ]) {
+        auto q = writeTmpYaml("emptymix", body_);
+        scope(exit) remove(q);
+        bool threw = false;
+        try { loadPies(q); } catch (Exception e) { threw = true; }
+        assert(threw, "`empty: true` alongside a label or an action must throw");
+    }
+}
+
+unittest {  // a BLANK label on a normal item is refused — the empty slot has a
+            // spelling of its own, and a typo must not silently become one
+    auto p = writeTmpYaml("blanklabel",
+        "menus:\n  - id: x\n    title: T\n    items:\n"
+        ~ "      - { label: \"\", action: { kind: command, id: viewport.fit } }\n");
+    scope(exit) remove(p);
+    bool threw = false;
+    try { loadPies(p); } catch (Exception e) { threw = true; }
+    assert(threw, "a blank label must throw rather than render an unnamed wedge "
+                ~ "that DOES fire");
 }
 
 unittest {  // a ninth item is refused, not silently dropped

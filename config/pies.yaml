@@ -31,9 +31,21 @@ menus:
       - { label: Bottom,      action: { kind: script, lines: ["viewport.view Bottom"] } }       # S
       - { label: Back,        action: { kind: script, lines: ["viewport.view Back"] } }         # SW
       - { label: Left,        action: { kind: script, lines: ["viewport.view Left"] } }         # W
-      # The reference puts "Maximize" here; our nearest equivalent is the
-      # single-cell viewport layout.
-      - { label: Single,      action: { kind: script, lines: ["viewport.layout Single"] } }     # NW
+      # NW is RESERVED AND EMPTY, on purpose.
+      #
+      # The reference offers its camera view here (measured live, 2026-08-24).
+      # We have no camera item to project from — `viewport.view Camera` sets a
+      # label and nothing else: same projection kind and same orientation as
+      # Perspective, so the wedge would silently duplicate its own neighbour.
+      #
+      # The slot is held rather than dropped because the index IS the compass
+      # direction: with seven wedges the circle divides by 51.4°, Bottom lands
+      # on 205.7° instead of due south and Left on 308.6° instead of due west,
+      # so the axis views stop being opposite each other. Eight slots keep
+      # Top=N, Right=E, Bottom=S, Left=W exact.
+      #
+      # When camera items land, this becomes one line.
+      - { empty: true }                                                                         # NW
 
   # Item / layer operations. Bound to the SAME chord as the menu above, scoped
   # to the Items panel — see the `bindings:` block in config/shortcuts.yaml.

@@ -347,7 +347,41 @@ PieMenu[] loadPies(string path) {
                 format("pies: menu '%s' in '%s' is missing 'items'", m.id, path));
 
         foreach (Node itemNode; menuNode["items"]) {
+            // ---- a RESERVED, EMPTY slot ------------------------------------
+            //
+            //   - { empty: true }
+            //
+            // The wedge is drawn and holds its place in the circle, and nothing
+            // else: no label, no action, no hover, no click. It exists because
+            // the index in `items:` IS the compass direction — with seven
+            // wedges the circle divides by 51.4° and Bottom lands 25° off
+            // south, so a menu that is one item short of eight would silently
+            // re-aim every wedge below the gap. Holding the slot keeps Top
+            // north, Right east, Bottom south and Left west exactly.
+            //
+            // Deliberately NOT spelled as a disabled button with an empty label
+            // and a dummy action: an empty slot has no action to name, and
+            // inventing one to satisfy the schema is the kind of placeholder
+            // that later reads as a real binding somebody broke.
+            if (itemNode.containsKey("empty") && itemNode["empty"].as!bool) {
+                if (itemNode.containsKey("label") || itemNode.containsKey("action"))
+                    throw new Exception(format(
+                        "pies: an `empty: true` slot in menu '%s' ('%s') also declares "
+                        ~ "a label or an action — it is one or the other",
+                        m.id, path));
+                Button hole;
+                hole.disabled = true;   // reuses the existing "no hover, no
+                                        // click" contract (see Button.disabled)
+                m.items ~= hole;
+                continue;
+            }
+
             auto btn = parseButton(itemNode, "<pie:" ~ m.id ~ ">", m.id, path);
+            if (btn.label.length == 0)
+                throw new Exception(format(
+                    "pies: an item of menu '%s' ('%s') has an empty label — if the "
+                    ~ "slot is meant to be blank, declare it as `{ empty: true }`",
+                    m.id, path));
             // A pie wedge is chosen by DIRECTION and released over; a dropdown
             // that would need a second, aimed click has nowhere to open from.
             if (btn.action.kind == ActionKind.popup)

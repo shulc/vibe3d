@@ -67,7 +67,12 @@ void drawPieMenu(scope string delegate(ref Button) refusalOf = null) {
     immutable float  w = 2.0f * PI / n;
 
     foreach (i, ref item; m.items) {
-        immutable bool hot = (cast(int) i == g_pie.hover);
+        // A wedge that cannot fire does not take the hover colour, and that is
+        // `Button.disabled`'s own contract ("does not react to hover or
+        // click"), not a rule invented here: the highlight means "let go, or
+        // click, and THIS runs". On a reserved empty slot it would promise
+        // something that is not there.
+        immutable bool hot = (cast(int) i == g_pie.hover) && !item.disabled;
 
         // Slot i is centred on `i * 2π/n` CLOCKWISE FROM NOON
         // (pie_geometry's law). ImGui's arc angles run from due east and grow
@@ -107,7 +112,7 @@ void drawPieMenu(scope string delegate(ref Button) refusalOf = null) {
     // Labels, after every wedge is filled so no fill can cover a neighbour's
     // text.
     foreach (i, ref item; m.items) {
-        immutable bool hot = (cast(int) i == g_pie.hover);
+        immutable bool hot = (cast(int) i == g_pie.hover) && !item.disabled;
         immutable float mid = -cast(float)(PI * 0.5) + slotCenterAngle(cast(int) i, n);
 
         string label = item.label;
@@ -117,8 +122,20 @@ void drawPieMenu(scope string delegate(ref Button) refusalOf = null) {
         if (item.checked.present && resolveChecked(item.checked))
             label = "• " ~ label;
 
+        // The availability record is taken for EVERY slot, including a
+        // reserved empty one, and BEFORE the text is skipped below: the slot
+        // exists, it occupies a compass direction, and a reader asking "what
+        // does this menu offer" must be able to see that the eighth is
+        // deliberately blank rather than missing. Skipping the record here is
+        // what made the ring report seven wedges and broke the input-grab
+        // case's own setup assertion.
         string why = (refusalOf is null) ? "" : refusalOf(item);
         immutable bool off = item.disabled || why.length > 0;
+
+        // A reserved empty slot has drawn its plate and its seams above and
+        // stops here — no text, and no greyed placeholder text either, because
+        // the slot names nothing.
+        if (label.length == 0) continue;
 
         auto ts = ImGui.CalcTextSize(label);
         immutable float lx = c.x + cos(mid) * LABEL_R - ts.x * 0.5f;

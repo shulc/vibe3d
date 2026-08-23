@@ -327,3 +327,82 @@ unittest {  // 5. the chord is still held after the click — auto-repeat must n
 
     runCmd("viewport.view Perspective");
 }
+
+/// Is the wedge with no label recorded as inert?
+bool emptySlotRecordedDisabled() {
+    foreach (b; getJson("/api/buttons/availability")["buttons"].array)
+        if (b["source"].str == "pie" && b["label"].str.length == 0)
+            return b["disabled"].type == JSONType.TRUE;
+    return false;
+}
+
+unittest {  // 6. the reserved EMPTY slot occupies its place and does nothing
+            //
+            // WHAT THIS CASE DOES *NOT* TEST, said plainly because the mutation
+            // drill caught me claiming otherwise: it does NOT exercise
+            // `pieFireHovered`'s `if (btn.disabled) return`. An empty slot
+            // carries `Action.init` — kind `tool`, empty id — so a fire would
+            // dispatch `activateToolById("")`, which does nothing. "Refused"
+            // and "fired a no-op" are the same observation BY CONSTRUCTION, and
+            // deleting that guard leaves every assertion here green (measured).
+            //
+            // What it DOES pin: the NW direction maps to the empty slot and not
+            // to a neighbour's command — rotate the slot mapping by one and
+            // this reddens with a camera change.
+    resetScene();
+    immutable before = historyLen();
+
+    // NW = slot 7 of 8, i.e. up-and-left of the centre.
+    enum int D = 56;                       // clears the 22 px dead zone on both
+                                           // axes, well inside the outer radius
+    play([
+        evMotion(PIE_CX, PIE_CY),
+        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
+        evMotion(PIE_CX - D, PIE_CY - D),  // aim NW
+        evClickDown(PIE_CX - D, PIE_CY - D),
+        evClickUp(PIE_CX - D, PIE_CY - D),
+        evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
+    ]);
+
+    // It is a slot, not a gap: the menu still has eight wedges, which is what
+    // keeps Top/Right/Bottom/Left on their compass points. Then it closed
+    // without running anything.
+    assert(cameraPreset() == "Perspective",
+        "clicking the reserved empty slot must run nothing, camera went to "
+        ~ cameraPreset());
+    assert(historyLen() == before,
+        "...and record nothing: history grew from " ~ before.to!string
+        ~ " to " ~ historyLen().to!string);
+    assert(pieWedgesDrawn() == 0, "the click still dismisses the ring");
+}
+
+unittest {  // 6b. the empty slot is CLASSIFIED inert, which is what greys it and
+            //     what keeps it out of the hover highlight
+    resetScene();
+    play([
+        evMotion(PIE_CX, PIE_CY),
+        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
+    ]);
+    immutable inert = emptySlotRecordedDisabled();
+    play([ evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL) ]);
+
+    assert(inert,
+        "the unlabelled wedge must be drawn as disabled — that flag is what "
+        ~ "denies it the hover highlight and the refusal path; an empty label "
+        ~ "alone would leave a live, nameless, clickable wedge");
+}
+
+unittest {  // 7. ...and the slot really is DRAWN, all eight of them
+    resetScene();
+    play([
+        evMotion(PIE_CX, PIE_CY),
+        evKeyDown(SYM_SPACE, SCAN_SPACE, MOD_LCTRL),
+    ]);
+    auto n = pieWedgesDrawn();
+    play([ evKeyUp(SYM_SPACE, SCAN_SPACE, MOD_LCTRL) ]);
+
+    assert(n == 8,
+        "the empty slot is still a slot — eight wedges, not seven, got "
+        ~ n.to!string ~ ". Seven would divide the circle by 51.4° and put "
+        ~ "Bottom 25° off south.");
+}
