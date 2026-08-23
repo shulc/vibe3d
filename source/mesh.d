@@ -10786,6 +10786,7 @@ struct Mesh {
     /// the selected branch needs no filter because §3.1's Select ∧ Hide = ∅
     /// invariant makes a hidden vertex unselectable).
     int[] selectedVertexIndicesVertices() const {
+        { import perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
         int[] idx;
         if (hasAnySelectedVertices()) {
             foreach (i; 0 .. vertices.length)
@@ -11047,6 +11048,7 @@ struct Mesh {
     /// If nothing is selected, returns every VISIBLE vertex index (§3.2 shape
     /// A, task 0613 — see selectedVertexIndicesVertices above).
     int[] selectedVertexIndicesEdges() const {
+        { import perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
         int[] idx;
         if (hasAnySelectedEdges()) {
             bool[] added = new bool[](vertices.length);
@@ -11067,6 +11069,7 @@ struct Mesh {
     /// If nothing is selected, returns every VISIBLE vertex index (§3.2 shape
     /// A, task 0613 — see selectedVertexIndicesVertices above).
     int[] selectedVertexIndicesFaces() const {
+        { import perf_probe : g_perf, Cat; g_perf.count(Cat.selVertexIndicesBuild, 1); }
         int[] idx;
         if (hasAnySelectedFaces()) {
             bool[] added = new bool[](vertices.length);

@@ -51,6 +51,10 @@ string replicate(string s, size_t n) {
 struct FrameRecJ {
     long totalNs, eventNs, toolNs, cacheNs, drawNs, uploadNs, uiNs;
     long gcAllocBytes, gcCollections;
+    // Task 1800 — per-phase alloc deltas. NOT a partition of gcAllocBytes:
+    // the phases do not tile the frame and `tool` nests inside `events`, so
+    // they overlap exactly as the ns fields do.
+    long eventAlloc, toolAlloc, cacheAlloc, drawAlloc, uploadAlloc, uiAlloc;
 }
 
 FrameRecJ parseFrameRec(JSONValue j) {
@@ -64,6 +68,14 @@ FrameRecJ parseFrameRec(JSONValue j) {
     r.uiNs          = j["uiNs"].integer;
     r.gcAllocBytes  = j["gcAllocBytes"].integer;
     r.gcCollections = j["gcCollections"].integer;
+    if ("eventAlloc" in j) {
+        r.eventAlloc  = j["eventAlloc"].integer;
+        r.toolAlloc   = j["toolAlloc"].integer;
+        r.cacheAlloc  = j["cacheAlloc"].integer;
+        r.drawAlloc   = j["drawAlloc"].integer;
+        r.uploadAlloc = j["uploadAlloc"].integer;
+        r.uiAlloc     = j["uiAlloc"].integer;
+    }
     return r;
 }
 

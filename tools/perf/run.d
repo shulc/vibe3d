@@ -2785,6 +2785,17 @@ void printFramesTable(FrameScenarioResult[] results) {
                  r.stats.worst.gcCollections);
         writefln("  %-16s F-I2 steady-state alloc/frame (whole-frame, main-thread, " ~
                  "post-warmup): %d B", r.name, r.stats.steadyMaxAllocBytes);
+        // Task 1800 — WHICH PHASE allocated in the worst frame. Overlapping,
+        // not a partition: `tool` nests inside `events` and the phases do not
+        // tile the frame, so these are read as shares of attention, not as
+        // addends of `gcAlloc`.
+        writefln("  %-16s worst-frame ALLOC by phase (overlapping): events=%dB"
+                 ~ " (tool=%dB) cache=%dB draw=%dB upload=%dB ui=%dB"
+                 ~ " | frame total=%dB",
+                 r.name, r.stats.worst.eventAlloc, r.stats.worst.toolAlloc,
+                 r.stats.worst.cacheAlloc, r.stats.worst.drawAlloc,
+                 r.stats.worst.uploadAlloc, r.stats.worst.uiAlloc,
+                 r.stats.worst.gcAllocBytes);
         if (r.subpatchTopoMiss >= 0)
             writefln("  %-16s subpatch topology: miss=%d hit=%d level=%d "
                      ~ "(cold-topology / WARM-BUFFER regime — see runTabCold)",

@@ -194,6 +194,13 @@ enum Cat {
     // prints `entries=0 timerOpens=1` — the straddle with the in-window build
     // now removed — which is the same artifact seen from the other side.
     bvhRebuildEnter,
+    // Task 1800 — the three `Mesh.selectedVertexIndices*` builders, which
+    // grow an `int[]` by APPEND over the whole mesh. Per-phase alloc
+    // attribution put 99.9 % of a drag frame's 8 MB inside `events` with the
+    // tool apply itself at ZERO, and these are the appenders in that phase.
+    // A counter, not a timer: the question is how often they run, since one
+    // call per drag is a cost and one per frame is a defect.
+    selVertexIndicesBuild,
     // Task 1760 probe — how many times a DERIVED accessor is re-derived during
     // one drag. `Document.primary` is a function, not a field
     // (`nthEditTargetCandidate(0)`), and `TransformTool.computeSelectionHash`
@@ -387,6 +394,28 @@ struct FrameRec {
     long uiNs;
     long gcAllocBytes;
     long gcCollections;
+    // ---- Task 1800: WHICH PHASE ALLOCATED ----------------------------
+    //
+    // `gcAllocBytes` above says a frame allocated; it has never said WHERE.
+    // A `perf` capture cannot close that either — the allocator entry points
+    // resolve no callers through this build's inlining, tried and failed —
+    // and the GC mark phase is 5.4 % of a drag profile, which is a cost
+    // driven entirely by allocation RATE. So the attribution has to come
+    // from the same place the timing attribution already comes from: the
+    // phase scopes.
+    //
+    // These are alloc deltas around each `phase()` scope, in the same six
+    // buckets the ns fields use, so a reader compares like with like. NOT a
+    // partition of `gcAllocBytes`: the phases do not tile the frame (there
+    // is un-phased work between them) and `toolNs` deliberately NESTS inside
+    // `eventNs`, so tool bytes are counted in events too. Same caveat the
+    // ns side carries, and for the same reason.
+    long eventAlloc;
+    long toolAlloc;
+    long cacheAlloc;
+    long drawAlloc;
+    long uploadAlloc;
+    long uiAlloc;
 }
 
 /// Per-frame phase categories timed by `FrameProbe.phase()`. Distinct from
@@ -419,6 +448,7 @@ version (PerfProbe) {
     /// end of scope. Non-copyable so the stop time is taken exactly once.
     struct ScopeTimer {
         private MonoTime start_;
+        private ulong    allocStart_;   // task 1800
         private Cat cat_;
         private bool armed_;
 
@@ -428,6 +458,14 @@ version (PerfProbe) {
             if (!armed_) return;
             const elapsed = MonoTime.currTime - start_;
             g_perf.recordNs(cat_, elapsed.total!"nsecs");
+            // Task 1800 — the alloc delta over the same scope, so every
+            // existing timer answers "and how much did it allocate" for free.
+            // The frame-phase probe put 99.9 % of a drag frame's 8 MB inside
+            // `events` with the tool apply at ZERO, which named a phase but
+            // not a call; these scopes are the finer grain inside it.
+            import core.memory : GC;
+            g_perf.recordAlloc(cat_,
+                cast(long)(GC.allocatedInCurrentThread - allocStart_));
         }
     }
 
@@ -467,13 +505,16 @@ version (PerfProbe) {
 
     struct PerfProbe {
         private TimerStat[firstCounter]              timers_;
+        private long[firstCounter]                   allocs_;   // task 1800
         private CounterStat[Cat.max + 1 - firstCounter] counters_;
 
         /// Open a scope timer for `c`. Records on destruction.
         ScopeTimer scope_(Cat c) {
+            import core.memory : GC;
             ScopeTimer z;
             z.cat_ = c;
             z.armed_ = true;
+            z.allocStart_ = GC.allocatedInCurrentThread;   // task 1800
             z.start_ = MonoTime.currTime;
             return z;
         }
@@ -490,6 +531,14 @@ version (PerfProbe) {
 
         /// Internal: record an elapsed-ns sample into a timer category.
         /// Called by ScopeTimer.~this. No-op if `c` is a counter.
+        /// Task 1800 — accumulated GC bytes for a TIMER category. Lives
+        /// beside the ns total rather than in a counter, because the question
+        /// it answers is about the same scope.
+        void recordAlloc(Cat c, long b) {
+            if (c >= firstCounter) return;
+            allocs_[c] += b;
+        }
+
         void recordNs(Cat c, long ns) {
             if (c >= firstCounter) return;
             timers_[c].add(ns);
@@ -499,6 +548,7 @@ version (PerfProbe) {
         /// (POST /api/perf/reset).
         void reset() {
             foreach (ref t; timers_)   t.clear();
+            allocs_[] = 0;                                    // task 1800
             foreach (ref cc; counters_) cc.clear();
         }
 
@@ -535,11 +585,12 @@ version (PerfProbe) {
                     comma();
                     app.formattedWrite(
                         `"%s":{"count":%d,"sum_ns":%d,"min_ns":%d,"max_ns":%d,` ~
-                        `"median_ns":%d,"p95_ns":%d}`,
+                        `"median_ns":%d,"p95_ns":%d,"alloc_bytes":%d}`,
                         member, t.count, t.sum,
                         t.count > 0 ? t.min : 0,
                         t.count > 0 ? t.max : 0,
-                        median, p95);
+                        median, p95,
+                        allocs_[__traits(getMember, Cat, member)]);
                 }
             }}
 
@@ -573,6 +624,7 @@ version (PerfProbe) {
     /// N-cell viewport loop) and the accumulator sums them.
     struct PhaseTimer {
         private MonoTime start_;
+        private ulong    allocStart_;   // task 1800
         private Phase p_;
         private bool armed_;
 
@@ -582,6 +634,12 @@ version (PerfProbe) {
             if (!armed_) return;
             const elapsed = MonoTime.currTime - start_;
             g_frames.addPhase(p_, elapsed.total!"nsecs");
+            // Task 1800 — the alloc delta over the same scope. A TLS read
+            // either side, which is why this can sit on a per-phase scope
+            // and could not sit on a per-element one.
+            import core.memory : GC;
+            g_frames.addPhaseAlloc(p_,
+                cast(long)(GC.allocatedInCurrentThread - allocStart_));
         }
     }
 
@@ -627,9 +685,11 @@ version (PerfProbe) {
         /// destruction; multiple opens of the same phase within one frame
         /// (e.g. `draw` across an N-cell render loop) accumulate.
         PhaseTimer phase(Phase p) {
+            import core.memory : GC;
             PhaseTimer z;
             z.p_ = p;
             z.armed_ = true;
+            z.allocStart_ = GC.allocatedInCurrentThread;   // task 1800
             z.start_ = MonoTime.currTime;
             return z;
         }
@@ -644,6 +704,19 @@ version (PerfProbe) {
                 case Phase.draw:   cur_.drawNs   += ns; break;
                 case Phase.upload: cur_.uploadNs += ns; break;
                 case Phase.ui:     cur_.uiNs     += ns; break;
+            }
+        }
+
+        /// Task 1800 — the alloc twin of `addPhase`, same buckets, same
+        /// accumulate-on-reopen behaviour.
+        void addPhaseAlloc(Phase p, long b) {
+            final switch (p) {
+                case Phase.events: cur_.eventAlloc  += b; break;
+                case Phase.tool:   cur_.toolAlloc   += b; break;
+                case Phase.cache:  cur_.cacheAlloc  += b; break;
+                case Phase.draw:   cur_.drawAlloc   += b; break;
+                case Phase.upload: cur_.uploadAlloc += b; break;
+                case Phase.ui:     cur_.uiAlloc     += b; break;
             }
         }
 
@@ -755,9 +828,12 @@ version (PerfProbe) {
             return format(
                 `{"totalNs":%d,"eventNs":%d,"toolNs":%d,"cacheNs":%d,` ~
                 `"drawNs":%d,"uploadNs":%d,"uiNs":%d,"gcAllocBytes":%d,` ~
-                `"gcCollections":%d}`,
+                `"gcCollections":%d,"eventAlloc":%d,"toolAlloc":%d,` ~
+                `"cacheAlloc":%d,"drawAlloc":%d,"uploadAlloc":%d,"uiAlloc":%d}`,
                 r.totalNs, r.eventNs, r.toolNs, r.cacheNs, r.drawNs,
-                r.uploadNs, r.uiNs, r.gcAllocBytes, r.gcCollections);
+                r.uploadNs, r.uiNs, r.gcAllocBytes, r.gcCollections,
+                r.eventAlloc, r.toolAlloc, r.cacheAlloc, r.drawAlloc,
+                r.uploadAlloc, r.uiAlloc);
         }
 
         /// JSON snapshot: frame count, total-time percentiles, per-phase
