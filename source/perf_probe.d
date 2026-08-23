@@ -194,6 +194,15 @@ enum Cat {
     // prints `entries=0 timerOpens=1` — the straddle with the in-window build
     // now removed — which is the same artifact seen from the other side.
     bvhRebuildEnter,
+    // Task 1760 probe — how many times a DERIVED accessor is re-derived during
+    // one drag. `Document.primary` is a function, not a field
+    // (`nthEditTargetCandidate(0)`), and `TransformTool.computeSelectionHash`
+    // rehashes the selection; a flame of `move/baseline` put them at 6.38 %
+    // and 6.75 % of the profile on a ONE-LAYER document, where the walk is a
+    // single loop iteration. A share that large from a body that small is a
+    // CALL-COUNT statement, and these are what turn it into one.
+    editTargetDerive,
+    selectionHashCompute,
     vertsTouched,
     // undoApply — bumped once per successful `undo()` (Case A/B success
     // return, command_history.d:1090). A true counter (ordinal >

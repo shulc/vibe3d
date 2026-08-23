@@ -634,6 +634,7 @@ protected:
     // uint): a wider same-run change-detector token, harmless — nothing here
     // is persisted or compared across runs.
     ulong computeSelectionHash() {
+        { import perf_probe : g_perf, Cat; g_perf.count(Cat.selectionHashCompute, 1); }
         return mesh.selectionSignature(*editMode);
     }
 

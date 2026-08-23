@@ -135,6 +135,7 @@ mixin template DocumentSelection() {
     /// than dropped is precisely the stored pointer this task exists to not
     /// reintroduce.
     private inout(Layer) nthEditTargetCandidate(size_t n) inout {
+        { import perf_probe : g_perf, Cat; g_perf.count(Cat.editTargetDerive, 1); }
         size_t emitted = 0;
         foreach (stage; 0 .. 2) {
             immutable want = stage == 0 ? SelState.Current : SelState.History;

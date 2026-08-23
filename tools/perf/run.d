@@ -2490,6 +2490,21 @@ long perfCounterSum(JSONValue perf, string key) {
 long perfTimerSumNs(JSONValue perf, string key) {
     return (key in perf) ? perf[key]["sum_ns"].integer : 0;
 }
+/// Task 1760 — the derived-accessor call counts for one measured drag window.
+/// Printed beside the case rather than buried in results.json: a share in a
+/// flame is an argument, a call count per drag step is a fact.
+void reportDeriveCounts(string caseName, long dragSteps) {
+    auto perf = perfRead();
+    immutable long et = perfCounterCount(perf, "editTargetDerive");
+    immutable long sh = perfCounterCount(perf, "selectionHashCompute");
+    if (et == 0 && sh == 0) return;
+    writefln("  %-28s derived per window: editTarget=%d selectionHash=%d"
+             ~ "  (drag steps=%d => %.1f / %.1f per step)",
+             caseName, et, sh, dragSteps,
+             dragSteps > 0 ? cast(double)et / dragSteps : 0.0,
+             dragSteps > 0 ? cast(double)sh / dragSteps : 0.0);
+}
+
 long perfTimerMaxNs(JSONValue perf, string key) {
     return (key in perf) ? perf[key]["max_ns"].integer : 0;
 }
