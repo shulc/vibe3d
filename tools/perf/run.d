@@ -1747,6 +1747,11 @@ struct FrameScenarioResult {
     // for "cage-sized or limit-sized".
     long       cageFacesAtToggle = -1;
     long       settles           = -1;  // tab-orbit: camera settles in the window
+    // vert-select (task 1770) — draw-call counts for the LAST rendered scene.
+    long       vertPassCalls     = -1;
+    long       vertPassVerts     = -1;
+    long       sceneDrawCalls    = -1;
+    long       selectedVerts     = -1;
     long       hoverPickCount    = -1;
     long       cacheNsWindowSum  = -1;  // sum of the PHASE over the window
 }
@@ -2087,6 +2092,88 @@ FrameScenarioResult runTabOrbit(int n, string meshType) {
     try res.cageFacesAtToggle = activeLayerInfo().faceCount;
     catch (Exception) { res.cageFacesAtToggle = -1; }
 
+    res.status = CaseStatus.OK;
+    return res;
+}
+
+// vert-select (task 1770) — a WHOLE-MESH VERTEX selection, on screen.
+//
+// WHY IT HAD TO EXIST BEFORE THE FIX IT WATCHES. `GpuMesh.drawVertices` issues
+// one `glDrawArrays` per SELECTED vertex. No existing scenario reaches that
+// loop: `drag-falloff` runs on an EMPTY selection (the whole-mesh fallback, so
+// nothing is marked), `lasso-dense` selects POLYGONS while this pass reads
+// vertex marks, and the 13 % that the vertex pass occupies in a flame is its
+// FIRST draw — one call rasterising every vertex as a grey dot. So the
+// expensive path was uncovered in both directions: a regression there would
+// not have reddened anything, and an improvement could not be shown. An
+// optimisation of it was in fact written and reverted for exactly that reason.
+//
+// THE SUBJECT IS A COUNT, NOT A TIME, and that is deliberate. Draw calls are
+// exact, reproducible, and indifferent to what else the host is doing — this
+// lane has already had a night's numbers poisoned by CPU contention, and the
+// same defect is plainly visible in a counter that a stopwatch could not
+// resolve.
+//
+// `select.invert` is how the selection is built: selecting 100 489 indices
+// over HTTP exceeds the request-body limit and the connection is reset, so the
+// scenario selects ONE vertex and inverts.
+FrameScenarioResult runVertSelect(int n, string meshType) {
+    FrameScenarioResult res;
+    res.name = "vert-select";
+
+    resetMesh(meshType, n);
+    if (!selectMode("vertices", [0])) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "selectMode vertices [0] failed";
+        return res;
+    }
+    if (!postCommand("select.invert")) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "select.invert failed";
+        return res;
+    }
+    settleAfterReset();
+
+    // Non-vacuity, checked rather than assumed: if the invert did not take,
+    // every assertion below would pass on a scenario that selected nothing.
+    res.selectedVerts = selectedVertexCount();
+    if (res.selectedVerts < 1000) {
+        res.status = CaseStatus.ERROR;
+        res.detail = format("only %d vertices selected — the scenario cannot "
+                            ~ "exhibit the per-vertex draw-call path",
+                            res.selectedVerts);
+        return res;
+    }
+
+    resetFrameCounts();
+    framesReset();
+
+    auto cam = fetchCamera();
+    immutable int cy = cam.vpY + cam.height / 2;
+    string log = buildHoverLog(cam.vpX, cam.vpY, cam.width, cam.height,
+                               cam.vpX + cast(int)(cam.width * 0.35), cy,
+                               cam.vpX + cast(int)(cam.width * 0.65), cy, 24);
+    try {
+        playAndWait(log);
+    } catch (Exception e) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "hover sweep: " ~ e.msg;
+        return res;
+    }
+    settleAfterPlay();
+
+    res.stats = fetchFrames();
+    if (res.stats.empty) {
+        res.status = CaseStatus.ERROR;
+        res.detail = "no frames recorded — vibe3d not built with --build=perf?";
+        return res;
+    }
+    immutable auto vc = fetchVertPassCounts();
+    if (!vc.empty) {
+        res.vertPassCalls = vc.vertCalls;
+        res.vertPassVerts = vc.vertVerts;
+        res.sceneDrawCalls = vc.drawCalls;
+    }
     res.status = CaseStatus.OK;
     return res;
 }
@@ -3680,6 +3767,36 @@ Invariant[] checkFramesInvariants(FrameScenarioResult[] results, bool ciMode,
         }
     }
 
+    // F-I12 — GATING. vert-select: the vertex pass must not issue a draw call
+    // PER SELECTED VERTEX.
+    //
+    // The bound is a small CONSTANT rather than a ratio, because the correct
+    // shape of this pass is a constant: all-vertices dots (1), the selected
+    // run(s), and the hovered one. A whole-mesh selection is contiguous apart
+    // from whatever the invert left out, so a handful of runs covers it. If
+    // the count ever scales with the selection again — 100 489 calls at n=316,
+    // which is what this was measured doing — it lands far outside 16 and says
+    // so with both numbers.
+    //
+    // `selectedVerts` is reported beside it because a green here is otherwise
+    // indistinguishable from a scenario that selected nothing, which is the
+    // failure mode the runner already refuses in the scenario body.
+    {
+        auto r = findFrameScenario(results, "vert-select");
+        if (r !is null && r.status == CaseStatus.OK && r.vertPassCalls >= 0) {
+            enum long K_VERT_PASS_CALLS = 16;
+            immutable bool ok = r.vertPassCalls <= K_VERT_PASS_CALLS;
+            inv ~= Invariant("F-I12",
+                format("vert-select: vertex pass issues <= %d draw calls, "
+                       ~ "not one per selected vertex", K_VERT_PASS_CALLS),
+                ok, format("pass.verts.calls=%d over %d selected vertices "
+                           ~ "(%d points submitted, %d scene draw calls)%s",
+                           r.vertPassCalls, r.selectedVerts, r.vertPassVerts,
+                           r.sceneDrawCalls,
+                           ok ? "" : "  <-- ONE DRAW CALL PER SELECTED VERTEX"));
+        }
+    }
+
     // F-I11 — GATING. tab-cold: NO BVH is constructed over the LIMIT surface.
     //
     // This is the half of task 1540's option C that the HTTP suite cannot
@@ -3892,6 +4009,7 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
         ScenarioSpec("lasso-dense",  &runLassoDense),
         ScenarioSpec("undo-spam",    &runUndoSpam),
         ScenarioSpec("tab-orbit",    &runTabOrbit),
+        ScenarioSpec("vert-select",  &runVertSelect),
         // tab-cold goes LAST, and the position is load-bearing (task 1374).
         // `tab-subpatch` above is today the process's FIRST buildPreview --
         // the three scenarios before it never call one -- so it already

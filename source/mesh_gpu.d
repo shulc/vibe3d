@@ -1399,20 +1399,59 @@ struct GpuMesh {
             return (c == uint.max) ? -1 : cast(int)c;
         }
 
+        // RUN-MERGED (task 1770). These two loops used to issue ONE
+        // glDrawArrays PER MATCHING VERTEX. Measured by `frames vert-select`
+        // at n=316 with the whole mesh selected: 100 490 calls in the vertex
+        // pass, 100 495 in the entire scene — that pass was 99.99 % of every
+        // draw call the frame made.
+        //
+        // Nothing about WHAT is drawn changes: the same VBO indices, in the
+        // same order, same point size, same uniform colour, and the depth test
+        // is off for both passes so even ordering is immaterial. Only the call
+        // count changes — a contiguous run becomes one call.
+        //
+        // The loops run to `vertCount` INCLUSIVE so the final run is flushed by
+        // the same branch that flushes every other one. Without that the last
+        // run — which on a whole-mesh selection is the ONLY run — is dropped
+        // and the selection stops rendering entirely.
+        //
+        // WRITTEN TWICE RATHER THAN SHARED THROUGH A PREDICATE, and that is a
+        // measurement rather than a style choice. The first draft factored the
+        // run-merge into a local taking a `scope bool delegate(int)`; a
+        // delegate is an INDIRECT CALL PER VERTEX, and at this vertex count it
+        // cost more than the draw calls it saved — frame p50 went 0.390 ->
+        // 0.422 ms, an optimisation that was a slowdown. Two explicit loops
+        // inline their predicate and keep the win.
         glPointSize(10.0f);
         glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
-        for (int i = 0; i < vertCount; i++) {
-            int c = cageOf(i);
-            if (c < 0) continue;
-            if (c < cast(int)selected.length && selected[c])
-                dcArrays(DrawPass.verts, GL_POINTS, i, 1);
+        {
+            int runStart = -1;
+            for (int i = 0; i <= vertCount; i++) {
+                bool hit = false;
+                if (i < vertCount) {
+                    immutable int c = cageOf(i);
+                    hit = c >= 0 && c < cast(int)selected.length && selected[c];
+                }
+                if (hit) {
+                    if (runStart < 0) runStart = i;
+                } else if (runStart >= 0) {
+                    dcArrays(DrawPass.verts, GL_POINTS, runStart, i - runStart);
+                    runStart = -1;
+                }
+            }
         }
 
         if (hovered >= 0) {
             glUniform3f(locColor, 1.0f, 0.95f, 0.15f);
-            for (int i = 0; i < vertCount; i++) {
-                if (cageOf(i) == hovered)
-                    dcArrays(DrawPass.verts, GL_POINTS, i, 1);
+            int runStart = -1;
+            for (int i = 0; i <= vertCount; i++) {
+                immutable bool hit = (i < vertCount) && cageOf(i) == hovered;
+                if (hit) {
+                    if (runStart < 0) runStart = i;
+                } else if (runStart >= 0) {
+                    dcArrays(DrawPass.verts, GL_POINTS, runStart, i - runStart);
+                    runStart = -1;
+                }
             }
         }
 

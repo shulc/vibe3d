@@ -472,15 +472,32 @@ void selectEdgesBy(const long[] idx) {
 /// The selection type the RENDERER is feeding back, straight from the app.
 string selTypeNow() { return gj("/api/selection")["selType"].str; }
 
-unittest { // the VERTEX mask reaches drawVertices, exactly once per element
+unittest { // the VERTEX mask reaches drawVertices, with the right run structure
     // `drawVertices` submits one GL_POINTS batch for the whole cloud and then
-    // one MORE for each selected vertex, so `pass.verts.calls == 1 + n`. The
-    // leading 1 is the trap this block is built around: it is submitted in
+    // one MORE PER CONTIGUOUS RUN of selected vertices, so
+    // `pass.verts.calls == 1 + runsOf(mask, true)`.
+    //
+    // TASK 1770 CHANGED THIS FORMULA, and what it changed is arithmetic, not
+    // the contract. It used to read `1 + n`, one call per selected VERTEX,
+    // because the pass issued a draw call each; at n=316 with the whole mesh
+    // selected that measured 100 490 calls in a frame whose total was 100 495.
+    // The pass now merges adjacent indices exactly as the EDGE pass beside it
+    // already did — same VBO indices, same order, same colour, depth test off
+    // — so this block now uses the same `runsOf` the edge block does, and the
+    // two passes are finally described by one rule.
+    //
+    // WHAT DID NOT MOVE is the assertion that matters most: `passVerts` is
+    // still exactly `nv + n`, because merging changes how many CALLS carry the
+    // points, never how many points. That is the exactness guard, and it went
+    // on passing across the change.
+    //
+    // The leading 1 is the trap this block is built around: it is submitted in
     // every mode whether or not the mask consumer ever ran, so `calls >= 1`
     // and `verts > 0` are both satisfied by a mask that silently reported
     // nothing. Only the strict `> 1` on a NON-EMPTY selection proves the
-    // consumer executed — that is the positive control here, and it is why
-    // every pattern below except the first selects something.
+    // consumer executed — that is the positive control here, and it survives
+    // the merge, since even a fully contiguous selection still costs a second
+    // call. It is why every pattern below except the first selects something.
     resetApp();
     auto model = gj("/api/model");
     immutable long nv = modelVertCount(model);
@@ -500,10 +517,13 @@ unittest { // the VERTEX mask reaches drawVertices, exactly once per element
 
         auto w = lastScene();
         immutable long n = cast(long)pattern.length;
-        assert(passCalls(w, "verts") == 1 + n,
-               format("%d selected vertices: expected %d point submissions "
-                      ~ "(1 cloud + %d dots), got %d",
-                      n, 1 + n, n, passCalls(w, "verts")));
+        bool[] selMask = new bool[](cast(size_t)nv);
+        foreach (vi; pattern) selMask[cast(size_t)vi] = true;
+        immutable long runs = runsOf(selMask, true);
+        assert(passCalls(w, "verts") == 1 + runs,
+               format("%d selected vertices in %d run(s): expected %d point "
+                      ~ "submissions (1 cloud + %d run(s)), got %d",
+                      n, runs, 1 + runs, runs, passCalls(w, "verts")));
         assert(passVerts(w, "verts") == nv + n,
                format("%d selected vertices: expected %d submitted points, got %d",
                       n, nv + n, passVerts(w, "verts")));

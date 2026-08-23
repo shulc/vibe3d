@@ -197,6 +197,55 @@ FrameStats fetchFrames() {
     return s;
 }
 
+/// How many vertices are selected right now. The non-vacuity check for
+/// `vert-select` (task 1770): every assertion that scenario makes is satisfied
+/// by a mesh with NOTHING selected, so the count has to be looked at rather
+/// than assumed.
+long selectedVertexCount() {
+    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/selection"));
+    auto p = "selectedVertices" in j;
+    if (p is null || p.type != JSONType.array) return 0;
+    return cast(long)p.array.length;
+}
+
+/// Draw-call counts for the LAST rendered scene, off `/api/frames/counts`.
+///
+/// A COUNTER, and that is the point (task 1770). The defect it exists to watch
+/// — one `glDrawArrays` per selected vertex — is invisible to a stopwatch on a
+/// contended host and perfectly visible here, because the number is exact,
+/// reproducible and independent of what else the machine is doing. The lane
+/// already learned this the hard way: an unmeasurable "optimisation" of this
+/// very path was written and reverted because no timing scenario could see it.
+struct VertPassCounts {
+    bool empty = true;
+    long vertCalls;    // pass.verts.calls  — draw calls in the vertex pass
+    long vertVerts;    // pass.verts.verts  — points submitted by it
+    long drawCalls;    // whole-scene total, for context
+    long frames;
+}
+
+VertPassCounts fetchVertPassCounts() {
+    VertPassCounts c;
+    auto j = parseJSON(cast(string)get(g_baseUrl ~ "/api/frames/counts"));
+    if ("lastScene" !in j) return c;      // uninstrumented build answers "{}"
+    auto ls = j["lastScene"];
+    if (ls.type == JSONType.null_) return c;
+    auto pass = "pass" in ls;
+    if (pass is null) return c;
+    auto vp = "verts" in *pass;
+    if (vp is null) return c;
+    c.vertCalls = (*vp)["calls"].integer;
+    c.vertVerts = (*vp)["verts"].integer;
+    c.drawCalls = ls["drawCalls"].integer;
+    c.frames    = ("frames" in j) ? j["frames"].integer : 0;
+    c.empty     = false;
+    return c;
+}
+
+void resetFrameCounts() {
+    post(g_baseUrl ~ "/api/frames/counts/reset", "");
+}
+
 struct ModelInfo { long vertexCount; long faceCount; }
 // Lightweight geometry probe for command cases: /api/layers reports the
 // active layer's vertex/face counts AND its mutationVersion without
