@@ -202,14 +202,12 @@ class Command {
             scope(exit) if (hideBatchMesh !is null) hideBatchMesh.endHideDeriveBatch();
             VectorStack vts;
             SubjectPacket subj;
-            subj.mesh     = mesh;
-            subj.editMode = editMode;
             // The CURRENT selection type, from the app's live authority when
             // one is wired (see `currentType()` and THE RULE above it). This
             // is the command layer's half of the same answer app.d publishes
             // into its own SubjectPacket via `buildToolVts`; the two layers
             // now read one authority instead of two.
-            subj.selType  = currentType();
+            //
             // The camera the operator evaluates against (task 0619). An
             // `Operator`'s `evaluate` can only see the viewport this packet
             // carries, and the pixel-space falloff types read it through
@@ -234,8 +232,13 @@ class Command {
             // constructed headless command may leave null; that one case
             // keeps the field's default (width 0 / NaN matrices, which
             // every viewport-dependent stage already treats as "invalid,
-            // early out") instead of crashing.
-            if (view !is null) subj.viewport = effectiveViewport();
+            // early out") instead of crashing. Guard and fallback preserved
+            // verbatim (task 1904 Stage 3): `SubjectSource.viewport` simply
+            // stays `Viewport.init` when `view is null`, matching the old
+            // "leave the field's default" branch exactly.
+            import toolpipe.subject : SubjectSource, fillSubject;
+            Viewport vp = (view !is null) ? effectiveViewport() : Viewport.init;
+            fillSubject(subj, SubjectSource(mesh, editMode, currentType(), vp));
             vts.put(&subj);
             return op.evaluate(vts);
         }
@@ -627,13 +630,16 @@ private:
 // one depending on who fired it.
 //
 // VERIFIED BY MUTATION, twice:
-//   * dropping the `subj.viewport = effectiveViewport()` line — i.e. the code
-//     exactly as it stood before this fix — gives "Command.apply() must
+//   * replacing `Command.apply`'s
+//     `Viewport vp = (view !is null) ? effectiveViewport() : Viewport.init;`
+//     ternary with an unconditional `Viewport vp = Viewport.init;` — i.e.
+//     the code as it behaved before this fix — gives "Command.apply() must
 //     publish the live camera onto the subject packet: got width=0, want
 //     width=800";
-//   * dropping only the `view !is null` guard in front of it kills the
-//     process with SIGSEGV (exit 139) on the second case below, which is why
-//     that case exists: without it the guard is dead weight nobody reaches.
+//   * dropping only the `view !is null` guard in front of it (always taking
+//     the `effectiveViewport()` branch) kills the process with SIGSEGV
+//     (exit 139) on the second case below, which is why that case exists:
+//     without it the guard is dead weight nobody reaches.
 // ---------------------------------------------------------------------------
 version (unittest) {
     import operator         : Operator, VectorStack, OperatorActrCommon,
