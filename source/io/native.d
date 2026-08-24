@@ -1619,17 +1619,32 @@ private bool meshFromJson(JSONValue m, ref Mesh mesh)
             polys ~= face;
     }
 
-    if (verts.length == 0) {
-        v3dReject("no vertices");
-        return false;
-    }
     // NO POLYGON REQUIREMENT (task 1210). A points-only mesh is a state the
     // editor can now REACH: `vert.join` over every vertex of a plate leaves
     // one free vertex and no faces, matching the reference. The writer emitted
     // that document happily and this reader refused to read it back — the
-    // document saved, and opening it failed with "no polygons". The vertex
-    // requirement above stays: a mesh with neither vertices nor polygons is
-    // still nothing at all.
+    // document saved, and opening it failed with "no polygons".
+    //
+    // NO VERTEX REQUIREMENT EITHER (task 1890). What stood here was 1210's own
+    // leftover — "the vertex requirement above stays: a mesh with neither
+    // vertices nor polygons is still nothing at all" — and that sentence is
+    // FALSE about this editor. An EMPTY MESH ITEM is not nothing; it is what
+    // the Add Item ▸ Mesh button makes, it is a first-class row in the Items
+    // list, and both this list and the reference give it its own appearance
+    // (`ItemGlyph.Empty`, a greyed name) precisely because a created-but-empty
+    // layer is an ordinary thing to have.
+    //
+    // So this was the SAME defect as 1210 one clause further along, and it bit
+    // harder: the reject is raised per LAYER but fails the WHOLE file, so one
+    // empty layer made the entire document unopenable. Reported from a
+    // backdrop-only scene — two image planes and an empty mesh to model into —
+    // but the image planes are incidental: `layer.add` then save then load is
+    // the whole reproduction, measured before this line was touched.
+    //
+    // The STRUCTURAL guards are untouched and still do the real work: a
+    // "vertices" key that is missing or is not an array still rejects above,
+    // as does a malformed triple. This clause only ever judged an
+    // already-well-formed EMPTY array, which is a document the writer emits.
 
     // Out-of-range vertex index check before committing anything.
     const uint nv = cast(uint) verts.length;
