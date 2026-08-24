@@ -226,8 +226,12 @@ struct HeadlessPanel {
         frame();
     }
 
-    private void keyDown(int key) { ImGui.GetIO().AddKeyEvent(cast(ImGuiKey) key, true); }
-    private void keyUp(int key)   { ImGui.GetIO().AddKeyEvent(cast(ImGuiKey) key, false); }
+    /// Push one key down / up into ImGui's input queue, exactly as the SDL2
+    /// backend does. Public because a test module next door drives keys that
+    /// this harness has no gesture for (task 1850 sends a bare Tab).
+    void keyDown(int key) { ImGui.GetIO().AddKeyEvent(cast(ImGuiKey) key, true); }
+    /// ditto
+    void keyUp(int key)   { ImGui.GetIO().AddKeyEvent(cast(ImGuiKey) key, false); }
 
     /// Tear the context down. Safe to call twice.
     void close() {

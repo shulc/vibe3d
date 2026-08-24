@@ -17,6 +17,7 @@ import ImGui = d_imgui;
 import d_imgui.imgui_h;
 import d_imgui.imgui_demo;
 import imgui_impl_sdl2;
+import imgui_event_gate : feedImGui, keyBelongsToEditor;
 import imgui_impl_opengl3;
 import nfde;
 
@@ -6567,7 +6568,16 @@ void main(string[] args) {
             }
         }
 
-        ImGui_ImplSDL2_ProcessEvent(ev);
+        // THE ONLY DOOR INTO IMGUI (task 1850). Tab is the subpatch toggle;
+        // ImGui's keyboard-focus walk eats it as well, so one press both
+        // toggled the flag and crept the focus one widget along. `feedImGui`
+        // holds back exactly the Tab PRESSES ImGui would turn into a focus
+        // move — bare and Shift+Tab — and passes everything else, releases
+        // included. Ctrl+Tab still reaches ImGui: that is the window switcher,
+        // not a focus move. The rule, and why it has no `WantTextInput`
+        // carve-out, are in `source/imgui_event_gate.d`; do not re-inline this
+        // call, a unittest scans `source/` for a second caller.
+        feedImGui(ev);
 
         // Route through viewportInputAllowed() so mouse events over the docked
         // "Viewport" window still reach 3D picking/orbit (objection 1 fix).
@@ -6592,8 +6602,15 @@ void main(string[] args) {
              ev.type == SDL_MOUSEWHEEL))
             return true;
 
-        if (io.WantTextInput &&
-            (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP))
+        // A FOCUSED TEXT FIELD OWNS THE KEYBOARD. Same rule as before, moved
+        // into `imgui_event_gate` so it can be tabled in a unittest (task
+        // 1850): the gate above now holds a bare Tab PRESS back from ImGui, so
+        // the focus can no longer walk off a field by itself — which makes THIS
+        // line the only thing between a Tab pressed mid-typing and the subpatch
+        // toggle at `case SDLK_TAB`. It did not have that job before the fix
+        // (the focus left the field on Tab #1 and Tab #2 came through here
+        // unswallowed), so it is pinned now rather than left inline.
+        if (!keyBelongsToEditor(ev.type, io.WantTextInput))
             return true;
 
         // Phase 1c — input-router seam: compute hovered/active viewport per
