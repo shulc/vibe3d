@@ -12,6 +12,8 @@ import operator                : VectorStack;
 
 import mesh : Mesh;
 import editmode : EditMode;
+import seltype : SelType;
+import toolpipe.subject : evaluateSubject, viewOnlySubject, SubjectSource;
 import snap : SnapResult, snapCursor;
 import snap_render : publishLastSnap, clearLastSnap;
 // Task 0617 Stage 4: Create-tools always build into the active/primary
@@ -103,11 +105,12 @@ BuildPlane pickMostFacingPlane(const ref Viewport vp) {
 // ---------------------------------------------------------------------------
 BuildPlane pickWorkplane(const ref Viewport vp) {
     if (g_pipeCtx is null) return pickMostFacingPlane(vp);
+    // Task 1904 Stage 4 / plan §1.3a: this evaluate's mesh/editMode/selType
+    // are the FROZEN view-only source (`viewOnlySubject`) — never live
+    // editor state. See the function's own doc comment for why.
     SubjectPacket subj;
-    subj.viewport = vp;   // workplane stage reads viewport for auto-mode camera-facing pick
-    VectorStack vts;
-    vts.put(&subj);
-    g_pipeCtx.pipeline.evaluate(vts);
+    VectorStack   vts;
+    evaluateSubject(subj, vts, viewOnlySubject(vp));
     if (auto wp = vts.get!WorkplanePacket())
         return BuildPlane(wp.normal, wp.axis1, wp.axis2);
     return pickMostFacingPlane(vp);
@@ -154,11 +157,11 @@ WorkplaneFrame pickWorkplaneFrame(const ref Viewport vp) {
         f.origin = vp.focus;
         f.isAuto = true;
     } else {
+        // Task 1904 Stage 4 / plan §1.3a: FROZEN view-only source, same as
+        // `pickWorkplane` above — never live editor state.
         SubjectPacket subj;
-        subj.viewport = vp;
-        VectorStack vts;
-        vts.put(&subj);
-        g_pipeCtx.pipeline.evaluate(vts);
+        VectorStack   vts;
+        evaluateSubject(subj, vts, viewOnlySubject(vp));
         if (auto wp = vts.get!WorkplanePacket()) {
             f.normal = wp.normal;
             f.axis1  = wp.axis1;
@@ -477,13 +480,12 @@ SnapPacket currentSnapPacket(const ref Mesh mesh, EditMode editMode,
                               const ref Viewport vp)
 {
     if (g_pipeCtx is null) return SnapPacket.init;
+    // selType frozen at Vertex (plan §1.3 — one of the seven sites that
+    // never had a live SelType/SelTypeOrder to read).
     SubjectPacket subj;
-    subj.mesh     = cast(Mesh*)&mesh;
-    subj.editMode = editMode;
-    subj.viewport = vp;
-    VectorStack vts;
-    vts.put(&subj);
-    g_pipeCtx.pipeline.evaluate(vts);
+    VectorStack   vts;
+    evaluateSubject(subj, vts,
+        SubjectSource(cast(Mesh*)&mesh, editMode, SelType.Vertex, vp));
     auto snapPkt = vts.get!SnapPacket();
     if (snapPkt is null) return SnapPacket.init;
     return *snapPkt;
@@ -526,13 +528,13 @@ SnapResult snapLocalHit(ref Vec3 hitLocal,
 {
     SnapResult sr;
     if (g_pipeCtx is null) return sr;
+    // selType frozen at Vertex (plan §1.3 — one of the seven sites that
+    // never had a live SelType/SelTypeOrder to read). `mesh` cast is the
+    // same "SnapStage doesn't mutate" pointer widening the old build did.
     SubjectPacket subj;
-    subj.mesh             = cast(Mesh*)&mesh;   // SnapStage doesn't mutate
-    subj.editMode         = editMode;
-    subj.viewport         = vp;
-    VectorStack vts;
-    vts.put(&subj);
-    g_pipeCtx.pipeline.evaluate(vts);
+    VectorStack   vts;
+    evaluateSubject(subj, vts,
+        SubjectSource(cast(Mesh*)&mesh, editMode, SelType.Vertex, vp));
     auto snapPkt = vts.get!SnapPacket();
     if (snapPkt is null || !snapPkt.enabled) return sr;
 
