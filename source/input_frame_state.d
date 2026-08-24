@@ -54,7 +54,7 @@ module input_frame_state;
 import editor_app         : EditorApp;
 import toolpipe.packets   : SubjectPacket, GesturePacket;
 import operator           : VectorStack;
-import toolpipe.pipeline  : g_pipeCtx;
+import toolpipe.subject   : SubjectSource, evaluateSubject;
 import seltype             : currentSelType;
 import d_imgui.imgui_h    : ImVec2;
 
@@ -105,18 +105,14 @@ struct InputFrameState {
     void buildToolVts(out SubjectPacket subj, ref VectorStack vts,
                        int curX = -1, int curY = -1, bool curValid = false,
                        GesturePacket gest = GesturePacket.init) {
-        subj.mesh        = &app.mesh();
-        subj.editMode    = app.editMode;
-        subj.selType     = currentSelType(app.selTypeOrder);
-        subj.viewport    = app.vpm.inputSnapshot();
-        subj.cursorX     = curX;
-        subj.cursorY     = curY;
-        subj.cursorValid = curValid;
-        vts.put(&subj);
+        auto src = SubjectSource(&app.mesh(), app.editMode,
+                                  currentSelType(app.selTypeOrder),
+                                  app.vpm.inputSnapshot());
+        src.cursorX     = curX;
+        src.cursorY     = curY;
+        src.cursorValid = curValid;
         gestureSlot = gest;
-        vts.put(&gestureSlot);
-        if (g_pipeCtx !is null)
-            g_pipeCtx.pipeline.evaluate(vts);
+        evaluateSubject(subj, vts, src, &gestureSlot);
     }
 
     // `viewportInputAllowed`'s own backing flag stays a main()-local

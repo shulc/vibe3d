@@ -738,32 +738,23 @@ protected:
     /// unit-test contexts with no pipe registered.
     protected bool buildLocalVts(out SubjectPacket subj, ref VectorStack vts) {
         import toolpipe.pipeline : g_pipeCtx;
+        import toolpipe.subject  : SubjectSource, evaluateSubject;
         if (g_pipeCtx is null || mesh is null) return false;
-        subj.mesh             = mesh;
-        subj.editMode         = *editMode;
         // Blocker 1 (0614 review): match app.d's buildToolVts — read the
         // SAME live authority so the apply path (this function) and the
         // render path (buildToolVts) agree on the subject. Left at the
         // packet's own Vertex default when no live source is wired (see
         // `selTypeSrc_`'s doc comment above).
-        if (selTypeSrc_) subj.selType = selTypeSrc_();
-        subj.viewport         = cachedVp;
+        auto src = SubjectSource(mesh, *editMode,
+                                  selTypeSrc_ ? selTypeSrc_() : SelType.Vertex,
+                                  cachedVp);
         // Task 1069 — declare the morph routing target on the subject.
-        // Resolved AGAINST THIS MESH, so a target naming a map that this layer
-        // does not carry degrades to "no target" rather than to a stale name.
-        // Declared here for every TransformTool subclass; only
-        // XfrmTransformTool's apply path READS it (plan §2.0).
-        {
-            import morph_target : resolveMorphTarget;
-            string mtName; MapKind mtKind;
-            if (resolveMorphTarget(mesh, mtName, mtKind)) {
-                subj.morphTargetName = mtName;
-                subj.morphTargetKind = mtKind;
-            }
-        }
-        vts.put(&subj);
-        g_pipeCtx.pipeline.evaluate(vts);
-        return true;
+        // Resolved AGAINST THIS MESH by `fillSubject`, so a target naming a
+        // map that this layer does not carry degrades to "no target" rather
+        // than to a stale name. Requested here for every TransformTool
+        // subclass; only XfrmTransformTool's apply path READS it (plan §2.0).
+        src.resolveMorphTarget = true;
+        return evaluateSubject(subj, vts, src);
     }
 
     void currentBasis(out Vec3 ax, out Vec3 ay, out Vec3 az,
