@@ -258,7 +258,18 @@ public:
         import std.format : format;
         foreach (kind; op.requiredPackets()) {
             if (vts.has(kind)) continue;
-            const opName = typeid(op).name;
+            // `typeid(op)` where `op`'s STATIC type is an interface
+            // (`Operator`) returns the INTERFACE's own TypeInfo
+            // ("operator.Operator") for every caller, not the concrete
+            // stage's — a D trap distinct from the class case, where
+            // `typeid` on a class-typed reference correctly dispatches to
+            // the dynamic type (task 1904 Stage 6 measured this directly:
+            // the de-spam key collapsed across ALL operator types sharing a
+            // missing `kind`, so a second stage's warning silently rode the
+            // first's already-consumed key, and the message never named the
+            // real offender). Casting through `Object` first forces the
+            // correct dynamic lookup.
+            const opName = typeid(cast(Object) op).name;
             const key = opName ~ "|" ~ kind.to!string;
             logWarnOnce("toolpipe", key, format(
                 "WARNING: operator %s requires packet %s but " ~

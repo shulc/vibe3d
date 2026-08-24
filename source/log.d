@@ -206,7 +206,13 @@ private LogEntry[] snapshotLocked() @trusted nothrow {
 version (unittest) {
     // Test-only hard reset of the shared state. Acquires the lock so it is safe
     // even though tests run single-threaded.
-    private void resetLogForTest() @trusted {
+    //
+    // Non-private (task 1904 Stage 6, doc/subject_stage_plan.md §7): the
+    // `requiredPackets()` witness (tests/unit/toolpipe/
+    // required_packets_witness_test.d) needs this from another module. Still
+    // only compiled under `version (unittest)`, so it never reaches a
+    // release binary regardless of visibility.
+    void resetLogForTest() @trusted {
         auto m = logMutex();
         m.lock();
         scope(exit) m.unlock();
