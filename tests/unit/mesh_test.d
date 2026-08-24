@@ -22,6 +22,7 @@ import mesh_ops.connected_mask : MeshConnectedMaskOps;
 import std.algorithm.sorting : sort;
 import std.math : cos, sin, PI;
 import std.format : format;
+import tests.unit.fixtures : makeTaggedGrid, findEdge;
 import mesh;
 
     unittest { // connectedComponentVertices: two disjoint cubes — island is
@@ -5682,4 +5683,160 @@ unittest { // earClipRingCorners: a ring on which the quality EARLY-OUT actually
             ~ "[[3,4,5],[5,0,1],[2,3,5],[1,2,5]] instead has the threshold at 0.8 "
             ~ "or higher, or no early-out at all; one that answers "
             ~ "[[0,2,1],[5,2,0],[2,4,3],[2,5,4]] has it at 0.16 or below");
+}
+
+// ---------------------------------------------------------------------------
+// TASK 1902, Stage B drill (2026-08-25) — three `mesh_planes.rewriteFaces`
+// call sites with NO existing red witness in the tree. Drilled live: at each
+// site, `faceMaterial = new uint[](faces.length);` dropped in right after
+// the `rewriteFaces` call reddened NEITHER `dub test --config=tests` (260
+// modules passed, unchanged) NOR the focused HTTP test named below (stayed
+// PASS with the mutation in place) — a check that cannot come out
+// differently (CLAUDE.md). The three unittests below are the missing
+// witnesses; each was confirmed to redden against the drop before being
+// written up clean.
+// ---------------------------------------------------------------------------
+
+unittest // removeEdgesByMask (site 5): dissolving the interior edge between
+         // two adjacent faces merges them into ONE polygon whose plane
+         // values must come from the REPRESENTATIVE old face (`comp[0]`, the
+         // smaller of the two original indices), via `mesh_planes.rewriteFaces`.
+         // `./run_test.d test_delete` (edge-delete/remove cases) and
+         // `test_undo_tracker_delete`/`test_mesh_edit_delta`/
+         // `test_uv_undo_delta` all stayed PASS under the drop — none of them
+         // asserts a plane VALUE on a merged face, only topology/undo shape.
+{
+    Mesh m = makeTaggedGrid();   // 3x3 grid, 9 quads: faceMaterial alternates
+                                 // 0/1 by fi%2, facePart cycles [0,2,5] by fi%3
+    m.buildLoops();
+    m.syncSelection();
+
+    // Faces 1 ([1,2,6,5]) and 2 ([2,3,7,6]) are adjacent, sharing the
+    // interior edge (2,6). material[1]=1, part[1]=2 — BOTH non-zero, so a
+    // dropped carry (reads T.init == 0) cannot coincide with the expected
+    // value by accident.
+    assert(m.faces[1][] == [1u, 2u, 6u, 5u], "fixture shape assumption: face 1");
+    assert(m.faces[2][] == [2u, 3u, 7u, 6u], "fixture shape assumption: face 2");
+    assert(m.faceMaterial[1] == 1 && m.facePart[1] == 2,
+        "fixture: face 1 must carry a non-zero material/part for this drill "
+      ~ "to discriminate a drop from the T.init default");
+
+    const edgeIdx = findEdge(m, 2, 6);
+    assert(edgeIdx >= 0, "fixture: edge (2,6) must exist between faces 1 and 2");
+
+    bool[] mask = new bool[](m.edges.length);
+    mask[edgeIdx] = true;
+    const removed = m.removeEdgesByMask(mask);
+    assert(removed == 1, "exactly one edge dissolved");
+    assert(m.faces.length == 8,
+        format("two quads merge into one hexagon: 9 -> 8 faces (got %d)",
+               m.faces.length));
+
+    // The merged polygon is appended at the TAIL of [kept ++ merged] — the
+    // one face whose old index no longer names a still-quad survivor.
+    assert(m.faces[$ - 1].length == 6,
+        format("merged face should be a hexagon (4+4-2 shared corners), got "
+             ~ "%d corners", m.faces[$ - 1].length));
+    assert(m.faceMaterial[$ - 1] == 1,
+        format("removeEdgesByMask: merged face must keep comp[0]'s (face 1's) "
+             ~ "material via mesh_planes.rewriteFaces (got %d)",
+               m.faceMaterial[$ - 1]));
+    assert(m.facePart[$ - 1] == 2,
+        format("removeEdgesByMask: merged face must keep comp[0]'s (face 1's) "
+             ~ "part via mesh_planes.rewriteFaces (got %d)",
+               m.facePart[$ - 1]));
+}
+
+unittest // triangulateFacesByMask (site 6): each triangle split off a masked
+         // quad must inherit the SOURCE face's plane values via `faceOrigin`
+         // (already newToOld, fed straight into `mesh_planes.rewriteFaces`).
+         // `./run_test.d test_fixture_triangulate_convex_strip` stayed PASS
+         // under the drop — it asserts triangle SHAPE/winding, never a plane
+         // value.
+{
+    Mesh m = makeTaggedGrid();
+    m.buildLoops();
+    m.syncSelection();
+
+    // Face 1: material=1, part=2 (both non-zero — see the removeEdgesByMask
+    // drill above for why that matters). Not hidden/selected/subpatch-only
+    // in a way that would interfere: face 1 IS marked Subpatch by the
+    // fixture, which triangulateFacesByMask does not gate on.
+    assert(m.faceMaterial[1] == 1 && m.facePart[1] == 2,
+        "fixture: face 1 must carry a non-zero material/part for this drill "
+      ~ "to discriminate a drop from the T.init default");
+
+    bool[] mask = new bool[](m.faces.length);
+    mask[1] = true;
+    const changed = m.triangulateFacesByMask(mask);
+    assert(changed == 1, "exactly one quad triangulated");
+    assert(m.faces.length == 10,
+        format("one quad -> two triangles: 9 -> 10 faces (got %d)", m.faces.length));
+
+    // Faces pass through in original order; the masked quad at old index 1
+    // is replaced IN PLACE by its two triangles, landing at new indices 1
+    // and 2 (face 0 stays at 0; faces 3.. shift by +1 for the extra split).
+    foreach (fi; [1, 2]) {
+        assert(m.faces[fi].length == 3,
+            format("split triangle at new index %d should have 3 corners, got %d",
+                   fi, m.faces[fi].length));
+        assert(m.faceMaterial[fi] == 1,
+            format("triangulateFacesByMask: triangle at new index %d must keep "
+                 ~ "source face 1's material via faceOrigin (got %d)",
+                   fi, m.faceMaterial[fi]));
+        assert(m.facePart[fi] == 2,
+            format("triangulateFacesByMask: triangle at new index %d must keep "
+                 ~ "source face 1's part via faceOrigin (got %d)",
+                   fi, m.facePart[fi]));
+    }
+}
+
+unittest // arrayFacesGrid (site 7, the Merge-Vertices DEDUP block only):
+         // the survivor of a fingerprint-duplicate pair must keep ITS OWN
+         // material/part via `mesh_planes.rewriteFaces`'s `oldOfNew`, not a
+         // zero-filled default. Same geometric recipe as
+         // `tests/test_fixture_array.d`'s T6 ("two cap-to-cap cubes weld
+         // their shared face") — that HTTP test stayed PASS under the drop
+         // because it only counts verts/faces (12/11), never reads a plane
+         // value; a default cube's uniform material=0 would not have
+         // discriminated even if it did, which is why every face is seeded
+         // distinctly and non-zero here.
+{
+    Mesh m = makeCube();   // -0.5..0.5 cube, extent 1 on every axis
+    m.syncSelection();
+    m.faceMaterial = new uint[](m.faces.length);
+    m.facePart     = new uint[](m.faces.length);
+    foreach (fi; 0 .. m.faces.length) {
+        m.faceMaterial[fi] = cast(uint)(fi + 1);   // 1..6, never 0
+        m.facePart[fi]     = cast(uint)(fi + 10);  // 10..15, never 0
+    }
+
+    bool[] mask = new bool[](m.faces.length);
+    mask[] = true;   // whole cube, matching T6's "select all faces"
+
+    // T6's own recipe: numX=2 offX=1 (== the cube's own extent) clones a
+    // second cube cap-to-cap along +X; Merge Vertices welds the shared wall,
+    // producing exactly one fingerprint-duplicate pair for the dedup block
+    // below to drop.
+    const n = m.arrayFacesGrid(mask, /*numX*/2, /*numY*/1, /*numZ*/1,
+                                /*offset*/Vec3(1, 0, 0), /*jitter*/Vec3(0, 0, 0),
+                                /*scale*/Vec3(1, 1, 1), /*rotateDeg*/Vec3(0, 0, 0),
+                                /*between*/false, /*replaceSource*/false,
+                                /*invertPolygons*/false, /*mergeVertices*/true,
+                                /*mergeDistance*/0.01f);
+    assert(n == 6, format("setup: 6 selected faces cloned once, got %d", n));
+    assert(m.faces.length == 11,
+        format("T6's own law: 12 - 1 duplicate seam = 11 faces (got %d)",
+               m.faces.length));
+
+    // Every one of the 11 survivors — whichever half of each dedup pair the
+    // primitive kept — must read a non-zero (seeded) material/part.
+    foreach (fi; 0 .. m.faces.length) {
+        assert(m.faceMaterial[fi] != 0,
+            format("arrayFacesGrid dedup: face %d lost its material to the "
+                 ~ "primitive's carry (read 0; every seed value was 1..6)", fi));
+        assert(m.facePart[fi] != 0,
+            format("arrayFacesGrid dedup: face %d lost its part to the "
+                 ~ "primitive's carry (read 0; every seed value was 10..15)", fi));
+    }
 }

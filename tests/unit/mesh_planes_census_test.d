@@ -447,11 +447,15 @@ private struct AllowEntry { string file; string text; string reason; size_t coun
 
 private immutable AllowEntry[] kAllow = [
     // --- source/mesh.d: production face/vertex-rewrite sites (Stage B/vertex family) ---
-    AllowEntry("source/mesh.d", "faces              = newFaces;",
-        "sites 1/2/4/6: applyVertexRemapAndRebuild, applyVertexRemap, "
-      ~ "dissolveVerticesByMask, triangulateFacesByMask", 4),
-    AllowEntry("source/mesh.d", "faces              = keptFaces;",
-        "sites 3/5/7: deleteFacesByMask, removeEdgesByMask, arrayFacesGrid", 3),
+    // Stage B (task 1902) migrated sites 1/2/3/4/5/6/7 onto
+    // mesh_planes.rewriteFaces — their hand-rolled `faces = newFaces;` /
+    // `faces              = keptFaces;` lines are gone from the source text,
+    // so both former entries here are DEAD and removed in this same commit,
+    // per this file's own header comment ("its hand-rolled line disappears
+    // from the source text ... the corresponding entry below becomes DEAD —
+    // remove it in the SAME commit"). Site 8 (mirrorFacesPlane) is a RESTORE,
+    // not a reindex — see its own kAllow entries and the doc comment at its
+    // call site (mesh.d) for why it stays hand-rolled.
     AllowEntry("source/mesh.d", "vertices = newVerts;",
         "vertex-rewrite site: compactUnreferenced", 1),
     AllowEntry("source/mesh.d", "vertices             = rbVertices;",

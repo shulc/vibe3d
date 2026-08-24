@@ -22,6 +22,7 @@ import mesh_ops.select_loop : MeshSelectLoopOps;
 import mesh_ops.poly_bevel : MeshPolyBevelOps;
 import mesh_selsets : selSetResizeVertex, selSetRekeyEdges,
     selSetGatherVertexMaskForward;
+import mesh_planes : rewriteFaces, FaceSource;
 // Snap-visibility instrumentation (task 1350/1351). `perf_probe` imports only
 // core.time, so this is a leaf dependency and cannot cycle; every call compiles
 // to nothing unless the `perf`/`perf-count` build defines PerfProbe.
@@ -2139,12 +2140,10 @@ struct Mesh {
     private void applyVertexRemapAndRebuild(in int[] remap,
                                             JoinWeldPolicy join = JoinWeldPolicy.init) {
         uint[][] newFaces;
-        uint[]   newWord;   // whole faceMarks word per survivor (task 0613 §4.2)
-        int[]    newOrder;
-        uint[]   newMaterial;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c — faceSetMask rides facePart's carry
+        uint[]   oldOfNew;   // newToOld correspondence — task 1902, mesh_planes.rewriteFaces
+                              // carries every kFacePlanes entry from this in one pass.
         newFaces.reserve(faces.length);
+        oldOfNew.reserve(faces.length);
         foreach (fi, ref face; faces) {
             uint[] f;
             f.reserve(face.length);
@@ -2162,20 +2161,15 @@ struct Mesh {
             // remnant survives there, and inventing that is not this port's
             // to invent.
             if (f.length >= (join.keepTwoPointFaces ? 2 : 3)) {
-                newFaces    ~= f;
-                newWord     ~= faceAttrOr(faceMarks, fi);
-                newOrder    ~= faceAttrOr(faceSelectionOrder, fi);
-                newMaterial ~= faceAttrOr(faceMaterial, fi);
-                newPart     ~= faceAttrOr(facePart, fi);
-                newSetMask  ~= faceAttrOr(faceSetMask, fi);
+                newFaces ~= f;
+                oldOfNew ~= cast(uint) fi;
             }
         }
-        faces              = newFaces;
-        setFaceMarksFrom(newWord, ~Marks.Select);
-        faceSelectionOrder = newOrder;
-        faceMaterial       = newMaterial;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
+        // No corner handle here — this site declares through a bare
+        // dropCornerProvenance(WeldTailNoSource) below (task 0830, no begin*
+        // ever opened), so `rw` stays unpassed (defaults null).
+        rewriteFaces(this, newFaces, FaceSource(oldOfNew));
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
         clearFaceSelectionResize();
 
         // task 1060, Stage 5b — re-key the edge-set registry through THIS
@@ -2184,10 +2178,10 @@ struct Mesh {
         // (every vertex maps to a live survivor — itself or its weld
         // target, never dropped), so this call carries the COLLAPSE half:
         // an edge (5,9) whose endpoint 9 welds into 3 follows to (5,3) —
-        // exactly what `facePart` does for faces at this very site
-        // (`newPart ~= faceAttrOr(facePart, fi)` just above). Re-keying
-        // ONLY at compactUnreferenced would instead read endpoint 9 as
-        // "gone" and drop the membership outright.
+        // exactly what `facePart` does for faces at this very site, carried
+        // by `mesh_planes.rewriteFaces`'s call above via `kFacePlanes`
+        // (task 1902). Re-keying ONLY at compactUnreferenced would instead
+        // read endpoint 9 as "gone" and drop the membership outright.
         selSetRekeyEdges(this, (uint v) =>
             v < remap.length ? cast(uint) remap[v] : v);
 
@@ -3224,18 +3218,16 @@ struct Mesh {
         uint[] oldLoopOfNewLoop;
 
         uint[][] newFaces;
-        // Task 0921: gathered in survivor order, keyed by each face's OLD
-        // index `fi` — the same shape the per-corner (UV) relocate just below
-        // already uses for this exact drop, and byte-identical to the weld
-        // sibling `applyVertexRemapAndRebuild`'s own gather above in this
-        // file. Without this, a face dropped anywhere but the array's tail
-        // left every survivor after it wearing a FRONT-TRUNCATED slice of the
-        // pre-collapse material/part/marks arrays instead of its own values.
-        uint[]   newWord;   // whole faceMarks word per survivor (Select dropped below)
-        int[]    newOrder;
-        uint[]   newMaterial;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c
+        // Task 0921: `faceRemap` is gathered in survivor order, keyed by each
+        // face's OLD index `fi` — the same shape the per-corner (UV) relocate
+        // just below already uses for this exact drop, and byte-identical to
+        // the weld sibling `applyVertexRemapAndRebuild`'s own gather above in
+        // this file. Without this, a face dropped anywhere but the array's
+        // tail left every survivor after it wearing a FRONT-TRUNCATED slice
+        // of the pre-collapse material/part/marks arrays instead of its own
+        // values — now `mesh_planes.rewriteFaces` below carries every plane
+        // through the SAME oldToNew `faceRemap`, via `FaceSource.fromOldToNew`
+        // (this function's own public return, untouched — plan §6 Stage B).
         newFaces.reserve(faces.length);
         int[] faceRemap = new int[](faces.length);
         foreach (fi, ref face; faces) {
@@ -3258,11 +3250,6 @@ struct Mesh {
             if (f.length >= 3) {
                 faceRemap[fi] = cast(int)newFaces.length;
                 newFaces    ~= f;
-                newWord     ~= faceAttrOr(faceMarks, fi);
-                newOrder    ~= faceAttrOr(faceSelectionOrder, fi);
-                newMaterial ~= faceAttrOr(faceMaterial, fi);
-                newPart     ~= faceAttrOr(facePart, fi);
-                newSetMask  ~= faceAttrOr(faceSetMask, fi);
                 if (remapUv)
                     foreach (sc; srcCorner)
                         oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, sc);
@@ -3270,12 +3257,8 @@ struct Mesh {
                 faceRemap[fi] = -1;
             }
         }
-        faces              = newFaces;
-        setFaceMarksFrom(newWord, ~Marks.Select);
-        faceSelectionOrder = newOrder;
-        faceMaterial       = newMaterial;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
+        rewriteFaces(this, newFaces, FaceSource.fromOldToNew(faceRemap, newFaces.length));
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
 
         // task 1060, Stage 5b — re-key the edge-set registry through THIS
@@ -3512,17 +3495,12 @@ struct Mesh {
         const mask = maskMinusHiddenFaces(maskIn);  // §3.3 backstop (task 0613) — see maskMinusHidden* in mesh.d
         if (mask.length != faces.length) return 0;
         uint[][] keptFaces;
-        uint[]   keptWord;   // whole faceMarks word per survivor (task 0613 §4.2)
-        int[]    keptOrder;
-        uint[]   keptMaterial;
-        uint[]   keptPart;
-        ulong[]  keptSetMask;   // task 1060, Stage 5c — faceSetMask rides facePart's carry
+        uint[]   oldOfNew;   // newToOld correspondence — task 1902, mesh_planes.rewriteFaces
+                              // carries faceMarks/faceMaterial/facePart/faceSelectionOrder/
+                              // faceSetMask from this in one pass; no more hand-built kept* planes.
         size_t   removed = 0;
         keptFaces.reserve(faces.length);
-        keptWord.reserve(faces.length);
-        keptOrder.reserve(faces.length);
-        keptMaterial.reserve(faces.length);
-        keptPart.reserve(faces.length);
+        oldOfNew.reserve(faces.length);
         // Class B tracker hook — accumulate the dropped (filtered-out) faces so
         // a RemoveFaces entry can re-insert them on revert. Inert unless a batch
         // is open. Indices are the PRE-filter face indices (the space the entry
@@ -3595,25 +3573,21 @@ struct Mesh {
                 continue;
             }
             keptFaces ~= f;
-            // faceAttrOr(faceMarks, i), NOT isFaceSubpatch/isSubpatch[i]:
-            // carries the WHOLE marks word (Subpatch + Hide + reserved Lock),
-            // not just one bit (task 0613 §4.2 — this is the fix for the GAP
-            // that used to be documented right here: `setFaceSubpatchFrom`
-            // only patched in the Subpatch bit at each NEW index, leaving
-            // whatever Hide bit already sat there from truncation, so a
-            // deleted face's Hide bit would silently MOVE onto whichever
-            // face slides into its vacated slot instead of following its own
-            // face or vanishing with it). `keptWord` below re-establishes the
-            // word at its captured OLD index `i`, so `setFaceMarksFrom`
-            // writes each survivor's OWN word at its new position — same
-            // O(F²) trap avoided as the old isFaceSubpatch comment noted
-            // (task 0396: a `@property` read here would rebuild a fresh
-            // array every iteration; `faceAttrOr` is O(1) non-allocating).
-            keptWord     ~= faceAttrOr(faceMarks, i);
-            keptOrder    ~= faceAttrOr(faceSelectionOrder, i);
-            keptMaterial ~= faceAttrOr(faceMaterial, i);
-            keptPart     ~= faceAttrOr(facePart, i);
-            keptSetMask  ~= faceAttrOr(faceSetMask, i);
+            // Old index `i` is this survivor's SOLE plane source — carried by
+            // `mesh_planes.rewriteFaces` below, whole word (Subpatch + Hide +
+            // reserved Lock, not just one bit — task 0613 §4.2: the GAP that
+            // used to be documented right here was `setFaceSubpatchFrom` only
+            // patching in the Subpatch bit at each NEW index, leaving whatever
+            // Hide bit already sat there from truncation, so a deleted face's
+            // Hide bit would silently MOVE onto whichever face slides into its
+            // vacated slot instead of following its own face or vanishing with
+            // it. The primitive re-establishes every plane at its captured OLD
+            // index `i`, so `setFaceMarksFrom` below writes each survivor's OWN
+            // word at its new position — same O(F²) trap avoided as the old
+            // isFaceSubpatch comment noted (task 0396): no allocating
+            // `@property` read, the primitive's generated body reads the raw
+            // plane arrays directly.
+            oldOfNew ~= cast(uint) i;
             if (remapUv)
                 foreach (c; 0 .. f.length)
                     oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)i, cast(uint)c);
@@ -3629,17 +3603,25 @@ struct Mesh {
                                             droppedFaceMat, droppedFacePart, droppedFaceSub,
                                             droppedFaceSetMask);
         }
-        faces              = keptFaces;
+        // task 1902: mesh_planes.rewriteFaces assigns `faces` AND carries
+        // every kFacePlanes entry (faceMarks/faceMaterial/facePart/
+        // faceSelectionOrder/faceSetMask) from `oldOfNew` in one pass — the
+        // hand-built kept*/keptWord arrays above are gone, this is their
+        // replacement. `rw` (this site's OWN beginCornerRelocate() handle) is
+        // NOT passed in: it declares through `.relocated()` on a per-CORNER
+        // correspondence built above, which is a different shape from the
+        // primitive's per-NEW-FACE `rw.carriedPerFace()` call — passing it in
+        // would call the wrong method on a handle opened for relocation, not
+        // rewrite (`CornerRewrite.carried()` asserts on exactly that
+        // mismatch). So the corner declaration below stays this site's own,
+        // unchanged.
+        rewriteFaces(this, keptFaces, FaceSource(oldOfNew));
         // Select is still dropped deliberately (~Marks.Select) — the
         // subsequent clearFaceSelectionResize() below relied on that being
         // true regardless, so this stays behaviourally identical for Select;
         // Subpatch and Hide now BOTH ride along in the same word, at the
         // survivor's own captured index, not whatever slot they land in.
-        setFaceMarksFrom(keptWord, ~Marks.Select);
-        faceSelectionOrder = keptOrder;
-        faceMaterial       = keptMaterial;
-        facePart           = keptPart;
-        faceSetMask        = keptSetMask;
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
         // PolyVertex relocate (a): per-corner values follow their surviving
         // corners. Done now (before the tail buildLoops); the loop layout this
         // produces is exactly what buildLoops rebuilds from the new `faces`, so
@@ -3769,17 +3751,10 @@ struct Mesh {
         // Rebuild faces array, dropping each masked vert from every face's
         // boundary. Faces shrunk below 3 verts (degenerate) are dropped.
         uint[][] newFaces;
-        uint[]   newWord;   // whole faceMarks word per survivor (task 0613 §4.2)
-        int[]    newOrder;
-        uint[]   newMaterial;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c
+        uint[]   oldOfNew;   // newToOld correspondence — task 1902, mesh_planes.rewriteFaces
+                              // carries every kFacePlanes entry from this in one pass.
         newFaces.reserve(faces.length);
-        newWord.reserve(faces.length);
-        newOrder.reserve(faces.length);
-        newMaterial.reserve(faces.length);
-        newPart.reserve(faces.length);
-        newSetMask.reserve(faces.length);
+        oldOfNew.reserve(faces.length);
         // Class B tracker hook accumulators — inert unless a batch is open.
         // A face whose boundary shrinks (but stays >= 3) is a ReshapeFaces; a
         // face that becomes degenerate (< 3) and is dropped is a RemoveFaces.
@@ -3841,12 +3816,8 @@ struct Mesh {
                     reshapeBefore ~= f.dup;
                     reshapeAfter  ~= kept.dup;
                 }
-                newFaces    ~= kept;
-                newWord     ~= faceAttrOr(faceMarks, fi);
-                newOrder    ~= faceAttrOr(faceSelectionOrder, fi);
-                newMaterial ~= faceAttrOr(faceMaterial, fi);
-                newPart     ~= faceAttrOr(facePart, fi);
-                newSetMask  ~= faceAttrOr(faceSetMask, fi);
+                newFaces ~= kept;
+                oldOfNew ~= cast(uint) fi;
                 if (remapUv)
                     foreach (kc; keptCorner)
                         oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop, cast(uint)fi, kc);
@@ -3879,12 +3850,8 @@ struct Mesh {
                                             removedFaceMat, removedFacePart, removedFaceSub,
                                             removedFaceSetMask);
         }
-        faces              = newFaces;
-        setFaceMarksFrom(newWord, ~Marks.Select);
-        faceSelectionOrder = newOrder;
-        faceMaterial       = newMaterial;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
+        rewriteFaces(this, newFaces, FaceSource(oldOfNew));
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
         // PolyVertex relocate (b): per-corner values follow surviving corners
         // through the arity change. Before the tail buildLoops/compact.
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
@@ -4458,11 +4425,11 @@ struct Mesh {
         // merged polygon. Single-face components are untouched.
         bool[] dropFace      = new bool[](nFaces);
         uint[][] newPolyList;
-        uint[]   newPolyWord;   // whole faceMarks word, task 0613 §4.2
-        int[]    newPolyOrder;
-        uint[]   newPolyMaterial;
-        uint[]   newPolyPart;
-        ulong[]  newPolySetMask;   // task 1060, Stage 5c
+        uint[]   newPolySrc;    // per merged poly: the representative OLD face
+                                 // index (comp[0]) — task 1902,
+                                 // mesh_planes.rewriteFaces's plane source,
+                                 // replacing newPolyWord/Order/Material/Part/
+                                 // SetMask above (all five rode `firstFi`).
         // Parallel to newPolyList: the OLD loop index that produced each merged
         // corner (mechanism b). `~0u` ⇒ no traceable source ⇒ zero-fill.
         uint[][] newPolySrcLoop;
@@ -4794,12 +4761,8 @@ struct Mesh {
             // task 0613 §4.2 — was Subpatch-only) and selection-order from the
             // FIRST face in the component (arbitrary but deterministic).
             int firstFi = cast(int)comp[0];
-            newPolyList      ~= poly;
-            newPolyWord      ~= faceAttrOr(faceMarks, cast(size_t)firstFi);
-            newPolyOrder     ~= faceAttrOr(faceSelectionOrder, firstFi);
-            newPolyMaterial  ~= faceAttrOr(faceMaterial, firstFi);
-            newPolyPart      ~= faceAttrOr(facePart, firstFi);
-            newPolySetMask   ~= faceAttrOr(faceSetMask, cast(size_t) firstFi);
+            newPolyList ~= poly;
+            newPolySrc  ~= cast(uint) firstFi;
             if (remapUv) newPolySrcLoop ~= polySrc;
         }
 
@@ -4835,11 +4798,9 @@ struct Mesh {
         uint[]   droppedFaceSub;
         ulong[]  droppedFaceSetMask;   // task 1060 review SHOULD-FIX 4 — rides facePart's carry
         uint[][] keptFaces;
-        uint[]   keptWord;   // whole faceMarks word per face (task 0613 §4.2)
-        int[]    keptOrder;
-        uint[]   keptMaterial;
-        uint[]   keptPart;
-        ulong[]  keptSetMask;   // task 1060, Stage 5c
+        uint[]   oldOfNew;   // newToOld correspondence, final [kept ++ merged]
+                              // order — task 1902, mesh_planes.rewriteFaces
+                              // carries every kFacePlanes entry from this.
         // PolyVertex relocate accumulator, in final [kept ++ merged] CSR order.
         uint[] oldLoopOfNewLoop;
         foreach (fi; faceIndices) {
@@ -4877,11 +4838,7 @@ struct Mesh {
                 continue;
             }
             keptFaces ~= faces[fi];
-            keptWord     ~= faceAttrOr(faceMarks, fi);
-            keptOrder    ~= faceAttrOr(faceSelectionOrder, fi);
-            keptMaterial ~= faceAttrOr(faceMaterial, fi);
-            keptPart     ~= faceAttrOr(facePart, fi);
-            keptSetMask  ~= faceAttrOr(faceSetMask, fi);
+            oldOfNew  ~= cast(uint) fi;
             // Kept faces preserve arity → corner c maps to old loop fi/c (a).
             if (remapUv)
                 foreach (c; 0 .. faces[fi].length)
@@ -4895,12 +4852,8 @@ struct Mesh {
         foreach (i; 0 .. newPolyList.length)
             lastDissolveProduct_ ~= cast(uint)(firstMerged + i);
         foreach (i; 0 .. newPolyList.length) {
-            keptFaces    ~= newPolyList[i];
-            keptWord     ~= newPolyWord[i];
-            keptOrder    ~= newPolyOrder[i];
-            keptMaterial ~= newPolyMaterial[i];
-            keptPart     ~= newPolyPart[i];
-            keptSetMask  ~= newPolySetMask[i];
+            keptFaces ~= newPolyList[i];
+            oldOfNew  ~= newPolySrc[i];
             // Merged poly corners → the old loop traced during the boundary
             // walk (~0u where the walk could not trace a source) (b).
             if (remapUv) oldLoopOfNewLoop ~= newPolySrcLoop[i];
@@ -4932,12 +4885,8 @@ struct Mesh {
             editRecorder_.recordAddFaces(FaceIdx.assumeFaceSpace(firstMerged),
                                          cast(uint)keptFaces.length, mergedLists);
         }
-        faces              = keptFaces;
-        setFaceMarksFrom(keptWord, ~Marks.Select);
-        faceSelectionOrder = keptOrder;
-        faceMaterial       = keptMaterial;
-        facePart           = keptPart;
-        faceSetMask        = keptSetMask;
+        rewriteFaces(this, keptFaces, FaceSource(oldOfNew));
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
         // PolyVertex relocate (b): per-corner values follow the merged/kept
         // corners. Before the tail buildLoops (which then no-ops the resize).
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
@@ -5658,32 +5607,21 @@ struct Mesh {
         uint[] oldLoopOfNewLoop;
 
         uint[][] newFaces;
-        uint[]   newWord;   // whole faceMarks word per emitted face (task 0613 §4.2)
-        int[]    newOrder;
-        uint[]   newMaterial;
-        uint[]   newPart;
-        ulong[]  newSetMask;   // task 1060, Stage 5c
-        uint[]   faceOrigin;   // faceOrigin[new_fi] = original fi
+        uint[]   faceOrigin;   // faceOrigin[new_fi] = original fi — ALREADY the
+                                // newToOld correspondence mesh_planes.FaceSource
+                                // wants (task 1902); fed straight in below
+                                // instead of hand-building newWord/Order/
+                                // Material/Part/SetMask, plan §6 Stage B.
 
         size_t changed = 0;
 
         foreach (fi; 0 .. faces.length) {
-            auto f    = faces[fi];
-            uint word = faceAttrOr(faceMarks, fi);
-            int  ord = faceAttrOr(faceSelectionOrder, fi);
-            uint mat = faceAttrOr(faceMaterial, fi);
-            uint prt = faceAttrOr(facePart, fi);
-            ulong setm = faceAttrOr(faceSetMask, fi);
+            auto f = faces[fi];
 
             if (!mask[fi] || f.length <= 3) {
                 // Pass through untouched.
-                newFaces    ~= f.dup;
-                newWord     ~= word;
-                newOrder    ~= ord;
-                newMaterial ~= mat;
-                newPart     ~= prt;
-                newSetMask  ~= setm;
-                faceOrigin  ~= cast(uint)fi;
+                newFaces   ~= f.dup;
+                faceOrigin ~= cast(uint)fi;
                 if (remapUv)
                     foreach (c; 0 .. f.length)
                         oldLoopOfNewLoop ~= oldFaceLoopIndex(oldFaceLoop,
@@ -5692,7 +5630,8 @@ struct Mesh {
             } else {
                 // Diagonals chosen by geometry (tripleRingCorners), never by
                 // ring position. Every triangle inherits the source face's
-                // WHOLE marks word (Subpatch + Hide), the same "each piece
+                // WHOLE marks word (Subpatch + Hide) via `faceOrigin` below
+                // (mesh_planes.rewriteFaces's carry), the same "each piece
                 // keeps the parent's word" rule as every other 1-to-many split
                 // above.
                 ++changed;
@@ -5702,13 +5641,8 @@ struct Mesh {
                 assert(tri.length == f.length - 2,
                     "tripleRingCorners must return exactly n-2 triangles");
                 foreach (t; tri) {
-                    newFaces    ~= [f[t[0]], f[t[1]], f[t[2]]];
-                    newWord     ~= word;
-                    newOrder    ~= ord;
-                    newMaterial ~= mat;
-                    newPart     ~= prt;
-                    newSetMask  ~= setm;
-                    faceOrigin  ~= cast(uint)fi;
+                    newFaces   ~= [f[t[0]], f[t[1]], f[t[2]]];
+                    faceOrigin ~= cast(uint)fi;
                     if (remapUv) {
                         // A triangle corner comes from the OLD corner the clip
                         // named — its ring index, not a fan's 0/i/i+1. Getting
@@ -5723,12 +5657,8 @@ struct Mesh {
 
         if (changed == 0) return 0;
 
-        faces              = newFaces;
-        setFaceMarksFrom(newWord, ~Marks.Select);
-        faceSelectionOrder = newOrder;
-        faceMaterial       = newMaterial;
-        facePart           = newPart;
-        faceSetMask        = newSetMask;
+        rewriteFaces(this, newFaces, FaceSource(faceOrigin));
+        setFaceMarksFrom(faceMarks, ~Marks.Select);
         if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
         clearFaceSelectionResize();
         rebuildEdges();
@@ -6474,19 +6404,18 @@ struct Mesh {
                 import std.format : format;
                 bool[string] seenFp;
                 uint[][] keptFaces;
-                uint[]   keptWord;   // whole faceMarks word (task 0613 §4.2)
-                int[]    keptOrder;
-                bool[]   keptSelected;
-                uint[]   keptMaterial;
-                uint[]   keptPart;
-                ulong[]  keptSetMask;   // task 1060, Stage 5c
+                uint[]   oldOfNew;      // newToOld correspondence — task 1902,
+                                         // mesh_planes.rewriteFaces carries
+                                         // every kFacePlanes entry from this
+                                         // (replaces keptWord/Order/Material/
+                                         // Part/SetMask below).
+                bool[]   keptSelected;  // Select stays OUTSIDE the primitive's
+                                         // carry (plan §2.7) — reapplied below
+                                         // via setFacesSelectedFrom, same as
+                                         // today.
                 keptFaces   .reserve(faces.length);
-                keptWord    .reserve(faces.length);
-                keptOrder   .reserve(faces.length);
+                oldOfNew    .reserve(faces.length);
                 keptSelected.reserve(faces.length);
-                keptMaterial.reserve(faces.length);
-                keptPart    .reserve(faces.length);
-                keptSetMask .reserve(faces.length);
                 // Per-corner (UV) relocate — mechanism (a). This rebuild drops
                 // whole DUPLICATE faces but keeps every survivor's corner
                 // count, so each kept corner has exactly one old corner. Without
@@ -6518,24 +6447,17 @@ struct Mesh {
                         foreach (c; 0 .. f.length)
                             oldLoopOfNewLoop ~= rw.oldFaceLoop()[fi] + cast(uint)c;
                     keptFaces    ~= f;
-                    keptWord     ~= faceAttrOr(faceMarks, fi);
-                    keptOrder    ~= faceAttrOr(faceSelectionOrder, fi);
-                    keptSelected ~= (fi < selectedFaces.length      ? selectedFaces[fi]      : false);
-                    keptMaterial ~= faceAttrOr(faceMaterial, fi);
-                    keptPart     ~= faceAttrOr(facePart, fi);
-                    keptSetMask  ~= faceAttrOr(faceSetMask, fi);
+                    oldOfNew     ~= cast(uint) fi;
+                    keptSelected ~= (fi < selectedFaces.length ? selectedFaces[fi] : false);
                 }
-                faces              = keptFaces;
+                rewriteFaces(this, keptFaces, FaceSource(oldOfNew));
                 if (remapUv) declareCornerProvenance(rw.relocated(oldLoopOfNewLoop));
                 // keptSelected is applied right after via setFacesSelectedFrom,
-                // so Select's bit in keptWord is irrelevant either way; drop it
-                // here anyway to match every other compaction site's convention.
-                setFaceMarksFrom(keptWord, ~Marks.Select);
-                faceSelectionOrder = keptOrder;
+                // so Select's bit in the carried faceMarks is irrelevant either
+                // way; drop it here anyway to match every other compaction
+                // site's convention.
+                setFaceMarksFrom(faceMarks, ~Marks.Select);
                 setFacesSelectedFrom(keptSelected);
-                faceMaterial       = keptMaterial;
-                facePart           = keptPart;
-                faceSetMask        = keptSetMask;
                 rebuildEdges();
                 clearEdgeSelectionResize();
                 compactUnreferenced();
@@ -6747,6 +6669,22 @@ struct Mesh {
                 // collapse driven by a threshold too large for this mesh's
                 // scale. Roll back to the un-welded (but valid, non-empty)
                 // mirror clone rather than commit an empty mesh.
+                //
+                // task 1902 (site 8): this is a RESTORE, not a reindex, and
+                // deliberately stays outside mesh_planes.rewriteFaces/
+                // rewriteVertices. The primitive reads every plane off `m`'s
+                // OWN live arrays through a FaceSource/VertSource correspondence
+                // — it has no way to pull a value from an external snapshot
+                // like `rbFaceMaterial`, so expressing this as a "rewrite"
+                // would mean first overwriting the live arrays with the `rb*`
+                // snapshots and then asking the primitive to copy them right
+                // back out under `.identity()` — strictly more code and one
+                // more allocation per plane for the exact same bytes. Nothing
+                // here is renumbered either: `rbFaces`/`rb*` are the pre-weld
+                // state at its OWN pre-weld indices, restored verbatim, which
+                // is exactly what `declareCornerProvenance(unchanged())` below
+                // already says about the corners. Stays hand-rolled and in
+                // mesh_planes_census_test.d's kAllow (both entries unchanged).
                 vertices             = rbVertices;
                 edges                = rbEdges;
                 faces                = rbFaces;
@@ -9271,6 +9209,27 @@ struct Mesh {
     // everything not explicitly overwritten by the caller. Raw (no
     // commitChange), same "bulk/internal writer, caller commits" contract
     // setFaceSubpatchFrom had.
+    //
+    // SELF-ALIASING IS SUPPORTED, and every `mesh_planes.rewriteFaces`-
+    // migrated call site (task 1902 Stage B) relies on it:
+    // `setFaceMarksFrom(faceMarks, ~Marks.Select)`, `src` the SAME array as
+    // the field being written. `rewriteFaces` has already carried the WHOLE
+    // marks word onto `faceMarks` at each new index; this call's only
+    // remaining job is to mask the Select bit back out of what is already
+    // there, so passing `faceMarks` as both source and destination is the
+    // direct spelling of that, not an accident. It is safe here for two
+    // properties of THIS body specifically — not a general aliasing
+    // guarantee — so do not assume it extends to a body shaped differently:
+    // (1) `faceMarks.length = src.length` is a no-op when `src is faceMarks`
+    // (already the same length), so the resize cannot reallocate/move the
+    // backing store out from under `src` before the loop runs; (2) the loop
+    // reads `src[i]` into the local `w` and writes `faceMarks[i]` in the
+    // SAME iteration, one index at a time, so a write at index i is never
+    // read back at a later index — there is no cross-index dependency for a
+    // forward pass to disturb. A non-aliased caller (`src` a freshly
+    // gathered, generally shorter array — e.g. a compaction's `newWord`)
+    // depends on neither property, since `src` and `faceMarks` are genuinely
+    // different arrays there.
     void setFaceMarksFrom(const uint[] src, uint keepMask) {
         faceMarks.length = src.length;
         foreach (i, w; src) faceMarks[i] = w & keepMask;

@@ -31,12 +31,32 @@ module mesh_planes;
 // them a public return value) — a same-named newToOld struct would collide
 // with an established local meaning at exactly those sites.
 //
-// STAGE A ONLY (this commit). The primitive and its three-layer enumeration
-// guard exist here; NOTHING under `source/` calls `rewriteFaces` /
-// `rewriteVertices` yet — that is Stage A's own gate (§6 of the plan). The
-// 19 face sites and 5 vertex sites migrate family-by-family in later stages,
-// each one behaviour-preserving by construction (a byte-identical mesh, not
-// a corrected one — this task has no user-visible defect to fix, see the
+// STAGE B (this commit) has migrated `mesh.d`'s compaction family — seven
+// callers, all in `source/mesh.d`: `Mesh.applyVertexRemapAndRebuild`,
+// `Mesh.applyVertexRemap`, `Mesh.deleteFacesByMask`,
+// `Mesh.dissolveVerticesByMask`, `Mesh.removeEdgesByMask`,
+// `Mesh.triangulateFacesByMask`, `Mesh.arrayFacesGrid`. Every one of them
+// passes `rw = null` to `rewriteFaces`: each already declares its per-corner
+// (UV) correspondence itself, through its own `beginCornerRelocate()` →
+// `rw.relocated(oldLoopOfNewLoop)` call sitting right next to the
+// `rewriteFaces` call — a PER-CORNER correspondence, not the PER-NEW-FACE
+// one `rewriteFaces`'s own `rw` parameter would declare through
+// `rw.carriedPerFace(...)` (plan §6 Stage B). An eighth candidate,
+// `Mesh.mirrorFacesPlane`'s weld-collapse rollback, was considered and
+// DECLINED: its only `faces =`/`vertices =` assignment restores `rb*`
+// snapshots (`.dup`d before the weld pass) verbatim at their OWN pre-weld
+// indices — a RESTORE, not a reindex. `rewriteFaces`/`rewriteVertices` read
+// every plane off `m`'s OWN live arrays through a `FaceSource`/`VertSource`
+// correspondence; there is no way to pull a value from an external snapshot
+// like `rbFaceMaterial` through that shape without first writing it back
+// onto `m` and then asking the primitive to copy it right back out under
+// `.identity()` — strictly more code and one more allocation per plane for
+// the same bytes. Stays hand-rolled (plan §6 Stage B; `mesh_planes_census_
+// test.d`'s tree-scan `kAllow` still names both of its `faces =`/
+// `vertices =` lines). The remaining face sites (`mesh_ops/*`) and the
+// vertex sites migrate family-by-family in later stages, each one
+// behaviour-preserving by construction (a byte-identical mesh, not a
+// corrected one — this task has no user-visible defect to fix, see the
 // plan's §0).
 //
 // `commitChange`: the CALLER's, never the primitive's (plan §2.5). Every
@@ -296,14 +316,23 @@ static assert(countArrayShapedFields!Mesh == 34,
 ///
 /// `rw` is the optional corner-provenance declaration (task 0830's
 /// `Mesh.CornerRewrite`, opened by the CALLER via `m.beginCornerRewrite()`
-/// before it built `newFaces`, exactly as every existing carry site already
-/// does). When non-null, `rewriteFaces` declares the correspondence through
-/// the SAME `src.oldOfNew` used for the per-face planes — `carriedPerFace`'s
-/// `srcFaceOfNewFace` parameter wants EXACTLY a newToOld array with one
-/// entry per new face, which `FaceSource.oldOfNew` already is. That a single
-/// value serves both obligations without translation is the strongest
-/// evidence newToOld is the right direction for this primitive (plan §2.6).
-/// `rw` is null at every Stage A call (there are none yet); the two
+/// before it built `newFaces`). When non-null, `rewriteFaces` declares the
+/// correspondence through the SAME `src.oldOfNew` used for the per-face
+/// planes — `carriedPerFace`'s `srcFaceOfNewFace` parameter wants EXACTLY a
+/// newToOld array with one entry per new face, which `FaceSource.oldOfNew`
+/// already is. That a single value serves both obligations without
+/// translation is the strongest evidence newToOld is the right direction for
+/// this primitive (plan §2.6). `rw` is null at every Stage B call site
+/// (`mesh.d`'s seven migrated callers — this module's header names them):
+/// each already declares its OWN per-corner correspondence through
+/// `beginCornerRelocate()` → `rw.relocated(oldLoopOfNewLoop)`, a
+/// PER-CORNER shape built ahead of time in the kernel's own loop, not the
+/// PER-NEW-FACE shape `carriedPerFace` wants — passing that site-local
+/// handle in here would invoke the wrong method on it (`CornerRewrite.
+/// carried()` asserts on exactly that mismatch: "open it with
+/// beginCornerRewrite(), not beginCornerRelocate()"). A future caller that
+/// opens with `beginCornerRewrite()` instead (matching THIS parameter's
+/// shape) is the first real user of a non-null `rw`; until then the two
 /// obligations stay independent — a rewrite with no PolyVertex map active
 /// carries its planes exactly the same whether `rw` is passed or not,
 /// because `CornerRewrite.carriedPerFace` on an inactive handle degrades to
@@ -319,26 +348,34 @@ void rewriteFaces(ref Mesh m, uint[][] newFaces, in FaceSource src,
                 ~ "over the new face array, or a plane silently truncates",
                   src.oldOfNew.length, newFaces.length));
 
-    // NOTE ON SHAPE: `__traits(getMember, m, n)` is used DIRECTLY at every
-    // read/write below rather than bound once through `alias plane = …;`.
-    // Measured (a 3-line repro, both directions): `alias` over
-    // `__traits(getMember, refParam, name)` compiles but silently loses the
-    // INSTANCE — every subsequent use reads as the unqualified static
-    // member and dmd 2.112 rejects it ("accessing non-static variable …
-    // requires an instance of `Mesh`"), for a `ref` parameter and for a
-    // plain local alike. Only the TYPE may be aliased (`typeof(...)` does
-    // not evaluate the instance), so `PlaneT` below is the one alias in
-    // this loop.
+    // NOTE ON SHAPE: `__traits(getMember, m, n)` is used DIRECTLY (assigned
+    // into `built` at the end) rather than bound once through
+    // `alias plane = …;`. Measured (a 3-line repro, both directions):
+    // `alias` over `__traits(getMember, refParam, name)` compiles but
+    // silently loses the INSTANCE — every subsequent use reads as the
+    // unqualified static member and dmd 2.112 rejects it ("accessing
+    // non-static variable … requires an instance of `Mesh`"), for a `ref`
+    // parameter and for a plain local alike. Only the TYPE may be aliased
+    // (`typeof(...)` does not evaluate the instance), so `PlaneT` below is
+    // the one alias in this loop. `srcPlane`, by contrast, is hoisted with a
+    // plain `auto` — a VALUE assignment (dynamic arrays are a length+ptr
+    // pair copied by value), not an alias, so it evaluates `m`'s instance
+    // exactly once and does not hit the same rejection; it is read-only for
+    // the rest of the loop, and it is deliberately the array's OLD contents
+    // — the field itself is not reassigned until after the loop, at the
+    // final `__traits(getMember, m, n) = built;` line, so hoisting it costs
+    // nothing and reads the same bytes the per-iteration lookup did.
     static foreach (n; kFacePlanes) {
         {
             alias PlaneT = typeof(__traits(getMember, m, n));
+            auto srcPlane = __traits(getMember, m, n);
             PlaneT built;
             built.length = newFaces.length;          // one allocation per plane
             foreach (nf; 0 .. newFaces.length) {
                 const uint of = src.oldOfNew[nf];
-                built[nf] = (of == kNoSource || of >= __traits(getMember, m, n).length)
+                built[nf] = (of == kNoSource || of >= srcPlane.length)
                           ? typeof(built[0]).init
-                          : __traits(getMember, m, n)[of];  // lazy-length safe (plan §5)
+                          : srcPlane[of];  // lazy-length safe (plan §5)
             }
             __traits(getMember, m, n) = built;
         }
@@ -380,13 +417,15 @@ void rewriteVertices(ref Mesh m, Vec3[] newVerts, in VertSource src) {
     static foreach (n; kVertPlanes) {
         {
             alias PlaneT = typeof(__traits(getMember, m, n));
+            auto srcPlane = __traits(getMember, m, n);  // OLD buffer — see rewriteFaces's
+                                                          // NOTE ON SHAPE above
             PlaneT built;
             built.length = newVerts.length;
             foreach (nv; 0 .. newVerts.length) {
                 const uint of = src.oldOfNew[nv];
-                built[nv] = (of == kNoSource || of >= __traits(getMember, m, n).length)
+                built[nv] = (of == kNoSource || of >= srcPlane.length)
                           ? typeof(built[0]).init
-                          : __traits(getMember, m, n)[of];
+                          : srcPlane[of];
             }
             __traits(getMember, m, n) = built;
         }
