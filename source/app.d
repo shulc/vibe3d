@@ -5582,9 +5582,27 @@ void main(string[] args) {
                 // around. Nothing selected is wrong in a way they can see and
                 // repeat; a plausible wrong set is not.
 
+                // Selection visibility, resolved ONCE for this gesture
+                // (`select_visibility.d`). Under a display style that draws no
+                // faces the ID buffer carries no depth pre-pass, so
+                // `gpuVisible` marks everything that rasterised and the STRICT
+                // endpoint probes below stop rejecting far edges: the lasso
+                // picks vertices and edges THROUGH the model, exactly as click
+                // and paint now do.
+                //
+                // The polygon half of the lasso is deliberately UNCHANGED:
+                // `SelectMode.Face` never ran the pre-pass (the face pass is
+                // the surface), and the separate `frontFacing` cull below is
+                // its own, still-unwired term. See the follow-up named in
+                // doc/tasks/work/1830-wireframe-select-through.md.
+                //
+                // Hoisted rather than resolved per element: it is one pure
+                // resolve, and per-edge calls would put it inside the probe
+                // loop for no gain.
+                immutable bool occlTerm = vpm.pickVisibility().occlusionTerm;
                 // vpWorld + ms — gpuSelect composes `ms` internally (R10).
                 bool[] gpuVisible = gpuSelect.elementVisibility(
-                    vbMode, mesh, gpu, vpWorld, ms);
+                    vbMode, mesh, gpu, vpWorld, ms, occlTerm);
 
                 bool preview = subpatchPreview.active;
                 // ---- M-INV (task 1500), CONSUMER 1 of 2 ----------------
@@ -5798,10 +5816,10 @@ void main(string[] args) {
                                 // vpWorld + ms — see the elementVisibility call above (R10).
                                 if (!gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxa), cast(int)lround(sya),
-                                        gpu, vpWorld, ms) ||
+                                        gpu, vpWorld, ms, occlTerm) ||
                                     !gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxb), cast(int)lround(syb),
-                                        gpu, vpWorld, ms)) {
+                                        gpu, vpWorld, ms, occlTerm)) {
                                     cageAllInside[cage] = false;
                                 }
                             }
@@ -5840,10 +5858,10 @@ void main(string[] args) {
                                 // vpWorld + ms — see the elementVisibility call above (R10).
                                 if (!gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxa), cast(int)lround(sya),
-                                        gpu, vpWorld, ms)) continue;
+                                        gpu, vpWorld, ms, occlTerm)) continue;
                                 if (!gpuSelect.endpointVisibleEdgeFbo(
                                         cast(int)lround(sxb), cast(int)lround(syb),
-                                        gpu, vpWorld, ms)) continue;
+                                        gpu, vpWorld, ms, occlTerm)) continue;
                                 symmetricSelectEdge(&mesh(), vpWorld, editMode,
                                                     cast(int)ei, /*deselect=*/ctrl);
                             }
@@ -6067,7 +6085,19 @@ void main(string[] args) {
         // Task 0617: `mesh`/`vp` here are the PRIMARY layer's — pair with
         // primaryModelSpace() so a transformed primary is picked where it's
         // drawn, not at its identity pose.
-        int hit = gpuSelect.pick(sm, mx, my, radius, mesh, gpu, vp, primaryModelSpace());
+        // Selection visibility (`select_visibility.d`), resolved for the cell
+        // whose ID buffer this is: under a style that draws no faces the
+        // picker stops running its face depth pre-pass, so a vertex or edge
+        // behind the surface keeps its id and can be picked. One code path for
+        // hover, click and paint (`doSelectPickAt` calls this same function),
+        // so all three follow the style together.
+        //
+        // NO FACING TERM HERE, ever: `pickVisibility().facingTerm` is resolved
+        // and deliberately not read on this path — it is MEASURED to have
+        // none (`CLAUDE.md` §Measured laws).
+        int hit = gpuSelect.pick(sm, mx, my, radius, mesh, gpu, vp,
+                                 primaryModelSpace(),
+                                 vpm.pickVisibility().occlusionTerm);
         if (hit < 0) return;
 
         hovered = hit;
@@ -6163,8 +6193,14 @@ void main(string[] args) {
         if (useBvhFacePick && !subpatchPreview.active) {
             hit = bvhPick.pickFace(mx, my, vp, mesh(), gpu, primaryModelSpace());
         } else {
+            // The term is inert for `SelectMode.Face` by construction (the
+            // face pass IS the surface, so no pre-pass ever ran for it) — it
+            // is passed rather than hardcoded so this call site does not
+            // become the one place that pins a policy of its own if the face
+            // path ever grows a through-mode.
             hit = gpuSelect.pick(SelectMode.Face, mx, my, /*r=*/0,
-                                  mesh, gpu, vp, primaryModelSpace());
+                                  mesh, gpu, vp, primaryModelSpace(),
+                                  vpm.pickVisibility().occlusionTerm);
         }
         if (hit < 0) return;
 

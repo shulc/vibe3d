@@ -29,9 +29,20 @@ import perf_probe : g_perf, Cat, g_fc, DrawPass;
 // translates back to a cage element via gpu.vertOriginGpu /
 // gpu.edgeOriginGpu / gpu.faceOriginGpu after readback.
 //
-// Cache key: (mode, gpu.uploadVersion, view, proj, FBO size). One
-// cache slot per mode so flipping edit modes 1/2/3 doesn't churn the
+// Cache key: (mode, gpu.uploadVersion, view, proj, FBO size, occlude).
+// One cache slot per mode so flipping edit modes 1/2/3 doesn't churn the
 // buffer; camera and mesh changes invalidate all three slots.
+//
+// `occlude` is the SELECTION-VISIBILITY term (`select_visibility.d`), and it
+// is in the key for a reason that will not announce itself if it is dropped:
+// a display-style flip alone moves NONE of the other five terms — same mesh,
+// same camera, same FBO size — so the slot would stay `valid` and the picker
+// would keep answering out of an FBO rendered under the PREVIOUS policy until
+// something else invalidated it. Two cells with different styles are the same
+// defect in space rather than in time. The guard is spelled ONCE, in
+// `ensureSlot`, for the same reason: it used to be written out verbatim in
+// three entry points, and adding a term to two of the three is invisible —
+// the third path just answers stale.
 //
 // Task 0617: the VBOs hold LOCAL (cage/preview) coordinates and the shaders
 // below carry no model uniform — so the layer's item transform is folded
@@ -172,6 +183,9 @@ private:
         float[16] view;
         float[16] proj;
         int       w, h;
+        /// Was the face depth pre-pass run into this FBO? Part of the KEY,
+        /// not a note — see the module header.
+        bool      occlude;
     }
     Slot[3] slots;
 
@@ -219,9 +233,13 @@ public:
     /// the nearest non-zero ID translated back to a cage element index.
     /// Returns -1 when the cursor is outside the viewport, the FBO has
     /// zero size, or nothing is within reach.
+    /// `occlude` is the resolved selection-visibility occlusion term
+    /// (`select_visibility.resolveSelectVisibility(...).occlusionTerm`).
+    /// REQUIRED, with no default value on purpose: a defaulted parameter lets
+    /// a future call site inherit the old policy silently.
     int pick(SelectMode mode, int mx, int my, int r,
              ref const Mesh mesh, ref const GpuMesh gpu, ref const Viewport vp,
-             const ModelSpace ms)
+             const ModelSpace ms, bool occlude)
     {
         auto z = g_perf.scope_(Cat.hoverPick);
         g_fc.bumpHoverPick();
@@ -231,27 +249,7 @@ public:
         // Task 0617 — composed view; slot key stores THIS, not raw vp.view.
         const float[16] mv = ms.isIdentity ? vp.view : matMul4(vp.view, ms.m);
 
-        Slot* slot = &slots[mode];
-        if (!slot.valid
-            || slot.uploadVer != gpu.uploadVersion
-            || slot.w != fboW || slot.h != fboH
-            || !matricesEqual(slot.view, mv)
-            || !matricesEqual(slot.proj, vp.proj))
-        {
-            renderMode(mode, gpu, vp, mv);
-            // FBO now holds this mode's IDs only — every other
-            // slot's cached state no longer matches the FBO
-            // contents. See the Slot struct comment above.
-            foreach (mi, ref s; slots) {
-                if (cast(SelectMode)mi != mode) s.valid = false;
-            }
-            slot.valid  = true;
-            slot.uploadVer = gpu.uploadVersion;
-            slot.view   = mv;
-            slot.proj   = vp.proj;
-            slot.w      = fboW;
-            slot.h      = fboH;
-        }
+        ensureSlot(mode, gpu, vp, mv, occlude);
 
         int gpuId = readbackNearest(mx, my, r, vp);
         if (gpuId < 0) return -1;
@@ -340,17 +338,27 @@ public:
     /// readback with no extra full render).
     ///
     /// The probe asks "any surviving edge pixel near this endpoint",
-    /// NOT "a pixel of THIS specific edge". This is exact for the
-    /// common case: near a genuinely occluded endpoint, the depth
+    /// NOT "a pixel of THIS specific edge". Under `occlude` this is exact
+    /// for the common case: near a genuinely occluded endpoint, the depth
     /// pre-pass zeroes the whole neighbourhood so no surviving edge
     /// pixel exists. A rare false-pass could occur if a DIFFERENT
     /// visible edge happens to pass within rp pixels of an occluded
     /// endpoint; that leak is accepted for v1. If it ever bites,
     /// tighten by matching the VBO segment id (elementVisibility
-    /// semantics already expose per-id pixels, gpu_select.d:365-369).
+    /// semantics already expose per-id pixels).
+    ///
+    /// WITHOUT `occlude` (a style that draws no faces) there is no pre-pass
+    /// and nothing is zeroed, so the probe degenerates to "any edge pixel
+    /// near this point" — which is the ANSWER WE WANT there: with the surface
+    /// not drawn, the far side is on screen and selectable. It also means the
+    /// STRICT both-endpoints rule stops rejecting far edges, i.e. the lasso
+    /// picks through in that style exactly as click does.
+    ///
+    /// `occlude` is REQUIRED and comes BEFORE the defaulted `rp` — see
+    /// `pick`'s comment for why it carries no default of its own.
     bool endpointVisibleEdgeFbo(int wx, int wy,
                                 ref const GpuMesh gpu, ref const Viewport vp,
-                                const ModelSpace ms,
+                                const ModelSpace ms, bool occlude,
                                 int rp = RP_DEFAULT)
     {
         if (vp.width <= 0 || vp.height <= 0) return false;
@@ -359,25 +367,7 @@ public:
         const float[16] mv = ms.isIdentity ? vp.view : matMul4(vp.view, ms.m);
 
         // Ensure the Edge ID-FBO slot is current (render if stale).
-        // Identical guard to elementVisibility(SelectMode.Edge).
-        Slot* slot = &slots[SelectMode.Edge];
-        if (!slot.valid
-            || slot.uploadVer != gpu.uploadVersion
-            || slot.w != fboW || slot.h != fboH
-            || !matricesEqual(slot.view, mv)
-            || !matricesEqual(slot.proj, vp.proj))
-        {
-            renderMode(SelectMode.Edge, gpu, vp, mv);
-            foreach (mi, ref s; slots) {
-                if (cast(SelectMode)mi != SelectMode.Edge) s.valid = false;
-            }
-            slot.valid     = true;
-            slot.uploadVer = gpu.uploadVersion;
-            slot.view      = mv;
-            slot.proj      = vp.proj;
-            slot.w         = fboW;
-            slot.h         = fboH;
-        }
+        ensureSlot(SelectMode.Edge, gpu, vp, mv, occlude);
 
         // Map window coords to FBO texel space (same as readbackNearest).
         int vx    = wx - vp.x;
@@ -416,36 +406,22 @@ public:
     /// `glReadPixels` plus an O(viewport-pixels) scan — typically a
     /// few ms regardless of mesh size.
     ///
+    /// Under `!occlude` (a style that draws no faces) no pre-pass runs, so
+    /// "visible" means only "rasterised somewhere in the viewport" — which is
+    /// what the user sees there. `occlude` is REQUIRED; see `pick`.
+    ///
     /// Returns `null` on empty viewport.
     bool[] elementVisibility(SelectMode mode,
                               ref const Mesh mesh, ref const GpuMesh gpu,
-                              ref const Viewport vp, const ModelSpace ms)
+                              ref const Viewport vp, const ModelSpace ms,
+                              bool occlude)
     {
         if (vp.width <= 0 || vp.height <= 0) return null;
         ensureSize(vp.width, vp.height);
 
         const float[16] mv = ms.isIdentity ? vp.view : matMul4(vp.view, ms.m);
 
-        Slot* slot = &slots[mode];
-        if (!slot.valid
-            || slot.uploadVer != gpu.uploadVersion
-            || slot.w != fboW || slot.h != fboH
-            || !matricesEqual(slot.view, mv)
-            || !matricesEqual(slot.proj, vp.proj))
-        {
-            renderMode(mode, gpu, vp, mv);
-            // Same shared-FBO invalidation as in pick() — see the
-            // Slot struct comment for why.
-            foreach (mi, ref s; slots) {
-                if (cast(SelectMode)mi != mode) s.valid = false;
-            }
-            slot.valid     = true;
-            slot.uploadVer = gpu.uploadVersion;
-            slot.view      = mv;
-            slot.proj      = vp.proj;
-            slot.w         = fboW;
-            slot.h         = fboH;
-        }
+        ensureSlot(mode, gpu, vp, mv, occlude);
 
         size_t maxId;
         final switch (mode) {
@@ -480,6 +456,45 @@ public:
     }
 
 private:
+    /// The ONE cache guard. `pick`, `endpointVisibleEdgeFbo` and
+    /// `elementVisibility` each carried a verbatim copy of this block; they
+    /// agreed, but nothing made them agree, and the key has since grown a
+    /// sixth term (`occlude`). Adding a term to two copies out of three
+    /// produces no crash and no red — the third path just answers out of an
+    /// FBO rendered under the other policy. So there is one copy.
+    ///
+    /// Callers must have run `ensureSize(vp.width, vp.height)` first: `fboW` /
+    /// `fboH` are part of the key this compares.
+    void ensureSlot(SelectMode mode, ref const GpuMesh gpu,
+                    ref const Viewport vp, ref const float[16] mv,
+                    bool occlude)
+    {
+        Slot* slot = &slots[mode];
+        if (slot.valid
+            && slot.occlude == occlude
+            && slot.uploadVer == gpu.uploadVersion
+            && slot.w == fboW && slot.h == fboH
+            && matricesEqual(slot.view, mv)
+            && matricesEqual(slot.proj, vp.proj))
+            return;
+
+        renderMode(mode, gpu, vp, mv, occlude);
+        // The FBO now holds this mode's IDs only — every other slot's cached
+        // state no longer matches the FBO contents. See the Slot struct
+        // comment for the "hover over edge highlights vertex on the opposite
+        // side" symptom this prevents.
+        foreach (mi, ref s; slots) {
+            if (cast(SelectMode)mi != mode) s.valid = false;
+        }
+        slot.valid     = true;
+        slot.uploadVer = gpu.uploadVersion;
+        slot.view      = mv;
+        slot.proj      = vp.proj;
+        slot.w         = fboW;
+        slot.h         = fboH;
+        slot.occlude   = occlude;
+    }
+
     // `mv` is the ALREADY-COMPOSED view (`ms.isIdentity ? vp.view :
     // matMul4(vp.view, ms.m)`) — every one of this method's three callers
     // computes it first anyway (to compare against the cache slot's stored
@@ -487,8 +502,14 @@ private:
     // in rather than recomputed here. Passing the matrix in also collapses
     // "the key matches what was rendered" from a two-expression invariant
     // (recompute-and-hope-they-agree) to a single value read twice.
+    //
+    // `occlude` — the resolved selection-visibility occlusion term. It gates
+    // the face depth pre-pass below, which is the ENTIRE occlusion mechanism
+    // for the vertex and edge passes. `SelectMode.Face` never runs the
+    // pre-pass (the face pass IS the surface), so the flag is inert there by
+    // construction, before and after this parameter existed.
     void renderMode(SelectMode mode, ref const GpuMesh gpu, ref const Viewport vp,
-                    ref const float[16] mv)
+                    ref const float[16] mv, bool occlude)
     {
         // Save state we touch so the main renderer survives unchanged.
         // pickXxx is called mid-frame between shader.useProgram and
@@ -505,10 +526,22 @@ private:
         glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
         GLboolean prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
         GLboolean prevPolyOff   = glIsEnabled(GL_POLYGON_OFFSET_FILL);
+        GLboolean prevCull      = glIsEnabled(GL_CULL_FACE);
 
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
         glViewport(0, 0, fboW, fboH);
         glEnable(GL_DEPTH_TEST);
+        // THE CLICK/HOVER PATH HAS NO FACING TERM — a measured law
+        // (`CLAUDE.md` §Measured laws), and until this line it was true only
+        // by INHERITANCE: nothing here touched culling, so the pre-pass was
+        // two-sided merely because whatever ran before it happened to leave
+        // GL_CULL_FACE off. Two modules do enable it (`handles/gl_util.d`,
+        // `tools/slice/slice_tool.d`), each restoring it themselves; one
+        // missed restore and a back-facing occluder would silently stop
+        // occluding — a facing rule nobody wrote. `bvh_pick.d` already treats
+        // "the face pass does not cull" as a load-bearing invariant of the
+        // GPU/BVH equivalence. Now it is enforced rather than inherited.
+        glDisable(GL_CULL_FACE);
 
         GLuint clearId = 0;
         glClearBufferuiv(GL_COLOR, 0, &clearId);
@@ -518,7 +551,15 @@ private:
         // depth, so verts / edges behind a face fail the depth test
         // and stay 0. Face mode skips this — the face pass itself fills
         // the depth + colour buffers with one draw call.
-        if (mode != SelectMode.Face && gpu.faceVertCount > 0) {
+        //
+        // `occlude` is the whole selection-visibility wiring: under a display
+        // style that draws NO faces there is no surface on screen to hide
+        // anything, so running this pass would model a scene the user is not
+        // looking at. Skipping it is what makes a vertex or edge behind the
+        // model pickable there. `GL_DEPTH_TEST` stays on either way — points
+        // and lines still depth-test against EACH OTHER, so element-vs-element
+        // ordering is unchanged; only the face surface leaves the buffer.
+        if (occlude && mode != SelectMode.Face && gpu.faceVertCount > 0) {
             glUseProgram(depthProgram);
             glUniformMatrix4fv(depthLocView, 1, GL_FALSE, mv.ptr);
             glUniformMatrix4fv(depthLocProj, 1, GL_FALSE, vp.proj.ptr);
@@ -572,6 +613,7 @@ private:
         if (!prevDepthTest) glDisable(GL_DEPTH_TEST);
         if (prevPolyOff)    glEnable(GL_POLYGON_OFFSET_FILL);
         else                glDisable(GL_POLYGON_OFFSET_FILL);
+        if (prevCull)       glEnable(GL_CULL_FACE);
     }
 
     void setupVertSelVao(ref const GpuMesh gpu) {

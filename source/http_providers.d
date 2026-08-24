@@ -1282,9 +1282,37 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                 // renderViewportSceneToFbo, so the reported grid cannot
                 // disagree with the drawn one by construction.
                 Viewport gvp = vpm.resolvedSnapshot(k);
+                // Task 1830 — the selection-visibility policy this cell's
+                // display style resolves to.
+                //
+                // The SAME resolver the picker calls, not a second copy of it
+                // — `vpm.pickVisibility()` is `vpm.visibilityFor(activeId)`.
+                // A local `resolveSelectVisibility(...)` here — or a
+                // literal `kSelectVisibilityDefault` in the `policy` field
+                // below — would keep answering from the shipped default on
+                // the day a writer appears (a stored value, a per-document
+                // preference, backdrop handling), and
+                // `tests/test_viewport_display.d` pins both, so they would
+                // stay green over the lie.
+                //
+                // STILL NOT EVIDENCE THAT THE PICKER ASKS. One resolver
+                // guarantees the two agree on the POLICY; it says nothing
+                // about the term reaching `gpuSelect`. If someone stopped
+                // passing it, this field would go on reporting a healthy
+                // `occlusion:false` while every pick still occluded — exactly
+                // the `lastOverlayMode` failure this file's own history
+                // records. The proof that the term is WIRED is
+                // `tests/test_wireframe_select_through.d`, which drives real
+                // picks and reads what came back.
+                //
+                // Reported for EVERY cell, while the picker only ever runs in
+                // the active one, so for k != activeId this is "what the
+                // policy would be if a gesture landed here".
+                immutable svTerms = vpm.visibilityFor(k);
                 buf.put(format(
                     `{"id":%d,"renders":%s,"overlayMode":"%s",` ~
                     `"ortho":%s,"userSet":%s,` ~
+                    `"selectVisibility":{"policy":"%s","facing":%s,"occlusion":%s},` ~
                     `"state":{"active":%s,"backdrop":%s,"backdropStyle":"%s"},` ~
                     `"plan":{"active":%s,"backdrop":%s},"grid":%s}`,
                     k,
@@ -1298,6 +1326,9 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
                     // layout is free to reassign.
                     cv.isOrtho() ? "true" : "false",
                     cv.displayUserSet ? "true" : "false",
+                    vpm.visibilityPolicyFor(k).to!string,
+                    svTerms.facingTerm    ? "true" : "false",
+                    svTerms.occlusionTerm ? "true" : "false",
                     stateJson(cv.display.active),
                     stateJson(cv.display.backdrop),
                     cv.display.backdropStyle.to!string,
@@ -1480,8 +1511,16 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
             int faceIdx;
             // Task 0617: both engines pick the PRIMARY layer here.
             if (engine == "gpu") {
+                // The selection-visibility term is INERT for the face path
+                // by construction — `renderMode` never runs the depth
+                // pre-pass for `SelectMode.Face` — so this oracle answers the
+                // same face index under every display style. That is the
+                // declared shape of the face gap, not an oversight; passing
+                // the resolved term rather than a literal keeps this call
+                // site from becoming the one place with a policy of its own.
                 faceIdx = gpuSelect.pick(SelectMode.Face, x, y, /*r=*/0,
-                                          mesh, gpu, vp, primaryModelSpace());
+                                          mesh, gpu, vp, primaryModelSpace(),
+                                          vpm.pickVisibility().occlusionTerm);
             } else {
                 // ---- M-INV (task 1500), CONSUMER 2 of 2 ----------------
                 // Same one-sided invariant as the RMB-lasso site in app.d:

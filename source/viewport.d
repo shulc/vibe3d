@@ -5,6 +5,8 @@ import viewcache     : VertexCache, FaceBoundsCache, EdgeCache;
 import gpu_select    : GpuSelectBuffer;
 import math          : Viewport, Vec3, Orientation;
 import display_state : ViewportDisplay, DrawPlan, resolveDrawPlan, kBackdropDim;
+import select_visibility : SelectVisibility, SelectVisibilityTerms,
+                           resolveSelectVisibility, kSelectVisibilityDefault;
 // Task 0612 Stage 1 — teardown only. `shutdown()` below is the app's single
 // all-GL-objects reclaim site; the cache itself is never touched from here on
 // any other path, and nothing in this module reads a texture.
@@ -1084,6 +1086,59 @@ final class ViewportManager {
 
     /// Resolved snapshot for the currently active cell.
     Viewport activeSnapshot() { return resolvedSnapshot(activeId); }
+
+    /// The selection-visibility terms cell `id`'s display style resolves to.
+    ///
+    /// THE ONE RESOLVER. Every caller — the picker (`pickVisibility` below)
+    /// and the `/api/viewport/display` dump — goes through here, so the dump
+    /// cannot answer from a policy the picker does not use. A second copy of
+    /// the expression would keep reporting `kSelectVisibilityDefault` on the
+    /// day a writer appears (a stored value, a per-document preference,
+    /// backdrop handling) and the pinning test would stay green over the lie.
+    /// Same rule as `resolvedSnapshot` and `testRendersCell` on their own
+    /// consumers: the reporter shares the render loop's predicate rather than
+    /// re-deriving it.
+    ///
+    /// The ACTIVE plan, never the backdrop one: picking only ever addresses
+    /// the primary layer, and `BackdropStyle.Hidden` resolves to a face-less
+    /// plan for geometry that is not drawn at all.
+    SelectVisibilityTerms visibilityFor(int id) {
+        return resolveSelectVisibility(
+            visibilityPolicyFor(id),
+            resolveDrawPlan(views[id].display, /*isBackdrop=*/false));
+    }
+
+    /// Which of the five rule values applies to cell `id`.
+    ///
+    /// The shipped default, unconditionally — there is NO WRITER yet, and the
+    /// rule is global (per-document at most), so `id` is deliberately unused.
+    /// It is a parameter anyway because the day a writer lands is the day
+    /// somebody has to decide whether the value is per-cell, and a signature
+    /// that already carries the cell makes that a body change rather than a
+    /// call-site sweep.
+    ///
+    /// Exists so the `/api/viewport/display` dump reports the policy it
+    /// ACTUALLY resolved with instead of naming `kSelectVisibilityDefault`
+    /// itself: a reporter that spells the default out would keep spelling it
+    /// out after a writer appeared, and its pinning test would stay green.
+    SelectVisibility visibilityPolicyFor(int id) {
+        return kSelectVisibilityDefault;
+    }
+
+    /// The selection-visibility terms for the cell a pick is about to run in.
+    ///
+    /// Resolved for `activeId` — and that is not a default, it is the ONLY
+    /// answer that cannot disagree with the picker: `EditorApp.gpuSelect` is
+    /// `views[activeId].gpuSel`, so the FBO whose policy this decides belongs
+    /// to that cell. Resolving for any other cell would key one cell's ID
+    /// buffer on another cell's display style.
+    ///
+    /// The lasso takes its CAMERA from `originSnapshot()` (`dragOriginId`)
+    /// while reading `activeId`'s picker. The two coincide: focus-follows-
+    /// mouse is pinned for the whole gesture (`updateFocusFollowsMouse`
+    /// below), so `activeId` cannot move mid-drag. Stated here rather than
+    /// left to be rediscovered.
+    SelectVisibilityTerms pickVisibility() { return visibilityFor(activeId); }
 
     /// Resolved snapshot for the drag-origin cell (or active if no gesture).
     Viewport originSnapshot() {

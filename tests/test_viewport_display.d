@@ -798,6 +798,37 @@ bool testFlowG() {
         "the lines-only style draws vertices as well as the edges between them");
     writeln("    G1 PASS: plan = no faces, lines on, vertex dots forced on");
 
+    // --- and the SELECTION-VISIBILITY policy the same plan resolves to ---
+    // READ THIS BEFORE TRUSTING IT: the dump RE-DERIVES the policy from the
+    // cell's display state; it does not observe the picker asking for it. If
+    // someone stopped passing the term to `gpuSelect`, these three lines would
+    // go on reporting a healthy `occlusion:false` while every pick still
+    // occluded — the `lastOverlayMode` failure, exactly. What this pins is the
+    // dump's SCHEMA and the resolver's answer, nothing more. The proof that
+    // the picker asks is `tests/test_wireframe_select_through.d`, which drives
+    // real picks in both styles.
+    {
+        auto sv = displayDump()["cells"].array[0]["selectVisibility"];
+        enforce(sv["policy"].str == "StyleAware",
+            "the shipped selection-visibility policy must be StyleAware; got "
+            ~ sv["policy"].str);
+        enforce(!jsonBool(sv, "occlusion"),
+            "a style that draws no faces has no surface to hide anything: the "
+            ~ "occlusion term must resolve OFF");
+        enforce(!jsonBool(sv, "facing"),
+            "with both sides of the model on screen the facing term must "
+            ~ "resolve off too");
+        postCommand("viewport.displayStyle", "shaded");
+        Thread.sleep(400.msecs);
+        auto svShaded = displayDump()["cells"].array[0]["selectVisibility"];
+        enforce(jsonBool(svShaded, "occlusion"),
+            "a shaded cell must resolve the occlusion term back ON — a policy "
+            ~ "stuck at one value would make the wireframe row above vacuous");
+        postCommand("viewport.displayStyle", "wireframe");
+        Thread.sleep(400.msecs);
+    }
+    writeln("    G1b PASS: selectVisibility = StyleAware, terms follow the style");
+
     // --- claim 1 (AREA): the solid surface is gone ---
     //
     // "GONE" MEANS *CHANGED*, NOT "BECAME THE CLEAR COLOUR", and the
