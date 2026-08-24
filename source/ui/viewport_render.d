@@ -563,19 +563,31 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     //
     // The 25 % SCREEN DOOR is a separate axis and is deliberately untouched:
     // our fragment shader already discards to the same lattice the reference
-    // stipples with (verified by enumeration, task 1820). The occlusion axis
-    // is untouched too — this pass still draws through the model at full
-    // strength, which after 1860 makes it the only selection feedback that
-    // does. That is a named follow-up, not an oversight.
+    // stipples with (verified by enumeration, task 1820).
+    //
+    // The OCCLUSION axis is no longer untouched (task 1862). The fill is now
+    // the same two passes the edge and vertex highlights took in 1860 — see
+    // `GpuMesh.drawSelectedFacesOverlay` and `OccludedPass` — and the
+    // `glDisable(GL_DEPTH_TEST)` that used to bracket this call is gone with
+    // it. The remaining one-pass, depth-off, full-strength selection surface
+    // is the ITEM highlight (`GpuMesh.drawItemHighlight`), whose depth
+    // convention is unmeasured and is its own card.
+    //
+    // The `OccludedPass` is built HERE and not shared with the `occluded`
+    // value the edge/vertex passes take a few lines below, because the alpha
+    // location it carries is a location IN A PROGRAM: this pass binds the
+    // CHECKER program and those bind the flat one, and a uniform location is
+    // meaningless across programs. The state helpers themselves fit unchanged
+    // — they touch only the depth comparison, the blend and that one uniform,
+    // never a program or a VAO.
     if (selFeedbackType == SelType.Polygon) {
         if (mesh.hasAnySelectedFaces()) {
             auto zOv = g_perf.scope_(Cat.drawOverlays);
             immutable Vec3 fillCol = schemeColor(SchemeColor.selection);
             checkerShader.useProgram(meshModel, vp,
                                      fillCol.x, fillCol.y, fillCol.z);
-            glDisable(GL_DEPTH_TEST);
-            gpu.drawSelectedFacesOverlay(mesh.selectedFaceView());
-            glEnable(GL_DEPTH_TEST);
+            gpu.drawSelectedFacesOverlay(mesh.selectedFaceView(),
+                                         OccludedPass(checkerShader.locAlpha));
         }
     }
 

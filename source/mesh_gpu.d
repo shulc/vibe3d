@@ -202,6 +202,36 @@ private bool beginOccludedHighlightPass(OccludedPass occ) {
     return true;
 }
 
+/// The depth bias the selected-face FILL is drawn under (task 1862).
+///
+/// WHAT WAS MEASURED is `glPolygonOffset(-2, -2)` on the reference's fill
+/// pass — and the reference's SURFACE pass carries no offset at all. So the
+/// number that was actually measured is a SEPARATION: the fill is depth-tested
+/// two units (and two slopes) in FRONT of the surface it lies on, which is how
+/// a coplanar overlay wins its own face's depth without a disabled depth test.
+///
+/// OUR SURFACE PASS IS NOT OFFSET-FREE. `drawFaces` and `drawFacesHighlighted`
+/// both run under `glPolygonOffset(1, 1)`, so the depth STORED for a face is
+/// already one unit BEHIND its true z (that offset exists so the wireframe
+/// drawn on top of a face does not z-fight it). Reproducing the measured
+/// separation therefore means -1 here, not -2:
+///
+///     fill_offset - surface_offset  ==  (-1) - (+1)  ==  -2
+///
+/// Shipping the literal -2 would give a separation of THREE, half again as
+/// much as anything measured, and the direction it errs in is not harmless:
+/// the bias moves the LEQUAL/GREATER boundary the occluded pass partitions on,
+/// so geometry occluding the fill by less than the separation reads as VISIBLE
+/// and paints at full strength — the pre-1862 rendering, silently retained for
+/// coincident and near-coincident pairs (a subpatch cage face against its own
+/// limit surface is the case in reach). A bigger number buys nothing and
+/// widens that blind band.
+///
+/// This is not a free parameter to tune by eye: `app.d`'s depth-size request
+/// records that `glPolygonOffset(1, 1)` on a 16-bit depth buffer is already
+/// enough to push silhouette-adjacent faces far enough to matter.
+private enum float kFillDepthBias = -1.0f;
+
 /// Undo both passes. `ranOccluded` is what `beginOccludedHighlightPass`
 /// returned, so the blend state and the alpha uniform are unwound exactly when
 /// they were wound up.
@@ -1297,7 +1327,34 @@ struct GpuMesh {
     // Optimized: batch selected faces to minimize draw calls. In subpatch
     // mode each VBO face is mapped through `faceOriginGpu` so all children
     // of a selected cage face are included.
-    void drawSelectedFacesOverlay(MarkView selectedFaces) {
+    //
+    // TWO PASSES, and a DEPTH BIAS instead of a disabled depth test (task
+    // 1862). Until then this was one submission under `glDisable(GL_DEPTH_TEST)`
+    // at full strength, which after task 1860 made the fill the only selection
+    // feedback still painting an occluded element exactly like a visible one.
+    // The law is `OccludedPass`' — the same one `drawEdges` and `drawVertices`
+    // obey, and the same three state helpers implement it here, because what
+    // differs between the sites is only the primitives submitted between them.
+    //
+    // TWO BEHAVIOURS CHANGE HERE, NOT ONE, and the second is not optional.
+    // Partitioning the depth range into LEQUAL (visible) and GREATER
+    // (occluded) requires the depth test ENABLED, so the moment the occluded
+    // half exists, a VISIBLE selected face stops being painted unconditionally
+    // over whatever is in front of it and becomes depth-tested-and-biased.
+    // That is the measured behaviour, but it rides along with the occlusion
+    // fix rather than being separable from it; only the bias VALUE is a free
+    // parameter, and `kFillDepthBias` carries its derivation.
+    //
+    // WHAT THIS DOES UNDER A STYLE THAT DRAWS NO FACES: nothing occludes, so
+    // pass A passes everywhere and pass B nowhere, and the fill draws at full
+    // strength through the model. That is the honest answer rather than an
+    // oversight — there IS no surface in that cell for the fill to be behind,
+    // and `drawFaces == false` is exactly the cell where task 1830 ruled that
+    // the PICKER must stop testing against faces for the same reason. If a
+    // future capture says the fill should still be halved there, it needs the
+    // cell's `DrawPlan`, not a change here.
+    void drawSelectedFacesOverlay(MarkView selectedFaces,
+                                  OccludedPass occ = OccludedPass.init) {
         glBindVertexArray(faceVao);
 
         bool preview = faceOriginGpu.length > 0;
@@ -1306,27 +1363,48 @@ struct GpuMesh {
             return cage >= 0 && cage < cast(int)selectedFaces.length && selectedFaces[cage];
         }
 
-        int batchStart = -1;
-        int vboFaceCount = cast(int)faceTriStart.length;
-        for (int i = 0; i < vboFaceCount; i++) {
-            if (!isSelected(i)) {
-                if (batchStart >= 0) {
-                    int startIdx = faceTriStart[batchStart];
-                    int endIdx   = faceTriStart[i];
-                    dcArrays(DrawPass.faceOverlay, GL_TRIANGLES, startIdx, endIdx - startIdx);
-                    batchStart = -1;
+        // The batch scan, issued ONCE and CALLED TWICE — the same idiom, for
+        // the same reason, as `drawEdges.emitHighlights`: the two passes are
+        // required to submit the same primitives in the same order, and two
+        // textual copies stop agreeing the first time either is touched.
+        void emitFill() {
+            int batchStart = -1;
+            int vboFaceCount = cast(int)faceTriStart.length;
+            for (int i = 0; i < vboFaceCount; i++) {
+                if (!isSelected(i)) {
+                    if (batchStart >= 0) {
+                        int startIdx = faceTriStart[batchStart];
+                        int endIdx   = faceTriStart[i];
+                        dcArrays(DrawPass.faceOverlay, GL_TRIANGLES, startIdx, endIdx - startIdx);
+                        batchStart = -1;
+                    }
+                } else if (batchStart < 0) {
+                    batchStart = i;
                 }
-            } else if (batchStart < 0) {
-                batchStart = i;
+            }
+
+            // Draw final batch if exists
+            if (batchStart >= 0) {
+                int startIdx = faceTriStart[batchStart];
+                dcArrays(DrawPass.faceOverlay, GL_TRIANGLES, startIdx, faceVertCount - startIdx);
             }
         }
 
-        // Draw final batch if exists
-        if (batchStart >= 0) {
-            int startIdx = faceTriStart[batchStart];
-            dcArrays(DrawPass.faceOverlay, GL_TRIANGLES, startIdx, faceVertCount - startIdx);
-        }
+        // ONE bias for BOTH passes, deliberately. LEQUAL and GREATER partition
+        // the depth range with no gap only when they compare the same value;
+        // biasing one pass and not the other would leave a band that neither
+        // paints (or that both do).
+        glEnable(GL_POLYGON_OFFSET_FILL);
+        glPolygonOffset(kFillDepthBias, kFillDepthBias);
 
+        beginVisibleHighlightPass();
+        emitFill();
+
+        immutable bool ranOccluded = beginOccludedHighlightPass(occ);
+        if (ranOccluded) emitFill();
+        endHighlightPasses(occ, ranOccluded);
+
+        glDisable(GL_POLYGON_OFFSET_FILL);
         glBindVertexArray(0);
     }
 

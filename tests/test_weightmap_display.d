@@ -124,6 +124,28 @@ bool jsonBool(JSONValue j, string[] path...) {
 
 JSONValue displayDump() { return parseJSON(httpGet("/api/viewport/display")); }
 JSONValue model()       { return parseJSON(httpGet("/api/model")); }
+JSONValue selection()   { return parseJSON(httpGet("/api/selection")); }
+
+/// How many of the mesh's undirected edges do NOT border exactly two faces.
+///
+/// Zero means a CLOSED solid. Flow G's premise block below is the only caller
+/// and carries the reason it needs that property; `/api/model` publishes no
+/// adjacency, so it is recomputed here from the face loops it does publish.
+size_t openEdgeCount(JSONValue mdl) {
+    size_t[int[2]] use;
+    foreach (f; mdl["faces"].array) {
+        auto vs = f.array;
+        foreach (j; 0 .. vs.length) {
+            immutable int a = cast(int)vs[j].integer;
+            immutable int b = cast(int)vs[(j + 1) % vs.length].integer;
+            immutable int[2] key = a < b ? [a, b] : [b, a];
+            use[key] = use.get(key, 0) + 1;
+        }
+    }
+    size_t bad = 0;
+    foreach (n; use.byValue) if (n != 2) bad++;
+    return bad;
+}
 
 struct Px { int x, y, r, g, b, a; bool valid; }
 
@@ -998,9 +1020,56 @@ bool testFlowG() {
         wantW[0], wantW[1], wantW[2], idx.length));
     writefln("    G1 PASS: an 8x4 all-weight block at (%d,%d)", bx, by);
 
-    // --- selection: exactly a quarter of the block, opaque where it covers ---
+    // --- selection: exactly a quarter of the block, ONE colour where it covers ---
     httpPost("/api/select", `{"mode":"polygons","indices":[0,1,2,3,4,5]}`);
     settle();
+
+    // THE PREMISE THE OVERLAY ASSERTIONS BELOW REST ON (task 1862), asserted
+    // here rather than assumed from "the fixture is a cube".
+    //
+    // Since 1862 the selected-face fill is TWO passes — a depth-tested visible
+    // one at full strength and an occluded one at 0.30 (`OccludedPass`,
+    // `source/mesh_gpu.d`). Both stipple the SAME screen-space lattice, so at
+    // every covered pixel of this block the visible pass writes the selection
+    // colour and the occluded pass (the cube's far faces, selected and behind
+    // the near one) blends that same colour OVER ITSELF: 0.30*sel + 0.70*sel
+    // == sel. What this block reads is therefore the selection colour at FULL
+    // STRENGTH, and it is one colour — by that identity, not because the
+    // overlay is opaque wherever it draws. It is not, any more.
+    //
+    // The identity needs EVERY face selected on a CLOSED solid. Under a
+    // partial selection the occluded half can land on pixels the visible half
+    // never painted, and the overlay reads 0.30 of the selection colour over
+    // the weight colour instead.
+    //
+    // AND NOTHING BELOW WOULD CATCH THAT — measured, not supposed. Re-running
+    // this flow with `indices":[0,1,2]` and these two enforces neutralised
+    // leaves Flow G fully GREEN: the count assertion still splits 8/32, and
+    // the one-colour assertion still passes because a uniformly blended
+    // overlay is also a single colour. The colour ITSELF is a registered
+    // divergence and is deliberately not asserted, so the blend has nowhere to
+    // surface. That is what makes this premise load-bearing rather than
+    // decorative, and why it is a check and not a comment.
+    {
+        auto mdl = model();
+        immutable size_t nFaces  = mdl["faces"].array.length;
+        immutable size_t nSelFac = selection()["selectedFaces"].array.length;
+        enforce(nFaces > 0 && nSelFac == nFaces, format(
+            "Flow G needs EVERY face selected — %d of %d are. The overlay "
+            ~ "readings below are the selection colour at full strength only "
+            ~ "while the occluded half of the fill blends it over itself; "
+            ~ "under a partial selection it blends over the weight colour and "
+            ~ "the block goes uniformly dimmer — which every assertion below "
+            ~ "absorbs silently", nSelFac, nFaces));
+        immutable size_t openEdges = openEdgeCount(mdl);
+        enforce(openEdges == 0, format(
+            "Flow G needs a CLOSED solid — %d of the fixture's edges do not "
+            ~ "border exactly two faces. On an open mesh a covered pixel can "
+            ~ "have an occluded selected face behind it with no selected "
+            ~ "surface in front, which dims the overlay the same way",
+            openEdges));
+    }
+
     auto sel = probe(0, blockPts).points;
     enforce(sel.length == 32, "the probe did not return the whole block");
 
@@ -1008,15 +1077,24 @@ bool testFlowG() {
     foreach (px; sel) {
         string why;
         if (matchesWeight(px, 1.0, why)) { nWeightColour++; continue; }
-        // The selection overlay is opaque where it covers, so anything that
-        // is not the weight colour must be ONE other colour. Which colour is
-        // a registered divergence (ours is not the reference's), so it is not
-        // asserted — but that it is a single colour, and covers exactly a
-        // quarter, is the measured SHAPE.
+        // Anything that is not the weight colour must be ONE other colour —
+        // under this fixture, for the reason the premise block above pins.
+        // Which colour is a registered divergence (ours is not the
+        // reference's), so it is not asserted — but that it is a single
+        // colour, and covers exactly a quarter, is the measured SHAPE.
         nSelColour++;
     }
-    // Every non-weight pixel must be the SAME colour: a stipple that blended
-    // would produce several.
+    // Every non-weight pixel must be the SAME colour.
+    //
+    // NOT because the overlay never blends — since 1862 the occluded pass DOES
+    // blend, and it contributes at every one of these pixels (the cube's far
+    // faces are selected and occluded). One colour survives because that blend
+    // is the selection colour over the selection colour, an identity the
+    // premise block above pins by asserting its two fixture properties. What
+    // is left for this block to catch is a stipple that blends against
+    // something ELSE at only SOME pixels — a lattice that drifted between the
+    // two passes, so the occluded half lands partly on weight-coloured pixels
+    // the visible half did not cover.
     Px firstSel;
     bool haveFirst = false;
     foreach (px; sel) {
@@ -1026,9 +1104,14 @@ bool testFlowG() {
         if (!samePixel(firstSel, px)) nOther++;
     }
     enforce(nOther == 0, format(
-        "%d of the %d overlay pixels differ from each other — the selection "
-        ~ "stipple is OPAQUE where it covers, so it must contribute exactly "
-        ~ "one colour", nOther, nSelColour));
+        "%d of the %d overlay pixels differ from each other — the fill must "
+        ~ "contribute exactly ONE colour over this block. Its visible pass "
+        ~ "paints the selection colour opaque and its occluded pass re-blends "
+        ~ "the SAME colour over it at 0.30, which is the identity (the premise "
+        ~ "block above pins the fixture properties that make it so). More than "
+        ~ "one colour means the two passes stopped covering the same pixels — "
+        ~ "it does NOT mean the overlay stopped being opaque",
+        nOther, nSelColour));
     enforce(nSelColour == 8 && nWeightColour == 24, format(
         "the selection overlay covers %d of 32 block pixels and leaves %d at "
         ~ "the weight colour; the measured shape is exactly 8 and 24 (a 25 %% "

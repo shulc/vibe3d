@@ -13,17 +13,36 @@
 // to get this wrong, so they are the two this file is built to separate.
 //
 // ---------------------------------------------------------------------------
-// TWO ELEMENT TYPES, TWO ARMS, AND WHY ONE ARM IS NOT ENOUGH
+// THREE ELEMENT TYPES, THREE ARMS, AND WHY ONE ARM IS NOT ENOUGH
 // ---------------------------------------------------------------------------
-// The occluded pass is issued from TWO draw entry points — `drawEdges` and
-// `drawVertices` — and until this file grew its second arm only the edge one
-// was probed. That gap was not theoretical: mutating pass B at the VERTEX site
-// alone (its depth compare back to `GL_LEQUAL`, its alpha never written) left
-// every gate in this project green while an occluded selected vertex vanished
-// behind the model — neither the old law nor the new one. A mutation applied
-// to BOTH sites at once cannot find that, because the edge arm's red hides the
-// vertex site's silence. So U1 probes an occluded EDGE and an occluded VERTEX,
-// on one rig, and each arm has to be able to redden on its own site.
+// The occluded pass is issued from THREE draw entry points — `drawEdges`,
+// `drawVertices` and `drawSelectedFacesOverlay` — and until this file grew its
+// second arm only the edge one was probed. That gap was not theoretical:
+// mutating pass B at the VERTEX site alone (its depth compare back to
+// `GL_LEQUAL`, its alpha never written) left every gate in this project green
+// while an occluded selected vertex vanished behind the model — neither the
+// old law nor the new one. A mutation applied to BOTH sites at once cannot
+// find that, because the edge arm's red hides the vertex site's silence. So U1
+// probes an occluded EDGE and an occluded VERTEX, on one rig, and each arm has
+// to be able to redden on its own site.
+//
+// U3 (task 1862) is the POLYGON FILL, the third site and the last selection
+// surface that was still drawing through the model at full strength. It is a
+// SEPARATE unittest block rather than a third arm of U1, and that is the same
+// isolation rule stated the other way round: druntime stops a module at its
+// first failed assert, so a mutation that must redden the fill has to be able
+// to redden it in a block the edge arm cannot pre-empt.
+//
+// The fill's own hazard, which neither of the other two has: it is a 25 %
+// SCREEN-DOOR STIPPLE. Three of every four pixels it covers are `discard`ed
+// and read the surface underneath, so a single probe that happens to land on a
+// discarded sample reads the background and "the occluded fill is not at full
+// strength" passes for the wrong reason. The keep predicate has period 4 in x
+// and 2 in y, so an offset found at one probe does NOT transfer to another
+// (the two probes are projections of different world points; neither
+// congruence holds by construction). U3 therefore reads a 4x2 NEIGHBOURHOOD at
+// each site independently and asserts it splits exactly 6 surface / 2 fill —
+// which doubles as a positive control on the lattice itself.
 //
 // ---------------------------------------------------------------------------
 // THE DISCRIMINATING CELL — named before anything was driven
@@ -318,6 +337,91 @@ private void hoverAt(Cell c, int fx, int fy) {
                       50.0 + i * 20.0, fx + c.vx, fy + c.vy);
     playAndWait(log, baseUrl);
     settle();
+}
+
+private void selectPolys(const long[] idx) {
+    import std.conv : to;
+    string s = "[";
+    foreach (i, v; idx) { if (i) s ~= ","; s ~= v.to!string; }
+    postJson("/api/select", `{"mode":"polygons","indices":` ~ s ~ `]}`);
+    settle();
+}
+
+/// Which face is IN FRONT of this cell pixel, asked of a channel that is not
+/// the pixel itself. `/api/pick` raycasts the mesh and answers the NEAREST
+/// face, so it is what turns "the probe is occluded" from an assumption about
+/// the projection into a reading. Takes cell coordinates and adds the cell
+/// origin, because the pick endpoint speaks window coordinates.
+private long faceUnder(Cell c, const int[2] p) {
+    auto j = getJson(format("/api/pick?x=%d&y=%d&engine=bvh",
+                            p[0] + c.vx, p[1] + c.vy));
+    return j["faceIndex"].integer;
+}
+
+/// The 4x2 neighbourhood whose top-left corner is `p`, as raw pixels.
+private Px[] block4x2(const int[2] p, string what) {
+    int[2][] pts;
+    foreach (dy; 0 .. 2) foreach (dx; 0 .. 4) pts ~= [p[0] + dx, p[1] + dy];
+    auto blk = probe(pts);
+    assert(blk.length == 8,
+        format("the %s block came back with %d pixels, not 8", what, blk.length));
+    foreach (i, px; blk)
+        assert(px.valid, format("the %s block's pixel (%d, %d) is unreadable",
+                                what, pts[i][0], pts[i][1]));
+    return blk;
+}
+
+private string dumpBlock(const int[2] p, const Px[] blk) {
+    string d;
+    foreach (i, px; blk)
+        d ~= format("(%d,%d)=%s ", p[0] + (i % 4), p[1] + (i / 4), px.toString);
+    return d;
+}
+
+/// Assert the 4x2 block is ONE colour and return it. The positive control that
+/// a window is clean surface — no wireframe, no dot, no silhouette, and no
+/// stipple — before any coverage is counted over it.
+private Px pureBlock(const int[2] p, string what) {
+    auto blk = block4x2(p, what);
+    foreach (px; blk)
+        assert(sameRgb(px, blk[0]),
+            format("rig premise: the %s 4x2 window at (%d, %d) is not one flat "
+                   ~ "surface, so every count taken over it below would be "
+                   ~ "counting a wire, a dot or a silhouette: %s",
+                   what, p[0], p[1], dumpBlock(p, blk)));
+    return blk[0];
+}
+
+/// The 25 %% stipple's two readings at one site: the SURFACE it leaves alone
+/// and the FILL it paints, recovered from the block's own 6/2 split rather
+/// than from a copy of the shader's keep predicate.
+private struct FillBlock { Px surface; Px fill; }
+
+private FillBlock fillBlock(const int[2] p, string what) {
+    auto blk = block4x2(p, what);
+    // How many of the eight each pixel agrees with, itself included. A surface
+    // pixel must agree with 6, a fill pixel with 2. Nothing here knows WHICH
+    // pixels the lattice keeps — that the split is 6/2 at all is the assertion.
+    int[8] n;
+    foreach (i; 0 .. 8) foreach (j; 0 .. 8) if (sameRgb(blk[i], blk[j])) n[i]++;
+
+    FillBlock r;
+    int nSurf = 0, nFill = 0;
+    foreach (i; 0 .. 8) {
+        if      (n[i] == 6) { r.surface = blk[i]; nSurf++; }
+        else if (n[i] == 2) { r.fill    = blk[i]; nFill++; }
+    }
+    assert(nSurf == 6 && nFill == 2,
+        format("the %s 4x2 window must split 6 surface / 2 fill — the "
+               ~ "selection fill is a 25 %% screen door and this window is two "
+               ~ "full periods in x and one in y. It splits %d / %d, over "
+               ~ "per-pixel agreement counts %s. All eight agreeing means the "
+               ~ "fill is ABSENT from this window (or is the same colour as "
+               ~ "the surface, in which case nothing below discriminates); a "
+               ~ "6/2 split the other way round means it went opaque over "
+               ~ "three quarters of the face: %s",
+               what, nSurf, nFill, n, dumpBlock(p, blk)));
+    return r;
 }
 
 // ===========================================================================
@@ -639,4 +743,182 @@ unittest {
                hoverRun, selRun, unsel));
 
     parkPointer(c);
+}
+
+// ===========================================================================
+// U3 — the selected-POLYGON FILL, the third draw entry point (task 1862).
+//
+//      Same rig as U1, same discriminating cell, one selected FACE instead of
+//      an edge or a pair of dots: half of the back bar is behind the front
+//      quad and half sticks out past it, so the two readings differ in nothing
+//      but what is in front of them.
+//
+//      A SEPARATE unittest block, deliberately. druntime aborts a module at
+//      its first failed assert, so folding this into U1 would let the edge
+//      arm's red hide the fill site's silence — the exact trap the vertex arm
+//      was added to close.
+//
+//      Four candidate implementations, four different readings at the
+//      occluded probe, exactly as in U1:
+//
+//        correct two-pass          -> round(0.30 * fill + 0.70 * surface)
+//        one pass, depth test off  -> `fill` at full strength  (pre-1862)
+//        second pass missing       -> the front quad's own surface
+//        alpha uniform not written -> `fill` at full strength again
+//
+//      ...and one more that only the fill can produce, because only the fill
+//      is a stipple: a probe on a DISCARDED sample reads the surface and looks
+//      exactly like "second pass missing". That is why every reading here is
+//      taken over a 4x2 window with an asserted 6/2 split rather than at a
+//      single pixel.
+// ===========================================================================
+unittest {
+    postJson("/api/reset", "{}");
+    settle();
+    loadMesh(`[[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1],`
+             ~ `[-0.6,-0.5,-1],[3.0,-0.5,-1],[3.0,0.5,-1],[-0.6,0.5,-1]]`,
+             `[[0,1,2,3],[4,5,6,7]]`);
+    frontalCamera(9.0);
+    auto c = cell();
+    parkPointer(c);
+
+    // ---- WHICH DISPLAY STYLE THIS RUNS UNDER, asserted not assumed --------
+    // Under a style whose DrawPlan draws no faces there is no surface in the
+    // depth buffer for the fill to be behind: pass A would pass everywhere,
+    // pass B nowhere, and the fill would correctly paint at full strength.
+    // That is a real cell of the shipped behaviour and it is NOT the cell this
+    // block measures, so the plan is read back rather than trusted.
+    {
+        auto d = getJson("/api/viewport/display");
+        auto plan = d["cells"].array[0]["plan"]["active"];
+        assert(plan["drawFaces"].type == JSONType.true_,
+            "rig: cell 0's display plan draws no faces, so nothing occludes "
+            ~ "anything and every reading below is void — this block measures "
+            ~ "the face-drawing styles, and the no-face style is a separate "
+            ~ "(and deliberately full-strength) case");
+    }
+
+    // Two windows on the SAME selected face, y = 0.25 so that neither the
+    // bar's own top/bottom edges (y = +-0.5) nor the ground grid's edge-on
+    // line (world y = 0) is anywhere near them.
+    //   x = 0.0  -> inside the front quad's footprint  => OCCLUDED
+    //   x = 2.0  -> past the front quad's x = 1 edge   => CLEAR
+    immutable int[2] pOccF = fbo(DHVec3(0.0f, 0.25f, -1.0f));
+    immutable int[2] pVisF = fbo(DHVec3(2.0f, 0.25f, -1.0f));
+
+    static struct Named { string what; int[2] p; }
+    foreach (n; [Named("occluded fill", pOccF), Named("clear fill", pVisF)])
+        assert(n.p[0] >= 4 && n.p[1] >= 4
+            && n.p[0] + 4 < c.vw - 4 && n.p[1] + 2 < c.vh - 4,
+            format("rig: the %s window starts at FBO (%d, %d), off or against "
+                   ~ "the edge of the %dx%d cell", n.what, n.p[0], n.p[1],
+                   c.vw, c.vh));
+    assert(pOccF[0] + 4 <= pVisF[0] || pVisF[0] + 4 <= pOccF[0],
+        "rig: the two 4x2 windows overlap in x — they must be two independent "
+        ~ "readings of the same face");
+
+    // ---- RIG PREMISE (1): WHAT IS IN FRONT, read from a second channel ----
+    // `/api/pick` raycasts and answers the nearest face, so this is evidence
+    // about the geometry rather than about the pixels under test. Face 0 is
+    // the front quad, face 1 the back bar.
+    assert(faceUnder(c, pOccF) == 0,
+        format("rig premise: the OCCLUDED window must have the front quad "
+               ~ "(face 0) in front of it; the picker says face %d is nearest "
+               ~ "there, so there is no occlusion to measure",
+               faceUnder(c, pOccF)));
+    assert(faceUnder(c, pVisF) == 1,
+        format("rig premise: the CLEAR window must see the back bar (face 1) "
+               ~ "with nothing in front of it; the picker says face %d",
+               faceUnder(c, pVisF)));
+
+    // ---- RIG PREMISE (2): both windows are clean surface before selection --
+    selectPolys([]);
+    immutable Px preOccSurf = pureBlock(pOccF, "occluded (unselected)");
+    immutable Px preVisSurf = pureBlock(pVisF, "clear (unselected)");
+    immutable Px sel = asPx(kSelectionRgb);
+    assert(!sameRgb(preOccSurf, sel, 8),
+        format("rig premise: the front quad's surface %s is already the "
+               ~ "selection colour %s — the occluded reading below could not "
+               ~ "tell a blend from the surface it blends over",
+               preOccSurf.toString, sel.toString));
+
+    // ---- Select the BACK BAR's face --------------------------------------
+    selectPolys([1]);
+    assert(selType() == "polygon",
+        "the app is feeding back " ~ selType() ~ ", not the polygon type — the "
+        ~ "checker fill under test would not be the pass running");
+
+    auto occ = fillBlock(pOccF, "occluded");
+    auto vis = fillBlock(pVisF, "clear");
+
+    // (1) THE CLEAR HALF is the selection colour at FULL STRENGTH.
+    //     Asserted against the colour itself, not merely "not the surface": a
+    //     clear fill drawn at 0.30 is still non-background, and that is exactly
+    //     what a swapped GL_LEQUAL/GL_GREATER — or a depth mismatch between
+    //     the fill's vertex program and the lit one — would produce.
+    assert(sameRgb(vis.fill, sel),
+        format("the CLEAR half of the selected face must be the selection "
+               ~ "colour %s at full strength; its stipple reads %s over a "
+               ~ "surface of %s. A reading part-way to the surface means the "
+               ~ "two depth comparisons are the wrong way round, or the "
+               ~ "visible pass is losing its own face's depth",
+               sel.toString, vis.fill.toString, vis.surface.toString));
+
+    // (2) THE SURFACE UNDER THE OCCLUDED WINDOW did not move: it is still the
+    //     front quad, exactly as it read before anything was selected.
+    assert(sameRgb(occ.surface, preOccSurf),
+        format("the occluded window's surface changed from %s to %s when the "
+               ~ "back face was selected — the fill is painting the discarded "
+               ~ "samples too, so the 6/2 split below is not measuring a "
+               ~ "stipple", preOccSurf.toString, occ.surface.toString));
+
+    // (3) THE OCCLUDED HALF is the blend, computed from the surface as it is
+    //     in THIS frame.
+    immutable Px want = blendOver(kSelectionRgb, occ.surface);
+    assert(sameRgb(occ.fill, want),
+        format("the OCCLUDED half of the selected face must be %.2f of the "
+               ~ "selection colour over the surface in front of it: %s over "
+               ~ "%s = %s. It reads %s. Full strength (%s) means one pass with "
+               ~ "the depth test off, or a second pass whose alpha was never "
+               ~ "written; the plain surface (%s) means the second pass is not "
+               ~ "happening at all — and note the EDGE and VERTEX arms stay "
+               ~ "green for every one of those, because the fill has its own "
+               ~ "pair of passes and its own program's alpha",
+               kOccludedAlpha, sel.toString, occ.surface.toString,
+               want.toString, occ.fill.toString, sel.toString,
+               occ.surface.toString));
+
+    // (4) NON-VACUITY. A blend is evidence only if it is distinguishable from
+    //     both of the things it blends.
+    assert(!sameRgb(want, sel, 2),
+        format("the expected fill blend %s is indistinguishable from the "
+               ~ "selection colour %s — this arm cannot see a missing alpha",
+               want.toString, sel.toString));
+    assert(!sameRgb(want, occ.surface, 2),
+        format("the expected fill blend %s is indistinguishable from the "
+               ~ "surface %s — this arm cannot see a missing second pass",
+               want.toString, occ.surface.toString));
+
+    // (5) DESTINATION ALPHA IS UNTOUCHED at the fill site too. The blend state
+    //     is shared with the other two entry points, but "shared" is a claim
+    //     about today's code, not a licence to leave a site unprobed — and
+    //     this one binds a DIFFERENT program, whose fragment shader now writes
+    //     u_alpha into the source alpha for the first time.
+    assert(occ.fill.a == occ.surface.a,
+        format("the occluded fill must leave DESTINATION ALPHA alone — the "
+               ~ "blended stipple carries a=%d where the surface beside it "
+               ~ "carries a=%d. The cell FBO's alpha is a real attachment",
+               occ.fill.a, occ.surface.a));
+
+    // (6) And the clear half did not punch the alpha either: its visible pass
+    //     runs with blending OFF, so it writes u_alpha = 1.0 straight through.
+    assert(vis.fill.a == vis.surface.a,
+        format("the VISIBLE fill pass moved the destination alpha: the fill "
+               ~ "carries a=%d against the surface's a=%d. That is the shape "
+               ~ "of a program whose new u_alpha uniform was never seeded — "
+               ~ "GL initialises an unset uniform to 0",
+               vis.fill.a, vis.surface.a));
+    assert(sameRgb(vis.surface, preVisSurf),
+        format("the clear window's surface changed from %s to %s under "
+               ~ "selection", preVisSurf.toString, vis.surface.toString));
 }

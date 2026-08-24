@@ -234,26 +234,39 @@ unittest { // draw-CALL count tracks selection fragmentation
     // calls and N adjacent ones cost fewer. A regression that dropped the
     // batching would leave `verts` untouched and `calls` exploding — which is
     // precisely the shape no timing number on this host would resolve.
+    //
+    // TASK 1862 MADE THE FILL A TWO-PASS HIGHLIGHT TOO, so every count here
+    // carries the same `kHighlightPasses` factor the edge formula does — the
+    // fill is submitted once depth-tested and once with the depth comparison
+    // inverted, and the two submissions carry the same primitives in the same
+    // order. The factor is written as the named constant and NOT as a doubled
+    // literal, so a future third pass moves one number.
     resetApp();
     httpPost("/api/select", `{"mode":"polygons","indices":[0]}`);
     settle();
 
     auto one = lastScene();
-    assert(passCalls(one, "faceOverlay") == 1,
-           format("one selected face should be one overlay draw, got %d",
+    assert(passCalls(one, "faceOverlay") == kHighlightPasses * 1,
+           format("one selected face should be %d overlay draws (%d passes x "
+                  ~ "one contiguous run), got %d",
+                  kHighlightPasses, kHighlightPasses,
                   passCalls(one, "faceOverlay")));
     immutable long onePolyVerts = passVerts(one, "faceOverlay");
     assert(onePolyVerts > 0);
 
     // Faces 0, 2, 4 of the cube are non-adjacent IN VBO ORDER, so the run
-    // batcher cannot coalesce them: three faces, three submissions.
+    // batcher cannot coalesce them: three faces, three submissions per pass.
     httpPost("/api/select", `{"mode":"polygons","indices":[0,2,4]}`);
     settle();
 
     auto three = lastScene();
-    assert(passCalls(three, "faceOverlay") == 3,
-           format("three non-contiguous faces should be three overlay draws, got %d",
+    assert(passCalls(three, "faceOverlay") == kHighlightPasses * 3,
+           format("three non-contiguous faces should be %d overlay draws (%d "
+                  ~ "passes x three runs), got %d",
+                  kHighlightPasses * 3, kHighlightPasses,
                   passCalls(three, "faceOverlay")));
+    // `onePolyVerts` was read off the SAME doubled counter, so this ratio is
+    // pass-count-free by construction and stays 3x whatever the pass count is.
     assert(passVerts(three, "faceOverlay") == 3 * onePolyVerts,
            format("three faces should submit 3x the vertices of one (%d), got %d",
                   3 * onePolyVerts, passVerts(three, "faceOverlay")));
@@ -405,6 +418,11 @@ long runsOf(const bool[] m, bool want) {
 ///   highlight  — one submission for the whole mesh when everything is
 ///                selected, else one per contiguous run of SELECTED segments;
 ///   hover pass — none, `hoveredEdge < 0` and no loop mask.
+///
+/// USED BY THE FACE-OVERLAY ORACLES TOO. Task 1862 gave the selected-polygon
+/// FILL the same pair of passes, so `pass.faceOverlay` carries the same factor
+/// as the edge highlight — one constant, three draw entry points, and no
+/// doubled literal anywhere.
 ///
 /// TASK 1860 MADE THE HIGHLIGHT TERM x2, and that factor is the whole reason
 /// this file is a structural pin on the occluded-selection pass. A selected
@@ -620,17 +638,20 @@ unittest { // the FACE selection drives BOTH the overlay and the face->edge cach
                "CONSUMER LIVENESS: the edge pass must run in Polygons mode");
 
         // The checker overlay: one submission per contiguous run of selected
-        // faces, and the fan-triangulated vertices of exactly those faces.
+        // faces, PER PASS, and the fan-triangulated vertices of exactly those
+        // faces, per pass (task 1862 — see `kHighlightPasses`).
         auto faceMask = new bool[](model["faces"].array.length);
         foreach (fi; pattern) faceMask[cast(size_t)fi] = true;
-        assert(passCalls(w, "faceOverlay") == runsOf(faceMask, true),
-               format("face selection %s is %d contiguous run(s), got %d "
-                      ~ "overlay submissions", pattern, runsOf(faceMask, true),
+        assert(passCalls(w, "faceOverlay") == kHighlightPasses * runsOf(faceMask, true),
+               format("face selection %s is %d contiguous run(s) over %d "
+                      ~ "passes = %d submissions, got %d",
+                      pattern, runsOf(faceMask, true), kHighlightPasses,
+                      kHighlightPasses * runsOf(faceMask, true),
                       passCalls(w, "faceOverlay")));
-        assert(passVerts(w, "faceOverlay") == overlayVertsFor(model, pattern),
-               format("face selection %s implies %d overlay verts, got %d",
-                      pattern, overlayVertsFor(model, pattern),
-                      passVerts(w, "faceOverlay")));
+        assert(passVerts(w, "faceOverlay") == kHighlightPasses * overlayVertsFor(model, pattern),
+               format("face selection %s implies %d overlay verts (%d passes), got %d",
+                      pattern, kHighlightPasses * overlayVertsFor(model, pattern),
+                      kHighlightPasses, passVerts(w, "faceOverlay")));
         if (pattern.length > 0)
             assert(passCalls(w, "faceOverlay") >= 1,
                    "CONSUMER LIVENESS: a non-empty face selection must draw "
@@ -680,10 +701,11 @@ unittest { // MIXED FACE DEGREES — the one reading here that can see POSITION
         selectPolys(pattern);
         settle();
         auto w = lastScene();
-        assert(passVerts(w, "faceOverlay") == overlayVertsFor(model, pattern),
-               format("mixed-degree selection %s implies %d overlay verts, got %d",
-                      pattern, overlayVertsFor(model, pattern),
-                      passVerts(w, "faceOverlay")));
+        assert(passVerts(w, "faceOverlay") == kHighlightPasses * overlayVertsFor(model, pattern),
+               format("mixed-degree selection %s implies %d overlay verts (%d "
+                      ~ "passes), got %d",
+                      pattern, kHighlightPasses * overlayVertsFor(model, pattern),
+                      kHighlightPasses, passVerts(w, "faceOverlay")));
     }
 
     // The fixture is only worth its cost if a SHIFTED mask of the same size

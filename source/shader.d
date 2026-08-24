@@ -294,14 +294,36 @@ private immutable string litFragSrc = q{
 };
 
 // Checkerboard overlay shader — every other screen pixel is discarded,
-// the rest are filled with u_color.  Used to highlight selected faces.
+// the rest are filled with u_color at u_alpha.  Used to highlight selected
+// faces.
+//
+// `u_alpha` IS THIS PROGRAM'S OWN, AND IT IS NOT ON THE SHARED CONTRACT
+// (task 1862). `kSharedFragNeutrals` / `seedSharedFragUniforms` describe the
+// programs built from `fragmentShaderSrc` and its geometry-stage twin
+// `thickLineFragSrc`; the helper resolves BY NAME, over programs whose
+// builders call it. `CheckerShader` is built from `checkerFragSrc`, so adding
+// a uniform on either side does NOT enlist the other.
+//
+// Which puts this source under the rule `fillFragSrc` and `imagePlaneFragSrc`
+// already state, not under an exception to it: a program whose `u_alpha` is
+// WRITTEN on every draw is never a seeding obligation and must NOT be seeded
+// through `seedSharedFragUniforms`. `CheckerShader.useProgram` writes the
+// neutral on every bind, so the obligation is discharged there — see the ctor
+// for why calling the helper as well would be worse than redundant.
+//
+// Why it exists at all: the OCCLUDED half of the selected-face fill (the part
+// behind other geometry) is submitted a second time at
+// `kOccludedSelectionAlpha` — see `OccludedPass` in `mesh_gpu.d`. Without a
+// per-draw alpha that second pass would paint at full strength, which is the
+// pre-1862 rendering it exists to replace.
 private immutable string checkerFragSrc = q{
     #version 330 core
-    uniform vec3 u_color;
+    uniform vec3  u_color;
+    uniform float u_alpha;
     out vec4 fragColor;
     void main() {
         if ((int(gl_FragCoord.x)/2 + int(gl_FragCoord.y)) % 2 == 0 || int(gl_FragCoord.x) % 2 == 0) discard;
-        fragColor = vec4(u_color, 1.0);
+        fragColor = vec4(u_color, u_alpha);
     }
 };
 
@@ -646,6 +668,10 @@ class CheckerShader {
     GLint locView;
     GLint locProj;
     GLint locColor;
+    /// `checkerFragSrc`'s OWN `u_alpha` — see that source's comment for why it
+    /// is not the shared contract's. Handed to `GpuMesh.drawSelectedFacesOverlay`
+    /// inside an `OccludedPass` so the occluded half of the fill can be blended.
+    GLint locAlpha;
 
     this() {
         program  = createProgram(vertexShaderSrc, checkerFragSrc);
@@ -653,6 +679,26 @@ class CheckerShader {
         locView  = glGetUniformLocation(program, "u_view");
         locProj  = glGetUniformLocation(program, "u_proj");
         locColor = glGetUniformLocation(program, "u_color");
+        locAlpha = glGetUniformLocation(program, "u_alpha");
+        // NO `seedSharedFragUniforms(program)` HERE, deliberately, and this is
+        // the file's one rule rather than an exception to it: GL initialises
+        // an unset uniform to 0 and 0 is the DESTRUCTIVE value for an alpha,
+        // but this program's alpha is WRITTEN on every bind by `useProgram`
+        // below — which is its ONLY bind site — so nothing can reach a draw
+        // through an unwritten `u_alpha`. That is exactly the property
+        // `fillFragSrc` and `imagePlaneFragSrc` name as "never a seeding
+        // obligation".
+        //
+        // Calling the helper anyway would not be merely redundant. It resolves
+        // BY NAME over the programs whose builders call it, so calling it here
+        // is what would ENLIST this program in `kSharedFragNeutrals` — and a
+        // later edit to a neutral there, or a third entry whose name
+        // `checkerFragSrc` happens to also use, would then reach a program the
+        // shared contract does not describe.
+        //
+        // The obligation travels with the bind: a new site that binds
+        // `program` raw instead of through `useProgram` takes it on, and
+        // writing `u_alpha` is that site's job.
     }
 
     ~this() { glDeleteProgram(program); }
@@ -663,6 +709,13 @@ class CheckerShader {
         glUniformMatrix4fv(locView,  1, GL_FALSE, vp.view.ptr);
         glUniformMatrix4fv(locProj,  1, GL_FALSE, vp.proj.ptr);
         glUniform3f(locColor, r, g, b);
+        // THE NEUTRAL'S ONLY DISCHARGE — the ctor deliberately does not seed
+        // it (see there). Every bind starts fully opaque, so the very first
+        // frame's visible pass is opaque too. The one pass that lowers it (the
+        // occluded half of the fill) restores 1.0 through `endHighlightPasses`
+        // — but a bind that inherited 0.30 from a previous frame would paint a
+        // ghost fill, so the neutral is written here rather than assumed.
+        glUniform1f(locAlpha, 1.0f);
     }
 }
 
