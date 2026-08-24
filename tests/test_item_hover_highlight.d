@@ -336,7 +336,7 @@ private void assertRigSane(const Box[] b) {
 
 /// A scan row through `b` that no vertex DOT can reach.
 ///
-/// The primary layer draws a grey dot at every one of its vertices, AFTER the
+/// The primary layer draws a dot at every one of its vertices, AFTER the
 /// highlight pass, so a row passing within a couple of pixels of a projected
 /// vertex has some of its highlight pixels overwritten — and, because only the
 /// PRIMARY gets dots, by a different amount depending on which item is primary.
@@ -347,7 +347,12 @@ private void assertRigSane(const Box[] b) {
 /// Found by walking outward from the box centre, so the answer is deterministic
 /// and stays near the widest part of the item.
 private int scanRow(const Box[] boxes, size_t which) {
-    enum int kDotClear = 6;      // a 5 px dot, plus margin
+    // The unselected dot is 3 px since task 1860 (it was 5). The clearance is
+    // deliberately left at 6 rather than tightened with it: the number's job is
+    // to be comfortably larger than the dot, and a margin that tracked the size
+    // exactly would put this rig back on the edge every time the size moves.
+    // The SELECTED dot is 6 px, and nothing in this file selects a vertex.
+    enum int kDotClear = 6;      // a 3 px dot, plus generous margin
     enum int kInset    = 2;      // stay off the box's own top/bottom edge
     const b = boxes[which];
     // Only the SCANNED item's own vertices matter. A row is a horizontal line

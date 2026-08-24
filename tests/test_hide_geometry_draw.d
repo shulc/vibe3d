@@ -494,11 +494,24 @@ unittest {
     // edges, and the edges draw pass submits exactly 2 verts fewer per hidden
     // edge. `verts`, not `calls`: a batched path hides a count change in a
     // call count.
+    // WHY THE EXPECTED NUMBER IS DOUBLED (task 1860). The selection highlight
+    // is now submitted TWICE per frame — once depth-tested normally, once
+    // against the inverted depth comparison at the occluded alpha — so an
+    // all-edges-selected cube puts its 24-vert buffer through the edges pass
+    // twice. The factor is spelled out rather than folded into a literal 48,
+    // for two reasons: this row would otherwise read as "the buffer is 48
+    // verts long", which is false; and if the occluded pass is ever dropped
+    // the numbers here go back to 24/18 and BOTH rows redden with a message
+    // that names the pass count, instead of one bare arithmetic mismatch.
+    enum long kHighlightPasses = 2;
+
     auto cleanCounts = getJson("/api/frames/counts");
     immutable long cleanVerts = cleanCounts["lastScene"]["pass"]["edges"]["verts"].integer;
-    assert(cleanVerts == 24,
-        "edges pass must submit the whole 24-vert buffer when all edges are "
-        ~ "selected and none hidden, got " ~ cleanVerts.to!string);
+    assert(cleanVerts == 24 * kHighlightPasses,
+        "edges pass must submit the whole 24-vert buffer once per highlight "
+        ~ "pass when all edges are selected and none hidden: expected "
+        ~ (24 * kHighlightPasses).to!string ~ " ("
+        ~ kHighlightPasses.to!string ~ " x 24), got " ~ cleanVerts.to!string);
 
     selectMode("vertices", [0]);
     runCmd("mesh.hide");
@@ -523,10 +536,16 @@ unittest {
 
     auto dirtyCounts = getJson("/api/frames/counts");
     immutable long dirtyVerts = dirtyCounts["lastScene"]["pass"]["edges"]["verts"].integer;
-    assert(dirtyVerts == cleanVerts - 2 * hiddenEdges,
-        "the edges draw pass must submit 2 fewer verts per hidden edge: "
-        ~ (cleanVerts - 2*hiddenEdges).to!string ~ " expected, got "
-        ~ dirtyVerts.to!string);
+    // Per hidden edge the buffer loses 2 verts, and each of the highlight
+    // passes stops submitting them — so the drop is 2 x kHighlightPasses per
+    // hidden edge, not 2. Written through the same constant as the row above
+    // so the two cannot disagree about how many passes there are.
+    assert(dirtyVerts == cleanVerts - 2 * kHighlightPasses * hiddenEdges,
+        "the edges draw pass must submit 2 fewer verts per hidden edge PER "
+        ~ "highlight pass: " ~ (cleanVerts - 2*kHighlightPasses*hiddenEdges).to!string
+        ~ " expected (" ~ cleanVerts.to!string ~ " - 2 x "
+        ~ kHighlightPasses.to!string ~ " x " ~ hiddenEdges.to!string
+        ~ "), got " ~ dirtyVerts.to!string);
 
     // And it goes back. `unhideAll` must restore the sentinel to EMPTY, not
     // merely refill it at full length — otherwise the shortcut is disabled for

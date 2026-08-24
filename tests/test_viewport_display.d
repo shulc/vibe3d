@@ -1018,28 +1018,91 @@ bool testFlowI() {
     // The measurement set is defined BY the opaque image — the pixels the
     // base line pass actually covers — so the test never needs to know where
     // an edge is.
-    size_t[] linePx;
+    // A CANDIDATE line pixel is one carrying the base wireframe colour
+    // EXACTLY. The set is narrowed a second time below, once the clear frame
+    // is in hand, because this colour is no longer unique to lines.
+    //
+    // This used to be a brightness threshold (`min channel >= 200`), which
+    // worked only because the wire happened to be brighter than any lit face.
+    // Task 1860 moved the wire to the measured 0.72 grey and the threshold
+    // stopped selecting anything — a predicate that had been standing on a
+    // margin rather than on the thing it meant. An exact compare says what it
+    // means: the base pass writes a flat `u_color` with no lighting, no
+    // blending and no anti-aliasing at wireAlpha 1.0, so a covered pixel is
+    // this value and nothing near it.
+    //
+    // 184 = round(0.72 * 255), the `wireframe` row of `viewport_scheme.d`.
+    // Written out rather than read from the plan dump: `plan.wireColor` is
+    // carried and NOT consumed by any pass (see A3), so using it as the oracle
+    // here would assert a relationship that does not exist.
+    enum int kWireLevel = 184;
+    size_t[] candidate;
     foreach (i, p; opaque.points) {
         if (!p.valid) continue;
-        immutable int mn = (p.r < p.g ? (p.r < p.b ? p.r : p.b) : (p.g < p.b ? p.g : p.b));
-        if (mn >= 200) linePx ~= i;
+        if (p.r == kWireLevel && p.g == kWireLevel && p.b == kWireLevel)
+            candidate ~= i;
     }
-    enforce(linePx.length >= 20,
-        format("only %d fully-lit line samples found; too few to measure "
-               ~ "opacity against", linePx.length));
+    enforce(candidate.length >= 20,
+        format("only %d opaque base-wireframe samples found (looking for the "
+               ~ "flat grey %d); too few to measure opacity against",
+               candidate.length, kWireLevel));
 
-    double meanRedAt(string alpha) {
+    ProbeResult sampleAt(string alpha) {
         postCommand("viewport.wireAlpha", alpha);
         Thread.sleep(400.msecs);
-        auto s = probe(0, pts);
+        return probe(0, pts);
+    }
+
+    // The order is 1.0 -> 0.5 -> 0.0 so that the plan assertion at the bottom
+    // reads the opacity this flow set LAST. `opaque` is the 1.0 sample and is
+    // reused rather than re-probed.
+    auto half  = sampleAt("0.5");
+    auto clear = sampleAt("0.0");
+
+    // ---- THE SAMPLE SET IS NARROWED, and this is the discriminating step ---
+    //
+    // `kWireLevel` selects base-wireframe pixels AND unselected vertex DOTS:
+    // task 1860 gave the two ONE scheme row, so they are the same value. A dot
+    // pixel is ALPHA-IMMUNE — `viewport.wireAlpha` reaches only the base line
+    // pass, through `BaseWire` — so it contributes the identical 184 to all
+    // three means and flattens exactly the gap the enforce below measures.
+    //
+    // AND THE DOTS ARE BEING DRAWN HERE. Measured on this flow's own state:
+    // `plan.active.drawVerts` is FALSE under Shaded, but `/api/selection`
+    // reports `selType: vertex` after a reset, and the vertex pass runs on
+    // `drawVerts || selFeedbackType == Vertex`. So the cloud is on screen; it
+    // simply misses this flow's 11 columns and 11 rows on the default cube
+    // (the run below reports how many were dropped, and today it is 0). That
+    // near-miss is the whole point: the flow would be resting on where a dot
+    // happens to land, which is the same kind of margin the exact-colour
+    // predicate was brought in to replace.
+    //
+    // So: keep only the samples that MOVED between fully opaque and fully
+    // clear. That is not a proxy for "is a line", it is the property the
+    // measurement actually needs — a sample that does not respond to the knob
+    // cannot testify about the knob. Any future alpha-immune pixel that lands
+    // on this colour is excluded by construction rather than by luck.
+    size_t[] linePx;
+    foreach (i; candidate)
+        if (clear.points[i].valid && clear.points[i].r != opaque.points[i].r)
+            linePx ~= i;
+    immutable size_t dropped = candidate.length - linePx.length;
+    enforce(linePx.length >= 20,
+        format("only %d of %d base-wireframe samples respond to wireAlpha at "
+               ~ "all (%d were identical at 1.0 and 0.0 — alpha-immune, most "
+               ~ "likely unselected vertex dots, which share the wire's "
+               ~ "colour); too few to measure opacity against",
+               linePx.length, candidate.length, dropped));
+
+    double meanRed(ProbeResult s) {
         double acc = 0;
         foreach (i; linePx) acc += s.points[i].r;
         return acc / cast(double)linePx.length;
     }
 
-    immutable double m10 = meanRedAt("1.0");
-    immutable double m05 = meanRedAt("0.5");
-    immutable double m00 = meanRedAt("0.0");
+    immutable double m10 = meanRed(opaque);
+    immutable double m05 = meanRed(half);
+    immutable double m00 = meanRed(clear);
 
     // Directional and categorical: lines get closer to what is behind them as
     // opacity falls. No shading value is asserted.
@@ -1048,8 +1111,9 @@ bool testFlowI() {
                ~ "%.1f (opaque) / %.1f (half) / %.1f (clear) over %d line "
                ~ "samples — expected a strict, substantial decrease",
                m10, m05, m00, linePx.length));
-    writefln("    I1 PASS: %d line samples fade %.1f -> %.1f -> %.1f as "
-             ~ "opacity drops 1.0 -> 0.5 -> 0.0", linePx.length, m10, m05, m00);
+    writefln("    I1 PASS: %d alpha-responsive line samples (%d alpha-immune "
+             ~ "dropped) fade %.1f -> %.1f -> %.1f as opacity drops "
+             ~ "1.0 -> 0.5 -> 0.0", linePx.length, dropped, m10, m05, m00);
 
     enforce(jsonNum(displayDump()["cells"].array[0], "plan", "active", "wireAlpha") == 0.0,
         "the plan must report the opacity that was set");

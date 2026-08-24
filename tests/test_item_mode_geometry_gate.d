@@ -17,11 +17,23 @@
 //     implementation that turned picking off reddens the control, not the item
 //     arm, which is the only way to tell the fix from the amputation.
 //
-// The drawing half gets the same treatment. "Not drawn" is asserted as a pixel
-// census that is ZERO for the selection colour while the item-highlight colour
-// at the very same pixels is NON-zero — so a frame that simply failed to render
-// cannot pass — and then the type is switched back and the census must return
-// to its full value.
+// The drawing half gets the same treatment. "Not drawn" is asserted as a ZERO
+// on the vertex-dot pass's own draw counter, standing beside THREE positive
+// controls — the scene frame ordinal advanced, the edge pass still ran, and the
+// item highlight is present in PIXELS at the very vertices whose dots are
+// claimed absent — so a frame that simply failed to render cannot pass, and
+// neither can a renderer that stopped drawing. Then the type is switched back
+// and the counter must return to its baseline value.
+//
+// TASK 1860 REPLACED THE DISCRIMINATOR HERE, and the replacement is not a
+// weakening. The zero used to be a pixel census for the selection colour, with
+// the item-highlight colour at the same pixels as its control. That pair
+// depended on the two colours being TELLABLE APART, which a `static assert`
+// enforced — and the measurement made them the SAME colour (one palette row,
+// read by both passes), so the guard began failing the BUILD on correct code.
+// A counter names the PASS, which is what the gate is actually about; a census
+// could only ever say "no pixels of that colour", which the item highlight now
+// answers by itself.
 //
 // THREE ITEMS, not one. With one item "the item under the cursor" and "all of
 // them" are the same set, and this area has sprung that trap twice (0647 had to
@@ -57,6 +69,7 @@
 //   * the vertex-dot pass goes back to `editMode`
 //       -> U1(b) "under the item type the selected vertices must not be drawn —
 //          vertex 0's 5x5 patch still carries 25 selection-coloured pixels".
+//          (RE-RUN under the counter discriminator by task 1860 — see below.)
 //   * geometry picking switched off in EVERY type (the amputation that the
 //     one-sided assertion would have let through)
 //       -> U2's control "the same band in the vertex type must select — the
@@ -79,6 +92,19 @@
 //       -> U1(a) "baseline: … carries 0 of 25 selection-coloured pixels.
 //          Looking for the selection dot = (255..255, 127..128, 25..26); the
 //          patch is mostly (255, 168, 41) (25 of 25)".
+//
+// TASK 1860 CHANGED THE DISCRIMINATOR AGAIN — a counter where 0674 had a
+// census — so the drawing rows were re-verified a third time, against the new
+// one:
+//   * the vertex-dot pass goes back to `editMode` (the same mutation, third
+//     re-run) -> U1(b), on the counter this time. Verbatim red in the task file.
+//
+// U1(a) IS RETIRED AND MUST NOT BE RE-RUN. Its mutation was "the dot pass
+// paints in the item-highlight colour instead of the selection colour", and
+// the two are now byte-identical BY MEASUREMENT — the mutation edits one
+// expression into an equal one and cannot go red. A green from it would be
+// logged as "expected" and would mean nothing. There is no colour-separability
+// question left here to mutate against; the pass-identity question replaced it.
 import std.net.curl;
 import std.json;
 import std.format  : format;
@@ -179,6 +205,48 @@ private string guardState() {
 private string editModeName() { return getJson("/api/selection")["mode"].str; }
 private int primaryIndex() { return cast(int)getJson("/api/layers")["active"].integer; }
 
+/// The per-frame draw-pass counters, from the last COMPLETED scene frame.
+///
+/// `/api/frames/counts` is live in this build (see `test_frame_counts.d`), and
+/// `lastScene` is the last frame that actually rendered a viewport cell —
+/// never `last`, which can be a frame that drew no cell at all.
+///
+/// `seq` is the frame ORDINAL. It is what turns "the counters say zero" into
+/// "the counters say zero ON A FRAME DRAWN AFTER THE GESTURE": a probe or a
+/// counter read straight after a command can serve the frame that preceded it,
+/// and a zero from that frame is about the wrong state entirely.
+private struct Scene { long seq, vertCalls, vertVerts, edgeCalls; }
+
+private Scene scene() {
+    auto w = getJson("/api/frames/counts")["lastScene"];
+    Scene r;
+    r.seq       = w["seq"].integer;
+    r.vertCalls = w["pass"]["verts"]["calls"].integer;
+    r.vertVerts = w["pass"]["verts"]["verts"].integer;
+    r.edgeCalls = w["pass"]["edges"]["calls"].integer;
+    return r;
+}
+
+/// The next scene reading from a frame STRICTLY LATER than `afterSeq`.
+///
+/// Same device `test_draw_alloc_scaling.d` uses. Without it a caller that
+/// polled twice quickly could read one frame twice and call it two.
+private Scene sceneAfter(long afterSeq) {
+    foreach (attempt; 0 .. 40) {
+        auto r = scene();
+        if (r.seq > afterSeq) return r;
+        Thread.sleep(50.msecs);
+    }
+    assert(false, format("no scene frame past seq %d in 2 s — the renderer is "
+                         ~ "not producing frames, so nothing below is a "
+                         ~ "reading about this gesture", afterSeq));
+}
+
+/// The primary's vertex count. Stated, not fetched: the whole rig is three
+/// copies of the reset cube, and `assertRigSane` already fails loudly if the
+/// projection does not find eight corners.
+private enum long kCubeVerts = 8;
+
 private struct Px { int r, g, b; bool valid; }
 
 /// Probe a run of FBO pixels, chunked so the request line stays short.
@@ -265,30 +333,46 @@ private struct DrawnColour {
     }
 }
 
-private enum DrawnColour kSelectedVertexDot =
-    DrawnColour("the selection dot",  [1.0f, 0.5f,  0.1f ]);  // mesh_gpu.d
-private enum DrawnColour kItemHighlight =
-    DrawnColour("the item highlight", [1.0f, 0.66f, 0.16f]);  // viewport_scheme.d
-
-/// The census means nothing unless the two colours stay TELLABLE APART under
-/// the widened predicate. They part company on green — and they must part by
-/// more than the quantisation slack, or "0 selection-coloured pixels while the
-/// item highlight is present" degenerates into a statement about one colour
-/// counted twice. Checked at compile time so a re-theme that brought the two
-/// within a count of each other fails here, loudly, instead of quietly turning
-/// every drawing row below into a tautology.
-static assert(kSelectedVertexDot.hi(1) < kItemHighlight.lo(1) - 1,
-    "the selection dot and the item highlight are no longer separable on the "
-    ~ "green channel; the pixel census below can no longer tell them apart");
-
-/// How many pixels of a 5x5 patch centred on `p` carry `want`.
+/// The selection colour — ONE row, read by the vertex-dot pass AND by the
+/// item-highlight pass.
 ///
-/// A patch, not a pixel: the dot is a 10-px GL point, so a 5x5 window centred
-/// on the projected vertex is entirely inside it — the count is 25 or it is 0,
-/// with no third answer for a rounding disagreement to hide in.
+/// TASK 1860 COLLAPSED WHAT USED TO BE TWO CONSTANTS HERE, and the collapse is
+/// a measurement, not a convenience. The dot pass used to hold its own literal
+/// `(1.0, 0.5, 0.1)` while the item highlight resolved the scheme's
+/// `(1.0, 0.66, 0.16)`; the reference paints both from the same palette entry,
+/// so the dot pass now reads the scheme too and the two are byte-identical.
+///
+/// A `static assert` used to stand here demanding the two be TELLABLE APART on
+/// the green channel, so that "zero selection-coloured pixels while the item
+/// highlight is present" could not degenerate into one colour counted twice.
+/// That guard could not survive the measurement — it now fails the BUILD on
+/// correct code — and its job has been given to a stronger discriminator (the
+/// vertex-pass draw counter, below). THE COLOUR-SEPARABILITY COMPARE IS GONE
+/// PERMANENTLY AND BY MEASUREMENT: a future repair here must not re-introduce
+/// one, because there is no longer a second colour for it to compare against.
+private enum DrawnColour kSelectionColour =
+    DrawnColour("the selection colour", [1.0f, 0.66f, 0.16f]);  // viewport_scheme.d
+
+/// The patch half-width, and the count a fully-covered patch gives.
+///
+/// A patch, not a pixel: the count is `kPatchN` or it is 0, with no third
+/// answer for a rounding disagreement to hide in. That needs the window to sit
+/// ENTIRELY inside the drawn dot, which is what fixes the size.
+///
+/// 3x3, NOT the 5x5 this file used to take. The selected dot was a 10 px GL
+/// point and is now 6 px (task 1860: 3 px base x 2 for selected). A 5x5 window
+/// still nominally fits inside 6 px, but only with half a pixel to spare on
+/// each side, and the projected centre is rounded to an integer — so it would
+/// be a window that fits by luck. 3x3 leaves a whole pixel of margin on every
+/// side at 6 px.
+private enum int kPatchR = 1;
+private enum int kPatchN = (2 * kPatchR + 1) * (2 * kPatchR + 1);
+
+/// How many pixels of a `kPatchN` patch centred on `p` carry `want`.
 private int patchCount(int[2] p, DrawnColour want) {
     int[2][] pts;
-    foreach (dy; -2 .. 3) foreach (dx; -2 .. 3) pts ~= [p[0] + dx, p[1] + dy];
+    foreach (dy; -kPatchR .. kPatchR + 1)
+        foreach (dx; -kPatchR .. kPatchR + 1) pts ~= [p[0] + dx, p[1] + dy];
     int n = 0;
     foreach (v; probe(pts))
         if (want.matches(v)) ++n;
@@ -305,7 +389,8 @@ private int patchCount(int[2] p, DrawnColour want) {
 /// like the first. Naming the majority colour separates them in the message.
 private string patchSpell(int[2] p) {
     int[2][] pts;
-    foreach (dy; -2 .. 3) foreach (dx; -2 .. 3) pts ~= [p[0] + dx, p[1] + dy];
+    foreach (dy; -kPatchR .. kPatchR + 1)
+        foreach (dx; -kPatchR .. kPatchR + 1) pts ~= [p[0] + dx, p[1] + dy];
     int[string] tally;
     int invalid = 0;
     foreach (v; probe(pts)) {
@@ -314,8 +399,9 @@ private string patchSpell(int[2] p) {
     }
     string best; int bestN = 0;
     foreach (k, n; tally) if (n > bestN) { best = k; bestN = n; }
-    if (bestN == 0) return format("%d of 25 pixels could not be read at all", invalid);
-    return format("the patch is mostly %s (%d of 25)%s", best, bestN,
+    if (bestN == 0)
+        return format("%d of %d pixels could not be read at all", invalid, kPatchN);
+    return format("the patch is mostly %s (%d of %d)%s", best, bestN, kPatchN,
                   invalid ? format(", %d unreadable", invalid) : "");
 }
 
@@ -502,10 +588,12 @@ private void assertRigSane(const ref Rig rig, Cell c) {
                        ~ "and not these two' is not a claim this rig can make",
                        i, j));
     foreach (vi, p; rig.vertFbo)
-        assert(p[0] >= 3 && p[1] >= 3 && p[0] < c.vw - 3 && p[1] < c.vh - 3,
+        assert(p[0] >= kPatchR + 1 && p[1] >= kPatchR + 1
+            && p[0] < c.vw - kPatchR - 1 && p[1] < c.vh - kPatchR - 1,
             format("rig: the primary's vertex %d projects to FBO (%d, %d), "
-                   ~ "too close to the %dx%d cell edge for a 5x5 patch",
-                   vi, p[0], p[1], c.vw, c.vh));
+                   ~ "too close to the %dx%d cell edge for a %dx%d patch",
+                   vi, p[0], p[1], c.vw, c.vh,
+                   2 * kPatchR + 1, 2 * kPatchR + 1));
 }
 
 // ---------------------------------------------------------------------------
@@ -524,21 +612,20 @@ unittest {
     assertRigSane(rig, c);
     parkPointer(c);
 
-    // ---- (a) the baseline: in the vertex type the selected dots are there and
-    //      the unselected ones are not, so the census can tell them apart at
-    //      all. Vertex 1 is the control — an unselected corner of the same cube.
-    foreach (vi; kStanding)
-        assert(patchCount(rig.vertFbo[vi], kSelectedVertexDot) == 25,
-            format("baseline: in the vertex type the selected vertex %d must be "
-                   ~ "drawn as a selection dot — its 5x5 patch carries %d of 25 "
-                   ~ "selection-coloured pixels. Looking for %s; %s",
-                   vi, patchCount(rig.vertFbo[vi], kSelectedVertexDot),
-                   kSelectedVertexDot.spell(), patchSpell(rig.vertFbo[vi])));
-    assert(patchCount(rig.vertFbo[1], kSelectedVertexDot) == 0,
-        format("baseline: vertex 1 is NOT selected, so its patch must carry no "
-               ~ "selection colour — it carries %d, which would make the census "
-               ~ "unable to distinguish selected from not",
-               patchCount(rig.vertFbo[1], kSelectedVertexDot)));
+    // ---- (a) the baseline: in the vertex type the vertex-dot pass runs AND
+    //      consults the selection mask, so the readings below can tell "the
+    //      pass did not run" from "the pass ran over nothing".
+    immutable Scene base = scene();
+    assert(base.vertCalls > 1,
+        format("baseline: in the vertex type the vertex-dot pass must run and "
+               ~ "consult the selection mask. It issued %d submission(s); the "
+               ~ "bare cloud is exactly 1 and happens whatever the mask says, "
+               ~ "so > 1 is the only reading that proves the mask was read",
+               base.vertCalls));
+    assert(base.vertVerts > kCubeVerts,
+        format("baseline: the pass submitted %d points for an %d-vertex cube — "
+               ~ "the selected dots are drawn ON TOP of the cloud, so a "
+               ~ "standing selection must add to it", base.vertVerts, kCubeVerts));
 
     // ---- (b) under the item type: kept, and not drawn.
     cmd("select.typeFrom item");
@@ -551,21 +638,47 @@ unittest {
     assert(selectedVertices() == kStanding,
         format("the geometry selection must SURVIVE the switch into the item "
                ~ "type — %s became %s", kStanding, selectedVertices()));
+
+    // THE DISCRIMINATOR, and it is a PASS COUNTER rather than the pixel census
+    // this block used to take. Task 1860 made the selected dot and the item
+    // highlight the SAME colour (measured — they read one palette row), so
+    // "zero selection-coloured pixels at these pixels" became a statement the
+    // item highlight itself falsifies, at the very pixels it is painted on.
+    //
+    // A zero count needs positive controls or it passes on a frame that never
+    // rendered, on a stale reading, and on a renderer that stopped drawing
+    // altogether. THREE stand beside it, and all three are required:
+    //
+    //   1. the scene frame ORDINAL advanced past the pre-gesture value, so the
+    //      reading is a NEW frame and not the one taken before the switch;
+    //   2. the EDGE pass still ran, so the mesh was drawn under the item type
+    //      at all — this is the arm that separates "the dot pass is gated" from
+    //      "the renderer stopped";
+    //   3. the item highlight is present IN PIXELS at the very vertices whose
+    //      dots are claimed absent, which is the surviving half of the original
+    //      census and the one thing a counter cannot say.
+    immutable Scene item = sceneAfter(base.seq);
+    assert(item.seq > base.seq,
+        format("the reading must come from a frame drawn AFTER the switch — "
+               ~ "seq %d is not past %d", item.seq, base.seq));
+    assert(item.vertCalls == 0,
+        format("under the item type the vertex-dot pass must not run at all — "
+               ~ "it issued %d submission(s) carrying %d points",
+               item.vertCalls, item.vertVerts));
+    assert(item.edgeCalls > 0,
+        format("the frame must still be drawing the mesh under the item type — "
+               ~ "the edge pass issued %d submissions, so the zero above says "
+               ~ "nothing about a GATE and may just be a renderer that stopped",
+               item.edgeCalls));
     foreach (vi; kStanding) {
-        immutable int sel  = patchCount(rig.vertFbo[vi], kSelectedVertexDot);
-        immutable int item = patchCount(rig.vertFbo[vi], kItemHighlight);
-        assert(sel == 0,
-            format("under the item type the selected vertices must not be "
-                   ~ "drawn — vertex %d's 5x5 patch still carries %d "
-                   ~ "selection-coloured pixels", vi, sel));
-        // The same pixels must carry the ITEM highlight, which is what makes
-        // the zero above a statement about this pass rather than about a frame
-        // that never rendered.
-        assert(item > 0,
-            format("the frame must still be drawing the item at vertex %d's "
-                   ~ "pixels — its patch carries %d item-highlight pixels, so "
-                   ~ "the zero above says nothing. Looking for %s; %s",
-                   vi, item, kItemHighlight.spell(), patchSpell(rig.vertFbo[vi])));
+        immutable int painted = patchCount(rig.vertFbo[vi], kSelectionColour);
+        assert(painted > 0,
+            format("the frame must still be painting the item at vertex %d's "
+                   ~ "pixels — its patch carries %d highlight pixels, so the "
+                   ~ "zero-submission reading above is about a frame nobody "
+                   ~ "can see. Looking for %s; %s",
+                   vi, painted, kSelectionColour.spell(),
+                   patchSpell(rig.vertFbo[vi])));
     }
 
     // ---- (c) back to the vertex type: the same selection, drawn again.
@@ -574,12 +687,11 @@ unittest {
     assert(selectedVertices() == kStanding,
         format("coming back to the vertex type must show the SAME selection — "
                ~ "%s became %s", kStanding, selectedVertices()));
-    foreach (vi; kStanding)
-        assert(patchCount(rig.vertFbo[vi], kSelectedVertexDot) == 25,
-            format("coming back must draw it again — vertex %d's patch carries "
-                   ~ "%d of 25 selection-coloured pixels. Looking for %s; %s",
-                   vi, patchCount(rig.vertFbo[vi], kSelectedVertexDot),
-                   kSelectedVertexDot.spell(), patchSpell(rig.vertFbo[vi])));
+    immutable Scene back = sceneAfter(item.seq);
+    assert(back.vertCalls == base.vertCalls && back.vertVerts == base.vertVerts,
+        format("coming back must draw exactly what the baseline drew — "
+               ~ "%d submissions / %d points became %d / %d",
+               base.vertCalls, base.vertVerts, back.vertCalls, back.vertVerts));
 }
 
 // ---------------------------------------------------------------------------
@@ -710,14 +822,22 @@ unittest {
                ~ "whole round trip — %s became %s",
                kStanding, selectedVertices()));
 
-    // …and it is drawn again the moment the geometry type comes back.
+    // …and it is drawn again the moment the geometry type comes back. Read as
+    // the pass counter for the same reason U1 does: after task 1860 the dot
+    // and the item highlight share one colour, so a census here would be
+    // satisfied by the item highlight alone.
+    immutable long beforeSeq = scene().seq;
     cmd("select.typeFrom vertex");
     settle();
-    foreach (vi; kStanding)
-        assert(patchCount(rig.vertFbo[vi], kSelectedVertexDot) == 25,
-            format("after the round trip vertex %d must be drawn selected "
-                   ~ "again — its patch carries %d of 25",
-                   vi, patchCount(rig.vertFbo[vi], kSelectedVertexDot)));
+    immutable Scene drawn = sceneAfter(beforeSeq);
+    assert(drawn.vertCalls > 1,
+        format("after the round trip the vertex-dot pass must run and consult "
+               ~ "the selection again — it issued %d submission(s)",
+               drawn.vertCalls));
+    assert(drawn.vertVerts > kCubeVerts,
+        format("after the round trip the pass submitted %d points for an "
+               ~ "%d-vertex cube — the standing selection adds to the cloud",
+               drawn.vertVerts, kCubeVerts));
 }
 
 // ---------------------------------------------------------------------------

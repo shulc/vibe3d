@@ -236,6 +236,7 @@ enum float kBackdropDim = 0.45f;
 /// where the value comes from and for the per-item precedence we do not yet
 /// have. Value and behaviour are unchanged by the move.
 public import viewport_scheme : kSchemeSolidFill;
+import viewport_scheme : schemeColor, SchemeColor;
 
 /// One activity state's controls — the active mesh, or the backdrop.
 ///
@@ -380,7 +381,18 @@ struct DrawPlan {
     float    wireAlpha = 1.0f;
     /// Overlay line colour. Defaults to the colour the edge pass already
     /// uses, so resolving it changes nothing.
-    float[3] wireColor = [0.9f, 0.9f, 0.9f];
+    ///
+    /// STILL UNCONSUMED (task 1860 kept it that way): no pass reads this, so
+    /// the default below is bookkeeping and NOT evidence that the wire colour
+    /// is wired. It is synced to the scheme row the edge pass actually reads
+    /// so the field cannot start CONTRADICTING the code — a silent field and a
+    /// wrong field are different failures — but nothing about drawing can be
+    /// asserted from it, and the only check that could exist for this line is
+    /// a value assertion, which is a tautology. That stays true until the
+    /// consuming card lands.
+    float[3] wireColor = [schemeColor(SchemeColor.wireframe).x,
+                          schemeColor(SchemeColor.wireframe).y,
+                          schemeColor(SchemeColor.wireframe).z];
     /// The style FORCES vertex dots on, independently of edit mode. False for
     /// every style except `Wireframe`, which draws vertices as well as edges.
     ///

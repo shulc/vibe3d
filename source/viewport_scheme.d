@@ -47,6 +47,21 @@ enum SchemeColor {
     backdrop,      /// empty-viewport background
     selection,     /// selected MESH geometry. NEVER a handle — see kHandleActive
     preHighlight,  /// the thing under the pointer, before any click commits to it
+    /// The base wireframe AND the unselected vertex dot.
+    ///
+    /// ONE row for both, and that is measured rather than tidy: the reference
+    /// paints an unselected dot in the wireframe colour, reading the same
+    /// palette entry the wire pass reads. Two rows here would let the two
+    /// drift apart, which is a thing our own code had already done (0.9 for
+    /// the wire, 0.6 for the dot) with nothing behind the difference.
+    ///
+    /// The value is the NEUTRAL-wire branch. The reference's shipped modelling
+    /// viewport actually takes a different branch of the same law — a per-ITEM
+    /// wire colour at 10 % alpha, with unselected dots off by default — and we
+    /// model neither the per-item colour channel nor the dots-off axis. Those
+    /// are separate, unadopted axes; this row is not "what the reference shows
+    /// by default", it is the entry its neutral branch reads.
+    wireframe,
     // --- axes ---
     axisX,
     axisY,
@@ -84,6 +99,7 @@ immutable Vec3[kSchemeColorCount] kSchemeDefaults = [
     SchemeColor.backdrop:     Vec3(0.36f, 0.40f, 0.45f),
     SchemeColor.selection:    Vec3(1.00f, 0.66f, 0.16f),
     SchemeColor.preHighlight: Vec3(0.549f, 0.710f, 0.780f),
+    SchemeColor.wireframe:    Vec3(0.72f, 0.72f, 0.72f),
 
     SchemeColor.axisX:        Vec3(0.90f, 0.20f, 0.20f),
     SchemeColor.axisY:        Vec3(0.20f, 0.80f, 0.20f),
@@ -114,6 +130,66 @@ immutable Vec3[kSchemeColorCount] kSchemeDefaults = [
 Vec3 schemeColor(SchemeColor role) @safe pure nothrow @nogc {
     return kSchemeDefaults[cast(size_t)role];
 }
+
+// ---------------------------------------------------------------------------
+// The preference-backed METRICS — sizes and opacities, not colours
+// ---------------------------------------------------------------------------
+//
+// Same tier as the table above (each of these is one row a settings UI would
+// expose and one row a saved scheme file would carry), but they are numbers
+// rather than triples, so they cannot live in a `Vec3[]`. They sit here
+// anyway, beside the colours, because the alternative — a literal at the draw
+// call — is exactly the arrangement the header above describes as already
+// having drifted apart once.
+//
+// MEASURED (task 1820, adopted by 1860 on the owner's signature). Read
+// `doc/selection_display_parity.md` §1 and §2.5 for the derivation; do not
+// re-derive it here.
+
+/// The unselected vertex dot, in pixels.
+enum float kBasePointSize = 3.0f;
+
+/// How much bigger a SELECTED vertex dot is than an unselected one.
+///
+/// A MULTIPLIER, not a second size, and that is the measured shape rather than
+/// a tidier spelling of two literals: the base is one preference and the scale
+/// is another, so re-theming the base moves the selected dot with it. Two
+/// independent literals (which is what we shipped: 5 and 10) keep the ratio
+/// only by luck, and the luck runs out the first time one of them is edited.
+enum float kSelectedPointScale = 2.0f;
+
+/// The drawn size of a vertex dot.
+///
+/// `base` is a parameter rather than a read of `kBasePointSize` so the
+/// per-viewport override the law provides for (§2.5: a viewport may carry its
+/// own point size, and the retopology layout ships one) resolves at the CALLER
+/// and this function stays the multiplier law alone. We have no override
+/// channel yet — see the follow-up card — so today every caller passes
+/// `kBasePointSize`; the unit test drives it with two different bases
+/// precisely so an implementation that multiplied the constant instead of the
+/// argument cannot pass.
+///
+/// A PRE-HIGHLIGHTED dot is drawn at the SELECTED size — that is measured, and
+/// it is the caller's `selected = true`, not a third state here.
+float pointSizePx(float base, bool selected) @safe pure nothrow @nogc {
+    return base * (selected ? kSelectedPointScale : 1.0f);
+}
+
+/// Alpha for the OCCLUDED half of a selection / pre-highlight draw.
+///
+/// The selection is submitted twice: once depth-tested normally, and once more
+/// where the fragment is BEHIND what is already in the depth buffer. The
+/// second submission is blended at this alpha, so a selected element hidden by
+/// the model still reads as selected without pretending it is in front.
+///
+/// 0.30 is `1 − 0.70`, and the 0.70 is a TRANSPARENCY. The shipped reference
+/// help calls the same number an "opacity", and that is FALSIFIED — the
+/// reference's own code subtracts it from 1 at both of its use sites, its
+/// panel groups it under a "Transparency" heading, and its upper bound is 0.99
+/// rather than 1.0, which only makes sense for a transparency. Registered as
+/// row 76 of `doc/behavior_gap_registry.md`; do not "correct" this to 0.70 on
+/// the strength of the help text.
+enum float kOccludedSelectionAlpha = 0.30f;
 
 // ---------------------------------------------------------------------------
 // Fixed constants — NOT preference rows (see the two-tier note up top)

@@ -17,6 +17,8 @@ import shader;  // LitShader
 import mesh;    // Mesh, FaceList
 import change_bus : MeshEditScope;  // Position class for the preview-refresh publish
 import perf_probe : g_fc, DrawPass;  // always-on per-frame work counters
+import viewport_scheme : schemeColor, SchemeColor, pointSizePx, kBasePointSize,
+                         kOccludedSelectionAlpha;
 
 // ---------------------------------------------------------------------------
 // The HIDE skip predicate (task 0613 S3, doc/hide_geometry_plan.md)
@@ -80,6 +82,148 @@ struct BaseWire {
     /// Base-line opacity, 0..1. Anything below 1.0 turns blending on for the
     /// duration of the base pass only.
     float alpha    = 1.0f;
+}
+
+// ---------------------------------------------------------------------------
+// OccludedPass — the SECOND submission of the selection / pre-highlight
+// ---------------------------------------------------------------------------
+
+/// How the OCCLUDED half of a selection highlight is drawn (task 1860).
+///
+/// MEASURED (`doc/selection_display_parity.md` §2.1-§2.2, §3.3): a selected
+/// element is submitted TWICE per frame. The first submission is depth-tested
+/// normally and paints the part of the selection that is genuinely in front.
+/// The second inverts the depth function, so it paints ONLY where the fragment
+/// is behind what is already there, and blends at a low alpha. Two passes is
+/// settled structurally rather than by appearance — one batch cannot be both
+/// "nearer or equal" and "further", and the reference attaches the same
+/// selection model to two stages that set exactly those two.
+///
+/// WHAT WE SHIPPED BEFORE, and why it is not the same thing: one pass with
+/// `glDisable(GL_DEPTH_TEST)` at full strength. That draws the occluded half
+/// and the visible half identically, so the user cannot tell a selected edge
+/// in front of the model from one behind it. It is not a weaker version of the
+/// law, it is a different law.
+///
+/// Sister struct to `BaseWire`, and the same idiom for the same reason: a
+/// defaulted trailing parameter, so every existing call site keeps compiling
+/// and a call site that does not wire it up draws the ORDINARY pass alone.
+struct OccludedPass {
+    /// Location of the flat shader's `u_alpha`.
+    ///
+    /// NEGATIVE MEANS THE OCCLUDED PASS DOES NOT RUN AT ALL, and that is a
+    /// refusal rather than a fallback. A pass that cannot write its alpha is
+    /// not the measured pass: it paints the occluded half at FULL strength,
+    /// which is precisely the pre-1860 rendering this change removed, and its
+    /// draw-call census is byte-identical to the correct one — so no counter,
+    /// and no test built on one, could tell the difference.
+    ///
+    /// This struct is a DEFAULTED trailing parameter, so "run anyway at
+    /// whatever alpha the program carries" would make that wrong rendering
+    /// THE DEFAULT for every call site that omits the argument. Three do
+    /// today (`shader.d`'s and `pen.d`'s preview wireframes, and the backdrop
+    /// pass in `ui/viewport_render.d`); each is safe only because it passes
+    /// no selection and no hover, so its highlight scan emits nothing either
+    /// way. The refusal is what keeps them safe on the day one of them grows
+    /// a selection argument.
+    GLint locAlpha = -1;
+    /// Alpha for the occluded submission.
+    float alpha    = kOccludedSelectionAlpha;
+}
+
+// ---------------------------------------------------------------------------
+// The two-pass GL state — written ONCE, called from both draw entry points
+// ---------------------------------------------------------------------------
+//
+// `drawEdges` and `drawVertices` draw their highlights in exactly the passes
+// `OccludedPass` describes, and the GL state those passes need is IDENTICAL at
+// the two sites — only the primitives submitted between them differ. So it is
+// written here once, for the same reason each site issues its batch scan once
+// and calls it twice: the two passes are required to agree, and a textual copy
+// stops agreeing the first time either half is touched. A drift between the
+// SITES is the worse of the two, because the pixel checks probe one element
+// type at a time and a mutation applied to both sites at once cannot separate
+// them.
+//
+// Cost: two calls per frame per site, not per element. This is not the shape
+// that was measured and rejected inside `drawVertices` (a `bool delegate(int)`
+// evaluated PER VERTEX, which cost more than the draw calls it saved).
+
+/// Pass A — the VISIBLE half of a highlight.
+///
+/// `GL_LEQUAL`, not the inherited default: `glDepthFunc` is called nowhere
+/// else in `source/`, so `GL_LESS` is in force, and the base wire pass that
+/// runs before this one WROTE depth at exactly the pixels a selected edge
+/// would cover. Under `GL_LESS` a highlight lying on depth that is already
+/// there fails the test and the selection would simply vanish.
+/// `LEQUAL`/`GREATER` also partition the depth range with NO GAP, which is the
+/// reference's own pair.
+///
+/// `glDepthMask(GL_FALSE)` on BOTH passes, which keeps the depth buffer
+/// exactly as the caller found it — the same postcondition the old
+/// `glDisable(GL_DEPTH_TEST)` had, since disabling the test disables depth
+/// WRITES with it. Only the occluded pass's mask is named in the measured law;
+/// making pass A depth-writing would be an unmeasured extra, and it would
+/// newly let a selected edge occlude everything drawn after it (the vertex
+/// dots, the gizmo).
+private void beginVisibleHighlightPass() {
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDepthFunc(GL_LEQUAL);
+}
+
+/// Pass B — the OCCLUDED half. Same primitives, same colours; only the depth
+/// comparison and the alpha differ.
+///
+/// Returns whether the pass may run. The caller MUST submit nothing when this
+/// is false — see `OccludedPass.locAlpha` for why a pass without its alpha is
+/// a different rendering rather than a slightly-off one.
+///
+/// UNCONDITIONAL OTHERWISE. Not "skip it when nothing is occluded": whether
+/// the reference elides the stage for a fully visible selection is registered
+/// as unknown (`doc/selection_display_parity.md` §5), and a scene-dependent
+/// second pass would make the draw-call census scene-dependent too — which is
+/// the census this change is pinned by. The `GL_GREATER` test discards it per
+/// fragment either way.
+///
+/// `glBlendFuncSeparate`, set here rather than inherited: `drawEdges`' base
+/// wire block establishes the separate form only inside its own `blend` branch
+/// (which does not run at the default opacity) and resets to the NON-separate
+/// form on the way out. Colour blends; DESTINATION ALPHA IS LEFT ALONE,
+/// because the cell FBO's alpha channel is a real attachment and punching
+/// holes in it would leak into anything that composites the cell texture.
+private bool beginOccludedHighlightPass(OccludedPass occ) {
+    if (occ.locAlpha < 0) return false;
+    glDepthFunc(GL_GREATER);
+    glEnable(GL_BLEND);
+    glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                        GL_ZERO, GL_ONE);
+    glUniform1f(occ.locAlpha, occ.alpha);
+    return true;
+}
+
+/// Undo both passes. `ranOccluded` is what `beginOccludedHighlightPass`
+/// returned, so the blend state and the alpha uniform are unwound exactly when
+/// they were wound up.
+///
+/// The DEPTH state is restored unconditionally. `gpu_select.renderMode` runs
+/// mid-frame and saves/restores the program, the VAO, the FBO, the viewport,
+/// GL_DEPTH_TEST, GL_POLYGON_OFFSET_FILL and GL_CULL_FACE — but NOT the depth
+/// func and NOT the depth mask. A leaked `GL_GREATER` would invert its face
+/// depth pre-pass, so elements BEHIND a face become pickable and those in
+/// front do not, with no pixel changing; a leaked `glDepthMask(GL_FALSE)`
+/// would make its `glClear(GL_DEPTH_BUFFER_BIT)` a no-op, because a depth
+/// clear is masked by the depth mask, and the pick FBO would silently reuse
+/// the previous pick's depth.
+private void endHighlightPasses(OccludedPass occ, bool ranOccluded) {
+    if (ranOccluded) {
+        glUniform1f(occ.locAlpha, 1.0f);
+        glDisable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    }
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
 }
 
 // ---------------------------------------------------------------------------
@@ -1205,7 +1349,8 @@ struct GpuMesh {
     // existing call site is unchanged.
     void drawEdges(GLint locColor, int hoveredEdge, MarkView selectedEdges,
                    const bool[] hoveredEdges = [],
-                   BaseWire base = BaseWire.init) {
+                   BaseWire base = BaseWire.init,
+                   OccludedPass occ = OccludedPass.init) {
         int edgeCount = edgeVertCount / 2;
         glBindVertexArray(edgeVao);
 
@@ -1273,7 +1418,8 @@ struct GpuMesh {
                                     GL_ZERO, GL_ONE);
             }
 
-            glUniform3f(locColor, 0.9f, 0.9f, 0.9f);
+            immutable Vec3 wireCol = schemeColor(SchemeColor.wireframe);
+            glUniform3f(locColor, wireCol.x, wireCol.y, wireCol.z);
             if (!anyHover && selectedEdges.empty) {
                 dcArrays(DrawPass.edges, GL_LINES, 0, edgeVertCount);
             } else if (!allEdgesSelected) {
@@ -1298,40 +1444,67 @@ struct GpuMesh {
             }
         }
 
-        // Highlight pass — draw without depth so selection shows through.
-        glDisable(GL_DEPTH_TEST);
+        // ---- Highlight: the selection and pre-highlight, in TWO passes ----
+        //
+        // See `OccludedPass` for the measured law. The batch scans below are
+        // issued ONCE as a nested function and CALLED TWICE rather than
+        // written out twice: the two passes are required to submit the same
+        // primitives in the same order (the reference attaches one model to
+        // both stages), and two textual copies would drift the first time
+        // either scan is touched.
+        immutable Vec3 selCol = schemeColor(SchemeColor.selection);
+        immutable Vec3 preCol = schemeColor(SchemeColor.preHighlight);
 
-        if (allEdgesSelected && hoveredEdge < 0) {
-            glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
-            dcArrays(DrawPass.edges, GL_LINES, 0, edgeVertCount);
-        } else if (!selectedEdges.empty) {
-            glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
-            int batchStart = -1;
-            for (int i = 0; i < edgeCount; i++) {
-                if (segSelected(i) && !segHovered(i)) {
-                    if (batchStart < 0) batchStart = i;
-                } else if (batchStart >= 0) {
-                    dcArrays(DrawPass.edges, GL_LINES, batchStart * 2, (i - batchStart) * 2);
-                    batchStart = -1;
+        void emitHighlights() {
+            if (allEdgesSelected && hoveredEdge < 0) {
+                glUniform3f(locColor, selCol.x, selCol.y, selCol.z);
+                dcArrays(DrawPass.edges, GL_LINES, 0, edgeVertCount);
+            } else if (!selectedEdges.empty) {
+                glUniform3f(locColor, selCol.x, selCol.y, selCol.z);
+                int batchStart = -1;
+                for (int i = 0; i < edgeCount; i++) {
+                    if (segSelected(i) && !segHovered(i)) {
+                        if (batchStart < 0) batchStart = i;
+                    } else if (batchStart >= 0) {
+                        dcArrays(DrawPass.edges, GL_LINES, batchStart * 2, (i - batchStart) * 2);
+                        batchStart = -1;
+                    }
                 }
+                if (batchStart >= 0)
+                    dcArrays(DrawPass.edges, GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
             }
-            if (batchStart >= 0)
-                dcArrays(DrawPass.edges, GL_LINES, batchStart * 2, (edgeCount - batchStart) * 2);
+
+            if (anyHover) {
+                glUniform3f(locColor, preCol.x, preCol.y, preCol.z);
+                // Draw EVERY hovered segment (single hovered edge + any
+                // loop-mask edges). In preview mode a cage edge fans out to
+                // several VBO segments; in cage mode it is 1:1 — segHovered()
+                // handles both and also folds in the hoveredEdges loop mask,
+                // so a single scan covers the single-edge case and the
+                // whole-loop case uniformly.
+                for (int i = 0; i < edgeCount; i++)
+                    if (segHovered(i))
+                        dcArrays(DrawPass.edges, GL_LINES, i * 2, 2);
+            }
         }
 
-        if (anyHover) {
-            glUniform3f(locColor, 1.0f, 0.95f, 0.15f);
-            // Draw EVERY hovered segment (single hovered edge + any loop-mask
-            // edges). In preview mode a cage edge fans out to several VBO
-            // segments; in cage mode it is 1:1 — segHovered() handles both and
-            // also folds in the hoveredEdges loop mask, so a single scan covers
-            // the single-edge case and the whole-loop case uniformly.
-            for (int i = 0; i < edgeCount; i++)
-                if (segHovered(i))
-                    dcArrays(DrawPass.edges, GL_LINES, i * 2, 2);
-        }
+        // Pass A, then pass B. NEITHER the GL state nor the batch scan is
+        // spelled out here: the state lives in `beginVisibleHighlightPass` /
+        // `beginOccludedHighlightPass` / `endHighlightPasses` (shared with
+        // `drawVertices`, which must not drift from this), the scan lives in
+        // `emitHighlights` (shared between the two passes, which must not
+        // drift from each other). Each doc comment carries its own reasoning.
+        //
+        // Pass B submits NOTHING when it refuses to run — an occluded pass
+        // with no alpha uniform is the old full-strength rendering, not a
+        // slightly-off new one.
+        beginVisibleHighlightPass();
+        emitHighlights();
 
-        glEnable(GL_DEPTH_TEST);
+        immutable bool ranOccluded = beginOccludedHighlightPass(occ);
+        if (ranOccluded) emitHighlights();
+        endHighlightPasses(occ, ranOccluded);
+
         glBindVertexArray(0);
     }
 
@@ -1343,10 +1516,10 @@ struct GpuMesh {
     //
     //   * the COVERAGE is the whole cage, with no selection or hover set to
     //     partition it, so there is nothing for the batching scan to do;
-    //   * the COLOUR is the caller's, not one of the two literals `drawEdges`
-    //     holds — item state has three colours and geometry state has two, and
-    //     folding them into one function is how the item's derived
-    //     hovered-selected shade would end up as a fourth literal in here;
+    //   * the COLOUR is the caller's, not one of the two scheme rows
+    //     `drawEdges` reads — item state has three colours and geometry state
+    //     has two, and folding them into one function is how the item's
+    //     derived hovered-selected shade would end up resolved in here;
     //   * the BASE (grey) pass must not run. In item mode this pass is drawn
     //     OVER a wireframe that has already been laid down, and re-issuing the
     //     grey underneath it would be pure waste.
@@ -1356,12 +1529,27 @@ struct GpuMesh {
     // it painted were on edges that are not on the outline), so a silhouette
     // extraction here would be a different, wrong shape.
     //
-    // Depth test OFF, matching the selection/hover passes in `drawEdges`: an
-    // item's highlight reads as feedback about the ITEM, and feedback that is
-    // occluded by the item's own front faces would answer a question nobody
-    // asked. (The reference rig measured flat grids, where the two conventions
-    // are indistinguishable, so this half follows the house convention rather
-    // than a measurement.)
+    // DEPTH TEST OFF, and DELIBERATELY NOT the two-pass occlusion shape the
+    // selection passes moved to in task 1860.
+    //
+    // The measured two-pass law is a law about the SELECTION model: it is that
+    // model the reference attaches to both an ordinary stage and an occluded
+    // one. An item's wireframe is painted by a DIFFERENT callback, and that
+    // callback does not appear in the viewport's model table at all — nothing
+    // ever put it on an occluded stage. So the reference's own evidence says
+    // nothing about which depth convention an item highlight takes.
+    //
+    // Its rig could not have said, either: 0647 measured flat grids, where
+    // "occluded" and "visible" are the same set, and its items were laid out
+    // deliberately disjoint. Adopting the two-pass shape here would therefore
+    // replace one unmeasured convention with another unmeasured one and call
+    // the result parity — which is the substitution `CLAUDE.md` forbids under
+    // "Unknowns are CAPTURED, not invented".
+    //
+    // The house convention it keeps: an item's highlight reads as feedback
+    // about the ITEM, and feedback occluded by the item's own front faces
+    // would answer a question nobody asked. The rig that would settle it — two
+    // OVERLAPPING items, the back one lit — is a separate card.
     void drawItemHighlight(GLint locColor, float r, float g, float b) {
         if (edgeVertCount <= 0) return;
         glBindVertexArray(edgeVao);
@@ -1382,16 +1570,16 @@ struct GpuMesh {
     /// this, hovering on the subdivided surface highlighted the wrong
     /// preview vert because the cage index from picking was being
     /// used as a raw glDrawArrays offset.
-    void drawVertices(GLint locColor, int hovered, MarkView selected) {
+    void drawVertices(GLint locColor, int hovered, MarkView selected,
+                      OccludedPass occ = OccludedPass.init) {
         glBindVertexArray(vertVao);
 
-        // All vertices — small gray dots, with depth test
-        glPointSize(5.0f);
-        glUniform3f(locColor, 0.6f, 0.6f, 0.6f);
+        // All vertices — small dots in the WIREFRAME colour, with depth test.
+        // One scheme row serves both; see `SchemeColor.wireframe`.
+        glPointSize(pointSizePx(kBasePointSize, false));
+        immutable Vec3 wireCol = schemeColor(SchemeColor.wireframe);
+        glUniform3f(locColor, wireCol.x, wireCol.y, wireCol.z);
         dcArrays(DrawPass.verts, GL_POINTS, 0, vertCount);
-
-        // Selected and hovered — drawn without depth test so they show through faces.
-        glDisable(GL_DEPTH_TEST);
 
         int cageOf(int vboIdx) {
             if (vboIdx >= cast(int)vertOriginGpu.length) return -1;
@@ -1405,10 +1593,24 @@ struct GpuMesh {
         // pass, 100 495 in the entire scene — that pass was 99.99 % of every
         // draw call the frame made.
         //
-        // Nothing about WHAT is drawn changes: the same VBO indices, in the
-        // same order, same point size, same uniform colour, and the depth test
-        // is off for both passes so even ordering is immaterial. Only the call
-        // count changes — a contiguous run becomes one call.
+        // Nothing about WHAT is drawn changes: the same VBO indices, submitted
+        // in the same order, same point size, same uniform colour. Only the
+        // call COUNT changes — a contiguous run becomes one call.
+        //
+        // WHY THE ORDER SURVIVES THE MERGE, restated for task 1860. This used
+        // to read "the depth test is off for both passes so even ordering is
+        // immaterial", and that premise is now FALSE: these two loops run
+        // inside the two highlight passes below, which are depth-TESTED
+        // (`GL_LEQUAL`, then `GL_GREATER`) and the second of which BLENDS. The
+        // merge is still exact, but for the reason it always really had: a run
+        // collapsed into one `glDrawArrays` submits the same points in the
+        // same index order the per-point calls did, and GL orders fragments
+        // within a call the way it orders calls, so not one fragment moves.
+        // Depth WRITES are masked off in both passes as well, so no submission
+        // can change the depth another is tested against. The one ordering
+        // that carries meaning — the hover loop running after the selected one
+        // so a vertex that is both comes out pre-highlighted — is between the
+        // loops, not inside a run, and is untouched.
         //
         // The loops run to `vertCount` INCLUSIVE so the final run is flushed by
         // the same branch that flushes every other one. Without that the last
@@ -1433,40 +1635,67 @@ struct GpuMesh {
         // `anySet`, not `empty`: `empty` is only true for a null view. A live
         // view over an unselected mesh is full-length and bitless, which is
         // exactly the case being skipped.
-        glPointSize(10.0f);
-        glUniform3f(locColor, 1.0f, 0.5f, 0.1f);
-        if (selected.anySet()) {
-            int runStart = -1;
-            for (int i = 0; i <= vertCount; i++) {
-                bool hit = false;
-                if (i < vertCount) {
-                    immutable int c = cageOf(i);
-                    hit = c >= 0 && c < cast(int)selected.length && selected[c];
+        immutable Vec3 selCol = schemeColor(SchemeColor.selection);
+        immutable Vec3 preCol = schemeColor(SchemeColor.preHighlight);
+
+        // Issued once, called twice — see the twin block in `drawEdges` and
+        // the `OccludedPass` header for the law. The point SIZE is set inside,
+        // so both passes draw the same dot.
+        void emitHighlights() {
+            glPointSize(pointSizePx(kBasePointSize, true));
+            glUniform3f(locColor, selCol.x, selCol.y, selCol.z);
+            if (selected.anySet()) {
+                int runStart = -1;
+                for (int i = 0; i <= vertCount; i++) {
+                    bool hit = false;
+                    if (i < vertCount) {
+                        immutable int c = cageOf(i);
+                        hit = c >= 0 && c < cast(int)selected.length && selected[c];
+                    }
+                    if (hit) {
+                        if (runStart < 0) runStart = i;
+                    } else if (runStart >= 0) {
+                        dcArrays(DrawPass.verts, GL_POINTS, runStart, i - runStart);
+                        runStart = -1;
+                    }
                 }
-                if (hit) {
-                    if (runStart < 0) runStart = i;
-                } else if (runStart >= 0) {
-                    dcArrays(DrawPass.verts, GL_POINTS, runStart, i - runStart);
-                    runStart = -1;
+            }
+
+            if (hovered >= 0) {
+                // The SELECTED size, stated rather than inherited. It happens
+                // to be what the line above already left in the GL state, and
+                // that coincidence is exactly the problem: the measured law is
+                // that a pre-highlighted dot is drawn at the selected size
+                // (the reference's rollover pass asks for the selected size
+                // explicitly), and a law that holds only because of the order
+                // of two statements stops holding when they are reordered.
+                glPointSize(pointSizePx(kBasePointSize, true));
+                glUniform3f(locColor, preCol.x, preCol.y, preCol.z);
+                int runStart = -1;
+                for (int i = 0; i <= vertCount; i++) {
+                    immutable bool hit = (i < vertCount) && cageOf(i) == hovered;
+                    if (hit) {
+                        if (runStart < 0) runStart = i;
+                    } else if (runStart >= 0) {
+                        dcArrays(DrawPass.verts, GL_POINTS, runStart, i - runStart);
+                        runStart = -1;
+                    }
                 }
             }
         }
 
-        if (hovered >= 0) {
-            glUniform3f(locColor, 1.0f, 0.95f, 0.15f);
-            int runStart = -1;
-            for (int i = 0; i <= vertCount; i++) {
-                immutable bool hit = (i < vertCount) && cageOf(i) == hovered;
-                if (hit) {
-                    if (runStart < 0) runStart = i;
-                } else if (runStart >= 0) {
-                    dcArrays(DrawPass.verts, GL_POINTS, runStart, i - runStart);
-                    runStart = -1;
-                }
-            }
-        }
+        // Pass A, then pass B — the SAME three calls `drawEdges` makes, not a
+        // second copy of them. The reasoning for GL_LEQUAL, for the depth mask
+        // being off in both passes, for the second pass being unconditional
+        // once it has its alpha, for glBlendFuncSeparate and for restoring the
+        // depth func and mask lives on those three functions.
+        beginVisibleHighlightPass();
+        emitHighlights();
 
-        glEnable(GL_DEPTH_TEST);
+        immutable bool ranOccluded = beginOccludedHighlightPass(occ);
+        if (ranOccluded) emitHighlights();
+        endHighlightPasses(occ, ranOccluded);
+
         glPointSize(1.0f);
         glBindVertexArray(0);
     }

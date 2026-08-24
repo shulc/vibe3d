@@ -364,8 +364,9 @@ unittest { // reset actually zeroes the published records
 // selected vertex, one overlay submission per contiguous run of selected
 // faces, the exact edge-pass call count for a given selected-edge mask.
 //
-// WHAT IT CANNOT PIN: IDENTITY. `drawVertices` gives `calls = 1 + #selected`,
-// so a mask of {0,2,4} and one of {1,3,5} are indistinguishable here; the face
+// WHAT IT CANNOT PIN: IDENTITY. `drawVertices` gives one point submission per
+// contiguous run of selected vertices PER PASS, so a mask of {0,2,4} and one
+// of {1,3,5} are indistinguishable here; the face
 // overlay submits once per contiguous run, so {0,1,2} and {5,6,7} both give 1.
 // Any error that preserves cardinality — most plausibly an index shift in the
 // `uint[]` change-detector conversion — passes this tier clean. Identity is
@@ -397,13 +398,34 @@ long runsOf(const bool[] m, bool want) {
 /// selected-edge mask, on a mesh whose VBO segments are 1:1 with cage edges,
 /// with no hovered edge and the base wireframe overlay on.
 ///
-/// Re-derived from drawEdges' three passes, not copied from a measurement:
+/// Re-derived from drawEdges' passes, not copied from a measurement:
 ///   base pass  — one submission per contiguous run of UNSELECTED segments,
 ///                except the whole-mesh fast path (mask length 0) and the
 ///                all-selected shortcut (skipped entirely);
 ///   highlight  — one submission for the whole mesh when everything is
 ///                selected, else one per contiguous run of SELECTED segments;
 ///   hover pass — none, `hoveredEdge < 0` and no loop mask.
+///
+/// TASK 1860 MADE THE HIGHLIGHT TERM x2, and that factor is the whole reason
+/// this file is a structural pin on the occluded-selection pass. A selected
+/// element is now submitted TWICE — once depth-tested normally, once with the
+/// depth function inverted so only the part behind other geometry paints —
+/// and the two submissions are required to carry the SAME primitives in the
+/// same order. So the highlight term doubles and the base term does not: the
+/// base wireframe is a single depth-tested pass and is untouched.
+///
+/// WHY 2 AND NOT "2 IF SOMETHING IS OCCLUDED". The second pass is
+/// unconditional in the implementation, deliberately: whether the reference
+/// elides its occluded stage for a fully visible selection is registered as
+/// unknown, and a scene-dependent second pass would make this counter
+/// scene-dependent, which would make the exact formula below unwritable. The
+/// inverted depth test discards it per fragment either way.
+///
+/// The factor is written HERE, next to the derivation, and NOT transcribed
+/// from a run. If a future pass count is read off the counter and pasted back
+/// into this function, this stops being an oracle and becomes a mirror.
+enum long kHighlightPasses = 2;   // ordinary + occluded (task 1860)
+
 long expectedEdgeCalls(const bool[] sel) {
     immutable bool haveMask = sel.length > 0;
     bool allSel = haveMask;
@@ -412,8 +434,9 @@ long expectedEdgeCalls(const bool[] sel) {
     long calls = 0;
     if (!haveMask)      calls += 1;              // gray fast path, whole mesh
     else if (!allSel)   calls += runsOf(sel, false);
-    if (allSel)         calls += 1;              // orange, whole mesh
-    else if (haveMask)  calls += runsOf(sel, true);
+    // The highlight, once per pass.
+    if (allSel)         calls += kHighlightPasses * 1;          // whole mesh
+    else if (haveMask)  calls += kHighlightPasses * runsOf(sel, true);
     return calls;
 }
 
@@ -520,13 +543,17 @@ unittest { // the VERTEX mask reaches drawVertices, with the right run structure
         bool[] selMask = new bool[](cast(size_t)nv);
         foreach (vi; pattern) selMask[cast(size_t)vi] = true;
         immutable long runs = runsOf(selMask, true);
-        assert(passCalls(w, "verts") == 1 + runs,
+        immutable long wantCalls = 1 + kHighlightPasses * runs;
+        immutable long wantVerts  = nv + kHighlightPasses * n;
+        assert(passCalls(w, "verts") == wantCalls,
                format("%d selected vertices in %d run(s): expected %d point "
-                      ~ "submissions (1 cloud + %d run(s)), got %d",
-                      n, runs, 1 + runs, runs, passCalls(w, "verts")));
-        assert(passVerts(w, "verts") == nv + n,
-               format("%d selected vertices: expected %d submitted points, got %d",
-                      n, nv + n, passVerts(w, "verts")));
+                      ~ "submissions (1 cloud + %d pass(es) x %d run(s)), got %d",
+                      n, runs, wantCalls, kHighlightPasses, runs,
+                      passCalls(w, "verts")));
+        assert(passVerts(w, "verts") == wantVerts,
+               format("%d selected vertices over %d highlight pass(es): "
+                      ~ "expected %d submitted points, got %d",
+                      n, kHighlightPasses, wantVerts, passVerts(w, "verts")));
         if (n > 0)
             assert(passCalls(w, "verts") > 1,
                    "CONSUMER LIVENESS: the bare cloud submission is exactly 1 "

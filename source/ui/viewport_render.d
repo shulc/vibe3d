@@ -24,7 +24,8 @@ import mesh;                 // Mesh
 import weightmap_view       : currentWeightMapName;  // task 1090
 import editmode;             // EditMode
 import seltype;              // SelType, viewportPickType
-import mesh_gpu              : BaseWire;
+import mesh_gpu              : BaseWire, OccludedPass;
+import viewport_scheme       : schemeColor, SchemeColor;
 import handles.gl_util       : setThickLineScreenSize;
 import document              : Layer, kindInfo;
 import viewport              : Viewport3D;
@@ -553,10 +554,25 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     }
 
     // Checkerboard overlay for selected faces (Polygons mode).
+    //
+    // The COLOUR comes from the same scheme row the edge and vertex highlights
+    // read (task 1860). The reference's fill and line selection entries ship
+    // identical values, and leaving this one on the old orange while the
+    // element highlights moved would recreate exactly the self-inconsistency
+    // that change existed to remove.
+    //
+    // The 25 % SCREEN DOOR is a separate axis and is deliberately untouched:
+    // our fragment shader already discards to the same lattice the reference
+    // stipples with (verified by enumeration, task 1820). The occlusion axis
+    // is untouched too — this pass still draws through the model at full
+    // strength, which after 1860 makes it the only selection feedback that
+    // does. That is a named follow-up, not an oversight.
     if (selFeedbackType == SelType.Polygon) {
         if (mesh.hasAnySelectedFaces()) {
             auto zOv = g_perf.scope_(Cat.drawOverlays);
-            checkerShader.useProgram(meshModel, vp, 1.0f, 0.5f, 0.1f);
+            immutable Vec3 fillCol = schemeColor(SchemeColor.selection);
+            checkerShader.useProgram(meshModel, vp,
+                                     fillCol.x, fillCol.y, fillCol.z);
             glDisable(GL_DEPTH_TEST);
             gpu.drawSelectedFacesOverlay(mesh.selectedFaceView());
             glEnable(GL_DEPTH_TEST);
@@ -575,6 +591,11 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     // would do exactly that, and is the named wrong implementation.
     immutable BaseWire baseWire = BaseWire(
         activePlan.drawWire, shader.locAlpha, activePlan.wireAlpha);
+    // The occluded half of every selection / pre-highlight draw (task 1860).
+    // One value for the whole frame, handed to both `drawEdges` and
+    // `drawVertices` so the two passes cannot drift; the alpha itself is the
+    // scheme's, resolved inside `OccludedPass`.
+    immutable OccludedPass occluded = OccludedPass(shader.locAlpha);
     {
         auto zEdges = g_perf.scope_(Cat.drawEdges);
         if (selFeedbackType == SelType.Edge) {
@@ -609,7 +630,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                     loopMask = rebuildLoopHoverMask(hoveredEdge);
             }
             gpu.drawEdges(shader.locColor, hovForDraw, mesh.selectedEdgeView(),
-                          loopMask, baseWire);
+                          loopMask, baseWire, occluded);
         } else if (selFeedbackType == SelType.Polygon) {
             // Rebuild trigger. WHAT THE CACHE IS A FUNCTION OF is the whole
             // question here, and it is THREE things, not one: the face
@@ -704,7 +725,8 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 }
             }
             gpu.drawEdges(shader.locColor, -1,
-                          MarkView(faceSelEdgesCache, Mesh.Marks.Select), [], baseWire);
+                          MarkView(faceSelEdgesCache, Mesh.Marks.Select), [],
+                          baseWire, occluded);
 
             // Task 0399: Loop Slice ring-preview in Polygons mode. The
             // Edges-mode branch above previews the ring through
@@ -734,7 +756,7 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                 if (auto lst = cast(LoopSliceTool) activeTool) {
                     const(bool)[] loopSelMask = lst.selectionRingPreviewMask();
                     gpu.drawEdges(shader.locColor, -1, mesh.selectedEdgeView(),
-                                  loopSelMask, baseWire);
+                                  loopSelMask, baseWire, occluded);
                 }
             }
         } else if (showEdgeHover && hoveredEdge >= 0) {
@@ -743,14 +765,15 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
                     ? rebuildLoopHoverMask(hoveredEdge)
                     : (bool[]).init;
             gpu.drawEdges(shader.locColor, hoveredEdge, MarkView.init, loopMask,
-                          baseWire);
+                          baseWire, occluded);
         } else if (activePlan.drawWire) {
             // The bare-overlay branch: no selection set, no hover index, so
             // `baseWire` is the ONLY thing it would draw. Kept as an explicit
             // early-out rather than a `BaseWire(false, ...)` call so that an
             // overlay of "none" with nothing selected issues no GL at all —
             // not a VAO bind and a loop over zero batches.
-            gpu.drawEdges(shader.locColor, -1, MarkView.init, [], baseWire);
+            gpu.drawEdges(shader.locColor, -1, MarkView.init, [], baseWire,
+                          occluded);
         }
     }
 
@@ -878,10 +901,11 @@ void renderViewportSceneToFbo(EditorApp app, Viewport3D v, ref Viewport vp,
     // absent, and it is the visible half of "kept but not drawn".
     if (activePlan.drawVerts || selFeedbackType == SelType.Vertex) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
-        gpu.drawVertices(shader.locColor, hoveredVertex, mesh.selectedVertexView());
+        gpu.drawVertices(shader.locColor, hoveredVertex,
+                         mesh.selectedVertexView(), occluded);
     } else if (showVertHover && hoveredVertex >= 0) {
         auto zOv = g_perf.scope_(Cat.drawOverlays);
-        gpu.drawVertices(shader.locColor, hoveredVertex, MarkView.init);
+        gpu.drawVertices(shader.locColor, hoveredVertex, MarkView.init, occluded);
     }
 
     // ---- Active tool / falloff gizmo draws ----

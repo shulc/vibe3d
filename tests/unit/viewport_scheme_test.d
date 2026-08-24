@@ -54,6 +54,8 @@ unittest {
         Row(SchemeColor.selection,    1.0f,  0.66f, 0.16f, "MESH selection — never a handle"),
         Row(SchemeColor.preHighlight, 0.549f, 0.710f, 0.780f,
             "the thing under the pointer — NOT the face-specific tint (0.5, 0.71, 0.79)"),
+        Row(SchemeColor.wireframe,    0.72f, 0.72f, 0.72f,
+            "the base wireframe AND the unselected vertex dot — ONE row, not 0.9/0.6"),
     ];
     // dfmt on
     foreach (p; pinned) {
