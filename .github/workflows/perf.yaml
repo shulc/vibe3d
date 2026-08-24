@@ -25,7 +25,12 @@ name: nightly-perf
 #   2. --vs-last day-over-day gate — GATING. Any per-case kernel median
 #      +20% over the previous comparable nightly fails the run. This is the
 #      "new regression since yesterday" detector that stays meaningful even
-#      while (1) is red with known debt.
+#      while (1) is red with known debt. It also fails with NO VERDICT when
+#      the ops run above was CONTAMINATED — a foreign vibe3d alive on this
+#      workstation while the matrix measured (task 1840). Such a night is
+#      recorded but never compared, in either direction: its numbers are the
+#      host's contention, and a green would mean "did not check". The fix is
+#      on the host, not in the code — clear the stray instance and re-run.
 #   3. tools preview invariants — GATING. The cost of ONE rebuildPreview for
 #      the sixteen tools that rebuild a standing preview every drag frame,
 #      plus the counts that make that number trustworthy (task 1370). No

@@ -71,10 +71,28 @@ rationale.
 
 ## Regression detection — two levels
 
-**Relative invariants (I1–I4)** are same-run ratios that do not drift with
+**Relative invariants (I1a–I4)** are same-run ratios that do not drift with
 hardware. They run ALWAYS (no baseline / mismatched machine included) and are
 what `run_all.d`'s perf lane checks. Thresholds are generous gross-regression
-guards, tuned with margin off observed n=64 ratios.
+guards, tuned with margin off observed ratios.
+
+One of them is NOT a ratio, on purpose. **I1b** is an absolute ceiling in
+nanoseconds per vertex visited, because the falloff clause it belongs to used
+to be `falloff=radial ≤ 6× baseline` and a ratio to the baseline case cannot
+tell "falloff got worse" from "the no-falloff arm got better". On 2026-08-24
+the second happened — the no-falloff arm was hoisted 4× faster — and the gate
+reddened at 6.85× with the falloff arm unmoved. The pair that replaced it:
+
+* **I1a** — per tool, the dearest whole-mesh falloff shape within 3.0× of the
+  cheapest. Scale-free, so hardware and a noisy host cancel; blind to a
+  regression that hits every shape equally, which is what I1b is for.
+* **I1b** — per tool, no falloff case over 90 ns of `kernelApply` per vertex
+  it visited (grid fixture only, since an absolute number describes a
+  fixture). Its detail line also PRINTS the falloff arm's cost against the
+  uniform arm — ~6.8× as of 2026-08-24 — reported and deliberately not gated.
+
+Derivations, and the 168-measurement history both numbers come from, are in
+`lib/baseline.d` beside the constants.
 
 **Count invariants (I5–I7)** assert control flow, not time, and so are exact
 rather than tuned. I5: `snapCursor` was called at all. I6: a one-shot command
@@ -519,6 +537,22 @@ workflow** (`.github/workflows/perf.yaml`): it stays meaningful while the
 absolute lane is knowingly red against a stale committed baseline, because
 it answers a different question — "did TONIGHT's run regress against last
 night's?".
+
+**Contaminated runs never gate, in either direction (task 1840).** A run that
+measured while a foreign vibe3d was alive on the host writes its history entry
+stamped `"contaminated":true` (the entry is still written — it is the record
+of what that night's host did). `--vs-last` then:
+
+* refuses to gate FROM such an entry — it prints `NO VERDICT (FAIL)` with the
+  offending pids and exits nonzero, because a green here would mean "did not
+  check", not "nothing regressed";
+* skips such entries when looking BACKWARD for a reference, so an inflated
+  night cannot turn honest numbers into fake improvements and give a real
+  regression the same room to hide in.
+
+The worked example is 2026-08-24: one stray `./vibe3d` made `flip/polygons/
+whole` read +57%, `magnet/vertices/whole` +39% and `mergeFaces/polygons/half`
++22%; re-measured on a quiet host at the same HEAD, all three came back.
 
 ## Nightly runs (`.github/workflows/perf.yaml`)
 

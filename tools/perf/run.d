@@ -2995,6 +2995,14 @@ void writeResultsJson(string path, string meshType, int n, long faceCount,
     auto a = appender!string();
     a.put("{\n");
     a.put(format(`  "buildType": "perf",` ~ "\n"));
+    // Was a foreign vibe3d alive while this ran (task 1840)? The artifact is
+    // the forensic record of the night, so the fact that voids its numbers
+    // belongs IN it — not only in the log line that scrolls past.
+    a.put(format(`  "contaminated": %s,` ~ "\n",
+                 runWasContaminated() ? "true" : "false"));
+    if (runWasContaminated())
+        a.put(format(`  "contaminatedBy": "%s",` ~ "\n",
+                     contaminationDetail().replaceQuotes));
     // The run's name-substring filter, empty for a full run (task 1373).
     // `--lane-health` needs it: "every declared case is present" is only a
     // fair question of a run that was asked for every declared case.
@@ -3119,9 +3127,10 @@ CaseResult* findCase(CaseResult[] results, string name) {
 
 // ----- Relative invariant thresholds -----------------------------------
 //
-// K1_FALLOFF/K2_SYM_OFF_US/K3_SYMMETRY/K4_PIPE_OVERHEAD now live in
-// lib.baseline (tuned from observed n=64 ratios with generous margin — see
-// that module for the derivation notes).
+// K1A_FALLOFF_SPREAD/K1B_FALLOFF_NS_PER_VERT/K2_SYM_OFF_US/K3_SYMMETRY/
+// K4_PIPE_OVERHEAD now live in lib.baseline, with generous margin over the
+// observed values — K2/K3/K4 off n=64 ratios, K1A/K1B off the n=316 run
+// history (task 1840). See that module for the derivation notes.
 //
 // I5 — snap is actually engaged: when a snap=* case is active, snapCursor
 // must have been CALLED during the drag (count > 0). We check the call
@@ -3194,18 +3203,102 @@ Invariant[] checkInvariants(CaseResult[] results, size_t requestedCases,
                           coverageGap.length, coverageGap.join(", ")));
     }
 
-    // I1 — falloff loop bounded: radial kernelApply ≤ K1 × baseline (per tool).
+    // I1 — the falloff loop, in two clauses. `lib.baseline`'s K1A/K1B block
+    // carries the derivation and the history the numbers come from; what
+    // follows is what each clause looks at and what it CANNOT see.
+    //
+    // The pair replaces one ratio-to-baseline clause that could not tell
+    // "falloff got worse" from "the no-falloff arm got better", and reddened
+    // on the second (task 1840). Neither clause below mentions the baseline
+    // case as a denominator; the baseline is read only to PRINT the one fact
+    // the old clause was accidentally reporting — see I1b's detail.
     foreach (tool; ["move", "rotate", "scale"]) {
         auto base = findCase(results, tool ~ "/baseline");
-        auto rad  = findCase(results, tool ~ "/falloff=radial");
-        if (base is null || rad is null || base.kernelMedianUs <= 0) continue;
-        double ratio = rad.kernelMedianUs / base.kernelMedianUs;
-        bool ok = ratio <= K1_FALLOFF;
-        inv ~= Invariant("I1", format("%s falloff=radial kernelApply ≤ %.1f× baseline",
-                                      tool, K1_FALLOFF), ok,
-                         format("ratio=%.2f× (%.1f/%.1f µs) threshold %.1f×",
-                                ratio, rad.kernelMedianUs, base.kernelMedianUs,
-                                K1_FALLOFF));
+
+        // The falloff cases that moved the same set as the tool's baseline —
+        // the whole-mesh SHAPES. Derived from `vertsTouched`, not from a list
+        // of names: a new shape case joins the clause automatically, while
+        // `falloff=selection` (half the mesh) and `falloff=element` (one
+        // anchor vertex) stay out of a µs-to-µs comparison they would only
+        // distort. A hand-written name list is a second place to update and
+        // therefore a place to forget.
+        CaseResult*[] shapes;
+        foreach (ref r; results) {
+            if (r.status != CaseStatus.OK) continue;
+            if (!r.name.startsWith(tool ~ "/falloff=")) continue;
+            if (base is null || r.vertsTouched != base.vertsTouched) continue;
+            if (r.kernelMedianUs < ABS_NOISE_FLOOR_US) continue;
+            shapes ~= &r;
+        }
+
+        // I1a — SHAPE SPREAD. Scale-free, so a faster host, a slower host and
+        // a host with a neighbour stealing cores all read the same.
+        //
+        // BLIND SPOT, stated because I1b exists to cover it: a regression
+        // that lands on every shape at once moves both ends of this ratio and
+        // leaves it where it was.
+        if (shapes.length >= 2) {
+            auto worst = shapes[0], best = shapes[0];
+            foreach (s; shapes) {
+                if (s.kernelMedianUs > worst.kernelMedianUs) worst = s;
+                if (s.kernelMedianUs < best.kernelMedianUs)  best  = s;
+            }
+            double spread = worst.kernelMedianUs / best.kernelMedianUs;
+            inv ~= Invariant("I1a",
+                format("%s falloff shapes within %.1f× of each other",
+                       tool, K1A_FALLOFF_SPREAD),
+                spread <= K1A_FALLOFF_SPREAD,
+                format("spread=%.2f× — %s %.0f µs / %s %.0f µs (%d shapes, " ~
+                       "threshold %.1f×)",
+                       spread, worst.name, worst.kernelMedianUs,
+                       best.name, best.kernelMedianUs, shapes.length,
+                       K1A_FALLOFF_SPREAD));
+        }
+
+        // I1b — ABSOLUTE per-vertex-visit ceiling, over EVERY falloff case of
+        // this tool above the noise floor (the half-selection and single-vertex
+        // cases included: dividing by the verts each case actually visited is
+        // what makes them comparable).
+        //
+        // Its detail also prints the uniform arm's ns/vertex and the ratio
+        // between them. THAT NUMBER IS REPORTED AND DELIBERATELY NOT GATED:
+        // it is ~6.8× today and it is a real hot spot — the falloff arm still
+        // recomputes per vertex what task 1760's hoist lifted out of the
+        // no-falloff arm, plus one `blendToIdentity` per vertex — but it is a
+        // property of the RATIO of two arms, which is exactly the quantity
+        // that made the old I1 unable to hold still. It is a finding, filed as
+        // its own task, not a threshold.
+        {
+            CaseResult* worstNs = null;
+            double worstVal = 0;
+            foreach (ref r; results) {
+                if (r.status != CaseStatus.OK) continue;
+                if (!r.name.startsWith(tool ~ "/falloff=")) continue;
+                if (r.meshKind != "grid") continue;   // absolute ⇒ one fixture
+                if (r.kernelMedianUs < ABS_NOISE_FLOOR_US) continue;
+                if (r.vertsTouched <= 0) continue;
+                double ns = r.kernelMedianUs * 1000.0 / r.vertsTouched;
+                if (ns > worstVal) { worstVal = ns; worstNs = &r; }
+            }
+            if (worstNs !is null) {
+                string arm = "baseline case absent";
+                if (base !is null && base.vertsTouched > 0
+                    && base.kernelMedianUs > 0) {
+                    double baseNs = base.kernelMedianUs * 1000.0 / base.vertsTouched;
+                    arm = format("uniform arm %.2f ns/vert ⇒ falloff arm ×%.1f " ~
+                                 "— REPORTED, NOT GATED (task 1841)",
+                                 baseNs, worstVal / baseNs);
+                }
+                inv ~= Invariant("I1b",
+                    format("%s falloff kernelApply ≤ %.0f ns per vertex visited",
+                           tool, K1B_FALLOFF_NS_PER_VERT),
+                    worstVal <= K1B_FALLOFF_NS_PER_VERT,
+                    format("worst=%.2f ns/vert (%s: %.0f µs / %d visits), " ~
+                           "ceiling %.0f; %s",
+                           worstVal, worstNs.name, worstNs.kernelMedianUs,
+                           worstNs.vertsTouched, K1B_FALLOFF_NS_PER_VERT, arm));
+            }
+        }
     }
 
     // I2 — symmetry disabled is free: pipeSymmetry sum ≈ 0 in every case whose
@@ -4172,6 +4265,10 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
         writefln("  absolute regressions: %d", absFail);
     writeln(failures == 0 ? "  OVERALL: PASS" : "  OVERALL: FAIL");
 
+    // Second contamination sweep before the entry is written — same reason as
+    // the ops lane's (task 1840).
+    warnForeignVibe(port);
+
     // History (task 0197 Phase 4) — one line per `frames` run, {scenario:
     // p99Ms}. Best-effort: a history-append failure must never fail the run.
     try {
@@ -4179,7 +4276,8 @@ int runFramesSubcommand(string meshType, int meshParam, string viewport, ushort 
         foreach (r; results)
             if (r.status == CaseStatus.OK)
                 p99ByScenario[r.name] = msFromNs(r.stats.p99Ns);
-        lib.history.appendHistory(g_repoRoot, curHeader, p99ByScenario, "frames");
+        lib.history.appendHistory(g_repoRoot, curHeader, p99ByScenario, "frames",
+                                  lib.lifecycle.runWasContaminated());
     } catch (Exception e) {
         stderr.writeln("warning: history append failed: ", e.msg);
     }
@@ -4465,6 +4563,10 @@ int runToolsSubcommand(string meshType, int meshParam, string viewport,
     writeln("\nWrote ", outPath);
 
     int failures = 0;
+    // Second contamination sweep before this lane's entry is written — same
+    // reason as the ops lane's (task 1840).
+    warnForeignVibe(port);
+
     writeln();
     writeln("=== tool preview invariants ===");
     auto invs = checkToolInvariants(results, cases.length);
@@ -4541,7 +4643,8 @@ int runToolsSubcommand(string meshType, int meshParam, string viewport,
             // deliberate follow-up, not something to imply here.
             byCase[r.name ~ "#kernelShare"] = r.kernelShare;
         }
-        lib.history.appendHistory(g_repoRoot, curHeader, byCase, "tools");
+        lib.history.appendHistory(g_repoRoot, curHeader, byCase, "tools",
+                                  lib.lifecycle.runWasContaminated());
     } catch (Exception e) {
         stderr.writeln("warning: history append failed: ", e.msg);
     }
@@ -5070,6 +5173,10 @@ int main(string[] args) {
         int regressions = lib.history.checkVsLast(entries, vsLastThreshold,
                                                   vsLastSnapThreshold,
                                                   vsLastFloorUs);
+        // NO VERDICT is a failure, not a pass: see `kVsLastNoVerdict`. The
+        // step it fails is the one whose whole claim is "nothing got slower
+        // since yesterday", and tonight that claim was never established.
+        if (regressions == lib.history.kVsLastNoVerdict) return 1;
         return regressions > 0 ? 1 : 0;
     }
 
@@ -5188,6 +5295,13 @@ int main(string[] args) {
         results ~= r;
     }
 
+    // Second contamination sweep (task 1840). The first ran before the build,
+    // from `killStaleVibe`; a neighbour that started AFTER it — or that the
+    // first sweep raced — competed for the CPU of every case above and would
+    // otherwise be recorded as clean. `warnForeignVibe` unions its findings
+    // into the same list `runWasContaminated` reads.
+    warnForeignVibe(port);
+
     printTable(results, meshParam);
 
     // Coverage (invariant L2) is asked of the LIVE app — the registry is the
@@ -5286,6 +5400,12 @@ int main(string[] args) {
              invs.length);
     if (absFail > 0)
         writefln("  absolute regressions: %d", absFail);
+    if (runWasContaminated())
+        writefln("  CONTAMINATED: measured while a foreign vibe3d was alive "
+                 ~ "(%s) — the medians below describe this host's contention "
+                 ~ "as much as the code, the history entry is stamped, and "
+                 ~ "`--vs-last` will refuse to gate on it",
+                 contaminationDetail());
     writeln(failures == 0 ? "  OVERALL: PASS" : "  OVERALL: FAIL");
 
     // History (task 0197 Phase 4) — one line per `ops` run, {caseName:
@@ -5364,7 +5484,8 @@ int main(string[] args) {
                         r.snapVisMaskMedianUs;
             }
         }
-        lib.history.appendHistory(g_repoRoot, curHeader, kernelMedianByCase, "ops");
+        lib.history.appendHistory(g_repoRoot, curHeader, kernelMedianByCase, "ops",
+                                  lib.lifecycle.runWasContaminated());
     } catch (Exception e) {
         stderr.writeln("warning: history append failed: ", e.msg);
     }

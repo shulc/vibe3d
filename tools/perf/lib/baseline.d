@@ -213,14 +213,71 @@ FramesBaseline loadFramesBaseline(string path) {
 
 // Tuned from observed n=64 ratios with generous margin (gross-regression
 // guards, not tight benchmarks). Observed (worst tool) ⇒ chosen K:
-//   I1 falloff radial / baseline kernelApply:  ~1.95×   ⇒ K1 = 6.0
 //   I2 pipeSymmetry sum when symmetry OFF:     ≤ ~7.5µs ⇒ K2 = 200µs (abs)
 //   I3 symmetry=X / baseline kernelApply:      ~1.86×   ⇒ K3 = 4.0
 //   I4 baseline pipeTotal / kernelApply:       ~1.19×   ⇒ K4 = 4.0
-enum double K1_FALLOFF        = 6.0;
 enum double K2_SYM_OFF_US     = 200.0;   // absolute µs ceiling, per case
 enum double K3_SYMMETRY       = 4.0;
 enum double K4_PIPE_OVERHEAD  = 4.0;
+
+// --- I1: the falloff loop, in two clauses (task 1840) ----------------------
+//
+// WHAT REPLACED WHAT, because the old form failed in a way worth keeping on
+// the record. I1 used to read `falloff=radial kernelApply ≤ 6.0 × baseline
+// kernelApply`, per tool. On 2026-08-24 it went red at 6.72-6.85× — and the
+// falloff arm had not moved. Its DENOMINATOR had: two commits (e25530a4,
+// 6bfb65a7) hoisted per-vertex-invariant work out of the no-falloff arm and
+// `move/baseline` went 18 367 → 4 529 µs overnight, while
+// `move/falloff=radial` went 29 858 → 30 455 (+2%, inside this lane's noise).
+//
+//     ratio = (base + falloff) / base = 1 + falloff/base
+//
+// so the gate's reading is proportional to the SPEED OF SOMETHING IT IS NOT
+// ABOUT, and it moves the wrong way: an improvement to the uniform arm is
+// reported as a falloff regression. The threshold 6.0 was itself calibrated
+// (n=64, observed ~1.95×) while the baseline still carried the very defect
+// those commits removed — a threshold set by a number the fix later changed.
+// The same arithmetic is what makes the old form DEFEATABLE: a falloff
+// regression arriving together with a baseline regression leaves the ratio
+// where it was, and the gate stays green through both.
+//
+// Both clauses below are therefore free of that denominator. They were
+// derived from the run history — `tools/perf/history/<host>.jsonl`, 14
+// comparable ops runs between 2026-08-13 and 2026-08-24, 3 tools × 4
+// whole-mesh falloff shapes = 168 measurements — NOT from the run that
+// reddened, and both are computed only from the falloff cases themselves.
+//
+// I1a — SHAPE SPREAD, per tool: the dearest whole-mesh falloff shape costs no
+// more than K1A × the cheapest. Scale-free: no host speed, no mesh size, no
+// uniform-arm cost in it. The measured population, per tool over those 15
+// runs (max/min of {linear, radial, screen, cylinder}):
+//
+//     move    1.60 - 1.71      rotate  1.53 - 1.63      scale  1.89 - 1.93
+//
+// The spread is also blind to host contention, which is the property that
+// makes it a gate rather than a thermometer: on the contaminated 2026-08-24
+// run, where every case read 2-4% high, move's spread moved 1.64 → 1.63.
+// K1A = 3.0 leaves 1.55× over the worst value ever recorded.
+//
+// I1b — ABSOLUTE per-vertex-visit ceiling: no falloff case may spend more
+// than K1B nanoseconds of kernelApply per vertex it visited. This is the
+// clause I1a cannot be: a regression that lands on EVERY falloff shape at
+// once (the shared per-vertex body, `blendToIdentity`, the double-precision
+// re-centre block) moves numerator and denominator of any in-family ratio
+// together and hides there. Measured ns/vertex-visit over the same 168
+// samples: radial 14.67-15.44, linear 15.87-16.69, cylinder 22.42-24.30,
+// screen 20.36-29.02 (scale/screen is the dearest shape in the matrix);
+// `falloff=selection`, which moves half the mesh and is normalised by the
+// verts IT visited, 9.53-10.17.
+// K1B = 90 leaves 3.1× over the worst — the same order of margin I7e's
+// absolute budget carries, and for the same reason: this catches the GROSS
+// class (a per-vertex allocation, an O(V) search inside the weight function,
+// a lost early-out), while a modest drift is `--vs-last`'s +20% job.
+//
+// Grid-only, like I7e: an absolute per-vertex number is a statement about a
+// fixture, and `--subdivcube` is a different one.
+enum double K1A_FALLOFF_SPREAD    = 3.0;
+enum double K1B_FALLOFF_NS_PER_VERT = 90.0;
 
 // Below this baseline median (µs), a metric is in the timing noise floor and a
 // percentage-growth comparison is meaningless (e.g. selection=single touches

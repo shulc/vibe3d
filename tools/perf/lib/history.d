@@ -40,8 +40,17 @@ string historyPath(string repoRoot, string host) {
 // like ops case names do, so the fallback would file them as `ops` and
 // `--trend` would put one preview rebuild next to a kernelApply median in
 // one drift table (task 1370).
+//
+// `contaminated` (task 1840) marks a run measured while a foreign vibe3d was
+// alive on the host — see `lib.lifecycle.warnForeignVibe` for the incident and
+// the numbers. The entry is still WRITTEN: it is a record of what the host did
+// that night, and deleting measurements because they are inconvenient is how a
+// history stops being evidence. It is the day-over-day GATE that must not
+// touch it, in either direction, and `checkVsLast` is where that is enforced.
+// The key is emitted only when true, so every pre-1840 line stays byte-exact
+// and `loadHistory` reads a missing key as false.
 void appendHistory(string repoRoot, RunHeader h, double[string] medians,
-                   string kind = "") {
+                   string kind = "", bool contaminated = false) {
     string dir = historyDir(repoRoot);
     if (!exists(dir)) mkdirRecurse(dir);
     string path = historyPath(repoRoot, h.host);
@@ -50,6 +59,7 @@ void appendHistory(string repoRoot, RunHeader h, double[string] medians,
     a.put("{");
     a.put(format(`"ts":%d,`, Clock.currTime.toUnixTime!long));
     if (kind.length) a.put(format(`"kind":"%s",`, kind));
+    if (contaminated) a.put(`"contaminated":true,`);
     a.put(format(`"buildType":"%s","compiler":"%s","host":"%s","meshType":"%s",`,
                  h.buildType, h.compiler, h.host, h.meshType));
     a.put(format(`"n":%d,"faceCount":%d,"viewport":"%s","repeats":%d,`,
@@ -70,6 +80,11 @@ void appendHistory(string repoRoot, RunHeader h, double[string] medians,
 struct HistoryEntry {
     long   ts;
     string kind;          // "ops" / "frames" / "tools"; "" on pre-tag entries
+    // A foreign vibe3d was alive on the host while this run measured, so its
+    // medians describe the host's contention as much as the code's cost
+    // (task 1840). False on every entry written before the flag existed —
+    // which is a statement about the RECORD, not about those hosts.
+    bool   contaminated;
     RunHeader header;
     double[string] medians;
 }
@@ -113,6 +128,8 @@ HistoryEntry[] loadHistory(string path) {
         HistoryEntry e;
         e.ts = ("ts" in j) ? j["ts"].integer : 0;
         e.kind = ("kind" in j) ? j["kind"].str : "";
+        e.contaminated = ("contaminated" in j)
+            && j["contaminated"].type == JSONType.true_;
         e.header.buildType = j["buildType"].str;
         e.header.compiler  = j["compiler"].str;
         e.header.host      = j["host"].str;
@@ -284,6 +301,17 @@ void printTrend(HistoryEntry[] entries, int last) {
 // this one down with it — see `checkVsLast`'s caller in run.d).
 enum double kSnapQueryVsLastThreshold = 0.60;
 
+// `checkVsLast`'s return for "this run cannot be judged" — distinct from 0
+// (compared, clean) and from -1 (nothing to compare, which is a legitimate
+// pass on a first run). The caller turns it into a FAILING exit code.
+//
+// Why it fails rather than passes, task 1840: a green that means "did not
+// check" is the inert gate this project keeps paying for (CLAUDE.md: "the run
+// never happened"). Nothing was measured tonight that a day-over-day gate may
+// speak about, and the lane's job is to say so — with the pids, so the fix is
+// one `kill` away — not to report health it did not establish.
+enum int kVsLastNoVerdict = -2;
+
 int checkVsLast(HistoryEntry[] entries, double threshold, double snapThreshold,
                 double floorUs) {
     if (entries.length == 0) {
@@ -295,12 +323,30 @@ int checkVsLast(HistoryEntry[] entries, double threshold, double snapThreshold,
         writeln("vs-last: latest entry is not an `ops` run — nothing to gate (PASS)");
         return -1;
     }
-    // Latest earlier comparable entry.
+    if (current.contaminated) {
+        writefln("vs-last: the latest `ops` run (ts=%d) is marked CONTAMINATED "
+                 ~ "— a foreign vibe3d was alive on the host while it measured, "
+                 ~ "so its medians are not comparable with anything. NO VERDICT "
+                 ~ "(FAIL): nothing was measured that this gate may speak about. "
+                 ~ "Clear the foreign instance and re-run the ops lane.",
+                 current.ts);
+        return kVsLastNoVerdict;
+    }
+    // Latest earlier comparable entry — skipping contaminated ones. A
+    // contaminated reference is worse than no reference: its inflated medians
+    // turn today's honest numbers into fake IMPROVEMENTS and give a real
+    // regression the same amount of room to hide in (task 1840).
     HistoryEntry prev;
     bool found = false;
+    int skippedContaminated = 0;
     foreach_reverse (e; entries[0 .. $ - 1]) {
-        if (comparableEntries(e, current)) { prev = e; found = true; break; }
+        if (!comparableEntries(e, current)) continue;
+        if (e.contaminated) { skippedContaminated++; continue; }
+        prev = e; found = true; break;
     }
+    if (skippedContaminated > 0)
+        writefln("vs-last: skipped %d contaminated entry/entries while looking "
+                 ~ "for a reference", skippedContaminated);
     if (!found) {
         writeln("vs-last: no comparable previous run — nothing to compare (PASS)");
         return -1;
