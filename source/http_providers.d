@@ -1564,21 +1564,19 @@ private void wireViewportProviders(HttpServer httpServer, ref EditorApp app,
         httpServer.setSurfaceRaycastProvider((int x, int y, float thresholdPx) {
             import std.format        : format;
             import toolpipe.packets  : ConstrainHitPacket, HoverTargetKind;
+            import toolpipe.subject  : SubjectSource, evaluateSubject;
             import constraint        : resolveHoverTarget, topoPenPressPickPx;
 
-            SubjectPacket subj;
-            subj.mesh        = &mesh();
-            subj.editMode    = editMode;
-            subj.selType     = currentSelType(selTypeOrder);
-            subj.viewport    = vpm.activeSnapshot();
-            subj.cursorX     = x;
-            subj.cursorY     = y;
-            subj.cursorValid = true;
+            auto src = SubjectSource(&mesh(), editMode,
+                                      currentSelType(selTypeOrder),
+                                      vpm.activeSnapshot());
+            src.cursorX     = x;
+            src.cursorY     = y;
+            src.cursorValid = true;
 
+            SubjectPacket subj;
             VectorStack vts;
-            vts.put(&subj);
-            if (g_pipeCtx !is null)
-                g_pipeCtx.pipeline.evaluate(vts);
+            evaluateSubject(subj, vts, src);
 
             auto hp = vts.get!ConstrainHitPacket();
             if (hp is null)
@@ -1860,33 +1858,37 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
         // pipeline.evaluate touches View state (cameraView.viewport()
         // recomputes view/proj) and writes g_pipeCtx's caches. The service
         // body below therefore runs inside tickAll(), on the main thread.
-        // Do not cite this provider as precedent for a direct HTTP-thread
-        // read — /api/snap and /api/constrain did, and they are the two
-        // that still evaluate the pipeline off-thread.
+        // All five pipeline-evaluating providers (this one, /api/snap,
+        // /api/constrain, /api/path, /api/surface-raycast) are main-thread-
+        // bridged (their own bridge, own epoch pair — http_server.d) —
+        // there is no off-thread pipeline read left to cite.
         httpServer.setToolPipeEvalProvider(() {
             import std.array       : appender;
             import std.format      : format;
             import toolpipe.pipeline : g_pipeCtx;
+            import toolpipe.subject  : SubjectSource, evaluateSubject;
             import toolpipe.packets  : SubjectPacket;
             import math              : Vec3;
 
             auto buf = appender!string;
+            // N1 (task 1904): the null check stays BEFORE the subject is
+            // built, byte-for-byte with the pre-migration order -- so that
+            // &mesh() / currentSelType(...) / vpm.activeSnapshot() are never
+            // evaluated when the pipe is not registered.
             if (g_pipeCtx is null) {
                 buf.put(`{"error":"pipeline not initialised"}`);
                 return buf.data;
             }
-            SubjectPacket subj;
-            subj.mesh             = &mesh();
-            subj.editMode         = editMode;
-            subj.selType          = currentSelType(selTypeOrder);
-            subj.viewport         = vpm.activeSnapshot();
+            auto src = SubjectSource(&mesh(), editMode,
+                                      currentSelType(selTypeOrder),
+                                      vpm.activeSnapshot());
 
             import operator             : VectorStack;
             import toolpipe.packets     : ActionCenterPacket, AxisPacket,
                                           SymmetryPacket, SnapPacket;
+            SubjectPacket subj;
             VectorStack vts;
-            vts.put(&subj);
-            g_pipeCtx.pipeline.evaluate(vts);
+            evaluateSubject(subj, vts, src);   // g_pipeCtx confirmed above
 
             ActionCenterPacket acen;
             AxisPacket         axis;
@@ -2140,7 +2142,6 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             import std.format      : format;
             import std.json        : parseJSON, JSONType, JSONValue;
             import std.conv        : to;
-            import toolpipe.pipeline       : g_pipeCtx;
             import toolpipe.packets        : SnapPacket, SubjectPacket;
             import snap                    : snapCursor, SnapResult;
             import math                    : Vec3;
@@ -2188,17 +2189,15 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             // (they depend on the upstream WORK stage having run).
             auto vp = vpm.activeSnapshot();
             SnapPacket cfg;
-            if (g_pipeCtx !is null) {
+            {
+                import toolpipe.subject : SubjectSource, evaluateSubject;
                 import operator        : VectorStack;
+                auto src = SubjectSource(&mesh(), editMode,
+                                          currentSelType(selTypeOrder), vp);
                 SubjectPacket subj;
-                subj.mesh             = &mesh();
-                subj.editMode         = editMode;
-                subj.selType          = currentSelType(selTypeOrder);
-                subj.viewport         = vp;
                 VectorStack vts;
-                vts.put(&subj);
-                g_pipeCtx.pipeline.evaluate(vts);
-                if (auto sp = vts.get!SnapPacket()) cfg = *sp;
+                if (evaluateSubject(subj, vts, src))
+                    if (auto sp = vts.get!SnapPacket()) cfg = *sp;
             }
 
             // The just-in-time item-frame install that used to sit here is
@@ -2273,7 +2272,6 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             import std.format      : format;
             import std.json        : parseJSON, JSONType, JSONValue;
             import std.conv        : to;
-            import toolpipe.pipeline   : g_pipeCtx;
             import toolpipe.packets    : ConstrainPacket, SubjectPacket;
             import snap                : backgroundSourcesFull;
             import constraint          : constrainPoint;
@@ -2312,17 +2310,15 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
 
             auto vp = vpm.activeSnapshot();
             ConstrainPacket cfg;
-            if (g_pipeCtx !is null) {
+            {
+                import toolpipe.subject : SubjectSource, evaluateSubject;
                 import operator : VectorStack;
+                auto src = SubjectSource(&mesh(), editMode,
+                                          currentSelType(selTypeOrder), vp);
                 SubjectPacket subj;
-                subj.mesh     = &mesh();
-                subj.editMode = editMode;
-                subj.selType  = currentSelType(selTypeOrder);
-                subj.viewport = vp;
                 VectorStack vts;
-                vts.put(&subj);
-                g_pipeCtx.pipeline.evaluate(vts);
-                if (auto cp = vts.get!ConstrainPacket()) cfg = *cp;
+                if (evaluateSubject(subj, vts, src))
+                    if (auto cp = vts.get!ConstrainPacket()) cfg = *cp;
             }
 
             auto bgSrc = backgroundSourcesFull();
@@ -2351,22 +2347,22 @@ private void wireToolpipeProviders(HttpServer httpServer, ref EditorApp app,
             import std.array         : appender;
             import std.format        : format;
             import toolpipe.pipeline : g_pipeCtx;
+            import toolpipe.subject  : SubjectSource, evaluateSubject;
             import toolpipe.packets  : SubjectPacket, PathPacket;
             import operator          : VectorStack;
             import path              : pathValue, pathTangent, pathLength;
 
+            // N1 (task 1904): null check stays BEFORE the subject is built,
+            // byte-for-byte with the pre-migration order.
             if (g_pipeCtx is null)
                 return `{"error":"pipeline not initialised"}`;
+            auto src = SubjectSource(&mesh(), editMode,
+                                      currentSelType(selTypeOrder),
+                                      vpm.activeSnapshot());
 
             SubjectPacket subj;
-            subj.mesh     = &mesh();
-            subj.editMode = editMode;
-            subj.selType  = currentSelType(selTypeOrder);
-            subj.viewport = vpm.activeSnapshot();
-
             VectorStack vts;
-            vts.put(&subj);
-            g_pipeCtx.pipeline.evaluate(vts);
+            evaluateSubject(subj, vts, src);   // g_pipeCtx confirmed above
 
             auto pp = vts.get!PathPacket();
             if (pp is null || !pp.enabled)
