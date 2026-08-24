@@ -1,6 +1,6 @@
 module layer_params;
 
-import params   : Param, ParamProvider;
+import params   : Param, ParamProvider, MixedValueProvider, paramToJson;
 import document : Layer, Document, kindInfo, ItemKind, ItemXform,
                   MIN_ITEM_SCALE_MAG, MAX_ITEM_SCALE_MAG, sanitizeItemXform;
 import seltype  : SelType;
@@ -33,7 +33,7 @@ import seltype  : SelType;
 //     selection-set invariants and are deliberately NOT writable params here.
 // ---------------------------------------------------------------------------
 
-final class LayerPropsProvider : ParamProvider {
+final class LayerPropsProvider : ParamProvider, MixedValueProvider {
     private Layer layer_;   // the wrapped layer (a class ⇒ stable heap identity)
 
     // P4 primary-transform interlock. When a transform tool is active, the panel
@@ -404,6 +404,68 @@ final class LayerPropsProvider : ParamProvider {
     /// frame (no GPU vertex re-upload, since vertices never move and the mesh
     /// `mutationVersion` is untouched).
     void onParamChanged(string name) {}
+
+    // -----------------------------------------------------------------------
+    // MixedValueProvider — TASK 1880, gang edit
+    // -----------------------------------------------------------------------
+
+    /// The OTHER subjects this provider stands for, beside `layer_`.
+    ///
+    /// Snapshots of their `params()`, not the layers: a `Param` holds a typed
+    /// POINTER into its layer's fields and `Layer` is a class (stable heap
+    /// address by design — see document.d), so a snapshot taken once stays
+    /// live for the whole frame and re-reads the current value on every probe.
+    /// Taking it once is the point: `params()` allocates a fresh array per
+    /// call, and asking it per row per target would rebuild it ~20 x N times a
+    /// frame for a panel that needs it N.
+    private Param[][] gangSnapshots_;
+
+    /// Bind the gang-edit subject set — every OTHER item the edit applies to.
+    ///
+    /// Called once per frame by the panel with the item selection minus the
+    /// focus. Passing an empty array (or never calling this) leaves the
+    /// provider single-subject, which is the pre-1880 behaviour exactly:
+    /// `paramMixed` then answers false for everything and no widget changes.
+    ///
+    /// KIND FILTERING IS THE CALLER'S. The reference gang-edits "multiple
+    /// layer selections of identical item types", and the panel is the layer
+    /// that knows the focus's kind; doing it here would duplicate that rule in
+    /// a second place and let the two drift.
+    void setGangTargets(Layer[] others) {
+        if (others.length == 0) { gangSnapshots_.length = 0; return; }
+        gangSnapshots_.length = others.length;
+        foreach (i, o; others)
+            gangSnapshots_[i] = (o is null) ? null
+                              : (new LayerPropsProvider(o)).params();
+    }
+
+    /// True when the subjects disagree on `name`.
+    ///
+    /// Compared through `paramToJson`, which is the same boxing the read-back
+    /// query and the `.v3d` codec already use — so "these two agree" means the
+    /// same thing here as it does everywhere else that reads a layer param,
+    /// rather than being a fourth notion of equality.
+    ///
+    /// A target that does not EXPOSE `name` counts as agreeing. The row is
+    /// only drawn because the focus exposes it, and a kind that lacks the
+    /// channel entirely has no value to disagree with; reporting mixed there
+    /// would put a placeholder on a row whose only real subject is the focus.
+    bool paramMixed(string name) {
+        if (gangSnapshots_.length == 0) return false;
+        auto mine = params();
+        const(Param)* self;
+        foreach (ref p; mine) if (p.name == name) { self = &p; break; }
+        if (self is null) return false;
+        auto want = paramToJson(*self);
+        foreach (ref snap; gangSnapshots_) {
+            foreach (ref p; snap) {
+                if (p.name != name) continue;
+                if (paramToJson(p) != want) return true;
+                break;
+            }
+        }
+        return false;
+    }
 }
 
 /// Which item the shared item-properties form binds — the item-selection

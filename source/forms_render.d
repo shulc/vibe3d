@@ -51,7 +51,7 @@ import forms;
 // Pure write-path serialization helpers live in forms.d (ImGui-free, so they
 // stay headless-unit-testable without dragging d_imgui into a test link).
 import forms : valueToArgToken, substituteQuery, currentEnumTag;
-import params : Param, ParamProvider;
+import params : Param, ParamProvider, MixedValueProvider, kMixedPlaceholder;
 
 import ImGui = d_imgui;
 import d_imgui.imgui_h;
@@ -350,6 +350,21 @@ class FormsPanel {
         if (disabled) ImGui.BeginDisabled();
         scope(exit) if (disabled) ImGui.EndDisabled();
 
+        // TASK 1880 — MIXED. Asked exactly the way `paramEnabled` above is
+        // asked: one question per row, answered by the provider, never
+        // computed here. The `cast` is the whole opt-in — a provider that
+        // stands for one subject (every tool, every stage) does not implement
+        // the interface and pays a null cast.
+        //
+        // A mixed row still BINDS and still writes. The reference's own model
+        // is that the collapse is a display decision over an array of queried
+        // values, not a state the control enters: an edit is one absolute
+        // value applied to every subject either way. So `mixed` only ever
+        // changes what the widget SHOWS.
+        bool mixed = false;
+        if (auto mp = cast(MixedValueProvider) provider)
+            mixed = mp.paramMixed(rc.param.name);
+
         // Visible label text (left column) vs. the hidden `##id` label fed to
         // the widget. Checkbox / button keep ImGui's native right-of-widget
         // label; value widgets (float / int / combo / text) put the label in a
@@ -363,7 +378,7 @@ class FormsPanel {
 
         final switch (rc.widget) {
             case WidgetKind.checkbox:
-                drawCheckbox(*row, rc, row.showLabel ? visible : hidden, idispatch);
+                drawCheckbox(*row, rc, row.showLabel ? visible : hidden, idispatch, mixed);
                 break;
             case WidgetKind.button:
                 drawBoolButton(*row, rc, row.showLabel ? visible : hidden, idispatch);
@@ -371,20 +386,20 @@ class FormsPanel {
             case WidgetKind.dragFloat:
             case WidgetKind.sliderFloat:
                 beginLabeledRow(visible);
-                drawFloatControl(*row, rc, cid, hidden, idispatch);
+                drawFloatControl(*row, rc, cid, hidden, idispatch, mixed);
                 break;
             case WidgetKind.dragInt:
             case WidgetKind.sliderInt:
                 beginLabeledRow(visible);
-                drawIntControl(*row, rc, cid, hidden, idispatch);
+                drawIntControl(*row, rc, cid, hidden, idispatch, mixed);
                 break;
             case WidgetKind.combo:
                 beginLabeledRow(visible);
-                drawCombo(*row, rc, hidden, idispatch);
+                drawCombo(*row, rc, hidden, idispatch, mixed);
                 break;
             case WidgetKind.text:
                 beginLabeledRow(visible);
-                drawText(*row, rc, hidden, idispatch);
+                drawText(*row, rc, hidden, idispatch, mixed);
                 break;
             case WidgetKind.vec3:
                 // A single Vec3 attr (e.g. falloff start/end) expands into an
@@ -401,9 +416,15 @@ class FormsPanel {
 
     // ---- bool: checkbox ---------------------------------------------------
     private void drawCheckbox(ref Row row, ref ResolvedControl rc, string label,
-                              InteractiveDispatchFn idispatch)
+                              InteractiveDispatchFn idispatch, bool mixed = false)
     {
         bool v = *rc.param.bptr;
+        // Mixed: the box cannot show a third state (this binding has no
+        // tristate checkbox), so the PLACEHOLDER rides the label instead of
+        // the box. Clicking still writes one absolute value to every subject,
+        // which is what the reference does too — so the box showing the
+        // focus's own value is not a lie about what a click will do.
+        if (mixed) label = label ~ " " ~ kMixedPlaceholder;
         // Align the checkbox box at the value-field column (its left edge), with
         // the label to its RIGHT — so a column of checkboxes lines up with the
         // numeric fields above/below them. beginLabeledRow("") emits an empty
@@ -427,7 +448,8 @@ class FormsPanel {
     // ---- float: drag / slider, with active-item guard --------------------
     private void drawFloatControl(ref Row row, ref ResolvedControl rc,
                                   string cid, string label,
-                                  InteractiveDispatchFn idispatch)
+                                  InteractiveDispatchFn idispatch,
+                                  bool mixed = false)
     {
         auto sc = cid in scratch_;
         if (sc is null) { scratch_[cid] = Scratch.init; sc = cid in scratch_; }
@@ -442,6 +464,11 @@ class FormsPanel {
         float hi   = h.hasMaxF ? h.maxF : 0.0f;
         float step = h.hasStep ? h.step_ : (h.isAngle ? 0.1f : 0.001f);
         string fmt = h.hasFmt  ? h.fmt   : "%.3f";
+        // Mixed: ImGui renders a format string with no conversion specifier
+        // verbatim, so the placeholder replaces the number while the drag
+        // itself keeps working — which is the behaviour wanted, since a drag
+        // on a mixed field is exactly how you give every subject one value.
+        if (mixed) fmt = kMixedPlaceholder;
 
         bool changed;
         if (rc.widget == WidgetKind.sliderFloat && h.hasMinF && h.hasMaxF)
@@ -464,7 +491,8 @@ class FormsPanel {
     // ---- int: drag / slider, with active-item guard ----------------------
     private void drawIntControl(ref Row row, ref ResolvedControl rc,
                                 string cid, string label,
-                                InteractiveDispatchFn idispatch)
+                                InteractiveDispatchFn idispatch,
+                                bool mixed = false)
     {
         auto sc = cid in scratch_;
         if (sc is null) { scratch_[cid] = Scratch.init; sc = cid in scratch_; }
@@ -475,12 +503,18 @@ class FormsPanel {
         const h = rc.param.hints;
         int lo = h.hasMinI ? h.minI : 0;
         int hi = h.hasMaxI ? h.maxI : 0;
+        // Same trick the float path takes: a format string carrying no
+        // conversion specifier renders verbatim, so the placeholder replaces
+        // the number and the drag keeps working. The binding has taken a
+        // format here all along (`DragInt`/`SliderInt`, d_imgui package.d);
+        // these two call sites simply never passed one.
+        string ifmt = mixed ? kMixedPlaceholder : "%d";
 
         bool changed;
         if (rc.widget == WidgetKind.sliderInt && h.hasMinI && h.hasMaxI)
-            changed = ImGui.SliderInt(label, &sc.i, lo, hi);
+            changed = ImGui.SliderInt(label, &sc.i, lo, hi, ifmt);
         else
-            changed = ImGui.DragInt(label, &sc.i, 0.1f, lo, hi);
+            changed = ImGui.DragInt(label, &sc.i, 0.1f, lo, hi, ifmt);
 
         sc.active = ImGui.IsItemActive();
         if (changed)
@@ -546,13 +580,17 @@ class FormsPanel {
 
     // ---- enum / intEnum: combo (choices from the Param, not YAML) --------
     private void drawCombo(ref Row row, ref ResolvedControl rc, string label,
-                           InteractiveDispatchFn idispatch)
+                           InteractiveDispatchFn idispatch, bool mixed = false)
     {
         // Current tag + preview label from the resolved choices.
         string curTag = currentEnumTag(rc.param);
         string preview = curTag;
         foreach (ch; rc.choices)
             if (ch[0] == curTag) { preview = ch[1]; break; }
+        // Mixed: the PREVIEW carries the placeholder, and the item list below
+        // is left alone — every choice stays pickable, and picking one is what
+        // resolves the disagreement.
+        if (mixed) preview = kMixedPlaceholder;
 
         if (ImGui.BeginCombo(label, preview)) {
             foreach (ch; rc.choices) {
@@ -576,11 +614,14 @@ class FormsPanel {
 
     // ---- string: text input ----------------------------------------------
     private void drawText(ref Row row, ref ResolvedControl rc, string label,
-                          InteractiveDispatchFn idispatch)
+                          InteractiveDispatchFn idispatch, bool mixed = false)
     {
         import core.stdc.string : strlen;
         char[256] buf;
-        string cur = *rc.param.sptr;
+        // Mixed: the placeholder is seeded INTO the buffer, so the field reads
+        // as the other widgets do. Typing replaces it wholesale, which is the
+        // right write — one absolute value to every subject.
+        string cur = mixed ? kMixedPlaceholder : *rc.param.sptr;
         size_t len = cur.length < buf.length - 1 ? cur.length : buf.length - 1;
         buf[0 .. len] = cur[0 .. len];
         buf[len] = '\0';

@@ -26,6 +26,52 @@ interface ParamProvider {
 }
 
 // ---------------------------------------------------------------------------
+// MixedValueProvider — a provider that stands for MORE THAN ONE subject, and
+// can therefore be asked whether they agree on a given param.
+//
+// TASK 1880. A SEPARATE, OPTIONAL interface rather than a fourth method on
+// `ParamProvider`, for two reasons. D interfaces cannot carry a default
+// implementation for a virtual method (only `static`/`final` bodies are
+// allowed), so a fourth method would be a compile break in every one of the
+// ~dozen providers — tools, stages, falloffs — none of which stands for more
+// than one subject and none of which has anything to say here. And the renderer
+// can ask with one `cast`, which costs nothing on the providers that do not
+// implement it.
+//
+// WHAT "MIXED" IS, and it is not a value. Read out of the reference's own SDK
+// rather than designed: a command's argument QUERY there does not return a
+// value, it fills an ARRAY — one entry per element of the selection — and the
+// array type carries a first-differing probe. The command itself has no concept
+// of "mixed" at all; a shipped sample's query visitor simply appends one number
+// per element and its comment says that is "pretty much all that's required".
+// The COLLAPSE is the UI's, and so is the placeholder it substitutes when the
+// entries disagree: that placeholder sits in the reference's message table
+// beside its "(none)" / "(unnamed)" / "(all)" siblings, which is what settles
+// that it is a placeholder and not a value the field holds.
+//
+// So this interface answers the collapse, never a value. A widget that reports
+// `true` here still binds and still WRITES normally — an edit is one absolute
+// value applied to every subject, which is again read rather than chosen (the
+// same sample's apply visitor assigns the one argument to every element it
+// visits, with no delta arithmetic anywhere).
+// ---------------------------------------------------------------------------
+
+/// What a control SHOWS in place of a value its subjects disagree on.
+///
+/// One literal, in one place, so the panel and the test that asserts it cannot
+/// drift — and so the string is a decision on the record rather than a repeated
+/// magic constant. Parenthesised because it is a placeholder standing where a
+/// value goes, matching the reference's own "(none)" / "(unnamed)" family; the
+/// reference's message table spells this one the same way.
+enum string kMixedPlaceholder = "(mixed)";
+
+interface MixedValueProvider {
+    /// True when the subjects this provider stands for do NOT all agree on
+    /// `name`. False for a single subject, an unknown param, or agreement.
+    bool paramMixed(string name);
+}
+
+// ---------------------------------------------------------------------------
 // ParamHints — optional rendering / validation hints for one parameter.
 // ---------------------------------------------------------------------------
 

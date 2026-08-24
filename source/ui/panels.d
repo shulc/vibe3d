@@ -1603,19 +1603,56 @@ void drawLayerListPanel(EditorApp app) {
                     layerProv.setTransformGuard(
                         (cast(TransformTool)activeTool) !is null,
                         currentSelType(selTypeOrder));
+
+                    // ---- TASK 1880: gang edit --------------------------
+                    // Every OTHER selected item OF THE FOCUS'S KIND. The form
+                    // then shows the placeholder on any row those items
+                    // disagree on, and a write fans out to all of them.
+                    //
+                    // The KIND FILTER is the reference's stated condition —
+                    // "multiple layer selections of identical item types allow
+                    // for gang editing of property values" — and it is applied
+                    // HERE rather than in the provider because the panel is
+                    // what knows which item the form is bound to. Exact kind,
+                    // not "has the same channel": a mesh and an image plane
+                    // share all twelve transform components, so a channel
+                    // intersection would gang-edit two rows of a selection the
+                    // reference says is not gang-editable at all.
+                    //
+                    // Rebuilt per frame from the live selection, so it cannot
+                    // go stale — and it is empty in the ordinary one-item case,
+                    // where `setGangTargets` early-outs and every widget
+                    // behaves exactly as it did before this task.
+                    string layerTargets = to!string(document.indexOf(propsTarget));
+                    {
+                        import document : Layer;
+                        Layer[] gang;
+                        foreach (l; document.layers)
+                            if (l !is null && l.selected && l !is propsTarget
+                                && l.kind == propsTarget.kind)
+                                gang ~= l;
+                        layerProv.setGangTargets(gang);
+                        // The WRITE target slot. The focus stays FIRST — it is
+                        // the layer the form is bound to and the one whose
+                        // value a non-mixed row is showing — and the rest of
+                        // the gang follows, so one dispatch is one undo entry
+                        // covering the whole selection.
+                        foreach (l; gang)
+                            layerTargets ~= "," ~ to!string(document.indexOf(l));
+                    }
                     formsPanel.draw(*layerForm, layerProv,
                                     uiCommandDelegate,
                                     formsInteractiveDispatch,
                                     /*activeToolId=*/"",
                                     /*stageId=*/"",
-                                    // The dispatched `layer.attr <idx>` must
-                                    // address the layer the form is BOUND to,
-                                    // not the primary — those are the same
+                                    // The dispatched `layer.attr <targets>`
+                                    // must address the layer the form is BOUND
+                                    // to, not the primary — those are the same
                                     // index on an all-mesh document and a
                                     // different one the moment a non-mesh row
-                                    // takes the focus.
-                                    /*layerIndex=*/to!string(
-                                        document.indexOf(propsTarget)));
+                                    // takes the focus. Task 1880: it is a
+                                    // LIST, so a gang edit is one command.
+                                    /*layerIndex=*/layerTargets);
                     }   // task 0654: end of the has-a-target arm
                 }
             }

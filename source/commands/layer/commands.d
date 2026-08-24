@@ -1161,6 +1161,24 @@ final class LayerAttr : LayerCommandBase {
     private size_t    target_;
     private JSONValue priorValue_;
     private bool      applied_;
+    // TASK 1880 — GANG EDIT. The index slot accepts a LIST ("0,3,4"), and a
+    // write lands on every item in it as ONE undo entry.
+    //
+    // A list rather than a new argument because the panel's write already goes
+    // through the form's own `layer.attr <index> <attr> ?` line, whose target
+    // slot is rebound per draw (`forms.rebindBindingTarget`). Widening THAT
+    // token to a list means the twenty rows of `config/forms/layer_props.yaml`
+    // are untouched and a single-index call is a one-element list — the same
+    // command, the same undo class, the same coalescing.
+    //
+    // The write is an ABSOLUTE value applied to every target, with no delta
+    // arithmetic — read from the reference's SDK rather than chosen: its own
+    // multi-element sample assigns the one command argument to each element it
+    // visits. (Its Relative/Proportional gang modes are a different feature —
+    // the tie between the X/Y/Z controls of ONE item, not between items.)
+    private string    targetsArg_;          // "" => just `indexArg`
+    private size_t[]  targets_;             // resolved at apply()
+    private JSONValue[] priorValues_;       // one per target, for revert()
 
     this(Mesh* mesh, ref View view, EditMode editMode, Document* doc,
          void delegate(size_t, size_t) onSwitch) {
@@ -1176,7 +1194,11 @@ final class LayerAttr : LayerCommandBase {
 
     // Programmatic setters (wired from app.d's positional injector, mirroring
     // ToolAttrCommand). The value/`?` discriminator follows the forms idiom.
-    void setIndex(int i)           { indexArg = i; }
+    void setIndex(int i)           { indexArg = i; targetsArg_ = ""; }
+    /// The gang-edit target slot: a comma-separated index list ("0,3,4").
+    /// A single index with no comma is accepted too and behaves exactly like
+    /// `setIndex`, so the injector has one path rather than two.
+    void setIndexList(string csv)  { targetsArg_ = csv; }
     void setAttrName(string n)     { attrName_ = n; }
     void setAttrValue(JSONValue v) { attrValue_ = v; }
     void setQuery(bool v)          { query_ = v; }
@@ -1188,7 +1210,61 @@ final class LayerAttr : LayerCommandBase {
     }
 
     override Param[] params() {
-        return [ Param.int_("index", "Index", &indexArg, -1) ];
+        return [ Param.int_("index", "Index", &indexArg, -1),
+                 Param.string_("targets", "Targets", &targetsArg_, "") ];
+    }
+
+    /// Resolve the target list. `targetsArg_` wins when it is set; otherwise
+    /// the single `indexArg`, which keeps every pre-1880 caller byte-identical.
+    /// Returns false (with `refusal_` set) when a token is not a legal index —
+    /// a REFUSAL, never a silent skip: the alternative is a gang write that
+    /// quietly lands on fewer items than the user selected.
+    private bool resolveTargets() {
+        import std.array  : split;
+        import std.string : strip;
+        import std.conv   : to;
+        targets_.length = 0;
+        if (targetsArg_.length == 0) {
+            immutable size_t one = resolveIndex(indexArg);
+            // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
+            // rather than index, and never clamp a missing default into a real
+            // layer (see `resolveIndex`).
+            if (one >= doc.layers.length) { refusal_ = kNoDefaultLayerReason; return false; }
+            targets_ ~= one;
+            return true;
+        }
+        foreach (tok; targetsArg_.split(",")) {
+            auto t = tok.strip;
+            if (t.length == 0) continue;
+            int v;
+            try { v = t.to!int; }
+            catch (Exception) {
+                refusal_ = "layer.attr: target '" ~ t ~ "' is not an index";
+                return false;
+            }
+            // NOT `resolveIndex`, and that is a decision. `resolveIndex`
+            // CLAMPS an explicit out-of-range index onto the last layer —
+            // documented, deliberate, and forgiving in the single-index case
+            // this command has always had. In a LIST it is a trap: `"0,99"`
+            // would write to layer 0 and to the last layer, neither of which
+            // the caller named, and report `ok`. A gang write is a write to a
+            // named SET; a member that is not a layer makes the set wrong, so
+            // it refuses. The single-index path above keeps the clamp exactly
+            // as it was.
+            if (v < 0 || cast(size_t) v >= doc.layers.length) {
+                refusal_ = "layer.attr: target " ~ t ~ " names no layer";
+                return false;
+            }
+            immutable size_t idx = cast(size_t) v;
+            // De-duplicate: the same layer twice would snapshot its own
+            // post-write value as the second prior and make undo a no-op for
+            // it. Cheap linear scan — a gang is a selection, not a corpus.
+            bool seen = false;
+            foreach (e; targets_) if (e == idx) { seen = true; break; }
+            if (!seen) targets_ ~= idx;
+        }
+        if (targets_.length == 0) { refusal_ = kNoDefaultLayerReason; return false; }
+        return true;
     }
 
     override bool apply() {
@@ -1197,11 +1273,8 @@ final class LayerAttr : LayerCommandBase {
         if (doc.layers.length == 0)
             throw new Exception("layer.attr: no layers");
 
-        target_      = resolveIndex(indexArg);
-        // Task 0654: the absent-sentinel from `resolveIndex(-1)` — refuse
-        // rather than index, and never clamp a missing default into a real
-        // layer (see `resolveIndex`).
-        if (target_ >= doc.layers.length) { refusal_ = kNoDefaultLayerReason; return false; }
+        if (!resolveTargets()) return false;
+        target_      = targets_[0];
         auto layer   = doc.layers[target_];
         auto prov    = new LayerPropsProvider(layer);
         auto ps      = prov.params();
@@ -1240,9 +1313,16 @@ final class LayerAttr : LayerCommandBase {
                 "layer.attr: attribute '" ~ attrName_ ~ "' is read-only "
                 ~ "(readable via '?', not writable through layer.attr)");
 
-        // Write: snapshot the prior value for revert(), then inject the new one
-        // through the param's typed pointer (which aliases the live Layer field).
+        // Write: snapshot each target's prior value for revert(), then inject
+        // the new one through that layer's own param pointer.
+        //
+        // TASK 1880 — the loop below is the gang write. `found` above resolved
+        // the attr against the FIRST target; every other target is resolved
+        // against its OWN provider, because a param is a typed pointer into one
+        // specific layer and reusing the first one's would write the same field
+        // N times.
         priorValue_ = paramToJson(*found);
+        priorValues_.length = targets_.length;
         // Task 0614 Phase 5 (R7, layer two): the WHOLE pre-write xform, not just
         // the one attr, because `sanitizeXform` rejects a non-finite write by
         // restoring the component it came in on — and this is the only point that
@@ -1282,6 +1362,43 @@ final class LayerAttr : LayerCommandBase {
                       ~ "] with the sign kept; a non-finite component is "
                       ~ "rejected back to its previous value)");
         }
+        priorValues_[0] = priorValue_;
+
+        // ---- the rest of the gang ------------------------------------------
+        // Every step the first target took, including the sanitiser and its
+        // warning: a repaired value is repaired on all of them or on none, and
+        // a target that silently skipped the guard would be the one layer in
+        // the selection holding a degenerate scale.
+        foreach (ti; 1 .. targets_.length) {
+            auto l2   = doc.layers[targets_[ti]];
+            auto prov2 = new LayerPropsProvider(l2);
+            auto ps2   = prov2.params();
+            import std.conv : to;
+            Param* f2;
+            foreach (ref p; ps2)
+                if (p.name == attrName_) { f2 = &p; break; }
+            if (f2 is null)
+                throw new Exception(
+                    "layer.attr: target " ~ targets_[ti].to!string
+                  ~ " has no attribute '" ~ attrName_ ~ "'");
+            if (f2.readonly_)
+                throw new Exception(
+                    "layer.attr: attribute '" ~ attrName_ ~ "' is read-only "
+                  ~ "(readable via '?', not writable through layer.attr)");
+            priorValues_[ti] = paramToJson(*f2);
+            immutable ItemXform before2 = l2.xform;
+            JSONValue pj2 = JSONValue(cast(JSONValue[string]) null);
+            pj2[attrName_] = attrValue_;
+            injectParamsInto(ps2, pj2);
+            if (prov2.sanitizeXform(before2)) {
+                import log      : logWarnOnce;
+                import std.conv : to;
+                logWarnOnce("layer",
+                    "layer.attr.clamp:" ~ targets_[ti].to!string ~ ":" ~ attrName_,
+                    "layer " ~ targets_[ti].to!string ~ " " ~ attrName_
+                  ~ ": value was out of range and has been repaired");
+            }
+        }
         applied_ = true;
 
         // Pure document-state change: publish the generic property-changed kind,
@@ -1293,23 +1410,32 @@ final class LayerAttr : LayerCommandBase {
 
     override bool revert() {
         if (!applied_) return false;
-        if (target_ >= doc.layers.length) return false;
-        // Restore the snapshotted prior value of the one touched attr.
-        auto prov = new LayerPropsProvider(doc.layers[target_]);
-        auto ps   = prov.params();
-        immutable ItemXform beforeXform = doc.layers[target_].xform;
-        JSONValue pj = JSONValue(cast(JSONValue[string]) null);
-        pj[attrName_] = priorValue_;
-        injectParamsInto(ps, pj);
+        if (targets_.length == 0 || targets_.length != priorValues_.length)
+            return false;
+        // Restore each target's OWN snapshotted prior value. Per target, not
+        // one value replayed across the gang: the whole point of the gang write
+        // is that the items disagreed beforehand, so a single restore value
+        // would undo the edit by flattening them instead of putting them back.
+        foreach (ti, tgt; targets_) {
+            if (tgt >= doc.layers.length) continue;
+            auto prov2 = new LayerPropsProvider(doc.layers[tgt]);
+            auto ps2   = prov2.params();
+            immutable ItemXform before2 = doc.layers[tgt].xform;
+            JSONValue pj2 = JSONValue(cast(JSONValue[string]) null);
+            pj2[attrName_] = priorValues_[ti];
+            injectParamsInto(ps2, pj2);
+            prov2.sanitizeXform(before2);
+        }
         // Task 0614 Phase 5 review, B3: an undo is a WRITE like any other, so
-        // it gets the same guard as apply(). `priorValue_` is normally already
-        // legal (it was read off a sanitised layer), but "normally" is exactly
-        // what the guard is not allowed to rely on: a document loaded before
-        // this guard existed, or one whose xform was reached by some future
-        // path, would let an undo re-inject a degenerate value into a layer
-        // apply() had just repaired. A band enforced on some write paths makes
-        // the invalid state rare; enforced on all of them it is impossible.
-        prov.sanitizeXform(beforeXform);
+        // it gets the same guard as apply() — which is why `sanitizeXform` runs
+        // inside the loop above, once per restored layer. `priorValues_` are
+        // normally already legal (each was read off a sanitised layer), but
+        // "normally" is exactly what the guard is not allowed to rely on: a
+        // document loaded before this guard existed, or one whose xform was
+        // reached by some future path, would let an undo re-inject a degenerate
+        // value into a layer apply() had just repaired. A band enforced on some
+        // write paths makes the invalid state rare; enforced on all of them it
+        // is impossible.
         noteLayerChange(LayerChange.PropertyChanged);
         return true;
     }
@@ -1326,6 +1452,13 @@ final class LayerAttr : LayerCommandBase {
         if (p is null) return CompareResult.Different;
         if (p.target_ != this.target_)   return CompareResult.Different;
         if (p.attrName_ != this.attrName_) return CompareResult.Different;
+        // TASK 1880 — the whole GANG has to match, not just its head. Two
+        // writes that share a first target but cover different sets are two
+        // different edits, and folding them would leave the items only the
+        // earlier one touched holding a value no undo entry remembers.
+        if (p.targets_.length != this.targets_.length) return CompareResult.Different;
+        foreach (i, t; this.targets_)
+            if (p.targets_[i] != t) return CompareResult.Different;
         return CompareResult.Compatible;
     }
 

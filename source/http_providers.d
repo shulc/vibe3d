@@ -2495,7 +2495,19 @@ private void wireCommandProviders(HttpServer httpServer, ref EditorApp app,
                         if (pos.length >= 1) {
                             if      (pos[0].type == JSONType.integer)  la.setIndex(cast(int)pos[0].integer);
                             else if (pos[0].type == JSONType.uinteger) la.setIndex(cast(int)pos[0].uinteger);
-                            else if (pos[0].type == JSONType.string)   { try { la.setIndex(pos[0].str.to!int); } catch (Exception) {} }
+                            else if (pos[0].type == JSONType.string) {
+                                // TASK 1880 — the target slot takes a LIST
+                                // ("0,3,4") as well as a single index. The
+                                // comma is the discriminator, and it has to be
+                                // checked BEFORE `to!int`: that parse throws on
+                                // a list and the catch below swallows it, which
+                                // would leave `indexArg` at -1 and land a gang
+                                // write silently on the active layer alone.
+                                import std.algorithm : canFind;
+                                if (pos[0].str.canFind(','))
+                                    la.setIndexList(pos[0].str);
+                                else { try { la.setIndex(pos[0].str.to!int); } catch (Exception) {} }
+                            }
                         }
                         if (pos.length >= 2 && pos[1].type == JSONType.string)
                             la.setAttrName(pos[1].str);
