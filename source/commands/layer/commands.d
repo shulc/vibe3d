@@ -811,7 +811,7 @@ final class LayerSelect : LayerCommandBase {
                  Param.enum_("mode", "Mode", &modeArg,
                      [["set","Set"], ["add","Add"],
                       ["remove","Remove"], ["toggle","Toggle"],
-                      ["clear","Clear"]], "set"),
+                      ["clear","Clear"], ["range","Range"]], "set"),
                  Param.enum_("kind", "Kind", &kindArg, kindChoices, "") ];
     }
 
@@ -882,6 +882,78 @@ final class LayerSelect : LayerCommandBase {
             return false;
         }
         auto target = doc.layers[idx];
+
+        // TASK 1880 — `mode:range`, the item list's Shift+click.
+        //
+        // The reference states the law three times over (`ui_conventions`,
+        // `list_info/item_list`, and again for the shader tree): a plain click
+        // is exclusive, Ctrl is the non-sequential toggle, and Shift takes the
+        // CONTIGUOUS SPAN — "clicking the top most item layer, and then
+        // pressing and holding the Shift key and then clicking on the bottom
+        // most layer, selecting all the layers in-between". Note this is NOT
+        // the viewport's modifier set, where Shift adds and Ctrl removes; the
+        // asymmetry is the reference's own and is deliberate here.
+        //
+        // ANCHOR = `firstSelectedItem`, i.e. the first element of the item
+        // selection, which is what the reference calls the primary selection
+        // ("The first item selected always is the primary selection") and what
+        // the item list already marks with `RowRole.SelectedFirst`.
+        //
+        // NOT `focusedItem` (the newest touch) and NOT `primary` (the edit
+        // target). The anchor has to SURVIVE the range it produces, so that a
+        // second Shift+click re-ranges from the same row rather than walking
+        // one row per click — and `focusedItem` is moved by every `Add` below,
+        // so anchoring on it would walk. `primary` filters on `canBePrimary`,
+        // so a range anchored at a locator or an image plane would silently
+        // jump to some mesh elsewhere in the list. `firstSelectedItem` filters
+        // on neither, and the `Set`-then-`Add` order below re-seats it at the
+        // head of the new selection, which is what makes the anchor stable.
+        //
+        // ⚠ UNMEASURED (task card §"Что НЕ измерено", items 1-2): which of the
+        // three the reference actually anchors on, and whether Shift REPLACES
+        // the selection or unions the span into it. Both are captures, not
+        // designs; the choices here are the ordinary tree-view ones and the
+        // reading the doc's phrasing points at.
+        if (modeArg == "range") {
+            import item_kinds : kindInfo;
+            auto anchor = doc.firstSelectedItem;
+            // Membership in the ROW SET, not merely non-null: this command is
+            // the item list's, and a span is only defined over the rows that
+            // list draws. `isSceneItem` is the same capability predicate
+            // `ui/item_rows.d::isItemRow` uses, so the span and the rows
+            // cannot drift apart. With no usable anchor a Shift+click is a
+            // plain click, which is what a tree does on its first click.
+            immutable bool usable = anchor !is null
+                && kindInfo(anchor.kind).isSceneItem
+                && kindInfo(target.kind).isSceneItem;
+            if (!usable) {
+                doc.selectItem(target, SelMode.Set);
+            } else {
+                immutable size_t a = doc.indexOf(anchor);
+                // `Set` FIRST, so the anchor is re-seated at the head and the
+                // adds that follow seat behind it. `Add` never promotes the
+                // edit target (task 0671), so the walk below cannot move it.
+                doc.selectItem(anchor, SelMode.Set);
+                // Walk anchor -> target, so the CLICKED row is touched last
+                // and ends as `focusedItem`. Resource items inside the span
+                // (an image is not a row) are skipped rather than swept in.
+                if (a < idx) {
+                    foreach (i; a + 1 .. idx + 1)
+                        if (kindInfo(doc.layers[i].kind).isSceneItem)
+                            doc.selectItem(doc.layers[i], SelMode.Add);
+                } else if (a > idx) {
+                    foreach_reverse (i; idx .. a)
+                        if (kindInfo(doc.layers[i].kind).isSceneItem)
+                            doc.selectItem(doc.layers[i], SelMode.Add);
+                }
+            }
+            applied = true;
+            fireSwitchIfChanged(prevPrimary, prevActiveIndex);
+            noteItemSelectionChange();
+            if (onItemSelect !is null) onItemSelect();
+            return true;
+        }
+
         const mode  = selModeFromToken(modeArg);
 
         doc.selectItem(target, mode);

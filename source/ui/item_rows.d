@@ -336,6 +336,44 @@ string documentRootName(string docPath, bool dirty) {
     return dirty ? base ~ kDirtyMark : base;
 }
 
+/// The `layer.select mode:` a click on an item row dispatches, as the QUOTED
+/// JSON token the panel splices — modifiers in, mode out.
+///
+/// Here rather than at the two call sites in `ui/panels.d` for this module's
+/// standing reason: a decision taken inside an ImGui panel body has no headless
+/// observable, so it can only ever be asserted as "the function ran". As a pure
+/// function of the two modifier bits it is a table a unit test can read off.
+///
+/// The law (task 1880), stated three times over in the reference's own docs and
+/// NOT the same as the viewport's:
+///
+///   plain  -> `set`     exclusive; drops everything else
+///   Ctrl   -> `toggle`  non-sequential add, and remove on an already-selected row
+///   Shift  -> `range`   the contiguous span from the anchor to this row
+///
+/// In the VIEWPORT Shift adds and Ctrl removes. The asymmetry is the
+/// reference's, deliberate, and confirmed by the owner before this shipped.
+///
+/// ⚠ Ctrl+Shift together is NOT covered by any reference doc we hold. Shift
+/// wins, because `range` is the only mode the pair could plausibly mean and
+/// letting Ctrl win would make Shift silently inert on a two-modifier press.
+/// Unmeasured — see the task card.
+string itemClickMode(bool ctrl, bool shift) pure @safe {
+    if (shift) return `"range"`;
+    if (ctrl)  return `"toggle"`;
+    return `"set"`;
+}
+
+unittest {
+    // Every cell of the 2x2, because the interesting one is the pair and a
+    // three-case test would not have it.
+    assert(itemClickMode(false, false) == `"set"`);
+    assert(itemClickMode(true,  false) == `"toggle"`);
+    assert(itemClickMode(false, true)  == `"range"`);
+    assert(itemClickMode(true,  true)  == `"range"`,   // Shift wins the pair
+        "Ctrl+Shift must not fall back to toggle — Shift would be inert");
+}
+
 /// The row's standing in the item selection.
 ///
 /// SELECTION FIRST AND ONLY (task 0672). This used to ask `doc.isPrimary(l)`

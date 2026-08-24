@@ -1492,9 +1492,11 @@ private void registerViewCommands(EditorApp app) {
     // owner redirect 0217 uses for pan/zoom. Single view: owners = self →
     // byte-neutral under --test.
     reg.commandFactories["viewport.fit"]          = () => cast(Command) new Fit(&mesh(),
-        vpm.focusOwnerCamera(vpm.activeId), vpm.scaleOwnerCamera(vpm.activeId), editMode);
+        vpm.focusOwnerCamera(vpm.activeId), vpm.scaleOwnerCamera(vpm.activeId), editMode,
+        &document());
     reg.commandFactories["viewport.fit_selected"] = () => cast(Command) new FitSelected(&mesh(),
-        vpm.focusOwnerCamera(vpm.activeId), vpm.scaleOwnerCamera(vpm.activeId), editMode);
+        vpm.focusOwnerCamera(vpm.activeId), vpm.scaleOwnerCamera(vpm.activeId), editMode,
+        &document());
     // The ten `viewport.*` commands task 0761 moved out of the HTTP
     // delegate's own interception (they used to run BEFORE the
     // `reg.commandFactories` lookup — see `doc/tasks/done/0761-*`). Each

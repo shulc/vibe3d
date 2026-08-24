@@ -1078,7 +1078,7 @@ void drawLayerListPanel(EditorApp app) {
     import std.conv : to;
     import std.string : fromStringz;
     import ui.item_rows   : ItemRow, ItemGlyph, RowRole, RowColor, itemRowsInto,
-                            kAddItemChoices;
+                            kAddItemChoices, itemClickMode;
     import ui.item_glyphs : drawItemGlyph, drawEyeGlyph, drawRoleGlyph,
                             drawDisclosure, kGlyphCellRatio,
                             kGlyphRadiusRatio, kIndentRatio;
@@ -1110,6 +1110,23 @@ void drawLayerListPanel(EditorApp app) {
         immutable float cellW   = rowH * kGlyphCellRatio;
         immutable float gRad    = rowH * kGlyphRadiusRatio;
         immutable float indentW = rowH * kIndentRatio;
+
+        // ---- Shift, and why it does NOT come from `io` --------------------
+        // Task 1880. Ctrl below still reads `io.KeyCtrl`; there is no
+        // `io.KeyShift` to pair it with — our d_imgui binding is a trimmed
+        // one and exposes exactly one modifier accessor
+        // (`igVibe3d_IO_KeyCtrl`, D-ImGui `imgui_h.d:252`). Widening the
+        // binding for one bit means pushing to the pinned fork and re-pinning
+        // the commit in dub.json, which is a lot of moving parts for a
+        // predicate SDL already answers.
+        //
+        // `SDL_GetModState()` is the same state ImGui's SDL2 backend feeds
+        // `io.KeyCtrl` from, so the two cannot disagree within a frame, and it
+        // is the reading the rest of the app already takes (`eventlog.d:37`,
+        // `shortcuts.d:233`). It is also what makes this TESTABLE: `EventPlayer`
+        // calls `SDL_SetModState` during `/api/play-events`, so a recorded
+        // Shift+click replays with the modifier actually set.
+        immutable bool shiftHeld = (SDL_GetModState() & KMOD_SHIFT) != 0;
 
         // The panel runs on a LIGHT grey background (143,143,143) with
         // ImGuiCol.Text pushed to black (pushPanelChromeStyle), so these are
@@ -1326,10 +1343,10 @@ void drawLayerListPanel(EditorApp app) {
             if (!r.isRoot) {
                 if (ImGui.InvisibleButton("##role", ImVec2(cellW, rowH))) {
                     if (uiCommandDelegate !is null
-                        && (io.KeyCtrl || !r.isSoleSelection))
+                        && (io.KeyCtrl || shiftHeld || !r.isSoleSelection))
                         uiCommandDelegate("layer.select",
                             `{"index":` ~ to!string(r.index) ~ `,"mode":`
-                            ~ (io.KeyCtrl ? `"toggle"` : `"set"`) ~ `}`);
+                            ~ itemClickMode(io.KeyCtrl, shiftHeld) ~ `}`);
                 }
                 drawRoleGlyph(dl,
                     ImVec2(rowP0.x + cellW * 1.5f, rowP0.y + rowH * 0.5f),
@@ -1430,9 +1447,9 @@ void drawLayerListPanel(EditorApp app) {
                 bool dbl = ImGui.IsItemHovered()
                     && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left);
                 if (nameClicked && !dbl && uiCommandDelegate !is null) {
-                    // io.KeyCtrl is the frame's merged Ctrl-modifier state
-                    // (matches every other modifier read in the app).
-                    immutable mode = io.KeyCtrl ? `"toggle"` : `"set"`;
+                    // io.KeyCtrl / io.KeyShift are the frame's merged modifier
+                    // state (matches every other modifier read in the app).
+                    immutable mode = itemClickMode(io.KeyCtrl, shiftHeld);
                     // Plain click on a row that is already the WHOLE selection
                     // is a no-op switch; skip it so a single-select drag-press
                     // doesn't re-dispatch every frame. Task 0672: this asked
@@ -1441,7 +1458,12 @@ void drawLayerListPanel(EditorApp app) {
                     // the latched mesh's name to select it back did nothing.
                     // It is the same defect 0671 fixed in app.d's viewport
                     // click guard, and the same fix: ask about the SELECTION.
-                    if (io.KeyCtrl || !r.isSoleSelection)
+                    // Shift joins Ctrl in ALWAYS dispatching: a range from the
+                    // anchor can change the selection even when the clicked
+                    // row is already the whole of it (anchor above, click
+                    // below), so the "already the sole selection" short-circuit
+                    // would swallow exactly the click that widens it.
+                    if (io.KeyCtrl || shiftHeld || !r.isSoleSelection)
                         uiCommandDelegate("layer.select",
                             `{"index":` ~ to!string(r.index) ~ `,"mode":`
                             ~ mode ~ `}`);
