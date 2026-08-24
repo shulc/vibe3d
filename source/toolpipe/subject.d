@@ -85,14 +85,15 @@ struct SubjectSource {
     bool resolveMorphTarget = false;   // buildLocalVts only
 }
 
-/// Fill a caller-owned packet. WILL BE the only place `SubjectPacket`
-/// fields are written outside `version (unittest)` blocks once Stages 2–5
-/// land (plan §3) — today nine hand-fill sites remain outside this module:
-/// `command.d :: Command.apply`, `symmetry_pick.d`,
+/// Fill a caller-owned packet. This IS the only place `SubjectPacket`
+/// fields are assigned outside a literal `unittest { }` body anywhere in
+/// `source/**` (plan §3) — the nine hand-fill sites that used to decide
+/// this by hand (`command.d :: Command.apply`, `symmetry_pick.d`,
 /// `commands/mesh/select.d`, `create_common.d` (×4), `command_wrapper.d`
-/// (×2). The §6 census test (`tests/unit/toolpipe/subject_construction_census_test.d`)
-/// will enforce the "only place" claim once those sites are migrated; it
-/// does not exist yet.
+/// (×2)) are all migrated. Enforced by the §6 census test
+/// (`tests/unit/toolpipe/subject_construction_census_test.d`), which scans
+/// `source/**` only and excludes literal `unittest { }` bodies — not
+/// `version (unittest)` blocks, which it does NOT exclude.
 ///
 /// `subj` is `out`, matching every existing builder: the caller's own
 /// local is the storage `evaluateSubject` below later hands to
@@ -133,7 +134,7 @@ void fillSubject(out SubjectPacket subj, in SubjectSource src) {
 
 /// fill + put + (optionally publish a gesture) + evaluate. THE ONLY caller
 /// of `g_pipeCtx.pipeline.evaluate` outside `toolpipe/pipeline.d` (plan
-/// §5) — after every call site is migrated the grep
+/// §5) — now that every call site is migrated, the grep
 /// `grep -rn 'pipeline\.evaluate(' source --include=*.d | grep -vE ':[0-9]+: *(//|\*|///)'`
 /// returns exactly the one line inside this function.
 ///
