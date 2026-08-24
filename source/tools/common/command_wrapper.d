@@ -6,6 +6,7 @@ import command : Command;
 import mesh    : Mesh, GpuMesh;
 import view    : View;
 import editmode : EditMode;
+import seltype  : SelType;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 import display_sync : refreshDisplay;
 import tool   : Tool;
@@ -518,13 +519,17 @@ abstract class CommandWrapperTool : Tool, RefireClient {
         {
             import toolpipe.pipeline : g_pipeCtx;
             if (g_pipeCtx !is null) {
+                // Task 1904 Stage 5: `editMode` stays the hardcoded literal
+                // `EditMode.Vertices` (plan §12 Q3 default: freeze, pending
+                // owner — the live edit mode is deliberately NOT wired
+                // here). `selType` was never set either (one of plan §1.3's
+                // seven sites), so it is now frozen at `SelType.Vertex`
+                // explicitly, through the funnel.
+                import toolpipe.subject : evaluateSubject, SubjectSource;
                 SubjectPacket subj;
-                subj.mesh             = meshPtr;
-                subj.editMode         = EditMode.Vertices;
-                subj.viewport         = cachedVp;
-                VectorStack vts;
-                vts.put(&subj);
-                g_pipeCtx.pipeline.evaluate(vts);
+                VectorStack   vts;
+                evaluateSubject(subj, vts,
+                    SubjectSource(meshPtr, EditMode.Vertices, SelType.Vertex, cachedVp));
                 // SET-aware: compare the per-stage config set, so a tweak to
                 // ANY stacked falloff (or an add/remove) refreshes the preview,
                 // not just the primary. Single-falloff = 1-element compare.
@@ -688,22 +693,23 @@ abstract class CommandWrapperTool : Tool, RefireClient {
     }
 
     private bool applyWithLivePipeline() {
-        import toolpipe.pipeline : g_pipeCtx;
         if (meshPtr is null) return false;
 
         // Restore baseline so apply runs against pre-drag state.
         meshPtr.vertices[] = baseline[];
 
+        // Task 1904 Stage 5: `editMode` stays the hardcoded literal
+        // `EditMode.Vertices` (plan §12 Q3 default: freeze, pending owner).
+        // `selType` was never set either (one of plan §1.3's seven sites),
+        // so it is now frozen at `SelType.Vertex` explicitly. Populates
+        // upstream packets (falloff, symmetry, …) when a pipe is
+        // registered; `evaluateSubject`'s own `g_pipeCtx is null` gate is
+        // the same no-op the direct call used to be.
+        import toolpipe.subject : evaluateSubject, SubjectSource;
         SubjectPacket subj;
-        subj.mesh             = meshPtr;
-        subj.editMode         = EditMode.Vertices;
-        subj.viewport         = cachedVp;
-
-        VectorStack vts;
-        vts.put(&subj);
-
-        if (g_pipeCtx !is null)
-            g_pipeCtx.pipeline.evaluate(vts);   // populate upstream packets
+        VectorStack   vts;
+        evaluateSubject(subj, vts,
+            SubjectSource(meshPtr, EditMode.Vertices, SelType.Vertex, cachedVp));
 
         // Snapshot the applied falloff SET for the change-detection branch
         // in evaluate(). Per-stage config copies (by value) keep the
