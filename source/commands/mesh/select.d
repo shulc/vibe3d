@@ -7,11 +7,11 @@ import editmode;
 import snapshot : SelectionSnapshot;
 import math : Vec3;
 import toolpipe.pipeline : g_pipeCtx;
-import toolpipe.packets  : SubjectPacket, SymmetryPacket;
+import toolpipe.packets  : SymmetryPacket;
 import toolpipe.stage    : TaskCode;
 import toolpipe.stages.symmetry : SymmetryStage;
-import operator          : VectorStack;
 import symmetry          : mirrorEdge, mirrorFace;
+import symmetry_pick     : captureLiveSymmetry;
 
 /// Replace the current selection with the given indices in the given mode.
 /// Switches editMode to match (vertices/edges/polygons). Used to be a direct
@@ -169,25 +169,20 @@ class MeshSelect : Command {
     /// .evaluate has cross-stage side effects (FalloffStage caches
     /// workplane normal on every fire), so we skip the call entirely
     /// when symmetry is off.
+    ///
+    /// Task 1904 Stage 2: this used to build its own SubjectPacket by
+    /// hand; it now shares `symmetry_pick.d :: captureLiveSymmetry` with
+    /// `MeshTransform` and the interactive symmetric*Select* helpers.
+    /// selType stays left at its default (Vertex) inside that shared
+    /// function — this command only ever mirrors a GEOMETRY selection
+    /// (vertex/edge/polygon), never an item one (`layer.select` is the
+    /// separate command for item selection), and this class carries no
+    /// SelType/SelTypeOrder reference to read.
     private auto captureSymmetryPacket() {
-        import toolpipe.packets : SymmetryPacket;
         SymmetryPacket result;
-        if (g_pipeCtx is null) return result;
-        auto sym = cast(SymmetryStage)
-                   g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
-        if (sym is null || !sym.enabled) return result;
-        SubjectPacket subj;
-        subj.mesh             = mesh;
-        subj.editMode         = *editModePtr;
-        // subj.selType left at its default (Vertex): this command only ever
-        // mirrors a GEOMETRY selection (vertex/edge/polygon), never an item
-        // one — `layer.select` is the separate command for item selection —
-        // and this class carries no SelType/SelTypeOrder reference to read.
-        subj.viewport         = effectiveViewport();
-        VectorStack vts;
-        vts.put(&subj);
-        g_pipeCtx.pipeline.evaluate(vts);
-        if (auto p = vts.get!SymmetryPacket()) return *p;
+        SymmetryStage  stageUnused;
+        captureLiveSymmetry(mesh, effectiveViewport(), *editModePtr,
+                            result, stageUnused);
         return result;
     }
 

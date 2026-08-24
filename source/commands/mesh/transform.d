@@ -8,11 +8,9 @@ import view;
 import editmode;
 import math : Vec3, Vec4, mulMV, pivotRotationMatrix, pivotScaleMatrix;
 import change_bus : MeshEditScope;
-import toolpipe.pipeline : g_pipeCtx;
 import toolpipe.packets  : SubjectPacket, SymmetryPacket;
-import toolpipe.stage    : TaskCode;
-import toolpipe.stages.symmetry : SymmetryStage;
 import symmetry          : applySymmetryMirror, applySymmetryMirrorDelta, projectOnPlane;
+import symmetry_pick     : captureLiveSymmetry;
 import operator          : Operator, Task, VectorStack, PacketKind, OperatorActrCommon;
 // GpuMesh lives in mesh.d, already imported above.
 
@@ -98,34 +96,27 @@ class MeshTransform : Command, Operator {
         // touched symmetry would leak workplane state into the
         // falloff stage's auto-size cache, breaking subsequent
         // auto-size operations that expect a freshly-set workplane).
+        // That gate now lives once in `symmetry_pick.d ::
+        // captureLiveSymmetry` (task 1904 Stage 2), shared with
+        // `MeshSelect` and the interactive symmetric*Select* helpers
+        // instead of being copied a third time here. selType stays left
+        // at its default (Vertex) inside that shared function: this is
+        // the legacy vertex/edge/polygon transform command (the item
+        // path is XfrmTransformTool, not MeshTransform), and this class
+        // has no SelType/SelTypeOrder reference to read.
+        // `symm` may end up holding a disabled (default `.init`) packet
+        // copy — `captureLiveSymmetry`'s `out` parameter is reset on every
+        // call, including its early-return gates — so every read of `symm`
+        // below is guarded by `symmActive`, never by `symm` alone.
         SymmetryPacket symm;
         bool           symmActive = false;
-        if ((kind == "translate" || kind == "rotate" || kind == "scale")
-         && g_pipeCtx !is null)
-        {
-            auto symStage = cast(SymmetryStage)
-                            g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
-            if (symStage !is null && symStage.enabled) {
-                SubjectPacket symmSubj;
-                symmSubj.mesh             = mesh;
-                symmSubj.editMode         = editMode;
-                // selType left at its default (Vertex): this is the legacy
-                // vertex/edge/polygon transform command (the item path is
-                // XfrmTransformTool, not MeshTransform), and this class has
-                // no SelType/SelTypeOrder reference to read.
-                symmSubj.viewport         = effectiveViewport();
-                VectorStack symmVts;
-                symmVts.put(&symmSubj);
-                g_pipeCtx.pipeline.evaluate(symmVts);
-                if (auto symPkt = symmVts.get!SymmetryPacket()) {
-                    if (symPkt.enabled
-                     && symPkt.pairOf.length == mesh.vertices.length)
-                    {
-                        symm       = *symPkt;
-                        symmActive = true;
-                    }
-                }
-            }
+        if (kind == "translate" || kind == "rotate" || kind == "scale") {
+            import toolpipe.stages.symmetry : SymmetryStage;
+            SymmetryStage symStageUnused;
+            captureLiveSymmetry(mesh, effectiveViewport(), editMode,
+                                symm, symStageUnused);
+            symmActive = symm.enabled
+                      && symm.pairOf.length == mesh.vertices.length;
         }
 
         // Snapshot the touched verts only. revert() restores them. With

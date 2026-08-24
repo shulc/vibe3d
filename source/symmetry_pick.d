@@ -3,10 +3,12 @@ module symmetry_pick;
 import math    : Vec3, Viewport;
 import mesh    : Mesh;
 import editmode : EditMode;
+import seltype  : SelType;
 import toolpipe.pipeline      : g_pipeCtx;
 import toolpipe.packets       : SubjectPacket, SymmetryPacket;
 import toolpipe.stage         : TaskCode;
 import toolpipe.stages.symmetry : SymmetryStage;
+import toolpipe.subject        : evaluateSubject, SubjectSource;
 import symmetry               : mirrorEdge, mirrorFace;
 import operator               : VectorStack;
 
@@ -112,26 +114,47 @@ void symmetricSelectFace(Mesh* mesh, Viewport vp, EditMode em,
 // enabled — pipeline.evaluate has cross-stage side effects (FalloffStage
 // caches the upstream workplane normal on every fire), so we skip the
 // call when symmetry is off.
-// ---------------------------------------------------------------------------
-private bool captureLiveSymmetry(Mesh* mesh, Viewport vp, EditMode em,
-                                 out SymmetryPacket pkt, out SymmetryStage stage)
+//
+// Task 1904 Stage 2: this used to be three copies of the same function —
+// this one, `commands/mesh/select.d :: MeshSelect.captureSymmetryPacket`
+// and the inline block in `commands/mesh/transform.d :: MeshTransform.
+// evaluate` — same findByTask(TaskCode.Symm) + stage.enabled gate, same
+// R3 comment, same "selType left at its default (Vertex)" note, same
+// `get!SymmetryPacket` copy. Collapsed here (the widest signature — it
+// hands back the stage too, which the interactive `symmetricSelectVertex`/
+// `symmetricSelectEdge`/`symmetricSelectFace` helpers below need for
+// `anchorAt`; `MeshSelect` ignores the returned stage and does its own
+// `findByTask` lookup for `anchorAt` instead) and made non-private so both
+// command sites call it instead of rebuilding it. Their only real
+// difference was the viewport expression, so that stays a parameter.
+//
+// `vp` is `lazy`: callers build it from `effectiveViewport()`, which is
+// cheap to call but not side-effect-free to call unconditionally — on a
+// headless/direct-constructed command with no resolved-viewport provider
+// it falls back to `view.viewportWith(...)`, which dereferences `view`
+// (see command.d's `effectiveViewport()` doc). Before this function
+// existed, each of the three call sites computed the viewport only
+// *inside* its own `g_pipeCtx !is null` / `stage.enabled` guard;
+// collapsing them here must not turn that conditional read into an
+// unconditional one at the call site. `lazy` defers evaluation to the
+// one read below, after both gates, so `mesh, effectiveViewport(), em`
+// at a call site costs nothing when this function returns early.
+public bool captureLiveSymmetry(Mesh* mesh, lazy Viewport vp, EditMode em,
+                                out SymmetryPacket pkt, out SymmetryStage stage)
 {
     if (g_pipeCtx is null) return false;
     stage = cast(SymmetryStage)
             g_pipeCtx.pipeline.findByTask(TaskCode.Symm);
     if (stage is null || !stage.enabled) return false;
 
-    SubjectPacket subj;
-    subj.mesh             = mesh;
-    subj.editMode         = em;
     // selType left at its default (Vertex): symmetry pairing is a
     // geometry-element operation (SYMM mirrors vertex pairs, see
     // doc/item_mode_transform_plan.md §Q2 — "not consumed" in item mode),
-    // and this free function has no SelType/SelTypeOrder to read.
-    subj.viewport         = vp;
-    VectorStack vts;
-    vts.put(&subj);
-    g_pipeCtx.pipeline.evaluate(vts);
+    // and none of this function's three callers has a SelType/SelTypeOrder
+    // to read (plan §1.3 — one of the seven sites that freeze Vertex).
+    SubjectPacket subj;
+    VectorStack   vts;
+    evaluateSubject(subj, vts, SubjectSource(mesh, em, SelType.Vertex, vp));
     if (auto p = vts.get!SymmetryPacket()) pkt = *p;
     return true;
 }
