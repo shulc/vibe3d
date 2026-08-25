@@ -81,8 +81,16 @@
 // green. The window cannot shrink much (ten-plus lines of reasoning is the
 // house style for these notes, and the note has to reach past the compare's
 // own multi-line condition), so this is a stated limit, not a bug to fix here.
-// What closes it is §4 stage 3's stricter census, which asserts the site SET
-// against §3.6 verbatim.
+// ==> CLOSED AT STAGE 4 by the SET GATE at the bottom of this file. A poll
+// born under someone else's note still slips the marker gate; it does NOT
+// slip the set gate, because that file's recorded site COUNT goes up. The two
+// gates are deliberately different questions — "is this compare argued" and
+// "is this compare one of the ones we argued" — and only the second one
+// notices an ADDITION that came with an argument attached to it.
+// The resolution is the per-file COUNT, so a SWAP inside one file (one poll
+// deleted, one added, both argued) is invisible to BOTH gates — measured at the
+// stage-4 review; §3.6's symbol column is the human check for that cell, and
+// `symbols` here is deliberately not matched against anything.
 //
 // THE FLOOR BELOW THE GATE. A scanner that lost its place (an unterminated
 // literal, a stripper bug) finds nothing and the gate passes vacuously, so the
@@ -92,7 +100,7 @@ module tests.unit.version_poll_census_test;
 
 import std.algorithm : any, canFind, endsWith;
 import std.array     : appender, array;
-import std.file      : dirEntries, readText, SpanMode;
+import std.file      : dirEntries, exists, readText, SpanMode;
 import std.format    : format;
 import std.path      : buildPath, dirName;
 import std.string    : splitLines, strip, toLower;
@@ -555,4 +563,190 @@ unittest {
       ~ "stopped matching does NOT show up here — it shows up as a long list "
       ~ "on the assertion above, which is the right place for it.)",
         sites.length));
+}
+
+// ---------------------------------------------------------------------------
+// THE SET GATE (task 1906 stage 4). The remainder is not just argued — it is
+// ENUMERATED, and nothing may join it quietly.
+//
+// WHY A SECOND GATE OVER THE SAME SCAN. The marker gate above asks "does this
+// compare carry an argument". That question is answered by the fifteen lines
+// above the compare, so a NEW poll written directly under an EXISTING note is
+// born green — stated as a known hole in the header, and it is the same hole
+// task 0401's four stale caches went through (each was locally reasonable).
+// This gate asks the other question: "is this compare one of the nineteen we
+// argued". A new site is red here whether or not it came with prose.
+//
+// WHY THE TABLE LIVES HERE AND NOT IN THE PLAN DOC. `doc/` is a gitignored
+// symlink in this checkout and does not exist in a clean clone, so a gate that
+// parsed §3.6 would be unrunnable in CI — i.e. exactly the "the run never
+// happened" green this repo keeps paying for. The tracked copy is therefore
+// the one below; §3.6 of `doc/bus_sync_listeners_plan.md` carries the same
+// nineteen rows with a paragraph of reasoning each, and the two are edited
+// together. Precedent: `tests/unit/census_ledger.txt`.
+//
+// WHY PER-FILE COUNTS AND NOT `file:line`. A `file:line` table reddens on
+// every unrelated edit ABOVE a row, which trains people to bump a number
+// instead of to think — the objection is recorded in the plan (§4 stage 3) and
+// it is why the 2e census stopped short of this. A per-file count is immune to
+// line drift and to reformatting, and still reddens in BOTH directions the
+// stage-4 validation names: delete a row from the table without deleting the
+// code and the file is over its count; add a poll without adding a row and the
+// file is over its count the other way round.
+//
+// WHAT IT DELIBERATELY DOES NOT ASSERT: that no consumer both subscribes to
+// the bus and polls a version on the SAME change class. That property is true
+// of all nineteen rows and is what each row's note argues, but it is not
+// derivable from source text — row 10 (`SubpatchPreview`) is BOTH a bus
+// consumer and a version poller, and is correct precisely because the epoch
+// carries `Position|Points|Polygons` while the poll carries `Marks|Material`.
+// A scanner cannot see a change class. What is mechanised is the weaker,
+// checkable half: the set is closed, so no consumer can START doing both
+// without a human writing the row.
+//
+// IT IS SELF-DEFENDING AGAINST VACUITY without a separate floor: if the
+// scanner loses its place, every recorded file reports "0 found, expected N"
+// and this gate is the loudest thing in the lane.
+//
+// It runs AFTER the marker gate on purpose. druntime stops a module at its
+// first failed assert, and when someone adds an un-argued poll BOTH gates
+// have something to say — "write the note" is the more useful of the two.
+// ---------------------------------------------------------------------------
+
+/// One row per FILE of §3.6's site-by-site table. `symbols` is for the failure
+/// message only: it is what a reader needs in order to go and find the rows,
+/// and it is not matched against anything.
+private struct RemainderFile {
+    string file;
+    size_t sites;
+    string symbols;
+}
+
+/// §3.6, "The remainder, SITE BY SITE" — 19 production compares over 9 files,
+/// complete as of stage 4 (2026-08-26). Line numbers are deliberately absent;
+/// the SYMBOL is the reference.
+private static immutable RemainderFile[] kRemainder = [
+    RemainderFile("source/app.d", 3,
+        "rebuildLoopHoverMask (row 20) | the missedPublishers shadow check "
+      ~ "| the cage/preview upload fast path (row 3)"),
+    RemainderFile("source/bvh_pick.d", 1,
+        "BvhPick.pickFace (row 6) — keys on the VBO content it rasterises from"),
+    RemainderFile("source/gpu_select.d", 1,
+        "GpuSelectBuffer.ensureSlot (row 5) — same, uploadVersion"),
+    RemainderFile("source/mesh.d", 8,
+        "MeshCacheKey/MeshStructKey/MeshTopoKey.matches (the key TYPES) "
+      ~ "| vertexAdjacencyCSR (row 12) | loopsValid + edgeMapUsable (row 13) "
+      ~ "| SubpatchPreview.rebuildIfStale's two terms (row 10)"),
+    RemainderFile("source/render/render_mvp.d", 1,
+        "shadowCheckMeshChanged — diagnostic only, behind VIBE3D_RENDER_HASH_CHECK"),
+    RemainderFile("source/tools/transform/rotate.d", 1,
+        "RotateTool's gesture boundary (§3.6 row 21's family)"),
+    RemainderFile("source/tools/transform/scale.d", 1,
+        "ScaleTool's gesture boundary (same family)"),
+    RemainderFile("source/tools/transform/transform.d", 1,
+        "computeSelectionHash's marksVersion memo"),
+    RemainderFile("source/tools/transform/xfrm_transform.d", 2,
+        "the gesture staleness gate (row 21) + the wrapper's gesture boundary"),
+];
+
+/// The two sites §3.6 keeps by HAND because no line scanner can reach them:
+/// a counter stamped into a struct that is later compared WHOLE names no
+/// counter at the compare and no local carries it. Named here so that "19"
+/// below is never mistaken for "every version-keyed site in the tree".
+private enum string kHandMaintained =
+    "source/app.d's two stamps into `viewport.DirtyKey` — `.meshMutVer` from "
+  ~ "`mesh.mutationVersion` and `.gpuUploadVer` from `gpu.uploadVersion`, "
+  ~ "compared ~90 lines later as `_newKey != _cv.lastKey` "
+  ~ "(stamp-then-compare-whole; §3.6's second table)";
+
+unittest {
+    // Every recorded file must still exist — checked FIRST so a moved module
+    // gets this diagnosis rather than the set gate's "recorded N, found 0"
+    // (stage-4 review: the assert used to sit after the gate and never ran).
+    foreach (ref r; kRemainder)
+        assert(buildPath(repoRoot, r.file).exists, format(
+            "§3.6 records %d version poll(s) in %s and that file is gone. If "
+          ~ "the module moved, move the row; if the polls went with it, delete "
+          ~ "the row and the §3.6 rows together.", r.sites, r.file));
+    auto sites = scanTree();
+
+    size_t[string] found;
+    foreach (ref s; sites) found[s.file] = found.get(s.file, 0) + 1;
+
+    auto bad = appender!string;
+    size_t recordedTotal = 0;
+
+    foreach (ref r; kRemainder) {
+        recordedTotal += r.sites;
+        const size_t n = found.get(r.file, 0);
+        if (n == r.sites) continue;
+        bad.put(format(
+            "\n    %s — recorded %d, scanner found %d\n        rows: %s",
+            r.file, r.sites, n, r.symbols));
+        foreach (ref s; sites)
+            if (s.file == r.file)
+                bad.put(format("\n        found  %s:%d [%s]  %s",
+                               s.file, s.line, s.shape, s.text));
+    }
+
+    foreach (f, n; found) {
+        bool recorded = false;
+        foreach (ref r; kRemainder) if (r.file == f) { recorded = true; break; }
+        if (recorded) continue;
+        bad.put(format(
+            "\n    %s — NOT IN THE REMAINDER AT ALL, scanner found %d site(s)",
+            f, n));
+        foreach (ref s; sites)
+            if (s.file == f)
+                bad.put(format("\n        found  %s:%d [%s]  %s",
+                               s.file, s.line, s.shape, s.text));
+    }
+
+    assert(bad.data.length == 0, format(
+        "task 1906 §3.6: the surviving version-poll SET no longer matches the "
+      ~ "recorded remainder.%s\n\n"
+      ~ "  Recorded: %d compare(s) over %d file(s). Scanner: %d over %d.\n\n"
+      ~ "  A version compare is not wrong by itself — §3.6 of "
+      ~ "doc/bus_sync_listeners_plan.md lists the ones that are right, each "
+      ~ "with the reason a bus change class cannot answer it. What is wrong is "
+      ~ "a compare JOINING that set without anyone arguing it, which the marker "
+      ~ "gate above cannot see when the new line lands under an existing note. "
+      ~ "So:\n"
+      ~ "    * MORE than recorded — either key the cache on `mesh_dirty`'s bus "
+      ~ "epochs (a gizmo drag is version-SILENT: task 0401 lost four caches to "
+      ~ "exactly this), or write the §3.6 row AND bump the count here.\n"
+      ~ "    * FEWER than recorded — a poll was migrated or deleted, which is "
+      ~ "the direction this task exists to move in: drop the §3.6 row and this "
+      ~ "count together, in one commit.\n"
+      ~ "    * a file that is not listed at all — same as MORE, and note that "
+      ~ "the file did not previously contain a single version compare.\n\n"
+      ~ "  Not counted here, by construction: %s",
+        bad.data, recordedTotal, kRemainder.length,
+        sites.length, found.length, kHandMaintained));
+}
+
+/// The set gate's own discriminator, on scratch buffers rather than on the
+/// tree — a probe that has to be written into `source/` and taken out again is
+/// a probe nobody re-runs. Both directions of §4's validation line, and the
+/// thing the MARKER gate cannot do: an ARGUED addition is still an addition.
+unittest {
+    enum string arguedButNew = q"PROBE
+        void f() {
+            // recorded remainder (1906 3.6): a brand-new poll, fully argued.
+            if (cachedVer != mesh.mutationVersion) rebuild();
+        }
+PROBE";
+    auto s = scanSource("source/newcomer.d", arguedButNew);
+    assert(s.length == 1 && s[0].argued,
+        "PREMISE: the marker gate is GREEN on this probe — which is the whole "
+      ~ "reason the set gate exists. If this ever fails, the two gates have "
+      ~ "stopped being different questions and the cell below proves nothing.");
+
+    // The set gate's arithmetic, run by hand over the probe: a file nobody
+    // recorded, carrying one site, is a finding.
+    bool recorded = false;
+    foreach (ref r; kRemainder) if (r.file == "source/newcomer.d") recorded = true;
+    assert(!recorded && s.length > 0,
+        "an unrecorded file with a site must be a finding");
+
 }
