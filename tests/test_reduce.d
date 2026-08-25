@@ -42,6 +42,7 @@ string postCommandRaw(string body) { return postRaw("/api/command", body); }
 
 JSONValue postUndo() { return postJ("/api/undo", ""); }
 JSONValue getModel()  { return getJ("/api/model"); }
+JSONValue getChanges() { return getJ("/api/changes"); }
 
 // Switch to Polygons mode (required for mesh.subdivide, mesh.triple).
 void setPolygonMode() {
@@ -199,6 +200,93 @@ unittest { // no-op: count >= current face count returns status:error
         "count>=current must return error, got: " ~ resp);
     assert(cast(size_t)getModel()["faceCount"].integer == f0,
         "mesh must be unchanged on no-op count");
+}
+
+// ---------------------------------------------------------------------------
+// The edit-seam observables of mesh.reduce (task 1903 Stage D2). Both of these
+// are invisible to every other test in this file: the geometry a reduce
+// produces is byte-identical whether or not the kernel runs inside a batch and
+// whether its finalising coordinate write is recorded or raw. What separates
+// those worlds is the change-bus counters at /api/changes.
+// ---------------------------------------------------------------------------
+unittest { // reduce runs inside an edit batch, and publishes the Position class
+    // The dense tri stand, spelled out rather than via buildDenseTriMesh(),
+    // because the positive control has to sit at a step that MUTATES and has
+    // to leave a TRIANGLE mesh behind for the reduce (measured: a reduce on a
+    // freshly-subdivided quad cage finds no valid collapse, returns
+    // status:error and moves no counter at all — that no-op would have made
+    // every assertion below vacuously true).
+    resetCube();
+    setPolygonMode();
+    runCmd("mesh.subdivide");
+    runCmd("mesh.subdivide");
+
+    // POSITIVE CONTROL, and it is not decoration. Every assertion below is
+    // "this counter did not move" or "that counter moved by one", and a dead
+    // counter — the g_isDocumentMesh predicate uninstalled, the endpoint
+    // reading a stale copy — satisfies the first kind for free. So make the
+    // SAME counter move first, with a command that is deliberately still
+    // batchless: mesh.triple commits its geometry unbatched, exactly as
+    // mesh.reduce did before Stage D2 (measured on this build: triple +2,
+    // reduce +4 before the conversion and +0 after).
+    auto c0 = getChanges();
+    runCmd("mesh.triple");
+    auto c1 = getChanges();
+    const long ctrl = c1["unbatchedGeometryCommits"].integer
+                    - c0["unbatchedGeometryCommits"].integer;
+    assert(ctrl > 0,
+        "positive control: an UNBATCHED command must tick "
+      ~ "unbatchedGeometryCommits, and mesh.triple ticked " ~ ctrl.to!string
+      ~ ". A dead counter passes the two assertions below for free "
+      ~ "(task 1903 §3.2 L2, M-DM).");
+
+    auto before = getChanges();
+    postCommand(`{"id":"mesh.reduce","params":{"ratio":0.5,"preserveBoundary":false}}`);
+    auto after = getChanges();
+
+    // (1) THE BATCH. Stage D2 made reduceToTarget take `ref MeshEditBatch`, so
+    // every commitChange the collapse and the finalising weld make is DEFERRED
+    // into the frame and stamped once at close(). If a caller ever stops
+    // opening the batch — or opens it around less than the whole kernel — those
+    // commits land unbatched and this delta stops being zero.
+    const long unbatched = after["unbatchedGeometryCommits"].integer
+                         - before["unbatchedGeometryCommits"].integer;
+    assert(unbatched == 0,
+        "mesh.reduce made " ~ unbatched.to!string ~ " UNBATCHED geometry "
+      ~ "commit(s). The kernel's receiver is `ref MeshEditBatch`, so its "
+      ~ "commits must defer into the frame and stamp once at close(); a "
+      ~ "non-zero delta means the batch does not cover the kernel "
+      ~ "(task 1903 Stage D2, plan §3.2 L2). Pre-D2 this was +4.");
+
+    // (2) THE RECORDED WRITE'S PUBLISHING HALF. The finalise that coincides
+    // every cluster member onto its representative goes through
+    // MeshEditBatch.setVertexPositions, which publishes
+    // MeshEditScope.Position. The raw `vertices[i] = …` it replaced published
+    // NOTHING for the coordinates it moved — the reduce announced only
+    // Points|Polygons, and a Position-keyed cache had no reason to
+    // invalidate. The OP-LOG half of that call cannot be checked until Stage
+    // L10 gives Kind.SetPos a reader; THIS half can be, and is, today.
+    const long pos = after["totalPosition"].integer - before["totalPosition"].integer;
+    assert(pos == 1,
+        "mesh.reduce published the Position change class " ~ pos.to!string
+      ~ " time(s), expected exactly 1. The finalising coordinate write goes "
+      ~ "through MeshEditBatch.setVertexPositions; a raw `vertices[i] = …` "
+      ~ "moves the same coordinates and announces none of them "
+      ~ "(task 1903 §2.5, §5.7 M-D2).");
+
+    // (3) The batch closed cleanly and nobody stamped without publishing.
+    assert(after["batchLeaks"].integer == 0,
+        "a MeshEditBatch leaked (destroyed while still open): "
+      ~ after["batchLeaks"].integer.to!string);
+    assert(after["missedPublishers"].integer == 0,
+        "a mutationVersion bump reached the frame with no pending change: "
+      ~ after["missedPublishers"].integer.to!string);
+    // Unrecorded at D2 by design — Stage L10 is where this becomes non-zero.
+    assert(after["opLogEntriesRecorded"].integer
+        == before["opLogEntriesRecorded"].integer,
+        "mesh.reduce recorded op-log entries. Its batch is UNRECORDED until "
+      ~ "Stage L10 moves this family's undo off the whole-mesh snapshot; a "
+      ~ "recording batch here builds a log nothing reads (task 1903 §5.1).");
 }
 
 unittest { // preserveBoundary: open mesh boundary vertex set preserved

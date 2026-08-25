@@ -344,6 +344,7 @@ unittest // every beginEditBatch caller carries a scope(failure) abort
 // M-C-MIXIN: paste `mixin MeshSelectLoopOps;` back into struct Mesh (keeping
 // the free functions) → this block reddens naming MeshSelectLoopOps.
 // M-D1-MIXIN: the same for `mixin MeshConnectedMaskOps;` (task 1903 Stage D1).
+// M-D2-MIXIN: the same for `mixin MeshDecimateOps;` (task 1903 Stage D2).
 // ---------------------------------------------------------------------------
 
 unittest // the mixin count is falling, and the converted families stay converted
@@ -368,7 +369,7 @@ unittest // the mixin count is falling, and the converted families stay converte
 
     // 13 at the branch point; one family leaves per track-1 stage; 0 at Stage I.
     enum size_t kAtStart = 13;
-    enum size_t kExpected = 11;          // C: MeshSelectLoopOps; D1: MeshConnectedMaskOps
+    enum size_t kExpected = 10;          // C: MeshSelectLoopOps; D1: MeshConnectedMaskOps; D2: MeshDecimateOps
     assert(live.length == kExpected,
         format("source/mesh.d instantiates %d `mixin Mesh*Ops` templates; this "
              ~ "gate expects %d. Track 1 started at %d and every conversion "
@@ -380,7 +381,8 @@ unittest // the mixin count is falling, and the converted families stay converte
     // …and these are gone BY NAME. A converted family cannot come back beside
     // its free functions without silently taking every call site with it.
     static immutable string[] kConverted = ["MeshSelectLoopOps",        // Stage C
-                                            "MeshConnectedMaskOps"];    // Stage D1
+                                            "MeshConnectedMaskOps",     // Stage D1
+                                            "MeshDecimateOps"];         // Stage D2
     foreach (name; kConverted)
         assert(!live.canFind(name),
             format("`mixin %s;` is back in struct Mesh. That family is free "
@@ -404,7 +406,14 @@ unittest // the mixin count is falling, and the converted families stay converte
       ~ "MeshSelectLoopOps` — Stage C converted this family to free functions "
       ~ "over `ref const(Mesh)`; a surviving template is either dead or a "
       ~ "second implementation (task 1903 Stage C).");
-    assert(countOccurrences(ops, "selectLoopEdges(ref const(Mesh) m") == 1,
+    // THE TRAILING COMMA IS LOAD-BEARING in all four receiver pins below (D2
+    // review, MINOR-1). Without it the needle is a PREFIX of the declaration,
+    // so renaming the receiver `m` → `m2` (or `ed` → `edb`) leaves the pin
+    // green while the name the pin exists to hold has changed. Measured:
+    // `ed` → `edb` stayed green on the D2 row. Every one of these four
+    // declarations takes a second parameter, so `,` is the delimiter that is
+    // actually there; a nullary receiver would need `)` instead.
+    assert(countOccurrences(ops, "selectLoopEdges(ref const(Mesh) m,") == 1,
         "source/mesh_ops/select_loop.d no longer declares `selectLoopEdges` as "
       ~ "a free function over `ref const(Mesh)` — if the receiver changed, say "
       ~ "why here: `ref const(Mesh)` is what keeps `mesh.selectLoopEdges(seed)` "
@@ -430,7 +439,7 @@ unittest // the mixin count is falling, and the converted families stay converte
     // and publish a change for a call that changes nothing observable. If a
     // later stage widens `connectedComponentMask` to a batch receiver, that is
     // a decision to argue for here, not a mechanical follow-on.
-    assert(countOccurrences(cm, "connectedComponentMask(ref Mesh m") == 1,
+    assert(countOccurrences(cm, "connectedComponentMask(ref Mesh m,") == 1,
         "source/mesh_ops/connected_mask.d no longer declares "
       ~ "`connectedComponentMask` over `ref Mesh` — if it became "
       ~ "`ref const(Mesh)` it cannot compile (`vertexAdjacencyCSR` memoizes and "
@@ -441,10 +450,136 @@ unittest // the mixin count is falling, and the converted families stay converte
         "a `ref const(Mesh)` overload of `connectedComponentMask` can only exist by "
       ~ "casting const away to reach the memoizing `vertexAdjacencyCSR` — that is the "
       ~ "receiver this family refused, not a second convenience (task 1903 Stage D1).");
-    assert(countOccurrences(cm, "edgeCentroid(ref const(Mesh) m") == 1,
+    assert(countOccurrences(cm, "edgeCentroid(ref const(Mesh) m,") == 1,
         "source/mesh_ops/connected_mask.d no longer declares `edgeCentroid` "
       ~ "over `ref const(Mesh)` — it reads two vertices and nothing else, so "
       ~ "the const receiver is what states that, and it is what keeps "
       ~ "`mesh.edgeCentroid(ei)` compiling verbatim in xfrm_transform.d "
       ~ "(task 1903 Stage D1).");
+
+    // Stage D2 — the decimation family, and the FIRST MUTATING receiver in the
+    // tree. Everything above this point is a read-only or memo-touching query;
+    // `reduceToTarget` is the first kernel whose receiver is the edit batch
+    // itself, so these three lines are the ones D3…H are measured against.
+    immutable dcPath = buildPath(repoRoot, "source", "mesh_ops", "decimate.d");
+    assert(exists(dcPath), "cannot find source/mesh_ops/decimate.d at " ~ dcPath);
+    immutable dc = stripCommentsAndStrings(readText(dcPath));
+    assert(countOccurrences(dc, "mixin template MeshDecimateOps") == 0,
+        "source/mesh_ops/decimate.d still declares `mixin template "
+      ~ "MeshDecimateOps` — Stage D2 converted this family to a free function; "
+      ~ "a surviving template is either dead or a second implementation "
+      ~ "(task 1903 Stage D2).");
+
+    // The RECEIVER, pinned WITH its parameter name. `ed` is not decoration:
+    // plan §4.3 step 3 requires one stable name across the family because the
+    // kernel's nested functions capture the enclosing parameter the way they
+    // used to capture `this` — rename it per file and every nested body needs
+    // threading instead of a prefix.
+    assert(countOccurrences(dc, "reduceToTarget(ref MeshEditBatch ed,") == 1,
+        "source/mesh_ops/decimate.d no longer declares `reduceToTarget` over "
+      ~ "`ref MeshEditBatch ed`. That receiver is the enforcement, not the "
+      ~ "style: it is what makes a batchless call a COMPILE error, so one "
+      ~ "reduce stamps, derives and delivers once at close() instead of once "
+      ~ "per internal commit — and it is what gives the recorded finalise "
+      ~ "write somewhere to record TO at Stage L10 (task 1903 §4.1, §5.2 D2).");
+
+    // …and the two wrong spellings, absent. A `ref Mesh` receiver would compile
+    // and would silently take the batch away — the exact regression the row
+    // above exists to stop, and one no behavioural test in the tree can see
+    // while the undo path is still a whole-mesh snapshot.
+    assert(countOccurrences(dc, "reduceToTarget(ref Mesh ") == 0,
+        "`reduceToTarget` has a `ref Mesh` receiver again — that compiles, and "
+      ~ "it drops the batch: the kernel's internal commits go back to stamping "
+      ~ "one at a time and the finalise write has no frame to record into. If "
+      ~ "this is deliberate it is an argument to make here, not a mechanical "
+      ~ "follow-on (task 1903 Stage D2).");
+    assert(countOccurrences(dc, "reduceToTarget(ref const(Mesh)") == 0,
+        "`reduceToTarget` cannot have a `ref const(Mesh)` receiver — it welds, "
+      ~ "drops faces and moves every cluster member. Such an overload could "
+      ~ "only exist by casting const away (task 1903 Stage D2).");
+
+    // The raw coordinate write is GONE from this file, which is the half of
+    // Stage D2 that can be red today. The delta's `Kind.SetPos` has no reader
+    // until Stage L10, so no undo fixture can tell a raw write from the
+    // recorded one yet — plan §5.7 says so outright, and this text check is
+    // what holds the line in between. It is deliberately narrower than §5.7's
+    // full position-write scanner (a later stage builds that over all of
+    // source/mesh_ops and source/commands); it is this ONE file's count.
+    assert(countOccurrences(dc, "ed.setVertexPositions(") == 1,
+        "source/mesh_ops/decimate.d no longer calls `setVertexPositions` — the "
+      ~ "finalise that coincides every cluster member onto its representative "
+      ~ "is the raw `vertices[i] = …` write again, and a raw write inside a "
+      ~ "recording batch produces NO op-log entry: a delta undo would restore "
+      ~ "the topology and leave every coordinate at its post-collapse value "
+      ~ "(task 1903 §2.5, §5.7 M-D2).");
+    // …and the raw write is gone under §5.7's OWN predicate, not under a
+    // hand-narrowed one (D2 review, MINOR-2). The previous spelling of this
+    // check counted the literal `vertices[i] =`, which is one of FOUR shapes a
+    // raw coordinate write takes: `vertices[j].x += d`, a slice assign and a
+    // `foreach (ref v; vertices)` all walk past it, and §5.7's Revision 3
+    // re-measurement found 15 such writes in `source/commands` alone that the
+    // narrow regex had missed. This file's expected count is 0 — decimate's
+    // §5.7 entry was retired at Stage D2, which is what makes 0 the right
+    // number here and not an `AllowEntry`.
+    {
+        import std.regex : regex, matchAll;
+
+        // Verbatim from the plan's Revision 3 text, one alternative per line.
+        // (`[^\]]` for the plan's `[^]]`: same class, and it does not depend on
+        // the engine's reading of a leading `]`.)
+        enum string kPosWrite =
+              r"vertices\s*\[[^\]]*\]\s*(\.[xyz]\s*)?([-+*/]?)=[^=]"          // indexed, whole or per-component, any op-assign
+            ~ r"|(^|[^a-zA-Z_.])vertices\s*(~|[-+*/])?=[^=]"                   // whole-array assign / append
+            ~ r"|vertices\s*\[[^\]]*\.\.[^\]]*\]\s*(\[\s*\])?\s*=[^=]"         // slice assign, incl. `[] =`
+            ~ r"|foreach\s*\(\s*(size_t\s+\w+\s*,\s*)?ref\s+\w+\s*;\s*[a-zA-Z_.]*vertices"; // `foreach (ref v; vertices)`
+        auto posRe = regex(kPosWrite);
+
+        // POSITIVE CONTROL, and it goes FIRST. A count of 0 over a predicate
+        // that matches nothing is the "gate reports clean over an empty input"
+        // shape; these five samples are the four shapes §5.7 enumerates plus
+        // the exact line M-V1 puts back into this file.
+        static immutable string[] kMustMatch = [
+            "    vertices[i] = p;\n",
+            "    ed.vertices[i] = pos[find(cast(int)i)];\n",
+            "    m.vertices[j].x += d;\n",
+            "    vertices[a .. b] = src;\n",
+            "    foreach (ref v; vertices) v.y = 0;\n",
+        ];
+        foreach (sample; kMustMatch)
+            assert(!matchAll(sample, posRe).empty,
+                format("the §5.7 position-write predicate does not match `%s` "
+                     ~ "— it has been narrowed, and every count it reports is "
+                     ~ "worthless until it matches this again",
+                       sample[0 .. $ - 1]));
+
+        // NEGATIVE CONTROL: a predicate that matches every mention of
+        // `vertices` would also report 0-is-impossible and pass this gate by
+        // being permanently red, which is a different way of not measuring.
+        static immutable string[] kMustNotMatch = [
+            "    const n = ed.vertices.length;\n",
+            "    if (vertices[i] == p) return;\n",
+            "    Vec3[] pos = ed.vertices.dup;\n",
+        ];
+        foreach (sample; kMustNotMatch)
+            assert(matchAll(sample, posRe).empty,
+                format("the §5.7 position-write predicate matches `%s`, which "
+                     ~ "is a READ — a predicate that fires on reads cannot "
+                     ~ "distinguish a migrated file from an unmigrated one",
+                       sample[0 .. $ - 1]));
+
+        size_t rawWrites;
+        string firstHit;
+        foreach (mm; matchAll(dc, posRe)) {
+            if (rawWrites == 0) firstHit = mm.hit.idup;
+            ++rawWrites;
+        }
+        assert(rawWrites == 0,
+            format("source/mesh_ops/decimate.d: %d raw position write(s) under "
+                 ~ "§5.7's predicate, expected 0 — this entry was retired at "
+                 ~ "Stage D2. First hit: `%s`. `alias mesh this` means "
+                 ~ "`ed.vertices[i] = p` COMPILES inside a recording batch and "
+                 ~ "records nothing, which is why the boundary is a counted "
+                 ~ "census and not a type (task 1903 §5.7, M-V1).",
+                   rawWrites, firstHit));
+    }
 }

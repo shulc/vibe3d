@@ -494,6 +494,83 @@ unittest // setVertexPositions is the bulk form, and drops the no-op writes
 }
 
 // ===========================================================================
+// M-SP0 — THE NO-OP SKIP IS BIT IDENTITY, NOT `==` (task 1903 Stage D2 review,
+// MAJOR-1).
+//
+// Both setters skip a write whose new value equals the old one. Spelled `==`,
+// that predicate is not a no-op detector: `-0.0 == +0.0` is true, so a vertex
+// asked to drop its negative zero KEEPS it, and the primitive's forward result
+// differs from the raw `vertices[i] = p` loop it is replacing.
+//
+// It is reachable, not theoretical. Stage D2's `-0.0` sweep — `reduceToTarget`
+// over a 6×6 triangulated grid with one zero-length edge whose endpoints differ
+// only in the sign of x, 40 edges × 4 targets × 2 preserveBoundary — produced
+// 9 cells where the converted kernel left `80000000` and the pre-conversion
+// kernel wrote `00000000`. Nothing downstream launders it: `weldVerticesByMask`
+// with `average=false` keeps the LOWEST-INDEXED member's bits, and
+// `meshPlanesJson` prints `%.9g`, which is `-0`.
+//
+// Mutation: `sameBits(b, to[k])` → `b == to[k]` in `MeshEditBatch`
+// (`source/mesh.d`) → the first assertion below reddens with
+// "setVertexPositions skipped a ±0 write: vertex 0 kept bits 80000000".
+// The two fixture assertions in front of it are the anti-vacuity half: without
+// a real negative zero in the mesh every later line is true on the broken code
+// too, so they are stated as their own failures.
+// ===========================================================================
+
+unittest // ±0 is a real write: the skip compares bits, not values
+{
+    static uint bits(float f) { return *cast(uint*)&f; }
+
+    auto m = makeCube();
+    m.syncSelection();
+
+    // The fixture, and its own guard. `-0.0f` reaching the array as `+0.0f` —
+    // constant-folded, or copied through something that normalises — would make
+    // this block vacuous in exactly the direction it is testing.
+    m.vertices[0] = Vec3(-0.0f, 1.0f, 2.0f);
+    m.vertices[1] = Vec3(-0.0f, 3.0f, 4.0f);
+    assert(bits(m.vertices[0].x) == 0x8000_0000,
+        format("fixture vertex 0 does not carry a negative zero (bits %08x) — "
+             ~ "this block cannot discriminate `==` from bit identity without "
+             ~ "one", bits(m.vertices[0].x)));
+    assert(bits(m.vertices[1].x) == 0x8000_0000,
+        format("fixture vertex 1 does not carry a negative zero (bits %08x)",
+               bits(m.vertices[1].x)));
+
+    MeshEditDelta d;
+    {
+        auto ed = MeshEditBatch(m, MeshEditScope.Position);
+        ed.setVertexPositions([0u], [Vec3(0.0f, 1.0f, 2.0f)]);  // bulk form
+        ed.setVertexPos(1, Vec3(0.0f, 3.0f, 4.0f));             // scalar form
+        d = ed.close();
+    }
+
+    assert(bits(m.vertices[0].x) == 0x0000_0000,
+        format("setVertexPositions skipped a ±0 write: vertex 0 kept bits %08x "
+             ~ "where the caller asked for 00000000. The no-op predicate is "
+             ~ "comparing VALUES (`-0.0 == +0.0`), so this primitive and the "
+             ~ "raw `vertices[i] = p` loop it replaces do not produce the same "
+             ~ "forward result (task 1903 Stage D2)", bits(m.vertices[0].x)));
+    assert(bits(m.vertices[1].x) == 0x0000_0000,
+        format("setVertexPos skipped a ±0 write: vertex 1 kept bits %08x",
+               bits(m.vertices[1].x)));
+    assert(!d.isEmpty(),
+        "a ±0 write reached the mesh but recorded no op-log entry — the write "
+      ~ "and the record must be skipped together or the entry's before/after "
+      ~ "arrays go out of step with its index array");
+
+    // The other side of the same fact: the before-values were captured with
+    // their signs, so the revert puts the negative zeros back.
+    cast(void)d.revert(m);
+    assert(bits(m.vertices[0].x) == 0x8000_0000
+        && bits(m.vertices[1].x) == 0x8000_0000,
+        format("revert restored vertices 0/1 as %08x/%08x, not 80000000 — the "
+             ~ "recorded before-values lost the zero sign",
+               bits(m.vertices[0].x), bits(m.vertices[1].x)));
+}
+
+// ===========================================================================
 // The UNRECORDED batch (plan §9) — the interactive preview path.
 // ===========================================================================
 

@@ -166,10 +166,15 @@ shared static this() {
     //   This is the one place the fallback must NOT subtract hidden geometry:
     //   it is the writer OF that geometry.
     ALLOWED_COUNT["source/mesh_ops/decimate.d"] = 1;
-    // ^ :420 is an unconditional internal finalisation mask (coincide-then-weld
+    // ^ :509 is an unconditional internal finalisation mask (coincide-then-weld
     //   every cluster member), not a selection fallback — and it goes through
     //   weldVerticesByMask, so the §3.3 backstop covers it anyway. Was 5 until
     //   task 0706; the other four were unittest fixtures and left with them.
+    //   The line MOVED (was :420) at task 1903 Stage D2, which took the
+    //   `mixin template MeshDecimateOps` wrapper off this file and put a header
+    //   on it; the count is unchanged at 1 because the mask itself is unchanged
+    //   — only the raw `vertices[i] = …` two lines above it became
+    //   `ed.setVertexPositions(...)`.
     ALLOWED_COUNT["source/input_router.d"] = 2;
     // ^ `cageAllInside` is an AND-accumulator seeded true and cleared per
     //   preview child, not an operand set. Its hide handling landed in S4.

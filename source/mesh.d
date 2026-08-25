@@ -10,13 +10,19 @@ import change_bus : SelDomain, changeBus;
 import mesh_ops.cut : MeshCutOps;
 import mesh_ops.bridge : MeshBridgeOps;
 import mesh_ops.loop_slice : MeshLoopSliceOps, bandWalk, BandCell;
-import mesh_ops.decimate : MeshDecimateOps;
 import mesh_ops.revolve : MeshRevolveOps;
 import mesh_ops.cleanup : MeshCleanupOps;
 import mesh_ops.edge_bevel : MeshEdgeBevelOps;
 import mesh_ops.bevel_fin : MeshBevelFinOps;
 import mesh_ops.bevel_vertex : MeshBevelVertexOps;
 import mesh_ops.extrude : MeshExtrudeOps;
+// task 1903 Stage D2: the decimation family is ONE module-level free function
+// (`reduceToTarget` over `ref MeshEditBatch`), not a mixin. PUBLIC so every
+// `import mesh;` re-exports it and `ed.reduceToTarget(target, pb)` resolves
+// through UFCS (`doc/mesh_edit_seam_plan.md` §4.2). This keeps mesh.d the door
+// for the ops namespace; narrowing that is audit 0678 M9's job, not this
+// task's.
+public import mesh_ops.decimate;
 // task 1903 Stage D1: the connected-mask family is module-level free functions
 // (`connectedComponentMask` over `ref Mesh`, `edgeCentroid` over
 // `ref const(Mesh)`), not a mixin. PUBLIC so every `import mesh;` re-exports
@@ -14590,9 +14596,19 @@ struct Mesh {
     // source/mesh_ops/cleanup.d (task 0417, 0407 §B.V2).
     mixin MeshCleanupOps;
 
-    // Polygon decimation kernel (reduceToTarget) — see
-    // source/mesh_ops/decimate.d (task 0417, 0407 §B.V2).
-    mixin MeshDecimateOps;
+    // Polygon decimation kernel (reduceToTarget) is NO LONGER a mixin: task
+    // 1903 Stage D2 made it a module-level free function in
+    // source/mesh_ops/decimate.d, over `ref MeshEditBatch` — the first
+    // MUTATING family to cross the seam, so the kernel can no longer be
+    // reached without a batch, and one reduce now stamps, derives and
+    // delivers ONCE instead of once per internal commit. Re-exported by the
+    // `public import` at the top of this file. Do not reinstate the
+    // `MeshDecimateOps` mixin here — a member BEATS a same-name UFCS free
+    // function, so the mixin would silently take every call back, the batch
+    // receiver would go with it, and the conversion would mean nothing
+    // (`doc/mesh_edit_seam_plan.md` Revision 2 caveat 1;
+    // tests/unit/commit_seam_census_test.d reddens by name if it returns, and
+    // decimate.d's own `static assert` reddens at build).
 
     // Plane-cut kernel family (cutByPlane / cutByPlaneRestricted / planeCutCore /
     // cutByPlaneClipped / PlaneCutLoops / cutByPlaneEx / deleteComponentsInSlab /
@@ -15841,10 +15857,40 @@ struct MeshEditBatch {
     /// records nothing. This method does not close that hole — it provides the
     /// recorded alternative; the counted position-write census (plan §5.7) is
     /// what closes it, per family.
+    /// BIT identity, not `==`, and this is the whole no-op predicate for both
+    /// setters below.
+    ///
+    /// `==` on floats says `-0.0 == +0.0`, so an `==` skip does not merely
+    /// "record nothing" — it declines to WRITE, and the vertex keeps the sign
+    /// the caller asked it to drop. That is a forward-result difference
+    /// between this primitive and the raw `vertices[i] = p` loop it replaces,
+    /// and it is REACHABLE: measured at Stage D2 on `reduceToTarget` over a
+    /// 6×6 triangulated grid carrying one zero-length edge whose endpoints
+    /// differ only in the sign of x — 9 of 320 (edge × target × preserveBoundary)
+    /// cells came out with `80000000` where the pre-conversion kernel wrote
+    /// `00000000`. The trailing `weldVerticesByMask` does NOT launder it: with
+    /// `average=false` the survivor is the lowest-indexed cluster member and
+    /// keeps its own bits, and `meshPlanesJson` prints `%.9g`, i.e. `-0`, so a
+    /// plane fixture sees the sign.
+    ///
+    /// Comparing bits makes the substitution EXACT — every other equal-compare
+    /// already implied identical bits, so this only ever adds writes that the
+    /// raw loop also made. `Kind.SetPos` has no other publisher, so no op-log
+    /// consumer can be surprised by the extra entries either.
+    ///
+    /// Mutation: put `a == b` back → `tests/unit/mesh_edit_batch_test.d`'s
+    /// signed-zero block reddens ("setVertexPositions skipped a write whose
+    /// new value is `==` but not identical to the old one"), and the Stage D2
+    /// `-0.0` sweep goes back to 9 diverging cells.
+    private static bool sameBits(Vec3 a, Vec3 b) {
+        return isIdentical(a.x, b.x) && isIdentical(a.y, b.y)
+            && isIdentical(a.z, b.z);
+    }
+
     void setVertexPos(uint vi, Vec3 p) {
         if (vi >= m_.vertices.length) return;
         const Vec3 before = m_.vertices[vi];
-        if (before == p) return;              // a no-op write records nothing
+        if (sameBits(before, p)) return;      // a no-op write records nothing
         m_.vertices[vi] = p;
         if (auto f = currentBatchFrame(m_))
             if (f.rec !is null && !f.errored)
@@ -15863,10 +15909,15 @@ struct MeshEditBatch {
           ~ "in length");
         uint[] hitIdx;
         Vec3[] before, after;
+        // `idx.length` is the exact ceiling for all three: the loop only ever
+        // appends, and only ever one element per input index.
+        hitIdx.reserve(idx.length);
+        before.reserve(idx.length);
+        after.reserve(idx.length);
         foreach (k, vi; idx) {
             if (vi >= m_.vertices.length) continue;
             const Vec3 b = m_.vertices[vi];
-            if (b == to[k]) continue;
+            if (sameBits(b, to[k])) continue;
             m_.vertices[vi] = to[k];
             hitIdx ~= vi;
             before  ~= b;

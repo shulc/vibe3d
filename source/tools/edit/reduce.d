@@ -13,6 +13,7 @@ import shader : LitShader;
 import command_history : CommandHistory;
 import commands.mesh.session_edit : MeshSessionEdit;
 import snapshot : MeshSnapshot;
+import mesh_edit_delta : MeshEditScope;
 import viewcache : VertexCache, EdgeCache, FaceBoundsCache;
 
 import std.math : lround;
@@ -157,7 +158,15 @@ public:
         if (target < 1) target = 1;
         if (target >= origFaces) return false;  // no-op (ratio >= 1.0 or rounding)
 
-        size_t n = mesh.reduceToTarget(target, pb_);
+        // TASK 1903 Stage D2 — the batch opens at the TOOL boundary, never
+        // inside the kernel (plan §4.1); see the note at rebuildPreview below
+        // for why both of this tool's batches are UNRECORDED.
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kReduceEditScope);
+            n = ed.reduceToTarget(target, pb_);
+            ed.close();
+        }
         if (n == 0) return false;
 
         refreshDisplay(mesh, gpu, vc, ec, fc);
@@ -191,7 +200,27 @@ private:
             return;
         }
 
-        size_t n = mesh.reduceToTarget(target, pb_);
+        // TASK 1903 Stage D2 — UNRECORDED, and on this path that is a HARD
+        // requirement rather than a track-1 economy (plan §9). `rebuildPreview`
+        // runs once per parameter change, i.e. once per drag frame: a
+        // RECORDING batch would build and throw away a full op-log at 60 Hz,
+        // and `changeBus.opLogEntriesRecorded` would tick for an edit the user
+        // has not committed. An unrecorded frame keeps every tracker hook on
+        // its existing `if (editRecorder_ is null) return;` first line — one
+        // predictable branch, exactly today's batchless cost — while still
+        // collapsing the kernel's internal commits into ONE stamp, ONE hidden
+        // derive and ONE delivery per frame. `close()` returns
+        // `MeshEditDelta.init` and there is nothing to read.
+        //
+        // The close MUST precede `refreshDisplay`: the display refresh reads
+        // the version stamps this batch is deferring, so refreshing inside the
+        // batch would paint from the pre-edit stamps.
+        size_t n;
+        {
+            auto ed = MeshEditBatch.unrecorded(*mesh, kReduceEditScope);
+            n = ed.reduceToTarget(target, pb_);
+            ed.close();
+        }
         built = (n != 0);
         refreshDisplay(mesh, gpu, vc, ec, fc);
     }
