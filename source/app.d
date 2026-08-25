@@ -1390,18 +1390,19 @@ void main(string[] args) {
     if (loadOpenGL() < glSupport) { writeln("Failed to load OpenGL 3.3"); return; }
     writefln("OpenGL: %s", glGetString(GL_VERSION));
 
-    // Framebuffer size (may differ on HiDPI / Retina). Task 0781 step 1a:
-    // storage moved into the input/frame cluster (`ifs.fbW`/`ifs.fbH`) --
-    // these two are now `@property ref` forwarders, the same pattern
-    // `dragMode` already uses, so every existing bare read/write site below
-    // stays textually unchanged. The one exception is address-of: `&fbW`
-    // now takes the FORWARDER FUNCTION's address, not the stored int's, so
-    // the site that needs the stored int's address spells it `&fbW()`/
-    // `&fbH()` (below) or reaches the field directly as `&ifs.fbW`/
-    // `&ifs.fbH` (InputRouter's wiring).
-    @property ref int fbW() { return ifs.fbW; }
-    @property ref int fbH() { return ifs.fbH; }
-    SDL_GL_GetDrawableSize(window, &fbW(), &fbH());
+    // Framebuffer size (may differ on HiDPI / Retina). Task 0781 step 1a
+    // moved the storage into the input/frame cluster (`ifs.fbW`/`ifs.fbH`)
+    // behind two same-name `@property ref` forwarders, so every bare site
+    // stayed textually unchanged; STEP 3 DELETED THEM. Every read here is
+    // now `ifs.fbW`/`ifs.fbH`, and the address-of below takes the stored
+    // int's address directly -- which is also the end of step 1a's one
+    // wart, the `&fbW()` spelling that existed only because `&fbW` would
+    // have taken the FORWARDER's address instead of the field's.
+    //
+    // Not to be confused with `readDepth`'s `fbW`/`fbH` PARAMETERS at the
+    // top of this module: same names, a different variable, and they are
+    // deliberately untouched.
+    SDL_GL_GetDrawableSize(window, &ifs.fbW, &ifs.fbH);
 
     // --perf disables vsync so the benchmark isn't capped at the display
     // refresh rate; --test disables it too so a hidden test window never blocks
@@ -1411,7 +1412,7 @@ void main(string[] args) {
     // display and the loop doesn't busy-spin; hidden --test stays vsync-off.
     SDL_GL_SetSwapInterval((perfMode || (command.g_testMode && !visibleTest)) ? 0 : 1);
     glEnable(GL_DEPTH_TEST);
-    glViewport(0, 0, fbW, fbH);
+    glViewport(0, 0, ifs.fbW, ifs.fbH);
 
     // ImGui
     IMGUI_CHECKVERSION();
@@ -1598,7 +1599,7 @@ void main(string[] args) {
     // `seedSharedFragUniforms` still covers it.
     GLuint thickLineProgram = createProgramWithGeom(vertexShaderSrc, thickLineGeomSrc, thickLineFragSrc);
     scope(exit) glDeleteProgram(thickLineProgram);
-    initThickLineProgram(thickLineProgram, fbW, fbH);
+    initThickLineProgram(thickLineProgram, ifs.fbW, ifs.fbH);
 
     // Translucent-fill program (flat u_color at u_alpha) — backs
     // handler.drawWorldQuad, used by the Slice tool's cut-plane overlay. No
@@ -1802,10 +1803,10 @@ void main(string[] args) {
     // again: a wedged build degrades to the pre-1730 flicker rather than to a
     // viewport that has stopped answering.
     // Task 0781 step 1a: body relocated to
-    // InputFrameState.previewIndexSpaceStale; this forwarder keeps every
-    // one of its existing bare call sites (the pick family, the mouse
-    // handlers, the frame body) untouched.
-    bool previewIndexSpaceStale() { return ifs.previewIndexSpaceStale(); }
+    // InputFrameState.previewIndexSpaceStale. Step 1a kept a same-name
+    // forwarder here; STEP 3 DELETED IT -- the pick family and the mouse
+    // handlers left main() in steps 1c/2, and the frame body's one call
+    // now reads `ifs.previewIndexSpaceStale()` explicitly.
     // Source topologyVersion of the last FULL preview upload. When this
     // matches the current preview's source topology, the preview mesh
     // layout (#faces, fan order, edge / vert filter mask) is identical
@@ -1939,17 +1940,19 @@ void main(string[] args) {
     // single flag controls whether 3D input reaches the picking / camera
     // orbit code.  In --test: byte-identical to the prior per-site checks.
     //
-    // Task 0781 step 1a: now a `@property ref` forwarder into the input/
-    // frame cluster (`ifs.viewportWindowHovered`), the same pattern
-    // `dragMode` already uses, instead of a plain local `ifs` held a
-    // pointer at. The not-yet-extracted frame body's three direct writes
-    // stay textually unchanged (`g_viewportWindowHovered = true/false`)
-    // and now land straight in the cluster's own field.
-    @property ref bool g_viewportWindowHovered() { return ifs.viewportWindowHovered; }
-    // Body relocated to InputFrameState.viewportInputAllowed (task 1040);
-    // this forwarder keeps every one of its ~15 existing bare call sites
-    // (inside the not-yet-extracted mouse handlers) untouched.
-    bool viewportInputAllowed() { return ifs.viewportInputAllowed(); }
+    // Task 0781 step 1a moved the flag into the input/frame cluster as
+    // `ifs.viewportWindowHovered`, behind a same-name `@property ref`
+    // forwarder so the frame body's three writes stayed textually
+    // unchanged. STEP 3 DELETED THAT FORWARDER: those three writes now
+    // spell `ifs.viewportWindowHovered = true/false` directly, so the
+    // `g_` prefix -- which only ever meant "a main() local pretending to
+    // be a global" -- is gone from app.d with it.
+    // Body relocated to InputFrameState.viewportInputAllowed (task 1040).
+    // Task 1040 kept a same-name forwarder here for the mouse handlers'
+    // bare call sites; those handlers left main() in task 0781 step 2, and
+    // STEP 3 DELETED THE FORWARDER. The one main()-side site left is the
+    // `app.viewportInputAllowedDg` binding further down, which now takes
+    // `&ifs.viewportInputAllowed` explicitly.
 
     // Change-notification bus, Stage 2 — pick-cache subscriber state.
     //
@@ -2181,20 +2184,18 @@ void main(string[] args) {
     // Task 0781 step 1b: the three hover indices were plain main() locals
     // here; their storage moved into the input/frame cluster
     // (`ifs.hoveredVertex`/`hoveredEdge`/`hoveredFace`), the same pattern
-    // `dragMode` / `fbW` / `g_viewportWindowHovered` already follow. These
-    // forwarders keep every bare read/write site untouched -- the pick*
-    // family that writes them (including `pickHover`'s
-    // `alias hovered = hoveredVertex;`, which aliases the forwarder and
-    // still assigns through its `ref` return), the two hover-publish
-    // blocks, and the frame body's toolpipe display key.
+    // `dragMode` / `fbW` already follow. Step 1b kept same-name forwarders
+    // here so every bare read/write site stayed untouched; STEP 3 DELETED
+    // THEM. The pick* family that writes the triple left main() in step 1c
+    // (`pickHover`'s `alias hovered = hoveredVertex;` went with it and now
+    // aliases the cluster's own field); what remains in app.d is the frame
+    // body's hover-priority block, the two hover-publish lines and the
+    // toolpipe display key, all of which now spell `ifs.hovered*`.
     //
     // A reader outside app.d never sees these: `ui/viewport_render.d` goes
     // through `EditorApp.hoveredVertex`/`Edge`/`Face`, whose backing
     // pointers are repointed at the cluster's fields (see the wiring block
     // beside `app.hoveredVertexPtr`). Same storage, one owner.
-    @property ref int hoveredVertex() { return ifs.hoveredVertex; }
-    @property ref int hoveredEdge()   { return ifs.hoveredEdge;   }
-    @property ref int hoveredFace()   { return ifs.hoveredFace;   }
     mesh.resetSelection();
 
     // Cache: face→edge mask for Polygons mode edge highlighting.
@@ -2238,11 +2239,12 @@ void main(string[] args) {
     ulong  loopHoverPrevTopo = ulong.max; // mesh.topologyVersion at last rebuild
     bool   loopHoverPrevSlice = false;    // ring KIND at last rebuild (slice vs edge-loop)
 
-    // Task 1040: state relocated to InputFrameState.dragMode; this
-    // forwarder keeps every one of its ~46 existing bare read/write sites
-    // (inside the not-yet-extracted mouse handlers, pick* family, and
-    // frame body) untouched.
-    @property ref DragMode dragMode() { return ifs.dragMode; }
+    // Task 1040: state relocated to InputFrameState.dragMode, behind a
+    // same-name forwarder that kept all ~46 bare read/write sites
+    // untouched. The mouse handlers and the pick* family left main() in
+    // task 0781 steps 1c/2, and STEP 3 DELETED THE FORWARDER: the frame
+    // body's six remaining reads -- the `doingCameraDrag` term and the two
+    // "is a drag in flight" guards -- now spell `ifs.dragMode`.
     // `editMode` is a MATERIALIZED VIEW of `selTypeOrder.mostRecentGeometry`.
     // It is written by exactly ONE path — `setEditModeFromOrder()` below —
     // called from the geometry-type funnel (`switchGeometryType` /
@@ -2264,11 +2266,20 @@ void main(string[] args) {
     // classification, so it MOVES rather than joining the cluster the way
     // its trail `rmbPath` did. Its same-name forwarder died in step 2d with
     // the press/release handlers, its last main()-side readers.
-    // Task 1040: state relocated to InputFrameState.rmbPath; this forwarder
-    // keeps every one of its ~13 existing bare read/write sites (inside the
-    // not-yet-extracted mouse handlers and the frame body's lasso overlay)
-    // untouched.
-    @property ref ImVec2[] rmbPath() { return ifs.rmbPath; }
+    // Task 1040: state relocated to InputFrameState.rmbPath, behind a
+    // same-name forwarder that kept its ~13 bare read/write sites
+    // untouched. The mouse handlers left main() in task 0781 step 2d, and
+    // STEP 3 DELETED THE FORWARDER: what remains is the frame body's lasso
+    // overlay, which now reads `ifs.rmbPath`.
+    //
+    // THAT OVERLAY IS THE ONE CONSUMER IN THIS TASK WITH NO ORACLE, named
+    // rather than assumed (plan section 6.3). It draws through an ImGui
+    // foreground `DrawList`, and `/api/viewport/probe` reads the FBO, so no
+    // suite test can see those four lines at all. The array's STATE is
+    // covered -- the same `ifs.rmbPath` drives the lasso selection in the
+    // moved `handleMouseButtonUp`, asserted by selected-id count in
+    // `tests/test_lasso_select.d` -- but the DRAW is not. Step 3 therefore
+    // renamed the reference in that block and changed nothing else in it.
 
     // Phase C.x: interactive selection edit session. Task 0781 step 2d moved
     // the three fields AND the `beginInteractiveSelEdit` /
@@ -4248,10 +4259,12 @@ void main(string[] args) {
     // must be kept balanced: the sweep below recomputes it from the cameras it
     // just ticked, so the worst a stale `true` can cost is one extra sweep.
     //
-    // Task 1040: state relocated to InputFrameState.anySpinning; this
-    // forwarder keeps every one of its ~6 existing bare read/write sites
-    // (the button-up handler's OR-in, the frame body's tick) untouched.
-    @property ref bool anySpinning() { return ifs.anySpinning; }
+    // Task 1040: state relocated to InputFrameState.anySpinning, behind a
+    // same-name forwarder that kept its ~6 bare read/write sites untouched.
+    // The button-up handler that ORs a fresh spin in left main() in task
+    // 0781 step 2b, and STEP 3 DELETED THE FORWARDER: the frame body's
+    // tick -- the `if`, the clear and the recompute -- reads
+    // `ifs.anySpinning`.
 
     // The cooked 2D event, and the bookkeeping behind it. Task 0781 step 2c:
     // `gestureTrack` relocated to InputRouter alongside handleMouseMotion,
@@ -4652,14 +4665,22 @@ void main(string[] args) {
     // read it; none does, and that is the neutrality argument for the
     // commit that introduced it.
     // Body relocated to InputFrameState.buildToolVts (task 1040), full six-
-    // parameter form preserved exactly (same defaults) -- this forwarder
-    // keeps every one of its ~25 existing call sites, both the bare 2-arg
-    // and the 4-trailing-arg forms, untouched.
-    void buildToolVts(out SubjectPacket subj, ref VectorStack vts,
-                      int curX = -1, int curY = -1, bool curValid = false,
-                      GesturePacket gest = GesturePacket.init) {
-        ifs.buildToolVts(subj, vts, curX, curY, curValid, gest);
-    }
+    // parameter form preserved exactly (same defaults), behind a same-name
+    // forwarder that kept all ~25 call sites -- the bare 2-arg and the
+    // 4-trailing-arg forms alike -- untouched. The mouse and key handlers
+    // that used the 6-arg form left main() in task 0781 step 2, and STEP 3
+    // DELETED THE FORWARDER: every remaining site here spells
+    // `ifs.buildToolVts(...)`.
+    //
+    // WHICH `buildToolVts` IS WHICH, because there are two and they are not
+    // the same thing. `ifs.buildToolVts` is the real SIX-parameter method on
+    // the cluster. `EditorApp.buildToolVts` is a TWO-parameter DELEGATE
+    // FIELD, bound below by a genuine 2-parameter closure whose body now
+    // calls `ifs.buildToolVts(s, v)`. That closure is not ceremony: binding
+    // the 6-arg function to the 2-arg field directly compiles but is an ABI
+    // lie -- the trailing three parameters read stack garbage, a
+    // reproducible segfault (see the note at the binding site). The field
+    // stays 2-arg; do not "simplify" it to match the method.
 
     // -------------------------------------------------------------------------
     // Task 0419 (campaign 0407 §V1.2) LATE ctx-wiring -- the 30 new EditorApp
@@ -4756,14 +4777,14 @@ void main(string[] args) {
     // holding stack garbage). Wrap in a genuine 2-parameter closure instead
     // so the trailing 3 args are filled in by buildToolVts's OWN defaults
     // at a real call site, not by ABI coincidence.
-    app.buildToolVts = (out SubjectPacket s, ref VectorStack v) { buildToolVts(s, v); };
+    app.buildToolVts = (out SubjectPacket s, ref VectorStack v) { ifs.buildToolVts(s, v); };
     app.anyFalloffActive     = cast(bool delegate())&anyFalloffActive;
     // Task 1691 — bound to THIS forwarder, the same one every mouse handler
     // below calls, so the diagnostic in `/api/viewport/display` cannot drift
     // from the branch it describes. Assigned before `wireHttpProviders` (just
     // below) for the same reason every other field in these blocks is: the
     // moved provider closures read `app` through the `ref` parameter.
-    app.viewportInputAllowedDg = &viewportInputAllowed;
+    app.viewportInputAllowedDg = &ifs.viewportInputAllowed;
     app.rebuildLoopHoverMask = cast(const(bool)[] delegate(int))&rebuildLoopHoverMask;
 
     // Phase-B ctx wiring (source/http_providers.d): same rules as the blocks
@@ -4926,7 +4947,7 @@ void main(string[] args) {
     // would be a refactor of that, not of this.
     armedToolPoseHook = () {
         if (activeTool is null) return;
-        SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+        SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
         activeTool.update(vts);
     };
 
@@ -5011,27 +5032,16 @@ void main(string[] args) {
     // frame shared-state cluster (source/input_frame_state.d), for the same
     // producer/consumer reason as every member before them: the frame body
     // calls them directly, the three picker delegates below call them too.
-    // What stays here is five same-name forwarders at the original position,
-    // so every call site -- the delegates just below and the frame body's
-    // four calls -- is textually unchanged. `pickHover` itself needs none:
+    // Step 1c left five same-name forwarders here so no call site had to
+    // change; STEP 3 DELETED THEM, and the frame body's four calls now read
+    // `ifs.pickVertices` / `ifs.pickEdges` / `ifs.pickFaces` /
+    // `ifs.pickItems` explicitly. `pickHover` never needed a forwarder:
     // nothing outside the family ever named it.
     //
     // `itemPicker` and `useBvhFacePick` travelled with them (their only
     // readers were `pickItemUnderCursor` and `pickFaces`); both are wired
     // next to `ifs.app` further down, where the VIBE3D_FACE_PICK read now
     // lives.
-    void pickVertices(ref Viewport vp, bool doingCameraDrag) {
-        ifs.pickVertices(vp, doingCameraDrag);
-    }
-    void pickEdges(ref Viewport vp, bool doingCameraDrag) {
-        ifs.pickEdges(vp, doingCameraDrag);
-    }
-    void pickFaces(ref Viewport vp, bool doingCameraDrag) {
-        ifs.pickFaces(vp, doingCameraDrag);
-    }
-    void pickItems(ref Viewport vp, bool doingCameraDrag) {
-        ifs.pickItems(vp, doingCameraDrag);
-    }
 
     // Task 0781 step 2e -- THE THREE PICKER BODIES MOVED. `doSelectPickAt`,
     // `doItemSelectPickAt` and `refreshHoverPickAt` are now real METHODS of
@@ -5242,13 +5252,13 @@ void main(string[] args) {
         // background cell must keep coasting while you work in another) and
         // recomputes the flag from what is still running, so the tick switches
         // itself off one frame after the last spin ends.
-        if (anySpinning) {
+        if (ifs.anySpinning) {
             immutable uint nowMs = SDL_GetTicks();
-            anySpinning = false;
+            ifs.anySpinning = false;
             foreach (cell; vpm.views) {
                 if (cell is null || cell.camera is null) continue;
                 cell.camera.spinTick(nowMs);
-                anySpinning = anySpinning || cell.camera.spinning();
+                ifs.anySpinning = ifs.anySpinning || cell.camera.spinning();
             }
         }
 
@@ -5843,7 +5853,7 @@ void main(string[] args) {
         }
 
         // ---- RMB path trail ----
-        if (rmbPath.length >= 2) {
+        if (ifs.rmbPath.length >= 2) {
             ImDrawList* dl = ImGui.GetForegroundDrawList();
             // Task 0222: the lasso belongs to ONE gesture in ONE cell, but
             // rmbPath is stored in absolute screen coords and drawn on the
@@ -5862,10 +5872,10 @@ void main(string[] args) {
                            cast(float)(_ocv.winY + _ocv.winH)),
                     true);
             }
-            for (size_t i = 1; i < rmbPath.length; i++)
-                dl.AddLine(rmbPath[i - 1], rmbPath[i], IM_COL32(0, 255, 255, 220), 1.0f);
+            for (size_t i = 1; i < ifs.rmbPath.length; i++)
+                dl.AddLine(ifs.rmbPath[i - 1], ifs.rmbPath[i], IM_COL32(0, 255, 255, 220), 1.0f);
             // Closing line: start → end
-            dl.AddLine(rmbPath[0], rmbPath[$ - 1], IM_COL32(0, 255, 255, 220), 1.0f);
+            dl.AddLine(ifs.rmbPath[0], ifs.rmbPath[$ - 1], IM_COL32(0, 255, 255, 220), 1.0f);
             if (_clipCell) dl.PopClipRect();
         }
 
@@ -6165,7 +6175,7 @@ void main(string[] args) {
             // surface on screen AND keeps `suppressCageUpload` on, so a
             // tool-side upload cannot write cage data into the preview
             // buffers and reintroduce the flicker by another door.
-            immutable bool staleOnScreen = previewIndexSpaceStale();
+            immutable bool staleOnScreen = ifs.previewIndexSpaceStale();
             bool wantPreview = subpatchPreview.active || staleOnScreen;
             gpu.suppressCageUpload = wantPreview;
             bool versionChanged = gpuUploadedVersion != mesh.mutationVersion;
@@ -6256,10 +6266,10 @@ void main(string[] args) {
         // BEFORE ImGui.Render() via renderViewportSceneToFbo().  See
         // the Phase-2 FBO section below (after hover resolution).
 
-        bool doingCameraDrag = (dragMode == DragMode.Orbit ||
-                                dragMode == DragMode.Zoom  ||
-                                dragMode == DragMode.Pan   ||
-                                dragMode == DragMode.Roll);
+        bool doingCameraDrag = (ifs.dragMode == DragMode.Orbit ||
+                                ifs.dragMode == DragMode.Zoom  ||
+                                ifs.dragMode == DragMode.Pan   ||
+                                ifs.dragMode == DragMode.Roll);
 
         // Invalidate the screen-space pick caches when the MESH actually
         // changed this frame (change-notification bus, Stage 2). The bus
@@ -6392,7 +6402,7 @@ void main(string[] args) {
         // for the future layer panel.
         selChangedDomains = 0;
 
-        pickVertices(vp, doingCameraDrag);
+        ifs.pickVertices(vp, doingCameraDrag);
 
         // Check if edge cache needs update due to camera movement
         if (!doingCameraDrag && edgeCache.needsUpdate(vp)) {
@@ -6400,7 +6410,7 @@ void main(string[] args) {
             edgeCache.update(vp);
         }
 
-        pickEdges(vp, doingCameraDrag);
+        ifs.pickEdges(vp, doingCameraDrag);
 
         // Check if face cache needs update due to camera movement
         if (!doingCameraDrag && faceCache.needsUpdate(vp)) {
@@ -6408,16 +6418,16 @@ void main(string[] args) {
             faceCache.update(vp);
         }
 
-        pickFaces(vp, doingCameraDrag);
+        ifs.pickFaces(vp, doingCameraDrag);
 
         // Item hover (task 0647). Last of the four, and outside every
         // editMode branch above: the item ray is asked on EVERY frame under
         // the Item selection type, whatever the remembered geometry type is.
-        pickItems(vp, doingCameraDrag);
+        ifs.pickItems(vp, doingCameraDrag);
         }
-        int pickedVertex = hoveredVertex;
-        int pickedEdge = hoveredEdge;
-        int pickedFace = hoveredFace;
+        int pickedVertex = ifs.hoveredVertex;
+        int pickedEdge = ifs.hoveredEdge;
+        int pickedFace = ifs.hoveredFace;
 
         // Tool-driven multi-type hover priority resolution: when an
         // active tool (e.g. XfrmTransformTool with falloff.element
@@ -6428,11 +6438,11 @@ void main(string[] args) {
         // corner would light up both the vertex dot AND the face
         // checker, which mis-represents what click-to-pick will hit.
         if (activeTool !is null) {
-            if (hoveredVertex >= 0) {
-                hoveredEdge = -1;
-                hoveredFace = -1;
-            } else if (hoveredEdge >= 0) {
-                hoveredFace = -1;
+            if (ifs.hoveredVertex >= 0) {
+                ifs.hoveredEdge = -1;
+                ifs.hoveredFace = -1;
+            } else if (ifs.hoveredEdge >= 0) {
+                ifs.hoveredFace = -1;
             }
         }
         int elementTraceMouseX, elementTraceMouseY;
@@ -6447,9 +6457,9 @@ void main(string[] args) {
         // would pick back-facing / hidden polygons that happened to
         // project to the cursor).
         import hover_state : g_hoveredVertex, g_hoveredEdge, g_hoveredFace;
-        g_hoveredVertex = hoveredVertex;
-        g_hoveredEdge   = hoveredEdge;
-        g_hoveredFace   = hoveredFace;
+        g_hoveredVertex = ifs.hoveredVertex;
+        g_hoveredEdge   = ifs.hoveredEdge;
+        g_hoveredFace   = ifs.hoveredFace;
         // Per-type highlight gates (for the FBO draw pass).
         bool showVertHover = (editMode == EditMode.Vertices)
                           || (activeTool !is null
@@ -6464,7 +6474,7 @@ void main(string[] args) {
         // Tool logic update (handle-hover state) — runs in main loop so it
         // is current before renderViewportSceneToFbo() draws the handles.
         if (activeTool) {
-            SubjectPacket subj; VectorStack vts; buildToolVts(subj, vts);
+            SubjectPacket subj; VectorStack vts; ifs.buildToolVts(subj, vts);
             activeTool.update(vts);
         }
 
@@ -6564,7 +6574,7 @@ void main(string[] args) {
         // "Viewport" window — interactive only.  NOT created in --test so the
         // central node stays the PassthruCentralNode hole, keeping
         // WantCaptureMouse false over the 3D area → 320/320 byte-identical.
-        g_viewportWindowHovered = false;
+        ifs.viewportWindowHovered = false;
         if (!testMode) {
             import std.conv : to;
             import toolpipe.packets : FalloffPacket;
@@ -6608,7 +6618,7 @@ void main(string[] args) {
             // it (task 0170 regression — see doc/falloff_sphere_rings_plan.md).
             FalloffPacket _wlFp;
             if (activeTool !is null || anyFalloffActive()) {
-                SubjectPacket _wlSubj; VectorStack _wlVts; buildToolVts(_wlSubj, _wlVts);
+                SubjectPacket _wlSubj; VectorStack _wlVts; ifs.buildToolVts(_wlSubj, _wlVts);
                 if (auto p = _wlVts.get!FalloffPacket()) _wlFp = *p;
             }
 
@@ -7110,7 +7120,7 @@ void main(string[] args) {
                         if (!_cellWidgetHovered &&
                             ImGui.IsItemHovered(
                                 ImGuiHoveredFlags.AllowWhenBlockedByActiveItem))
-                            g_viewportWindowHovered = true;
+                            ifs.viewportWindowHovered = true;
                     }
                 }
                 ImGui.End();
@@ -7175,7 +7185,7 @@ void main(string[] args) {
                 // cell) can't grab an arm anyway — this guard is defence in
                 // depth.
                 bool anyGestureActive = vpm.dragOriginId >= 0
-                                     || dragMode != DragMode.None
+                                     || ifs.dragMode != DragMode.None
                                      || (activeTool !is null && activeTool.isDragging())
                                      || pipeGizmoHost.isDragging();
 
@@ -7373,7 +7383,7 @@ void main(string[] args) {
                 // strip, so the cells' ##vpHit would not have set this true
                 // there anyway — this just guarantees it.
                 if (crossHot)
-                    g_viewportWindowHovered = false;
+                    ifs.viewportWindowHovered = false;
             }
             // ── end cross-splitter widget ─────────────────────────────────────
         }
@@ -7445,11 +7455,11 @@ void main(string[] args) {
             }
 
             auto _dsz = io.DisplaySize;
-            float dpiX = (_dsz.x > 0.0f) ? cast(float)fbW / _dsz.x : 1.0f;
-            float dpiY = (_dsz.y > 0.0f) ? cast(float)fbH / _dsz.y : 1.0f;
+            float dpiX = (_dsz.x > 0.0f) ? cast(float)ifs.fbW / _dsz.x : 1.0f;
+            float dpiY = (_dsz.y > 0.0f) ? cast(float)ifs.fbH / _dsz.y : 1.0f;
 
             bool forceActive = (activeTool !is null)
-                            || (dragMode != DragMode.None)
+                            || (ifs.dragMode != DragMode.None)
                             || anyFalloffActive();
 
             // Overlay-owner cell: origin cell during a drag, else the HOVERED
@@ -7489,7 +7499,7 @@ void main(string[] args) {
             int _ovlHot = currentHotPart();
             if (!testMode && (activeTool !is null || anyFalloffActive())) {
                 import toolpipe.packets : ActionCenterPacket, FalloffPacket, FalloffType;
-                SubjectPacket _osubj; VectorStack _ovts; buildToolVts(_osubj, _ovts);
+                SubjectPacket _osubj; VectorStack _ovts; ifs.buildToolVts(_osubj, _ovts);
                 if (activeTool !is null) {
                     _ovlKind |= 1;
                     if (auto p = _ovts.get!ActionCenterPacket()) _ovlCenter = p.center;
@@ -7603,9 +7613,9 @@ void main(string[] args) {
                         _newKey.selEpoch   = fboSelEpoch;
                         _newKey.editMode_k = cast(int)editMode;
                         // Hover state only matters in the hovered cell.
-                        _newKey.hovV       = _hovK ? hoveredVertex : -1;
-                        _newKey.hovE       = _hovK ? hoveredEdge   : -1;
-                        _newKey.hovF       = _hovK ? hoveredFace   : -1;
+                        _newKey.hovV       = _hovK ? ifs.hoveredVertex : -1;
+                        _newKey.hovE       = _hovK ? ifs.hoveredEdge   : -1;
+                        _newKey.hovF       = _hovK ? ifs.hoveredFace   : -1;
                         // Task 0647 — see DirtyKey.itemHighlightKey for why
                         // none of the three fields above can carry this. NOT
                         // gated on `_hovK`: the item under the pointer is lit
@@ -7735,8 +7745,8 @@ void main(string[] args) {
                 // Destination in GL bottom-up coords (flip screen-space Y).
                 int _dX0 = layout.vpX;
                 int _dX1 = layout.vpX + layout.vpW;
-                int _dY0 = fbH - (layout.vpY + layout.vpH);
-                int _dY1 = fbH - layout.vpY;
+                int _dY0 = ifs.fbH - (layout.vpY + layout.vpH);
+                int _dY1 = ifs.fbH - layout.vpY;
                 glBindFramebuffer(GL_READ_FRAMEBUFFER, _av.fbo.fbo);
                 glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
                 glBlitFramebuffer(0, 0, _fw, _fh,
@@ -7766,7 +7776,7 @@ void main(string[] args) {
             auto zFramesUi = g_frames.phase(Phase.ui);
             ImGui.Render();
             // Restore full viewport for ImGui rendering.
-            glViewport(0, 0, fbW, fbH);
+            glViewport(0, 0, ifs.fbW, ifs.fbH);
             ImGui_ImplOpenGL3_RenderDrawData(ImGui.GetDrawData());
         }
 
